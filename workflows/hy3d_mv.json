@@ -1,0 +1,189 @@
+{
+ "ck": {
+  "class_type": "ImageOnlyCheckpointLoader",
+  "inputs": {
+   "ckpt_name": "3D Rendering\\Hunyuan3D-2mv.fp16.safetensors"
+  }
+ },
+ "ms": {
+  "class_type": "ModelSamplingAuraFlow",
+  "inputs": {
+   "model": [
+    "ck",
+    0
+   ],
+   "shift": 1.0
+  }
+ },
+ "cond": {
+  "class_type": "Hunyuan3Dv2ConditioningMultiView",
+  "inputs": {
+   "front": [
+    "enc_front",
+    0
+   ],
+   "left": [
+    "enc_left",
+    0
+   ],
+   "back": [
+    "enc_back",
+    0
+   ],
+   "right": [
+    "enc_right",
+    0
+   ]
+  }
+ },
+ "lat": {
+  "class_type": "EmptyLatentHunyuan3Dv2",
+  "inputs": {
+   "resolution": 3072,
+   "batch_size": 1
+  }
+ },
+ "ks": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "ms",
+    0
+   ],
+   "positive": [
+    "cond",
+    0
+   ],
+   "negative": [
+    "cond",
+    1
+   ],
+   "latent_image": [
+    "lat",
+    0
+   ],
+   "seed": 42,
+   "steps": 20,
+   "cfg": 7.5,
+   "sampler_name": "euler",
+   "scheduler": "normal",
+   "denoise": 1.0
+  }
+ },
+ "dec": {
+  "class_type": "VAEDecodeHunyuan3D",
+  "inputs": {
+   "samples": [
+    "ks",
+    0
+   ],
+   "vae": [
+    "ck",
+    2
+   ],
+   "num_chunks": 8000,
+   "octree_resolution": 256
+  }
+ },
+ "mesh": {
+  "class_type": "VoxelToMesh",
+  "inputs": {
+   "voxel": [
+    "dec",
+    0
+   ],
+   "algorithm": "surface net",
+   "threshold": 0.6
+  }
+ },
+ "glb": {
+  "class_type": "SaveGLB",
+  "inputs": {
+   "mesh": [
+    "mesh",
+    0
+   ],
+   "filename_prefix": "vgac/mesh/model"
+  }
+ },
+ "img_front": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "front_white.png"
+  }
+ },
+ "enc_front": {
+  "class_type": "CLIPVisionEncode",
+  "inputs": {
+   "clip_vision": [
+    "ck",
+    1
+   ],
+   "image": [
+    "img_front",
+    0
+   ],
+   "crop": "none"
+  }
+ },
+ "img_left": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "left_white.png"
+  }
+ },
+ "enc_left": {
+  "class_type": "CLIPVisionEncode",
+  "inputs": {
+   "clip_vision": [
+    "ck",
+    1
+   ],
+   "image": [
+    "img_left",
+    0
+   ],
+   "crop": "none"
+  }
+ },
+ "img_back": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "back_white.png"
+  }
+ },
+ "enc_back": {
+  "class_type": "CLIPVisionEncode",
+  "inputs": {
+   "clip_vision": [
+    "ck",
+    1
+   ],
+   "image": [
+    "img_back",
+    0
+   ],
+   "crop": "none"
+  }
+ },
+ "img_right": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "right_white.png"
+  }
+ },
+ "enc_right": {
+  "class_type": "CLIPVisionEncode",
+  "inputs": {
+   "clip_vision": [
+    "ck",
+    1
+   ],
+   "image": [
+    "img_right",
+    0
+   ],
+   "crop": "none"
+  }
+ }
+}

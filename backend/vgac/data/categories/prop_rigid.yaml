@@ -1,0 +1,19 @@
+id: prop_rigid
+label: Rigid prop
+rig_engine: none
+symmetric: false
+size_m: 0.6
+parts_default: []
+topology: triangle
+input_view_default: front
+lod_ratios: [0.5, 0.25]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The object sits on a plain flat light grey surface against a plain flat light grey background,
+  seen from a three-quarter front angle slightly above, whole object visible with margin around it,
+  centred in frame. Soft even studio lighting with no hard shadows. No text, no logos, no other
+  objects, no scenery, no motion blur, no cropping.
+budgets:
+  mobile_low: {triangles: 1000, texture: 512}
+  pc_mid: {triangles: 5000, texture: 2048}
+  high: {triangles: 20000, texture: 4096}

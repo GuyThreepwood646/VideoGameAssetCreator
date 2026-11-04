@@ -1,0 +1,20 @@
+id: vehicle
+label: Vehicle or mech
+rig_engine: none
+symmetric: true
+size_m: 4.0
+parts_default: [wheels, turret, doors]
+topology: triangle
+input_view_default: quarter
+lod_ratios: [0.5, 0.25]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The vehicle sits at rest on a plain flat light grey surface against a plain flat light grey
+  background, wheels straight, doors and hatches closed, seen from a three-quarter front angle
+  slightly above so the front, one side and the roof are visible, whole vehicle visible with margin
+  around it, centred in frame. Soft even studio lighting with no hard shadows. No text, no logos,
+  no people, no scenery, no motion blur, no cropping.
+budgets:
+  mobile_low: {triangles: 6000, texture: 1024}
+  pc_mid: {triangles: 30000, texture: 2048}
+  high: {triangles: 100000, texture: 4096}

@@ -1,0 +1,45 @@
+# Style presets. `model` picks the concept engine (docs/API.md style_lock.model values);
+# `prompt_block` is appended to the asset prompt. The project style lock can override both.
+styles:
+  - id: painted
+    label: Painted
+    model: zturbo
+    prompt_block: >-
+      A full-body painted concept art reference for a video game, a real digital painting with
+      smooth painterly shading, clean readable shapes, slightly exaggerated proportions, muted
+      colours with one bright accent.
+  - id: cel
+    label: Cel shaded
+    model: anima
+    prompt_block: >-
+      Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and
+      simple readable shapes, suitable for a stylized video game character.
+  - id: pixel
+    label: Pixel art
+    model: pixel
+    prompt_block: >-
+      16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.
+  - id: retro64
+    label: Retro 64
+    model: zturbo
+    prompt_block: >-
+      Late 1990s low-polygon console style, chunky simple shapes, flat vertex-lit shading, small
+      blurry textures, bold saturated colours, as if rendered on a 64-bit era console.
+  - id: lowpoly_flat
+    label: Low-poly flat
+    model: zturbo
+    prompt_block: >-
+      Low-poly flat-shaded style, faceted geometric surfaces, solid flat colour per face, no
+      texture detail, clean silhouettes, soft pastel palette.
+  - id: realistic_pbr
+    label: Realistic PBR
+    model: zbase
+    prompt_block: >-
+      Photorealistic physically based rendering reference, real material response, subtle wear
+      and surface detail, neutral studio lighting, accurate proportions.
+  - id: clay
+    label: Clay
+    model: klein
+    prompt_block: >-
+      Stop-motion clay style, soft matte sculpted surfaces with fingerprint texture, rounded
+      simplified shapes, warm muted colours, as if photographed on a tabletop set.

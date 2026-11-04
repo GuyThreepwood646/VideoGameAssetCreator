@@ -1,0 +1,29 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Asset storage (generated content, large)
+library/
+runtime/*
+!runtime/start-comfy-b.ps1
+
+# Unity sandbox generated folders
+unity-sandbox/Library/
+unity-sandbox/Logs/
+unity-sandbox/Temp/
+unity-sandbox/obj/
+unity-sandbox/UserSettings/
+unity-sandbox/Assets/VGAC/
+unity-sandbox/Assets/VGAC.meta
+
+# Experiment outputs and scratch
+bakeoff/out/
+bakeoff/__pycache__/
+tools/e2e_report.json
+exports/

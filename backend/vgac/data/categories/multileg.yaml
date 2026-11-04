@@ -1,0 +1,20 @@
+id: multileg
+label: Multi-leg creature
+rig_engine: skintoken
+symmetric: true
+size_m: 1.0
+parts_default: []
+topology: quad
+input_view_default: quarter
+lod_ratios: [0.5, 0.25, 0.1]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The creature stands in a neutral pose with all legs planted on the ground and spread evenly so
+  every leg is visible and none overlap, body level, head facing forward, seen from a three-quarter
+  front angle slightly above, whole body visible with margin around it, centred in frame. Plain flat
+  light grey background. Soft even studio lighting from the front with no hard shadows. No text,
+  no logos, no background scenery, no motion blur, no cropping.
+budgets:
+  mobile_low: {triangles: 6000, texture: 1024}
+  pc_mid: {triangles: 24000, texture: 2048}
+  high: {triangles: 70000, texture: 4096}

@@ -1,0 +1,67 @@
+"""Load backend/config.yaml into typed settings.
+
+The config file lives next to the backend package (backend/config.yaml). Set the
+VGAC_CONFIG environment variable to use a different file. Tests call reset_settings()
+after pointing VGAC_CONFIG at a temporary file.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, Field
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+PACKAGE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BACKEND_DIR.parent
+DEFAULT_CONFIG_PATH = BACKEND_DIR / "config.yaml"
+DATA_DIR = PACKAGE_DIR / "data"
+BLENDER_SCRIPTS_DIR = PACKAGE_DIR / "blender"
+
+
+class InstanceConfig(BaseModel):
+    url: str
+    gpu: str = ""
+    role: str = ""
+    # Local output directory of that ComfyUI instance, for nodes that save files without
+    # reporting them through /history (SkinToken). Optional.
+    output_dir: Path | None = None
+
+
+class Settings(BaseModel):
+    instances: dict[str, InstanceConfig]
+    library_path: Path
+    blender_exe: Path | None = None
+    unity_exe: Path | None = None
+    unity_project: Path | None = None
+    comfy_input_dir: Path | None = None
+    clips_libraries: dict[str, Path] = Field(default_factory=dict)
+    min_free_ram_gb: float = Field(default=24, ge=0)
+    # Seconds a ComfyUI job may run before the worker gives up on it.
+    job_timeout_seconds: float = Field(default=3600, ge=1)
+
+    @property
+    def db_path(self) -> Path:
+        return self.library_path / "vgac.sqlite"
+
+
+def load_settings(path: Path | str | None = None) -> Settings:
+    config_path = Path(path or os.environ.get("VGAC_CONFIG") or DEFAULT_CONFIG_PATH)
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    settings = Settings.model_validate(raw)
+    settings.library_path.mkdir(parents=True, exist_ok=True)
+    return settings
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return load_settings()
+
+
+def reset_settings() -> None:
+    """Forget the cached settings (tests switch config files)."""
+    get_settings.cache_clear()
