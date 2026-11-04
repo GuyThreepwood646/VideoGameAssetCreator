@@ -98,6 +98,8 @@ Incorporate REVIEW.md into the plan, define the end goal in industry terms (ARCH
 
 - Frontend autopilot and presets finished by the agent (Make it control with stop_on, running/paused/done states, finish card with turntable, preset row on projects and creation, asset form autopilot checkbox). Backend autopilot gained `fix` (re-run a stage as an adjust, supersede later stages, continue) and in-flight waiting; 39 tests pass; backend restarted; committed.
 
+- Desktop launcher (desktop/, Electron): status window supervising ComfyUI A (Comfy Desktop owns it), ComfyUI B, backend and UI; starts what is down, never duplicates, kills only what it started; tray and Services menu; portable exe at desktop/dist/VGAC-portable.exe and a VGAC.lnk on the desktop. Committed with the README refresh. Test projects tidied: Autopilot demo (goblin), Pipeline runs: Knight (with the winter-cloak variant), Wolf, Treasure chest, Cobblestone material.
+
 ## Next
 
 - UX items still open from docs/UX-REVIEW.md: L thumbs up/down on keep, M glossary and example gallery. (G autopilot, H presets, K finishing moment are done.)
