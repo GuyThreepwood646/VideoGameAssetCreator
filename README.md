@@ -54,6 +54,16 @@ Frontend without the backend (mock mode). `VITE_MOCK=1` installs an in-browser m
 
 The mock store lives in memory and resets on a page reload; `window.vgacMock.store` exposes it and `window.vgacMock.setSpeed(4)` makes simulated jobs run faster. See `frontend/README.md` for the screens and the data layer.
 
+## Desktop launcher
+
+`desktop/` is an Electron launcher (decision D13). It shows a status window for the four services (ComfyUI A, ComfyUI B, backend, UI), starts ComfyUI B and the backend when they are not already running (and builds `frontend/dist` once if it is missing), then opens the app at http://127.0.0.1:8765/ in its own window with a tray icon and a Services menu (restart backend, restart ComfyUI B, open logs and exports folders). On quit it stops only the processes it started; ComfyUI A belongs to ComfyUI Desktop and is never touched. Paths and ports live in `desktop/config.json`.
+
+    cd desktop
+    npm install                      # once (then `node node_modules/electron/install.js` if the Electron binary did not download)
+    npm run start                    # run from source
+    npm run dist                     # portable exe in desktop/dist/
+    powershell -ExecutionPolicy Bypass -File make-shortcut.ps1   # VGAC.lnk on the desktop (built exe if present, else from source)
+
 ## Backend
 
 The backend is the phase 1 build: every endpoint in `docs/API.md`, six stage modules that port the proven bake-off engines, a per-instance job queue with websocket events, category and style data files, the quality gate and the manifest. Module map, data flow and how to add an engine are in `docs/BACKEND.md`.

@@ -308,7 +308,8 @@ export function autopilotLine(stage: StageId | null, secondsLeft: number | null,
   if (!stage) return 'Autopilot: starting.'
   const k = STAGES.indexOf(stage) + 1
   const time = extra?.queued ? 'waiting for a free machine' : secondsLeft !== null ? `${fmtDuration(secondsLeft)} left` : ''
-  return `Autopilot: ${stageGerund(stage).toLowerCase()}${time ? `, ${time}` : ''}, step ${k} of ${STAGES.length}`
+  const g = stageGerund(stage)
+  return `Autopilot: ${g.charAt(0).toLowerCase() + g.slice(1)}${time ? `, ${time}` : ''}, step ${k} of ${STAGES.length}`
 }
 
 // Seconds left for the autopilot: the rest of the current stage plus every stage after it, up to until_stage.

@@ -64,20 +64,26 @@ def _passes(v: Version, stop_on: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def _rank(v: Version) -> tuple[int, int, float]:
+def _rank(v: Version) -> tuple[int, int, float, float]:
+    """Gate passed, then checks passed, then silhouette match, then newest (so a fix beats its predecessor on a tie)."""
     m = v.metrics or {}
-    return (1 if m.get("gate_ok", not _failed_checks(v)) else 0, int(m.get("checks_passed") or 0), float(m.get("silhouette_iou") or 0.0))
+    ts = v.created_at.timestamp() if v.created_at else 0.0
+    return (1 if m.get("gate_ok", not _failed_checks(v)) else 0, int(m.get("checks_passed") or 0), float(m.get("silhouette_iou") or 0.0), ts)
 
 
-def start(aid: str, until_stage: str = "export", stop_on: str = "block") -> dict[str, Any]:
+def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fix = {"stage", "params"}: before continuing, run that stage once more (as an adjust of its kept version when
+    there is one) with those params; later stages are unkept so they are rebuilt from the fixed result."""
     if until_stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage {until_stage!r}")
     if stop_on not in ("block", "warn", "never"):
         raise ValueError("stop_on must be block, warn or never")
+    if fix and fix.get("stage") not in STAGE_ORDER:
+        raise ValueError("fix.stage must be a stage id")
     t = _tasks.get(aid)
     if t is not None and not t.done():
         return _set(aid)
-    state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_now())
+    state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_now(), pending_fix=fix or None)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
 
@@ -87,6 +93,16 @@ def stop(aid: str) -> dict[str, Any]:
     if t is not None and not t.done():
         t.cancel()
     return _set(aid, status="paused", reason="Stopped by you. Press Make it to continue.")
+
+
+async def _wait(version_ids: list[str]) -> None:
+    """Block until every version has finished (done, error or rejected)."""
+    while True:
+        await asyncio.sleep(POLL_SECONDS)
+        with session_factory()() as db:
+            vs = [db.get(Version, vid) for vid in version_ids]
+            if all(v is None or v.status in ("done", "error", "rejected") for v in vs):
+                return
 
 
 async def _run(aid: str) -> None:
@@ -99,6 +115,34 @@ async def _run(aid: str) -> None:
                 state = get_state(a)
                 until = state.get("until_stage", "export")
                 stop_on = state.get("stop_on", "block")
+                # A requested fix: re-run its stage with the params (adjust of the kept version when one exists),
+                # unkeep everything after it, then let the normal loop pick the result up.
+                fix = state.get("pending_fix")
+                if fix:
+                    fstage = fix["stage"]
+                    kept = m._selected(db, aid, fstage)
+                    later = STAGE_ORDER[STAGE_ORDER.index(fstage) + 1:]
+                    # Everything built on the old result is superseded: mark it rejected so it is rebuilt, not re-kept.
+                    for v in a.versions:
+                        if v.stage in later:
+                            v.selected = False
+                            if v.status == "done":
+                                v.status = "rejected"
+                    if kept is not None and kept.status == "done":
+                        v = m._new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
+                        job = m._submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
+                        pairs = [{"job": m.job_to_dict(job), "version": m.version_to_dict(v)}]
+                    else:
+                        pairs = m._run_stage_internal(db, a, fstage, count=1, params=fix.get("params") or {})
+                    for v in a.versions:
+                        if v.stage == fstage:
+                            v.selected = False
+                    db.commit()
+                    target = fstage
+                    version_ids = [pair["version"]["id"] for pair in pairs]
+                    _set(aid, status="running", stage=target, job_id=pairs[0]["job"]["id"], version_id=version_ids[0], pending_fix=None)
+                    await _wait(version_ids)
+                    continue
                 stages_done: list[str] = []
                 target: str | None = None
                 for s in STAGE_ORDER:
@@ -113,6 +157,13 @@ async def _run(aid: str) -> None:
                 if target is None:
                     _set(aid, status="done", stage=None, job_id=None, reason=None, stages_done=stages_done)
                     return
+                # Versions already queued or running in this stage are waited for, never duplicated.
+                inflight = [v for v in a.versions if v.stage == target and v.status in ("queued", "running")]
+                if inflight:
+                    version_ids = [v.id for v in inflight]
+                    _set(aid, status="running", stage=target, job_id=inflight[0].job_id, version_id=inflight[0].id, stages_done=stages_done)
+                    await _wait(version_ids)
+                    continue
                 # Existing finished versions in this stage (after a pause) are judged instead of re-run.
                 finished = [v for v in a.versions if v.stage == target and v.status == "done"]
                 if finished:
@@ -133,13 +184,7 @@ async def _run(aid: str) -> None:
                     return
                 version_ids = [p["version"]["id"] for p in pairs]
                 _set(aid, status="running", stage=target, job_id=pairs[0]["job"]["id"], version_id=version_ids[0], stages_done=stages_done)
-            # Wait for the jobs outside the session.
-            while True:
-                await asyncio.sleep(POLL_SECONDS)
-                with session_factory()() as db:
-                    vs = [db.get(Version, vid) for vid in version_ids]
-                    if all(v.status in ("done", "error", "rejected") for v in vs):
-                        break
+            await _wait(version_ids)
             with session_factory()() as db:
                 vs = [db.get(Version, vid) for vid in version_ids]
                 done = [v for v in vs if v.status == "done"]
