@@ -96,9 +96,11 @@ Incorporate REVIEW.md into the plan, define the end goal in industry terms (ARCH
 
 - Live autopilot (goblin, humanoid, mobile_low, Painted fantasy preset): prompt to delivered asset in 421 s with no input; concept 2 candidates, turnaround 3 min, mesh 17/17 (IoU 0.84), prep 6/6, rig 6/6 (52 bones), export 30/31. The miss: Unity Humanoid mapping failed on the stocky goblin with extra bones, so no CC0 clips attached; VgacImport.cs now falls back to Generic and attaches the procedural clips (confirmed: re-export imported as Generic with clipCount 2).
 
+- Frontend autopilot and presets finished by the agent (Make it control with stop_on, running/paused/done states, finish card with turntable, preset row on projects and creation, asset form autopilot checkbox). Backend autopilot gained `fix` (re-run a stage as an adjust, supersede later stages, continue) and in-flight waiting; 39 tests pass; backend restarted; committed.
+
 ## Next
 
-- UX items still open from docs/UX-REVIEW.md: G autopilot ("Make it" runs all stages, pauses on unfixable checks), H style presets filling the style lock, K finishing moment, L thumbs, M glossary and example gallery.
+- UX items still open from docs/UX-REVIEW.md: L thumbs up/down on keep, M glossary and example gallery. (G autopilot, H presets, K finishing moment are done.)
 - Job step index (step/steps on Job) so the status line is exact; a concept_model picker on the asset form now that the backend stores it.
 - Silhouette audit calibration for long-bodied animals (wolf IoU 0.55 flagged although the mesh is good).
 - Add Unity snapshot rendering (VgacImport.Snapshot) so the export stage shows animation frames.
