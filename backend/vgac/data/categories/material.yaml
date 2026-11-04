@@ -1,0 +1,18 @@
+id: material
+label: Tileable material
+rig_engine: none
+symmetric: false
+size_m: 1.0
+parts_default: []
+topology: none
+input_view_default: concept
+lod_ratios: []
+views: [front]
+pose_block: >-
+  A flat, seamless, tileable texture swatch seen straight on, filling the whole frame edge to edge,
+  evenly lit with no visible light direction, no shadows, no vignette, no perspective, no objects,
+  no border, no text, no logos.
+budgets:
+  mobile_low: {triangles: 0, texture: 1024}
+  pc_mid: {triangles: 0, texture: 2048}
+  high: {triangles: 0, texture: 4096}

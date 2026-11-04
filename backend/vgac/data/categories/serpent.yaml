@@ -1,0 +1,21 @@
+id: serpent
+label: Serpent or fish
+rig_engine: skintoken
+symmetric: true
+size_m: 2.0
+parts_default: []
+topology: quad
+input_view_default: quarter
+lod_ratios: [0.5, 0.25, 0.1]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The creature is shown in a straight neutral pose with the body extended in a gentle S curve along
+  one line, no coils or loops, head raised slightly and facing forward, seen from a three-quarter
+  front angle so the head and the full length of the body are visible, whole body visible with
+  margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting
+  from the front with no hard shadows. No text, no logos, no background scenery, no motion blur,
+  no cropping.
+budgets:
+  mobile_low: {triangles: 4000, texture: 1024}
+  pc_mid: {triangles: 16000, texture: 2048}
+  high: {triangles: 50000, texture: 4096}

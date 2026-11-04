@@ -1,0 +1,16 @@
+platforms:
+  - id: mobile_low
+    label: Mobile low
+    triangles_character: 5000
+    triangles_prop: 1000
+    texture: 1024
+  - id: pc_mid
+    label: PC mid
+    triangles_character: 20000
+    triangles_prop: 5000
+    texture: 2048
+  - id: high
+    label: High
+    triangles_character: 60000
+    triangles_prop: 20000
+    texture: 4096

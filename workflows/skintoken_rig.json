@@ -1,0 +1,53 @@
+{
+ "load": {
+  "class_type": "VGACLoadTrimesh",
+  "inputs": {
+   "path": "prep.glb",
+   "target_faces": 0,
+   "merge_vertices": true
+  }
+ },
+ "rig": {
+  "class_type": "SkinTokenRigTrimesh",
+  "inputs": {
+   "trimesh": [
+    "load",
+    0
+   ],
+   "ckpt_name": "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
+   "device": "auto",
+   "save_file": true,
+   "filename_prefix": "vgac/rig",
+   "file_format": "glb",
+   "use_transfer": false,
+   "use_postprocess": false,
+   "group_per_vertex": 4,
+   "bottom_center_origin": true,
+   "smooth_angle": 55.0,
+   "skeleton_template": "Mixamo",
+   "top_k": 5,
+   "top_p": 0.95,
+   "temperature": 1.0,
+   "repetition_penalty": 2.0,
+   "num_beams": 10
+  }
+ },
+ "show": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "rig",
+    1
+   ]
+  }
+ },
+ "faces": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "load",
+    2
+   ]
+  }
+ }
+}

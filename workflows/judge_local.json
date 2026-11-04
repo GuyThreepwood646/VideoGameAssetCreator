@@ -1,0 +1,43 @@
+{
+ "clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "gemma_3_12B_it.safetensors",
+   "type": "ltxv",
+   "device": "default"
+  }
+ },
+ "img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "image.png"
+  }
+ },
+ "gen": {
+  "class_type": "TextGenerate",
+  "inputs": {
+   "clip": [
+    "clip",
+    0
+   ],
+   "prompt": "You are a strict game art director reviewing a concept image for a 3D character pipeline. Score each criterion from 1 to 5 and explain briefly: (1) pose is a neutral A-pose or standing pose suitable for rigging, (2) the whole subject is visible and uncropped, (3) background is plain and separable, (4) lighting is even with no hard shadows, (5) anatomy and proportions are clean with no extra or fused limbs, (6) overall appeal. Then list the defects as short imperative fix instructions an image editor could follow. Answer as JSON with keys scores (object), defects (array of strings), summary (string).",
+   "max_length": 400,
+   "sampling_mode": "off",
+   "image": [
+    "img",
+    0
+   ],
+   "thinking": false,
+   "use_default_template": true
+  }
+ },
+ "show": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "gen",
+    0
+   ]
+  }
+ }
+}
