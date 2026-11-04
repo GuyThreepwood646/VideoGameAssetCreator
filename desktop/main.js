@@ -115,6 +115,15 @@ function createMainWindow() {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // The window only ever shows the local backend; any other navigation goes to the system browser instead.
+  const appOrigin = new URL(cfg.backend.url).origin;
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (new URL(url).origin !== appOrigin) {
+      e.preventDefault();
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+    }
+  });
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   mainWindow.on('close', (e) => {
     if (quitting) return;
     e.preventDefault();
@@ -245,8 +254,13 @@ function sendState() {
   if (tray) tray.setToolTip(trayTooltip(snap));
 }
 
-ipcMain.handle('state', () => supervisor.snapshot());
-ipcMain.handle('action', async (_e, id) => {
+function fromStatusWindow(e) {
+  return !!statusWindow && !statusWindow.isDestroyed() && e.sender === statusWindow.webContents;
+}
+
+ipcMain.handle('state', (e) => (fromStatusWindow(e) ? supervisor.snapshot() : null));
+ipcMain.handle('action', async (e, id) => {
+  if (!fromStatusWindow(e)) return false;
   log('action: ' + id);
   switch (id) {
     case 'openComfyDesktop': openComfyDesktop(); break;

@@ -2,7 +2,7 @@
 // Enabled when VITE_MOCK=1. Library files that the mock generates are data URLs
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
-import { setLibraryResolver, STAGES, type Asset, type AutopilotState, type Check, type Job, type ServerEvent, type StageId, type Version } from '../api'
+import { setLibraryResolver, STAGES, type Asset, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, stages, store, styles, uid } from './data'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
@@ -209,7 +209,7 @@ on('GET', '/api/suggest', (_m, _b, query) => {
   const platform = query.get('platform') ?? 'pc_mid'
   const preset = styles.find((s) => s.id === style) ?? styles[0]
   const model = preset.model
-  const labels: Record<string, string> = { zturbo: 'Z-Image Turbo', zbase: 'Z-Image base', klein: 'Klein', anima: 'Anima', pixel: 'Pixel', chroma: 'Chroma' }
+  const labels: Record<string, string> = { zturbo: 'Z-Image Turbo', zbase: 'Z-Image Base', klein: 'FLUX.2 Klein 4B', anima: 'Anima Turbo', pixel: 'Z-Image Pixel Art', chroma: 'Chroma1-HD' }
   const reasons: Record<string, string> = {
     zturbo: 'it gives the fastest painted look',
     zbase: 'it gives the highest quality for a realistic look',
@@ -281,6 +281,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
     prompt: String(body.prompt ?? ''),
     parts: (body.parts as string[]) ?? [],
     created_at: nowIso(),
+    concept_model: typeof body.concept_model === 'string' && body.concept_model ? body.concept_model : null,
     selected: {},
     stages: {},
   }
@@ -347,6 +348,8 @@ on('POST', '/api/assets/:id/stages/:stage/run', (m, body) => {
   const results = []
   for (let i = 0; i < count; i++) {
     const params = { ...stageParamsDefault(stage), ...((body.params as Record<string, unknown>) ?? {}) }
+    // Like the backend: the painter chosen on the creation form is the default for concept runs.
+    if (stage === 'concept' && a.concept_model && !((body.params as Record<string, unknown> | undefined)?.model)) params.model = a.concept_model
     if (!('seed' in ((body.params as Record<string, unknown>) ?? {}))) params.seed = Math.floor(Math.random() * 100000)
     const v = newVersion(a, stage, parent, params)
     const job = startJob(a, v, `${stage}.run`)
@@ -387,6 +390,49 @@ on('POST', '/api/versions/:vid/reject', (m) => {
   return version
 })
 on('GET', '/api/versions/:vid', (m) => findVersion(m.groups!.vid).version)
+on('POST', '/api/versions/:vid/feedback', (m, body) => {
+  const { version } = findVersion(m.groups!.vid)
+  const thumbs = body.thumbs === 'up' || body.thumbs === 'down' ? body.thumbs : body.thumbs === null || body.thumbs === undefined ? null : undefined
+  if (thumbs === undefined) throw new HttpError(422, 'thumbs must be "up", "down" or null')
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : ''
+  version.metrics = { ...version.metrics, feedback: { thumbs, note: thumbs === 'down' && note ? note : null, at: nowIso() } }
+  broadcast({ type: 'version', version: clone(version) })
+  return version
+})
+
+// Gallery: every asset with a finished export version, newest first.
+const folderName = (s: string) => s.trim().replace(/[^A-Za-z0-9_-]+/g, '_') || 'asset'
+on('GET', '/api/gallery', () => {
+  const out: { item: GalleryItem; t: number }[] = []
+  for (const a of store.assets) {
+    const exports = (a.stages.export ?? []).filter((v) => v.status === 'done')
+    if (!exports.length) continue
+    const ex = exports.find((v) => v.id === a.selected.export) ?? exports[exports.length - 1]
+    const project = store.projects.find((p) => p.id === a.project_id)
+    const concepts = a.stages.concept ?? []
+    const concept = concepts.find((v) => v.id === a.selected.concept) ?? concepts.find((v) => v.status === 'done')
+    const job = store.jobs.find((j) => j.id === ex.job_id)
+    const finished = job?.finished_at ?? ex.created_at
+    const item: GalleryItem = {
+      asset_id: a.id,
+      asset_name: a.name,
+      project_id: a.project_id,
+      project_name: project?.name ?? '',
+      category: a.category,
+      style_preset: a.style_preset,
+      platform_target: a.platform_target,
+      created_at: a.created_at,
+      finished_at: finished,
+      thumbnail: concept?.files.cutout ?? concept?.files.image ?? null,
+      preview: ex.files.glb ?? null,
+      delivered_to: `F:/Projects/VideoGameAssetCreator/exports/${folderName(project?.name ?? 'project')}/${folderName(a.name)}`,
+      fbx: ex.files.fbx ?? null,
+      glb: ex.files.glb ?? null,
+    }
+    out.push({ item, t: Date.parse(finished) || 0 })
+  }
+  return out.sort((x, y) => y.t - x.t).map((x) => x.item)
+})
 on('POST', '/api/versions/:vid/judge', (m, body) => {
   const { version } = findVersion(m.groups!.vid)
   version.metrics = { ...version.metrics, judge: body.mode ?? 'metrics', judged_at: nowIso() }
@@ -476,6 +522,7 @@ function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params
     // Prep: fail its checks once (seed 3: triangle_budget and manifold), then pass (seed % 3 !== 0).
     if (stage === 'prep') params.seed = pausedOnce.has(asset.id) ? 7 + 3 * Math.floor(Math.random() * 1000) : 3
     if (stage === 'concept') {
+      if (asset.concept_model) params.model = asset.concept_model
       try {
         const pref = localStorage.getItem('vgac.conceptModel.' + asset.id)
         if (pref) params.model = pref

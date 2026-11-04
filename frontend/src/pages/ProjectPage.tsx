@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type PlatformId, type Project, type Suggestion } from '../api'
 import { Info } from '../components/Info'
@@ -20,11 +20,31 @@ export default function ProjectPage() {
   const { ref } = useRefData()
   const { presets } = usePresets()
 
-  // Any version finishing for an asset of this project refreshes the grid.
+  // Any version finishing for an asset of this project refreshes the grid. A job
+  // end sends a job event and a version event; the short delay folds them into one reload.
+  const reloadRef = useRef(reload)
+  useEffect(() => {
+    reloadRef.current = reload
+  })
+  const reloadTimer = useRef<number | null>(null)
+  const reloadSoon = () => {
+    if (reloadTimer.current != null) return
+    reloadTimer.current = window.setTimeout(() => {
+      reloadTimer.current = null
+      reloadRef.current()
+    }, 150)
+  }
+  useEffect(
+    () => () => {
+      if (reloadTimer.current != null) window.clearTimeout(reloadTimer.current)
+      reloadTimer.current = null
+    },
+    [],
+  )
   useEvents(
     (ev) => {
-      if (ev.type === 'version' && assets?.some((a) => a.id === ev.version.asset_id)) reload()
-      if (ev.type === 'job' && (ev.job.status === 'done' || ev.job.status === 'error') && assets?.some((a) => a.id === ev.job.asset_id)) reload()
+      if (ev.type === 'version' && assets?.some((a) => a.id === ev.version.asset_id)) reloadSoon()
+      if (ev.type === 'job' && (ev.job.status === 'done' || ev.job.status === 'error' || ev.job.status === 'cancelled') && assets?.some((a) => a.id === ev.job.asset_id)) reloadSoon()
     },
     [assets],
   )
@@ -167,6 +187,11 @@ function CreateAssetForm({ project }: { project: Project }) {
   const budget = cat?.budgets?.[platform] ?? suggestion?.budgets
   const examples = examplePrompts(category)
   const chosenModel = model || suggestion?.model || ''
+  const overridden = !!model && !!suggestion && model !== suggestion.model
+  // The six painters, plus the suggested one if the backend names a model this list does not know.
+  const modelOptions: string[] = [...STYLE_MODELS]
+  if (suggestion?.model && !modelOptions.includes(suggestion.model)) modelOptions.push(suggestion.model)
+  const optionLabel = (m: string) => (suggestion && m === suggestion.model && !(STYLE_MODELS as readonly string[]).includes(m) ? suggestion.model_label : modelLabel(m))
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -175,7 +200,15 @@ function CreateAssetForm({ project }: { project: Project }) {
     setError(null)
     try {
       const finalName = name.trim() || autoName(prompt) || 'Untitled'
-      const a = await api.createAsset(project.id, { name: finalName, category, style_preset: style, platform_target: platform, prompt: prompt.trim(), parts })
+      const a = await api.createAsset(project.id, {
+        name: finalName,
+        category,
+        style_preset: style,
+        platform_target: platform,
+        prompt: prompt.trim(),
+        parts,
+        ...(chosenModel ? { concept_model: chosenModel } : {}),
+      })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       rememberAutopilotDefault(autopilot)
       if (autopilot) {
@@ -241,9 +274,18 @@ function CreateAssetForm({ project }: { project: Project }) {
       </div>
       {suggestion && (
         <div className="suggest-line">
-          We suggest <strong>{model && model !== suggestion.model ? modelLabel(model) : suggestion.model_label}</strong>
-          <Info term={'model.' + (chosenModel || suggestion.model)} />
-          {model && model !== suggestion.model ? ` (you chose it; we would have picked ${suggestion.model_label})` : `, because ${suggestion.reason}`}; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset.
+          {overridden ? (
+            <>
+              Painter: <strong>{modelLabel(model)}</strong>
+              <Info term={'model.' + model} /> (your choice; suggested: {suggestion.model_label})
+            </>
+          ) : (
+            <>
+              Suggested: <strong>{suggestion.model_label}</strong>
+              <Info term={'model.' + suggestion.model} /> because {suggestion.reason}
+            </>
+          )}
+          ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the painter under Advanced.</span>
         </div>
       )}
       <Disclosure label="Advanced">
@@ -251,15 +293,39 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Field label="Name" hint={`Optional. We will call it "${autoName(prompt) || 'Untitled'}" if you leave this empty.`}>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder={autoName(prompt) || 'Knight'} />
           </Field>
-          <Field label="Painter" term={'model.' + (chosenModel || 'zturbo')} hint="Which AI model paints the first picture. Applied to the first attempt; you can change it later under Fine-tune.">
-            <select value={chosenModel} onChange={(e) => setModel(e.target.value)}>
-              {STYLE_MODELS.map((m) => (
-                <option key={m} value={m}>
-                  {modelLabel(m)}
-                  {suggestion && m === suggestion.model ? ' (suggested)' : ''}
-                </option>
-              ))}
-            </select>
+          <Field
+            label="Painter"
+            term="term.concept_model"
+            hint={
+              suggestion ? (
+                <>
+                  Suggested: {suggestion.model_label} because {suggestion.reason}. Pick another to override it; you can change it later under Fine-tune.
+                  {overridden && (
+                    <>
+                      {' '}
+                      <button type="button" className="link small" onClick={() => setModel('')}>
+                        Use the suggestion
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                'Which AI model paints the first picture. You can change it later under Fine-tune.'
+              )
+            }
+          >
+            <span className="row-gap">
+              <select value={chosenModel} onChange={(e) => setModel(e.target.value === suggestion?.model ? '' : e.target.value)} aria-label="Painter">
+                {!chosenModel && <option value="">choosing...</option>}
+                {modelOptions.map((m) => (
+                  <option key={m} value={m}>
+                    {optionLabel(m)}
+                    {suggestion && m === suggestion.model ? ' (suggested)' : ''}
+                  </option>
+                ))}
+              </select>
+              {chosenModel && <Info term={'model.' + chosenModel} />}
+            </span>
           </Field>
           <Field label="Parts" term="term.parts" hint="Pieces that must move or swap on their own. Enter adds one.">
             <ChipInput value={parts} onChange={setParts} placeholder="e.g. weapon" />

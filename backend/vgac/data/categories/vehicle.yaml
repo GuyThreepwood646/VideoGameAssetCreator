@@ -1,6 +1,7 @@
 id: vehicle
 label: Vehicle or mech
 rig_engine: none
+silhouette_min: 0.55
 symmetric: true
 size_m: 4.0
 parts_default: [wheels, turret, doors]

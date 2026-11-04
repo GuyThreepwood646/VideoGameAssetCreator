@@ -18,7 +18,6 @@ class EventBus:
         self._queues: set[asyncio.Queue] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self.maxsize = maxsize
-        self.history: list[dict[str, Any]] = []
 
     def bind(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._loop = loop or asyncio.get_running_loop()
@@ -32,9 +31,6 @@ class EventBus:
         self._queues.discard(q)
 
     def publish(self, event: dict[str, Any]) -> None:
-        self.history.append(event)
-        if len(self.history) > 200:
-            del self.history[:-200]
         for q in list(self._queues):
             if q.full():
                 try:

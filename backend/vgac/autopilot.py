@@ -13,6 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
+
 from .db import Asset, Version, session_factory
 from .events import bus
 from .reference import STAGE_ORDER
@@ -86,6 +88,24 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_now(), pending_fix=fix or None)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
+
+
+def resume_all() -> int:
+    """After a restart, pick every autopilot up where it was: its state says running but no task exists. _run
+    re-evaluates from the database, so nothing is duplicated. Returns the number resumed."""
+    with session_factory()() as db:
+        ids = [a.id for a in db.scalars(select(Asset)).all() if (a.autopilot or {}).get("status") == "running"]
+    n = 0
+    for aid in ids:
+        t = _tasks.get(aid)
+        if t is not None and not t.done():
+            continue
+        _set(aid, reason=None)
+        _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
+        n += 1
+    if n:
+        log.info("autopilot resumed for %d asset(s) after restart", n)
+    return n
 
 
 def stop(aid: str) -> dict[str, Any]:

@@ -34,7 +34,8 @@ def opt(flag, default):
     return argv[argv.index(flag) + 1] if flag in argv else default
 
 
-lods = [float(x) for x in opt("--lods", "0.5,0.25,0.1").split(",") if x.strip()]
+_lods_raw = opt("--lods", "0.5,0.25,0.1")
+lods = [] if _lods_raw.strip().lower() in ("", "none") else [float(x) for x in _lods_raw.split(",") if x.strip()]
 collider_mode = opt("--collider", "hull")
 formats = [f.strip() for f in opt("--formats", "fbx,glb").split(",") if f.strip()]
 os.makedirs(out_dir, exist_ok=True)

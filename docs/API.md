@@ -106,3 +106,16 @@ Style presets (item H)
 Delivery (decision D12)
 - Project gains `unity_project_path` (string | null; POST/PUT). Every export copies the deliverables to `<export_path or library/../exports>/<project>/<asset>/` (metrics.delivered_to, delivered_files) and, when the project has a Unity project path, imports the FBX there with the same importer script (metrics.unity_project_import).
 - Asset gains `concept_model` (POST field; default painter for concept runs).
+
+Housekeeping (2026-11-04, UX review items L and M)
+- POST /api/versions/{vid}/feedback body { "thumbs": "up" | "down" | null, "note"?: str } -> Version. Stored on metrics.feedback { thumbs, note, at } (null clears it); never leaves the machine. Publishes a "version" event.
+- GET /api/gallery -> [ { asset_id, asset_name, project_id, project_name, category, style_preset, platform_target, created_at, finished_at, export_version_id, thumbnail, preview, delivered_to, fbx, glb } ] for every asset with a finished export (the kept one when there is one), newest first. thumbnail is the kept concept image, preview the export GLB (or the prep/mesh GLB), all library-relative.
+- Mesh check silhouette_iou uses the category's `silhouette_min` (quadruped, multileg, winged 0.5; serpent, foliage 0.45; vehicle 0.55; everything else 0.6).
+
+Behaviour notes (2026-11-04 audit)
+- Version.job_id is set for every run, refine and adjust (it was always null before).
+- A cancelled or rejected queued or running version ends as status "rejected" (never "error"), and a reject taken while the job runs stands when the job finishes.
+- A server stop while a job runs puts the job back to "queued" ("re-queued after restart"); autopilots in state "running" resume at startup.
+- Stage run parents: the kept version of the previous stage, walking back only over stages the category lists in `skips` (material skips turnaround). Missing a stage the category needs gives 409 naming that stage.
+- Stage params are validated against the Adjust schema (400 with a plain message); mask_png must be base64 PNG data; unity_project_path must be an existing Unity project folder.
+- The API refuses foreign Origin headers on state-changing requests, unknown Host headers, and foreign-origin websocket connections. The SQLite database is never served from /api/library.

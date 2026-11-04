@@ -83,9 +83,51 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("clips_library", "select", "ual1", options=["ual1", "ual2", "none"]),
         _param("sprites", "boolean", False),
         _param("sprite_directions", "integer", 8, min=1, max=16),
+        _param("sprite_frames", "integer", 8, min=1, max=64, description="Frames per clip in the sprite sheet"),
         _param("sprite_size", "integer", 128, min=32, max=1024),
     ],
 }
+
+MAX_STRING_PARAM = 4000
+
+
+def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    """Check the Adjust knobs of a stage against STAGE_SCHEMAS: type, range and options. Raises ValueError with a
+    plain message. Keys the schema does not know (internal markers such as instruction or refine_of) pass through,
+    and None means "use the default"."""
+    out = dict(params or {})
+    if stage not in STAGE_SCHEMAS:
+        return out
+    spec = {p["name"]: p for p in STAGE_SCHEMAS[stage]}
+    for key, value in list(out.items()):
+        p = spec.get(key)
+        if p is None or value is None:
+            continue
+        t = p["type"]
+        if t in ("integer", "number"):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{key} must be a number")
+            lo, hi = p.get("min"), p.get("max")
+            if (lo is not None and value < lo) or (hi is not None and value > hi):
+                raise ValueError(f"{key} must be between {lo} and {hi}")
+            out[key] = int(value) if t == "integer" else float(value)
+        elif t == "boolean":
+            if not isinstance(value, bool):
+                raise ValueError(f"{key} must be true or false")
+        elif t == "select":
+            opts = p.get("options")
+            if opts and value not in opts:
+                raise ValueError(f"{key} must be one of {opts}")
+        elif t == "multiselect":
+            opts = p.get("options") or []
+            if not isinstance(value, list) or any(v not in opts for v in value):
+                raise ValueError(f"{key} must be a list drawn from {opts}")
+        elif t == "string":
+            if not isinstance(value, str):
+                raise ValueError(f"{key} must be text")
+            if len(value) > MAX_STRING_PARAM:
+                raise ValueError(f"{key} is too long (max {MAX_STRING_PARAM} characters)")
+    return out
 
 
 def _load_yaml(path) -> Any:
@@ -110,6 +152,7 @@ def _data() -> dict[str, Any]:
 
 def reload() -> None:
     _data.cache_clear()
+    _presets.cache_clear()
 
 
 def categories() -> list[dict[str, Any]]:
@@ -186,8 +229,11 @@ def budget(category_id: str, platform_id: str) -> dict[str, int]:
     return {"triangles": int(p["triangles_character"] if is_character else p["triangles_prop"]), "texture": int(p["texture"])}
 
 
+@lru_cache(maxsize=1)
+def _presets() -> tuple[dict[str, Any], ...]:
+    return tuple(_load_yaml(DATA_DIR / "style_presets.yaml") or [])
+
+
 def style_presets() -> list[dict[str, Any]]:
     """Ready-made looks that fill a project's style lock (docs/UX-REVIEW.md item H)."""
-    import yaml
-    path = DATA_DIR / "style_presets.yaml"
-    return list(yaml.safe_load(path.read_text(encoding="utf-8")) or [])
+    return [dict(p) for p in _presets()]

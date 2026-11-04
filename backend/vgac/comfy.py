@@ -9,6 +9,7 @@ caller can inspect the exception type (SkinToken raises AssertionError for rigid
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import shutil
 import time
@@ -47,6 +48,9 @@ class ComfyError(RuntimeError):
 
     def is_assertion(self) -> bool:
         return any(t.endswith("AssertionError") for t in self.exception_types)
+
+
+log = logging.getLogger(__name__)
 
 
 class ComfyClient:
@@ -239,5 +243,5 @@ class ComfyClient:
         try:
             async with self._client(timeout=5.0) as c:
                 await c.post("/interrupt")
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.warning("instance %s: interrupt failed: %s", self.name, e)

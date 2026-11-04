@@ -13,12 +13,13 @@ import asyncio
 import json
 import logging
 import subprocess
+import time
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import psutil
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .comfy import ComfyClient
 from .config import Settings, get_settings
@@ -26,6 +27,7 @@ from .db import Job, Version, job_to_dict, session_factory, utcnow, version_to_d
 from .events import bus
 
 log = logging.getLogger("vgac.jobs")
+MESSAGE_THROTTLE_SECONDS = 5.0
 
 GB = 1024**3
 HOST = "host"
@@ -155,6 +157,9 @@ class InstanceWorker:
                         raise
                 finally:
                     self._job_task = None
+                me = asyncio.current_task()
+                if me is not None and me.cancelling():
+                    raise asyncio.CancelledError()  # the stop() cancel arrived while the job was swallowing its own
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -179,8 +184,8 @@ class InstanceWorker:
             for p in ctx.processes:
                 try:
                     p.kill()
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    log.debug("job %s: could not kill child process: %s", job_id[:8], e)
         task = self._job_task
         client = self.clients.get(self.name)
 
@@ -222,6 +227,14 @@ class InstanceWorker:
             is_judge = parse_kind(kind)[1] == "judge"
             if version_id and not is_judge:
                 v = db.get(Version, version_id)
+                if v is not None and v.status == "rejected":
+                    # Rejected while queued: nothing to build.
+                    job.status = "cancelled"
+                    job.error = job.message = "cancelled"
+                    job.finished_at = utcnow()
+                    db.commit()
+                    _publish_job(job)
+                    return
                 if v is not None:
                     v.status = "running"
                     db.commit()
@@ -229,37 +242,50 @@ class InstanceWorker:
 
         self.current_job_id = job_id
         log.info("worker %s running job %s (%s)", self.name, job_id, kind)
-        last: dict[str, Any] = {"fraction": -1.0, "message": ""}
+        last: dict[str, Any] = {"fraction": -1.0, "message": "", "at": 0.0}
 
         def progress(fraction: float, message: str) -> None:
-            changed = False
+            # A fraction change always goes out; a message-only change (the elapsed-seconds counter) at most every
+            # MESSAGE_THROTTLE_SECONDS, so a long job does not commit, log and broadcast once per poll.
+            now = time.monotonic()
+            fraction_changed = fraction >= 0 and abs(fraction - last["fraction"]) >= 0.005
+            message_changed = bool(message) and message != last["message"]
+            if not fraction_changed and (not message_changed or now - last["at"] < MESSAGE_THROTTLE_SECONDS):
+                return
             with Session() as db2:
                 j = db2.get(Job, job_id)
                 if j is None:
                     return
-                if fraction >= 0 and abs(fraction - last["fraction"]) >= 0.005:
+                if fraction_changed:
                     j.progress = max(0.0, min(1.0, fraction))
                     last["fraction"] = fraction
-                    changed = True
-                if message and message != last["message"]:
+                if message_changed:
                     j.message = message
                     last["message"] = message
-                    changed = True
-                if changed:
-                    db2.commit()
-                    log.info("job %s: %.0f%% %s", job_id[:8], j.progress * 100, j.message)
-                    _publish_job(j)
+                last["at"] = now
+                db2.commit()
+                log.log(logging.INFO if fraction_changed else logging.DEBUG, "job %s: %.0f%% %s", job_id[:8], j.progress * 100, j.message)
+                _publish_job(j)
 
         ctx = JobContext(job_id=job_id, instance=self.name, payload=payload, settings=self.settings, clients=self.clients,
                          _progress_cb=progress)
         self.current_ctx = ctx
         error: str | None = None
         cancelled = False
+        requeued = False
         try:
             await stages.execute(ctx, kind, payload)
-        except (asyncio.CancelledError, JobCancelled):
+        except JobCancelled:
             cancelled = True
             error = "cancelled"
+        except asyncio.CancelledError:
+            if ctx.cancelled:
+                cancelled = True
+                error = "cancelled"
+            else:
+                # Not the user: the server is shutting down. Put the job back so a restart resumes it.
+                requeued = True
+                error = "re-queued after restart"
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
             log.error("job %s failed: %s\n%s", job_id, e, traceback.format_exc()[-4000:])
@@ -270,7 +296,13 @@ class InstanceWorker:
                 job = db.get(Job, job_id)
                 if job is not None:
                     job.finished_at = utcnow()
-                    if error is None:
+                    if requeued:
+                        job.status = "queued"
+                        job.started_at = None
+                        job.finished_at = None
+                        job.progress = 0.0
+                        job.message = error
+                    elif error is None:
                         job.status = "done"
                         job.progress = 1.0
                         job.message = "done"
@@ -292,13 +324,22 @@ class InstanceWorker:
                                     m = v.metrics
                                     m["judge_error"] = error
                                     v.metrics = m
+                            elif v.status == "rejected":
+                                pass  # the person rejected it while it ran; the files are kept, the verdict stands
+                            elif requeued:
+                                v.status = "queued"
                             elif error is None:
                                 v.status = "done"
+                            elif cancelled:
+                                v.status = "rejected"
+                                v.error = error
                             else:
                                 v.status = "error"
                                 v.error = error
                             db.commit()
                             _publish_version(v)
+        if requeued:
+            raise asyncio.CancelledError()
 
 
 class JobQueue:
@@ -343,6 +384,7 @@ class JobQueue:
             job = Job(instance=instance, kind=kind, asset_id=asset_id, version_id=version_id, status="queued",
                       payload_json=json.dumps(payload or {}))
             db.add(job)
+            db.flush()  # the id comes from the column default, so it exists only after the flush
             if version_id:
                 v = db.get(Version, version_id)
                 if v is not None:
@@ -370,8 +412,8 @@ class JobQueue:
                 job.finished_at = utcnow()
                 if job.version_id:
                     v = db.get(Version, job.version_id)
-                    if v is not None:
-                        v.status = "error"
+                    if v is not None and v.status != "rejected":
+                        v.status = "rejected"
                         v.error = "cancelled"
                         db.commit()
                         _publish_version(v)
@@ -397,7 +439,8 @@ class JobQueue:
         out = {}
         with session_factory()() as db:
             for name, w in self.workers.items():
-                queued = db.scalar(select(Job).where(Job.instance == name, Job.status == "queued"))
-                n = len(db.scalars(select(Job.id).where(Job.instance == name, Job.status == "queued")).all())
-                out[name] = {"paused": w.paused, "current_job_id": w.current_job_id, "queued": n, "next_job_id": queued.id if queued else None}
+                pending = Job.instance == name, Job.status == "queued"
+                next_id = db.scalar(select(Job.id).where(*pending).order_by(Job.created_at, Job.id).limit(1))
+                n = db.scalar(select(func.count()).select_from(Job).where(*pending)) or 0
+                out[name] = {"paused": w.paused, "current_job_id": w.current_job_id, "queued": int(n), "next_job_id": next_id}
         return out

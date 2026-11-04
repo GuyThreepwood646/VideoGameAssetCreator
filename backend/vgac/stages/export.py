@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .. import library, quality, reference
+from .. import library, quality
 from ..imaging import contact_sheet
 from ..sprites import pack_sprites
 from .base import StageContext, slug
@@ -81,9 +81,8 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     sc.set_params(lods=lods, collider=collider, formats=formats, input=src_key)
     sc.use_model("blender")
     sc.progress(0.05, "Blender pack")
-    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "", "--collider", collider, "--formats", ",".join(formats)]
-    if not lods:
-        args = [src, sc.dir, name, "--collider", collider, "--formats", ",".join(formats)]
+    # "none" asks pack.py for LOD0 only; leaving --lods out would fall back to pack.py's own default chain.
+    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", collider, "--formats", ",".join(formats)]
     await sc.blender("pack.py", args, log_name="pack.log")
     report = json.loads((sc.dir / "report.json").read_text())
     sc.register("pack_report", sc.dir / "report.json")
@@ -268,11 +267,7 @@ async def judge(sc: StageContext) -> None:
 
 
 async def _export(sc: StageContext, params: dict[str, Any]) -> None:
-    if sc.asset.category == "material":
-        from . import material
-
-        await material.export_run(sc, params)
-        return
+    # The material category never reaches here: stages.module_for routes its export to stages/material.py.
     name = asset_export_name(sc)
     sc.set_params(export_name=name, unity=bool(params.get("unity", True)), clips_library=params.get("clips_library", "ual1"),
                   sprites=bool(params.get("sprites", False)), sprite_directions=int(params.get("sprite_directions") or 8),
@@ -291,17 +286,18 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     sc.progress(1.0, "export done")
 
 
-def _slug(text: str) -> str:
-    import re
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_") or "asset"
+def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
+    """exports/<project>/<asset>, with both names reduced to [A-Za-z0-9_] so no name can leave the export root."""
+    dest = (export_root / slug(project_name) / slug(asset_name)).resolve()
+    dest.relative_to(export_root.resolve())  # ValueError if a name ever escaped
+    return dest
 
 
 async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
     """Decision D12: always copy the deliverables to exports/<project>/<asset>/; also import into the project's own
     Unity project when one is set (never the sandbox's prefab, a fresh import there)."""
-    import shutil
-    export_root = Path(sc.settings.export_path) if sc.settings.export_path else Path(sc.settings.library_path).parent / "exports"
-    dest = export_root / _slug(sc.project.name) / _slug(sc.asset.name)
+    export_root = (Path(sc.settings.export_path) if sc.settings.export_path else Path(sc.settings.library_path).parent / "exports").resolve()
+    dest = delivery_dir(export_root, sc.project.name, sc.asset.name)
     dest.mkdir(parents=True, exist_ok=True)
     copied = []
     for key in ("fbx", "glb", "manifest", "base_color", "normal", "metallic", "roughness", "ao", "height", "tile_preview",
@@ -337,10 +333,22 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
         if lib and Path(lib).is_file():
             args["-vgacClips"] = lib
         sc.progress(0.97, f"Unity import into {proj.name}")
+        # The importer always writes <input>/unity_report.json; the sandbox step already produced one, so move it
+        # aside and read only a report this run wrote (B4 in docs/CODE-AUDIT.md).
+        rp = sc.dir / "unity_report.json"
+        sandbox_rp = sc.dir / "unity_sandbox_report.json"
+        if rp.is_file():
+            rp.replace(sandbox_rp)
+            if sc.version.files.get("unity_report"):
+                sc.register("unity_report", sandbox_rp)
         try:
             await sc.unity("VgacImport.Run", args, flags, "unity_project_import.log", project_path=proj)
-            rp = sc.dir / "unity_report.json"
-            report = json.loads(rp.read_text(encoding="utf-8")) if rp.is_file() else {}
+            if rp.is_file():
+                report = json.loads(rp.read_text(encoding="utf-8"))
+                rp.replace(sc.dir / "unity_project_report.json")
+                sc.register("unity_project_report", sc.dir / "unity_project_report.json")
+            else:
+                report = {"ok": False, "error": "Unity wrote no report; the project may not compile or the importer script is missing"}
             sc.set_metrics(unity_project_import={"ok": bool(report.get("ok")), "project": str(proj), "prefab": report.get("prefab", ""), "error": (report.get("error") or "")[:300]})
         except Exception as e:  # noqa: BLE001
             sc.set_metrics(unity_project_import={"ok": False, "project": str(proj), "error": str(e)[-500:]})
