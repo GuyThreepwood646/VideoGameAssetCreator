@@ -1,15 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
-import { api, PLATFORMS, STYLE_MODELS, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
+import { api, PLATFORMS, STYLE_MODELS, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
 import { Info } from '../components/Info'
-import { ChipInput, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
+import { PresetRow } from '../components/PresetRow'
+import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
 import { modelLabel, platformConsequence, platformPlain } from '../help'
+import { lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
 
 export default function ProjectsPage() {
   const { data: projects, error, loading, reload } = useAsync(() => api.listProjects(), [])
   const [params, setParams] = useSearchParams()
   const editId = params.get('edit')
   const editing = projects?.find((p) => p.id === editId) ?? null
+  const { presets } = usePresets()
 
   return (
     <div className="projects-layout">
@@ -29,7 +32,7 @@ export default function ProjectsPage() {
               <button type="button" className="project-main" onClick={() => setParams({ edit: p.id })}>
                 <span className="project-name">{p.name}</span>
                 <span className="muted small">
-                  {platformPlain(p.platform_target)} / {modelLabel(p.style_lock.model)}
+                  {platformPlain(p.platform_target)} / {presetById(presets, p.style_lock.preset)?.label ?? modelLabel(p.style_lock.model)}
                   {p.style_lock.loras.length ? ` / ${p.style_lock.loras.length} style add-on${p.style_lock.loras.length > 1 ? 's' : ''}` : ''} / created {timeAgo(p.created_at)}
                 </span>
                 <span className="swatches">
@@ -103,6 +106,10 @@ function CreateProjectForm({ onCreated, primary }: { onCreated: (p: Project) => 
   const [platform, setPlatform] = useState<PlatformId>('pc_mid')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const { presets, unavailable } = usePresets()
+  const [presetId, setPresetId] = useState<string | null>(null)
+  // A new project starts with a look chosen: the first preset unless the person picks another.
+  const chosen: LookPreset | null = presetById(presets, presetId) ?? presets?.[0] ?? null
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -110,7 +117,7 @@ function CreateProjectForm({ onCreated, primary }: { onCreated: (p: Project) => 
     setBusy(true)
     setError(null)
     try {
-      const p = await api.createProject({ name: name.trim(), platform_target: platform })
+      const p = await api.createProject({ name: name.trim(), platform_target: platform, ...(chosen ? { style_lock: lockFromPreset(chosen) } : {}) })
       setName('')
       onCreated(p)
     } catch (err) {
@@ -134,6 +141,22 @@ function CreateProjectForm({ onCreated, primary }: { onCreated: (p: Project) => 
         </button>
       </div>
       <div className="muted small">{platformConsequence(platform)}</div>
+      {presets && presets.length > 0 && (
+        <div className="col">
+          <div className="field-label">
+            Pick a look
+            <Info term="term.look" />
+            <span className="muted small"> (you can change it later)</span>
+          </div>
+          <PresetRow presets={presets} currentId={chosen?.id ?? null} busy={busy} compact onPick={(p) => setPresetId(p.id)} />
+          {chosen && (
+            <div className="muted small">
+              Look: <strong>{chosen.label}</strong>. {chosen.description}
+            </div>
+          )}
+        </div>
+      )}
+      {unavailable && <div className="muted small">Ready-made looks need a newer backend; the style lock can be filled by hand after creating.</div>}
       <ErrorText error={error} />
     </form>
   )
@@ -148,6 +171,9 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
   const [saved, setSaved] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [newColour, setNewColour] = useState('#808080')
+  const { presets, unavailable } = usePresets()
+  const current = presetById(presets, lock.preset)
+  const edited = !!current && !lockMatchesPreset(lock, current)
 
   useEffect(() => {
     setSaved(null)
@@ -155,12 +181,11 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
 
   const set = <K extends keyof StyleLock>(k: K, v: StyleLock[K]) => setLock((l) => ({ ...l, [k]: v }))
 
-  const save = async (e?: FormEvent) => {
-    e?.preventDefault()
+  const saveWith = async (next: StyleLock) => {
     setBusy(true)
     setError(null)
     try {
-      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: lock })
+      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: next })
       setSaved(new Date().toLocaleTimeString())
       onSaved()
     } catch (err) {
@@ -168,6 +193,18 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
     } finally {
       setBusy(false)
     }
+  }
+
+  const save = async (e?: FormEvent) => {
+    e?.preventDefault()
+    await saveWith(lock)
+  }
+
+  // Choosing a look fills the fields and saves straight away.
+  const usePreset = (p: LookPreset) => {
+    const next = lockFromPreset(p)
+    setLock(next)
+    void saveWith(next)
   }
 
   const remove = async () => {
@@ -198,7 +235,27 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
           </button>
         </div>
       </div>
-      <div className="muted small">The look every asset in this project shares. Fill it once; every new asset follows it. (Ready-made presets are coming; for now the fields are free text.)</div>
+      <div className="muted small">The look every asset in this project shares. Pick one once; every new asset follows it.</div>
+      <div className="col">
+        <div className="row-between">
+          <div className="field-label">
+            Look
+            <Info term="term.look" />
+          </div>
+          <span className="small">
+            {current ? (
+              <>
+                Using: <strong>{current.label}</strong>
+                {edited ? ' (edited by hand)' : ''}
+              </>
+            ) : presets ? (
+              <span className="muted">No ready-made look chosen; the fields below are set by hand.</span>
+            ) : null}
+          </span>
+        </div>
+        {presets && presets.length > 0 && <PresetRow presets={presets} currentId={current?.id ?? null} edited={edited} busy={busy} onPick={usePreset} />}
+        {unavailable && <div className="muted small">Ready-made looks need a newer backend (GET /api/style-presets is missing); edit the fields below by hand.</div>}
+      </div>
       <div className="grid-2">
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -209,6 +266,8 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
           </select>
         </Field>
       </div>
+      <Disclosure label="Advanced (edit the look by hand)" defaultOpen={!current && !!presets}>
+      <div className="col">
       <Field label="Style words" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">
         <SubmitTextarea rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
       </Field>
@@ -248,6 +307,8 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       <Field label="Avoid" term="term.negative" hint="Things the painter should leave out.">
         <SubmitTextarea rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
       </Field>
+      </div>
+      </Disclosure>
       <div className="row-gap">
         <button type="submit" className="primary" disabled={busy}>
           {busy ? 'Saving...' : 'Save'}

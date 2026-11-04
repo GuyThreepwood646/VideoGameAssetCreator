@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, STAGES, stageState, versionsOf, type Asset, type Job, type StageId, type Suggestion } from '../api'
+import { api, ApiError, STAGES, stageState, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
-import { Disclosure, ErrorText, Field, SubmitTextarea } from '../components/ui'
+import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest } from '../components/ui'
 import { useEvents } from '../events'
-import { fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { StagePanel } from '../pipeline/StagePanel'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
@@ -21,17 +22,73 @@ export default function AssetPage() {
   const [showLog, setShowLog] = useState(false)
   const [variantOpen, setVariantOpen] = useState(false)
   const [baseName, setBaseName] = useState<string | null>(null)
+  // Autopilot state; apAvailable is null until known, false when the backend has no autopilot (404).
+  const [autopilot, setAutopilot] = useState<AutopilotState | null>(null)
+  const [apAvailable, setApAvailable] = useState<boolean | null>(null)
+  const [apDismissed, setApDismissed] = useState<string | null>(null) // updated_at of a dismissed paused card
+  const [apBusy, setApBusy] = useState(false)
   const reloadTimer = useRef<number | null>(null)
+  const followRef = useRef<string | null>(null) // the autopilot stage the page last followed to
 
   const reload = useCallback(async () => {
     try {
       const a = await api.getAsset(aid)
       setAsset(a)
       setError(null)
+      if ('autopilot' in a) {
+        setApAvailable(true)
+        if (a.autopilot) setAutopilot(a.autopilot)
+      }
     } catch (e) {
       setError(e)
     }
   }, [aid])
+
+  // Probe the autopilot endpoint once per asset (the asset itself may not carry the state).
+  useEffect(() => {
+    setAutopilot(null)
+    setApAvailable(null)
+    setApDismissed(null)
+    followRef.current = null
+    let alive = true
+    api.getAutopilot(aid).then(
+      (st) => {
+        if (!alive) return
+        setApAvailable(true)
+        setAutopilot(st)
+      },
+      (e) => {
+        if (!alive) return
+        if (e instanceof ApiError && e.status === 404) setApAvailable(false)
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [aid])
+
+  // While the autopilot runs, re-read its state every few seconds (covers the polling fallback).
+  const apRunning = autopilot?.status === 'running'
+  useEffect(() => {
+    if (!apRunning) return
+    const t = window.setInterval(() => {
+      api.getAutopilot(aid).then(
+        (st) => setAutopilot((cur) => (cur && cur.status === st.status && cur.stage === st.stage && cur.job_id === st.job_id ? cur : st)),
+        () => undefined,
+      )
+    }, 3000)
+    return () => window.clearInterval(t)
+  }, [aid, apRunning])
+
+  // Follow the autopilot from stage to stage while the page is looking at the stage it was on.
+  const apStageNow = autopilotStage(autopilot)
+  const apStatus = autopilot?.status
+  useEffect(() => {
+    if (!apStageNow || !apStatus || apStatus === 'idle') return
+    const following = followRef.current === null || followRef.current === stage
+    if (following && apStageNow !== stage) navigate(`/assets/${aid}/${apStageNow}`, { replace: true })
+    followRef.current = apStageNow
+  }, [apStageNow, apStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadSoon = useCallback(() => {
     if (reloadTimer.current != null) return
@@ -91,10 +148,46 @@ export default function AssetPage() {
         if (ev.job.status === 'done' || ev.job.status === 'error' || ev.job.status === 'cancelled' || ev.job.status === 'running') reloadSoon()
       } else if (ev.type === 'version' && ev.version.asset_id === aid) {
         reloadSoon()
+      } else if (ev.type === 'autopilot' && ev.asset_id === aid) {
+        setApAvailable(true)
+        setAutopilot(ev.autopilot)
+        reloadSoon()
       }
     },
     [aid, reloadSoon],
   )
+
+  const apCall = async (fn: () => Promise<AutopilotState | void>) => {
+    setApBusy(true)
+    try {
+      const st = await fn()
+      if (st) setAutopilot(st)
+      setApDismissed(null)
+      setError(null)
+      reloadSoon()
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) setApAvailable(false)
+      else setError(e)
+    } finally {
+      setApBusy(false)
+    }
+  }
+  const autopilotActions: AutopilotActions = {
+    start: (body?: AutopilotBody) => void apCall(() => api.startAutopilot(aid, body ?? {})),
+    stop: () => void apCall(() => api.stopAutopilot(aid)),
+    // Proposed contract: POST autopilot {fix: {stage, params}} re-runs that stage with the fix, then continues.
+    fixAndContinue: (fix: FixRequest) => void apCall(() => api.startAutopilot(aid, { fix: { stage: fix.stage, params: fix.params } })),
+    continueAnyway: () =>
+      void apCall(async () => {
+        const vid = autopilot?.version_id
+        const s = autopilotStage(autopilot)
+        if (vid && s && asset && asset.selected?.[s] !== vid) await api.select(vid)
+        return api.startAutopilot(aid, {})
+      }),
+    dismiss: () => setApDismissed(autopilot?.updated_at ?? 'dismissed'),
+  }
+  // A dismissed paused or stopped card stays hidden until the state changes again.
+  const apShown = autopilot && apDismissed !== null && apDismissed === (autopilot.updated_at ?? 'dismissed') && autopilot.status !== 'running' ? null : autopilot
 
   const cancelJob = async (id: string) => {
     try {
@@ -116,7 +209,7 @@ export default function AssetPage() {
   }
 
   const stageInfo = (s: StageId) => ref?.stages.find((x) => x.id === s) ?? null
-  const status = statusLine(asset, jobs, ref, suggestion)
+  const status = statusLine(asset, jobs, ref, suggestion, autopilot)
 
   return (
     <div className={'pipeline-layout' + (showLog ? ' with-log' : '')}>
@@ -189,6 +282,11 @@ export default function AssetPage() {
             )}
           </div>
           <div className="row-gap">
+            {autopilot?.status === 'running' && (
+              <button type="button" className="small-btn" disabled={apBusy} onClick={autopilotActions.stop} title="Stop the autopilot after the current step">
+                Stop autopilot
+              </button>
+            )}
             <button type="button" className="small-btn" aria-pressed={variantOpen} disabled={!asset.selected?.concept} onClick={() => setVariantOpen((v) => !v)} title={asset.selected?.concept ? 'Make a copy of this asset with one change' : 'Keep a concept picture first'}>
               Make a variant
             </button>
@@ -200,7 +298,21 @@ export default function AssetPage() {
         </header>
         {variantOpen && <VariantPanel asset={asset} onClose={() => setVariantOpen(false)} onError={setError} />}
         <ErrorText error={error} />
-        <StagePanel key={stage} asset={asset} stage={stage} jobs={jobs} suggestion={suggestion} baseName={baseName} onChanged={reloadSoon} onError={setError} onCancelJob={cancelJob} />
+        <StagePanel
+          key={stage}
+          asset={asset}
+          stage={stage}
+          jobs={jobs}
+          suggestion={suggestion}
+          baseName={baseName}
+          autopilot={apShown}
+          apAvailable={apAvailable}
+          autopilotActions={autopilotActions}
+          onMakeVariant={() => setVariantOpen(true)}
+          onChanged={reloadSoon}
+          onError={setError}
+          onCancelJob={cancelJob}
+        />
       </section>
       {showLog && (
         <aside className="job-col">
@@ -274,9 +386,20 @@ function stageOfJob(job: Job, asset: Asset): StageId | null {
 }
 
 // The single status line in the asset header.
-function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: Suggestion | null): { text: string; tone: 'ok' | 'warn' | 'bad' | 'none'; raw?: string } {
+function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: Suggestion | null, autopilot: AutopilotState | null): { text: string; tone: 'ok' | 'warn' | 'bad' | 'none'; raw?: string } {
   const live = jobs.filter((j) => j.status === 'running' || j.status === 'queued')
   const job = live.find((j) => j.status === 'running') ?? live[0]
+  if (autopilot && isAutopilotActive(autopilot)) {
+    const s = autopilotStage(autopilot)
+    if (autopilot.status === 'running') {
+      const apJob = jobs.find((j) => j.id === autopilot.job_id) ?? job
+      const queued = apJob?.status === 'queued'
+      const until = STAGES.includes(autopilot.until_stage as StageId) ? (autopilot.until_stage as StageId) : 'export'
+      const left = s ? autopilotSecondsLeft(s, queued ? 0 : (apJob?.progress ?? 0), until, ref?.stages, suggestion?.estimates) : null
+      return { text: autopilotLine(s, left, { queued }) + '.', tone: 'ok' }
+    }
+    return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${autopilot.reason ?? 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
+  }
   if (job) {
     const s = stageOfJob(job, asset)
     const step = s ? `step ${STAGES.indexOf(s) + 1} of ${STAGES.length}` : ''
@@ -292,6 +415,6 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
     const s = stageOfJob(last, asset)
     return { text: `${s ? stagePlain(s) + ': ' : ''}${humanError(last.error)}`, tone: 'bad', raw: last.error ?? undefined }
   }
-  if (done === STAGES.length) return { text: 'Finished. Your asset is ready to hand to the game.', tone: 'ok' }
+  if (done === STAGES.length) return { text: `${autopilot?.status === 'done' ? 'Autopilot finished. ' : 'Finished. '}Your asset is ready to hand to the game.`, tone: 'ok' }
   return { text: `Nothing running. ${done} of ${STAGES.length} steps done.`, tone: 'none' }
 }

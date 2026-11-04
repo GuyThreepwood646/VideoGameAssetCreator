@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type PlatformId, type Project, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
-import { rememberConceptModel } from '../guide'
+import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { examplePrompts, fmtDuration, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
 export default function ProjectPage() {
@@ -17,6 +18,7 @@ export default function ProjectPage() {
     return Promise.all(list.map((a) => (a.stages ? Promise.resolve(a) : api.getAsset(a.id).catch(() => a))))
   }, [pid])
   const { ref } = useRefData()
+  const { presets } = usePresets()
 
   // Any version finishing for an asset of this project refreshes the grid.
   useEvents(
@@ -41,8 +43,8 @@ export default function ProjectPage() {
           {project && (
             <span className="muted small">
               {platformPlain(project.platform_target)}
-              <Info term={'platform.' + project.platform_target} /> / {modelLabel(project.style_lock.model)}
-              <Info term={'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>style lock</Link>
+              <Info term={'platform.' + project.platform_target} /> / {presetById(presets, project.style_lock.preset)?.label ?? modelLabel(project.style_lock.model)}
+              <Info term={project.style_lock.preset && presetById(presets, project.style_lock.preset) ? 'term.look' : 'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>style lock</Link>
               <Info term="term.style_lock" />
             </span>
           )}
@@ -126,6 +128,11 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
+  const [autopilot, setAutopilot] = useState(autopilotDefault())
+  const { presets } = usePresets()
+  // The project's ready-made look names the asset style new assets default to.
+  const projectLook = presetById(presets, project.style_lock.preset)
+  const projectStyleId = projectLook && ref?.styles.some((s) => s.id === projectLook.style_preset) ? projectLook.style_preset : (ref?.styles.find((s) => s.model === project.style_lock.model) ?? ref?.styles[0])?.id
 
   useEffect(() => {
     if (!ref) return
@@ -134,11 +141,8 @@ function CreateAssetForm({ project }: { project: Project }) {
       setCategory(first.id)
       setParts(first.parts_default ?? [])
     }
-    if (!style) {
-      const match = ref.styles.find((s) => s.model === project.style_lock.model) ?? ref.styles[0]
-      if (match) setStyle(match.id)
-    }
-  }, [ref, category, style, project.style_lock.model])
+    if (!style && projectStyleId) setStyle(projectStyleId)
+  }, [ref, category, style, projectStyleId])
 
   // Suggestion updates as category, style or platform change.
   useEffect(() => {
@@ -173,6 +177,15 @@ function CreateAssetForm({ project }: { project: Project }) {
       const finalName = name.trim() || autoName(prompt) || 'Untitled'
       const a = await api.createAsset(project.id, { name: finalName, category, style_preset: style, platform_target: platform, prompt: prompt.trim(), parts })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
+      rememberAutopilotDefault(autopilot)
+      if (autopilot) {
+        // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
+        try {
+          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export' })
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 404)) console.warn('autopilot did not start', err)
+        }
+      }
       navigate(`/assets/${a.id}`)
     } catch (err) {
       setError(err)
@@ -206,11 +219,12 @@ function CreateAssetForm({ project }: { project: Project }) {
         </select>
       </Field>
       <div className="grid-2">
-        <Field label="Look" term={'style.' + style}>
+        <Field label="Look" term={'style.' + style} hint={projectLook ? (style === projectStyleId ? `Your project's look: ${projectLook.label}.` : `Different from your project's look (${projectLook.label}).`) : undefined}>
           <select value={style} onChange={(e) => setStyle(e.target.value)}>
             {ref?.styles.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
+                {projectLook && s.id === projectStyleId ? ` (${projectLook.label}, the project look)` : ''}
               </option>
             ))}
           </select>
@@ -252,11 +266,19 @@ function CreateAssetForm({ project }: { project: Project }) {
           </Field>
         </div>
       </Disclosure>
+      <label className="check-item autopilot-check">
+        <input type="checkbox" checked={autopilot} onChange={(e) => setAutopilot(e.target.checked)} />
+        <span>
+          Build it automatically after creating
+          <Info term="term.autopilot" />
+          <span className="muted small block">Runs every step and only stops if something needs you.</span>
+        </span>
+      </label>
       <div className="row-gap">
         <button type="submit" className="primary" disabled={busy || !prompt.trim() || !category}>
-          {busy ? 'Creating...' : 'Create asset'}
+          {busy ? 'Creating...' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>
-        <span className="muted small">Next: we paint the first picture.</span>
+        <span className="muted small">{autopilot ? 'Next: every step runs by itself.' : 'Next: we paint the first picture.'}</span>
         <ErrorText error={error} />
       </div>
     </form>

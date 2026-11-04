@@ -9,6 +9,7 @@ import {
   versionsOf,
   type AdjustParam,
   type Asset,
+  type AutopilotState,
   type Check,
   type Job,
   type StageId,
@@ -21,7 +22,8 @@ import { useGlbSnapshot } from '../glbSnapshot'
 import { preferredConceptModel } from '../guide'
 import { firstFailing, fmtDuration, humanError, isSimpleParam, looksGood, modelLabel, paramPlain, platformPlain, stagePlain, totalEstimate } from '../help'
 import { useRefData, type RefData } from '../refdata'
-import { GuidePanel, guideState } from './GuidePanel'
+import { type AutopilotActions } from './AutopilotPanel'
+import { finishShown, GuidePanel, guideState } from './GuidePanel'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
 import { MeshView } from './views/MeshView'
@@ -34,12 +36,16 @@ type Props = {
   jobs: Job[]
   suggestion: Suggestion | null
   baseName?: string | null
+  autopilot: AutopilotState | null
+  apAvailable: boolean | null
+  autopilotActions: AutopilotActions
+  onMakeVariant: () => void
   onChanged: () => void
   onError: (e: unknown) => void
   onCancelJob: (id: string) => void
 }
 
-export function StagePanel({ asset, stage, jobs, suggestion, baseName, onChanged, onError, onCancelJob }: Props) {
+export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onCancelJob }: Props) {
   const navigate = useNavigate()
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
@@ -99,6 +105,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, onChanged
 
   const checks = active && isCheckList(active.metrics.checks) ? (active.metrics.checks as Check[]) : null
   const ctx = { platform: asset.platform_target }
+  // The finishing card above already shows the export's title, model and downloads.
+  const hideReady = stage === 'export' && !!active && active.id === selected?.id && finishShown(asset, stage, autopilot, jobs)
 
   return (
     <div className="stage-panel">
@@ -112,6 +120,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, onChanged
         selected={selected}
         busy={busy}
         baseName={baseName}
+        autopilot={autopilot}
+        apAvailable={apAvailable}
+        autopilotActions={autopilotActions}
+        onMakeVariant={onMakeVariant}
         onRun={run}
         onRunNext={runNext}
         onRetry={retry}
@@ -175,7 +187,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, onChanged
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
+            <StageViewer stage={stage} version={active} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -308,7 +320,7 @@ function CandidateCard({
   )
 }
 
-function StageViewer({ stage, version, onRefineView }: { stage: StageId; version: Version; onRefineView: (view: string) => void }) {
+function StageViewer({ stage, version, hideReady, onRefineView }: { stage: StageId; version: Version; hideReady?: boolean; onRefineView: (view: string) => void }) {
   if (version.status !== 'done' && version.status !== 'rejected') {
     return <div className="placeholder-box">{version.status === 'error' ? 'This version has no result.' : 'Waiting for the result...'}</div>
   }
@@ -323,7 +335,7 @@ function StageViewer({ stage, version, onRefineView }: { stage: StageId; version
     case 'rig':
       return <RigView version={version} />
     case 'export':
-      return <ExportView version={version} />
+      return <ExportView version={version} hideReady={hideReady} />
   }
 }
 

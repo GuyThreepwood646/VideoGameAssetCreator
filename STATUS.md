@@ -92,6 +92,10 @@ Incorporate REVIEW.md into the plan, define the end goal in industry terms (ARCH
 
 - 2026-11-04: backend restarted on the latest code (Variants, concept_model, guidance layer, widened LOD tolerance). 36 tests pass. Frontend dev server on 5174 serves the new UI against it.
 
+- 2026-11-04: git initialised; milestone commits 4ecb42c (everything so far) and 5b2d48c (autopilot, style presets, delivery). Backend: vgac/autopilot.py (runner, state on Asset.autopilot_json, endpoints, WS events; tested through all stages with mocked engines), data/style_presets.yaml with GET /api/style-presets, Project.unity_project_path, export delivery to exports/<project>/<asset>/ plus optional Unity project import (tools.run_unity project_path override). 38 tests. Live autopilot test running on a new goblin asset; frontend agent building the Make it control and preset chooser; a third agent building the Electron launcher in desktop/.
+
+- Live autopilot (goblin, humanoid, mobile_low, Painted fantasy preset): prompt to delivered asset in 421 s with no input; concept 2 candidates, turnaround 3 min, mesh 17/17 (IoU 0.84), prep 6/6, rig 6/6 (52 bones), export 30/31. The miss: Unity Humanoid mapping failed on the stocky goblin with extra bones, so no CC0 clips attached; VgacImport.cs now falls back to Generic and attaches the procedural clips (confirmed: re-export imported as Generic with clipCount 2).
+
 ## Next
 
 - UX items still open from docs/UX-REVIEW.md: G autopilot ("Make it" runs all stages, pauses on unfixable checks), H style presets filling the style lock, K finishing moment, L thumbs, M glossary and example gallery.

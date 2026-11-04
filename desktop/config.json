@@ -1,0 +1,42 @@
+{
+  "_comment": "Paths are absolute or relative to projectRoot. projectRoot itself is absolute or relative to this file. Edit and restart the launcher.",
+  "projectRoot": "F:\\Projects\\VideoGameAssetCreator",
+  "comfyA": {
+    "name": "ComfyUI A (GameDevComfy, RTX 3060)",
+    "url": "http://127.0.0.1:8188",
+    "desktopExe": "C:\\Users\\evanr\\AppData\\Local\\Programs\\Comfy Desktop\\Comfy Desktop.exe"
+  },
+  "comfyB": {
+    "name": "ComfyUI B (images and rigging, RTX 3080)",
+    "url": "http://127.0.0.1:8189",
+    "startScript": "runtime/start-comfy-b.ps1",
+    "log": "runtime/logs/comfy-b.log",
+    "processName": "python.exe",
+    "processMatch": "ComfyUI\\main.py --port 8189",
+    "startTimeoutSeconds": 300
+  },
+  "backend": {
+    "name": "Backend (FastAPI)",
+    "url": "http://127.0.0.1:8765",
+    "healthPath": "/api/health",
+    "python": "backend/.venv/Scripts/python.exe",
+    "args": ["-m", "uvicorn", "vgac.main:app", "--port", "8765"],
+    "cwd": "backend",
+    "log": "runtime/logs/backend.log",
+    "processName": "python.exe",
+    "processMatch": "uvicorn vgac.main:app --port 8765",
+    "startTimeoutSeconds": 120
+  },
+  "frontend": {
+    "name": "UI (frontend build served by the backend)",
+    "dir": "frontend",
+    "dist": "frontend/dist",
+    "buildCommand": "npm run build",
+    "buildLog": "runtime/logs/frontend-build.log"
+  },
+  "logsFolder": "runtime/logs",
+  "exportsFolder": "exports",
+  "launcherLog": "runtime/logs/launcher.log",
+  "window": { "width": 1440, "height": 900, "minWidth": 1200, "minHeight": 800 },
+  "pollIntervalMs": 2000
+}
