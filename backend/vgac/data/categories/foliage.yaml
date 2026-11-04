@@ -1,6 +1,7 @@
 id: foliage
 label: Foliage
 rig_engine: none
+silhouette_min: 0.45
 symmetric: false
 size_m: 2.5
 parts_default: []

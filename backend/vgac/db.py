@@ -1,8 +1,8 @@
 """SQLAlchemy models and SQLite session factory.
 
 Tables: project, asset, version, job, matching docs/API.md. Ids are uuid4 strings. JSON-valued
-fields are stored as text columns with dict accessors. Schema management is create_all only
-(no migrations): delete library/vgac.sqlite when the schema changes.
+fields are stored as text columns with dict accessors. Schema management is create_all plus a forward-only
+column migration (_ADDED_COLUMNS): new nullable columns are added with ALTER TABLE at startup.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class Asset(Base):
 
     @autopilot.setter
     def autopilot(self, value: dict[str, Any] | None) -> None:
-        self.autopilot_json = json.dumps(value) if value is not None else None
+        self.autopilot_json = _dumps(value) if value is not None else None
 
     @property
     def parts(self) -> list[str]:

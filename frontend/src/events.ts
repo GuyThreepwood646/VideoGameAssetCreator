@@ -1,6 +1,7 @@
 // Live event hub: WebSocket /api/ws/events with a polling fallback on /api/jobs every 3 s.
-// The polling fallback carries job and version events only; autopilot state is
-// re-read by the asset page from GET /api/assets/{aid}/autopilot while it runs.
+// The polling fallback carries job and version events only; the asset page then
+// gets the autopilot state from its asset reloads, plus a slow 30 s re-read of
+// GET /api/assets/{aid}/autopilot while the autopilot runs.
 import { useEffect, useState } from 'react'
 import { api, eventsUrl, type Job, type ServerEvent } from './api'
 

@@ -2,27 +2,32 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import {
   api,
+  ApiError,
   libraryUrl,
   previousStage,
   selectedVersion,
   TURNAROUND_VIEWS,
+  versionFeedback,
   versionsOf,
   type AdjustParam,
   type Asset,
   type AutopilotState,
   type Check,
+  type Feedback,
+  type FeedbackBody,
   type Job,
   type StageId,
   type Suggestion,
   type Version,
 } from '../api'
 import { Info } from '../components/Info'
-import { ChecksList, Disclosure, Field, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, TrafficDot, type FixRequest } from '../components/ui'
-import { useGlbSnapshot } from '../glbSnapshot'
+import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
-import { firstFailing, fmtDuration, humanError, isSimpleParam, looksGood, modelLabel, paramPlain, platformPlain, stagePlain, totalEstimate } from '../help'
+import { humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
+import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
+import { FineTune } from './FineTune'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
@@ -141,22 +146,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
           </span>
         </div>
-        {versions.length > 0 && (
-          <div className="candidates">
-            {versions.map((v, i) => (
-              <CandidateCard
-                key={v.id}
-                version={v}
-                index={i + 1}
-                stage={stage}
-                job={jobs.find((j) => j.id === v.job_id || j.version_id === v.id)}
-                isActive={active?.id === v.id}
-                isSelected={selected?.id === v.id}
-                onClick={() => setActiveId(v.id)}
-              />
-            ))}
-          </div>
-        )}
+        <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
         {versions.length === 0 && <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>}
         {active && (
           <div className="active-version">
@@ -211,6 +201,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 onKeep={() => act(() => api.select(active.id))}
                 onTryAgain={run}
                 onReject={() => act(() => api.reject(active.id))}
+                onFeedbackSaved={onChanged}
               />
             )}
             {changeOpen && active.status === 'done' && (
@@ -256,71 +247,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
-function shortId(id: string) {
-  return id.slice(0, 8)
-}
-
-function CandidateCard({
-  version,
-  index,
-  stage,
-  job,
-  isActive,
-  isSelected,
-  onClick,
-}: {
-  version: Version
-  index: number
-  stage: StageId
-  job?: Job
-  isActive: boolean
-  isSelected: boolean
-  onClick: () => void
-}) {
-  const is3d = stage === 'mesh' || stage === 'prep' || stage === 'rig' || stage === 'export'
-  const imgPath = stage === 'concept' ? (version.files.cutout ?? version.files.image) : stage === 'turnaround' ? (version.files.front_cutout ?? version.files.front ?? Object.values(version.files)[0]) : version.files.preview
-  const glbUrl = is3d && !version.files.preview ? libraryUrl(version.files.glb) : undefined
-  const { src: snap, error: snapError } = useGlbSnapshot(version.status === 'done' ? glbUrl : undefined)
-  const img = is3d ? (libraryUrl(imgPath) ?? snap) : libraryUrl(imgPath)
-  const cls = ['candidate', isActive ? 'active' : '', isSelected ? 'selected' : '', version.status === 'rejected' ? 'rejected' : ''].join(' ')
-  const good = version.status === 'done' ? looksGood(version.metrics) : null
-  const reason = version.status === 'done' ? firstFailing(version.metrics) : null
-  return (
-    <button type="button" className={cls} onClick={onClick} aria-pressed={isActive} aria-label={`version ${index}`}>
-      <div className="candidate-thumb checker">
-        {img ? (
-          <img src={img} alt={`version ${index}`} />
-        ) : version.status === 'running' || version.status === 'queued' ? (
-          <div className="thumb-progress">
-            <div className="progress">
-              <div className="progress-bar" style={{ width: `${Math.round((job?.progress ?? 0) * 100)}%` }} />
-            </div>
-            <span className="small muted">{version.status === 'queued' ? 'waiting' : 'working'}</span>
-          </div>
-        ) : (
-          <span className="small muted">{snapError ? 'no preview' : version.status === 'error' ? 'failed' : 'no preview'}</span>
-        )}
-      </div>
-      <div className="candidate-meta">
-        <span className="row-between">
-          <strong>v{index}</strong>
-          <span className="muted mono small">{shortId(version.id)}</span>
-        </span>
-        {version.status === 'done' ? (
-          <span className={'traffic-line ' + (good === false ? 'bad' : good ? 'ok' : 'none')} title={reason ?? (good ? 'Every check passed' : 'No checks for this version')}>
-            <TrafficDot state={good === false ? 'bad' : good ? 'ok' : 'none'} />
-            {good === false ? 'needs attention' : good ? 'looks good' : 'no checks'}
-          </span>
-        ) : (
-          <StatusBadge status={version.status} />
-        )}
-        {isSelected && <span className="chip chip-ok">kept</span>}
-      </div>
-    </button>
-  )
-}
-
 function StageViewer({ stage, version, hideReady, onRefineView }: { stage: StageId; version: Version; hideReady?: boolean; onRefineView: (view: string) => void }) {
+  // A queued version cancelled before it ran is rejected with no files.
+  if (version.status === 'rejected' && Object.keys(version.files).length === 0) {
+    return <div className="placeholder-box">This version was stopped before it made a result.</div>
+  }
   if (version.status !== 'done' && version.status !== 'rejected') {
     return <div className="placeholder-box">{version.status === 'error' ? 'This version has no result.' : 'Waiting for the result...'}</div>
   }
@@ -383,6 +314,7 @@ function HappyBlock({
   onKeep,
   onTryAgain,
   onReject,
+  onFeedbackSaved,
 }: {
   stage: StageId
   active: Version
@@ -396,7 +328,9 @@ function HappyBlock({
   onKeep: () => void
   onTryAgain: () => void
   onReject: () => void
+  onFeedbackSaved: () => void
 }) {
+  const fb = useFeedback(active, onFeedbackSaved)
   return (
     <div className="happy">
       <div className="happy-q">Happy with this?</div>
@@ -422,11 +356,136 @@ function HappyBlock({
           Change something
         </button>
         <span className="grow" />
+        <FeedbackButtons fb={fb} />
         <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
           Reject
         </button>
       </div>
+      <FeedbackNote key={active.id} fb={fb} />
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Thumbs up or down (POST /api/versions/{vid}/feedback). It only records which
+// results the person liked; a thumbs down opens an optional "What was wrong?" note.
+// ---------------------------------------------------------------------------
+
+type FeedbackState = {
+  current: Feedback
+  saving: boolean
+  error: string | null
+  send: (body: FeedbackBody) => void
+}
+
+function useFeedback(version: Version, onSaved: () => void): FeedbackState {
+  const stored = versionFeedback(version)
+  const storedKey = `${version.id}|${stored?.thumbs ?? ''}|${stored?.note ?? ''}`
+  const [current, setCurrent] = useState<Feedback>(stored ?? { thumbs: null })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Follow the stored value when the version changes or the backend sends a newer one.
+  useEffect(() => {
+    setCurrent(versionFeedback(version) ?? { thumbs: null })
+    setError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedKey])
+
+  const send = (body: FeedbackBody) => {
+    const before = current
+    setCurrent({ thumbs: body.thumbs, note: body.thumbs === 'down' ? (body.note ?? before.note ?? null) : null })
+    setSaving(true)
+    setError(null)
+    api.feedback(version.id, body).then(
+      (v) => {
+        setSaving(false)
+        const saved = versionFeedback(v)
+        if (saved) setCurrent(saved)
+        onSaved()
+      },
+      (e) => {
+        setSaving(false)
+        setCurrent(before)
+        setError(e instanceof ApiError && e.status === 404 ? 'This backend does not record likes yet.' : 'Could not save that. Try again.')
+      },
+    )
+  }
+  return { current, saving, error, send }
+}
+
+function FeedbackButtons({ fb }: { fb: FeedbackState }) {
+  const t = fb.current.thumbs
+  // Clicking the pressed button again clears the answer.
+  const toggle = (want: 'up' | 'down') => {
+    if (t === want) fb.send({ thumbs: null })
+    else if (want === 'down' && fb.current.note) fb.send({ thumbs: 'down', note: fb.current.note })
+    else fb.send({ thumbs: want })
+  }
+  return (
+    <span className="answer-group feedback-group">
+      <span className="muted small">
+        Liked it?
+        <Info term="term.feedback" />
+      </span>
+      <button
+        type="button"
+        className="thumb-btn"
+        aria-pressed={t === 'up'}
+        disabled={fb.saving}
+        onClick={() => toggle('up')}
+        title={t === 'up' ? 'You liked this. Click again to clear.' : 'Thumbs up: you liked this result'}
+      >
+        <ThumbIcon down={false} />
+        <span>Thumbs up</span>
+      </button>
+      <button
+        type="button"
+        className="thumb-btn"
+        aria-pressed={t === 'down'}
+        disabled={fb.saving}
+        onClick={() => toggle('down')}
+        title={t === 'down' ? 'You did not like this. Click again to clear.' : 'Thumbs down: you did not like this result'}
+      >
+        <ThumbIcon down />
+        <span>Thumbs down</span>
+      </button>
+    </span>
+  )
+}
+
+function FeedbackNote({ fb }: { fb: FeedbackState }) {
+  const savedNote = fb.current.note ?? ''
+  const [text, setText] = useState(savedNote)
+  useEffect(() => setText(savedNote), [savedNote])
+  if (fb.current.thumbs !== 'down') return fb.error ? <div className="feedback-error small">{fb.error}</div> : null
+  const changed = text.trim() !== savedNote.trim()
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!changed || fb.saving) return
+    fb.send({ thumbs: 'down', note: text.trim() })
+  }
+  return (
+    <form className="feedback-note" onSubmit={submit}>
+      <label className="field-label" htmlFor="feedback-note-input">
+        What was wrong?
+        <Info term="term.feedback_note" label="About this note" />
+      </label>
+      <div className="row-gap">
+        <input
+          id="feedback-note-input"
+          value={text}
+          maxLength={200}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Optional, e.g. face too dark, sword bent"
+          disabled={fb.saving}
+        />
+        <button type="submit" className="small-btn" disabled={fb.saving || !changed}>
+          {fb.saving ? 'Saving...' : 'Save note'}
+        </button>
+        {!changed && savedNote && <span className="muted small">Saved.</span>}
+      </div>
+      {fb.error && <div className="feedback-error small">{fb.error}</div>}
+    </form>
   )
 }
 
@@ -470,7 +529,7 @@ function ChangePanel({
           <Info term="term.instruction" />
         </div>
         <div className="refine-row">
-          <SubmitTextarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholderFor(stage)} aria-label="Describe the change" />
+          <SubmitTextarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage)} aria-label="Describe the change" />
           {stage === 'turnaround' && (
             <select value={view} onChange={(e) => setView(e.target.value)} aria-label="Which view to change">
               <option value="">all views</option>
@@ -490,316 +549,4 @@ function ChangePanel({
       <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} />
     </div>
   )
-}
-
-function placeholderFor(stage: StageId): string {
-  switch (stage) {
-    case 'concept':
-      return 'e.g. make the helmet open-faced and the shield round'
-    case 'turnaround':
-      return 'e.g. the back view should show the cloak'
-    case 'mesh':
-      return 'e.g. thicker sword, less bulky shoulders'
-    case 'prep':
-      return 'e.g. more wear on the armour'
-    case 'rig':
-      return 'e.g. smoother bending at the left elbow'
-    case 'export':
-      return 'e.g. drop the sprite sheet, add another detail level'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Fine-tune (the Adjust form) with a simple layer and an Advanced disclosure
-// ---------------------------------------------------------------------------
-
-const SIZE_OPTIONS = [768, 1024, 1280, 1536, 2048]
-
-function FineTune({
-  stage,
-  schema,
-  target,
-  asset,
-  refData,
-  suggestion,
-  disabled,
-  onSubmit,
-}: {
-  stage: StageId
-  schema: AdjustParam[]
-  target: Version
-  asset: Asset
-  refData: RefData | null
-  suggestion: Suggestion | null
-  disabled: boolean
-  onSubmit: (params: Record<string, unknown>) => void
-}) {
-  const initial = useMemo(() => {
-    const out: Record<string, unknown> = {}
-    for (const p of schema) {
-      const current = target.params?.[p.name]
-      out[p.name] = current !== undefined ? current : p.default !== undefined ? p.default : defaultFor(p)
-    }
-    return out
-  }, [schema, target])
-  const [values, setValues] = useState<Record<string, unknown>>(initial)
-  useEffect(() => setValues(initial), [initial])
-
-  const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }))
-  const changed = schema.filter((p) => JSON.stringify(values[p.name] ?? null) !== JSON.stringify(initial[p.name] ?? null))
-
-  const schemaHasFlag = schema.some((p) => p.simple !== undefined)
-  const simple = schema.filter((p) => isSimpleParam(stage, p, schemaHasFlag))
-  const advanced = schema.filter((p) => !simple.includes(p))
-  const hasSize = stage === 'concept' && simple.some((p) => p.name === 'width') && simple.some((p) => p.name === 'height')
-  const simpleShown = hasSize ? simple.filter((p) => p.name !== 'height') : simple
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    if (!changed.length) return
-    const params: Record<string, unknown> = {}
-    for (const p of changed) params[p.name] = values[p.name]
-    onSubmit(params)
-  }
-
-  const cat = refData?.categories.find((c) => c.id === asset.category)
-  const plat = refData?.platforms.find((p) => p.id === asset.platform_target)
-  const budget = cat?.budgets?.[asset.platform_target]?.triangles ?? suggestion?.budgets.triangles ?? plat?.triangles_character ?? 20000
-
-  const renderField = (p: AdjustParam, adv: boolean) => {
-    if (hasSize && p.name === 'width') {
-      const w = Number(values.width ?? 1024)
-      const opts = SIZE_OPTIONS.filter((o) => (p.min === undefined || o >= p.min) && (p.max === undefined || o <= p.max))
-      if (!opts.includes(w)) opts.push(w)
-      return (
-        <Field key="size" label="Size" term="term.size" hint="Width and height of the picture">
-          <select
-            value={w}
-            disabled={disabled}
-            onChange={(e) => {
-              const n = Number(e.target.value)
-              set('width', n)
-              set('height', n)
-            }}
-          >
-            {opts
-              .sort((a, b) => a - b)
-              .map((o) => (
-                <option key={o} value={o}>
-                  {o} px{o === 1024 ? ' (recommended)' : ''}
-                </option>
-              ))}
-          </select>
-        </Field>
-      )
-    }
-    if (stage === 'mesh' && p.name === 'target_faces' && !adv) {
-      const cur = values.target_faces
-      const curN = typeof cur === 'number' ? cur : null
-      const levels: { label: string; value: number | null }[] = [
-        ...(p.default === null || p.default === undefined ? [{ label: `Automatic (${budget.toLocaleString('en-US')} for ${stagePlainPlatform(asset.platform_target)})`, value: null }] : []),
-        { label: `Lower detail (${Math.round(budget / 2).toLocaleString('en-US')} triangles, smaller file)`, value: clamp(Math.round(budget / 2), p) },
-        { label: `Standard (${budget.toLocaleString('en-US')} triangles, the platform budget)`, value: clamp(budget, p) },
-        { label: `Higher detail (${(budget * 2).toLocaleString('en-US')} triangles, over budget)`, value: clamp(budget * 2, p) },
-      ]
-      if (curN !== null && !levels.some((l) => l.value === curN)) levels.push({ label: `Current (${curN.toLocaleString('en-US')} triangles)`, value: curN })
-      return (
-        <Field key={p.name} label="Detail level" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
-          <select value={cur === null || cur === undefined ? '' : String(cur)} disabled={disabled} onChange={(e) => set('target_faces', e.target.value === '' ? null : Number(e.target.value))}>
-            {levels.map((l) => (
-              <option key={String(l.value)} value={l.value === null ? '' : String(l.value)}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )
-    }
-    if (stage === 'concept' && p.name === 'model') {
-      return (
-        <Field key={p.name} label={paramPlain('model', p.label)} term="param.model" hint="Which AI model paints the picture.">
-          <select value={String(values.model ?? '')} disabled={disabled} onChange={(e) => set('model', e.target.value)}>
-            {(p.options ?? []).map((o) => (
-              <option key={String(o)} value={String(o)}>
-                {modelLabel(String(o))}
-                {suggestion && String(o) === suggestion.model ? ' (suggested)' : ''}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )
-    }
-    return <AdjustField key={p.name} param={p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
-  }
-
-  return (
-    <form className="finetune" onSubmit={submit}>
-      <div className="row-between">
-        <div className="field-label">
-          Fine-tune
-          <Info entry={{ plain: 'Fine-tune', meaning: 'Re-run this step with different settings.', why: 'Use it when the result is close but a setting is off; the description stays the same.', technical: 'adjust' }} />
-        </div>
-        {stage === 'concept' && suggestion && (
-          <span className="muted small">
-            We suggest {suggestion.model_label}, because {suggestion.reason}; {fmtDuration(totalEstimate(suggestion.estimates, refData))} to a finished asset.
-          </span>
-        )}
-      </div>
-      {schema.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
-      {simpleShown.length > 0 && <div className="adjust-grid">{simpleShown.map((p) => renderField(p, false))}</div>}
-      {advanced.length > 0 && (
-        <Disclosure label={`Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})`}>
-          <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>
-        </Disclosure>
-      )}
-      <div className="row-gap">
-        <button type="submit" disabled={disabled || !changed.length}>
-          Apply and re-run
-        </button>
-        <button type="button" disabled={!changed.length} onClick={() => setValues(initial)}>
-          Reset
-        </button>
-        <span className="muted small">{changed.length ? `${changed.length} changed: ${changed.map((p) => paramPlain(p.name, p.label)).join(', ')}` : 'no changes yet'}</span>
-      </div>
-    </form>
-  )
-}
-
-function stagePlainPlatform(id: string): string {
-  return platformPlain(id).split(':')[0].toLowerCase() || id
-}
-
-function clamp(n: number, p: AdjustParam): number {
-  if (p.min !== undefined) n = Math.max(p.min, n)
-  if (p.max !== undefined) n = Math.min(p.max, n)
-  return n
-}
-
-function defaultFor(p: AdjustParam): unknown {
-  switch (p.type) {
-    case 'number':
-    case 'integer':
-      return p.min ?? 0
-    case 'boolean':
-      return false
-    case 'multiselect':
-      return []
-    case 'select':
-      return p.options?.[0] ?? ''
-    default:
-      return ''
-  }
-}
-
-function AdjustField({ param: p, value, onChange, disabled }: { param: AdjustParam; value: unknown; onChange: (v: unknown) => void; disabled: boolean }) {
-  const label = paramPlain(p.name, p.label)
-  const term = `param.${p.name}`
-  const hint = p.help?.meaning ?? p.description
-  const tech = <span className="mono muted">{p.name}</span>
-  const hintNode = hint ? (
-    <>
-      {hint} <span className="muted">({tech})</span>
-    </>
-  ) : (
-    tech
-  )
-  switch (p.type) {
-    case 'number':
-    case 'integer': {
-      const empty = value === null || value === undefined || value === ''
-      const num = empty ? NaN : typeof value === 'number' ? value : Number(value)
-      const step = p.step ?? (p.type === 'integer' ? 1 : 0.01)
-      const hasRange = p.min !== undefined && p.max !== undefined && p.max - p.min <= 100000
-      return (
-        <Field
-          label={
-            <span className="row-between">
-              {label}
-              <span className="mono">{Number.isFinite(num) ? num : 'auto'}</span>
-            </span>
-          }
-          term={term}
-          hint={hintNode}
-        >
-          <div className="slider-row">
-            {hasRange && (
-              <input
-                type="range"
-                min={p.min}
-                max={p.max}
-                step={step}
-                value={Number.isFinite(num) ? num : (p.default as number) ?? p.min ?? 0}
-                disabled={disabled}
-                onChange={(e) => onChange(p.type === 'integer' ? Math.round(Number(e.target.value)) : Number(e.target.value))}
-              />
-            )}
-            <input
-              type="number"
-              className="num"
-              min={p.min}
-              max={p.max}
-              step={step}
-              placeholder="auto"
-              value={Number.isFinite(num) ? num : ''}
-              disabled={disabled}
-              onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-            />
-          </div>
-        </Field>
-      )
-    }
-    case 'boolean':
-      return (
-        <Field label={label} inline term={term} hint={hintNode}>
-          <input type="checkbox" checked={!!value} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-        </Field>
-      )
-    case 'select':
-      return (
-        <Field label={label} term={term} hint={hintNode}>
-          <select value={String(value ?? '')} disabled={disabled} onChange={(e) => onChange(e.target.value === '' ? null : coerceOption(p, e.target.value))}>
-            {(value === null || value === undefined) && <option value="">automatic</option>}
-            {(p.options ?? []).map((o) => (
-              <option key={String(o)} value={String(o)}>
-                {p.name === 'model' ? modelLabel(String(o)) : String(o)}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )
-    case 'multiselect': {
-      const arr = Array.isArray(value) ? (value as unknown[]).map(String) : []
-      return (
-        <Field label={label} term={term} hint={hintNode}>
-          <div className="check-row">
-            {(p.options ?? []).map((o) => (
-              <label key={String(o)} className="check-item">
-                <input
-                  type="checkbox"
-                  checked={arr.includes(String(o))}
-                  disabled={disabled}
-                  onChange={(e) => {
-                    const next = e.target.checked ? [...arr, String(o)] : arr.filter((x) => x !== String(o))
-                    onChange((p.options ?? []).filter((x) => next.includes(String(x))))
-                  }}
-                />
-                {String(o)}
-              </label>
-            ))}
-          </div>
-        </Field>
-      )
-    }
-    default:
-      return (
-        <Field label={label} term={term} hint={hintNode}>
-          <input value={Array.isArray(value) ? value.join(', ') : String(value ?? '')} placeholder={p.default === null ? 'automatic' : undefined} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
-        </Field>
-      )
-  }
-}
-
-function coerceOption(p: AdjustParam, raw: string): unknown {
-  const match = (p.options ?? []).find((o) => String(o) === raw)
-  return match !== undefined ? match : raw
 }

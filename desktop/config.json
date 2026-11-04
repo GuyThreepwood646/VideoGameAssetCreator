@@ -20,11 +20,11 @@
     "url": "http://127.0.0.1:8765",
     "healthPath": "/api/health",
     "python": "backend/.venv/Scripts/python.exe",
-    "args": ["-m", "uvicorn", "vgac.main:app", "--port", "8765"],
+    "args": ["-m", "uvicorn", "vgac.main:app", "--host", "127.0.0.1", "--port", "8765"],
     "cwd": "backend",
     "log": "runtime/logs/backend.log",
     "processName": "python.exe",
-    "processMatch": "uvicorn vgac.main:app --port 8765",
+    "processMatch": "uvicorn vgac.main:app --host 127.0.0.1 --port 8765",
     "startTimeoutSeconds": 120
   },
   "frontend": {

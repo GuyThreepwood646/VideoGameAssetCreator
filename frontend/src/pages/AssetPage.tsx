@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, STAGES, stageState, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type StageId, type Suggestion } from '../api'
+import { api, ApiError, STAGES, stageState, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest } from '../components/ui'
@@ -22,63 +22,85 @@ export default function AssetPage() {
   const [showLog, setShowLog] = useState(false)
   const [variantOpen, setVariantOpen] = useState(false)
   const [baseName, setBaseName] = useState<string | null>(null)
-  // Autopilot state; apAvailable is null until known, false when the backend has no autopilot (404).
-  const [autopilot, setAutopilot] = useState<AutopilotState | null>(null)
+  // The autopilot state has one home: asset.autopilot. Asset reloads, the websocket
+  // event, the mount fetch and the action responses all go through newerAutopilot.
+  // apAvailable is null until known, false when the backend has no autopilot (404).
   const [apAvailable, setApAvailable] = useState<boolean | null>(null)
   const [apDismissed, setApDismissed] = useState<string | null>(null) // updated_at of a dismissed paused card
   const [apBusy, setApBusy] = useState(false)
   const reloadTimer = useRef<number | null>(null)
   const followRef = useRef<string | null>(null) // the autopilot stage the page last followed to
+  const jobStatusRef = useRef(new Map<string, JobStatus>()) // last seen status per job id
+  const autopilot = asset && asset.id === aid ? (asset.autopilot ?? null) : null
+
+  const applyAutopilot = useCallback((assetId: string, st: AutopilotState) => {
+    setAsset((cur) => {
+      if (!cur || cur.id !== assetId) return cur
+      const next = newerAutopilot(cur.autopilot ?? null, st)
+      return next === cur.autopilot ? cur : { ...cur, autopilot: next }
+    })
+  }, [])
 
   const reload = useCallback(async () => {
     try {
       const a = await api.getAsset(aid)
-      setAsset(a)
+      // A reload that started before a newer websocket state must not undo it.
+      setAsset((cur) => (cur && cur.id === a.id && cur.autopilot ? { ...a, autopilot: newerAutopilot(cur.autopilot, a.autopilot ?? null) } : a))
       setError(null)
-      if ('autopilot' in a) {
-        setApAvailable(true)
-        if (a.autopilot) setAutopilot(a.autopilot)
-      }
+      if ('autopilot' in a) setApAvailable(true)
     } catch (e) {
       setError(e)
     }
   }, [aid])
 
-  // Probe the autopilot endpoint once per asset (the asset itself may not carry the state).
+  // Load the asset, then read the autopilot state once (this also finds out whether
+  // the backend has the autopilot at all). After that the websocket pushes it.
   useEffect(() => {
-    setAutopilot(null)
     setApAvailable(null)
     setApDismissed(null)
     followRef.current = null
+    jobStatusRef.current = new Map()
     let alive = true
-    api.getAutopilot(aid).then(
-      (st) => {
+    void reload()
+      .then(() => api.getAutopilot(aid))
+      .then(
+        (st) => {
+          if (!alive) return
+          setApAvailable(true)
+          applyAutopilot(aid, st)
+        },
+        (e) => {
+          if (!alive) return
+          if (e instanceof ApiError && e.status === 404) setApAvailable(false)
+        },
+      )
+    api.listJobs({ asset_id: aid }).then(
+      (list) => {
         if (!alive) return
-        setApAvailable(true)
-        setAutopilot(st)
+        for (const j of list) jobStatusRef.current.set(j.id, j.status)
+        setJobs(list)
       },
-      (e) => {
-        if (!alive) return
-        if (e instanceof ApiError && e.status === 404) setApAvailable(false)
+      () => {
+        if (alive) setJobs([])
       },
     )
     return () => {
       alive = false
     }
-  }, [aid])
+  }, [aid, reload, applyAutopilot])
 
-  // While the autopilot runs, re-read its state every few seconds (covers the polling fallback).
+  // Slow fallback while the autopilot runs, in case a websocket event was missed.
   const apRunning = autopilot?.status === 'running'
   useEffect(() => {
     if (!apRunning) return
     const t = window.setInterval(() => {
       api.getAutopilot(aid).then(
-        (st) => setAutopilot((cur) => (cur && cur.status === st.status && cur.stage === st.stage && cur.job_id === st.job_id ? cur : st)),
+        (st) => applyAutopilot(aid, st),
         () => undefined,
       )
-    }, 3000)
+    }, AUTOPILOT_FALLBACK_MS)
     return () => window.clearInterval(t)
-  }, [aid, apRunning])
+  }, [aid, apRunning, applyAutopilot])
 
   // Follow the autopilot from stage to stage while the page is looking at the stage it was on.
   const apStageNow = autopilotStage(autopilot)
@@ -97,11 +119,6 @@ export default function AssetPage() {
       void reload()
     }, 150)
   }, [reload])
-
-  useEffect(() => {
-    void reload()
-    api.listJobs({ asset_id: aid }).then(setJobs, () => setJobs([]))
-  }, [aid, reload])
 
   // The base asset's name when this is a variant.
   const baseId = asset?.base_asset_id ?? null
@@ -145,23 +162,27 @@ export default function AssetPage() {
           next[i] = ev.job
           return next
         })
-        if (ev.job.status === 'done' || ev.job.status === 'error' || ev.job.status === 'cancelled' || ev.job.status === 'running') reloadSoon()
+        // Progress events only move the bar; the asset is refetched when a job changes status.
+        const seen = jobStatusRef.current
+        const before = seen.get(ev.job.id)
+        seen.set(ev.job.id, ev.job.status)
+        if (before !== ev.job.status) reloadSoon()
       } else if (ev.type === 'version' && ev.version.asset_id === aid) {
         reloadSoon()
       } else if (ev.type === 'autopilot' && ev.asset_id === aid) {
         setApAvailable(true)
-        setAutopilot(ev.autopilot)
+        applyAutopilot(aid, ev.autopilot)
         reloadSoon()
       }
     },
-    [aid, reloadSoon],
+    [aid, reloadSoon, applyAutopilot],
   )
 
   const apCall = async (fn: () => Promise<AutopilotState | void>) => {
     setApBusy(true)
     try {
       const st = await fn()
-      if (st) setAutopilot(st)
+      if (st) applyAutopilot(aid, st)
       setApDismissed(null)
       setError(null)
       reloadSoon()
@@ -192,6 +213,7 @@ export default function AssetPage() {
   const cancelJob = async (id: string) => {
     try {
       const j = await api.cancelJob(id)
+      jobStatusRef.current.set(j.id, j.status)
       setJobs((list) => list.map((x) => (x.id === id ? j : x)))
       reloadSoon()
     } catch (e) {
@@ -321,6 +343,21 @@ export default function AssetPage() {
       )}
     </div>
   )
+}
+
+const AUTOPILOT_FALLBACK_MS = 30000
+
+// The newer of two autopilot states by updated_at (the incoming one wins a tie).
+// Returns cur itself when nothing changed, so callers can skip a re-render.
+// The backend never clears a state once set, so a missing incoming state keeps cur.
+function newerAutopilot(cur: AutopilotState | null, next: AutopilotState | null): AutopilotState | null {
+  if (!next) return cur
+  if (!cur) return next
+  const a = cur.updated_at ? Date.parse(cur.updated_at) : NaN
+  const b = next.updated_at ? Date.parse(next.updated_at) : NaN
+  if (Number.isFinite(a) && Number.isFinite(b) && b < a) return cur
+  if (JSON.stringify(cur) === JSON.stringify(next)) return cur
+  return next
 }
 
 // "Make a variant": a sibling asset with one change that keeps this one's identity.

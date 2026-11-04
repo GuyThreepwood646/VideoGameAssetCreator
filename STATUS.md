@@ -100,10 +100,12 @@ Incorporate REVIEW.md into the plan, define the end goal in industry terms (ARCH
 
 - Desktop launcher (desktop/, Electron): status window supervising ComfyUI A (Comfy Desktop owns it), ComfyUI B, backend and UI; starts what is down, never duplicates, kills only what it started; tray and Services menu; portable exe at desktop/dist/VGAC-portable.exe and a VGAC.lnk on the desktop. Committed with the README refresh. Test projects tidied: Autopilot demo (goblin), Pipeline runs: Knight (with the winter-cloak variant), Wolf, Treasure chest, Cobblestone material.
 
+- 2026-11-04 audits: docs/SECURITY-AUDIT.md (0 critical, 0 high, 3 medium, 7 low, 3 info) and docs/CODE-AUDIT.md (3 high, 14 medium, 20 low). Acted on: trusted-host and cross-site origin guards plus websocket origin check (F1 F2 F4), delivery folder slug and containment (F3), Unity project path validation (F5), stage params validated against the Adjust schema and mask_png checked as PNG (F6 F7), rig output confined to the ComfyUI output folder (F8), Electron will-navigate and permission guards and IPC sender check (F9), Vite library containment (F10), explicit --host 127.0.0.1 (F12); Version.job_id populated (B1), reject sticks and cancel gives "rejected" (B2 H4), feedback published thread-safe (B3), Unity project import reads its own report (B4), autopilot resumes after restart (B6), shutdown re-queues the running job (B7), check guide height_m and texture help (B9), LOD "none" honoured (B10), parent walk-back only over category skips (B11), progress message throttle 5 s (P1), selectinload and one-query gallery (P3), queue status count (P7), dead code and swallowed exceptions (H2 H5), style_preset validated. Deferred (recorded in docs/CODE-AUDIT.md "later"): B5 turnaround parent swap, P2 sync work on the event loop, P5 P6, D1 to D9 single-source refactors, H1 autopilot layering, H3 config constants, U1 full StagePanel split. Housekeeping done: POST /api/versions/{vid}/feedback (thumbs), GET /api/gallery, category silhouette_min thresholds, frontend thumbs, /glossary, /gallery, painter picker with suggestion, rig overlay double-offset fix. 45 backend tests.
+
 ## Next
 
-- UX items still open from docs/UX-REVIEW.md: L thumbs up/down on keep, M glossary and example gallery. (G autopilot, H presets, K finishing moment are done.)
-- Job step index (step/steps on Job) so the status line is exact; a concept_model picker on the asset form now that the backend stores it.
-- Silhouette audit calibration for long-bodied animals (wolf IoU 0.55 flagged although the mesh is good).
+- All docs/UX-REVIEW.md items are done (A to M).
+- Job step index (step/steps on Job) so the status line is exact.
+- Code audit "later" items (see the 2026-11-04 audits entry above), starting with D1/D2 single sources for the model list and stage order served through /api/stages.
 - Add Unity snapshot rendering (VgacImport.Snapshot) so the export stage shows animation frames.
 - Phase 3 items: style lock UI (frontend has it), tileable material category, sprite sheets, local VLM judge.

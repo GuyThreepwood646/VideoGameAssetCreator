@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { Check, JobStatus, StageId, VersionStatus } from '../api'
 import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, metricPlain, type CheckContext } from '../help'
 import { Info } from './Info'
@@ -290,25 +290,25 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
   const [tick, setTick] = useState(0)
-  const alive = useRef(true)
   useEffect(() => {
-    alive.current = true
+    // One flag per run: a slower earlier run that resolves after a newer one started is ignored.
+    let alive = true
     setLoading(true)
     fn().then(
       (d) => {
-        if (!alive.current) return
+        if (!alive) return
         setData(d)
         setError(null)
         setLoading(false)
       },
       (e) => {
-        if (!alive.current) return
+        if (!alive) return
         setError(e)
         setLoading(false)
       },
     )
     return () => {
-      alive.current = false
+      alive = false
     }
   }, [...deps, tick]) // eslint-disable-line react-hooks/exhaustive-deps
   return { data, error, loading, reload: () => setTick((t) => t + 1) }

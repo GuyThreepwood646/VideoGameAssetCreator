@@ -1,6 +1,7 @@
 id: quadruped
 label: Quadruped
 rig_engine: skintoken
+silhouette_min: 0.5
 symmetric: true
 size_m: 1.2
 parts_default: []
