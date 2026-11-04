@@ -302,3 +302,30 @@ def test_autopilot_runs_all_stages(client):
     assert len(full["stages"]["concept"]) == 2 and all(full["selected"].get(s) for s in full["stages"] if full["stages"][s])
     assert full["autopilot"]["status"] == "done"
     assert client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "bogus"}).status_code == 400
+
+
+
+def test_autopilot_fix_and_continue(client):
+    import time
+    p = client.post("/api/projects", json={"name": "apf"}).json()
+    a = client.post(f"/api/projects/{p['id']}/assets", json={"name": "crate", "category": "prop_rigid", "style_preset": "painted", "prompt": "a crate"}).json()
+    client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never"})
+    for _ in range(200):
+        st = client.get(f"/api/assets/{a['id']}/autopilot").json()
+        if st["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert st["status"] == "done"
+    # A fix on mesh re-runs mesh as an adjust, unkeeps prep..export and rebuilds them.
+    st = client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never", "fix": {"stage": "mesh", "params": {"target_faces": 1234}}}).json()
+    assert st["status"] == "running"
+    for _ in range(300):
+        st = client.get(f"/api/assets/{a['id']}/autopilot").json()
+        if st["status"] in ("done", "error", "paused"):
+            break
+        time.sleep(0.1)
+    assert st["status"] == "done", st
+    full = client.get(f"/api/assets/{a['id']}").json()
+    meshes = full["stages"]["mesh"]
+    assert len(meshes) == 2 and meshes[-1]["selected"] and meshes[-1]["params"].get("target_faces") == 1234
+    assert len(full["stages"]["export"]) == 2 and full["stages"]["export"][-1]["selected"]
