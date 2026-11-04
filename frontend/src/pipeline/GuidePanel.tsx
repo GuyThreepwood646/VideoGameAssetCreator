@@ -3,10 +3,11 @@
 // the page: it lives here, except in the review state where it is the "Yes, keep it"
 // answer next to the picture.
 import { Link } from 'react-router'
-import { libraryUrl, previousStage, STAGES, versionsOf, type Asset, type Job, type StageId, type StageInfo, type Version } from '../api'
+import { libraryUrl, previousStage, STAGES, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure } from '../components/ui'
 import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
 export type GuideState = 'blocked' | 'empty' | 'running' | 'error' | 'review' | 'selected' | 'finished'
 
@@ -20,10 +21,23 @@ type Props = {
   selected: Version | undefined
   busy: boolean
   baseName?: string | null
+  // Autopilot: null state when the backend has no autopilot yet (apAvailable false).
+  autopilot: AutopilotState | null
+  apAvailable: boolean | null
+  autopilotActions: AutopilotActions
+  onMakeVariant: () => void
   onRun: () => void
   onRunNext: (next: StageId) => void
   onRetry: (failed: Version) => void
   onCancel: (jobId: string) => void
+}
+
+// Whether the finishing card (turntable, downloads, what next) shows for this stage.
+export function finishShown(asset: Asset, stage: StageId, autopilot: AutopilotState | null, jobs: Job[]): boolean {
+  if (!isFinished(asset)) return false
+  if (isAutopilotActive(autopilot)) return false
+  if (guideState(asset, stage, jobs, undefined) === 'running') return false
+  return autopilot?.status === 'done' || stage === 'export'
 }
 
 export function nextStage(stage: StageId): StageId | null {
@@ -50,7 +64,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, onRun, onRunNext, onRetry, onCancel }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage)
@@ -58,6 +72,24 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   const state = guideState(asset, stage, jobs, selected)
   const est = stageEstimate(stage, info(stage), estimates)
   const stepNo = STAGES.indexOf(stage) + 1
+
+  // The autopilot owns the card while it runs, is paused or stopped.
+  if (autopilot && isAutopilotActive(autopilot)) {
+    return <AutopilotCard asset={asset} stage={stage} autopilot={autopilot} jobs={jobs} stages={stages} estimates={estimates} busy={busy} actions={autopilotActions} />
+  }
+  // The finishing moment, once every step is kept.
+  if (finishShown(asset, stage, autopilot, jobs)) {
+    return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} />
+  }
+
+  // "Make it" shows whenever nothing is running and the asset is not finished.
+  // It is the primary button except while a result waits to be judged (review:
+  // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
+  const makeIt =
+    apAvailable !== false && state !== 'running' && !isFinished(asset) ? (
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(body)} />
+    ) : null
+  const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' ? <span className="or-just">{node}</span> : node)
 
   let happened: string
   let now: string
@@ -69,7 +101,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       happened = 'Nothing here yet.'
       now = `First ${stageVerb(prev!, info(prev!)).toLowerCase()} and keep one of the results.`
       action = (
-        <Link className="btn primary" to={`/assets/${asset.id}/${prev}`}>
+        <Link className={'btn' + (makeIt ? '' : ' primary')} to={`/assets/${asset.id}/${prev}`}>
           Go to {stagePlain(prev!, info(prev!))}
         </Link>
       )
@@ -79,7 +111,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       happened = prev ? `You kept a result from "${stagePlain(prev, info(prev))}".` : `You described "${asset.name}".`
       now = stageHelp(stage, info(stage)).meaning
       action = (
-        <button type="button" className="primary" disabled={busy} onClick={onRun}>
+        <button type="button" className={makeIt ? '' : 'primary'} disabled={busy} onClick={onRun}>
           {stageVerb(stage, info(stage))}
           <span className="btn-est">{fmtDuration(est)}</span>
         </button>
@@ -141,7 +173,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       if (nextVersions.length) {
         now = `"${stagePlain(next!, nextInfo)}" already has ${nextVersions.length} result${nextVersions.length > 1 ? 's' : ''}. Continue there.`
         action = (
-          <Link className="btn primary" to={`/assets/${asset.id}/${next}`}>
+          <Link className={'btn' + (makeIt ? '' : ' primary')} to={`/assets/${asset.id}/${next}`}>
             Go to {stagePlain(next!, nextInfo)}
           </Link>
         )
@@ -149,7 +181,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
         now = stageHelp(next!, nextInfo).meaning
         const nextEst = stageEstimate(next!, nextInfo, estimates)
         action = (
-          <button type="button" className="primary" disabled={busy} onClick={() => onRunNext(next!)}>
+          <button type="button" className={makeIt ? '' : 'primary'} disabled={busy} onClick={() => onRunNext(next!)}>
             {stageVerb(next!, nextInfo)}
             <span className="btn-est">{fmtDuration(nextEst)}</span>
           </button>
@@ -185,8 +217,14 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
         <div className="guide-now">{now}</div>
         {extra}
         {activeFailed && <div className="muted small">The version you are looking at failed: {humanError(active.error)}</div>}
+        {apAvailable === false && state !== 'running' && <div className="muted small">Autopilot (one button that runs every step) is not available on this backend yet.</div>}
       </div>
-      {action && <div className="guide-action">{action}</div>}
+      {(action || makeIt) && (
+        <div className={'guide-action' + (makeIt && action ? ' guide-action-col' : '')}>
+          {makeIt}
+          {action && secondary(action)}
+        </div>
+      )}
     </section>
   )
 }

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'">
+<title>VGAC status</title>
+<style>
+  :root {
+    --bg: #1b1d21; --panel: #24272d; --panel-2: #1f2227; --input: #15171a; --border: #3a3e46; --border-strong: #4d525c;
+    --text: #e4e6ea; --muted: #9aa0a8; --ok: #5fbf7a; --bad: #d9655f; --warn: #d8a84a; --accent: #6ea4e8; --accent-ink: #0f1216;
+    --radius: 4px;
+    font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.4;
+    color: var(--text); background: var(--bg); color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; flex-direction: column; padding: 16px; gap: 12px; background: var(--bg); user-select: none; }
+  header { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  #summary { color: var(--muted); }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  li { display: grid; grid-template-columns: 14px 1fr auto; column-gap: 10px; align-items: center;
+       background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); justify-self: center; }
+  .dot.up { background: var(--ok); }
+  .dot.down, .dot.error { background: var(--bad); }
+  .dot.starting, .dot.building, .dot.checking, .dot.unknown { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .name { font-weight: 600; }
+  .url { color: var(--muted); font-size: 12px; margin-left: 8px; font-weight: 400; }
+  .msg { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .msg.error { color: var(--bad); }
+  .actions { display: flex; gap: 6px; }
+  button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border-strong); border-radius: var(--radius);
+           padding: 5px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #build { flex: 1; min-height: 0; display: none; flex-direction: column; gap: 4px; }
+  #build.show { display: flex; }
+  #build h2 { font-size: 12px; font-weight: 600; margin: 0; color: var(--muted); }
+  pre { flex: 1; margin: 0; overflow: auto; background: var(--input); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 8px; font: 11px/1.4 Consolas, 'Cascadia Mono', monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
+  footer { display: flex; gap: 8px; align-items: center; margin-top: auto; }
+  footer .spacer { flex: 1; }
+  footer .hint { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Video Game Asset Creator</h1>
+    <span id="summary">Checking services</span>
+  </header>
+  <ul id="services"></ul>
+  <section id="build">
+    <h2>Frontend build output</h2>
+    <pre id="buildlog"></pre>
+  </section>
+  <footer>
+    <button data-action="openLogs">Logs folder</button>
+    <button data-action="openExports">Exports folder</button>
+    <span class="spacer"></span>
+    <span class="hint" id="hint"></span>
+    <button data-action="openApp" id="openApp">Open app</button>
+    <button data-action="quit">Quit</button>
+  </footer>
+<script>
+  const list = document.getElementById('services');
+  const summary = document.getElementById('summary');
+  const build = document.getElementById('build');
+  const buildlog = document.getElementById('buildlog');
+  const openApp = document.getElementById('openApp');
+  const hint = document.getElementById('hint');
+
+  function render(snap) {
+    list.replaceChildren(...snap.services.map((s) => {
+      const li = document.createElement('li');
+      const dot = document.createElement('span'); dot.className = 'dot ' + s.state;
+      const body = document.createElement('div');
+      const name = document.createElement('div'); name.className = 'name';
+      name.textContent = s.name;
+      const url = document.createElement('span'); url.className = 'url'; url.textContent = s.url;
+      name.appendChild(url);
+      const msg = document.createElement('div'); msg.className = 'msg' + (s.state === 'error' ? ' error' : '');
+      msg.textContent = s.message + (s.owned && s.pid ? ` (PID ${s.pid})` : '');
+      body.append(name, msg);
+      const actions = document.createElement('div'); actions.className = 'actions';
+      for (const a of s.actions || []) {
+        const b = document.createElement('button'); b.textContent = a.label; b.dataset.action = a.id;
+        actions.appendChild(b);
+      }
+      li.append(dot, body, actions);
+      return li;
+    }));
+    const up = snap.services.filter((s) => s.state === 'up').length;
+    summary.textContent = snap.allUp ? 'All services up' : `${up} of ${snap.services.length} services up`;
+    build.classList.toggle('show', snap.build.active || (snap.build.lines.length > 0 && !snap.allUp));
+    const text = snap.build.lines.join('\n');
+    if (buildlog.textContent !== text) { buildlog.textContent = text; buildlog.scrollTop = buildlog.scrollHeight; }
+    openApp.className = snap.allUp ? 'primary' : '';
+    openApp.textContent = snap.allUp ? 'Open app' : 'Open app anyway';
+    const backendUp = snap.services.find((s) => s.key === 'backend');
+    openApp.disabled = !(backendUp && backendUp.state === 'up');
+    hint.textContent = snap.allUp ? '' : (backendUp && backendUp.state === 'up' ? 'Some services are still down' : 'Waiting for the backend');
+  }
+
+  document.body.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-action]');
+    if (!b) return;
+    b.disabled = true;
+    window.vgac.action(b.dataset.action).finally(() => { b.disabled = false; });
+  });
+
+  window.vgac.onState(render);
+  window.vgac.requestState().then(render);
+</script>
+</body>
+</html>

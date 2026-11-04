@@ -22,30 +22,42 @@ const FILE_NAMES: Record<string, string> = {
   manifest: 'manifest',
 }
 
-export function ExportView({ version }: { version: Version }) {
+const DELIVERABLE_KEYS = ['fbx', 'glb', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+
+// The download buttons for an export version (also used by the finishing card).
+export function Deliverables({ version }: { version: Version }) {
+  const fileKeys = DELIVERABLE_KEYS.filter((k) => version.files[k])
+  return (
+    <div className="deliverables">
+      {fileKeys.map((k) => (
+        <a key={k} className="btn" href={libraryUrl(version.files[k])} download={version.files[k].split('/').pop()} title={version.files[k]}>
+          {FILE_NAMES[k] ?? k}
+        </a>
+      ))}
+      {fileKeys.length === 0 && <span className="muted small">No files in this version.</span>}
+    </div>
+  )
+}
+
+// hideReady: the finishing card above already shows the title and the downloads.
+export function ExportView({ version, hideReady = false }: { version: Version; hideReady?: boolean }) {
   const glb = libraryUrl(version.files.glb)
   const lods = Array.isArray(version.metrics.lods) ? (version.metrics.lods as Lod[]) : []
   const unity = (version.metrics.unity_report ?? null) as UnityReport | null
   const sheet = libraryUrl(version.files.sprite_sheet ?? version.files.sheet)
   const clips = Array.isArray(version.metrics.clips) ? (version.metrics.clips as string[]) : []
   const lod0 = lods[0]?.triangles
-  const fileKeys = ['fbx', 'glb', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet'].filter((k) => version.files[k])
 
   return (
     <div className="export-view">
-      <div className="ready-box">
-        <div className="ready-title">Your asset is ready</div>
-        <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot; GLB works on the web.</div>
-        <div className="deliverables">
-          {fileKeys.map((k) => (
-            <a key={k} className="btn" href={libraryUrl(version.files[k])} download={version.files[k].split('/').pop()} title={version.files[k]}>
-              {FILE_NAMES[k] ?? k}
-            </a>
-          ))}
-          {fileKeys.length === 0 && <span className="muted small">No files in this version.</span>}
+      {!hideReady && (
+        <div className="ready-box">
+          <div className="ready-title">Your asset is ready</div>
+          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot; GLB works on the web.</div>
+          <Deliverables version={version} />
         </div>
-      </div>
-      {glb ? <Viewer url={glb} height={400} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      )}
+      {!hideReady && (glb ? <Viewer url={glb} height={400} /> : <div className="placeholder-box">No 3D model in this version.</div>)}
       <Disclosure label="What is inside">
         <div className="export-grid">
           <div>

@@ -66,3 +66,22 @@ export function preferredConceptModel(assetId: string): string | null {
     return null
   }
 }
+
+// The "Build it automatically after creating" checkbox on the asset form (default on).
+const AUTOPILOT_KEY = 'vgac.autopilotDefault'
+
+export function autopilotDefault(): boolean {
+  try {
+    return localStorage.getItem(AUTOPILOT_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function rememberAutopilotDefault(on: boolean) {
+  try {
+    localStorage.setItem(AUTOPILOT_KEY, on ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}

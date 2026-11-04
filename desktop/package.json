@@ -1,0 +1,55 @@
+{
+  "name": "vgac-desktop",
+  "productName": "Video Game Asset Creator",
+  "version": "0.1.0",
+  "description": "Desktop launcher for Video Game Asset Creator: starts ComfyUI B, the backend and the UI, then opens the app.",
+  "main": "main.js",
+  "private": true,
+  "author": "VGAC",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node make-icon.js",
+    "dist": "node make-icon.js && electron-builder --win portable"
+  },
+  "build": {
+    "appId": "local.vgac.desktop",
+    "productName": "VGAC",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "services.js",
+      "procs.js",
+      "status.html",
+      "config.json",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "VGAC-${version}-portable.exe"
+    },
+    "portable": {
+      "artifactName": "VGAC-portable.exe"
+    },
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "en-US"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^45.2.2",
+    "electron-builder": "^26.18.0"
+  }
+}
