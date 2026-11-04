@@ -53,7 +53,7 @@ export function activeJobFor(jobs: Job[], versions: Version[]): Job | undefined 
 
 export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: Version | undefined): GuideState {
   const versions = versionsOf(asset, stage)
-  const prev = previousStage(stage)
+  const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? asset.selected?.[prev] || versionsOf(asset, prev).some((v) => v.selected) : true
   if (versions.some((v) => v.status === 'running' || v.status === 'queued') || activeJobFor(jobs, versions)) return 'running'
   if (selected && selected.status === 'done') return stage === 'export' ? 'finished' : 'selected'
@@ -67,7 +67,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
 export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
-  const prev = previousStage(stage)
+  const prev = previousStage(stage, asset.category)
   const next = nextStage(stage)
   const state = guideState(asset, stage, jobs, selected)
   const est = stageEstimate(stage, info(stage), estimates)

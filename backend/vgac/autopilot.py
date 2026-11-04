@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 
-from .db import Asset, Version, session_factory
+from . import pipeline
+from .db import Asset, Version, _iso, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .reference import STAGE_ORDER
 
@@ -26,13 +26,9 @@ POLL_SECONDS = 3.0
 CONCEPT_CANDIDATES = 2
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def default_state(until_stage: str = "export", stop_on: str = "block") -> dict[str, Any]:
     return {"status": "idle", "stage": None, "job_id": None, "version_id": None, "reason": None, "stop_on": stop_on,
-            "until_stage": until_stage, "started_at": None, "updated_at": _now(), "stages_done": []}
+            "until_stage": until_stage, "started_at": None, "updated_at": _iso(utcnow()), "stages_done": []}
 
 
 def get_state(a: Asset) -> dict[str, Any]:
@@ -44,7 +40,7 @@ def _set(aid: str, **fields: Any) -> dict[str, Any]:
         a = db.get(Asset, aid)
         state = get_state(a)
         state.update(fields)
-        state["updated_at"] = _now()
+        state["updated_at"] = _iso(utcnow())
         a.autopilot = state
         db.commit()
     bus.publish_threadsafe({"type": "autopilot", "asset_id": aid, "autopilot": state})
@@ -85,7 +81,7 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     t = _tasks.get(aid)
     if t is not None and not t.done():
         return _set(aid)
-    state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_now(), pending_fix=fix or None)
+    state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_iso(utcnow()), pending_fix=fix or None)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
 
@@ -126,8 +122,6 @@ async def _wait(version_ids: list[str]) -> None:
 
 
 async def _run(aid: str) -> None:
-    from . import main as m  # late import: main imports this module
-
     try:
         while True:
             with session_factory()() as db:
@@ -140,7 +134,7 @@ async def _run(aid: str) -> None:
                 fix = state.get("pending_fix")
                 if fix:
                     fstage = fix["stage"]
-                    kept = m._selected(db, aid, fstage)
+                    kept = pipeline.selected(db, aid, fstage)
                     later = STAGE_ORDER[STAGE_ORDER.index(fstage) + 1:]
                     # Everything built on the old result is superseded: mark it rejected so it is rebuilt, not re-kept.
                     for v in a.versions:
@@ -149,11 +143,11 @@ async def _run(aid: str) -> None:
                             if v.status == "done":
                                 v.status = "rejected"
                     if kept is not None and kept.status == "done":
-                        v = m._new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
-                        job = m._submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
-                        pairs = [{"job": m.job_to_dict(job), "version": m.version_to_dict(v)}]
+                        v = pipeline.new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
+                        job = pipeline.submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
+                        pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
                     else:
-                        pairs = m._run_stage_internal(db, a, fstage, count=1, params=fix.get("params") or {})
+                        pairs = pipeline.run_stage(db, a, fstage, count=1, params=fix.get("params") or {})
                     for v in a.versions:
                         if v.stage == fstage:
                             v.selected = False
@@ -166,7 +160,7 @@ async def _run(aid: str) -> None:
                 stages_done: list[str] = []
                 target: str | None = None
                 for s in STAGE_ORDER:
-                    sel = m._selected(db, aid, s)
+                    sel = pipeline.selected(db, aid, s)
                     if sel is not None and sel.status == "done":
                         stages_done.append(s)
                         if s == until:
@@ -190,7 +184,7 @@ async def _run(aid: str) -> None:
                     best = sorted(finished, key=_rank, reverse=True)[0]
                     ok, reason = _passes(best, stop_on)
                     if ok:
-                        m._select(db, best)
+                        pipeline.select(db, best)
                         _set(aid, stage=target, version_id=best.id, stages_done=stages_done)
                         continue
                     _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=reason, stages_done=stages_done)
@@ -198,7 +192,7 @@ async def _run(aid: str) -> None:
                 # Run the stage.
                 count = CONCEPT_CANDIDATES if target == "concept" else 1
                 try:
-                    pairs = m._run_stage_internal(db, a, target, count=count, params={})
+                    pairs = pipeline.run_stage(db, a, target, count=count, params={})
                 except Exception as e:  # noqa: BLE001
                     _set(aid, status="error", stage=target, reason=f"Could not start the step: {e}", stages_done=stages_done)
                     return
@@ -217,7 +211,7 @@ async def _run(aid: str) -> None:
                 if not ok:
                     _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=reason)
                     return
-                m._select(db, best)
+                pipeline.select(db, best)
                 _set(aid, stage=target, version_id=best.id, job_id=None)
     except asyncio.CancelledError:
         raise

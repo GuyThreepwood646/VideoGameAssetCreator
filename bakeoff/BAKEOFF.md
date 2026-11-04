@@ -92,3 +92,7 @@ Findings:
 6. itch.io's download endpoint rejects scripted keys; OpenGameArt hosts the same CC0 zips with direct links.
 
 Decisions recorded in STATUS.md (D1 to D6). Phase 1 (application build) started on these engines.
+
+## Historical note (2026-11-04)
+
+The Blender scripts in this folder (procanim.py, rig_info.py, render_views.py, render_anim.py, sprites.py, finish.py) are the experiment-era ancestors of backend/vgac/blender/*.py. They import GLBs without the bone_shape_type fix and the Icosphere removal and read sys.argv directly. They are kept as the record of the bake-off and are not maintained; the backend copies (now sharing backend/vgac/blender/_common.py) are the live versions.

@@ -25,6 +25,7 @@ from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import Job, Version, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
+from .reference import STAGE_ORDER
 
 log = logging.getLogger("vgac.jobs")
 MESSAGE_THROTTLE_SECONDS = 5.0
@@ -32,16 +33,27 @@ MESSAGE_THROTTLE_SECONDS = 5.0
 GB = 1024**3
 HOST = "host"
 
-# Which instance runs each stage. Concept, turnaround and rig need the image/rig GPU (B); mesh needs the 3D GPU (A);
-# prep and export are Blender and Unity on the host. The material category is images only, so it stays on B.
-STAGE_INSTANCE = {"concept": "b", "turnaround": "b", "mesh": "a", "prep": HOST, "rig": "b", "export": HOST}
-MATERIAL_INSTANCE = {"concept": "b", "turnaround": "b", "mesh": "b", "prep": HOST, "rig": HOST, "export": HOST}
 
 
-def instance_for(stage: str, category: str) -> str:
-    if category == "material":
-        return MATERIAL_INSTANCE[stage]
-    return STAGE_INSTANCE[stage]
+def instance_for(stage: str, category: str, settings: Settings | None = None) -> str:
+    """Which instance runs `stage` (Settings.stage_instances, or material_stage_instances for the material category)."""
+    settings = settings or get_settings()
+    table = settings.material_stage_instances if category == "material" else settings.stage_instances
+    return table[stage]
+
+
+def check_stage_instances(settings: Settings) -> None:
+    """Every stage maps to a configured instance (or the host), for both tables and the judge. Raises ValueError."""
+    known = set(settings.instances) | {HOST}
+    for label, table in (("stage_instances", settings.stage_instances), ("material_stage_instances", settings.material_stage_instances)):
+        missing = [s for s in STAGE_ORDER if s not in table]
+        if missing:
+            raise ValueError(f"config {label} has no instance for stage(s) {missing}")
+        bad = {s: i for s, i in table.items() if i not in known}
+        if bad:
+            raise ValueError(f"config {label} names unknown instance(s) {bad}; known: {sorted(known)}")
+    if settings.judge_instance not in settings.instances:
+        raise ValueError(f"config judge_instance {settings.judge_instance!r} is not a ComfyUI instance; known: {sorted(settings.instances)}")
 
 
 def job_kind(stage: str, op: str, category: str) -> str:
@@ -342,6 +354,14 @@ class InstanceWorker:
             raise asyncio.CancelledError()
 
 
+_active: "JobQueue | None" = None
+
+
+def active_queue() -> "JobQueue | None":
+    """The running queue (set by JobQueue.start, cleared by stop), so the API and autopilot share one."""
+    return _active
+
+
 class JobQueue:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -359,6 +379,12 @@ class JobQueue:
             db.commit()
 
     async def start(self) -> None:
+        global _active
+        try:
+            check_stage_instances(self.settings)
+        except ValueError as e:
+            # Not fatal: jobs for the stages it names fail at submit with "unknown instance", as before.
+            log.warning("%s", e)
         bus.bind()
         self._requeue_orphans()
         for name, inst in self.settings.instances.items():
@@ -367,11 +393,17 @@ class JobQueue:
             w = InstanceWorker(name=name, settings=self.settings, clients=self.clients)
             w.start()
             self.workers[name] = w
+        _active = self
 
     async def stop(self) -> None:
+        global _active
         for w in self.workers.values():
             await w.stop()
         self.workers.clear()
+        for c in self.clients.values():
+            await c.aclose()
+        if _active is self:
+            _active = None
 
     def instances(self) -> list[str]:
         return list(self.settings.instances) + [HOST]
@@ -436,11 +468,16 @@ class JobQueue:
         w.wake.set()
 
     def status(self) -> dict[str, Any]:
-        out = {}
+        """Per worker: paused, current job, queued count and the next job in the order the worker picks (one query)."""
+        ranked = select(
+            Job.instance, Job.id,
+            func.row_number().over(partition_by=Job.instance, order_by=(Job.created_at, Job.id)).label("rn"),
+            func.count().over(partition_by=Job.instance).label("n"),
+        ).where(Job.status == "queued").subquery()
         with session_factory()() as db:
-            for name, w in self.workers.items():
-                pending = Job.instance == name, Job.status == "queued"
-                next_id = db.scalar(select(Job.id).where(*pending).order_by(Job.created_at, Job.id).limit(1))
-                n = db.scalar(select(func.count()).select_from(Job).where(*pending)) or 0
-                out[name] = {"paused": w.paused, "current_job_id": w.current_job_id, "queued": int(n), "next_job_id": next_id}
+            heads = {row.instance: (row.id, int(row.n)) for row in db.execute(select(ranked.c.instance, ranked.c.id, ranked.c.n).where(ranked.c.rn == 1))}
+        out = {}
+        for name, w in self.workers.items():
+            next_id, n = heads.get(name, (None, 0))
+            out[name] = {"paused": w.paused, "current_job_id": w.current_job_id, "queued": n, "next_job_id": next_id}
         return out

@@ -1,7 +1,10 @@
 """Reference data: categories, styles, platforms, models, stage adjust schemas.
 
-Loaded once from backend/vgac/data and served by /api/categories, /api/styles, /api/platforms
+Loaded once from backend/vgac/data and served by /api/categories, /api/styles, /api/platforms, /api/models
 and /api/stages. Call reload() after editing the YAML files while the server runs.
+
+Single sources (docs/CODE-AUDIT.md D1, D2): STAGE_ORDER is the one stage tuple (db, jobs, stages, guidance and
+autopilot import it), and the concept models are the `concept: true` entries of data/models.yaml.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ STAGE_LABELS = {
     "rig": "Rig",
     "export": "Export",
 }
-CONCEPT_MODELS = ("zturbo", "zbase", "klein", "anima", "pixel", "chroma")
 TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "top")
 
 
@@ -39,7 +41,8 @@ def _param(name: str, type_: str, default: Any, label: str | None = None, descri
 # (budgets, size, symmetry) are filled in by the stage module at run time.
 STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     "concept": [
-        _param("model", "select", "zturbo", options=list(CONCEPT_MODELS), description="Concept engine; the project style lock or style preset decides when empty"),
+        # options are filled from models.yaml when the schema is read (_schema), so a new model needs no edit here.
+        _param("model", "select", "zturbo", options=None, description="Concept engine; the project style lock or style preset decides when empty"),
         _param("seed", "integer", None, min=0, max=2**31 - 1, description="Random when empty"),
         _param("width", "integer", 1024, min=512, max=2048, step=64),
         _param("height", "integer", 1024, min=512, max=2048, step=64),
@@ -98,7 +101,7 @@ def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]
     out = dict(params or {})
     if stage not in STAGE_SCHEMAS:
         return out
-    spec = {p["name"]: p for p in STAGE_SCHEMAS[stage]}
+    spec = {p["name"]: p for p in _schema(stage)}
     for key, value in list(out.items()):
         p = spec.get(key)
         if p is None or value is None:
@@ -192,11 +195,57 @@ def models() -> dict[str, dict[str, Any]]:
     return _data()["models"]
 
 
+MANIFEST_MODEL_KEYS = ("name", "file", "licence", "version")
+
+
 def model_record(mid: str) -> dict[str, Any]:
+    """The model as the export manifest records it: id, name, file, licence, version."""
     m = models().get(mid)
     if m is None:
         return {"id": mid, "name": mid, "licence": "unknown", "version": ""}
+    return {"id": mid, **{k: m[k] for k in MANIFEST_MODEL_KEYS if k in m}}
+
+
+def concept_models() -> tuple[str, ...]:
+    """Ids of the concept painters, in models.yaml order."""
+    return tuple(mid for mid, m in models().items() if m.get("concept"))
+
+
+def concept_model(mid: str) -> dict[str, Any]:
+    """A concept model's models.yaml entry with its id. Raises KeyError for an id that is not a concept model."""
+    m = models().get(mid)
+    if m is None or not m.get("concept"):
+        raise KeyError(f"unknown concept model {mid!r}; known: {list(concept_models())}")
     return {"id": mid, **m}
+
+
+def model_label(mid: str | None) -> str:
+    """The short app label of a model, or the id when models.yaml has none."""
+    if not mid:
+        return ""
+    m = models().get(mid) or {}
+    return str(m.get("label") or m.get("name") or mid)
+
+
+def models_public() -> list[dict[str, Any]]:
+    """GET /api/models: the concept painters with what the app shows about them."""
+    out = []
+    for mid in concept_models():
+        m = models()[mid]
+        out.append({"id": mid, "label": model_label(mid), "description": m.get("description", ""), "name": m.get("name", mid),
+                    "licence": m.get("licence", "unknown"), "version": m.get("version", ""), "default_steps": m.get("default_steps"),
+                    "negative": bool(m.get("negative"))})
+    return out
+
+
+def _schema(stage: str) -> list[dict[str, Any]]:
+    """STAGE_SCHEMAS[stage] with live option lists (the concept model knob reads models.yaml)."""
+    out = []
+    for entry in STAGE_SCHEMAS[stage]:
+        if stage == "concept" and entry["name"] == "model":
+            entry = {**entry, "options": list(concept_models())}
+        out.append(entry)
+    return out
 
 
 def stages() -> list[dict[str, Any]]:
@@ -205,7 +254,7 @@ def stages() -> list[dict[str, Any]]:
     for s in STAGE_ORDER:
         g = guidance.stage_guide(s)
         schema = []
-        for entry in STAGE_SCHEMAS[s]:
+        for entry in _schema(s):
             ph = guidance.param_help(entry["name"])
             schema.append({**entry, "help": ph["help"], "simple": ph["simple"]})
         out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]),

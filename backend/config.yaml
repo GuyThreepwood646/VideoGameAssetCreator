@@ -32,3 +32,10 @@ min_free_ram_gb: 24
 
 # Seconds a single ComfyUI job may take before the worker fails it.
 job_timeout_seconds: 3600
+
+# Optional (defaults shown): which instance runs each stage, the local judge's instance, and the time limit of a
+# routine Blender step in seconds.
+# stage_instances: {concept: b, turnaround: b, mesh: a, prep: host, rig: b, export: host}
+# material_stage_instances: {concept: b, turnaround: b, mesh: b, prep: host, rig: host, export: host}
+# judge_instance: b
+# blender_timeout_seconds: 1800

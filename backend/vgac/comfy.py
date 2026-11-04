@@ -54,6 +54,9 @@ log = logging.getLogger(__name__)
 
 
 class ComfyClient:
+    """One long-lived httpx.AsyncClient per instance (created on first use, closed by aclose(), which JobQueue.stop
+    calls), so the once-a-second /history polls reuse a connection. Each request passes its own timeout."""
+
     def __init__(self, base_url: str, name: str = "", timeout: float = 30.0, input_dir: Path | str | None = None,
                  output_dir: Path | str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -61,16 +64,41 @@ class ComfyClient:
         self.timeout = timeout
         self.input_dir = Path(input_dir) if input_dir else None
         self.output_dir = Path(output_dir) if output_dir else None
+        self._http: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
+        self._vram_cache: tuple[float, dict[str, Any]] | None = None
 
-    def _client(self, timeout: float | None = None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(base_url=self.base_url, timeout=timeout or self.timeout)
+    def _client(self) -> httpx.AsyncClient:
+        loop = asyncio.get_running_loop()
+        # A client's connections belong to the loop that opened them; a different loop (a test, a one-off asyncio.run)
+        # gets its own client instead of reusing pooled connections from a dead loop.
+        if self._http is None or self._http.is_closed or self._http_loop is not loop:
+            self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
+            self._http_loop = loop
+        return self._http
+
+    async def aclose(self) -> None:
+        http, self._http, self._http_loop = self._http, None, None
+        if http is not None and not http.is_closed:
+            try:
+                await http.aclose()
+            except Exception as e:  # noqa: BLE001  (a client from another, closed loop cannot be closed cleanly)
+                log.debug("instance %s: closing the HTTP client failed: %s", self.name, e)
 
     async def system_stats(self) -> dict[str, Any]:
         """Raw /system_stats payload (devices with vram_total, vram_free, and so on)."""
-        async with self._client(timeout=3.0) as c:
-            r = await c.get("/system_stats")
-            r.raise_for_status()
-            return r.json()
+        r = await self._client().get("/system_stats", timeout=3.0)
+        r.raise_for_status()
+        return r.json()
+
+    async def cached_vram_summary(self, max_age: float = 5.0) -> dict[str, Any]:
+        """vram_summary(), reused for `max_age` seconds: /api/health is polled every 2 s."""
+        now = time.monotonic()
+        if self._vram_cache is not None and now - self._vram_cache[0] < max_age:
+            return self._vram_cache[1]
+        summary = await self.vram_summary()
+        self._vram_cache = (time.monotonic(), summary)
+        return summary
 
     async def vram_summary(self) -> dict[str, Any]:
         """Reachability plus VRAM per device. Never raises."""
@@ -102,15 +130,14 @@ class ComfyClient:
         body: dict[str, Any] = {"prompt": graph}
         if client_id:
             body["client_id"] = client_id
-        async with self._client() as c:
-            r = await c.post("/prompt", json=body)
-            if r.status_code >= 400:
-                try:
-                    data = r.json()
-                except Exception:
-                    data = {}
-                raise ComfyError(f"/prompt returned {r.status_code}: {r.text[:2000]}", node_errors=data.get("node_errors") or {})
-            data = r.json()
+        r = await self._client().post("/prompt", json=body)
+        if r.status_code >= 400:
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            raise ComfyError(f"/prompt returned {r.status_code}: {r.text[:2000]}", node_errors=data.get("node_errors") or {})
+        data = r.json()
         if data.get("node_errors"):
             raise ComfyError("node_errors: " + str(data["node_errors"])[:4000], node_errors=data["node_errors"])
         prompt_id = data.get("prompt_id")
@@ -119,16 +146,14 @@ class ComfyClient:
         return prompt_id
 
     async def history(self, prompt_id: str) -> dict[str, Any]:
-        async with self._client() as c:
-            r = await c.get(f"/history/{prompt_id}")
-            r.raise_for_status()
-            return r.json()
+        r = await self._client().get(f"/history/{prompt_id}")
+        r.raise_for_status()
+        return r.json()
 
     async def queue_state(self) -> dict[str, Any]:
-        async with self._client(timeout=5.0) as c:
-            r = await c.get("/queue")
-            r.raise_for_status()
-            return r.json()
+        r = await self._client().get("/queue", timeout=5.0)
+        r.raise_for_status()
+        return r.json()
 
     async def wait(self, prompt_id: str, poll_seconds: float = 1.0, timeout: float | None = None,
                    on_poll: Callable[[float], None] | None = None) -> dict[str, Any]:
@@ -198,13 +223,12 @@ class ComfyClient:
         dest = Path(dest_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         params = {"filename": item["filename"], "subfolder": item.get("subfolder") or "", "type": item.get("type") or "output"}
-        async with self._client(timeout=600.0) as c:
-            async with c.stream("GET", "/view", params=params) as r:
-                if r.status_code >= 400:
-                    raise ComfyError(f"/view returned {r.status_code} for {item['filename']}")
-                with open(dest, "wb") as f:
-                    async for chunk in r.aiter_bytes():
-                        f.write(chunk)
+        async with self._client().stream("GET", "/view", params=params, timeout=600.0) as r:
+            if r.status_code >= 400:
+                raise ComfyError(f"/view returned {r.status_code} for {item['filename']}")
+            with open(dest, "wb") as f:
+                async for chunk in r.aiter_bytes():
+                    f.write(chunk)
         return dest
 
     async def upload_image(self, path: Path | str, subfolder: str = "", overwrite: bool = True) -> dict[str, Any]:
@@ -216,8 +240,7 @@ class ComfyClient:
             data["subfolder"] = subfolder
         with open(p, "rb") as f:
             files = {"image": (p.name, f, mime)}
-            async with self._client(timeout=120.0) as c:
-                r = await c.post("/upload/image", data=data, files=files)
+            r = await self._client().post("/upload/image", data=data, files=files, timeout=120.0)
         if r.status_code >= 400:
             raise ComfyError(f"/upload/image returned {r.status_code}: {r.text[:500]}")
         return r.json()
@@ -241,7 +264,6 @@ class ComfyClient:
 
     async def interrupt(self) -> None:
         try:
-            async with self._client(timeout=5.0) as c:
-                await c.post("/interrupt")
+            await self._client().post("/interrupt", timeout=5.0)
         except Exception as e:  # noqa: BLE001
             log.warning("instance %s: interrupt failed: %s", self.name, e)

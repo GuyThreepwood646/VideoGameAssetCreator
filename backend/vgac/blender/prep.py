@@ -15,33 +15,20 @@ import sys
 import bmesh
 import bpy
 
-
-def _import_glb(path):
-    """glTF import without the bone display-shape helper object the importer otherwise adds for skins."""
-    try:
-        bpy.ops.import_scene.gltf(filepath=path, bone_shape_type="NONE")
-    except TypeError:
-        bpy.ops.import_scene.gltf(filepath=path)
-    for o in [o for o in bpy.context.scene.objects if o.type == "MESH" and not o.vertex_groups and o.name.lower().startswith("icosphere")]:
-        bpy.data.objects.remove(o, do_unlink=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402  (shared helpers next to this script)
 from mathutils import Vector
 
-argv = sys.argv[sys.argv.index("--") + 1:]
+argv = _common.after_double_dash()
 src, dst, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
 
-
-def opt(flag, default):
-    return argv[argv.index(flag) + 1] if flag in argv else default
-
-
-height = float(opt("--height", 1.8))
-symmetric = "--symmetric" in argv
-pivot = opt("--pivot", "base")
-smooth_angle = float(opt("--smooth-angle", 60.0))
+height = float(_common.opt("--height", 1.8))
+symmetric = _common.flag("--symmetric")
+pivot = _common.opt("--pivot", "base")
+smooth_angle = float(_common.opt("--smooth-angle", 60.0))
 os.makedirs(os.path.dirname(dst), exist_ok=True)
 
-bpy.ops.wm.read_factory_settings(use_empty=True)
-_import_glb(src)
+_common.open_glb(src)
 meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
 if not meshes:
@@ -111,7 +98,7 @@ if symmetric:
     bpy.ops.object.mode_set(mode="OBJECT")
 
 # Triangle budget: symmetrize and welding can push the count over the platform budget; decimate back to it.
-budget = int(opt("--budget", 0))
+budget = int(_common.opt("--budget", 0))
 mesh.data.calc_loop_triangles()
 if budget and len(mesh.data.loop_triangles) > budget:
     mod = mesh.modifiers.new("budget", "DECIMATE")
