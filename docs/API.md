@@ -40,7 +40,8 @@ Job
 
 Health and reference data
 - GET /api/health -> instances, host RAM, queue state (exists)
-- GET /api/categories -> [ {id, label, rig_engine, symmetric, pose_block, size_m, parts_default, budgets{platform: {triangles, texture}} } ]
+- GET /api/categories -> [ {id, label, rig_engine, symmetric, pose_block, size_m, parts_default, budgets{platform: {triangles, texture}}, views, lod_ratios, topology, input_view_default, skips: [stage]} ] (`skips`: stages the category does not have; runs build on the stage before them)
+- GET /api/models -> [ {id, label, description, name, licence, version, default_steps, negative} ] the concept models, from backend/vgac/data/models.yaml (entries with `concept: true`); concept_model, style_lock.model and the concept `model` param must be one of these ids
 - GET /api/styles -> [ {id, label, model, prompt_block} ]
 - GET /api/platforms -> [ {id, label, triangles_character, triangles_prop, texture} ]
 - GET /api/stages -> [ {id, label, adjust_schema: JSON-schema-like list of params with type/min/max/default} ]

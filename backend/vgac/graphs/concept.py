@@ -2,21 +2,22 @@
 
 zimage_graph is bakeoff/gen_concepts.py node for node. The others follow
 C:/Users/evanr/.claude/skills/comfyui-game-art/scripts/stylemodels.py.
+
+Which model uses which builder, its default steps, its SaveImage node and whether it takes a negative prompt are
+read from data/models.yaml (docs/CODE-AUDIT.md D1); this module only holds the graph functions.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
+from .. import reference
 from . import BS
 
 PAINT_NEG = ("comic book art, cartoon, cel shading, thick black outlines, ink line art, heavy linework, flat colors, sticker, "
              "anime, vector art, 3d render, plastic skin, low quality, worst quality, blurry, smudged, deformed hands, extra fingers, "
              "extra limbs, duplicate person, text, letters, numbers, logo, watermark, signature, border, frame")
 ANIMA_NEG = "worst quality, low quality, artist name, blurry, jpeg artifacts, text, watermark"
-
-DEFAULT_STEPS = {"zturbo": 8, "zbase": 30, "klein": 4, "anima": 10, "pixel": 8, "chroma": 30}
-
 
 def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8) -> dict[str, Any]:
     ckpt = "Z-Image" + BS + "z-image-turbo-fp8-aio.safetensors"
@@ -120,28 +121,36 @@ def chroma_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height:
     }
 
 
-BUILDERS = {
-    "zturbo": zimage_graph,
-    "zbase": zbase_graph,
-    "klein": klein_graph,
-    "anima": anima_graph,
-    "pixel": pixel_graph,
-    "chroma": chroma_graph,
-}
+def _spec(model: str) -> dict[str, Any]:
+    try:
+        return reference.concept_model(model)
+    except KeyError as e:
+        raise ValueError(str(e.args[0])) from None
+
+
+def builder(model: str) -> Callable[..., dict[str, Any]]:
+    """The graph function models.yaml names for `model`."""
+    name = _spec(model).get("builder")
+    fn = globals().get(str(name))
+    if not callable(fn) or not str(name).endswith("_graph"):
+        raise ValueError(f"concept model {model!r}: models.yaml names builder {name!r}, which graphs/concept.py does not define")
+    return fn
+
+
+def default_steps(model: str) -> int:
+    return int(_spec(model)["default_steps"])
 
 
 def concept_graph(model: str, prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
                   steps: int | None = None, negative: str | None = None) -> dict[str, Any]:
     """Dispatch to the builder for `model`. `negative` applies to models that use a real negative prompt."""
-    builder = BUILDERS.get(model)
-    if builder is None:
-        raise ValueError(f"unknown concept model {model!r}; known: {sorted(BUILDERS)}")
-    kwargs: dict[str, Any] = {"width": width, "height": height, "steps": steps or DEFAULT_STEPS[model]}
-    if negative and model in ("zbase", "chroma"):
+    fn = builder(model)
+    kwargs: dict[str, Any] = {"width": width, "height": height, "steps": steps or default_steps(model)}
+    if negative and _spec(model).get("negative"):
         kwargs["neg"] = negative
-    return builder(prompt, seed, prefix, **kwargs)
+    return fn(prompt, seed, prefix, **kwargs)
 
 
 def save_node(model: str) -> str:
     """Node id of the SaveImage that holds the final image for `model`."""
-    return {"zturbo": "8", "zbase": "9", "klein": "12", "anima": "9", "pixel": "11", "chroma": "9"}[model]
+    return str(_spec(model)["save_node"])

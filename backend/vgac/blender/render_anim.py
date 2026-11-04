@@ -11,24 +11,16 @@ import sys
 
 import bpy
 
-
-def _import_glb(path):
-    """glTF import without the bone display-shape helper object the importer otherwise adds for skins."""
-    try:
-        bpy.ops.import_scene.gltf(filepath=path, bone_shape_type="NONE")
-    except TypeError:
-        bpy.ops.import_scene.gltf(filepath=path)
-    for o in [o for o in bpy.context.scene.objects if o.type == "MESH" and not o.vertex_groups and o.name.lower().startswith("icosphere")]:
-        bpy.data.objects.remove(o, do_unlink=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402  (shared helpers next to this script)
 from mathutils import Vector
 
-argv = sys.argv[sys.argv.index("--") + 1:]
+argv = _common.after_double_dash()
 src, out_dir = os.path.abspath(argv[0]), os.path.abspath(argv[1])
 nframes = int(argv[2]) if len(argv) > 2 else 6
 size = int(argv[3]) if len(argv) > 3 else 384
 os.makedirs(out_dir, exist_ok=True)
-bpy.ops.wm.read_factory_settings(use_empty=True)
-_import_glb(src)
+_common.open_glb(src)
 arm = next((o for o in bpy.context.scene.objects if o.type == "ARMATURE"), None)
 meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 pts = [o.matrix_world @ Vector(c) for o in meshes for c in o.bound_box]

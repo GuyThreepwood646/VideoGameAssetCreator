@@ -2,8 +2,8 @@
 // model, platform, category and style has an entry {plain, meaning, why, technical}.
 // The backend may send its own help (stage.help, param.help, check.help); the
 // functions below prefer that and fall back to this registry.
-import type { Category, Check, Platform, StageId, StageInfo, StylePreset } from './api'
-import { STAGES } from './api'
+import type { Category, Check, ModelInfo, Platform, StageId, StageInfo, StylePreset } from './api'
+import { api, STAGES, stageEstimateSeconds } from './api'
 
 export type HelpEntry = {
   plain: string // the plain name shown as a label
@@ -19,14 +19,14 @@ const H = (plain: string, meaning: string, why: string, technical: string): Help
 // ---------------------------------------------------------------------------
 
 // placeholder: the example shown in the empty "Describe the change" box of this step.
-export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; estimate: number; placeholder: string }
+// Time estimates are not kept here: they come from GET /api/stages (see stageEstimate).
+export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; placeholder: string }
 
 export const STAGE_TEXT: Record<StageId, StageText> = {
   concept: {
     plain: 'Describe',
     verb: 'Make concept art',
     gerund: 'Painting the concept art',
-    estimate: 30,
     placeholder: 'e.g. make the helmet open-faced and the shield round',
     help: H('Describe', 'Concept art: the first picture of your asset, painted from your description.', 'Everything that follows is built from this picture, so get the look right here.', 'concept'),
   },
@@ -34,7 +34,6 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Check all sides',
     verb: 'Check all sides',
     gerund: 'Drawing the other sides',
-    estimate: 120,
     placeholder: 'e.g. the back view should show the cloak',
     help: H('Check all sides', 'We look at your character from the front, sides and back so the 3D model gets the back right.', 'If a view looks wrong, regenerate just that view before building the model.', 'turnaround'),
   },
@@ -42,7 +41,6 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Build the 3D model',
     verb: 'Build the 3D model',
     gerund: 'Building the 3D model',
-    estimate: 240,
     placeholder: 'e.g. thicker sword, less bulky shoulders',
     help: H('Build the 3D model', 'Turns the pictures into a 3D shape with painted surfaces.', 'This is the raw model; the next step tidies it for the game.', 'mesh'),
   },
@@ -50,7 +48,6 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Clean up for the game',
     verb: 'Clean up for the game',
     gerund: 'Cleaning up for the game',
-    estimate: 90,
     placeholder: 'e.g. more wear on the armour',
     help: H('Clean up for the game', 'Shrinks the model to the platform budget, fixes holes, sets its size and makes a tidy texture.', 'Game engines need a clean, light model; this step makes it one.', 'prep'),
   },
@@ -58,7 +55,6 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Make it move',
     verb: 'Make it move',
     gerund: 'Adding a skeleton',
-    estimate: 120,
     placeholder: 'e.g. smoother bending at the left elbow',
     help: H('Make it move', 'Adds a skeleton and attaches the surface to it so the model can be animated.', 'Without this the model is a statue; with it, walk and idle animations work.', 'rig'),
   },
@@ -66,7 +62,6 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Hand off to the game',
     verb: 'Hand off to the game',
     gerund: 'Packing the files for the game',
-    estimate: 90,
     placeholder: 'e.g. drop the sprite sheet, add another detail level',
     help: H('Hand off to the game', 'Packs the model, textures, skeleton and animations into files a game engine can load.', 'This is the finished asset you drop into your game.', 'export'),
   },
@@ -95,12 +90,12 @@ export function stageHelp(stage: StageId, info?: StageInfo | null): HelpEntry {
   return { plain: stagePlain(stage, info), meaning: h.meaning || base.meaning, why: h.why || base.why, technical: h.technical || base.technical }
 }
 
-// Seconds a stage usually takes: the backend estimate, else the /api/suggest estimate, else the registry.
+// Seconds a stage usually takes: the backend estimate, else the /api/suggest estimate, else the fallback in api.ts.
 export function stageEstimate(stage: StageId, info?: StageInfo | null, estimates?: Partial<Record<string, number>> | null): number {
   if (info?.estimate_seconds && info.estimate_seconds > 0) return info.estimate_seconds
   const s = estimates?.[stage]
   if (typeof s === 'number' && s > 0) return s
-  return STAGE_TEXT[stage].estimate
+  return stageEstimateSeconds(stage)
 }
 
 export function fmtDuration(seconds: number, prefix = 'about '): string {
@@ -118,18 +113,57 @@ export function fmtDuration(seconds: number, prefix = 'about '): string {
 // Models, platforms, categories, styles
 // ---------------------------------------------------------------------------
 
-export const MODEL_HELP: Record<string, HelpEntry> = {
-  zturbo: H('Z-Image Turbo', 'Fast painted look.', 'Good default: a clean painted concept in under half a minute.', 'zturbo (Z-Image Turbo)'),
-  zbase: H('Z-Image Base', 'Higher quality, slower.', 'Use it when the Turbo result is close but not detailed enough.', 'zbase (Z-Image Base)'),
-  klein: H('FLUX.2 Klein 4B', 'Quick drafts.', 'Fastest way to try several ideas before committing.', 'klein (FLUX.2 Klein 4B)'),
-  anima: H('Anima Turbo', 'Anime line art.', 'Pick it for cel-shaded, anime-style characters.', 'anima (Anima Turbo)'),
-  pixel: H('Z-Image Pixel Art', 'Pixel art sprites.', 'Pick it for retro, pixel-art games.', 'pixel (Z-Image Pixel Art)'),
-  chroma: H('Chroma1-HD', 'Loose painterly.', 'Pick it for a rough, expressive painted look.', 'chroma (Chroma1-HD)'),
+// Model labels come from GET /api/models (the backend's data/models.yaml). These are used until it has loaded, or
+// when it cannot be reached (the mock).
+const MODEL_LABEL_FALLBACK: Record<string, string> = {
+  zturbo: 'Z-Image Turbo',
+  zbase: 'Z-Image Base',
+  klein: 'FLUX.2 Klein 4B',
+  anima: 'Anima Turbo',
+  pixel: 'Z-Image Pixel Art',
+  chroma: 'Chroma1-HD',
+}
+
+let apiModels: Record<string, ModelInfo> | null = null
+let modelsRequest: Promise<void> | null = null
+
+// Fetch the model list once; modelLabel starts it on first use. Call it early to have labels for the first render.
+export function loadModels(): Promise<void> {
+  if (!modelsRequest) {
+    modelsRequest = api.models().then(
+      (list) => {
+        apiModels = Object.fromEntries(list.map((m) => [m.id, m]))
+      },
+      () => {
+        modelsRequest = null // keep the fallback labels; try again on a later call
+      },
+    )
+  }
+  return modelsRequest
+}
+
+// Plain-language help per model; the label (plain) is filled from the API by modelHelp().
+export const MODEL_HELP: Record<string, Omit<HelpEntry, 'plain'>> = {
+  zturbo: { meaning: 'Fast painted look.', why: 'Good default: a clean painted concept in under half a minute.', technical: 'zturbo (Z-Image Turbo)' },
+  zbase: { meaning: 'Higher quality, slower.', why: 'Use it when the Turbo result is close but not detailed enough.', technical: 'zbase (Z-Image Base)' },
+  klein: { meaning: 'Quick drafts.', why: 'Fastest way to try several ideas before committing.', technical: 'klein (FLUX.2 Klein 4B)' },
+  anima: { meaning: 'Anime line art.', why: 'Pick it for cel-shaded, anime-style characters.', technical: 'anima (Anima Turbo)' },
+  pixel: { meaning: 'Pixel art sprites.', why: 'Pick it for retro, pixel-art games.', technical: 'pixel (Z-Image Pixel Art)' },
+  chroma: { meaning: 'Loose painterly.', why: 'Pick it for a rough, expressive painted look.', technical: 'chroma (Chroma1-HD)' },
 }
 
 export function modelLabel(id: string | null | undefined): string {
   if (!id) return ''
-  return MODEL_HELP[id]?.plain ?? id
+  if (!apiModels) void loadModels()
+  return apiModels?.[id]?.label || MODEL_LABEL_FALLBACK[id] || id
+}
+
+export function modelHelp(id: string): HelpEntry | null {
+  const h = MODEL_HELP[id]
+  const m = apiModels?.[id]
+  if (h) return { plain: modelLabel(id), ...h }
+  if (m) return H(m.label, m.description ? m.description.charAt(0).toUpperCase() + m.description.slice(1) + '.' : '', '', id)
+  return null
 }
 
 export function modelReason(id: string | null | undefined): string {
@@ -496,7 +530,7 @@ export function helpFor(term: string): HelpEntry | null {
     case 'stage':
       return STAGES.includes(name as StageId) ? STAGE_TEXT[name as StageId].help : null
     case 'model':
-      return MODEL_HELP[name] ?? null
+      return modelHelp(name)
     case 'platform':
       return PLATFORM_HELP[name] ?? null
     case 'category':

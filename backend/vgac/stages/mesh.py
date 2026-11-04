@@ -10,6 +10,7 @@ re-runs with merged params.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,17 @@ from .. import library, quality
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, convert_graph
-from ..imaging import VIEW_YAW, best_alignment, silhouette
+from ..imaging import VIEW_YAW, best_alignment, contact_sheet, silhouette
 from .base import StageContext, random_seed
 
 TEXTURE_KEYS = ("base_color", "metallic", "roughness", "normal", "ao")
+
+
+def _silhouette_match(views_dir: Path, yaws, refs: dict[str, Path]) -> dict[str, Any]:
+    """Rendered silhouettes against the reference cutouts, best yaw alignment. Pure CPU work, run in a thread."""
+    rendered = {yaw: silhouette(views_dir / f"shade_{yaw}.png") for yaw in yaws}
+    ref_sils = {v: silhouette(p) for v, p in refs.items()}
+    return best_alignment(ref_sils, rendered)
 
 
 def _input_image(sc: StageContext, input_view: str) -> Path:
@@ -89,14 +97,12 @@ async def audit(sc: StageContext) -> None:
     try:
         sc.progress(0.8, "silhouette audit render")
         views_dir = sc.dir / "views"
-        await sc.blender("render_views.py", [glb, views_dir, 256, 15, "shade"], log_name="render_views.log", timeout=1800)
+        await sc.blender("render_views.py", [glb, views_dir, 256, 15, "shade"], log_name="render_views.log", timeout=sc.settings.blender_timeout_seconds)
         info = json.loads((views_dir / "info.json").read_text())
         sc.set_metrics(triangles=info.get("triangles"), dims=info.get("dims"))
         sc.register("views_dir", views_dir / "info.json")
         if refs:
-            rendered = {yaw: silhouette(views_dir / f"shade_{yaw}.png") for yaw in info.get("yaws", range(0, 360, 15))}
-            ref_sils = {v: silhouette(p) for v, p in refs.items()}
-            best = best_alignment(ref_sils, rendered)
+            best = await asyncio.to_thread(_silhouette_match, views_dir, info.get("yaws", range(0, 360, 15)), refs)
             sc.set_metrics(silhouette_iou=best["mean"], views={v: {"silhouette_iou": x} for v, x in best["views"].items()},
                            silhouette_offset=best["offset"], silhouette_sign=best["sign"])
         front = views_dir / "shade_0.png"
@@ -104,9 +110,8 @@ async def audit(sc: StageContext) -> None:
             sc.register("preview", front)
         sheet_paths = [views_dir / f"shade_{y}.png" for y in range(0, 360, 45) if (views_dir / f"shade_{y}.png").is_file()]
         if sheet_paths:
-            from ..imaging import contact_sheet
-
-            sc.register("sheet", contact_sheet(sheet_paths, sc.dir / "sheet.png", cell=256, columns=4, labels=[p.stem for p in sheet_paths]))
+            sheet = await asyncio.to_thread(contact_sheet, sheet_paths, sc.dir / "sheet.png", cell=256, columns=4, labels=[p.stem for p in sheet_paths])
+            sc.register("sheet", sheet)
     except Exception as e:  # Blender missing or render failed: keep the mesh, record the problem
         sc.set_metrics(audit_error=str(e)[:500])
     await judge(sc)
@@ -119,7 +124,7 @@ async def judge(sc: StageContext) -> None:
     checks = quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, sc.budget["texture"])
     tris = sc.version.metrics.get("triangles")
     if tris is not None and sc.budget["triangles"]:
-        checks.append(quality.check("triangle_budget", tris <= sc.budget["triangles"] * 1.05, tris, sc.budget["triangles"]))
+        checks.append(quality.check("triangle_budget", tris <= sc.budget["triangles"] * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, sc.budget["triangles"]))
     iou = sc.version.metrics.get("silhouette_iou")
     if iou is not None:
         # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,

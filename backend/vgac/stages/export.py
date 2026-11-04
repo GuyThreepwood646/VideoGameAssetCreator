@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .. import library, quality
-from ..imaging import contact_sheet
+from ..db import _iso, utcnow
+from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
-from .base import StageContext, slug
+from .base import StageContext, manifest_provenance, slug
 
 TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 
@@ -99,6 +99,24 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     return report
 
 
+def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Arguments and flags for VgacImport.Run, the same for the sandbox import and the project import (CODE-AUDIT
+    D7): -vgacInput, -vgacName, -nographics, -vgacHumanoid for a rigged humanoid, and -vgacClips when the humanoid's
+    clip library exists. -> (args, flags, warnings)."""
+    humanoid = _is_humanoid(sc)
+    flags = ["-nographics"] + (["-vgacHumanoid"] if humanoid else [])
+    args: dict[str, Any] = {"-vgacInput": sc.dir, "-vgacName": name}
+    warnings: list[str] = []
+    clips_lib = params.get("clips_library", "ual1")
+    if humanoid and clips_lib and clips_lib != "none":
+        lib = sc.settings.clips_libraries.get(clips_lib)
+        if lib and Path(lib).is_file():
+            args["-vgacClips"] = lib
+        else:
+            warnings.append(f"clips library {clips_lib!r} not found")
+    return args, flags, warnings
+
+
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
     if not params.get("unity", True):
         return None
@@ -108,17 +126,11 @@ async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[st
     if sc.file("fbx") is None:
         sc.set_metrics(unity_error="no FBX to import")
         return None
-    humanoid = _is_humanoid(sc)
-    flags = ["-nographics"] + (["-vgacHumanoid"] if humanoid else [])
-    args: dict[str, Any] = {"-vgacInput": sc.dir, "-vgacName": name}
-    clips_lib = params.get("clips_library", "ual1")
-    if humanoid and clips_lib and clips_lib != "none":
-        lib = sc.settings.clips_libraries.get(clips_lib)
-        if lib and Path(lib).is_file():
-            args["-vgacClips"] = lib
-            sc.use_model(clips_lib)
-        else:
-            sc.set_metrics(clips_warning=f"clips library {clips_lib!r} not found")
+    args, flags, warnings = _unity_args(sc, params, name)
+    if "-vgacClips" in args:
+        sc.use_model(params.get("clips_library", "ual1"))
+    for w in warnings:
+        sc.set_metrics(clips_warning=w)
     sc.use_model("unity")
     sc.progress(0.5, "Unity sandbox import")
     report: dict[str, Any] | None = None
@@ -185,28 +197,13 @@ async def _sprites(sc: StageContext, params: dict[str, Any]) -> None:
 
 
 def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | None, unity_report: dict[str, Any] | None) -> dict[str, Any]:
-    models: dict[str, dict[str, Any]] = {}
-    seeds: dict[str, Any] = {}
-    lineage = sc.lineage()
-    for entry in lineage:
-        v = sc.db.get(type(sc.version), entry["version_id"])
-        if v is None:
-            continue
-        for m in v.metrics.get("models") or []:
-            models[m.get("id", m.get("name"))] = m
-        if v.params.get("seed") is not None:
-            seeds[v.stage] = v.params.get("seed")
-        if v.stage == "turnaround":
-            seeds["turnaround_views"] = {k: info.get("seed") for k, info in (v.metrics.get("views") or {}).items()}
-    for m in sc.models_used.values():
-        models[m.get("id", m.get("name"))] = m
+    prov = manifest_provenance(sc)
+    models, seeds, lineage = prov["models"], prov["seeds"], prov["lineage"]
     rig_v = sc.stage_version("rig")
     textures = {}
     for key in TEXTURE_KEYS:
         p = sc.file(key)
         if p is not None:
-            from ..imaging import image_size
-
             textures[key] = {"file": p.name, "size": list(image_size(p))}
     return {
         "name": sc.asset.name,
@@ -214,7 +211,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "asset_id": sc.asset.id,
         "project_id": sc.project.id,
         "version_id": sc.version.id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": _iso(utcnow()),
         "category": sc.asset.category,
         "style_preset": sc.asset.style_preset,
         "style_lock": sc.project.style_lock,
@@ -257,7 +254,8 @@ async def judge(sc: StageContext) -> None:
         if rig_v.metrics.get("rigid"):
             checks += quality.rig_checks({"bones": report.get("bones", 0)}, rig_expected=False)
         elif info_path is not None:
-            checks += quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True)
+            checks += quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
+                                         group_per_vertex=rig_v.params.get("group_per_vertex"))
     u = sc.version.metrics.get("unity_report")
     if u:
         checks.append(quality.check("unity_import", bool(u.get("ok")), u.get("ok"), True))
@@ -325,13 +323,7 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
         script_src = Path(sc.settings.unity_project) / "Assets" / "Editor" / "VgacImport.cs" if sc.settings.unity_project else None
         if script_src and script_src.is_file() and not (editor_dir / "VgacImport.cs").is_file():
             shutil.copy2(script_src, editor_dir / "VgacImport.cs")
-        humanoid = _is_humanoid(sc)
-        flags = ["-nographics"] + (["-vgacHumanoid"] if humanoid else [])
-        args: dict[str, Any] = {"-vgacInput": sc.dir, "-vgacName": name}
-        clips_lib = params.get("clips_library", "ual1")
-        lib = sc.settings.clips_libraries.get(clips_lib) if humanoid and clips_lib and clips_lib != "none" else None
-        if lib and Path(lib).is_file():
-            args["-vgacClips"] = lib
+        args, flags, _ = _unity_args(sc, params, name)  # the sandbox import already recorded any clips warning
         sc.progress(0.97, f"Unity import into {proj.name}")
         # The importer always writes <input>/unity_report.json; the sandbox step already produced one, so move it
         # aside and read only a report this run wrote (B4 in docs/CODE-AUDIT.md).

@@ -56,7 +56,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const selected = selectedVersion(asset, stage)
   const [activeId, setActiveId] = useState<string | null>(null)
   const active = useMemo(() => versions.find((v) => v.id === activeId) ?? selected ?? versions[versions.length - 1], [versions, activeId, selected])
-  const prev = previousStage(stage)
+  const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
   const canRun = !prev || !!prevSelected
   const [count, setCount] = useState(2)

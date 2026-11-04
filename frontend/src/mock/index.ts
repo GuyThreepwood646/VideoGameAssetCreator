@@ -202,6 +202,14 @@ on('GET', '/api/categories', () => categories)
 on('GET', '/api/styles', () => styles)
 on('GET', '/api/platforms', () => platforms)
 on('GET', '/api/stages', () => stages)
+on('GET', '/api/models', () => [
+  { id: 'zturbo', label: 'Z-Image Turbo', description: 'fast painted look', default_steps: 8, licence: 'Apache-2.0' },
+  { id: 'zbase', label: 'Z-Image Base', description: 'higher quality, slower', default_steps: 30, licence: 'Apache-2.0' },
+  { id: 'klein', label: 'FLUX.2 Klein 4B', description: 'quick drafts', default_steps: 4, licence: 'Apache-2.0' },
+  { id: 'anima', label: 'Anima Turbo', description: 'anime line art', default_steps: 10, licence: 'outputs commercial' },
+  { id: 'pixel', label: 'Z-Image Pixel Art', description: 'pixel art', default_steps: 8, licence: 'Apache-2.0' },
+  { id: 'chroma', label: 'Chroma1-HD', description: 'loose painterly', default_steps: 30, licence: 'Apache-2.0' },
+])
 on('GET', '/api/style-presets', () => lookPresets)
 on('GET', '/api/suggest', (_m, _b, query) => {
   const category = query.get('category') ?? 'humanoid'

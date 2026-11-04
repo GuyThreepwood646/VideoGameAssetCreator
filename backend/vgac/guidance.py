@@ -1,38 +1,45 @@
 """Plain-language layer: stage names, help text, parameter help, check sentences with fixes, and suggestions.
 
 Everything a layperson sees comes from here, so the wording lives in one place. Technical names stay in `technical`.
+STAGE_GUIDE is the only place stage time estimates live (served by GET /api/stages as estimate_seconds); the numbers
+are the measured times in STATUS.md. Stage ids and order come from reference.STAGE_ORDER, model labels from
+data/models.yaml.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from . import reference
+from .reference import STAGE_ORDER
+
 STAGE_GUIDE: dict[str, dict[str, Any]] = {
     "concept": {
+        # Seconds per candidate.
         "plain_name": "Describe", "plain_verb": "Make concept art", "estimate_seconds": 25,
         "help": {"meaning": "The first picture of your asset, painted from your description.",
                  "why": "Everything later is built from this picture, so get the look right here.",
                  "technical": "Concept image (text-to-image), with a background cutout"},
     },
     "turnaround": {
-        "plain_name": "Check all sides", "plain_verb": "Show it from all sides", "estimate_seconds": 300,
+        "plain_name": "Check all sides", "plain_verb": "Show it from all sides", "estimate_seconds": 180,
         "help": {"meaning": "Views of your asset from the front, sides and back.",
                  "why": "The 3D builder guesses the sides it cannot see; checking them now avoids surprises later.",
                  "technical": "Turnaround views (multi-angle image editing), consistency checks per view"},
     },
     "mesh": {
-        "plain_name": "Build the 3D model", "plain_verb": "Build the 3D model", "estimate_seconds": 180,
+        "plain_name": "Build the 3D model", "plain_verb": "Build the 3D model", "estimate_seconds": 200,
         "help": {"meaning": "Turns the picture into a textured 3D model sized for your platform.",
                  "why": "This is the model your game will use.",
                  "technical": "Image-to-3D (TRELLIS.2 shape and texture), remesh, decimate, unwrap, bake"},
     },
     "prep": {
-        "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 10,
+        "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 20,
         "help": {"meaning": "Sets the real-world size, puts the pivot at the feet, mirrors the two halves and removes stray geometry.",
                  "why": "Game engines expect models at the right scale with a clean surface.",
                  "technical": "Scale, pivot, weld, symmetrize, manifold cleanup"},
     },
     "rig": {
-        "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 60,
+        "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 90,
         "help": {"meaning": "Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.",
                  "why": "Without a skeleton the model cannot animate.",
                  "technical": "Auto-rigging (SkinToken), skin weights, procedural idle and walk clips"},
@@ -46,7 +53,7 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
 }
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
-    "model": {"simple": True, "help": {"meaning": "Which painting engine draws the concept.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model: zturbo, zbase, klein, anima, pixel, chroma"}},
+    "model": {"simple": True, "help": {"meaning": "Which painting engine draws the concept.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
     "seed": {"simple": False, "help": {"meaning": "A number that makes the same request give the same picture.", "why": "Change it to get a different take on the same description.", "technical": "Random seed"}},
     "width": {"simple": False, "help": {"meaning": "Picture width in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent width"}},
     "height": {"simple": False, "help": {"meaning": "Picture height in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent height"}},
@@ -93,7 +100,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "bones": {"severity": "block", "help": "No skeleton was found in the rigged model."},
     "single_root": {"severity": "warn", "help": "The skeleton has more than one root bone; most engines expect one."},
     "weight_coverage": {"severity": "warn", "help": "Some points of the surface are not attached to any bone and would stay behind when it moves.", "fix": lambda c: {"stage": "rig", "params": {}}},
-    "max_influences": {"severity": "warn", "help": "Some points follow more than four bones; engines cap this and may deform differently."},
+    "max_influences": {"severity": "warn", "help": "Some points follow more bones than the rig allows; engines cap this and may deform differently."},
     "weights_normalised": {"severity": "warn", "help": "A few points have unbalanced bone weights, which can stretch oddly when animated.", "fix": lambda c: {"stage": "rig", "params": {}}},
     "clips": {"severity": "warn", "help": "The expected test animations are missing."},
 }
@@ -123,14 +130,15 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-MODEL_LABELS = {
-    "zturbo": "Z-Image Turbo (fast painted look)",
-    "zbase": "Z-Image base (higher quality, slower)",
-    "klein": "Klein (quick drafts)",
-    "anima": "Anima (anime line art)",
-    "pixel": "Z-Image pixel (pixel art)",
-    "chroma": "Chroma (loose painterly)",
-}
+# The tileable material category makes images only: these replace the stage estimates for it.
+MATERIAL_ESTIMATES = {"concept": 60, "turnaround": 0, "mesh": 10, "prep": 1, "rig": 1, "export": 5}
+
+
+def model_label_long(mid: str) -> str:
+    """"Z-Image Turbo (fast painted look)": the models.yaml label plus its description."""
+    desc = (reference.models().get(mid) or {}).get("description")
+    label = reference.model_label(mid)
+    return f"{label} ({desc})" if desc else label
 
 
 def suggest(category: str, style: str, platform: str, categories: list[dict[str, Any]], styles: list[dict[str, Any]],
@@ -156,15 +164,15 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
     else:
         reasons.append("a good general choice for this style")
     budgets = (cat.get("budgets") or {}).get(platform) or {}
-    est = {s: STAGE_GUIDE[s]["estimate_seconds"] for s in STAGE_GUIDE}
+    est = {s: STAGE_GUIDE[s]["estimate_seconds"] for s in STAGE_ORDER}
     if category == "material":
-        est = {"concept": 60, "mesh": 10, "prep": 1, "rig": 1, "export": 5, "turnaround": 0}
+        est = {s: MATERIAL_ESTIMATES[s] for s in STAGE_ORDER}
     if platform == "high":
         est["mesh"] = 600
     if cat.get("rig_engine", "none") == "none":
         est["rig"] = 5
     total_min = max(1, round(sum(est.values()) / 60))
-    return {"model": model, "model_label": MODEL_LABELS.get(model, model), "reason": "; ".join(reasons),
+    return {"model": model, "model_label": model_label_long(model), "reason": "; ".join(reasons),
             "budgets": budgets, "estimates": est, "total_minutes": total_min,
             "platform_label": plat.get("plain_name") or plat.get("label") or platform,
             "category_label": cat.get("label") or category}
