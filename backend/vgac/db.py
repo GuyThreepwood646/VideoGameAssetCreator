@@ -17,14 +17,14 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from .config import get_settings
-
-STAGES = ("concept", "turnaround", "mesh", "prep", "rig", "export")
+from .reference import STAGE_ORDER as STAGES  # the one stage tuple (docs/CODE-AUDIT.md D2)
 VERSION_STATUSES = ("queued", "running", "done", "error", "rejected")
 JOB_STATUSES = ("queued", "running", "done", "error", "cancelled")
 INSTANCES = ("a", "b", "host")
 
 
 def utcnow() -> datetime:
+    """The one clock. Serialise with _iso(), which writes UTC with a "Z" suffix (docs/CODE-AUDIT.md D5)."""
     return datetime.now(timezone.utc)
 
 

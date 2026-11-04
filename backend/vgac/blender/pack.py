@@ -16,32 +16,19 @@ import sys
 import bmesh
 import bpy
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402  (shared helpers next to this script)
 
-def _import_glb(path):
-    """glTF import without the bone display-shape helper object the importer otherwise adds for skins."""
-    try:
-        bpy.ops.import_scene.gltf(filepath=path, bone_shape_type="NONE")
-    except TypeError:
-        bpy.ops.import_scene.gltf(filepath=path)
-    for o in [o for o in bpy.context.scene.objects if o.type == "MESH" and not o.vertex_groups and o.name.lower().startswith("icosphere")]:
-        bpy.data.objects.remove(o, do_unlink=True)
-
-argv = sys.argv[sys.argv.index("--") + 1:]
+argv = _common.after_double_dash()
 src, out_dir, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
 
-
-def opt(flag, default):
-    return argv[argv.index(flag) + 1] if flag in argv else default
-
-
-_lods_raw = opt("--lods", "0.5,0.25,0.1")
+_lods_raw = _common.opt("--lods", "0.5,0.25,0.1")
 lods = [] if _lods_raw.strip().lower() in ("", "none") else [float(x) for x in _lods_raw.split(",") if x.strip()]
-collider_mode = opt("--collider", "hull")
-formats = [f.strip() for f in opt("--formats", "fbx,glb").split(",") if f.strip()]
+collider_mode = _common.opt("--collider", "hull")
+formats = [f.strip() for f in _common.opt("--formats", "fbx,glb").split(",") if f.strip()]
 os.makedirs(out_dir, exist_ok=True)
 
-bpy.ops.wm.read_factory_settings(use_empty=True)
-_import_glb(src)
+_common.open_glb(src)
 meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
 if not meshes:

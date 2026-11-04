@@ -14,6 +14,12 @@ from .imaging import image_size, is_power_of_two
 
 Check = dict[str, Any]
 
+# The mesh stage's triangle_budget check allows this fraction over the budget (the decimator lands near, not on, the
+# target); prep and export check the budget exactly. Named here so the tolerance lives in one place (CODE-AUDIT H3).
+TRIANGLE_BUDGET_TOLERANCE = 0.05
+# Bone influences per vertex when the rig version does not say (the rig stage's group_per_vertex default).
+DEFAULT_MAX_INFLUENCES = 4
+
 
 def check(id_: str, ok: bool, value: Any, limit: Any) -> Check:
     """{name, passed, message} as the frontend renders them, plus {id, ok, value, limit} as ARCHITECTURE.md names them."""
@@ -96,8 +102,10 @@ def texture_checks(files: dict[str, Path | str], texture_budget: int | None = No
     return out
 
 
-def rig_checks(info: dict[str, Any], rig_expected: bool, min_coverage: float = 0.99) -> list[Check]:
-    """From rig_info.json: bone count, single root, weight coverage, influences, normalisation."""
+def rig_checks(info: dict[str, Any], rig_expected: bool, min_coverage: float = 0.99,
+               group_per_vertex: int | None = None) -> list[Check]:
+    """From rig_info.json: bone count, single root, weight coverage, influences, normalisation. max_influences is
+    compared with the rig's own group_per_vertex parameter (default 4)."""
     out: list[Check] = []
     bones = int(info.get("bones", 0))
     if not rig_expected:
@@ -111,7 +119,8 @@ def rig_checks(info: dict[str, Any], rig_expected: bool, min_coverage: float = 0
         cov = float(info.get("weight_coverage", info.get("weighted_verts", 0) / info["verts"]))
         out.append(check("weight_coverage", cov >= min_coverage, round(cov, 4), min_coverage))
     if "max_influences" in info:
-        out.append(check("max_influences", info["max_influences"] <= 4, info["max_influences"], 4))
+        limit = int(group_per_vertex or DEFAULT_MAX_INFLUENCES)
+        out.append(check("max_influences", info["max_influences"] <= limit, info["max_influences"], limit))
     if "unnormalised_verts" in info:
         out.append(check("weights_normalised", info["unnormalised_verts"] == 0, info["unnormalised_verts"], 0))
     return out

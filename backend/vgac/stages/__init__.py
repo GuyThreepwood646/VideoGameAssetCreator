@@ -16,9 +16,10 @@ from typing import Any
 
 from ..db import Version, session_factory
 from ..jobs import JobContext, parse_kind
+from ..reference import STAGE_ORDER
 from .base import StageContext
 
-STAGE_MODULES = {s: f"vgac.stages.{s}" for s in ("concept", "turnaround", "mesh", "prep", "rig", "export")}
+STAGE_MODULES = {s: f"vgac.stages.{s}" for s in STAGE_ORDER}
 MATERIAL_STAGES = ("concept", "mesh", "export")
 
 

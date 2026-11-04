@@ -25,7 +25,7 @@ def test_styles_and_platforms():
     styles = reference.styles()
     assert {s["id"] for s in styles} == {"painted", "cel", "pixel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
     for s in styles:
-        assert s["model"] in reference.CONCEPT_MODELS
+        assert s["model"] in reference.concept_models()
         assert s["prompt_block"]
     assert reference.style("painted")["model"] == "zturbo"
     plats = reference.platforms()

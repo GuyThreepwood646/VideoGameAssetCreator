@@ -15,8 +15,32 @@ export const STAGE_LABELS: Record<StageId, string> = {
 export const TURNAROUND_VIEWS = ['front', 'left', 'back', 'right', 'quarter', 'top'] as const
 export type ViewId = (typeof TURNAROUND_VIEWS)[number]
 
+// Seconds each stage usually takes, used only until GET /api/stages (estimate_seconds) has loaded or when it is
+// unreachable. The backend's guidance.STAGE_GUIDE is the source; these are its numbers (measured, STATUS.md).
+export const STAGE_ESTIMATE_FALLBACK: Record<StageId, number> = { concept: 25, turnaround: 180, mesh: 200, prep: 20, rig: 90, export: 120 }
+
+// Seconds a stage usually takes: estimate_seconds from GET /api/stages, else the fallback above.
+export function stageEstimateSeconds(stage: StageId, info?: Pick<StageInfo, 'estimate_seconds'> | null): number {
+  const s = info?.estimate_seconds
+  return typeof s === 'number' && s > 0 ? s : STAGE_ESTIMATE_FALLBACK[stage]
+}
+
+// The concept models as of this build. The backend's data/models.yaml is the source and GET /api/models serves it
+// (api.models()); this list is the fallback for the pickers and the mock.
 export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'pixel', 'chroma'] as const
 export type StyleModel = (typeof STYLE_MODELS)[number]
+
+// One concept model (GET /api/models), from the backend's data/models.yaml.
+export type ModelInfo = {
+  id: string
+  label: string
+  description: string
+  name?: string
+  licence: string
+  version?: string
+  default_steps: number | null
+  negative?: boolean
+}
 
 export const PLATFORMS = ['mobile_low', 'pc_mid', 'high'] as const
 export type PlatformId = (typeof PLATFORMS)[number]
@@ -167,6 +191,8 @@ export type Category = {
   lod_ratios?: number[] | null
   topology?: 'quad' | 'triangle' | 'none' | string | null
   input_view_default?: 'concept' | 'front' | 'quarter' | string | null
+  // Stages this category does not have (material: turnaround). Runs build on the stage before them.
+  skips?: string[]
 }
 
 export type StylePreset = { id: string; label: string; model: string; prompt_block: string }
@@ -328,10 +354,11 @@ export type Health = {
 export const api = {
   // Reference data
   health: () => get<Health>('/api/health'),
-  categories: () => get<Category[]>('/api/categories'),
+  categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),
   stages: () => get<StageInfo[]>('/api/stages'),
+  models: () => get<ModelInfo[]>('/api/models'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),
   stylePresets: () => get<LookPreset[]>('/api/style-presets'),
 
@@ -413,9 +440,20 @@ export function selectedVersion(asset: AssetSummary, stage: StageId): Version | 
   return list.find((v) => v.id === id) ?? list.find((v) => v.selected)
 }
 
-export function previousStage(stage: StageId): StageId | null {
-  const i = STAGES.indexOf(stage)
-  return i > 0 ? STAGES[i - 1] : null
+// The stage a run of `stage` builds on: the one before it, walking back over stages the category skips
+// (material skips turnaround), the same rule as the backend. Without a category it is strictly the one before.
+// Stages each category skips, filled from the categories call; the material default covers mock mode and the
+// moment before the first fetch.
+const CATEGORY_SKIPS: Record<string, string[]> = { material: ['turnaround'] }
+export function rememberSkips(list: Category[]): void {
+  for (const c of list) CATEGORY_SKIPS[c.id] = c.skips ?? []
+}
+
+export function previousStage(stage: StageId, category?: Pick<Category, 'skips'> | string | null): StageId | null {
+  const skips = new Set(typeof category === 'string' ? CATEGORY_SKIPS[category] ?? [] : category?.skips ?? [])
+  let i = STAGES.indexOf(stage) - 1
+  while (i > 0 && skips.has(STAGES[i])) i -= 1
+  return i >= 0 ? STAGES[i] : null
 }
 
 export type StageState = 'none' | 'running' | 'done' | 'error'

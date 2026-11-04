@@ -8,10 +8,12 @@ flagged. refine re-runs one view; adjust re-runs the whole set with new params.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from .. import library
+from ..db import Version
 from ..graphs.qwen_edit import angle_graph, view_prompt
 from ..imaging import alpha_bbox, colour_histogram, histogram_distance, mirror_iou
 from .base import StageContext, random_seed
@@ -21,11 +23,11 @@ MAX_REROLLS = 2
 LIMITS = {"height_ratio": (0.75, 1.3), "hist_distance": 0.35, "mirror_iou": 0.55, "min_coverage": 0.02}
 
 
-def _source_image(sc: StageContext) -> Path:
-    parent = sc.parent
-    if parent is None:
+def _source_image(sc: StageContext, source: Version | None) -> Path:
+    """The concept image of `source`, the version the views are generated from (not necessarily sc.parent)."""
+    if source is None:
         raise ValueError("turnaround needs a concept parent version")
-    src = library.version_file(parent, "image", sc.settings)
+    src = library.version_file(source, "image", sc.settings)
     if src is None:
         raise FileNotFoundError("parent concept image missing")
     return src
@@ -60,12 +62,24 @@ async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, 
     entry = await sc.comfy(graph, message=f"view {view}", base=base, span=span * 0.7)
     raw = await sc.download_image(entry, "save", sc.dir / f"{view}_raw.png")
     res = await sc.cutout(raw, view, base=base + span * 0.7, span=span * 0.3)
-    return {"raw": raw, "cutout": res["cutout"], "white": res["white"]}
+    return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
 
 
-async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], keep: dict[str, dict[str, Any]] | None = None,
-                     extra: str = "") -> None:
-    src = _source_image(sc)
+def _measure(cutout: Path, stats: dict[str, Any] | None, other_cutout: Path | None,
+             hist_paths: dict[str, Path | None]) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
+    """CPU part of a view's checks (no database access, so it runs in a worker thread): bbox stats, mirror IoU
+    against the opposite view, and colour histograms for the views in `hist_paths`."""
+    if stats is None:
+        stats = alpha_bbox(cutout)
+    mirror = mirror_iou(cutout, other_cutout) if other_cutout is not None else None
+    hists = {v: (colour_histogram(p) if p else None) for v, p in hist_paths.items()}
+    return stats, mirror, hists
+
+
+async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
+                     keep: dict[str, dict[str, Any]] | None = None, extra: str = "") -> None:
+    """Generate and check `views` from the concept image of `source`."""
+    src = _source_image(sc, source)
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
     lora_strength = float(params.get("lora_strength", 0.9))
     auto_reroll = bool(params.get("auto_reroll", True))
@@ -80,12 +94,6 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     n = max(1, len(todo))
     hist_cache: dict[str, Any] = {}
 
-    def hist(view: str):
-        if view not in hist_cache:
-            p = sc.file(f"{view}_cutout")
-            hist_cache[view] = colour_histogram(p) if p else None
-        return hist_cache[view]
-
     for i, view in enumerate(todo):
         attempts = 0
         seed = int(base_seed) + i if base_seed else random_seed()
@@ -96,13 +104,17 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
             hist_cache.pop(view, None)
-            stats = alpha_bbox(files["cutout"])
             front_stats = results.get("front", {}).get("bbox") if view != "front" else None
-            mirror = None
             other = {"left": "right", "right": "left"}.get(view)
-            if other and sc.file(f"{other}_cutout") is not None:
-                mirror = mirror_iou(files["cutout"], sc.file(f"{other}_cutout"))
-            info = view_checks(view, stats, front_stats, hist("front") if view != "front" and sc.file("front_cutout") else None, hist(view), mirror)
+            # File lookups read the version row, so they stay on the event loop; the image work goes to a thread.
+            other_cutout = sc.file(f"{other}_cutout") if other else None
+            front_cutout = sc.file("front_cutout") if view != "front" else None
+            want: dict[str, Path | None] = {view: sc.file(f"{view}_cutout")}
+            if front_cutout and "front" not in hist_cache:
+                want["front"] = front_cutout
+            stats, mirror, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
+            hist_cache.update(new_hists)
+            info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror)
             info["seed"] = seed
             info["rerolls"] = attempts
             results[view] = info
@@ -126,7 +138,7 @@ def _publish_views(sc: StageContext, results: dict[str, dict[str, Any]]) -> None
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
     views = list(params.get("views") or sc.category.get("views") or DEFAULT_VIEWS)
-    await _run_views(sc, views, params)
+    await _run_views(sc, views, params, sc.parent)
 
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
@@ -150,18 +162,10 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     sc.set_params(**merged)
     sc.set_metrics(views=keep)
     # The concept source is the turnaround parent's parent.
-    grand = sc.db.get(type(parent), parent.parent_version_id) if parent.parent_version_id else None
+    grand = sc.db.get(Version, parent.parent_version_id) if parent.parent_version_id else None
     if grand is None:
         raise ValueError("turnaround parent has no concept parent")
-    sc.version.parent_version_id = parent.id
-    # _run_views reads the concept through sc.parent; temporarily point at the concept version.
-    original_parent = sc.version.parent_version_id
-    sc.version.parent_version_id = grand.id
-    try:
-        await _run_views(sc, [view], merged, keep=keep, extra=instruction)
-    finally:
-        sc.version.parent_version_id = original_parent
-        sc.save()
+    await _run_views(sc, [view], merged, grand, keep=keep, extra=instruction)
 
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
@@ -169,12 +173,8 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     merged = {**(parent.params if parent else {}), **params}
     views = list(merged.get("views") or DEFAULT_VIEWS)
     if parent is not None and parent.stage == "turnaround":
-        grand_id = parent.parent_version_id
-        sc.version.parent_version_id = grand_id
-        try:
-            await _run_views(sc, views, merged)
-        finally:
-            sc.version.parent_version_id = parent.id
-            sc.save()
+        # The concept source is the turnaround parent's parent; this version's own parent stays the turnaround.
+        source = sc.db.get(Version, parent.parent_version_id) if parent.parent_version_id else None
     else:
-        await _run_views(sc, views, merged)
+        source = parent
+    await _run_views(sc, views, merged, source)

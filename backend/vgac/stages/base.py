@@ -8,7 +8,7 @@ import random
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +20,29 @@ from ..graphs.birefnet import cutout_graph
 from ..imaging import alpha_bbox, white_composite
 from ..jobs import JobContext
 from ..tools import run_blender, run_unity
+
+
+def _lineage_entry(v: Version) -> dict[str, Any]:
+    return {"stage": v.stage, "version_id": v.id, "params": v.params, "files": v.files}
+
+
+def manifest_provenance(sc: "StageContext") -> dict[str, Any]:
+    """What an export manifest records about where the asset came from, in one lineage walk: models (every model used
+    along the lineage, then by this run, by id), seeds (per stage, plus the turnaround's per-view seeds) and lineage
+    (concept first)."""
+    models: dict[str, dict[str, Any]] = {}
+    seeds: dict[str, Any] = {}
+    chain = list(reversed(list(sc.iter_lineage())))
+    for v in chain:
+        for m in v.metrics.get("models") or []:
+            models[m.get("id", m.get("name"))] = m
+        if v.params.get("seed") is not None:
+            seeds[v.stage] = v.params.get("seed")
+        if v.stage == "turnaround":
+            seeds["turnaround_views"] = {k: info.get("seed") for k, info in (v.metrics.get("views") or {}).items()}
+    for m in sc.models_used.values():
+        models[m.get("id", m.get("name"))] = m
+    return {"models": models, "seeds": seeds, "lineage": [_lineage_entry(v) for v in chain]}
 
 
 def random_seed() -> int:
@@ -88,28 +111,30 @@ class StageContext:
     def selected_version(self, stage: str) -> Version | None:
         return self.db.scalar(select(Version).where(Version.asset_id == self.asset.id, Version.stage == stage, Version.selected == True))  # noqa: E712
 
-    def stage_version(self, stage: str) -> Version | None:
-        """The version of `stage` in this version's lineage, else the selected one for the asset."""
-        v = self.parent
-        seen = set()
+    def iter_lineage(self, include_self: bool = True) -> Iterator[Version]:
+        """This version (unless include_self is False), then its parent, grandparent and so on up to the concept.
+        The one lineage walk (CODE-AUDIT D9); a parent loop in the data ends the walk instead of hanging it."""
+        v: Version | None = self.version if include_self else self.parent
+        seen: set[str] = set()
         while v is not None and v.id not in seen:
-            if v.stage == stage:
-                return v
+            yield v
             seen.add(v.id)
             v = self.db.get(Version, v.parent_version_id) if v.parent_version_id else None
+
+    def stage_version(self, stage: str) -> Version | None:
+        """The version of `stage` in this version's lineage, else the selected one for the asset."""
+        for v in self.iter_lineage(include_self=False):
+            if v.stage == stage:
+                return v
         return self.selected_version(stage)
 
     def lineage_file(self, key: str, stages: tuple[str, ...] | None = None) -> Path | None:
         """Walk up the lineage (then selected versions) for the first version that has file `key`."""
-        v = self.parent
-        seen = set()
-        while v is not None and v.id not in seen:
-            if (stages is None or v.stage in stages):
+        for v in self.iter_lineage(include_self=False):
+            if stages is None or v.stage in stages:
                 p = library.version_file(v, key, self.settings)
                 if p is not None:
                     return p
-            seen.add(v.id)
-            v = self.db.get(Version, v.parent_version_id) if v.parent_version_id else None
         for s in (stages or reference.STAGE_ORDER):
             sv = self.selected_version(s)
             if sv is not None:
@@ -122,14 +147,8 @@ class StageContext:
         return library.version_file(self.version, key, self.settings)
 
     def lineage(self) -> list[dict[str, Any]]:
-        out = []
-        v: Version | None = self.version
-        seen = set()
-        while v is not None and v.id not in seen:
-            out.append({"stage": v.stage, "version_id": v.id, "params": v.params, "files": v.files})
-            seen.add(v.id)
-            v = self.db.get(Version, v.parent_version_id) if v.parent_version_id else None
-        return out[::-1]
+        """The lineage from the concept down to this version, as the manifest records it."""
+        return [_lineage_entry(v) for v in reversed(list(self.iter_lineage()))]
 
     # --- ComfyUI --------------------------------------------------------------
 
@@ -174,15 +193,19 @@ class StageContext:
             raise ComfyError(f"no 3d output found; outputs: {json.dumps(entry.get('outputs', {}))[:800]}")
         return await self.client(instance).download_output(items[0], dest)
 
-    async def cutout(self, image_path: Path, name: str, instance: str = "b", base: float = 0.0, span: float = 0.1) -> dict[str, Path]:
-        """BiRefNet cutout of a local image: writes <name>.png (RGBA) and <name>_white.png next to it."""
+    async def cutout(self, image_path: Path, name: str, instance: str | None = None, base: float = 0.0, span: float = 0.1) -> dict[str, Path]:
+        """BiRefNet cutout of a local image: writes <name>.png (RGBA) and <name>_white.png next to it. Runs on the image
+        instance (the one Settings.stage_instances gives the concept stage) unless told otherwise."""
+        instance = instance or self.settings.stage_instances["concept"]
         src_name = await self.stage_input(image_path, f"vgac_{self.version.id[:8]}_{name}_src.png", instance)
         entry = await self.comfy(cutout_graph(src_name, self.prefix(name)), instance=instance, message=f"cutout {name}", base=base, span=span)
         dest = self.dir / f"{name}.png"
         await self.download_image(entry, "save", dest, instance)
-        white = white_composite(dest)
+        # Pure image work off the event loop; the session stays on this side.
+        white = await asyncio.to_thread(white_composite, dest)
+        stats = await asyncio.to_thread(alpha_bbox, dest)
         self.use_model("birefnet")
-        return {"cutout": dest, "white": white, "stats": alpha_bbox(dest)}
+        return {"cutout": dest, "white": white, "stats": stats}
 
     # --- host tools ---------------------------------------------------------------
 

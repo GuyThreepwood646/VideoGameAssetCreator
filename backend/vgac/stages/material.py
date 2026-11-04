@@ -7,13 +7,14 @@ skipped by their own modules. export: texture set zip plus manifest.json.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .. import library, quality
+from ..db import _iso, utcnow
 from ..graphs.material import derive_maps, make_seamless, seam_error, t2i_graph
 from ..imaging import image_size
 from .base import StageContext, random_seed, slug
@@ -53,14 +54,17 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
         raise FileNotFoundError("no concept image in lineage")
     power = float(params.get("seam_power") or 1.6)
     sc.set_params(engine="material", seam_power=power, texture_size=sc.budget["texture"])
+    # The numpy work on textures up to 2048 px runs in a worker thread so the API stays responsive; the session
+    # (register, set_metrics) is only used back on the event loop.
     sc.progress(0.1, "seamless blend")
-    base = make_seamless(src, sc.dir / "base_color.png", power=power)
+    base = await asyncio.to_thread(make_seamless, src, sc.dir / "base_color.png", power=power)
     sc.progress(0.5, "derived maps")
-    maps = derive_maps(base, sc.dir)
+    maps = await asyncio.to_thread(derive_maps, base, sc.dir)
     sc.register("base_color", base)
     for key, p in maps.items():
         sc.register(key, p)
-    sc.set_metrics(seam_error=round(seam_error(base), 5), size=list(image_size(base)), textured=True)
+    err = await asyncio.to_thread(seam_error, base)
+    sc.set_metrics(seam_error=round(err, 5), size=list(image_size(base)), textured=True)
     await judge(sc)
 
 
@@ -87,9 +91,11 @@ async def export_run(sc: StageContext, params: dict[str, Any]) -> None:
             sc.register(key, files[key])
     if "base_color" not in files:
         raise FileNotFoundError("no material maps in lineage")
+    # One walk of the lineage through the StageContext helper, reused for models, seeds and the manifest.
+    lineage = sc.lineage()
     models: dict[str, Any] = {}
     seeds: dict[str, Any] = {}
-    for entry in sc.lineage():
+    for entry in lineage:
         v = sc.db.get(type(sc.version), entry["version_id"])
         if v is None:
             continue
@@ -99,18 +105,14 @@ async def export_run(sc: StageContext, params: dict[str, Any]) -> None:
             seeds[v.stage] = v.params["seed"]
     manifest = {
         "name": sc.asset.name, "export_name": name, "asset_id": sc.asset.id, "project_id": sc.project.id, "version_id": sc.version.id,
-        "created_at": datetime.now(timezone.utc).isoformat(), "category": "material", "style_preset": sc.asset.style_preset,
+        "created_at": _iso(utcnow()), "category": "material", "style_preset": sc.asset.style_preset,
         "style_lock": sc.project.style_lock, "platform_target": sc.platform, "budget": sc.budget, "prompt": sc.asset.prompt,
         "textures": {k: {"file": p.name, "size": list(image_size(p))} for k, p in files.items() if k != "tile_preview"},
         "tileable": True, "normal_convention": "OpenGL", "models": list(models.values()),
-        "licences": sorted({m.get("licence", "unknown") for m in models.values()}), "seeds": seeds, "lineage": sc.lineage(),
+        "licences": sorted({m.get("licence", "unknown") for m in models.values()}), "seeds": seeds, "lineage": lineage,
     }
     sc.progress(0.5, "zip texture set")
-    zp = sc.dir / f"{name}_textures.zip"
-    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
-        for key, p in files.items():
-            z.write(p, f"{name}/{key}.png")
-        z.writestr(f"{name}/manifest.json", json.dumps(manifest, indent=1))
+    zp = await asyncio.to_thread(_write_zip, sc.dir / f"{name}_textures.zip", name, files, json.dumps(manifest, indent=1))
     sc.register("zip", zp)
     checks = quality.texture_checks({k: p for k, p in files.items() if k != "tile_preview"}, sc.budget["texture"], keys=tuple(k for k in files if k != "tile_preview"))
     sc.set_metrics(**quality.summarise(checks))
@@ -119,6 +121,15 @@ async def export_run(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
+
+
+def _write_zip(zp: Path, name: str, files: dict[str, Path], manifest_json: str) -> Path:
+    """Deflate the texture set and manifest into one zip (CPU and disk only, run in a thread)."""
+    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
+        for key, p in files.items():
+            z.write(p, f"{name}/{key}.png")
+        z.writestr(f"{name}/manifest.json", manifest_json)
+    return zp
 
 
 # --- dispatch used by the registry (module_for returns this module for concept, mesh, export) ----

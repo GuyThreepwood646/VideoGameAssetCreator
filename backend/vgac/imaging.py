@@ -1,11 +1,18 @@
 """Image metrics shared by the stages: silhouettes, IoU, best-alignment search, colour histograms, composites, sheets.
 
 silhouette, iou and best_alignment are bakeoff/metrics.py; white_composite is turnaround.py's white_copy.
+
+The alpha channel of each PNG and its silhouettes are cached in small LRU caches keyed by (path, mtime, size), so the
+several reads a cutout gets per turnaround view (alpha_bbox, mirror_iou, the mesh audit) decode it only once. A file
+rewritten in place gets a new mtime or size and so a new entry. The functions are pure and hold no session state, so
+the stages may call them through asyncio.to_thread.
 """
 
 from __future__ import annotations
 
 import json
+import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,22 +22,54 @@ from PIL import Image, ImageDraw
 VIEW_YAW = {"front": 0, "left": 90, "back": 180, "right": 270}
 
 
-def silhouette(path: Path | str, size: int = 256) -> np.ndarray:
-    """Alpha > 127 mask, cropped to its bounding box, scaled to fit `size` and centred. Bool array."""
-    im = Image.open(path).convert("RGBA")
-    a = np.array(im.getchannel("A")) > 127
+def _file_key(path: Path | str) -> tuple[str, int, int]:
+    """Cache key for a file: absolute path, mtime in ns and size in bytes."""
+    p = os.path.abspath(os.fspath(path))
+    st = os.stat(p)
+    return p, st.st_mtime_ns, st.st_size
+
+
+@lru_cache(maxsize=32)
+def _alpha_cached(path: str, mtime_ns: int, size: int) -> np.ndarray:
+    with Image.open(path) as im:
+        a = np.array(im.convert("RGBA").getchannel("A"))
+    a.flags.writeable = False  # shared between callers through the cache
+    return a
+
+
+def _alpha(path: Path | str) -> np.ndarray:
+    """Alpha channel (uint8, read-only) of the image converted to RGBA, decoded once per file version."""
+    return _alpha_cached(*_file_key(path))
+
+
+@lru_cache(maxsize=128)
+def _silhouette_cached(path: str, mtime_ns: int, size: int, out_size: int) -> np.ndarray:
+    a = _alpha_cached(path, mtime_ns, size) > 127
     ys, xs = np.where(a)
     if len(xs) == 0:
-        return np.zeros((size, size), bool)
-    crop = a[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
-    h, w = crop.shape
-    s = size / max(h, w)
-    small = Image.fromarray(crop.astype(np.uint8) * 255).resize((max(1, int(w * s)), max(1, int(h * s))))
-    out = np.zeros((size, size), bool)
-    sm = np.array(small) > 127
-    y0, x0 = (size - sm.shape[0]) // 2, (size - sm.shape[1]) // 2
-    out[y0:y0 + sm.shape[0], x0:x0 + sm.shape[1]] = sm
+        out = np.zeros((out_size, out_size), bool)
+    else:
+        crop = a[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        h, w = crop.shape
+        s = out_size / max(h, w)
+        small = Image.fromarray(crop.astype(np.uint8) * 255).resize((max(1, int(w * s)), max(1, int(h * s))))
+        out = np.zeros((out_size, out_size), bool)
+        sm = np.array(small) > 127
+        y0, x0 = (out_size - sm.shape[0]) // 2, (out_size - sm.shape[1]) // 2
+        out[y0:y0 + sm.shape[0], x0:x0 + sm.shape[1]] = sm
+    out.flags.writeable = False
     return out
+
+
+def silhouette(path: Path | str, size: int = 256) -> np.ndarray:
+    """Alpha > 127 mask, cropped to its bounding box, scaled to fit `size` and centred. Bool array (a fresh copy)."""
+    return _silhouette_cached(*_file_key(path), size).copy()
+
+
+def clear_cache() -> None:
+    """Drop the cached alpha channels and silhouettes (tests, or to free memory)."""
+    _silhouette_cached.cache_clear()
+    _alpha_cached.cache_clear()
 
 
 def iou(a: np.ndarray, b: np.ndarray) -> float:
@@ -61,16 +100,16 @@ def best_alignment(refs: dict[str, np.ndarray], rendered: dict[int, np.ndarray],
 
 def alpha_bbox(path: Path | str) -> dict[str, Any]:
     """Bounding box of alpha > 127 and its size, aspect and coverage."""
-    im = Image.open(path).convert("RGBA")
-    a = np.array(im.getchannel("A")) > 127
+    alpha = _alpha(path)
+    a = alpha > 127
     ys, xs = np.where(a)
-    w, h = im.size
+    h, w = alpha.shape
     if len(xs) == 0:
         return {"width": 0, "height": 0, "aspect": 0.0, "coverage": 0.0, "image_size": [w, h], "empty": True}
     bw, bh = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
     return {"width": bw, "height": bh, "aspect": round(bw / max(1, bh), 4), "coverage": round(float(a.mean()), 4),
-            "image_size": [w, h], "empty": False, "alpha_corner": int(np.array(im.getchannel("A"))[2, 2]),
-            "alpha_centre": int(np.array(im.getchannel("A"))[h // 2, w // 2])}
+            "image_size": [w, h], "empty": False, "alpha_corner": int(alpha[2, 2]),
+            "alpha_centre": int(alpha[h // 2, w // 2])}
 
 
 def colour_histogram(path: Path | str, bins: int = 8) -> np.ndarray:

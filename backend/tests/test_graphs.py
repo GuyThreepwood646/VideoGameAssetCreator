@@ -39,7 +39,10 @@ def test_zimage_matches_gen_concepts(bakeoff_dir):
 
 
 def test_concept_dispatch_and_save_nodes():
-    for model in concept.BUILDERS:
+    from vgac import reference
+
+    assert reference.concept_models() == ("zturbo", "zbase", "klein", "anima", "pixel", "chroma")
+    for model in reference.concept_models():
         g = concept.concept_graph(model, "p", 1, "pre", width=1024, height=1024)
         node = g[concept.save_node(model)]
         assert node["class_type"] == "SaveImage" and node["inputs"]["filename_prefix"] == "pre"

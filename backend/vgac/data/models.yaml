@@ -1,11 +1,28 @@
 # Models and tools the pipeline can use, with licence terms for the manifest.
+#
+# This file is the single source for the concept models (docs/CODE-AUDIT.md D1). An entry with `concept: true` is a
+# concept painter: it is offered in the concept Adjust knob, the style lock and the creation form, and served by
+# GET /api/models. Concept fields:
+#   label          short name shown in the app
+#   description    a few plain words on the look ("fast painted look")
+#   default_steps  sampler steps when the version leaves steps empty
+#   builder        graph builder function in vgac/graphs/concept.py
+#   save_node      node id of the SaveImage that holds the final image in that graph
+#   negative       true when the graph takes a real negative prompt (the style lock's negative is passed in)
+# Add a concept model by adding an entry here plus its builder function; nothing else lists them.
 models:
-  zturbo: {name: Z-Image Turbo, file: z-image-turbo-fp8-aio.safetensors, licence: Apache-2.0, version: "1.0"}
-  zbase: {name: Z-Image base, file: z_image_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0"}
-  klein: {name: FLUX.2 Klein 4B, file: flux-2-klein-4b-fp8.safetensors, licence: Apache-2.0, version: "4B"}
-  anima: {name: Anima turbo, file: anima-turbo-v1.1.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "1.1"}
-  pixel: {name: Z-Image Turbo + pixel art LoRA, file: pixel_art_style_z_image_turbo.safetensors, licence: Apache-2.0, version: "1.0"}
-  chroma: {name: Chroma1-HD, file: Chroma1-HD-fp8mixed.safetensors, licence: Apache-2.0, version: "1.0"}
+  zturbo: {name: Z-Image Turbo, file: z-image-turbo-fp8-aio.safetensors, licence: Apache-2.0, version: "1.0",
+    concept: true, label: Z-Image Turbo, description: fast painted look, default_steps: 8, builder: zimage_graph, save_node: "8", negative: false}
+  zbase: {name: Z-Image base, file: z_image_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
+    concept: true, label: Z-Image Base, description: "higher quality, slower", default_steps: 30, builder: zbase_graph, save_node: "9", negative: true}
+  klein: {name: FLUX.2 Klein 4B, file: flux-2-klein-4b-fp8.safetensors, licence: Apache-2.0, version: "4B",
+    concept: true, label: FLUX.2 Klein 4B, description: quick drafts, default_steps: 4, builder: klein_graph, save_node: "12", negative: false}
+  anima: {name: Anima turbo, file: anima-turbo-v1.1.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "1.1",
+    concept: true, label: Anima Turbo, description: anime line art, default_steps: 10, builder: anima_graph, save_node: "9", negative: false}
+  pixel: {name: Z-Image Turbo + pixel art LoRA, file: pixel_art_style_z_image_turbo.safetensors, licence: Apache-2.0, version: "1.0",
+    concept: true, label: Z-Image Pixel Art, description: pixel art, default_steps: 8, builder: pixel_graph, save_node: "11", negative: false}
+  chroma: {name: Chroma1-HD, file: Chroma1-HD-fp8mixed.safetensors, licence: Apache-2.0, version: "1.0",
+    concept: true, label: Chroma1-HD, description: loose painterly, default_steps: 30, builder: chroma_graph, save_node: "9", negative: true}
   qwen_edit: {name: Qwen-Image-Edit-2511, file: qwen_image_edit_2511_fp8mixed.safetensors, licence: Apache-2.0, version: "2511"}
   qwen_angles_lora: {name: Qwen-Image-Edit-2511 multiple-angles LoRA, file: qwen-image-edit-2511-multiple-angles-lora.safetensors, licence: Apache-2.0, version: "1.0"}
   qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0"}

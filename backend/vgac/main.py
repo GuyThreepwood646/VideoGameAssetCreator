@@ -23,39 +23,34 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, library, reference
+from . import __version__, autopilot, library, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
                  job_to_dict, project_to_dict, version_to_dict, _iso)
 from .events import bus
-from .jobs import HOST, JobQueue, free_ram_gb, instance_for, job_kind
+from .jobs import HOST, JobQueue, active_queue, free_ram_gb, job_kind
+from .pipeline import PipelineError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
 
 FRONTEND_DIST = BACKEND_DIR.parent / "frontend" / "dist"
-STYLE_MODELS = ("zturbo", "zbase", "klein", "anima", "pixel", "chroma")
-
-queue: JobQueue | None = None
+HEALTH_STATS_MAX_AGE = 5.0  # seconds an instance's /system_stats answer is reused by /api/health (polled every 2 s)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global queue
     settings = get_settings()
     init_db()
-    queue = JobQueue(settings)
-    await queue.start()
-    from . import autopilot  # late import: autopilot imports this module
-
+    q = JobQueue(settings)  # registers itself as jobs.active_queue() for the API and the autopilot
+    await q.start()
     autopilot.resume_all()
     log.info("library at %s, db at %s", settings.library_path, settings.db_path)
     try:
         yield
     finally:
-        await queue.stop()
-        queue = None
+        await q.stop()
 
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
@@ -72,6 +67,11 @@ app.add_middleware(
 # The server only ever listens on loopback; these two close the one remote route left, a web page in the
 # user's browser (DNS rebinding and cross-site requests).
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
+
+
+@app.exception_handler(PipelineError)
+async def _pipeline_error(request: Request, exc: PipelineError) -> JSONResponse:
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status)
 
 
 @app.middleware("http")
@@ -160,18 +160,15 @@ class FeedbackIn(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _queue() -> JobQueue:
-    if queue is None:
-        raise HTTPException(503, "job queue not running")
-    return queue
+_queue = pipeline.queue
+_params = pipeline.validate_params
+_version = pipeline.get_version
 
 
-def _params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]:
-    """Adjust knobs checked against the stage schema (400 on a bad value)."""
-    try:
-        return reference.validate_params(stage, params)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+def _check_concept_model(field: str, mid: str | None) -> None:
+    """A concept model id must be one of the concept models in data/models.yaml."""
+    if mid and mid not in reference.concept_models():
+        raise HTTPException(400, f"{field} must be one of {reference.concept_models()}")
 
 
 def _check_mask(mask_b64: str | None) -> None:
@@ -211,13 +208,6 @@ def _asset(db: Session, aid: str) -> Asset:
     return a
 
 
-def _version(db: Session, vid: str) -> Version:
-    v = db.get(Version, vid)
-    if v is None:
-        raise HTTPException(404, "version not found")
-    return v
-
-
 def _validate_platform(pid: str) -> None:
     try:
         reference.platform(pid)
@@ -237,41 +227,6 @@ def _validate_category(cid: str) -> None:
         raise HTTPException(400, str(e))
 
 
-def _selected(db: Session, asset_id: str, stage: str) -> Version | None:
-    return db.scalar(select(Version).where(Version.asset_id == asset_id, Version.stage == stage, Version.selected == True))  # noqa: E712
-
-
-def _select(db: Session, v: Version) -> None:
-    for sib in db.scalars(select(Version).where(Version.asset_id == v.asset_id, Version.stage == v.stage)).all():
-        sib.selected = sib.id == v.id
-    db.commit()
-
-
-def _new_version(db: Session, asset: Asset, stage: str, parent: Version | None, params: dict[str, Any]) -> Version:
-    merged = {k: v for k, v in reference.stage_defaults(stage).items() if v is not None}
-    merged.update(params or {})
-    v = Version(asset_id=asset.id, stage=stage, parent_version_id=parent.id if parent else None, status="queued")
-    v.params = merged
-    db.add(v)
-    db.commit()
-    db.refresh(v)
-    # First version of a stage is selected automatically so the next stage has a parent.
-    if _selected(db, asset.id, stage) is None:
-        v.selected = True
-        db.commit()
-    return v
-
-
-def _submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, Any]) -> Job:
-    q = _queue()
-    kind = job_kind(v.stage, op, asset.category)
-    instance = instance_for(v.stage, asset.category)
-    body = {"version_id": v.id, "op": op, **payload}
-    job = q.submit(instance, kind, asset.id, v.id, body)
-    db.refresh(v)
-    return job
-
-
 # ---------------------------------------------------------------------------
 # Health and reference data
 # ---------------------------------------------------------------------------
@@ -279,9 +234,11 @@ def _submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, A
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
+    """Polled every 2 s by the desktop launcher: it reuses the queue's ComfyUI clients and their cached /system_stats."""
     settings = get_settings()
-    clients = {name: ComfyClient(inst.url, name=name) for name, inst in settings.instances.items()}
-    summaries = await asyncio.gather(*(c.vram_summary() for c in clients.values()))
+    queue = active_queue()
+    clients = {name: (queue.clients.get(name) if queue else None) or _health_client(name, inst.url) for name, inst in settings.instances.items()}
+    summaries = await asyncio.gather(*(c.cached_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values()))
     instances = {}
     for (name, inst), summary in zip(settings.instances.items(), summaries):
         instances[name] = {"url": inst.url, "gpu": inst.gpu, "role": inst.role, **summary}
@@ -306,12 +263,30 @@ async def health() -> dict[str, Any]:
     }
 
 
+_health_clients: dict[str, ComfyClient] = {}
+
+
+def _health_client(name: str, url: str) -> ComfyClient:
+    """A client for health checks while no queue runs (kept, so its cache holds between polls)."""
+    c = _health_clients.get(name)
+    if c is None or c.base_url != url.rstrip("/"):
+        c = _health_clients[name] = ComfyClient(url, name=name)
+    return c
+
+
 @app.get("/api/categories")
 def categories() -> list[dict[str, Any]]:
     return [{"id": c["id"], "label": c["label"], "rig_engine": c["rig_engine"], "symmetric": bool(c["symmetric"]), "pose_block": c["pose_block"],
              "size_m": c["size_m"], "parts_default": c.get("parts_default", []), "budgets": c.get("budgets", {}),
-             "views": c.get("views"), "lod_ratios": c.get("lod_ratios"), "topology": c.get("topology"), "input_view_default": c.get("input_view_default")}
+             "views": c.get("views"), "lod_ratios": c.get("lod_ratios"), "topology": c.get("topology"), "input_view_default": c.get("input_view_default"),
+             "skips": list(c.get("skips") or [])}
             for c in reference.categories()]
+
+
+@app.get("/api/models")
+def models_() -> list[dict[str, Any]]:
+    """The concept painters from data/models.yaml: id, label, description, name, licence, version, default_steps, negative."""
+    return reference.models_public()
 
 
 @app.get("/api/styles")
@@ -354,8 +329,7 @@ def list_projects(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
 def create_project(body: ProjectIn, db: Session = Depends(get_session)) -> dict[str, Any]:
     _validate_platform(body.platform_target)
     lock = (body.style_lock or StyleLock()).model_dump()
-    if lock.get("model") and lock["model"] not in STYLE_MODELS:
-        raise HTTPException(400, f"style_lock.model must be one of {STYLE_MODELS}")
+    _check_concept_model("style_lock.model", lock.get("model"))
     p = Project(name=body.name, platform_target=body.platform_target)
     p.unity_project_path = _check_unity_project(body.unity_project_path)
     p.style_lock = lock
@@ -382,8 +356,7 @@ def update_project(pid: str, body: ProjectPatch, db: Session = Depends(get_sessi
         p.platform_target = body.platform_target
     if body.style_lock is not None:
         lock = body.style_lock.model_dump()
-        if lock.get("model") and lock["model"] not in STYLE_MODELS:
-            raise HTTPException(400, f"style_lock.model must be one of {STYLE_MODELS}")
+        _check_concept_model("style_lock.model", lock.get("model"))
         p.style_lock = lock
     db.commit()
     db.refresh(p)
@@ -420,8 +393,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     platform = body.platform_target or p.platform_target
     _validate_platform(platform)
     cat = reference.category(body.category)
-    if body.concept_model and body.concept_model not in STYLE_MODELS:
-        raise HTTPException(400, f"concept_model must be one of {STYLE_MODELS}")
+    _check_concept_model("concept_model", body.concept_model)
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
     a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
@@ -442,7 +414,7 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     """A variant is a sibling asset that keeps the base's identity: the base's selected concept is copied as the
     variant's first concept version and a refine with the change runs on it. Later stages run as usual."""
     base = _asset(db, aid)
-    src = _selected(db, base.id, "concept")
+    src = pipeline.selected(db, base.id, "concept")
     if src is None or src.status != "done":
         raise HTTPException(409, "the base asset needs a finished, selected concept first")
     change = body.change.strip()
@@ -478,8 +450,8 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     db.commit()
     # Refine with the change so the identity holds.
     vparams = _params("concept", body.params)
-    v = _new_version(db, a, "concept", copy, {**copy.params, **vparams})
-    job = _submit(db, a, v, "refine", {"instruction": change, "view": None, "mask_png": None, "params": vparams})
+    v = pipeline.new_version(db, a, "concept", copy, {**copy.params, **vparams})
+    job = pipeline.submit(db, a, v, "refine", {"instruction": change, "view": None, "mask_png": None, "params": vparams})
     return {"asset": asset_to_dict(a), "job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -526,49 +498,10 @@ def delete_asset(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def _run_stage_internal(db: Session, a: Asset, stage: str, count: int = 1, params: dict[str, Any] | None = None,
-                        parent_version_id: str | None = None) -> list[dict[str, Any]]:
-    if stage not in STAGES:
-        raise HTTPException(400, f"unknown stage {stage!r}; stages: {list(STAGES)}")
-    count = count if stage == "concept" else 1
-    parent: Version | None = None
-    if stage != "concept":
-        if parent_version_id:
-            parent = _version(db, parent_version_id)
-            if parent.asset_id != a.id:
-                raise HTTPException(400, "parent version belongs to another asset")
-        else:
-            # The parent is the kept version of the previous stage, walking back only over stages this category
-            # skips (material has no turnaround), never over a stage the person simply has not finished.
-            skips = set(reference.category(a.category).get("skips") or [])
-            idx = STAGES.index(stage) - 1
-            while idx > 0 and STAGES[idx] in skips:
-                idx -= 1
-            prev = STAGES[idx]
-            parent = _selected(db, a.id, prev)
-            if parent is None:
-                raise HTTPException(409, f"no selected {prev} version to build on")
-        if parent.status != "done":
-            raise HTTPException(409, f"parent version is {parent.status}, not done")
-    base_params = _params(stage, params)
-    if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
-        base_params["model"] = a.concept_model
-    versions, jobs = [], []
-    for i in range(count):
-        p = dict(base_params)
-        if count > 1 and p.get("seed") is not None:
-            p["seed"] = int(p["seed"]) + i
-        v = _new_version(db, a, stage, parent, p)
-        job = _submit(db, a, v, "run", {"params": p})
-        versions.append(v)
-        jobs.append(job)
-    return [{"job": job_to_dict(j), "version": version_to_dict(v)} for j, v in zip(jobs, versions)]
-
-
 @app.post("/api/assets/{aid}/stages/{stage}/run")
 def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_session)) -> Any:
     a = _asset(db, aid)
-    pairs = _run_stage_internal(db, a, stage, count=body.count, params=body.params, parent_version_id=body.parent_version_id)
+    pairs = pipeline.run_stage(db, a, stage, count=body.count, params=body.params, parent_version_id=body.parent_version_id)
     return pairs if len(pairs) > 1 else pairs[0]
 
 
@@ -580,7 +513,6 @@ class AutopilotIn(BaseModel):
 
 @app.post("/api/assets/{aid}/autopilot")
 async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session = Depends(get_session)) -> dict[str, Any]:
-    from . import autopilot
     a = _asset(db, aid)
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
@@ -593,13 +525,11 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
 
 @app.get("/api/assets/{aid}/autopilot")
 def get_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    from . import autopilot
     return autopilot.get_state(_asset(db, aid))
 
 
 @app.post("/api/assets/{aid}/autopilot/stop")
 async def stop_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    from . import autopilot
     _asset(db, aid)
     return autopilot.stop(aid)
 
@@ -614,8 +544,8 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
         raise HTTPException(400, f"unknown view {body.view!r}")
     _check_mask(body.mask_png)
     rparams = _params(parent.stage, body.params)
-    v = _new_version(db, a, parent.stage, parent, {**parent.params, **rparams})
-    job = _submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **rparams})
+    job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -626,15 +556,15 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params)
-    v = _new_version(db, a, parent.stage, parent, {**parent.params, **aparams})
-    job = _submit(db, a, v, "adjust", {"params": aparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **aparams})
+    job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 
 @app.post("/api/versions/{vid}/select")
 def select_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
     v = _version(db, vid)
-    _select(db, v)
+    pipeline.select(db, v)
     db.refresh(v)
     return version_to_dict(v)
 
@@ -642,6 +572,7 @@ def select_version(vid: str, db: Session = Depends(get_session)) -> dict[str, An
 @app.post("/api/versions/{vid}/reject")
 def reject_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
     v = _version(db, vid)
+    queue = active_queue()
     if v.status in ("queued", "running") and v.job_id and queue is not None:
         queue.cancel(v.job_id)
     v.status = "rejected"
@@ -679,6 +610,7 @@ async def judge_version(vid: str, body: JudgeIn, db: Session = Depends(get_sessi
         from . import stages as stages_mod
 
         try:
+            queue = active_queue()
             await stages_mod.judge_metrics(v.id, get_settings(), queue.clients if queue else {})
         except Exception as e:
             raise HTTPException(500, f"judge failed: {e}")
@@ -688,7 +620,7 @@ async def judge_version(vid: str, body: JudgeIn, db: Session = Depends(get_sessi
         if v.status != "done":
             raise HTTPException(409, f"version is {v.status}, not done")
         q = _queue()
-        job = q.submit("b", job_kind(v.stage, "judge", a.category), a.id, v.id, {"version_id": v.id, "op": "judge", "mode": "local"})
+        job = q.submit(q.settings.judge_instance, job_kind(v.stage, "judge", a.category), a.id, v.id, {"version_id": v.id, "op": "judge", "mode": "local"})
         db.expire_all()
         out = version_to_dict(_version(db, vid))
         out["judge_job"] = job_to_dict(job)

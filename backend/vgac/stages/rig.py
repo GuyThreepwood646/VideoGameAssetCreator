@@ -106,7 +106,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     rig_glb = sc.dir / "rig.glb"
     try:
         # Repair weights: unweighted vertices inherit the nearest weighted vertex, 4 influences max, normalised.
-        await sc.blender("rig_fix.py", [raw_glb, rig_glb], log_name="rig_fix.log", timeout=1800)
+        await sc.blender("rig_fix.py", [raw_glb, rig_glb], log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(rig_fix_error=str(e)[:500])
     if not rig_glb.is_file():
@@ -147,7 +147,7 @@ async def _inspect(sc: StageContext, rig_glb: Path, bend_test: bool) -> None:
     info_dir = sc.dir / "rig_info"
     try:
         sc.progress(0.6, "rig inspection render")
-        await sc.blender("rig_info.py", [rig_glb, info_dir, "35,90" if bend_test else "35"], log_name="rig_info.log", timeout=1800)
+        await sc.blender("rig_info.py", [rig_glb, info_dir, "35,90" if bend_test else "35"], log_name="rig_info.log", timeout=sc.settings.blender_timeout_seconds)
         info = json.loads((info_dir / "rig_info.json").read_text())
         sc.register("rig_info", info_dir / "rig_info.json")
         for key, fname in (info.get("renders") or {}).items():
@@ -170,7 +170,7 @@ async def _animate(sc: StageContext, rig_glb: Path) -> None:
     anim_glb = sc.dir / "anim.glb"
     try:
         sc.progress(0.75, "procedural idle and walk clips")
-        await sc.blender("procanim.py", [rig_glb, anim_glb, 24], log_name="procanim.log", timeout=1800)
+        await sc.blender("procanim.py", [rig_glb, anim_glb, 24], log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
         report_path = sc.dir / "anim_anim.json"
         sc.register("anim_glb", anim_glb)
         if report_path.is_file():
@@ -179,7 +179,7 @@ async def _animate(sc: StageContext, rig_glb: Path) -> None:
             sc.set_metrics(anim_kind=rep.get("kind"), clips=rep.get("clips"), walk_probe=rep.get("walk_probe"))
         sc.progress(0.88, "render clip strip")
         frames_dir = sc.dir / "anim_frames"
-        await sc.blender("render_anim.py", [anim_glb, frames_dir, 6, 256], log_name="render_anim.log", timeout=1800)
+        await sc.blender("render_anim.py", [anim_glb, frames_dir, 6, 256], log_name="render_anim.log", timeout=sc.settings.blender_timeout_seconds)
         frames = json.loads((frames_dir / "frames.json").read_text())
         paths, labels = [], []
         for clip, files in (frames.get("clips") or {}).items():
@@ -204,7 +204,8 @@ async def judge(sc: StageContext) -> None:
     if sc.version.metrics.get("rigid"):
         checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False)
     elif info_path is not None:
-        checks = quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True)
+        checks = quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
+                                    group_per_vertex=sc.version.params.get("group_per_vertex"))
     else:
         checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=True)
     if sc.version.metrics.get("anim_glb") or sc.file("anim_glb"):
