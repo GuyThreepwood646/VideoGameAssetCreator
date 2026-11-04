@@ -15,7 +15,8 @@ function configPath() {
   const exeDir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
   const p = path.join(exeDir, 'config.json');
   if (!fs.existsSync(p)) {
-    try { fs.copyFileSync(path.join(__dirname, 'config.json'), p); } catch (_) { return path.join(__dirname, 'config.json'); }
+    // read + write rather than copyFileSync: the source lives inside the asar archive.
+    try { fs.writeFileSync(p, fs.readFileSync(path.join(__dirname, 'config.json'))); } catch (_) { return path.join(__dirname, 'config.json'); }
   }
   return p;
 }
@@ -338,10 +339,16 @@ if (!gotLock) {
       setTimeout(async () => {
         const dir = process.env.VGAC_DESKTOP_SNAPSHOT_DIR;
         if (dir) {
+          // capturePage never resolves on a hidden window, so capture only visible ones and give up after 5 s.
+          const capture = async (win, file) => {
+            if (!win || win.isDestroyed() || !win.isVisible()) return;
+            const img = await Promise.race([win.webContents.capturePage(), new Promise((res) => setTimeout(() => res(null), 5000))]);
+            if (img) fs.writeFileSync(path.join(dir, file), img.toPNG());
+          };
           try {
             fs.mkdirSync(dir, { recursive: true });
-            if (statusWindow) fs.writeFileSync(path.join(dir, 'status.png'), (await statusWindow.webContents.capturePage()).toPNG());
-            if (mainWindow) fs.writeFileSync(path.join(dir, 'main.png'), (await mainWindow.webContents.capturePage()).toPNG());
+            await capture(statusWindow, 'status.png');
+            await capture(mainWindow, 'main.png');
             fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ mainOpened, hasMainWindow: !!mainWindow, statusVisible: !!(statusWindow && statusWindow.isVisible()), snapshot: supervisor.snapshot() }, null, 2));
           } catch (e) { log('snapshot failed: ' + e.message); }
         }

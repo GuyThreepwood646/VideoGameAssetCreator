@@ -25,6 +25,7 @@
       "services.js",
       "procs.js",
       "status.html",
+      "status.js",
       "config.json",
       "build/icon.png",
       "package.json"

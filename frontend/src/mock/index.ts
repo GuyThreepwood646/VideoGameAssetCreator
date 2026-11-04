@@ -473,7 +473,8 @@ function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params
     kind = `${stage}.adjust`
   } else {
     const params: Record<string, unknown> = { ...stageParamsDefault(stage), seed: Math.floor(Math.random() * 100000), autopilot: true }
-    if (stage === 'prep' && !pausedOnce.has(asset.id)) params.seed = 3 // fails triangle_budget and manifold once
+    // Prep: fail its checks once (seed 3: triangle_budget and manifold), then pass (seed % 3 !== 0).
+    if (stage === 'prep') params.seed = pausedOnce.has(asset.id) ? 7 + 3 * Math.floor(Math.random() * 1000) : 3
     if (stage === 'concept') {
       try {
         const pref = localStorage.getItem('vgac.conceptModel.' + asset.id)

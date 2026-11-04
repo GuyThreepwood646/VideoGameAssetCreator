@@ -510,6 +510,7 @@ def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_sessi
 class AutopilotIn(BaseModel):
     until_stage: str = "export"
     stop_on: str = "block"
+    fix: dict[str, Any] | None = None
 
 
 @app.post("/api/assets/{aid}/autopilot")
@@ -518,7 +519,7 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     a = _asset(db, aid)
     body = body or AutopilotIn()
     try:
-        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on)
+        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
