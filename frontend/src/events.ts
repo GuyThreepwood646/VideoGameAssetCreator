@@ -1,4 +1,6 @@
 // Live event hub: WebSocket /api/ws/events with a polling fallback on /api/jobs every 3 s.
+// The polling fallback carries job and version events only; autopilot state is
+// re-read by the asset page from GET /api/assets/{aid}/autopilot while it runs.
 import { useEffect, useState } from 'react'
 import { api, eventsUrl, type Job, type ServerEvent } from './api'
 
@@ -77,7 +79,7 @@ class EventHub {
     ws.onmessage = (m: MessageEvent) => {
       try {
         const ev = JSON.parse(String(m.data)) as ServerEvent
-        if (ev && (ev.type === 'job' || ev.type === 'version')) {
+        if (ev && (ev.type === 'job' || ev.type === 'version' || ev.type === 'autopilot')) {
           if (ev.type === 'job') this.remember(ev.job)
           this.emit(ev)
         }

@@ -184,3 +184,10 @@ def budget(category_id: str, platform_id: str) -> dict[str, int]:
     p = platform(platform_id)
     is_character = c.get("rig_engine", "none") != "none"
     return {"triangles": int(p["triangles_character"] if is_character else p["triangles_prop"]), "texture": int(p["texture"])}
+
+
+def style_presets() -> list[dict[str, Any]]:
+    """Ready-made looks that fill a project's style lock (docs/UX-REVIEW.md item H)."""
+    import yaml
+    path = DATA_DIR / "style_presets.yaml"
+    return list(yaml.safe_load(path.read_text(encoding="utf-8")) or [])

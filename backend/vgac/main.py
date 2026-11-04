@@ -68,6 +68,7 @@ app.add_middleware(
 
 
 class StyleLock(BaseModel):
+    preset: str | None = None
     prompt_block: str = ""
     model: str | None = None
     loras: list[str] = Field(default_factory=list)
@@ -79,12 +80,14 @@ class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     style_lock: StyleLock | None = None
     platform_target: str = "pc_mid"
+    unity_project_path: str | None = None
 
 
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     style_lock: StyleLock | None = None
     platform_target: str | None = None
+    unity_project_path: str | None = None
 
 
 class AssetIn(BaseModel):
@@ -265,6 +268,11 @@ def stages_() -> list[dict[str, Any]]:
     return reference.stages()
 
 
+@app.get("/api/style-presets")
+def style_presets_() -> list[dict[str, Any]]:
+    return reference.style_presets()
+
+
 @app.get("/api/suggest")
 def suggest_(category: str = "humanoid", style: str = "painted", platform: str = "pc_mid") -> dict[str, Any]:
     from . import guidance
@@ -288,6 +296,7 @@ def create_project(body: ProjectIn, db: Session = Depends(get_session)) -> dict[
     if lock.get("model") and lock["model"] not in STYLE_MODELS:
         raise HTTPException(400, f"style_lock.model must be one of {STYLE_MODELS}")
     p = Project(name=body.name, platform_target=body.platform_target)
+    p.unity_project_path = body.unity_project_path or None
     p.style_lock = lock
     db.add(p)
     db.commit()
@@ -303,6 +312,8 @@ def get_project(pid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
 @app.put("/api/projects/{pid}")
 def update_project(pid: str, body: ProjectPatch, db: Session = Depends(get_session)) -> dict[str, Any]:
     p = _project(db, pid)
+    if body.unity_project_path is not None:
+        p.unity_project_path = body.unity_project_path.strip() or None
     if body.name is not None:
         p.name = body.name
     if body.platform_target is not None:
@@ -449,16 +460,15 @@ def delete_asset(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/assets/{aid}/stages/{stage}/run")
-def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_session)) -> Any:
-    a = _asset(db, aid)
+def _run_stage_internal(db: Session, a: Asset, stage: str, count: int = 1, params: dict[str, Any] | None = None,
+                        parent_version_id: str | None = None) -> list[dict[str, Any]]:
     if stage not in STAGES:
         raise HTTPException(400, f"unknown stage {stage!r}; stages: {list(STAGES)}")
-    count = body.count if stage == "concept" else 1
+    count = count if stage == "concept" else 1
     parent: Version | None = None
     if stage != "concept":
-        if body.parent_version_id:
-            parent = _version(db, body.parent_version_id)
+        if parent_version_id:
+            parent = _version(db, parent_version_id)
             if parent.asset_id != a.id:
                 raise HTTPException(400, "parent version belongs to another asset")
         else:
@@ -475,20 +485,55 @@ def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_sessi
                 raise HTTPException(409, f"no selected {prev} version to build on")
         if parent.status != "done":
             raise HTTPException(409, f"parent version is {parent.status}, not done")
-    params = dict(body.params or {})
-    if stage == "concept" and not params.get("model") and getattr(a, "concept_model", None):
-        params["model"] = a.concept_model
+    base_params = dict(params or {})
+    if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
+        base_params["model"] = a.concept_model
     versions, jobs = [], []
     for i in range(count):
-        params = dict(body.params or {})
-        if count > 1 and params.get("seed") is not None:
-            params["seed"] = int(params["seed"]) + i
-        v = _new_version(db, a, stage, parent, params)
-        job = _submit(db, a, v, "run", {"params": params})
+        p = dict(base_params)
+        if count > 1 and p.get("seed") is not None:
+            p["seed"] = int(p["seed"]) + i
+        v = _new_version(db, a, stage, parent, p)
+        job = _submit(db, a, v, "run", {"params": p})
         versions.append(v)
         jobs.append(job)
-    pairs = [{"job": job_to_dict(j), "version": version_to_dict(v)} for j, v in zip(jobs, versions)]
-    return pairs if count > 1 else pairs[0]
+    return [{"job": job_to_dict(j), "version": version_to_dict(v)} for j, v in zip(jobs, versions)]
+
+
+@app.post("/api/assets/{aid}/stages/{stage}/run")
+def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_session)) -> Any:
+    a = _asset(db, aid)
+    pairs = _run_stage_internal(db, a, stage, count=body.count, params=body.params, parent_version_id=body.parent_version_id)
+    return pairs if len(pairs) > 1 else pairs[0]
+
+
+class AutopilotIn(BaseModel):
+    until_stage: str = "export"
+    stop_on: str = "block"
+
+
+@app.post("/api/assets/{aid}/autopilot")
+async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session = Depends(get_session)) -> dict[str, Any]:
+    from . import autopilot
+    a = _asset(db, aid)
+    body = body or AutopilotIn()
+    try:
+        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/assets/{aid}/autopilot")
+def get_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    from . import autopilot
+    return autopilot.get_state(_asset(db, aid))
+
+
+@app.post("/api/assets/{aid}/autopilot/stop")
+async def stop_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    from . import autopilot
+    _asset(db, aid)
+    return autopilot.stop(aid)
 
 
 @app.post("/api/versions/{vid}/refine")

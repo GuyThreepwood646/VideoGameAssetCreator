@@ -273,3 +273,32 @@ def test_variants(client, tmp_path):
     assert client.post(f"/api/assets/{a['id']}/variants", json={"change": "  "}).status_code == 400
     listed = client.get(f"/api/projects/{p['id']}/assets").json()
     assert any(x["base_asset_id"] == a["id"] for x in listed)
+
+
+
+def test_style_presets(client):
+    presets = client.get("/api/style-presets").json()
+    assert len(presets) >= 5 and all({"id", "label", "style_lock", "style_preset"} <= set(p) for p in presets)
+    p = client.post("/api/projects", json={"name": "s"}).json()
+    lock = presets[0]["style_lock"]
+    upd = client.put(f"/api/projects/{p['id']}", json={"style_lock": lock}).json()
+    assert upd["style_lock"]["model"] == lock["model"] and upd["style_lock"].get("preset") == presets[0]["id"]
+
+
+def test_autopilot_runs_all_stages(client):
+    p = client.post("/api/projects", json={"name": "ap"}).json()
+    a = client.post(f"/api/projects/{p['id']}/assets", json={"name": "bot", "category": "prop_rigid", "style_preset": "painted", "prompt": "a crate"}).json()
+    st = client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never"}).json()
+    assert st["status"] == "running"
+    import time
+    for _ in range(200):
+        st = client.get(f"/api/assets/{a['id']}/autopilot").json()
+        if st["status"] in ("done", "error", "paused"):
+            break
+        time.sleep(0.1)
+    assert st["status"] == "done", st
+    assert st["stages_done"] == ["concept", "turnaround", "mesh", "prep", "rig", "export"]
+    full = client.get(f"/api/assets/{a['id']}").json()
+    assert len(full["stages"]["concept"]) == 2 and all(full["selected"].get(s) for s in full["stages"] if full["stages"][s])
+    assert full["autopilot"]["status"] == "done"
+    assert client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "bogus"}).status_code == 400

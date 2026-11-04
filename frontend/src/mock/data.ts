@@ -1,6 +1,6 @@
 // Sample data for the mock backend: reference tables, one project with a fully
 // staged asset, and the fabricators that fill in files and metrics for new versions.
-import type { Asset, Category, Job, Platform, Project, StageId, StageInfo, StylePreset, Version } from '../api'
+import type { Asset, Category, Job, LookPreset, Platform, Project, StageId, StageInfo, StylePreset, Version } from '../api'
 import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, type Figure, type ViewName } from './images'
 
 export const files = new Map<string, string>() // library-relative path -> data URL
@@ -104,6 +104,82 @@ export const styles: StylePreset[] = [
   { id: 'realistic', label: 'Realistic PBR', model: 'zbase', prompt_block: 'photoreal game asset, neutral studio lighting, physically based materials' },
   { id: 'pixel', label: 'Pixel art', model: 'pixel', prompt_block: 'pixel art sprite, 32 colour palette, crisp edges' },
   { id: 'toon', label: 'Toon shaded', model: 'klein', prompt_block: 'cel shaded, bold outlines, flat colour regions, saturated palette' },
+  { id: 'cel', label: 'Cel shaded (anime)', model: 'anima', prompt_block: 'anime cel shading, clean line art, flat colour regions, soft gradients' },
+]
+
+// Ready-made looks: GET /api/style-presets. Applying one means PUT /api/projects/{id}
+// with the style_lock (plus "preset": id) and defaulting new assets to style_preset.
+export const lookPresets: LookPreset[] = [
+  {
+    id: 'painted_fantasy',
+    label: 'Painted fantasy',
+    description: 'Hand-painted, chunky shapes, warm light. The safe choice for fantasy and casual games.',
+    style_preset: 'painterly',
+    style_lock: {
+      prompt_block: 'hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette, muted earth tones with one accent colour',
+      model: 'zturbo',
+      loras: [],
+      palette: ['#3b2f2f', '#c9a24a', '#6b8e7b', '#e8dcc2', '#8c2f2f'],
+      negative: 'photorealistic, text, watermark, blurry, extra limbs, cropped',
+    },
+    example_prompt: 'A sturdy young knight in worn plate armour, short dark hair, no helmet',
+  },
+  {
+    id: 'clean_cartoon',
+    label: 'Clean cartoon',
+    description: 'Bold outlines, flat bright colours, simple shapes. Reads well on small screens.',
+    style_preset: 'toon',
+    style_lock: {
+      prompt_block: 'clean cartoon style, bold outlines, flat colour regions, saturated palette, simple readable shapes',
+      model: 'klein',
+      loras: [],
+      palette: ['#ff6b35', '#ffd166', '#06d6a0', '#118ab2', '#073b4c'],
+      negative: 'photorealistic, gradients, noise, text, watermark, blurry',
+    },
+    example_prompt: 'A round cheerful robot vendor with a tray of snacks and one wobbly antenna',
+  },
+  {
+    id: 'anime_cel',
+    label: 'Anime cel',
+    description: 'Clean line art with cel shading, as in Japanese animation.',
+    style_preset: 'cel',
+    style_lock: {
+      prompt_block: 'anime cel shading, clean line art, flat colour regions, soft gradients, expressive eyes',
+      model: 'anima',
+      loras: [],
+      palette: ['#2b2d42', '#8d99ae', '#edf2f4', '#ef233c', '#d90429'],
+      negative: 'photorealistic, 3d render, text, watermark, blurry, extra limbs',
+    },
+    example_prompt: 'A lanky swordswoman in a school uniform with a long red scarf, calm expression',
+  },
+  {
+    id: 'pixel_retro',
+    label: 'Pixel retro',
+    description: 'Crisp pixels and a small palette for 2D retro games; sprites come from the finished model.',
+    style_preset: 'pixel',
+    style_lock: {
+      prompt_block: 'pixel art sprite, 32 colour palette, crisp edges, no anti-aliasing, 16-bit console look',
+      model: 'pixel',
+      loras: [],
+      palette: ['#1a1c2c', '#5d275d', '#b13e53', '#ef7d57', '#ffcd75', '#38b764', '#3b5dc9', '#f4f4f4'],
+      negative: 'photorealistic, smooth shading, blur, text, watermark',
+    },
+    example_prompt: 'A small green slime with two button eyes and a crown, bouncing',
+  },
+  {
+    id: 'realistic',
+    label: 'Realistic',
+    description: 'Photoreal materials and proportions. Slower to make; best for PC and showcase.',
+    style_preset: 'realistic',
+    style_lock: {
+      prompt_block: 'photoreal game asset, neutral studio lighting, physically based materials, fine surface detail',
+      model: 'zbase',
+      loras: [],
+      palette: ['#2e2e2e', '#7a6f5d', '#b8b2a7', '#4a5a6a', '#8c6d3f'],
+      negative: 'cartoon, painterly, text, watermark, blurry, extra limbs, cropped',
+    },
+    example_prompt: 'A weathered oak barrel with rusted iron bands and a cracked stave',
+  },
 ]
 
 export const platforms: Platform[] = [
@@ -492,6 +568,7 @@ export function seedStore() {
       loras: ['vgac_painterly_v2', 'hollowkeep_palette'],
       palette: ['#3b2f2f', '#c9a24a', '#6b8e7b', '#e8dcc2', '#8c2f2f'],
       negative: 'photorealistic, text, watermark, blurry, extra limbs, cropped',
+      preset: 'painted_fantasy',
     },
     platform_target: 'pc_mid',
   }

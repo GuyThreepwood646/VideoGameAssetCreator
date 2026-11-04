@@ -16,6 +16,10 @@ type Props = {
   height?: number | string
   showBonesDefault?: boolean
   className?: string
+  // Start with the turntable on (the finishing moment).
+  turntableDefault?: boolean
+  // Prefer the clip whose name contains this text (case-insensitive), e.g. "walk".
+  defaultClip?: string
 }
 
 type SceneHandles = {
@@ -90,7 +94,7 @@ function buildBoneOverlay(bones: BoneSegment[]): THREE.Group {
   return g
 }
 
-export default function Viewer({ url, bones, height = 420, showBonesDefault = true, className = '' }: Props) {
+export default function Viewer({ url, bones, height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const handlesRef = useRef<SceneHandles | null>(null)
   const modelRef = useRef<THREE.Object3D | null>(null)
@@ -99,10 +103,10 @@ export default function Viewer({ url, bones, height = 420, showBonesDefault = tr
   const overlayRef = useRef<THREE.Group | null>(null)
   const clipsRef = useRef<THREE.AnimationClip[]>([])
   const actionRef = useRef<THREE.AnimationAction | null>(null)
-  const turntableRef = useRef(false)
+  const turntableRef = useRef(turntableDefault)
 
   const [shading, setShadingState] = useState<Shading>('textured')
-  const [turntable, setTurntable] = useState(false)
+  const [turntable, setTurntable] = useState(turntableDefault)
   const [grid, setGrid] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
   const [showBones, setShowBones] = useState(showBonesDefault)
@@ -236,7 +240,8 @@ export default function Viewer({ url, bones, height = 420, showBonesDefault = tr
         setClips(names)
         if (clipsRef.current.length) {
           hh.mixer = new THREE.AnimationMixer(model)
-          const first = clipsRef.current[0]
+          const wanted = defaultClip ? defaultClip.toLowerCase() : ''
+          const first = (wanted && clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted))) || clipsRef.current[0]
           const action = hh.mixer.clipAction(first)
           action.play()
           actionRef.current = action

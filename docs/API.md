@@ -94,3 +94,15 @@ Variants
 - POST /api/assets/{aid}/variants body { "change": str, "name"?: str, "params"?: {} } -> { asset, job, version } (201).
   Creates a sibling asset in the same project (same category, style, platform; prompt = base prompt + change), copies the base's selected, finished concept version as the variant's first concept version (done, selected), and starts a concept Refine on it with the change as the instruction. 409 when the base has no finished selected concept, 400 when the change is empty.
 - The export manifest of a variant carries `variant_of {asset_id, change}`.
+
+Autopilot (decision D11)
+- POST /api/assets/{aid}/autopilot body { "until_stage"?: "export", "stop_on"?: "block" | "warn" | "never" } -> state. Runs the stages in order from the first without a kept result; concept makes 2 candidates and the automated metrics pick; a stage that already has finished versions but none kept is judged, not re-run (so Fix and Continue work by re-posting). Pauses on a failed check it cannot accept, errors when a job fails.
+- GET /api/assets/{aid}/autopilot -> state; POST /api/assets/{aid}/autopilot/stop -> state.
+- State { status: idle|running|paused|done|error, stage, job_id, version_id, reason, stop_on, until_stage, started_at, updated_at, stages_done[] }; Asset carries `autopilot`; WS event {"type": "autopilot", "asset_id", "autopilot"}.
+
+Style presets (item H)
+- GET /api/style-presets -> [ { id, label, description, style_preset, example_prompt, style_lock { preset, prompt_block, model, loras, palette, negative } } ]. Apply with PUT /api/projects/{id} { style_lock }.
+
+Delivery (decision D12)
+- Project gains `unity_project_path` (string | null; POST/PUT). Every export copies the deliverables to `<export_path or library/../exports>/<project>/<asset>/` (metrics.delivered_to, delivered_files) and, when the project has a Unity project path, imports the FBX there with the same importer script (metrics.unity_project_import).
+- Asset gains `concept_model` (POST field; default painter for concept runs).

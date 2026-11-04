@@ -287,6 +287,41 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   judge: H('Judge', 'Recompute the quality checks for this version.', 'Use it after changing the budget.', 'judge'),
   variant: H('Variant', "A copy of an asset with one change (outfit, colour, damage) that keeps the original's identity.", 'Make one for the same character in winter clothes or battle-damaged; it starts from the original picture, so it stays recognisable.', 'variant (base_asset_id)'),
   variant_change: H('What changes', 'The one change that makes this variant different from the original.', 'Keep it short: an outfit, a colour scheme, a damage state.', 'variant_change'),
+  // Autopilot
+  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Make it" once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
+  stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),
+  until_stage: H('Run until', 'The last step the autopilot runs before it stops.', 'Usually the hand-off; stop earlier if you only want the picture or the model.', 'until_stage'),
+  // Style presets
+  look: H('Look', 'A ready-made style: the painter, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (GET /api/style-presets, stored as style_lock.preset)'),
+  look_preset: H('Look', 'A ready-made style: the painter, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (style_lock.preset)'),
+}
+
+// Plain words for the autopilot's stop_on setting.
+export const STOP_ON_OPTIONS: { id: 'block' | 'warn' | 'never'; label: string; hint: string }[] = [
+  { id: 'block', label: 'Stop for serious problems', hint: 'Pauses when a check fails that would break the asset; warnings do not stop it.' },
+  { id: 'warn', label: 'Stop for any warning', hint: 'Pauses on every failed check, even small ones.' },
+  { id: 'never', label: 'Never stop for checks', hint: 'Keeps going whatever the checks say; only a failed step pauses it.' },
+]
+
+// "Autopilot: Building the 3D model, about 7 minutes left, step 3 of 6".
+export function autopilotLine(stage: StageId | null, secondsLeft: number | null, extra?: { queued?: boolean }): string {
+  if (!stage) return 'Autopilot: starting.'
+  const k = STAGES.indexOf(stage) + 1
+  const time = extra?.queued ? 'waiting for a free machine' : secondsLeft !== null ? `${fmtDuration(secondsLeft)} left` : ''
+  return `Autopilot: ${stageGerund(stage).toLowerCase()}${time ? `, ${time}` : ''}, step ${k} of ${STAGES.length}`
+}
+
+// Seconds left for the autopilot: the rest of the current stage plus every stage after it, up to until_stage.
+export function autopilotSecondsLeft(stage: StageId, progress: number, untilStage: StageId, stages: StageInfo[] | null | undefined, estimates: Record<string, number> | null | undefined): number {
+  const from = STAGES.indexOf(stage)
+  const to = Math.max(from, STAGES.indexOf(untilStage) < 0 ? STAGES.length - 1 : STAGES.indexOf(untilStage))
+  let total = 0
+  for (let i = from; i <= to; i++) {
+    const s = STAGES[i]
+    const est = stageEstimate(s, stages?.find((x) => x.id === s), estimates)
+    total += i === from ? est * (1 - Math.min(1, Math.max(0, progress))) : est
+  }
+  return total
 }
 
 export const VARIANT_EXAMPLES = ['winter cloak and fur boots', 'rusted and battle-damaged', 'red and gold colour scheme']
@@ -452,6 +487,7 @@ export function helpFor(term: string): HelpEntry | null {
     case 'param':
     case 'metric':
     case 'term':
+    case 'preset':
       return TERM_HELP[name] ?? null
     default:
       return TERM_HELP[term] ?? null

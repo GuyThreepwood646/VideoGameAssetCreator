@@ -56,6 +56,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     style_lock_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     platform_target: Mapped[str] = mapped_column(String(50), nullable=False, default="pc_mid")
+    unity_project_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     assets: Mapped[list["Asset"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -83,12 +84,21 @@ class Asset(Base):
     base_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     variant_change: Mapped[str | None] = mapped_column(Text, nullable=True)
     concept_model: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    autopilot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="assets")
     versions: Mapped[list["Version"]] = relationship(
         back_populates="asset", cascade="all, delete-orphan", order_by="Version.created_at"
     )
+
+    @property
+    def autopilot(self) -> dict[str, Any] | None:
+        return _loads(self.autopilot_json, None) if self.autopilot_json else None
+
+    @autopilot.setter
+    def autopilot(self, value: dict[str, Any] | None) -> None:
+        self.autopilot_json = json.dumps(value) if value is not None else None
 
     @property
     def parts(self) -> list[str]:
@@ -207,7 +217,7 @@ def init_db() -> None:
     _ensure_columns(engine)
 
 
-_ADDED_COLUMNS = {"asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)"}}
+_ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT"}}
 
 
 def _ensure_columns(engine) -> None:
@@ -256,6 +266,7 @@ def project_to_dict(p: Project) -> dict[str, Any]:
         "created_at": _iso(p.created_at),
         "style_lock": p.style_lock,
         "platform_target": p.platform_target,
+        "unity_project_path": p.unity_project_path,
     }
 
 
@@ -289,6 +300,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
         "base_asset_id": a.base_asset_id,
         "variant_change": a.variant_change,
         "concept_model": a.concept_model,
+        "autopilot": a.autopilot,
         "created_at": _iso(a.created_at),
         "selected": {},
         "stages": {s: [] for s in STAGES},

@@ -27,6 +27,45 @@ export type StyleLock = {
   loras: string[]
   palette: string[]
   negative: string
+  // The ready-made look this lock was filled from (GET /api/style-presets id), if any.
+  preset?: string | null
+}
+
+// A ready-made look (GET /api/style-presets): fills the project's style lock and
+// names the asset style (style_preset) new assets in the project default to.
+export type LookPreset = {
+  id: string
+  label: string
+  description: string
+  style_preset: string
+  style_lock: StyleLock
+  example_prompt?: string
+}
+
+// Autopilot: runs every stage once from the first stage without a kept result,
+// keeps results that pass, and pauses only where something needs a person.
+export type AutopilotStatus = 'idle' | 'running' | 'paused' | 'done' | 'error'
+export type StopOn = 'block' | 'warn' | 'never'
+
+export type AutopilotState = {
+  status: AutopilotStatus
+  stage: StageId | string | null
+  job_id: string | null
+  version_id: string | null
+  reason: string | null
+  stop_on: StopOn | string
+  until_stage: StageId | string
+  started_at?: string | null
+  updated_at?: string | null
+  stages_done: string[]
+}
+
+export type AutopilotBody = {
+  until_stage?: StageId
+  stop_on?: StopOn
+  // Proposed addition (see README): run this stage once more with these params
+  // (an adjust of its kept version) before continuing. Used by "Fix and continue".
+  fix?: { stage: StageId; params: Record<string, unknown> }
 }
 
 export type Project = {
@@ -84,6 +123,8 @@ export type Asset = {
   // Variants: an asset derived from another with a change in the prompt.
   base_asset_id?: string | null
   variant_change?: string | null
+  // Autopilot state, when the backend has the feature (null when idle).
+  autopilot?: AutopilotState | null
   selected: Partial<Record<StageId, string>>
   stages: Partial<Record<StageId, Version[]>>
 }
@@ -165,7 +206,7 @@ export type Suggestion = {
   estimates: Record<string, number>
 }
 
-export type ServerEvent = { type: 'job'; job: Job } | { type: 'version'; version: Version }
+export type ServerEvent = { type: 'job'; job: Job } | { type: 'version'; version: Version } | { type: 'autopilot'; asset_id: string; autopilot: AutopilotState }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown> }
@@ -245,6 +286,7 @@ export const api = {
   platforms: () => get<Platform[]>('/api/platforms'),
   stages: () => get<StageInfo[]>('/api/stages'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),
+  stylePresets: () => get<LookPreset[]>('/api/style-presets'),
 
   // Projects
   listProjects: () => get<Project[]>('/api/projects'),
@@ -266,6 +308,11 @@ export const api = {
   updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target'>>) =>
     put<Asset>(`/api/assets/${id}`, body),
   deleteAsset: (id: string) => del<void>(`/api/assets/${id}`),
+
+  // Autopilot
+  startAutopilot: (aid: string, body: AutopilotBody = {}) => post<AutopilotState>(`/api/assets/${aid}/autopilot`, body),
+  getAutopilot: (aid: string) => get<AutopilotState>(`/api/assets/${aid}/autopilot`),
+  stopAutopilot: (aid: string) => post<AutopilotState>(`/api/assets/${aid}/autopilot/stop`),
 
   // Stages and versions
   runStage: (assetId: string, stage: StageId, body: RunStageBody = {}) =>

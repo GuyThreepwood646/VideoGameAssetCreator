@@ -1,0 +1,60 @@
+- id: painted_fantasy
+  label: Painted fantasy
+  description: Rich oil-and-airbrush painting, warm light, readable shapes. Good for RPGs and adventure games.
+  style_preset: painted
+  example_prompt: A weathered dwarven blacksmith with a braided beard, leather apron and heavy hammer.
+  style_lock:
+    preset: painted_fantasy
+    model: zturbo
+    prompt_block: A realistic acrylic and airbrush painting with visible confident brushstrokes and soft painted edges, forms modelled by light and value, rich colour, one warm key light. Painted illustration. No outlines, no line art, no comic or cartoon styling, no lettering.
+    loras: []
+    palette: ["#5b3a1e", "#c9a35c", "#2e4a6b", "#8a1c1c", "#e8dcc3"]
+    negative: comic and cartoon styling, outlines, cel shading, flat colours, anime, vector, text, logos, borders
+- id: clean_cartoon
+  label: Clean cartoon
+  description: Smooth shapes, bold simple colours, friendly proportions. Good for casual and family games.
+  style_preset: cel
+  example_prompt: A round cheerful robot helper with a single big eye and stubby arms.
+  style_lock:
+    preset: clean_cartoon
+    model: anima
+    prompt_block: Clean cel-shaded cartoon illustration with smooth simple shapes, bold flat colours, soft two-tone shading, friendly rounded proportions, plain background. No texture noise, no realism, no lettering.
+    loras: []
+    palette: ["#ff8a5b", "#ffd166", "#06d6a0", "#118ab2", "#f7f7f2"]
+    negative: realistic, photographic, gritty, noisy texture, text, logos
+- id: pixel_retro
+  label: Pixel retro
+  description: 16-bit pixel art with a limited palette and crisp pixels. Good for retro and indie games.
+  style_preset: pixel
+  example_prompt: A small knight sprite with a blue tunic and a round shield.
+  style_lock:
+    preset: pixel_retro
+    model: pixel
+    prompt_block: Pixel art style. 16-bit era sprite art with a limited palette, crisp clean pixels, no anti-aliasing, strong readable silhouette, plain background.
+    loras: []
+    palette: ["#1a1c2c", "#5d275d", "#b13e53", "#ef7d57", "#ffcd75", "#a7f070", "#38b764", "#3b5dc9"]
+    negative: blurry, smooth gradients, photographic, 3D render, text
+- id: realistic
+  label: Realistic
+  description: Photographic materials and lighting with physically based surfaces. Good for PC and console showcase assets.
+  style_preset: realistic_pbr
+  example_prompt: A battle-worn steel longsword with a leather-wrapped grip and a bronze pommel.
+  style_lock:
+    preset: realistic
+    model: zbase
+    prompt_block: Photorealistic studio photograph of the subject, physically accurate materials, soft even studio lighting, neutral grey backdrop, sharp focus, true-to-life proportions. No stylisation, no lettering.
+    loras: []
+    palette: ["#3a3a3a", "#8c7b6b", "#b5b5b5", "#5a6b4a", "#d9d2c5"]
+    negative: cartoon, anime, painting, illustration, outlines, text, logos, watermark
+- id: clay_toy
+  label: Clay toy
+  description: Soft matte clay and plastic look with chunky forms, like a stop-motion toy. Good for cosy and puzzle games.
+  style_preset: clay
+  example_prompt: A chunky clay fox with button eyes and a stubby tail.
+  style_lock:
+    preset: clay_toy
+    model: klein
+    prompt_block: Stylised 3D render of a handmade clay and plastic toy, soft matte materials, chunky rounded forms, fingerprint-smooth surfaces, soft studio light, plain pastel background. No lettering.
+    loras: []
+    palette: ["#f4a261", "#e76f51", "#2a9d8f", "#e9c46a", "#f1faee"]
+    negative: realistic skin, photographic, gritty, sharp metal, text, logos

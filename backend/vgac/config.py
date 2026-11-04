@@ -34,6 +34,7 @@ class InstanceConfig(BaseModel):
 class Settings(BaseModel):
     instances: dict[str, InstanceConfig]
     library_path: Path
+    export_path: Path | None = None
     blender_exe: Path | None = None
     unity_exe: Path | None = None
     unity_project: Path | None = None
