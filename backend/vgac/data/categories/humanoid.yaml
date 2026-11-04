@@ -1,0 +1,20 @@
+id: humanoid
+label: Humanoid
+rig_engine: skintoken_mixamo
+symmetric: true
+size_m: 1.8
+parts_default: []
+topology: quad
+input_view_default: quarter
+lod_ratios: [0.5, 0.25, 0.1]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The character stands in a relaxed A-pose, arms held slightly away from the body, palms inward,
+  feet shoulder-width apart, facing the camera directly, whole figure visible from head to toe with
+  margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting
+  from the front with no hard shadows. No text, no logos, no background scenery, no motion blur,
+  no cropping, nothing held in the hands.
+budgets:
+  mobile_low: {triangles: 5000, texture: 1024}
+  pc_mid: {triangles: 20000, texture: 2048}
+  high: {triangles: 60000, texture: 4096}

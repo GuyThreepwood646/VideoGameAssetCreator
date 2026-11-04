@@ -1,0 +1,59 @@
+{
+ "img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "image.png"
+  }
+ },
+ "bgm": {
+  "class_type": "LoadBackgroundRemovalModel",
+  "inputs": {
+   "bg_removal_name": "birefnet.safetensors"
+  }
+ },
+ "mask": {
+  "class_type": "RemoveBackground",
+  "inputs": {
+   "bg_removal_model": [
+    "bgm",
+    0
+   ],
+   "image": [
+    "img",
+    0
+   ]
+  }
+ },
+ "inv": {
+  "class_type": "InvertMask",
+  "inputs": {
+   "mask": [
+    "mask",
+    0
+   ]
+  }
+ },
+ "rgba": {
+  "class_type": "JoinImageWithAlpha",
+  "inputs": {
+   "image": [
+    "img",
+    0
+   ],
+   "alpha": [
+    "inv",
+    0
+   ]
+  }
+ },
+ "save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "rgba",
+    0
+   ],
+   "filename_prefix": "vgac/cutout"
+  }
+ }
+}

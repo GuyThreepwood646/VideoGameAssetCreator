@@ -1,0 +1,18 @@
+# Models and tools the pipeline can use, with licence terms for the manifest.
+models:
+  zturbo: {name: Z-Image Turbo, file: z-image-turbo-fp8-aio.safetensors, licence: Apache-2.0, version: "1.0"}
+  zbase: {name: Z-Image base, file: z_image_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0"}
+  klein: {name: FLUX.2 Klein 4B, file: flux-2-klein-4b-fp8.safetensors, licence: Apache-2.0, version: "4B"}
+  anima: {name: Anima turbo, file: anima-turbo-v1.1.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "1.1"}
+  pixel: {name: Z-Image Turbo + pixel art LoRA, file: pixel_art_style_z_image_turbo.safetensors, licence: Apache-2.0, version: "1.0"}
+  chroma: {name: Chroma1-HD, file: Chroma1-HD-fp8mixed.safetensors, licence: Apache-2.0, version: "1.0"}
+  qwen_edit: {name: Qwen-Image-Edit-2511, file: qwen_image_edit_2511_fp8mixed.safetensors, licence: Apache-2.0, version: "2511"}
+  qwen_angles_lora: {name: Qwen-Image-Edit-2511 multiple-angles LoRA, file: qwen-image-edit-2511-multiple-angles-lora.safetensors, licence: Apache-2.0, version: "1.0"}
+  qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0"}
+  birefnet: {name: BiRefNet, file: birefnet.safetensors, licence: MIT, version: "1.0"}
+  trellis2: {name: TRELLIS.2, file: trellis_2_int8_convrot.safetensors, licence: MIT, version: "2"}
+  hy3d_mv: {name: Hunyuan3D-2mv, file: Hunyuan3D-2mv.fp16.safetensors, licence: Tencent Hunyuan Community Licence, version: "2.0"}
+  skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400}
+  blender: {name: Blender, file: "", licence: GPL (tool), version: "5.2.3"}
+  unity: {name: Unity Editor (sandbox import), file: "", licence: Unity Personal/Pro (tool), version: "6000.4.3f1"}
+  ual1: {name: Universal Animation Library Standard (CC0), file: AnimationLibrary_Unity_Standard.fbx, licence: CC0, version: "1"}

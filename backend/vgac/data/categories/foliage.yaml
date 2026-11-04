@@ -1,0 +1,20 @@
+id: foliage
+label: Foliage
+rig_engine: none
+symmetric: false
+size_m: 2.5
+parts_default: []
+topology: triangle
+input_view_default: front
+lod_ratios: [0.5, 0.25]
+views: [front, left, back, right, quarter]
+pose_block: >-
+  The plant stands alone with its base on a plain flat light grey ground against a plain flat light
+  grey background, seen straight from the front at eye level, whole plant from the base to the top
+  visible with margin around it, centred in frame, leaves and branches clearly separated from the
+  background. Soft even studio lighting with no hard shadows. No text, no logos, no other plants,
+  no scenery, no motion blur, no cropping.
+budgets:
+  mobile_low: {triangles: 1500, texture: 1024}
+  pc_mid: {triangles: 8000, texture: 2048}
+  high: {triangles: 30000, texture: 4096}
