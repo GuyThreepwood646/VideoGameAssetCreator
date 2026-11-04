@@ -2,8 +2,8 @@
 // Enabled when VITE_MOCK=1. Library files that the mock generates are data URLs
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
-import { setLibraryResolver, STAGES, type Asset, type Job, type ServerEvent, type StageId, type Version } from '../api'
-import { categories, fabricate, files, newVersion, nowIso, platforms, seedStore, setSelected, stages, store, styles, uid } from './data'
+import { setLibraryResolver, STAGES, type Asset, type AutopilotState, type Check, type Job, type ServerEvent, type StageId, type Version } from '../api'
+import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, stages, store, styles, uid } from './data'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
 type Route = { method: string; re: RegExp; handler: Handler }
@@ -202,6 +202,7 @@ on('GET', '/api/categories', () => categories)
 on('GET', '/api/styles', () => styles)
 on('GET', '/api/platforms', () => platforms)
 on('GET', '/api/stages', () => stages)
+on('GET', '/api/style-presets', () => lookPresets)
 on('GET', '/api/suggest', (_m, _b, query) => {
   const category = query.get('category') ?? 'humanoid'
   const style = query.get('style') ?? styles[0].id
@@ -239,6 +240,7 @@ on('POST', '/api/projects', (_m, body) => {
       loras: (sl.loras as string[]) ?? [],
       palette: (sl.palette as string[]) ?? [],
       negative: String(sl.negative ?? ''),
+      preset: typeof sl.preset === 'string' ? sl.preset : null,
     },
     platform_target: (body.platform_target as 'pc_mid') ?? 'pc_mid',
   }
@@ -389,6 +391,204 @@ on('POST', '/api/versions/:vid/judge', (m, body) => {
   const { version } = findVersion(m.groups!.vid)
   version.metrics = { ...version.metrics, judge: body.mode ?? 'metrics', judged_at: nowIso() }
   return version
+})
+
+// ---------------------------------------------------------------------------
+// Autopilot: a simulated runner. From the first stage without a kept result it
+// runs each stage once, keeps the result when it passes, and pauses when a job
+// fails or a check fails that stop_on says to stop for. The first prep run of
+// every asset is forced to fail its checks (seed 3) so the paused state shows;
+// "Fix and continue" sends {fix: {stage, params}} and the runner re-runs that
+// stage as an adjust of its kept version, then carries on.
+// ---------------------------------------------------------------------------
+
+const WARN_CHECK = /^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou)$/
+const pausedOnce = new Set<string>()
+const runners = new Map<string, number>() // asset id -> interval handle
+
+function idleState(): AutopilotState {
+  return { status: 'idle', stage: null, job_id: null, version_id: null, reason: null, stop_on: 'block', until_stage: 'export', started_at: null, updated_at: null, stages_done: [] }
+}
+
+function apState(asset: Asset): AutopilotState {
+  if (!asset.autopilot) asset.autopilot = idleState()
+  return asset.autopilot
+}
+
+function apBroadcast(asset: Asset) {
+  const st = apState(asset)
+  st.updated_at = nowIso()
+  broadcast({ type: 'autopilot', asset_id: asset.id, autopilot: clone(st) })
+}
+
+function failingChecks(version: Version, stopOn: string): { blocking: Check[]; failing: Check[] } {
+  const checks = Array.isArray(version.metrics.checks) ? (version.metrics.checks as Check[]) : []
+  const failing = checks.filter((c) => !(c.passed ?? c.ok ?? false))
+  const sev = (c: Check) => c.severity ?? (WARN_CHECK.test(c.id ?? c.name) ? 'warn' : 'block')
+  const blocking = stopOn === 'never' ? [] : stopOn === 'warn' ? failing.slice() : failing.filter((c) => sev(c) === 'block')
+  // Turnaround: a view that failed consistency counts as a warning.
+  if (stopOn === 'warn' && version.metrics.consistency_ok === false && !blocking.length) {
+    const flagged = Array.isArray(version.metrics.flagged_views) ? (version.metrics.flagged_views as string[]) : []
+    blocking.push({ id: 'consistency', name: 'consistency', passed: false, ok: false, value: flagged, limit: [], message: `${flagged.join(', ')} do not match the front view`, severity: 'warn' })
+  }
+  return { blocking, failing }
+}
+
+function apStop(asset: Asset, status: AutopilotState['status'], reason: string | null) {
+  const st = apState(asset)
+  const h = runners.get(asset.id)
+  if (h !== undefined) {
+    window.clearInterval(h)
+    runners.delete(asset.id)
+  }
+  st.status = status
+  st.reason = reason
+  if (status === 'done' || status === 'idle') {
+    st.job_id = null
+    if (status === 'idle') st.stage = null
+  }
+  apBroadcast(asset)
+}
+
+function apNextStage(asset: Asset): StageId | null {
+  const st = apState(asset)
+  const until = STAGES.includes(st.until_stage as StageId) ? (st.until_stage as StageId) : 'export'
+  for (const s of STAGES) {
+    if (!asset.selected[s]) return s
+    if (s === until) return null
+  }
+  return null
+}
+
+function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params: Record<string, unknown> }) {
+  const st = apState(asset)
+  const idx = STAGES.indexOf(stage)
+  const parent = idx > 0 ? (asset.selected[STAGES[idx - 1]] ?? null) : null
+  let version: Version
+  let kind: string
+  if (fix) {
+    const kept = (asset.stages[stage] ?? []).find((v) => v.id === asset.selected[stage])
+    const base = kept?.params ?? stageParamsDefault(stage)
+    version = newVersion(asset, stage, kept ? kept.id : parent, { ...base, ...fix.params, autopilot: true })
+    kind = `${stage}.adjust`
+  } else {
+    const params: Record<string, unknown> = { ...stageParamsDefault(stage), seed: Math.floor(Math.random() * 100000), autopilot: true }
+    if (stage === 'prep' && !pausedOnce.has(asset.id)) params.seed = 3 // fails triangle_budget and manifold once
+    if (stage === 'concept') {
+      try {
+        const pref = localStorage.getItem('vgac.conceptModel.' + asset.id)
+        if (pref) params.model = pref
+      } catch {
+        // ignore
+      }
+    }
+    version = newVersion(asset, stage, parent, params)
+    kind = `${stage}.run`
+  }
+  const job = startJob(asset, version, kind)
+  st.status = 'running'
+  st.stage = stage
+  st.job_id = job.id
+  st.version_id = version.id
+  st.reason = null
+  apBroadcast(asset)
+
+  const h = window.setInterval(() => {
+    if (job.status === 'queued' || job.status === 'running') return
+    window.clearInterval(h)
+    runners.delete(asset.id)
+    if (st.status !== 'running' || st.job_id !== job.id) return // stopped meanwhile
+    if (job.status === 'cancelled') {
+      apStop(asset, 'paused', 'The run was cancelled.')
+      return
+    }
+    if (job.status === 'error') {
+      apStop(asset, 'paused', `The "${stage}" step failed and needs another try.`)
+      return
+    }
+    const { blocking } = failingChecks(version, String(st.stop_on))
+    if (blocking.length) {
+      // Not kept: the person decides. (startJob auto-selects the first result; undo that.)
+      if (asset.selected[stage] === version.id) {
+        version.selected = false
+        delete asset.selected[stage]
+      }
+      pausedOnce.add(asset.id)
+      const n = blocking.length
+      apStop(asset, 'paused', `${n} check${n > 1 ? 's' : ''} failed on "${stage}" and the autopilot could not fix ${n > 1 ? 'them' : 'it'} on its own.`)
+      return
+    }
+    setSelected(asset, version)
+    if (!st.stages_done.includes(stage)) st.stages_done.push(stage)
+    broadcast({ type: 'version', version: clone(version) })
+    apStep(asset)
+  }, 250)
+  runners.set(asset.id, h)
+}
+
+function apStep(asset: Asset) {
+  const st = apState(asset)
+  const next = apNextStage(asset)
+  if (!next) {
+    st.stage = STAGES.includes(st.until_stage as StageId) ? st.until_stage : 'export'
+    apStop(asset, 'done', null)
+    return
+  }
+  const running = (asset.stages[next] ?? []).some((v) => v.status === 'queued' || v.status === 'running')
+  if (running) {
+    apStop(asset, 'error', `"${next}" is already running; wait for it, then start the autopilot again.`)
+    return
+  }
+  apRunStage(asset, next)
+}
+
+on('GET', '/api/assets/:id/autopilot', (m) => apState(findAsset(m.groups!.id)))
+on('POST', '/api/assets/:id/autopilot', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  const st = apState(a)
+  if (st.status === 'running') throw new HttpError(409, 'the autopilot is already running')
+  const stopOn = String(body.stop_on ?? (st.status === 'paused' ? st.stop_on : 'block'))
+  if (!['block', 'warn', 'never'].includes(stopOn)) throw new HttpError(422, 'stop_on must be block, warn or never')
+  const until = String(body.until_stage ?? 'export')
+  if (!STAGES.includes(until as StageId)) throw new HttpError(422, 'unknown until_stage')
+  st.stop_on = stopOn
+  st.until_stage = until
+  st.started_at = nowIso()
+  st.stages_done = STAGES.filter((s) => !!a.selected[s])
+  const fix = body.fix as { stage?: string; params?: Record<string, unknown> } | undefined
+  if (fix && STAGES.includes(fix.stage as StageId)) {
+    apRunStage(a, fix.stage as StageId, { stage: fix.stage as StageId, params: fix.params ?? {} })
+  } else {
+    apStep(a)
+  }
+  return apState(a)
+})
+on('POST', '/api/assets/:id/autopilot/stop', (m) => {
+  const a = findAsset(m.groups!.id)
+  const st = apState(a)
+  if (st.status === 'running') {
+    if (st.job_id) {
+      const job = store.jobs.find((j) => j.id === st.job_id)
+      if (job && (job.status === 'queued' || job.status === 'running')) {
+        job.status = 'cancelled'
+        job.message = 'cancelled'
+        job.finished_at = nowIso()
+        if (job.version_id) {
+          try {
+            const { version } = findVersion(job.version_id)
+            version.status = 'error'
+            version.error = 'cancelled'
+            broadcast({ type: 'version', version: clone(version) })
+          } catch {
+            // no version
+          }
+        }
+        broadcast({ type: 'job', job: clone(job) })
+      }
+    }
+    apStop(a, 'paused', 'You stopped the autopilot.')
+  }
+  return apState(a)
 })
 
 on('GET', '/api/jobs', (_m, _b, query) => {

@@ -191,9 +191,10 @@ class StageContext:
         log_path = self.dir / (log_name or f"{Path(script).stem}.log")
         return await asyncio.to_thread(run_blender, self.settings, script, args, log_path, timeout, self.ctx.register_process)
 
-    async def unity(self, method: str, args: dict[str, Any], flags: list[str], log_name: str, timeout: float = 3600) -> str:
+    async def unity(self, method: str, args: dict[str, Any], flags: list[str], log_name: str, timeout: float = 3600,
+                    project_path: Path | str | None = None) -> str:
         self.ctx.check_cancelled()
-        return await asyncio.to_thread(run_unity, self.settings, method, args, flags, self.dir / log_name, timeout, self.ctx.register_process)
+        return await asyncio.to_thread(run_unity, self.settings, method, args, flags, self.dir / log_name, timeout, self.ctx.register_process, project_path)
 
     def copy_in(self, src: Path | str, name: str) -> Path:
         dest = self.dir / name

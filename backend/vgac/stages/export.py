@@ -287,7 +287,63 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
+    await _deliver(sc, name, params)
     sc.progress(1.0, "export done")
+
+
+def _slug(text: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_") or "asset"
+
+
+async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
+    """Decision D12: always copy the deliverables to exports/<project>/<asset>/; also import into the project's own
+    Unity project when one is set (never the sandbox's prefab, a fresh import there)."""
+    import shutil
+    export_root = Path(sc.settings.export_path) if sc.settings.export_path else Path(sc.settings.library_path).parent / "exports"
+    dest = export_root / _slug(sc.project.name) / _slug(sc.asset.name)
+    dest.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for key in ("fbx", "glb", "manifest", "base_color", "normal", "metallic", "roughness", "ao", "height", "tile_preview",
+                "sprite_atlas", "unity_strip", "zip"):
+        src = sc.file(key)
+        if src is not None and Path(src).is_file():
+            shutil.copy2(src, dest / Path(src).name)
+            copied.append(Path(src).name)
+    for key, rel in sc.version.files.items():
+        if key.startswith("sprite_") and key != "sprite_atlas":
+            src = sc.file(key)
+            if src is not None and Path(src).is_file():
+                shutil.copy2(src, dest / Path(src).name)
+                copied.append(Path(src).name)
+    sc.set_metrics(delivered_to=str(dest), delivered_files=copied)
+    sc.progress(0.95, f"delivered to {dest}")
+    proj_path = getattr(sc.project, "unity_project_path", None)
+    if proj_path and params.get("unity", True) and sc.file("fbx") is not None:
+        proj = Path(proj_path)
+        if not (proj / "Assets").is_dir():
+            sc.set_metrics(unity_project_import={"ok": False, "error": f"not a Unity project: {proj}"})
+            return
+        editor_dir = proj / "Assets" / "Editor"
+        editor_dir.mkdir(parents=True, exist_ok=True)
+        script_src = Path(sc.settings.unity_project) / "Assets" / "Editor" / "VgacImport.cs" if sc.settings.unity_project else None
+        if script_src and script_src.is_file() and not (editor_dir / "VgacImport.cs").is_file():
+            shutil.copy2(script_src, editor_dir / "VgacImport.cs")
+        humanoid = _is_humanoid(sc)
+        flags = ["-nographics"] + (["-vgacHumanoid"] if humanoid else [])
+        args: dict[str, Any] = {"-vgacInput": sc.dir, "-vgacName": name}
+        clips_lib = params.get("clips_library", "ual1")
+        lib = sc.settings.clips_libraries.get(clips_lib) if humanoid and clips_lib and clips_lib != "none" else None
+        if lib and Path(lib).is_file():
+            args["-vgacClips"] = lib
+        sc.progress(0.97, f"Unity import into {proj.name}")
+        try:
+            await sc.unity("VgacImport.Run", args, flags, "unity_project_import.log", project_path=proj)
+            rp = sc.dir / "unity_report.json"
+            report = json.loads(rp.read_text(encoding="utf-8")) if rp.is_file() else {}
+            sc.set_metrics(unity_project_import={"ok": bool(report.get("ok")), "project": str(proj), "prefab": report.get("prefab", ""), "error": (report.get("error") or "")[:300]})
+        except Exception as e:  # noqa: BLE001
+            sc.set_metrics(unity_project_import={"ok": False, "project": str(proj), "error": str(e)[-500:]})
 
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
