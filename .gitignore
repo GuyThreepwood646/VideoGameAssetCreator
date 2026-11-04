@@ -27,3 +27,7 @@ bakeoff/out/
 bakeoff/__pycache__/
 tools/e2e_report.json
 exports/
+
+# Desktop launcher build output
+desktop/dist/
+desktop/node_modules/

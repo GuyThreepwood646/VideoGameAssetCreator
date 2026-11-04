@@ -1,6 +1,10 @@
 # Video Game Asset Creator
 
-Local desktop tool that takes a text prompt to a rigged, game-ready 3D asset. See ARCHITECTURE.md for the design. This is the phase 0 skeleton: a FastAPI backend with a SQLite database and a per-instance job queue, and a React frontend with a health panel and a Three.js GLB viewer. Nothing user-facing beyond that yet.
+A local, free tool that turns a text prompt into a game-ready asset: a textured, rigged, LOD-ed, collidable model delivered as a Unity prefab plus FBX, GLB, textures and sprite sheets. Everything runs on this machine (ComfyUI on two GPUs, Blender, Unity in batch mode); no paid services.
+
+Six stages with a Review / Refine / Adjust loop at each (Describe, Check all sides, Build the 3D model, Clean up for the game, Make it move, Hand off to the game), or press "Make it" and autopilot runs them all and only stops when something needs you. Projects carry a style preset so every asset matches; Variants derive a new asset from an existing one with a change ("winter cloak") while keeping its identity.
+
+Start here: double-click the VGAC shortcut on the desktop (or see "Desktop launcher" below). Design: ARCHITECTURE.md (section 2 is the definition of done). Build state and decisions: STATUS.md. Contract: docs/API.md. UX rationale: docs/UX-REVIEW.md.
 
 ## Layout
 
