@@ -53,12 +53,14 @@ def run_blender(settings: Settings, script: str, args: list[Any], log_path: Path
     return run_process(blender_cmd(settings, script, args), log_path=log_path, timeout=timeout, on_start=on_start)
 
 
-def unity_cmd(settings: Settings, method: str, args: dict[str, Any], flags: list[str], log_path: Path) -> list[str]:
+def unity_cmd(settings: Settings, method: str, args: dict[str, Any], flags: list[str], log_path: Path,
+              project_path: Path | str | None = None) -> list[str]:
     if not settings.unity_exe or not Path(settings.unity_exe).is_file():
         raise ToolError(f"unity_exe not configured or missing: {settings.unity_exe}")
-    if not settings.unity_project or not Path(settings.unity_project).is_dir():
-        raise ToolError(f"unity_project not configured or missing: {settings.unity_project}")
-    cmd = [str(settings.unity_exe), "-batchmode", "-quit", "-projectPath", str(settings.unity_project), "-executeMethod", method]
+    project = Path(project_path) if project_path else settings.unity_project
+    if not project or not Path(project).is_dir():
+        raise ToolError(f"unity project not configured or missing: {project}")
+    cmd = [str(settings.unity_exe), "-batchmode", "-quit", "-projectPath", str(project), "-executeMethod", method]
     cmd += flags
     for k, v in args.items():
         cmd += [k, str(v)]
@@ -67,8 +69,9 @@ def unity_cmd(settings: Settings, method: str, args: dict[str, Any], flags: list
 
 
 def run_unity(settings: Settings, method: str, args: dict[str, Any], flags: list[str], log_path: Path,
-              timeout: float | None = 3600, on_start: Callable[[subprocess.Popen], None] | None = None) -> str:
-    cmd = unity_cmd(settings, method, args, flags, log_path)
+              timeout: float | None = 3600, on_start: Callable[[subprocess.Popen], None] | None = None,
+              project_path: Path | str | None = None) -> str:
+    cmd = unity_cmd(settings, method, args, flags, log_path, project_path=project_path)
     try:
         return run_process(cmd, log_path=None, timeout=timeout, on_start=on_start)
     except ToolError as e:
