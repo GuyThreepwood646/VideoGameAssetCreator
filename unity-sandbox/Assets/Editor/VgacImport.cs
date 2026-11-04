@@ -81,6 +81,21 @@ public static class VgacImport
                 ti.SaveAndReimport();
             }
 
+            // Humanoid mapping can fail on unusual proportions or extra bones: fall back to Generic so the
+            // model still gets its own procedural clips instead of nothing.
+            if (humanoid)
+            {
+                var probe = AssetDatabase.LoadAllAssetsAtPath(fbxPath).OfType<Avatar>().FirstOrDefault();
+                if (probe == null || !probe.isHuman || !probe.isValid)
+                {
+                    report.warnings.Add("humanoid mapping failed; imported as Generic");
+                    humanoid = false;
+                    importer.animationType = ModelImporterAnimationType.Generic;
+                    importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+                    importer.SaveAndReimport();
+                }
+            }
+
             var model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
             if (model == null) throw new Exception("model load failed");
 

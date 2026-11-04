@@ -1678,3 +1678,147 @@ input[type='checkbox'] {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Autopilot: Make it, the running/paused card, the finishing moment */
+.make-it {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.make-it > button {
+  padding: var(--s2) var(--s4);
+  font-size: 15px;
+}
+.make-it-line {
+  text-align: right;
+}
+.make-it-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.make-it-stop select {
+  font-size: 12px;
+  padding: 2px var(--s1);
+}
+.guide-action-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s2);
+}
+.or-just {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: 12px;
+  color: var(--muted);
+}
+.or-just::before {
+  content: 'or just:';
+}
+.or-just .btn,
+.or-just button {
+  font-size: 12px;
+  padding: 4px var(--s2);
+}
+.guide-autopilot {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(110, 164, 232, 0.2), rgba(110, 164, 232, 0.04));
+}
+.guide-paused {
+  border-color: var(--warn, #d9a441);
+  background: linear-gradient(90deg, rgba(217, 164, 65, 0.16), rgba(217, 164, 65, 0.03));
+}
+.guide-paused .guide-kicker {
+  color: var(--warn, #d9a441);
+}
+.guide .plain-checks {
+  margin-top: var(--s1);
+}
+.finish-card {
+  align-items: stretch;
+}
+.finish-card .guide-body {
+  gap: var(--s2);
+}
+.finish-title {
+  font-size: 20px;
+}
+.finish-viewer {
+  margin-top: var(--s1);
+}
+.finish-actions {
+  align-items: center;
+}
+.finish-card .deliverables {
+  margin-bottom: 0;
+}
+.autopilot-check {
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.autopilot-check input {
+  margin-top: 3px;
+}
+.small.block {
+  display: block;
+}
+
+/* Style presets: a row of ready-made looks */
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: var(--s2);
+}
+.preset-row.compact {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input);
+}
+.preset-card.current {
+  border-color: var(--ok);
+  background: rgba(95, 191, 122, 0.08);
+}
+.preset-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s1);
+}
+.preset-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.preset-desc {
+  color: var(--muted);
+  flex: 1;
+}
+.preset-card .swatches .swatch {
+  width: 18px;
+  height: 18px;
+}
+.preset-row.compact .preset-card .swatches .swatch {
+  width: 14px;
+  height: 14px;
+}
+.preset-meta {
+  display: flex;
+  align-items: center;
+}
+.preset-card .small-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.preset-use {
+  border-color: var(--accent);
+  color: var(--accent);
+}
