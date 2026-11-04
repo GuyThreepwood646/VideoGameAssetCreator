@@ -166,12 +166,15 @@ def test_refine_adjust_reject_judge(client, fake_execute):
     out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
     wait_job(client, out["job"]["id"])
     vid = out["version"]["id"]
-    r = client.post(f"/api/versions/{vid}/refine", json={"instruction": "red cloak", "mask_png": "aGVsbG8="})
+    import base64
+
+    mask = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 16).decode()
+    r = client.post(f"/api/versions/{vid}/refine", json={"instruction": "red cloak", "mask_png": mask})
     assert r.status_code == 200
     ref = r.json()
     assert ref["job"]["kind"] == "concept.refine" and ref["version"]["parent_version_id"] == vid
     wait_job(client, ref["job"]["id"])
-    assert fake_execute[-1]["payload"]["instruction"] == "red cloak" and fake_execute[-1]["payload"]["mask_png"] == "aGVsbG8="
+    assert fake_execute[-1]["payload"]["instruction"] == "red cloak" and fake_execute[-1]["payload"]["mask_png"] == mask
     assert client.get(f"/api/versions/{ref['version']['id']}").json()["metrics"]["instruction"] == "red cloak"
     r = client.post(f"/api/versions/{vid}/adjust", json={"params": {"seed": 99}})
     adj = r.json()
@@ -209,7 +212,7 @@ def test_cancel_running_and_queued(client):
         time.sleep(0.05)
     c2 = client.post(f"/api/jobs/{second['job']['id']}/cancel").json()
     assert c2["status"] == "cancelled"
-    assert client.get(f"/api/versions/{second['version']['id']}").json()["status"] == "error"
+    assert client.get(f"/api/versions/{second['version']['id']}").json()["status"] == "rejected"
     client.post(f"/api/jobs/{first['job']['id']}/cancel")
     j = wait_job(client, first["job"]["id"])
     assert j["status"] == "cancelled"
@@ -329,3 +332,158 @@ def test_autopilot_fix_and_continue(client):
     meshes = full["stages"]["mesh"]
     assert len(meshes) == 2 and meshes[-1]["selected"] and meshes[-1]["params"].get("target_faces") == 1234
     assert len(full["stages"]["export"]) == 2 and full["stages"]["export"][-1]["selected"]
+
+
+
+def test_feedback_and_gallery(client):
+    assert client.get("/api/gallery").json() == []
+    p, a = _project_asset(client)
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    wait_job(client, out["job"]["id"])
+    vid = out["version"]["id"]
+    r = client.post(f"/api/versions/{vid}/feedback", json={"thumbs": "down", "note": "  too dark "})
+    assert r.status_code == 200
+    fb = r.json()["metrics"]["feedback"]
+    assert fb["thumbs"] == "down" and fb["note"] == "too dark" and fb["at"]
+    assert client.post(f"/api/versions/{vid}/feedback", json={"thumbs": "sideways"}).status_code == 422
+    assert client.post(f"/api/versions/{vid}/feedback", json={}).json()["metrics"]["feedback"] is None
+    # Not in the gallery until export finishes.
+    assert client.get("/api/gallery").json() == []
+    for stage in ("turnaround", "mesh", "prep", "rig", "export"):
+        wait_job(client, client.post(f"/api/assets/{a['id']}/stages/{stage}/run", json={}).json()["job"]["id"])
+    g = client.get("/api/gallery").json()
+    assert len(g) == 1
+    card = g[0]
+    assert card["asset_id"] == a["id"] and card["asset_name"] == "knight" and card["project_name"] == "P"
+    assert card["thumbnail"].endswith("image.png") and card["glb"].endswith("model.glb") and card["preview"] == card["glb"]
+    assert card["fbx"] is None and card["delivered_to"] is None and card["finished_at"]
+    assert client.get("/api/library/" + card["thumbnail"]).status_code == 200
+
+
+
+def test_security_hardening(client, tmp_path):
+    # Foreign Origin on a state-changing request is refused; local and absent origins pass.
+    p, a = _project_asset(client)
+    url = f"/api/assets/{a['id']}/stages/concept/run"
+    assert client.post(url, json={}, headers={"Origin": "http://evil.example"}).status_code == 403
+    assert client.post(url, json={}, headers={"Origin": "http://localhost:5174"}).status_code == 200
+    assert client.get("/api/projects", headers={"Origin": "http://evil.example"}).status_code == 200
+    # Unknown Host (DNS rebinding) is refused.
+    assert client.get("/api/projects", headers={"Host": "evil.example"}).status_code == 400
+    # The websocket refuses a foreign origin.
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/ws/events", headers={"Origin": "http://evil.example"}) as ws:
+            ws.receive_json()
+    # The database file is never served even though it sits in the library folder.
+    assert client.get("/api/library/vgac.sqlite").status_code in (403, 404)
+    # Params are checked against the stage schema.
+    assert client.post(url, json={"params": {"width": 99999}}).status_code == 400
+    assert client.post(url, json={"params": {"model": "nope"}}).status_code == 400
+    assert client.post(url, json={"params": {"readiness_block": "yes"}}).status_code == 400
+    out = client.post(url, json={"params": {"width": 1024, "seed": 3}}).json()
+    wait_job(client, out["job"]["id"])
+    vid = out["version"]["id"]
+    assert client.post(f"/api/versions/{vid}/adjust", json={"params": {"steps": 0}}).status_code == 400
+    # Masks must be real base64 PNG data.
+    assert client.post(f"/api/versions/{vid}/refine", json={"instruction": "x", "mask_png": "not base64!"}).status_code == 400
+    assert client.post(f"/api/versions/{vid}/refine", json={"instruction": "x", "mask_png": "aGVsbG8="}).status_code == 400
+    import base64
+
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 16).decode()
+    assert client.post(f"/api/versions/{vid}/refine", json={"instruction": "x", "mask_png": "data:image/png;base64," + png}).status_code == 200
+    # Unity project paths must point at a real Unity project.
+    assert client.put(f"/api/projects/{p['id']}", json={"unity_project_path": str(tmp_path)}).status_code == 400
+    (tmp_path / "Assets").mkdir()
+    (tmp_path / "ProjectSettings").mkdir()
+    assert client.put(f"/api/projects/{p['id']}", json={"unity_project_path": str(tmp_path)}).json()["unity_project_path"]
+    assert client.put(f"/api/projects/{p['id']}", json={"unity_project_path": ""}).json()["unity_project_path"] is None
+
+
+def test_delivery_dir_never_escapes(tmp_path):
+    from vgac.stages.export import delivery_dir
+
+    root = tmp_path / "exports"
+    for name in ("..", "../../x", "C:\\Windows", "..\\..", ".hidden"):
+        d = delivery_dir(root, name, name)
+        assert str(d).startswith(str(root.resolve()))
+    assert delivery_dir(root, "My Game", "Sir Knight 2") == (root / "My_Game" / "Sir_Knight_2").resolve()
+
+
+
+def test_job_id_and_reject_sticks(client):
+    p, a = _project_asset(client)
+    first = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"params": {"slow": True}}).json()
+    second = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    # B1: the version knows its job.
+    assert first["version"]["job_id"] == first["job"]["id"]
+    assert client.get(f"/api/versions/{first['version']['id']}").json()["job_id"] == first["job"]["id"]
+    # B2: rejecting a queued version cancels its job and the rejection sticks after the worker looks at it.
+    r = client.post(f"/api/versions/{second['version']['id']}/reject").json()
+    assert r["status"] == "rejected"
+    wait_job(client, first["job"]["id"], timeout=30)
+    time.sleep(0.5)
+    assert client.get(f"/api/versions/{second['version']['id']}").json()["status"] == "rejected"
+    assert client.get(f"/api/jobs/{second['job']['id']}").json()["status"] == "cancelled"
+    # Rejecting the running one: the job ends cancelled and the version stays rejected.
+    third = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"params": {"slow": True}}).json()
+    t0 = time.time()
+    while client.get(f"/api/jobs/{third['job']['id']}").json()["status"] != "running" and time.time() - t0 < 5:
+        time.sleep(0.05)
+    client.post(f"/api/versions/{third['version']['id']}/reject")
+    assert wait_job(client, third["job"]["id"])["status"] == "cancelled"
+    assert client.get(f"/api/versions/{third['version']['id']}").json()["status"] == "rejected"
+
+
+def test_parent_walkback_only_over_skipped_stages(client):
+    p, a = _project_asset(client)
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()["job"]["id"])
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()["job"]["id"])
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/mesh/run", json={}).json()["job"]["id"])
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/prep/run", json={}).json()["job"]["id"])
+    # A humanoid export with no rig kept is refused and names the rig step, not concept.
+    r = client.post(f"/api/assets/{a['id']}/stages/export/run", json={})
+    assert r.status_code == 409 and "rig" in r.json()["detail"]
+    # Bad style presets are refused like bad categories.
+    assert client.post(f"/api/projects/{p['id']}/assets", json={"name": "x", "category": "humanoid", "style_preset": "nope", "prompt": "p"}).status_code == 400
+    assert client.put(f"/api/assets/{a['id']}", json={"name": ""}).status_code == 422
+
+
+def test_suggest_and_pause_and_autopilot_stop(client):
+    s = client.get("/api/suggest", params={"category": "quadruped", "style": "painted", "platform": "mobile_low"}).json()
+    assert s["model"] in ("zturbo", "zbase", "klein", "anima", "pixel", "chroma") and s["budgets"]["triangles"] and s["total_minutes"] > 0
+    h = client.post("/api/queue/b/pause", params={"paused": True}).json()
+    assert h["b"]["paused"] is True
+    assert client.post("/api/queue/b/pause", params={"paused": False}).json()["b"]["paused"] is False
+    p, a = _project_asset(client, category="prop_rigid")
+    st = client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never"}).json()
+    assert st["status"] == "running"
+    st = client.post(f"/api/assets/{a['id']}/autopilot/stop").json()
+    assert st["status"] == "paused" and "Stopped" in st["reason"]
+
+
+
+def test_spa_fallback(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from vgac.main import SpaStaticFiles
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    (dist / "assets" / "x.js").write_text("1", encoding="utf-8")
+    app2 = FastAPI()
+
+    @app2.get("/api/ping")
+    def ping():
+        return {"ok": True}
+
+    app2.mount("/", SpaStaticFiles(directory=str(dist), html=True), name="frontend")
+    with TestClient(app2) as c:
+        assert c.get("/").text == "<html>app</html>"
+        assert c.get("/gallery").text == "<html>app</html>"
+        assert c.get("/assets/abc").text == "<html>app</html>"
+        assert c.get("/assets/x.js").text == "1"
+        assert c.get("/api/ping").json() == {"ok": True}
+        assert c.get("/api/nope").status_code == 404

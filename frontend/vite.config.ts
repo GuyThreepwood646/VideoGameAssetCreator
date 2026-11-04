@@ -29,7 +29,8 @@ function serveLibrary(): Plugin {
         if (!url.startsWith('/api/library/')) return next()
         const rel = decodeURIComponent(url.slice('/api/library/'.length).split('?')[0])
         const file = path.resolve(root, rel)
-        if (!file.startsWith(root) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        const inside = file === root || file.startsWith(root.endsWith(path.sep) ? root : root + path.sep)
+        if (!inside || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
           res.statusCode = 404
           res.end('not found: ' + rel)
           return

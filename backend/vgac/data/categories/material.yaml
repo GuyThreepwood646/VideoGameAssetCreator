@@ -1,6 +1,7 @@
 id: material
 label: Tileable material
 rig_engine: none
+skips: [turnaround]
 symmetric: false
 size_m: 1.0
 parts_default: []

@@ -15,7 +15,11 @@ export default function App() {
           VGAC
         </NavLink>
         <nav className="topnav">
-          <NavLink to="/">Projects</NavLink>
+          <NavLink to="/" end>
+            Projects
+          </NavLink>
+          <NavLink to="/gallery">Gallery</NavLink>
+          <NavLink to="/glossary">Glossary</NavLink>
           <NavLink to="/health">Health</NavLink>
         </nav>
         <span className="grow" />
@@ -73,7 +77,7 @@ function FirstRunOverlay() {
             </div>
           </li>
         </ol>
-        <div className="muted small">The "Your next step" card on every asset tells you what to do. Hover any "i" for what a word means.</div>
+        <div className="muted small">The "Your next step" card on every asset tells you what to do. Hover any "i" for what a word means, or open the Glossary at the top.</div>
         <div className="row-gap">
           <button type="button" className="primary" onClick={closeGuide} autoFocus>
             Got it

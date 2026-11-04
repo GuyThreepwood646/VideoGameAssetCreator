@@ -18,7 +18,8 @@ const H = (plain: string, meaning: string, why: string, technical: string): Help
 // Stages
 // ---------------------------------------------------------------------------
 
-export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; estimate: number }
+// placeholder: the example shown in the empty "Describe the change" box of this step.
+export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; estimate: number; placeholder: string }
 
 export const STAGE_TEXT: Record<StageId, StageText> = {
   concept: {
@@ -26,6 +27,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Make concept art',
     gerund: 'Painting the concept art',
     estimate: 30,
+    placeholder: 'e.g. make the helmet open-faced and the shield round',
     help: H('Describe', 'Concept art: the first picture of your asset, painted from your description.', 'Everything that follows is built from this picture, so get the look right here.', 'concept'),
   },
   turnaround: {
@@ -33,6 +35,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Check all sides',
     gerund: 'Drawing the other sides',
     estimate: 120,
+    placeholder: 'e.g. the back view should show the cloak',
     help: H('Check all sides', 'We look at your character from the front, sides and back so the 3D model gets the back right.', 'If a view looks wrong, regenerate just that view before building the model.', 'turnaround'),
   },
   mesh: {
@@ -40,6 +43,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Build the 3D model',
     gerund: 'Building the 3D model',
     estimate: 240,
+    placeholder: 'e.g. thicker sword, less bulky shoulders',
     help: H('Build the 3D model', 'Turns the pictures into a 3D shape with painted surfaces.', 'This is the raw model; the next step tidies it for the game.', 'mesh'),
   },
   prep: {
@@ -47,6 +51,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Clean up for the game',
     gerund: 'Cleaning up for the game',
     estimate: 90,
+    placeholder: 'e.g. more wear on the armour',
     help: H('Clean up for the game', 'Shrinks the model to the platform budget, fixes holes, sets its size and makes a tidy texture.', 'Game engines need a clean, light model; this step makes it one.', 'prep'),
   },
   rig: {
@@ -54,6 +59,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Make it move',
     gerund: 'Adding a skeleton',
     estimate: 120,
+    placeholder: 'e.g. smoother bending at the left elbow',
     help: H('Make it move', 'Adds a skeleton and attaches the surface to it so the model can be animated.', 'Without this the model is a statue; with it, walk and idle animations work.', 'rig'),
   },
   export: {
@@ -61,6 +67,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Hand off to the game',
     gerund: 'Packing the files for the game',
     estimate: 90,
+    placeholder: 'e.g. drop the sprite sheet, add another detail level',
     help: H('Hand off to the game', 'Packs the model, textures, skeleton and animations into files a game engine can load.', 'This is the finished asset you drop into your game.', 'export'),
   },
 }
@@ -71,6 +78,10 @@ export function stagePlain(stage: StageId, info?: StageInfo | null): string {
 
 export function stageVerb(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_verb || STAGE_TEXT[stage].verb
+}
+
+export function stagePlaceholder(stage: StageId): string {
+  return STAGE_TEXT[stage].placeholder
 }
 
 export function stageGerund(stage: StageId): string {
@@ -109,11 +120,11 @@ export function fmtDuration(seconds: number, prefix = 'about '): string {
 
 export const MODEL_HELP: Record<string, HelpEntry> = {
   zturbo: H('Z-Image Turbo', 'Fast painted look.', 'Good default: a clean painted concept in under half a minute.', 'zturbo (Z-Image Turbo)'),
-  zbase: H('Z-Image base', 'Higher quality, slower.', 'Use it when the Turbo result is close but not detailed enough.', 'zbase (Z-Image base)'),
-  klein: H('Klein', 'Quick drafts.', 'Fastest way to try several ideas before committing.', 'klein'),
-  anima: H('Anima', 'Anime line art.', 'Pick it for cel-shaded, anime-style characters.', 'anima'),
-  pixel: H('Pixel', 'Pixel art sprites.', 'Pick it for retro, pixel-art games.', 'pixel'),
-  chroma: H('Chroma', 'Loose painterly.', 'Pick it for a rough, expressive painted look.', 'chroma'),
+  zbase: H('Z-Image Base', 'Higher quality, slower.', 'Use it when the Turbo result is close but not detailed enough.', 'zbase (Z-Image Base)'),
+  klein: H('FLUX.2 Klein 4B', 'Quick drafts.', 'Fastest way to try several ideas before committing.', 'klein (FLUX.2 Klein 4B)'),
+  anima: H('Anima Turbo', 'Anime line art.', 'Pick it for cel-shaded, anime-style characters.', 'anima (Anima Turbo)'),
+  pixel: H('Z-Image Pixel Art', 'Pixel art sprites.', 'Pick it for retro, pixel-art games.', 'pixel (Z-Image Pixel Art)'),
+  chroma: H('Chroma1-HD', 'Loose painterly.', 'Pick it for a rough, expressive painted look.', 'chroma (Chroma1-HD)'),
 }
 
 export function modelLabel(id: string | null | undefined): string {
@@ -189,6 +200,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   loras: H('Style add-ons', 'Small trained add-ons that push the painter toward a particular look.', 'Optional; most projects need none.', 'LoRA'),
   lora: H('Style add-on', 'A small trained add-on that pushes the painter toward a particular look.', 'Optional; most projects need none.', 'LoRA'),
   model: H('Painter', 'The AI model that paints the picture.', 'Different painters are faster, slower or suit different styles.', 'model (checkpoint)'),
+  concept_model: H('Painter', 'The AI model that paints the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
+  stage: H('Step', 'One of the six steps every asset goes through: describe, check all sides, build the 3D model, clean up, make it move, hand off.', 'Each step builds on the version you kept in the step before it.', 'stage'),
   // Image generation
   seed: H('Seed', 'A number that picks which of many possible pictures you get.', 'Same seed, same picture; change it to get a different one.', 'seed'),
   steps: H('Steps', 'How many passes the painter takes.', 'More passes can add detail but take longer; the default is usually right.', 'steps'),
@@ -199,6 +212,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   readiness_block: H('Pose for 3D', 'Adds the standard pose and plain background to the description.', 'Keep this on: the 3D step needs a clear, whole figure on a plain background.', 'readiness_block'),
   prompt_override: H('Replace description', 'Use this text instead of the asset description for one attempt.', 'Handy for a one-off experiment without changing the asset.', 'prompt_override'),
   cutout: H('Cutout', 'The picture with the background removed.', 'The 3D step works from the cutout, so a clean edge matters.', 'cutout (alpha matte)'),
+  finetune: H('Fine-tune', 'Re-run this step with different settings.', 'Use it when the result is close but a setting is off; the description stays the same.', 'adjust'),
   instruction: H('Change request', 'What you asked to change in this attempt.', 'Recorded so you can see how this version came about.', 'instruction'),
   // Turnaround
   views: H('Views', 'Which sides to draw: front, left, back, right, a three-quarter view and top.', 'The 3D step uses them to get the back and sides right.', 'views'),
@@ -221,6 +235,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   vertices: H('Points', 'The corner points of the triangles.', 'Roughly half the triangle count; another measure of weight.', 'vertices'),
   texture_size: H('Texture size', 'The size of the painted surface image in pixels.', 'Bigger textures look sharper up close and use more memory.', 'texture_size'),
   texture: H('Texture', 'The painted image wrapped around the model.', 'It is what gives the model its colours and surface detail.', 'texture'),
+  normal_map: H('Normal map', 'A special texture that fakes small bumps and dents, such as rivets or wood grain, without adding triangles.', 'The model looks detailed up close while staying light enough for the game.', 'normal map'),
+  triangle_budget: H('Triangle budget', 'The most triangles a model may have on the chosen platform.', 'Staying inside it keeps the game running smoothly; the clean-up step shrinks the model to fit.', 'triangle budget (triangles per asset)'),
   upsample: H('Texture sharpening', 'Sharpens the painted surface at a larger size.', 'Use the larger size for showcase assets; it is slower.', 'upsample'),
   remesh: H('Close holes', 'Rebuild the surface so it is one closed shell.', 'Closed shells clean up and rig reliably.', 'remesh (watertight)'),
   silhouette_iou: H('Outline match', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),
@@ -244,6 +260,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   checks_passed: H('Checks passed', 'How many quality checks passed.', 'All of them should.', 'checks_passed'),
   dims: H('Size', 'Width, depth and height of the model in metres.', 'Sanity check for scale.', 'dims'),
   // Rig
+  rig: H('Rig', 'The skeleton inside the model plus the skin weights that tie the surface to it.', 'A rigged model can be animated: it walks, idles and bends at the joints.', 'rig (armature and skin weights)'),
   template: H('Skeleton type', 'Which skeleton to fit: a standard human one, a generic one, or none.', 'The standard human skeleton gets shared animations for free.', 'template (auto | mixamo | generic | none)'),
   skeleton: H('Skeleton', 'The set of bones inside the model that animations move.', 'No skeleton, no movement.', 'skeleton (armature)'),
   bones: H('Bones', 'The joints of the skeleton.', 'More bones mean finer movement and a slightly heavier asset.', 'bones'),
@@ -287,6 +304,11 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   judge: H('Judge', 'Recompute the quality checks for this version.', 'Use it after changing the budget.', 'judge'),
   variant: H('Variant', "A copy of an asset with one change (outfit, colour, damage) that keeps the original's identity.", 'Make one for the same character in winter clothes or battle-damaged; it starts from the original picture, so it stays recognisable.', 'variant (base_asset_id)'),
   variant_change: H('What changes', 'The one change that makes this variant different from the original.', 'Keep it short: an outfit, a colour scheme, a damage state.', 'variant_change'),
+  // Feedback and the gallery
+  feedback: H('Liked it?', 'Thumbs up or down on a result, with an optional note on what was wrong.', 'It only teaches this app which results you liked so it can suggest better settings later. Nothing is sent anywhere; it stays in your own library.', 'feedback (metrics.feedback)'),
+  feedback_note: H('What was wrong?', 'A few words on why you did not like this result, such as "face too dark" or "sword bent".', 'Optional. It is kept with the version so you, and the app, can see what to avoid next time.', 'feedback.note'),
+  gallery: H('Gallery', 'Every finished asset from every project in one place.', 'Find a finished asset, open it, or copy the folder its files were saved to.', 'gallery (GET /api/gallery)'),
+  delivered_to: H('Saved to', 'The folder on this computer where the finished files were copied.', 'Open this folder, or point your game engine at it, to use the asset.', 'delivered_to'),
   // Autopilot
   autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Make it" once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
   stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),

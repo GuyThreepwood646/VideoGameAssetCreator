@@ -112,6 +112,9 @@ async def audit(sc: StageContext) -> None:
     await judge(sc)
 
 
+DEFAULT_SILHOUETTE_MIN = 0.6
+
+
 async def judge(sc: StageContext) -> None:
     checks = quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, sc.budget["texture"])
     tris = sc.version.metrics.get("triangles")
@@ -119,7 +122,10 @@ async def judge(sc: StageContext) -> None:
         checks.append(quality.check("triangle_budget", tris <= sc.budget["triangles"] * 1.05, tris, sc.budget["triangles"]))
     iou = sc.version.metrics.get("silhouette_iou")
     if iou is not None:
-        checks.append(quality.check("silhouette_iou", iou >= 0.6, iou, 0.6))
+        # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,
+        # so each category may lower the floor (silhouette_min in its yaml); 0.6 is the biped default.
+        floor = float(sc.category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
+        checks.append(quality.check("silhouette_iou", iou >= floor, iou, floor))
     sc.set_metrics(**quality.summarise(checks))
 
 

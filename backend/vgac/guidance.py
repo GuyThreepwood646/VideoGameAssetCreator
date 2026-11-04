@@ -86,7 +86,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "manifold": {"severity": "warn", "help": "A few edges on the surface overlap or meet oddly. Small counts are harmless; large ones can show as holes or shading errors."},
     "watertight": {"severity": "warn", "help": "The surface has small openings. Harmless for most game uses."},
     "degenerate_faces": {"severity": "warn", "help": "Some triangles have no area; engines ignore them but they are untidy."},
-    "height": {"severity": "warn", "help": "The model is not the size the category expects.", "fix": lambda c: {"stage": "prep", "params": {}}},
+    "height_m": {"severity": "warn", "help": "The model is not the size the category expects.", "fix": lambda c: {"stage": "prep", "params": {}}},
     "lod_count": {"severity": "block", "help": "The detail-level chain is missing a step.", "fix": lambda c: {"stage": "export", "params": {}}},
     "collider_present": {"severity": "block", "help": "No collision shape was built.", "fix": lambda c: {"stage": "export", "params": {"collider": "hull"}}},
     "collider_vertices": {"severity": "warn", "help": "The collision shape is more detailed than engines like; it still works but costs a little."},
@@ -109,9 +109,17 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
             out["fix"] = g["fix"](c)
     else:
         out.setdefault("severity", "warn")
-    for k in ("texture_", "lod"):
-        if (c.get("name") or "").startswith(k) and "help" not in out:
-            out["help"] = "A texture is not a power-of-two size." if k == "texture_" else "A detail level is not the expected fraction of the full model."
+    name = c.get("name") or ""
+    if "help" not in out:
+        if name.startswith("texture_"):
+            if name.endswith("_budget"):
+                out["help"] = "A texture is larger than your platform target allows."
+            elif name.endswith("_square"):
+                out["help"] = "A texture is not square."
+            else:
+                out["help"] = "A texture is not a power-of-two size."
+        elif name.startswith("lod"):
+            out["help"] = "A detail level is not the expected fraction of the full model."
     return out
 
 

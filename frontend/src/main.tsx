@@ -7,6 +7,8 @@ import { isMock } from './api'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
 import AssetPage from './pages/AssetPage'
+import GalleryPage from './pages/GalleryPage'
+import GlossaryPage from './pages/GlossaryPage'
 import { HealthPage } from './HealthPanel'
 
 async function boot() {
@@ -22,6 +24,8 @@ async function boot() {
         { index: true, Component: ProjectsPage },
         { path: 'projects/:pid', Component: ProjectPage },
         { path: 'assets/:aid/:stage?', Component: AssetPage },
+        { path: 'gallery', Component: GalleryPage },
+        { path: 'glossary', Component: GlossaryPage },
         { path: 'health', Component: HealthPage },
       ],
     },

@@ -122,12 +122,20 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
 
 def _locate_output(sc: StageContext, paths: list[str]) -> Path:
     client = sc.client()
+    out_dir = client.output_dir.resolve() if client.output_dir is not None else None
     for p in paths:
         cand = Path(str(p).strip())
-        if cand.is_file():
-            return cand
-        if client.output_dir is not None and (client.output_dir / cand).is_file():
-            return client.output_dir / cand
+        if out_dir is None:
+            continue
+        # SkinToken reports absolute or output-relative paths; either way the file must sit inside ComfyUI's
+        # output folder, never anywhere else on disk.
+        full = (cand if cand.is_absolute() else out_dir / cand).resolve()
+        try:
+            full.relative_to(out_dir)
+        except ValueError:
+            continue
+        if full.is_file():
+            return full
     if client.output_dir is not None:
         matches = sorted(client.output_dir.glob(sc.prefix("rig") + "*.glb"), key=lambda q: q.stat().st_mtime)
         if matches:

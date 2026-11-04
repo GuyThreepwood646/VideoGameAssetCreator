@@ -9,6 +9,7 @@ modules record a skip.
 from __future__ import annotations
 
 import base64
+import binascii
 import importlib
 from pathlib import Path
 from typing import Any
@@ -29,12 +30,29 @@ def module_for(stage: str, is_material: bool = False):
     return importlib.import_module(STAGE_MODULES[stage])
 
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_MASK_B64 = 6_000_000  # a 2048 px RGBA PNG mask is well under this
+
+
+def decode_mask(mask_b64: str) -> bytes:
+    """Strict base64 decode of a PNG mask (optionally a data: URL). Raises ValueError for anything else."""
+    if len(mask_b64) > MAX_MASK_B64:
+        raise ValueError("mask_png is too large")
+    data = mask_b64.split(",", 1)[1] if mask_b64.startswith("data:") else mask_b64
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (ValueError, binascii.Error) as e:
+        raise ValueError("mask_png is not valid base64") from e
+    if not raw.startswith(PNG_SIGNATURE):
+        raise ValueError("mask_png is not a PNG image")
+    return raw
+
+
 def _write_mask(sc: StageContext, mask_b64: str | None) -> Path | None:
     if not mask_b64:
         return None
-    data = mask_b64.split(",", 1)[1] if mask_b64.startswith("data:") else mask_b64
     p = sc.dir / "mask.png"
-    p.write_bytes(base64.b64decode(data))
+    p.write_bytes(decode_mask(mask_b64))
     sc.register("mask", p)
     return p
 

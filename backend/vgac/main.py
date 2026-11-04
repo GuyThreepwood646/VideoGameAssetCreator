@@ -7,23 +7,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import psutil
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from . import __version__, library, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
-from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db,
-                 job_to_dict, project_to_dict, version_to_dict)
+from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
+                 job_to_dict, project_to_dict, version_to_dict, _iso)
 from .events import bus
 from .jobs import HOST, JobQueue, free_ram_gb, instance_for, job_kind
 
@@ -43,6 +47,9 @@ async def lifespan(app: FastAPI):
     init_db()
     queue = JobQueue(settings)
     await queue.start()
+    from . import autopilot  # late import: autopilot imports this module
+
+    autopilot.resume_all()
     log.info("library at %s, db at %s", settings.library_path, settings.db_path)
     try:
         yield
@@ -53,13 +60,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 
+LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=LOCAL_ORIGIN.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# The server only ever listens on loopback; these two close the one remote route left, a web page in the
+# user's browser (DNS rebinding and cross-site requests).
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
+
+
+@app.middleware("http")
+async def _block_foreign_origins(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin and request.method not in ("GET", "HEAD", "OPTIONS") and not LOCAL_ORIGIN.match(origin):
+        return JSONResponse({"detail": "cross-site requests are not allowed"}, status_code=403)
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +121,7 @@ class AssetIn(BaseModel):
 
 
 class AssetPatch(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     prompt: str | None = None
     category: str | None = None
     parts: list[str] | None = None
@@ -116,9 +136,9 @@ class RunIn(BaseModel):
 
 
 class RefineIn(BaseModel):
-    instruction: str = Field(min_length=1)
+    instruction: str = Field(min_length=1, max_length=4000)
     view: str | None = None
-    mask_png: str | None = None
+    mask_png: str | None = Field(default=None, max_length=6_000_000)
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -130,6 +150,11 @@ class JudgeIn(BaseModel):
     mode: str = "metrics"
 
 
+class FeedbackIn(BaseModel):
+    thumbs: Literal["up", "down"] | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -139,6 +164,37 @@ def _queue() -> JobQueue:
     if queue is None:
         raise HTTPException(503, "job queue not running")
     return queue
+
+
+def _params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    """Adjust knobs checked against the stage schema (400 on a bad value)."""
+    try:
+        return reference.validate_params(stage, params)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _check_mask(mask_b64: str | None) -> None:
+    if mask_b64:
+        from .stages import decode_mask
+
+        try:
+            decode_mask(mask_b64)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+def _check_unity_project(path: str | None) -> str | None:
+    """A Unity project the export may write into: an existing folder with Assets and ProjectSettings inside."""
+    path = (path or "").strip()
+    if not path:
+        return None
+    p = Path(path)
+    if not p.is_absolute():
+        raise HTTPException(400, "unity_project_path must be an absolute folder path")
+    if not (p / "Assets").is_dir() or not (p / "ProjectSettings").is_dir():
+        raise HTTPException(400, "unity_project_path is not a Unity project (no Assets and ProjectSettings folders)")
+    return str(p.resolve())
 
 
 def _project(db: Session, pid: str) -> Project:
@@ -167,6 +223,11 @@ def _validate_platform(pid: str) -> None:
         reference.platform(pid)
     except KeyError as e:
         raise HTTPException(400, str(e))
+
+
+def _validate_style(sid: str) -> None:
+    if sid not in {s["id"] for s in reference.styles()}:
+        raise HTTPException(400, f"unknown style_preset {sid!r}; see GET /api/styles")
 
 
 def _validate_category(cid: str) -> None:
@@ -296,7 +357,7 @@ def create_project(body: ProjectIn, db: Session = Depends(get_session)) -> dict[
     if lock.get("model") and lock["model"] not in STYLE_MODELS:
         raise HTTPException(400, f"style_lock.model must be one of {STYLE_MODELS}")
     p = Project(name=body.name, platform_target=body.platform_target)
-    p.unity_project_path = body.unity_project_path or None
+    p.unity_project_path = _check_unity_project(body.unity_project_path)
     p.style_lock = lock
     db.add(p)
     db.commit()
@@ -313,7 +374,7 @@ def get_project(pid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
 def update_project(pid: str, body: ProjectPatch, db: Session = Depends(get_session)) -> dict[str, Any]:
     p = _project(db, pid)
     if body.unity_project_path is not None:
-        p.unity_project_path = body.unity_project_path.strip() or None
+        p.unity_project_path = _check_unity_project(body.unity_project_path)
     if body.name is not None:
         p.name = body.name
     if body.platform_target is not None:
@@ -346,7 +407,8 @@ def delete_project(pid: str, db: Session = Depends(get_session)) -> dict[str, An
 @app.get("/api/projects/{pid}/assets")
 def list_assets(pid: str, db: Session = Depends(get_session)) -> list[dict[str, Any]]:
     _project(db, pid)
-    rows = db.scalars(select(Asset).where(Asset.project_id == pid).order_by(Asset.created_at.desc())).all()
+    rows = db.scalars(select(Asset).where(Asset.project_id == pid).options(selectinload(Asset.versions))
+                      .order_by(Asset.created_at.desc())).all()
     return [asset_to_dict(a, with_stages=True) for a in rows]
 
 
@@ -354,6 +416,7 @@ def list_assets(pid: str, db: Session = Depends(get_session)) -> list[dict[str, 
 def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) -> dict[str, Any]:
     p = _project(db, pid)
     _validate_category(body.category)
+    _validate_style(body.style_preset)
     platform = body.platform_target or p.platform_target
     _validate_platform(platform)
     cat = reference.category(body.category)
@@ -408,13 +471,15 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
         try:
             dst = library.import_file(folder, library.abs_path(rel, settings))
             files[key] = library.rel_path(dst, settings)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            log.warning("variant of %s: could not copy %s (%s): %s", src.id[:8], key, rel, e)
             continue
     copy.files = files
     db.commit()
     # Refine with the change so the identity holds.
-    v = _new_version(db, a, "concept", copy, {**copy.params, **(body.params or {})})
-    job = _submit(db, a, v, "refine", {"instruction": change, "view": None, "mask_png": None, "params": body.params or {}})
+    vparams = _params("concept", body.params)
+    v = _new_version(db, a, "concept", copy, {**copy.params, **vparams})
+    job = _submit(db, a, v, "refine", {"instruction": change, "view": None, "mask_png": None, "params": vparams})
     return {"asset": asset_to_dict(a), "job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -439,6 +504,7 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
         _validate_platform(body.platform_target)
         a.platform_target = body.platform_target
     if body.style_preset is not None:
+        _validate_style(body.style_preset)
         a.style_preset = body.style_preset
     db.commit()
     db.refresh(a)
@@ -472,20 +538,19 @@ def _run_stage_internal(db: Session, a: Asset, stage: str, count: int = 1, param
             if parent.asset_id != a.id:
                 raise HTTPException(400, "parent version belongs to another asset")
         else:
-            # Walk back to the nearest earlier stage with a selected version, so categories that skip stages
-            # (material has no turnaround) still find their parent.
+            # The parent is the kept version of the previous stage, walking back only over stages this category
+            # skips (material has no turnaround), never over a stage the person simply has not finished.
+            skips = set(reference.category(a.category).get("skips") or [])
             idx = STAGES.index(stage) - 1
-            prev = STAGES[idx]
-            parent = None
-            while idx >= 0 and parent is None:
-                prev = STAGES[idx]
-                parent = _selected(db, a.id, prev)
+            while idx > 0 and STAGES[idx] in skips:
                 idx -= 1
+            prev = STAGES[idx]
+            parent = _selected(db, a.id, prev)
             if parent is None:
                 raise HTTPException(409, f"no selected {prev} version to build on")
         if parent.status != "done":
             raise HTTPException(409, f"parent version is {parent.status}, not done")
-    base_params = dict(params or {})
+    base_params = _params(stage, params)
     if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
         base_params["model"] = a.concept_model
     versions, jobs = [], []
@@ -518,6 +583,8 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     from . import autopilot
     a = _asset(db, aid)
     body = body or AutopilotIn()
+    if body.fix and body.fix.get("stage") in STAGES:
+        body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"))}
     try:
         return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix)
     except ValueError as e:
@@ -545,8 +612,10 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     a = _asset(db, parent.asset_id)
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
-    v = _new_version(db, a, parent.stage, parent, {**parent.params, **(body.params or {})})
-    job = _submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": body.params or {}})
+    _check_mask(body.mask_png)
+    rparams = _params(parent.stage, body.params)
+    v = _new_version(db, a, parent.stage, parent, {**parent.params, **rparams})
+    job = _submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -556,8 +625,9 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
-    v = _new_version(db, a, parent.stage, parent, {**parent.params, **(body.params or {})})
-    job = _submit(db, a, v, "adjust", {"params": body.params or {}})
+    aparams = _params(parent.stage, body.params)
+    v = _new_version(db, a, parent.stage, parent, {**parent.params, **aparams})
+    job = _submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -586,6 +656,21 @@ def get_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
     return version_to_dict(_version(db, vid))
 
 
+@app.post("/api/versions/{vid}/feedback")
+def feedback_version(vid: str, body: FeedbackIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Thumbs up or down (or neither) plus an optional note, kept on metrics.feedback. It stays local."""
+    v = _version(db, vid)
+    if body.thumbs is None and not body.note:
+        library.update_metrics(v, feedback=None)
+    else:
+        library.update_metrics(v, feedback={"thumbs": body.thumbs, "note": (body.note or "").strip() or None, "at": _iso(utcnow())})
+    db.commit()
+    db.refresh(v)
+    out = version_to_dict(v)
+    bus.publish_threadsafe({"type": "version", "version": out})  # plain def endpoints run in a worker thread
+    return out
+
+
 @app.post("/api/versions/{vid}/judge")
 async def judge_version(vid: str, body: JudgeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
     v = _version(db, vid)
@@ -609,6 +694,58 @@ async def judge_version(vid: str, body: JudgeIn, db: Session = Depends(get_sessi
         out["judge_job"] = job_to_dict(job)
         return out
     raise HTTPException(400, "mode must be metrics or local")
+
+
+# ---------------------------------------------------------------------------
+# Gallery
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/gallery")
+def gallery(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    """Every asset with a finished export, newest first: one card per asset with its thumbnail and deliverables."""
+    exports = db.scalars(select(Version).where(Version.stage == "export", Version.status == "done")
+                         .order_by(Version.created_at.desc(), Version.id)).all()
+    if not exports:
+        return []
+    asset_ids = {ex.asset_id for ex in exports}
+    assets = {a.id: a for a in db.scalars(select(Asset).where(Asset.id.in_(asset_ids))).all()}
+    projects = {p.id: p for p in db.scalars(select(Project).where(Project.id.in_({a.project_id for a in assets.values()}))).all()}
+    kept: dict[tuple[str, str], Version] = {(v.asset_id, v.stage): v for v in db.scalars(
+        select(Version).where(Version.asset_id.in_(asset_ids), Version.selected == True)).all()}  # noqa: E712
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for ex in exports:
+        a = assets.get(ex.asset_id)
+        if a is None or a.id in seen:
+            continue
+        # The kept export wins over a newer unkept one.
+        k = kept.get((a.id, "export"))
+        if k is not None and k.status == "done":
+            ex = k
+        seen.add(a.id)
+        pr = projects.get(a.project_id)
+        concept = kept.get((a.id, "concept"))
+        files = ex.files
+        thumb = None
+        if concept is not None:
+            thumb = concept.files.get("image") or concept.files.get("cutout")
+        preview = files.get("glb")
+        if preview is None:
+            mesh = kept.get((a.id, "prep")) or kept.get((a.id, "mesh"))
+            preview = mesh.files.get("glb") if mesh is not None else None
+        out.append({
+            "asset_id": a.id, "asset_name": a.name, "project_id": a.project_id,
+            "project_name": pr.name if pr is not None else None,
+            "category": a.category, "style_preset": a.style_preset,
+            "platform_target": a.platform_target or (pr.platform_target if pr is not None else None),
+            "created_at": _iso(a.created_at), "finished_at": _iso(ex.created_at),
+            "export_version_id": ex.id,
+            "thumbnail": thumb, "preview": preview,
+            "delivered_to": ex.metrics.get("delivered_to"),
+            "fbx": files.get("fbx"), "glb": files.get("glb"),
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +791,10 @@ def pause_queue(instance: str, paused: bool = True) -> dict[str, Any]:
 
 @app.websocket("/api/ws/events")
 async def ws_events(ws: WebSocket) -> None:
+    origin = ws.headers.get("origin")
+    if origin and not LOCAL_ORIGIN.match(origin):
+        await ws.close(code=1008)  # policy violation: a foreign page must not read the event stream
+        return
     await ws.accept()
     q = bus.subscribe()
     try:
@@ -684,6 +825,8 @@ def library_file(path: str) -> FileResponse:
         raise HTTPException(403, "path outside library")
     if not target.is_file():
         raise HTTPException(404, "file not found")
+    if target.suffix.lower().startswith(".sqlite") or target == Path(get_settings().db_path).resolve():
+        raise HTTPException(403, "the database is not served")
     media_type = {"glb": "model/gltf-binary", "fbx": "application/octet-stream", "json": "application/json"}.get(target.suffix.lower().lstrip("."))
     return FileResponse(target, media_type=media_type)
 
@@ -692,8 +835,22 @@ def library_file(path: str) -> FileResponse:
 # Frontend (built) at /
 # ---------------------------------------------------------------------------
 
+class SpaStaticFiles(StaticFiles):
+    """The built app with client-side routes: any path that is not a real file gets index.html, so deep links
+    such as /gallery or /assets/<id> and a browser refresh work (the API keeps its own 404s)."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            # Starlette joins the path with the OS separator, so it is "api\x" on Windows.
+            if e.status_code == 404 and not path.replace("\\", "/").lstrip("/").startswith("api/"):
+                return await super().get_response("index.html", scope)
+            raise
+
+
 if FRONTEND_DIST.is_dir() and (FRONTEND_DIST / "index.html").is_file():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+    app.mount("/", SpaStaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 else:
 
     @app.get("/")

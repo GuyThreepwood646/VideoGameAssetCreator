@@ -74,6 +74,8 @@ export type Project = {
   created_at: string
   style_lock: StyleLock
   platform_target: PlatformId
+  // Decision D12: the Unity project every export is imported into (absolute folder), or null.
+  unity_project_path?: string | null
 }
 
 export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
@@ -120,6 +122,8 @@ export type Asset = {
   prompt: string
   parts: string[]
   created_at: string
+  // The painter chosen on the creation form; the default for concept runs.
+  concept_model?: string | null
   // Variants: an asset derived from another with a change in the prompt.
   base_asset_id?: string | null
   variant_change?: string | null
@@ -158,6 +162,11 @@ export type Category = {
   size_m: number
   parts_default: string[]
   budgets: Record<string, { triangles: number; texture: number }>
+  // Null when the category file leaves them out.
+  views?: string[] | null
+  lod_ratios?: number[] | null
+  topology?: 'quad' | 'triangle' | 'none' | string | null
+  input_view_default?: 'concept' | 'front' | 'quarter' | string | null
 }
 
 export type StylePreset = { id: string; label: string; model: string; prompt_block: string }
@@ -204,12 +213,50 @@ export type Suggestion = {
   reason: string
   budgets: { triangles: number; texture: number }
   estimates: Record<string, number>
+  total_minutes?: number
+  platform_label?: string
+  category_label?: string
+}
+
+// Thumbs up or down on a finished version (POST /api/versions/{vid}/feedback),
+// stored in metrics.feedback. It only records which results the person liked.
+export type Thumbs = 'up' | 'down' | null
+export type Feedback = { thumbs: Thumbs; note?: string | null; at?: string | null }
+export type FeedbackBody = { thumbs: Thumbs; note?: string }
+
+export function versionFeedback(v: Pick<Version, 'metrics'>): Feedback | null {
+  const f = v.metrics?.feedback
+  if (!f || typeof f !== 'object') return null
+  const fb = f as { thumbs?: unknown; note?: unknown; at?: unknown }
+  const thumbs = fb.thumbs === 'up' || fb.thumbs === 'down' ? fb.thumbs : null
+  return { thumbs, note: typeof fb.note === 'string' ? fb.note : null, at: typeof fb.at === 'string' ? fb.at : null }
+}
+
+// One finished asset in the gallery (GET /api/gallery): every asset with a
+// finished export version, newest first. Paths are library-relative.
+export type GalleryItem = {
+  asset_id: string
+  asset_name: string
+  project_id: string
+  project_name: string
+  category: string
+  style_preset: string
+  platform_target: PlatformId | string
+  created_at: string
+  finished_at: string | null
+  export_version_id?: string
+  thumbnail: string | null
+  preview: string | null
+  delivered_to: string | null
+  fbx: string | null
+  glb: string | null
 }
 
 export type ServerEvent = { type: 'job'; job: Job } | { type: 'version'; version: Version } | { type: 'autopilot'; asset_id: string; autopilot: AutopilotState }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown> }
+export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
 export type VariantResult = { asset: Asset; job: Job; version: Version }
 
@@ -275,7 +322,7 @@ export type Health = {
   version: string
   instances: Record<string, HealthInstance>
   host: { ram_total_bytes: number; ram_free_bytes: number; ram_free_gb: number; min_free_ram_gb: number; cpu_percent: number }
-  queue: Record<string, { paused: boolean; current_job_id: number | string | null }>
+  queue: Record<string, { paused: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
 }
 
 export const api = {
@@ -290,24 +337,24 @@ export const api = {
 
   // Projects
   listProjects: () => get<Project[]>('/api/projects'),
-  createProject: (body: { name: string; style_lock?: Partial<StyleLock>; platform_target?: PlatformId }) =>
+  createProject: (body: { name: string; style_lock?: Partial<StyleLock>; platform_target?: PlatformId; unity_project_path?: string | null }) =>
     post<Project>('/api/projects', body),
   getProject: (id: string) => get<Project>(`/api/projects/${id}`),
-  updateProject: (id: string, body: Partial<Pick<Project, 'name' | 'style_lock' | 'platform_target'>>) =>
+  updateProject: (id: string, body: Partial<Pick<Project, 'name' | 'style_lock' | 'platform_target' | 'unity_project_path'>>) =>
     put<Project>(`/api/projects/${id}`, body),
-  deleteProject: (id: string) => del<void>(`/api/projects/${id}`),
+  deleteProject: (id: string) => del<DeleteResult>(`/api/projects/${id}`),
 
   // Assets
   listAssets: (pid: string) => get<AssetSummary[]>(`/api/projects/${pid}/assets`),
   createAsset: (
     pid: string,
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[] },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string },
   ) => post<Asset>(`/api/projects/${pid}/assets`, body),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),
   createVariant: (aid: string, body: { change: string; name?: string }) => post<VariantResult>(`/api/assets/${aid}/variants`, body),
   updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target'>>) =>
     put<Asset>(`/api/assets/${id}`, body),
-  deleteAsset: (id: string) => del<void>(`/api/assets/${id}`),
+  deleteAsset: (id: string) => del<DeleteResult>(`/api/assets/${id}`),
 
   // Autopilot
   startAutopilot: (aid: string, body: AutopilotBody = {}) => post<AutopilotState>(`/api/assets/${aid}/autopilot`, body),
@@ -322,7 +369,12 @@ export const api = {
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
   getVersion: (vid: string) => get<Version>(`/api/versions/${vid}`),
-  judge: (vid: string, mode: 'metrics' | 'local') => post<Version>(`/api/versions/${vid}/judge`, { mode }),
+  // In local mode the judging runs as a queued job, returned as judge_job.
+  judge: (vid: string, mode: 'metrics' | 'local') => post<Version & { judge_job?: Job }>(`/api/versions/${vid}/judge`, { mode }),
+  feedback: (vid: string, body: FeedbackBody) => post<Version>(`/api/versions/${vid}/feedback`, body),
+
+  // Gallery: every finished asset across projects
+  gallery: () => get<GalleryItem[]>('/api/gallery'),
 
   // Jobs
   listJobs: (params: { asset_id?: string; status?: string } = {}) => get<Job[]>('/api/jobs' + q(params)),
