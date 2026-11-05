@@ -2,12 +2,18 @@ import { useState } from 'react'
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { modelLabel } from '../../help'
+import { useRefData } from '../../refdata'
+import { addonsNotUsed } from '../Addons'
 
 export function ConceptView({ version }: { version: Version }) {
   const [cutout, setCutout] = useState(false)
   const image = libraryUrl(version.files.image)
   const cut = libraryUrl(version.files.cutout)
   const src = cutout && cut ? cut : image
+  // Add-ons this run asked for that the painter could not use, or that the app does not know.
+  const { ref } = useRefData()
+  const catalog = ref?.stages.find((s) => s.id === 'concept')?.adjust_schema.find((p) => p.type === 'addons')?.catalog
+  const notUsed = addonsNotUsed(version, catalog)
   return (
     <div className="concept-view">
       <div className="viewer-toolbar">
@@ -37,6 +43,12 @@ export function ConceptView({ version }: { version: Version }) {
       <div className="concept-body single">
         <div className={'concept-image' + (cutout ? ' checker' : '')}>{src ? <img src={src} alt="concept" /> : <span className="muted">no image</span>}</div>
       </div>
+      {notUsed && (
+        <div className="muted small">
+          {notUsed}
+          <Info term="term.addons" />
+        </div>
+      )}
     </div>
   )
 }

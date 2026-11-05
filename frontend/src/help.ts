@@ -415,7 +415,22 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   setup_group_storage: H('Storage', 'Free disk space where your assets are kept, and free memory on this computer.', 'Steps wait when memory is short, and fail to save when the disk is full.', 'library_path, export_path, min_free_ram_gb'),
   setup_needs_attention: H('Setup needs attention', 'At least one thing the app needs is missing or broken.', 'Open the Health page to see what it is and how to fix it.', 'GET /api/setup summary.fails'),
   gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
+  // Recipes: the look carried through every step
+  recipe: H('Recipe', 'How your chosen look is carried through every step: detail level, texture size, shading and how the game engine shows the textures.', 'So a pixel-art or low-poly asset stays that way all the way into your game, not just in the first picture.', 'reference.recipe'),
+  addons: H('Add-ons', 'Small trained helpers the painter loads on top of its model to push it toward a look.', 'Your style already switches on the ones it needs. Turn one up, down or off; required ones stay on.', 'LoRA chain'),
+  addon: H('Add-on', 'One small trained helper the painter loads on top of its model.', 'Switch it off to drop its effect, or pick how strongly it pushes the picture.', 'LoRA (data/addons.yaml)'),
+  strength_subtle: H('Subtle', 'The add-on pushes the picture a little.', 'Keeps more of the painter\'s own look.', 'lower LoRA strength (strengths.subtle)'),
+  strength_normal: H('Normal', 'The add-on at the strength it was made for.', 'The safe choice; start here.', 'LoRA strength (strengths.normal)'),
+  strength_strong: H('Strong', 'The add-on pushes the picture harder.', 'Use it when the look does not come through enough; too strong can distort the picture.', 'higher LoRA strength (strengths.strong)'),
+  texture_crisp: H('Crisp textures', 'Every texture pixel stays a sharp square, even up close.', 'The pixel-art look; smoothing would blur it.', 'Point filtering, no mipmaps, no compression'),
+  texture_smooth: H('Smooth textures', 'Texture pixels blend into each other up close and at a distance.', 'The usual look for painted and realistic assets; it hides the pixel grid.', 'Bilinear filtering, mipmaps, compression'),
+  shading: H('Shading', 'Whether the surface looks smooth and rounded or cut into flat faces.', 'Automatic follows your style: flat faces for low-poly, smooth for the rest.', 'smooth normals / flat per-face normals'),
+  look_applied: H('Look applied', 'Whether the finished model matches your chosen look: its detail level, texture size, shading and surface bumps.', 'A pixel-art or low-poly asset should stay that way in your game, not come out as a detailed model.', 'look_applied check (prep), metrics.recipe'),
+  unity_handoff: H('Sent to your open Unity project', 'Unity cannot be handed files while your project is open, so the app leaves them in the project for Unity to pick up.', 'You do not have to close your project; it imports itself when you switch to Unity.', 'Assets/VGAC/<Name>/_incoming/vgac_import.json, VgacImportWatcher'),
 }
+
+// The add-on strength steps in words (Fine-tune add-ons).
+export const STRENGTH_LABELS: Record<'off' | 'subtle' | 'normal' | 'strong', string> = { off: 'Off', subtle: 'Subtle', normal: 'Normal', strong: 'Strong' }
 
 // Plain words for the autopilot's stop_on setting.
 export const STOP_ON_OPTIONS: { id: 'block' | 'warn' | 'never'; label: string; hint: string }[] = [
@@ -579,6 +594,14 @@ const CHECK_TEXT: Record<string, CheckText> = {
     return `The piece is ${metres([w, d, h][i])} m ${word}, between grid steps, so it leaves a gap next to other pieces.`
   },
   tiles_cleanly: (v, _l, ok) => (ok ? 'Copies placed side by side meet without gaps.' : `Copies placed side by side leave a gap or overlap of ${n0(num(v) !== null ? Math.round(num(v)! * 10) / 10 : v)} cm.`),
+  // Recipes: what the look did to the model (prep).
+  look_applied: (v, _l, ok, _ctx, vars) => {
+    const look = str(vars.look)
+    const summary = str(vars.summary) || str(v)
+    if (ok) return summary ? (look ? `${look} look applied: ${summary}.` : `Look applied: ${summary}.`) : 'Look applied.'
+    const problem = str(vars.problem)
+    return look && problem ? `The ${look} look is not fully applied: ${problem}.` : 'The look is not fully applied to the model yet.'
+  },
   // Mock-era names
   'single subject': (_v, _l, ok) => (ok ? 'The picture shows one subject.' : 'The picture shows more than one subject.'),
   'rig-ready pose': (_v, _l, ok) => (ok ? 'The pose is ready for a skeleton.' : 'The pose will not rig well.'),
@@ -659,6 +682,7 @@ const CHECK_HELP: Record<string, string> = {
   mirror_iou: 'mirror_iou',
   grid_fit: 'grid',
   tiles_cleanly: 'grid',
+  look_applied: 'look_applied',
 }
 
 // The sentence for a check. The backend is the one source of check wording (2.1): it writes `help` from the
@@ -685,7 +709,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|baked_light|albedo_range|metal_mixed)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|baked_light|albedo_range|metal_mixed|look_applied)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -732,6 +756,7 @@ const FIX_LABELS: Record<string, string> = {
   albedo_range: 'Bring colours into range',
   metal_mixed: 'Make metal clearly metal',
   grid_fit: 'Snap to the grid',
+  look_applied: 'Apply the look again',
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
@@ -772,6 +797,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'bake_matches' || id === 'atlas_used') return { stage: 'prep', params: { rebake: true }, label }
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
+  if (id === 'look_applied') return { stage: 'prep', params: {}, label }
   return null
 }
 
@@ -876,6 +902,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
   delight: { auto: 'Automatic (by look)', remove: 'Remove them', keep: 'Keep them (part of the look)' },
+  shading: { auto: 'Automatic (by look)', smooth: 'Smooth', flat: 'Flat faces' },
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
   moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },

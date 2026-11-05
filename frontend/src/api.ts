@@ -229,7 +229,9 @@ export type Platform = {
 export type AdjustParam = {
   name: string
   label?: string
-  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string'
+  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string' | 'addons'
+  // type 'addons' (concept): every concept add-on the app knows. The value is {id: off | subtle | normal | strong}.
+  catalog?: AddonEntry[]
   min?: number
   max?: number
   step?: number
@@ -270,6 +272,66 @@ export type Suggestion = {
   total_minutes?: number
   platform_label?: string
   category_label?: string
+  // The recipe's plain sentence ("Pixel-art character: small crisp textures ..."), when the backend has recipes.
+  recipe_plain?: string
+}
+
+// Recipes (GET /api/recipe, backend reference.recipe_public): how the chosen look carries through every step.
+export type StrengthName = 'subtle' | 'normal' | 'strong'
+export type AddonChoice = 'off' | StrengthName
+export type AddonEntry = {
+  id: string
+  label: string
+  help: HelpText
+  stage: 'concept' | 'turnaround'
+  base_models: string[]
+  strengths: Record<StrengthName, number>
+  default_strength: StrengthName
+  required: boolean
+  required_for: string[]
+  trigger: string
+  licence: string
+  source: string
+  // Only on GET /api/recipe addon_entries: whether the recipe switches it on, and at which step.
+  on?: boolean
+  strength?: StrengthName
+}
+export type Recipe = {
+  id: string
+  style: string
+  category: string
+  platform: string
+  plain: string
+  concept: { model: string; steps: number | null; prompt_block: string; negative: string }
+  addons: { id: string; strength: StrengthName }[]
+  turnaround: { lora_strength: number; prompt_suffix: string }
+  mesh: {
+    triangle_scale: number
+    triangle_floor: number
+    triangles: number | null
+    budget_triangles: number | null
+    texture_cap: number | null
+    texture: number | null
+    budget_texture: number | null
+    normal_map: boolean
+  }
+  surface: { shading: 'smooth' | 'flat'; texture_filter: 'smooth' | 'crisp'; palette_colors: number | null; pixel_snap: boolean; delight: string; pbr_fix: boolean }
+  engine: { filter_mode: 'bilinear' | 'point'; mipmaps: boolean; compress: boolean }
+  addon_entries: AddonEntry[]
+}
+
+// metrics.unity_project_import on an export version. "sent": the project was open, so the files wait in the project
+// for the open Editor to import them; "imported" or "failed" once it has. Older exports have only ok and error.
+export type UnityHandoffState = 'sent' | 'imported' | 'failed'
+export type UnityProjectImport = {
+  ok?: boolean | null
+  state?: UnityHandoffState
+  project?: string
+  request_id?: string
+  folder?: string
+  prefab?: string
+  error?: string
+  note?: string
 }
 
 // Thumbs up or down on a finished version (POST /api/versions/{vid}/feedback),
@@ -469,6 +531,7 @@ export const api = {
   stages: () => get<StageInfo[]>('/api/stages'),
   models: () => get<ModelInfo[]>('/api/models'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),
+  recipe: (params: { style: string; category: string; platform: string }) => get<Recipe>('/api/recipe' + q(params)),
   stylePresets: () => get<LookPreset[]>('/api/style-presets'),
 
   // Projects

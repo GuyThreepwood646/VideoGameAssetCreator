@@ -11,6 +11,13 @@ export default function App() {
   const guideOpen = useGuide()
   return (
     <div className="app">
+      {/* The same flag that installs the mock layer (main.tsx), written out so a real build drops the banner. */}
+      {import.meta.env.VITE_MOCK === '1' && (
+        <div className="demo-banner" role="status">
+          <strong>Demo data.</strong> This preview uses sample data; switches and buttons here change nothing real. The real app is at{' '}
+          <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>.
+        </div>
+      )}
       <header className="topbar">
         <NavLink to="/" className="brand">
           VGAC

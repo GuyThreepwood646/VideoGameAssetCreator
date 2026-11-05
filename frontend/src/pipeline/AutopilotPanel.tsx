@@ -7,7 +7,9 @@ import { Info } from '../components/Info'
 import { Disclosure, PlainChecks, TrafficDot, type FixRequest } from '../components/ui'
 import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
+import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
+import { UnityHandoff } from './UnityHandoff'
 import { Deliverables } from './views/ExportView'
 
 export type AutopilotActions = {
@@ -228,7 +230,7 @@ function withCode(text: string): ReactNode {
 }
 
 // The finishing moment: turntable with the walk clip, what you get, downloads, using it in Unity, what next.
-export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = false }: { asset: Asset; byAutopilot: boolean; onMakeVariant: () => void; onFix?: (fix: FixRequest) => void; busy?: boolean }) {
+export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = false, onChanged }: { asset: Asset; byAutopilot: boolean; onMakeVariant: () => void; onFix?: (fix: FixRequest) => void; busy?: boolean; onChanged?: () => void }) {
   const exp = selectedVersion(asset, 'export')
   const lines = finishLines(asset)
   const howto = unityHowto(asset)
@@ -236,6 +238,8 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
   const walk = clips.find((c) => /walk/i.test(c)) ?? clips[0] ?? 'walk'
+  // "Look:" where the chosen look changed the result (from prep, else the mesh step).
+  const look = lines.some((l) => l.id === 'look') ? null : (versionLook(selectedVersion(asset, 'prep')) ?? versionLook(selectedVersion(asset, 'mesh')))
   return (
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
@@ -244,7 +248,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         <div className="guide-now">
           {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
-        {lines.length > 0 && (
+        {(lines.length > 0 || look) && (
           <div className="finish-lines">
             <div className="field-label">
               What you get
@@ -268,11 +272,22 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
                   </li>
                 )
               })}
+              {look && (
+                <li className={'finish-line ' + (look.ok ? 'ok' : 'warn')}>
+                  <TrafficDot state={look.ok ? 'ok' : 'warn'} title={look.ok ? 'checked' : 'needs a look'} />
+                  <span className="finish-line-text">
+                    Look: {look.ok && look.look && look.summary ? `${look.look}, ${look.summary}.` : look.sentence}
+                    <Info term="term.recipe" />
+                    {look.crisp && <Info term="term.texture_crisp" />}
+                  </span>
+                </li>
+              )}
             </ul>
           </div>
         )}
         {glb ? <Viewer url={glb} height={360} turntableDefault defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
         {exp && <Deliverables version={exp} />}
+        {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
         {howto && (
           <Disclosure label="Using it in Unity" className="unity-howto">
             <div className="muted small">

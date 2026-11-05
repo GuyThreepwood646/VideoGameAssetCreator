@@ -296,6 +296,12 @@ function CreateAssetForm({ project }: { project: Project }) {
           ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the painter under Advanced.</span>
         </div>
       )}
+      {suggestion?.recipe_plain && (
+        <div className="recipe-line small">
+          Recipe: {suggestion.recipe_plain}
+          <Info term="term.recipe" />
+        </div>
+      )}
       <Disclosure label="Advanced">
         <div className="col">
           <Field label="Name" hint={`Optional. We will call it "${autoName(prompt) || 'Untitled'}" if you leave this empty.`}>

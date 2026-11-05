@@ -3,6 +3,7 @@ import { Info } from '../../components/Info'
 import { Chip, Disclosure, TrafficDot } from '../../components/ui'
 import { joinAnd } from '../../help'
 import Viewer from '../../Viewer'
+import { UnityHandoff } from '../UnityHandoff'
 import { collisionPhrase, controllerParams, CYCLIC_CLIP, unityClips, unityReport, type UnityReport } from '../finish'
 
 type Lod = { level?: number; triangles?: number; screen_height?: number; ratio?: number }
@@ -51,7 +52,7 @@ export function Deliverables({ version }: { version: Version }) {
 }
 
 // hideReady: the finishing card above already shows the title and the downloads.
-export function ExportView({ version, hideReady = false }: { version: Version; hideReady?: boolean }) {
+export function ExportView({ version, hideReady = false, assetName = '', onChanged }: { version: Version; hideReady?: boolean; assetName?: string; onChanged?: () => void }) {
   const glb = libraryUrl(version.files.glb)
   const lods = Array.isArray(version.metrics.lods) ? (version.metrics.lods as Lod[]) : []
   const unity = unityReport(version)
@@ -69,6 +70,7 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
         </div>
       )}
       {!hideReady && (glb ? <Viewer url={glb} height={400} /> : <div className="placeholder-box">No 3D model in this version.</div>)}
+      {!hideReady && <UnityHandoff version={version} assetName={assetName} onChanged={onChanged} />}
       <Disclosure label="What is inside">
         <div className="export-grid">
           <div>

@@ -1,6 +1,7 @@
 // Sample data for the mock backend: reference tables, one project with a fully
 // staged asset, and the fabricators that fill in files and metrics for new versions.
 import type { Asset, Category, Job, LookPreset, Platform, Project, SetupItem, SetupReport, StageId, StageInfo, StylePreset, Version } from '../api'
+import { CONCEPT_CATALOG, LOOK_OF, lookSummary, mockRecipe, recipeRecord } from './recipes'
 import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, makeTiling, type Figure, type ViewName } from './images'
 
 const RIGGED_IDS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'] as const
@@ -133,6 +134,8 @@ export const styles: StylePreset[] = [
   { id: 'pixel', label: 'Pixel art', model: 'pixel', prompt_block: 'pixel art sprite, 32 colour palette, crisp edges' },
   { id: 'toon', label: 'Toon shaded', model: 'klein', prompt_block: 'cel shaded, bold outlines, flat colour regions, saturated palette' },
   { id: 'cel', label: 'Cel shaded (anime)', model: 'anima', prompt_block: 'anime cel shading, clean line art, flat colour regions, soft gradients' },
+  { id: 'retro64', label: 'Retro 64', model: 'zturbo', prompt_block: 'late 1990s low-polygon console style, chunky simple shapes, small blurry textures' },
+  { id: 'lowpoly_flat', label: 'Low-poly flat', model: 'zturbo', prompt_block: 'low-poly flat-shaded style, faceted geometric surfaces, solid flat colour per face' },
 ]
 
 // Ready-made looks: GET /api/style-presets. Applying one means PUT /api/projects/{id}
@@ -229,6 +232,8 @@ export const stages: StageInfo[] = [
       { name: 'steps', label: 'Steps', type: 'integer', min: 4, max: 50, step: 1, default: 8 },
       { name: 'readiness_block', label: 'Pipeline-readiness prompt block', type: 'boolean', default: true },
       { name: 'prompt_override', label: 'Prompt override', type: 'string', default: '' },
+      // As the backend serves it: the concept add-ons in `catalog`; the value is {id: off | subtle | normal | strong}.
+      { name: 'addons', label: 'Add-ons', type: 'addons', default: null, options: ['off', 'subtle', 'normal', 'strong'], description: 'The recipe and the style lock decide when empty', catalog: CONCEPT_CATALOG },
     ],
   },
   {
@@ -294,6 +299,8 @@ export const stages: StageInfo[] = [
       // 3.9: painted-on shadows, colour range and repainting. No option_labels, so help.ts OPTION_LABELS shows.
       { name: 'delight', label: 'Painted-on shadows', type: 'select', options: ['auto', 'remove', 'keep'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       { name: 'pbr_fix', label: 'Keep colours in a realistic range', type: 'boolean', default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      // Recipes: auto follows the look (flat faces for low-poly). No option_labels, so help.ts OPTION_LABELS shows.
+      { name: 'shading', label: 'Shading', type: 'select', options: ['auto', 'smooth', 'flat'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       { name: 'rebake', label: 'Paint the surface again', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // This one carries the backend's option_labels (2.2); the others fall back to help.ts OPTION_LABELS.
       // Scenery always gets the corner anchor, so the pivot knob is not offered for it.
@@ -613,6 +620,7 @@ export function fabricate(asset: Asset, version: Version) {
   const base = `projects/${asset.project_id}/assets/${asset.id}/${version.stage}/${version.id}`
   const f: Record<string, string> = {}
   const m: Record<string, unknown> = {}
+  const recipe = recipeFor(asset)
   switch (version.stage) {
     case 'concept': {
       f.image = putDataFile(`${base}/concept.png`, makeImage({ w: 512, h: 512, hue, seed, figure, label: `seed ${seed}` }))
@@ -621,6 +629,14 @@ export function fabricate(asset: Asset, version: Version) {
       m.elapsed_seconds = 16 + (seed % 5)
       m.model = version.params.model ?? 'zturbo'
       m.seed = seed
+      m.recipe = recipeRecord(recipe, 'concept', 'addons')
+      // Like the backend: style-lock add-ons the registry does not know are reported, never a failure.
+      {
+        const lock = store.projects.find((p) => p.id === asset.project_id)?.style_lock.loras ?? []
+        const known = new Set(CONCEPT_CATALOG.map((a) => a.id))
+        m.addons_unknown = lock.map((l) => l.split(':')[0]).filter((id) => !known.has(id))
+        m.addons_ignored = []
+      }
       break
     }
     case 'turnaround': {
@@ -658,6 +674,7 @@ export function fabricate(asset: Asset, version: Version) {
       m.silhouette_iou = { front: 0.93, left: 0.88, back: 0.91, right: 0.9, quarter: 0.92 }
       m.texture_size = version.params.texture_size ?? 2048
       m.checks = checksFor('mesh', seed)
+      m.recipe = recipeRecord(recipe, 'mesh')
       m.gate_ok = true
       m.elapsed_seconds = 180 + (seed % 40)
       break
@@ -687,6 +704,28 @@ export function fabricate(asset: Asset, version: Version) {
       m.texture_padding_px = 8
       m.atlas_used = 0.71
       m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000, asset.category)
+      // Recipes: the shading (the knob, else the look), and for a look that changes the result, the look_applied check.
+      {
+        const choice = version.params.shading
+        const shading = choice === 'smooth' || choice === 'flat' ? choice : recipe.surface.shading
+        m.shading_applied = shading
+        m.shading_source = choice === 'smooth' || choice === 'flat' ? 'chosen' : 'recipe'
+        m.recipe = recipeRecord(recipe, 'mesh', 'surface')
+        const colours = recipe.surface.palette_colors
+        if (colours) {
+          m.palette_limit = colours
+          m.texture_colours = colours
+        }
+        const summary = lookSummary(recipe, shading, colours)
+        if (summary) {
+          if (recipe.mesh.triangles && recipe.mesh.triangle_scale < 1) m.triangles = recipe.mesh.triangles - 40 + (seed % 5) * 10
+          if (!recipe.mesh.normal_map) delete f.normal
+          const look = LOOK_OF[asset.style_preset] ?? asset.style_preset
+          ;(m.checks as MockCheck[]).push(
+            chk('look_applied', true, summary, recipe.id, { severity: 'warn', help: `${look} look applied: ${summary}.`, vars: { look, summary, problem: '' } }),
+          )
+        }
+      }
       if (asset.category === 'environment') {
         const g = gridFor(seed, version.params)
         Object.assign(m, g.metrics)
@@ -800,12 +839,19 @@ export function fabricate(asset: Asset, version: Version) {
         errors: [],
       }
       m.checks = checksFor('export', seed, 20000, asset.category)
+      m.recipe = recipeRecord(recipe, 'surface', 'engine')
       m.gate_ok = true
       break
     }
   }
   version.files = f
   version.metrics = m
+}
+
+// The asset's recipe, as GET /api/recipe would give it.
+export function recipeFor(asset: Pick<Asset, 'style_preset' | 'category' | 'platform_target'>) {
+  const budget = categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target] ?? { triangles: 20000, texture: 2048 }
+  return mockRecipe(asset.style_preset, asset.category, asset.platform_target, budget)
 }
 
 // Real rig samples in library/samples (copied from library rig versions, with procanim clips and fitted hit boxes).
@@ -1153,6 +1199,46 @@ export function seedStore() {
   setSelected(wall, sr)
   const se = seedVersion(wall, 'export', sr, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 42, 'host')
   setSelected(wall, se)
+
+  // A pixel-art hero for phones, through to export: the recipe shrinks it (look line in the mesh and prep views and on
+  // the finish card), and the hand-off to the open Unity project waits as "sent" until "Check again".
+  const hero: Asset = {
+    id: uid('a'),
+    project_id: p1.id,
+    name: 'Pixel hero',
+    category: 'humanoid',
+    style_preset: 'pixel',
+    platform_target: 'mobile_low',
+    prompt: 'a small pixel-art adventurer with a green hood, a wooden sword and brown boots',
+    parts: [],
+    created_at: nowIso(-20 * 60_000),
+    concept_model: 'pixel',
+    selected: {},
+    stages: {},
+  }
+  store.assets.push(hero)
+  const hc = seedVersion(hero, 'concept', null, { model: 'pixel', seed: 14, width: 1024, height: 1024, steps: 8, readiness_block: true }, 19, 'b')
+  setSelected(hero, hc)
+  const ht = seedVersion(hero, 'turnaround', hc, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true }, 18, 'b')
+  setSelected(hero, ht)
+  const hm = seedVersion(hero, 'mesh', ht, { engine: 'trellis', input_view: 'quarter', seed: 2, remesh: true }, 16, 'a')
+  setSelected(hero, hm)
+  const hp = seedVersion(hero, 'prep', hm, { size_m: 1.2, face_yaw: 'auto', symmetric: true, pivot: 'base', shading: 'auto', seed: 1 }, 14, 'host')
+  setSelected(hero, hp)
+  const hr = seedVersion(hero, 'rig', hp, { template: 'auto', group_per_vertex: 4, bottom_center_origin: true, bend_test: true, motion: 'legs', moves: SAMPLE_CLIPS, hitboxes: 'simple', hitbox_fit: 'normal' }, 12, 'b')
+  setSelected(hero, hr)
+  const he = seedVersion(hero, 'export', hr, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 10, 'host')
+  he.metrics.unity_project_import = {
+    ok: null,
+    state: 'sent',
+    project: 'D:/Games/HollowKeep',
+    request_id: '4f1c0a9e2b7d4c55a1e0f3b6c9d8e712',
+    folder: 'D:/Games/HollowKeep/Assets/VGAC/Pixel_hero/_incoming',
+    prefab: '',
+    error: '',
+    note: 'Your Unity project was open, so the asset waits in Assets/VGAC/Pixel_hero/_incoming and imports itself the next time you switch to Unity (or use Tools > VGAC > Import pending assets).',
+  }
+  setSelected(hero, he)
 
   // A variant of the knight: same identity, winter outfit.
   const winter: Asset = {

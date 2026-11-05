@@ -3,7 +3,7 @@
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
 import { GPU_KINDS, setLibraryResolver, STAGES, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
-import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
+import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
 type Route = { method: string; re: RegExp; handler: Handler }
@@ -437,7 +437,8 @@ on('GET', '/api/suggest', (_m, _b, query) => {
   const budgets = cat?.budgets[platform] ?? { triangles: 20000, texture: 2048 }
   const slow = platform === 'high' ? 1.6 : platform === 'mobile_low' ? 0.8 : 1
   const estimates = { concept: model === 'zbase' ? 80 : 25, turnaround: 110, mesh: Math.round(200 * slow), prep: 70, rig: cat?.rig_engine === 'none' ? 10 : 95, export: 60 }
-  return { model, model_label: labels[model] ?? model, reason: `${reasons[model] ?? 'it fits this style'} for ${preset.label.toLowerCase()} on ${platform.replace('_', ' ')}`, budgets, estimates }
+  const recipe_plain = recipeFor({ style_preset: style, category, platform_target: platform as Asset['platform_target'] }).plain
+  return { model, model_label: labels[model] ?? model, reason: `${reasons[model] ?? 'it fits this style'} for ${preset.label.toLowerCase()} on ${platform.replace('_', ' ')}`, budgets, estimates, recipe_plain }
 })
 
 on('GET', '/api/projects', () => store.projects)
@@ -649,9 +650,25 @@ on('GET', '/api/gallery', () => {
   return out.sort((x, y) => y.t - x.t).map((x) => x.item)
 })
 on('POST', '/api/versions/:vid/judge', (m, body) => {
-  const { version } = findVersion(m.groups!.vid)
+  const { asset, version } = findVersion(m.groups!.vid)
   version.metrics = { ...version.metrics, judge: body.mode ?? 'metrics', judged_at: nowIso() }
+  // Like the backend's collect_unity_import: a hand-off to the open Unity project that Unity has picked up since.
+  const hand = version.metrics.unity_project_import as Record<string, unknown> | undefined
+  if (hand && hand.state === 'sent') {
+    const name = String(hand.folder ?? '').split(/[\\/]/).slice(-2, -1)[0] || asset.name
+    const rest = { ...hand }
+    delete rest.note
+    version.metrics.unity_project_import = { ...rest, ok: true, state: 'imported', prefab: `Assets/VGAC/${name}/${name}.prefab`, error: '' }
+    broadcast({ type: 'version', version: clone(version) })
+  }
   return version
+})
+on('GET', '/api/recipe', (_m, _b, query) => {
+  const style = query.get('style') ?? ''
+  const category = query.get('category') ?? 'humanoid'
+  const platform = query.get('platform') ?? 'pc_mid'
+  if (!categories.some((c) => c.id === category)) throw new HttpError(404, `unknown category: ${category}`)
+  return recipeFor({ style_preset: style, category, platform_target: platform as Asset['platform_target'] })
 })
 
 // ---------------------------------------------------------------------------
