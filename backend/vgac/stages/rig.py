@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -322,14 +323,72 @@ async def refit(sc: StageContext, parent: Any, params: dict[str, Any]) -> bool:
     return True
 
 
+CLIPS_SOURCES = ("auto", "library", "procedural")
+
+
+def clips_source(params: dict[str, Any]) -> str:
+    """The clips_source knob with its default: auto. Unknown values fall back to auto."""
+    v = str(params.get("clips_source") or "auto").strip().lower()
+    return v if v in CLIPS_SOURCES else "auto"
+
+
+def library_file(path: Path | str | None) -> Path | None:
+    """The file retarget.py loads for a configured clip library. config.yaml names the Unity FBX; the same download
+    carries a glTF copy (the Godot or Unreal-Godot folder) that Blender reads faster and with the bone axes intact,
+    so that is preferred. -> None when nothing usable is on disk."""
+    if not path:
+        return None
+    p = Path(path)
+    if p.suffix.lower() == ".glb" and p.is_file():
+        return p
+    root = p.parent
+    for anc in list(p.parents)[:4]:
+        if (anc / "License.txt").is_file():
+            root = anc
+            break
+    if root.is_dir():
+        glbs = sorted(root.rglob("*.glb"), key=lambda q: (0 if "godot" in str(q).lower() else 1, len(str(q))))
+        if glbs:
+            return glbs[0]
+    return p if p.is_file() else None
+
+
+def library_rows(category: dict[str, Any], moves: Any) -> list[dict[str, Any]]:
+    """The category's library_clips, narrowed to the moves knob when it is set (a row is made when its `move` is
+    one of the chosen moves)."""
+    rows = [r for r in (category.get("library_clips") or []) if isinstance(r, dict) and r.get("name")]
+    if moves is None:
+        return rows
+    chosen = {str(m).strip().lower() for m in (moves if isinstance(moves, (list, tuple)) else str(moves).split(","))}
+    return [r for r in rows if str(r.get("move") or r["name"]).lower() in chosen]
+
+
+def use_library(sc: StageContext, params: dict[str, Any]) -> tuple[bool, str | None]:
+    """(retarget library clips?, reason when not). Humanoids only (Mixamo-named skeleton), the knob not set to
+    built-in moves, a configured library on disk."""
+    if clips_source(params) == "procedural":
+        return False, "built-in moves chosen"
+    if sc.category.get("rig_engine") != "skintoken_mixamo" or not sc.category.get("library_clips"):
+        return False, "library clips are for human-shaped skeletons"
+    lib_id = params.get("clips_library") or "ual1"
+    if lib_id == "none":
+        return False, "no clip library chosen"
+    if library_file((sc.settings.clips_libraries or {}).get(lib_id)) is None:
+        return False, f"clip library {lib_id} not found on disk"
+    return True, None
+
+
 async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | None = None) -> None:
-    """Procedural clips per category (motion and moves: G30, G31), plus a rendered strip of them."""
+    """The moves: procedural clips per category (motion and moves: G30, G31), then for humanoids the hand-made CC0
+    library clips retargeted onto the skeleton (retarget.py; clips_source auto or library), which replace the
+    procedural clips of the same name. The procedural clips stay as the fallback and for every non-humanoid. Then a
+    rendered strip of the final clips. File names: anim.glb, anim_clips.json, anim_anim.json (and
+    anim_retarget.json when the library ran)."""
     params = params or {}
     anim_glb = sc.dir / "anim.glb"
     motion = params.get("motion") or sc.category.get("motion")
-    moves = params.get("moves")
-    if moves is None:
-        moves = sc.category.get("clips")
+    chosen_moves = params.get("moves")
+    moves = chosen_moves if chosen_moves is not None else sc.category.get("clips")
     args: list[Any] = [rig_glb, anim_glb, 24]
     if motion:
         args += ["--motion", str(motion)]
@@ -339,7 +398,7 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         args += ["--size", str(params["move_size"])]
     if params.get("move_speed"):
         args += ["--speed", str(params["move_speed"])]
-    sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves)
+    sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params))
     try:
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
@@ -352,7 +411,9 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
             rep = json.loads(report_path.read_text())
             sc.set_metrics(anim_kind=rep.get("kind"), motion=rep.get("motion"), clips=rep.get("clips"),
                            missing_clips=rep.get("missing_clips"), legs_moved=rep.get("legs_moved"),
-                           legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"))
+                           legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"),
+                           clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []))
+        await _retarget(sc, anim_glb, params, chosen_moves)
         if not (sc.version.metrics.get("clips") or []):
             return
         sc.progress(0.88, "render clip strip")
@@ -369,6 +430,55 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
             sc.register("anim_strip", strip)
     except Exception as e:
         sc.set_metrics(anim_error=str(e)[:500])
+
+
+async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], chosen_moves: Any) -> None:
+    """Retarget the library clips into anim.glb (in place). A failure leaves the procedural clips and records
+    retarget_error; metrics say which clips came from where and how long it took."""
+    ok, reason = use_library(sc, params)
+    if not ok:
+        sc.set_metrics(library_skipped=reason)
+        return
+    rows = library_rows(sc.category, chosen_moves)
+    if not rows:
+        sc.set_metrics(library_skipped="no library clips match the chosen moves")
+        return
+    from ..blender import gait
+
+    lib_id = params.get("clips_library") or "ual1"
+    lib = library_file(sc.settings.clips_libraries.get(lib_id))
+    spec = gait.clip_spec_text([(str(r["name"]), [str(c) for c in (r.get("from") or [r["name"]])]) for r in rows])
+    loops = ",".join(str(r["name"]) for r in rows if r.get("loop"))
+    report = sc.dir / "anim_retarget.json"
+    args: list[Any] = [anim_glb, anim_glb, "--library", lib, "--clips", spec, "--loops", loops or "none", "--fps", 24,
+                       "--report", report]
+    t0 = time.monotonic()
+    sc.set_metrics(library_skipped=None)
+    try:
+        sc.progress(0.82, "moving the hand-made clips onto the skeleton")
+        await sc.blender("retarget.py", args, log_name="retarget.log", timeout=sc.settings.blender_timeout_seconds)
+    except Exception as e:  # noqa: BLE001
+        rep = json.loads(report.read_text()) if report.is_file() else {}
+        sc.set_metrics(retarget_error=str(rep.get("error") or e)[:500], retarget_seconds=round(time.monotonic() - t0, 2))
+        return
+    rep = json.loads(report.read_text()) if report.is_file() else {}
+    sc.register("anim_retarget", report)
+    wanted = [str(r["name"]) for r in rows]
+    made = list(rep.get("clips") or [])
+    sc.set_metrics(clips=made, clips_source="library" if rep.get("library_clips") else "procedural",
+                   library_clips=rep.get("library_clips") or [], procedural_clips=rep.get("procedural_clips") or [],
+                   missing_clips=[c for c in wanted if c not in made], retarget_error=None,
+                   retarget_seconds=round(time.monotonic() - t0, 2), clips_library=lib_id,
+                   retarget={"leg_ratio": rep.get("leg_ratio"), "missing_bones": rep.get("missing_bones") or [],
+                             "seconds_in_blender": rep.get("seconds"), "faithful_max_deg": _faithful_max(rep)})
+
+
+def _faithful_max(rep: dict[str, Any]) -> float | None:
+    """Largest angle between a source limb segment and the same target segment over every library clip (the IK
+    that plants the feet accounts for most of it)."""
+    vals = [v.get("max_deg") for d in (rep.get("detail") or {}).values() for v in (d.get("segment_angle") or {}).values()]
+    vals = [float(v) for v in vals if v is not None]
+    return round(max(vals), 1) if vals else None
 
 
 def link_textures(sc: StageContext) -> None:
@@ -392,6 +502,11 @@ async def judge(sc: StageContext) -> None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
+        # The hand-made library was meant to run (humanoid, automatic or library) but gave no clips.
+        if m.get("library_skipped") is None and "library_clips" in m and (m.get("library_clips") or m.get("retarget_error")):
+            lib = m.get("library_clips") or []
+            checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",
+                                        vars={"count": len(lib), "reason": m.get("retarget_error") or ""}))
         if sc.asset.category in ("quadruped", "multileg") and m.get("legs_total"):
             checks.append(quality.check("legs_moved", (m.get("legs_moved") or 0) >= m["legs_total"], m.get("legs_moved"), m["legs_total"]))
         if sc.asset.category == "winged":

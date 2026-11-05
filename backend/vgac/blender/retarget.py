@@ -37,6 +37,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402
 import gait  # noqa: E402
+import numpy as np  # noqa: E402  (bundled with Blender)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 T0 = time.time()
@@ -98,6 +99,7 @@ old_rows = {c["name"]: c for c in old_sidecar.get("clips", [])}
 # ---- library ----------------------------------------------------------------------------------------------
 lib_actions = {}
 src = None
+src_ground = [None]
 for path in libraries:
     before = set(bpy.data.objects)
     acts_before = set(bpy.data.actions)
@@ -107,6 +109,9 @@ for path in libraries:
         _common.import_glb(path)
     new = [o for o in bpy.data.objects if o not in before]
     arm = next((o for o in new if o.type == "ARMATURE"), None)
+    for o in new:
+        if o.type == "MESH" and o.vertex_groups and src_ground[0] is None:
+            src_ground[0] = min((o.matrix_world @ v.co).z for v in o.data.vertices)
     for o in new:
         if o.type != "ARMATURE":
             bpy.data.objects.remove(o, do_unlink=True)
@@ -342,70 +347,178 @@ def knee_forward(posf, fwd):
     return ok
 
 
-def retarget_clip(name, arm, act, loop):
-    fr = act.frame_range
-    start, end = float(fr[0]), float(fr[1])
-    n = max(1, int(round(end - start)))
+# Target meshes: the rest ground (lowest vertex standing) and the torso vertices, for the sinking check.
+tgt_meshes = [o for o in tgt_objects if o.type == "MESH" and o.vertex_groups]
+_TORSO = ("Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "LeftShoulder", "RightShoulder", "LeftUpLeg", "RightUpLeg")
+_torso_names = {T.name_of[x] for x in _TORSO if T.has(x)}
+torso_mask = {}
+tgt_ground = None
+for _o in tgt_meshes:
+    _names = {g.index: g.name for g in _o.vertex_groups}
+    torso_mask[_o.name] = np.array([bool(v.groups) and _names.get(max(v.groups, key=lambda g: g.weight).group) in _torso_names
+                                    for v in _o.data.vertices], dtype=bool)
+    _z = min((_o.matrix_world @ v.co).z for v in _o.data.vertices)
+    tgt_ground = _z if tgt_ground is None else min(tgt_ground, _z)
+if tgt_ground is None:
+    tgt_ground = min(T.rest_head[n].z for n in T.rest_head)
+# Half the thickness of each hand (its palm vertices across the body's width at rest, where the arms hang with the
+# palms inward): a hand resting on the ground keeps its wrist at least this high so the glove stays above ground.
+hand_radius = {}
+for _side in ("Left", "Right"):
+    if not T.has(_side + "Hand"):
+        continue
+    _hn = T.name_of[_side + "Hand"]
+    _xs = []
+    for _o in tgt_meshes:
+        _gi = _o.vertex_groups.get(_hn)
+        if _gi is None:
+            continue
+        for v in _o.data.vertices:
+            if v.groups and max(v.groups, key=lambda g: g.weight).group == _gi.index:
+                _xs.append((T.G @ (_o.matrix_world @ v.co)).x)
+    hand_radius[_side] = 0.5 * (max(_xs) - min(_xs)) if len(_xs) > 3 else 0.0
+if src_ground[0] is None:
+    src_ground[0] = min(S.head(x).z for x in ("LeftToeBase", "RightToeBase", "LeftFoot", "RightFoot") if S.has(x))
+
+
+def torso_lowest():
+    """Lowest world z of the target's torso vertices in the current evaluated pose (None without a mesh)."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    low = None
+    for o in tgt_meshes:
+        mask = torso_mask.get(o.name)
+        if mask is None or not mask.any():
+            continue
+        ev = o.evaluated_get(dg)
+        me = ev.to_mesh()
+        if len(me.vertices) == len(mask):
+            co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+            me.vertices.foreach_get("co", co)
+            co = co.reshape(-1, 3)[mask]
+            mw = np.array(ev.matrix_world)
+            z = float((co @ mw[2, :3] + mw[2, 3]).min())
+            low = z if low is None else min(low, z)
+        ev.to_mesh_clear()
+    return low
+
+
+def ik_two(fr_, a_s, m_s, e_s, want):
+    """Two-bone IK on short names a_s (upper), m_s (middle) toward `want` for the end joint e_s, bending the way the
+    limb already bends; the end bone keeps its world orientation."""
+    pos = fk(fr_["orient"], fr_["hips"])
+    a_n, m_n, e_n = T.name_of[a_s], T.name_of[m_s], T.name_of[e_s]
+    hp, kp, ap = pos[a_n], pos[m_n], pos[e_n]
+    l1 = (t_rest_h[m_n] - t_rest_h[a_n]).length
+    l2 = (t_rest_h[e_n] - t_rest_h[m_n]).length
+    mid, end_, _ = gait.two_bone_ik(tuple(hp), tuple(want), l1, l2, tuple(kp + (kp - (hp + ap) / 2) * 2.0), max_bend_deg=165.0)
+    mid, end_ = Vector(mid), Vector(end_)
+    o = fr_["orient"]
+    o[a_n] = (kp - hp).rotation_difference(mid - hp) @ o[a_n]
+    o[m_n] = (ap - kp).rotation_difference(end_ - mid) @ o[m_n]
+
+
+def solve_frames(frames, loop, lift):
+    """Ground pass, torso lift, foot and hand contacts on fresh copies of the retargeted frames. -> (frames, ik count)."""
     S_rest_pos = S_rest_canon
     T_rest_short = T_rest_canon
-    frames = []
-    for i in range(n + 1):
-        f = start + (end - start) * i / n
-        qs, ps = sample_source(arm, act, f)
-        orient, hips = target_frame(qs, ps)
-        frames.append({"qs": qs, "ps": ps, "orient": orient, "hips": hips})
-    # Ground pass: lowest-foot clearance follows the source's, scaled.
-    for fr_ in frames:
+    work = [{"qs": f["qs"], "ps": f["ps"], "orient": dict(f["orient"]), "hips": f["hips"].copy()} for f in frames]
+    # Ground pass: lowest-foot clearance follows the source's, scaled; then the torso lift where it would sink.
+    for i, fr_ in enumerate(work):
         pos = fk(fr_["orient"], fr_["hips"])
-        tshort = {s: short_pos(pos, s) for s in mapped_short}
+        tshort = {x: short_pos(pos, x) for x in mapped_short}
         cs = min(clearance(fr_["ps"], side, S_rest_pos) for side in FEET)
         ct = min(clearance(tshort, side, T_rest_short) for side in FEET)
-        fr_["hips"] = fr_["hips"] + Vector((0, 0, ratio * cs - ct))
-    # Contacts: while a source foot is planted, the target ankle follows the source ankle's ground track.
+        fr_["hips"] = fr_["hips"] + Vector((0, 0, ratio * cs - ct + lift[i]))
+    # Feet: while a source foot is planted, the target ankle follows the source ankle's ground track.
     leg = S.leg_length()
     near, far = 0.03 * leg, 0.07 * leg
     ik_moves = 0
     for side in FEET:
         ank = side + "Foot"
-        cl = [clearance(fr_["ps"], side, S_rest_pos) for fr_ in frames]
-        segs = gait.contact_segments([c < far for c in cl], cyclic=loop)
-        for seg in segs:
+        cl = [clearance(fr_["ps"], side, S_rest_pos) for fr_ in work]
+        for seg in gait.contact_segments([c < far for c in cl], cyclic=loop):
             offs = []
             for i in seg:
-                fr_ = frames[i]
-                pos = fk(fr_["orient"], fr_["hips"])
-                tp = short_pos(pos, ank)
-                sp = fr_["ps"][ank]
+                tp = short_pos(fk(work[i]["orient"], work[i]["hips"]), ank)
+                sp = work[i]["ps"][ank]
                 offs.append(Vector((tp.x - ratio * sp.x, tp.y - ratio * sp.y)))
             anchor = sum(offs, Vector((0, 0))) / len(offs)
             for i in seg:
-                fr_ = frames[i]
+                fr_ = work[i]
                 w = gait.contact_weight(cl[i], near, far)
                 if w <= 0:
                     continue
-                pos = fk(fr_["orient"], fr_["hips"])
+                cur = short_pos(fk(fr_["orient"], fr_["hips"]), ank)
                 sp = fr_["ps"][ank]
-                cur = short_pos(pos, ank)
-                want = Vector((anchor.x + ratio * sp.x, anchor.y + ratio * sp.y,
-                               T_rest_short[ank].z + ratio * (sp.z - S_rest_pos[ank].z)))
+                want = Vector((anchor.x + ratio * sp.x, anchor.y + ratio * sp.y, T_rest_short[ank].z + ratio * (sp.z - S_rest_pos[ank].z)))
                 want = cur.lerp(want, w)
                 if (want - cur).length < 1e-4:
                     continue
-                hip_n, knee_n, ank_n = T.name_of[side + "UpLeg"], T.name_of[side + "Leg"], T.name_of[ank]
-                hp, kp, ap = pos[hip_n], pos[knee_n], pos[ank_n]
-                l1 = (t_rest_h[knee_n] - t_rest_h[hip_n]).length
-                l2 = (t_rest_h[ank_n] - t_rest_h[knee_n]).length
-                mid, end_, _ = gait.two_bone_ik(tuple(hp), tuple(want), l1, l2, tuple(kp + (kp - (hp + ap) / 2) * 2.0), max_bend_deg=165.0)
-                mid, end_ = Vector(mid), Vector(end_)
-                o = fr_["orient"]
-                r1 = (kp - hp).rotation_difference(mid - hp)
-                r2 = (ap - kp).rotation_difference(end_ - mid)
-                # Children of the thigh ride along through fk; the shin gets its own aim, the foot keeps its world turn.
-                o[hip_n] = r1 @ o[hip_n]
-                o[knee_n] = r2 @ o[knee_n]
+                ik_two(fr_, side + "UpLeg", side + "Leg", ank, want)
                 ik_moves += 1
-    # Bake.
-    act_out = bpy.data.actions.new(name)
+    # Hands: a hand the library rests on (or near) the ground rests at the same scaled height on the character.
+    hnear, hfar = 0.06 * leg, 0.12 * leg
+    for side in ("Left", "Right"):
+        hand = side + "Hand"
+        if not all(T.has(x) for x in (side + "Arm", side + "ForeArm", hand)) or hand not in S_rest_pos:
+            continue
+        for fr_ in work:
+            c = fr_["ps"][hand].z - src_ground[0]
+            w = gait.contact_weight(c, hnear, hfar)
+            if w <= 0:
+                continue
+            cur = short_pos(fk(fr_["orient"], fr_["hips"]), hand)
+            want = Vector((cur.x, cur.y, tgt_ground + max(ratio * c, hand_radius.get(side, 0.0))))
+            want = cur.lerp(want, w)
+            if abs(want.z - cur.z) < 1e-4:
+                continue
+            ik_two(fr_, side + "Arm", side + "ForeArm", hand, want)
+            ik_moves += 1
+    return work, ik_moves
+
+
+def retarget_clip(name, arm, act, loop):
+    fr = act.frame_range
+    start, end = float(fr[0]), float(fr[1])
+    n = max(1, int(round(end - start)))
+    base = []
+    for i in range(n + 1):
+        f = start + (end - start) * i / n
+        qs, ps = sample_source(arm, act, f)
+        orient, hips = target_frame(qs, ps)
+        base.append({"qs": qs, "ps": ps, "orient": orient, "hips": hips})
+    lift = [0.0] * len(base)
+    act_out = None
+    sank = 0.0
+    for attempt in range(2):
+        frames, ik_moves = solve_frames(base, loop, lift)
+        act_out = bake(name, act_out, frames, loop)
+        if attempt or not tgt_meshes:
+            break
+        # Sinking check: where the body comes low (lying, rolling, crouching), measure the torso mesh and lift the
+        # hips by however far it went below the ground; limbs in contact are solved again on the lifted body.
+        rest_hips_z = T_rest_canon["Hips"].z
+        need = [0.0] * len(frames)
+        tgt.animation_data.action = act_out
+        for i, fr_ in enumerate(frames):
+            if fr_["hips"].z > tgt_ground + 0.6 * (rest_hips_z - tgt_ground):
+                continue
+            scene.frame_set(i + 1)
+            low = torso_lowest()
+            if low is not None and low < tgt_ground:
+                need[i] = tgt_ground - low
+        tgt.animation_data.action = None
+        if max(need) < 0.002:
+            break
+        sank = max(need)
+        lift = [max(need[max(0, i - 2):i + 3]) for i in range(len(need))]  # widened so the lift eases in and out
+    return act_out, frames, ik_moves, sank
+
+
+def bake(name, act_out, frames, loop):
+    """Write the frames as quaternion keys (and the hips location) into one action named after the clip."""
+    if act_out is None:
+        act_out = bpy.data.actions.new(name)
     tgt.animation_data_create()
     ad = tgt.animation_data
     ad.action = act_out
@@ -414,9 +527,6 @@ def retarget_clip(name, arm, act, loop):
     loc_keys = []
     Wtq_i = T.Wq.inverted()
     Wt_i = T.W.inverted()
-    angles = {}
-    bends_s, bends_t = {}, {}
-    knees_bad = 0
     for i, fr_ in enumerate(frames):
         o = fr_["orient"]
         arm_q = {b: Wtq_i @ (T.Gi @ o[b]) for b in bones_out}
@@ -436,8 +546,24 @@ def retarget_clip(name, arm, act, loop):
         hb = tgt.data.bones[hips_name]
         d_arm = (Wt_i @ hips_world) - hb.head_local
         loc_keys.append(hb.matrix_local.to_3x3().inverted() @ d_arm)
+    write_keys(act_out, bones_out, rot_keys, hips_name, loc_keys)
+    if hasattr(act_out, "use_frame_range"):
+        act_out.use_frame_range = True
+        act_out.frame_start, act_out.frame_end = 1, len(frames)
+    if hasattr(act_out, "use_cyclic"):
+        act_out.use_cyclic = bool(loop)
+    ad.action = None
+    return act_out
+
+
+def clip_quality(frames, ik_moves, sank):
+    """How faithful the clip is to the library: limb segment directions and knee and elbow bends, source vs target."""
+    angles, bends_s, bends_t = {}, {}, {}
+    knees_bad = 0
+    for fr_ in frames:
+        o = fr_["orient"]
         pos = fk(o, fr_["hips"])
-        tshort = {s: short_pos(pos, s) for s in mapped_short}
+        tshort = {x: short_pos(pos, x) for x in mapped_short}
         for k, v in faithful_angles(fr_["ps"], pos).items():
             angles.setdefault(k, []).append(v)
         for k, v in joint_bends(fr_["ps"]).items():
@@ -447,18 +573,12 @@ def retarget_clip(name, arm, act, loop):
         hips_turn = o[hips_name] @ (T.G @ t_rest_q[hips_name]).inverted()
         if not knee_forward(tshort, hips_turn @ Vector((0, -1, 0))):
             knees_bad += 1
-    write_keys(act_out, bones_out, rot_keys, hips_name, loc_keys)
-    if hasattr(act_out, "use_frame_range"):
-        act_out.use_frame_range = True
-        act_out.frame_start, act_out.frame_end = 1, len(frames)
-    if hasattr(act_out, "use_cyclic"):
-        act_out.use_cyclic = bool(loop)
-    ad.action = None
     fid = {k: {"max_deg": round(max(v), 1), "mean_deg": round(sum(v) / len(v), 2)} for k, v in angles.items()}
     bend_cmp = {k: {"source_max": round(max(bends_s[k]), 1), "target_max": round(max(bends_t.get(k, [0])), 1),
                     "max_diff": round(max(abs(a - b) for a, b in zip(bends_s[k], bends_t.get(k, bends_s[k]))), 1)}
                 for k in bends_s}
-    return act_out, len(frames), {"segment_angle": fid, "bends": bend_cmp, "ik_frames": ik_moves, "inverted_knee_frames": knees_bad}
+    return {"segment_angle": fid, "bends": bend_cmp, "ik_frames": ik_moves, "inverted_knee_frames": knees_bad,
+            "torso_lift_m": round(sank, 4)}
 
 
 def write_keys(act, bones_out, rot_keys, hips, loc_keys):
@@ -514,7 +634,9 @@ for name, candidates in clip_spec:
         continue  # a clip from a second library skeleton is not supported in one pass
     loop = (name in loops) if loops is not None else (pick.lower().endswith("_loop") or name in gait.LOOPING)
     t1 = time.time()
-    a_out, nfr, det = retarget_clip(name, arm, act, loop)
+    a_out, frames_, ik_moves_, sank_ = retarget_clip(name, arm, act, loop)
+    nfr = len(frames_)
+    det = clip_quality(frames_, ik_moves_, sank_)
     det["from"] = pick
     det["seconds"] = round(time.time() - t1, 2)
     detail[name] = det
@@ -554,9 +676,21 @@ for n in spec_order:
         final.append(("library", n))
     elif n in kept_proc:
         final.append(("procedural", n))
+# A kept procedural clip goes after the clip that came before it in the procedural order (the turns after run).
+old_order = list(old_rows) or proc_order
 for n in proc_order:
-    if ("procedural", n) not in final:
+    if ("procedural", n) in final:
+        continue
+    names = [x for _, x in final]
+    i = old_order.index(n) if n in old_order else -1
+    prev = next((old_order[j] for j in range(i - 1, -1, -1) if old_order[j] in names), None) if i > 0 else None
+    if prev is None:
         final.append(("procedural", n))
+        continue
+    at = names.index(prev) + 1
+    while at < len(final) and final[at][0] == "procedural":
+        at += 1
+    final.insert(at, ("procedural", n))
 
 for tr in list(ad.nla_tracks):
     tr.mute = False
