@@ -69,6 +69,7 @@ ATLAS_USED_MIN = 0.35  # the unwrap normally lands between 0.45 and 0.6; a mirro
 BAKE_MATCH_MIN = 0.99
 ALBEDO_OUT_MAX = 0.01
 METAL_MIXED_MAX = 0.05
+METAL_MIXED_AFTER_FIX_MAX = 0.2  # leftover edge texels after the automatic sharpening (ranger: 0.51 before, 0.11 after)
 # The measured gutter passes at three quarters of the padding asked for (rasterising the pieces costs a texel or so).
 PADDING_PASS_FRACTION = 0.75
 DELIGHT_MODES = ("auto", "remove", "keep")
@@ -462,7 +463,9 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
                                  vars={"pbr_fix_on": fix_on, "kept": kept_look and not in_range, "black": pbr.get("albedo_black"),
                                        "white": pbr.get("albedo_white")}))
     if pbr.get("metal_mixed") is not None:
-        out.append(quality.check("metal_mixed", float(pbr["metal_mixed"]) <= METAL_MIXED_MAX, float(pbr["metal_mixed"]), METAL_MIXED_MAX,
+        # Once metal has been sharpened there is nothing more the person can do, so only a large leftover warns.
+        metal_limit = METAL_MIXED_AFTER_FIX_MAX if (fix_on or m.get("metal_sharpened")) else METAL_MIXED_MAX
+        out.append(quality.check("metal_mixed", float(pbr["metal_mixed"]) <= metal_limit, float(pbr["metal_mixed"]), metal_limit,
                                  vars={"pbr_fix_on": fix_on or bool(m.get("metal_sharpened"))}))
     return out
 
