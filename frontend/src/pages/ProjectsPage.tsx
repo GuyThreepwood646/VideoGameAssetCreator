@@ -6,6 +6,7 @@ import { PresetRow } from '../components/PresetRow'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
 import { modelLabel, platformConsequence, platformPlain } from '../help'
 import { lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
+import { MatchPicture } from './MatchPicture'
 
 export default function ProjectsPage() {
   const { data: projects, error, loading, reload } = useAsync(() => api.listProjects(), [])
@@ -266,6 +267,15 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
           </select>
         </Field>
       </div>
+      <MatchPicture
+        projectId={project.id}
+        busy={busy}
+        onApply={(change) => {
+          const next = { ...lock, ...change }
+          setLock(next)
+          void saveWith(next)
+        }}
+      />
       <Disclosure label="Advanced (edit the look by hand)" defaultOpen={!current && !!presets}>
       <div className="col">
       <Field label="Style words" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">

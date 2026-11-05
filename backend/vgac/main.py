@@ -23,14 +23,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, library, pipeline, reference
+from . import __version__, autopilot, library, own_images, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
-                 job_to_dict, project_to_dict, version_to_dict, _iso)
+                 job_to_dict, project_to_dict, session_factory, version_to_dict, _iso)
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
+from . import user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -54,6 +55,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
+app.include_router(own_images.router)  # start from your own images (own_images.py)
+app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 
 LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
 
@@ -118,6 +121,8 @@ class AssetIn(BaseModel):
     prompt: str = ""
     parts: list[str] | None = None
     concept_model: str | None = None
+    # Start from a picture: the person's own concept picture (base64 or a data: URL); the description may stay empty.
+    image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
 
 
 class AssetPatch(BaseModel):
@@ -139,6 +144,8 @@ class RefineIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=4000)
     view: str | None = None
     mask_png: str | None = Field(default=None, max_length=6_000_000)
+    # Experimental: a second picture the concept refine passes to the edit model (own_images.write_reference).
+    reference_image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -433,13 +440,18 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     _validate_platform(platform)
     cat = reference.category(body.category)
     _check_concept_model("concept_model", body.concept_model)
+    picture = own_images.decode_or_400(body.image) if body.image else None  # start from a picture: checked first
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
     a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
     db.add(a)
     db.commit()
     db.refresh(a)
-    return asset_to_dict(a)
+    if picture is None:
+        return asset_to_dict(a)
+    started = own_images.start_concept_from_picture(db, a, picture)
+    db.refresh(a)
+    return {**asset_to_dict(a), "upload": started}
 
 
 class VariantIn(BaseModel):
@@ -540,7 +552,10 @@ def delete_asset(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]
 @app.post("/api/assets/{aid}/stages/{stage}/run")
 def run_stage(aid: str, stage: str, body: RunIn, db: Session = Depends(get_session)) -> Any:
     a = _asset(db, aid)
-    pairs = pipeline.run_stage(db, a, stage, count=body.count, params=body.params, parent_version_id=body.parent_version_id)
+    params = dict(body.params)
+    # Your own side and back views (turnaround params provided_views {view: picture}): checked here, written before the job.
+    prepare = own_images.provided_views_prepare(db, a, params) if stage == "turnaround" else None
+    pairs = pipeline.run_stage(db, a, stage, count=body.count, params=params, parent_version_id=body.parent_version_id, prepare=prepare)
     return pairs if len(pairs) > 1 else pairs[0]
 
 
@@ -548,6 +563,8 @@ class AutopilotIn(BaseModel):
     until_stage: str = "export"
     stop_on: str = "block"
     fix: dict[str, Any] | None = None
+    # Go back to this step: it is made again and every step after it is rebuilt (the old results are set aside).
+    from_stage: str | None = None
 
 
 @app.post("/api/assets/{aid}/autopilot")
@@ -557,7 +574,7 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
     try:
-        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix)
+        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix, from_stage=body.from_stage)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -567,10 +584,65 @@ def get_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any
     return autopilot.get_state(_asset(db, aid))
 
 
+def _stop_asset(aid: str, stage: str | None) -> dict[str, Any]:
+    """Stop now: the autopilot when it is running (then every step of the asset stops), else the one stage."""
+    with session_factory()() as db:
+        a = db.get(Asset, aid)
+        if a is None:
+            raise HTTPException(404, "asset not found")
+        ap_running = autopilot.get_state(a).get("status") == "running"
+    state = autopilot.stop(aid) if ap_running else None
+    q = active_queue()
+    stopped = q.stop_asset(aid, None if ap_running else stage) if q is not None else []
+    if state is None:
+        with session_factory()() as db:
+            state = autopilot.get_state(db.get(Asset, aid))
+    return {"stopped": stopped, "autopilot": state}
+
+
 @app.post("/api/assets/{aid}/autopilot/stop")
 async def stop_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Stops the autopilot and the step in progress now (the same as POST /api/assets/{aid}/stop)."""
     _asset(db, aid)
-    return autopilot.stop(aid)
+    return _stop_asset(aid, None)["autopilot"]
+
+
+class StageIn(BaseModel):
+    stage: str | None = None
+
+
+@app.post("/api/assets/{aid}/stop")
+async def stop_asset(aid: str, body: StageIn | None = None) -> dict[str, Any]:
+    """The Stop button. Stops what is queued or running for this asset now: one step when `stage` is given and the
+    autopilot is not running, else everything, and the autopilot pauses. Nothing kept is lost."""
+    stage = (body.stage if body else None) or None
+    if stage and stage not in STAGES:
+        raise HTTPException(400, f"unknown stage {stage!r}")
+    return _stop_asset(aid, stage)
+
+
+@app.post("/api/assets/{aid}/resume")
+async def resume_asset(aid: str, body: StageIn | None = None, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """The Resume button. Puts the stopped versions back in the queue with the same settings (the step runs again
+    from its start). When the autopilot was stopped by the person it starts again and carries on from that step."""
+    a = _asset(db, aid)
+    stage = (body.stage if body else None) or None
+    if stage and stage not in STAGES:
+        raise HTTPException(400, f"unknown stage {stage!r}")
+    state = autopilot.get_state(a)
+    resumed = _queue().resume_asset(aid, stage)
+    if state.get("stopped_by_user") and state.get("status") == "paused":
+        state = autopilot.start(aid, until_stage=state.get("until_stage", "export"), stop_on=state.get("stop_on", "block"))
+    return {"resumed": resumed, "autopilot": state}
+
+
+@app.post("/api/assets/{aid}/stopped/dismiss")
+def dismiss_stopped(aid: str, body: StageIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Set a step's stopped versions aside ("Leave it stopped"): they stay in the history, Resume is no longer offered."""
+    _asset(db, aid)
+    if body.stage not in STAGES:
+        raise HTTPException(400, f"unknown stage {body.stage!r}")
+    return {"dismissed": _queue().dismiss_stopped(aid, body.stage)}
 
 
 @app.post("/api/versions/{vid}/refine")
@@ -582,8 +654,12 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
     _check_mask(body.mask_png)
+    reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
-    v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **rparams})
+    inherited = {k: val for k, val in parent.params.items() if k != "reference_experimental"}
+    v = pipeline.new_version(db, a, parent.stage, parent, {**inherited, **rparams})
+    if reference_img is not None:
+        own_images.write_reference(db, a, v, reference_img)
     job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 

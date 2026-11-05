@@ -7,7 +7,8 @@ import { Disclosure, Field } from '../components/ui'
 import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
-import { addonRows, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
+import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
+import { useMyAddons, withMyAddons } from './AddMyAddon'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
 
@@ -74,7 +75,9 @@ export function FineTune({
   const recipe = useRecipe(asset.style_preset, asset.category, asset.platform_target, stage === 'concept' || stage === 'turnaround')
   const addonsParam = visible.find((p) => p.type === 'addons')
   const painter = String(values.model ?? target.params?.model ?? suggestion?.model ?? recipe?.concept.model ?? '')
-  const rowsFor = (chosen: Record<string, AddonChoice>) => (addonsParam ? addonRows(addonsParam.catalog ?? [], recipe, painter, chosen) : [])
+  // The tested add-ons from the schema plus your own from the live list (GET /api/my-addons).
+  const myAddons = useMyAddons(stage === 'concept' && !!addonsParam)
+  const rowsFor = (chosen: Record<string, AddonChoice>) => (addonsParam ? addonRows(withMyAddons(addonsParam.catalog ?? [], myAddons), recipe, painter, chosen) : [])
   const rows = rowsFor(addonChoices(values[addonsParam?.name ?? 'addons']))
   const setAddon = (id: string, choice: AddonChoice) => {
     if (!addonsParam) return
@@ -90,7 +93,8 @@ export function FineTune({
   const turnaroundAddons = stage === 'turnaround' ? (recipe?.addon_entries ?? []).filter((e) => e.stage === 'turnaround') : []
 
   const schemaHasFlag = visible.some((p) => p.simple !== undefined)
-  const shown = visible.filter((p) => p.type !== 'addons' || rows.length > 0)
+  // The concept step always shows its add-ons section (it says when nothing is tested and offers your own).
+  const shown = visible.filter((p) => p.type !== 'addons' || rows.length > 0 || (stage === 'concept' && !!painter))
   const simple = shown.filter((p) => p.type !== 'addons' && isSimpleParam(stage, p, schemaHasFlag))
   const advanced = shown.filter((p) => !simple.includes(p))
 
@@ -148,7 +152,7 @@ export function FineTune({
   )
 
   const renderControl = (p: AdjustParam, adv: boolean) => {
-    if (p.type === 'addons') return <AddonsList rows={rows} disabled={disabled} onChange={setAddon} notUsed={addonsNotUsed(target, p.catalog)} />
+    if (p.type === 'addons') return <AddonsList rows={rows} disabled={disabled} onChange={setAddon} notUsed={addonsNotUsed(target, p.catalog)} painter={stage === 'concept' ? painter : undefined} />
     if (hasSize && p.name === 'width') {
       const w = Number(values.width ?? 1024)
       const opts = SIZE_OPTIONS.filter((o) => (p.min === undefined || o >= p.min) && (p.max === undefined || o <= p.max))
@@ -281,7 +285,7 @@ export function FineTune({
     let keep: string[] | null = null
     if (p.name === 'moves') {
       const mo = typeof motion === 'string' && motion ? motion : (MOTION_BY_CATEGORY[asset.category] ?? '')
-      keep = MOVES_BY_MOTION[mo] ?? null
+      keep = (asset.category === 'humanoid' && mo === 'legs' ? MOVES_BY_MOTION.human : MOVES_BY_MOTION[mo]) ?? null
     } else if (p.name === 'hitbox_regions') {
       const hb = target.metrics?.hitboxes as { regions_found?: ({ id?: string } | string)[] } | undefined
       const found = Array.isArray(hb?.regions_found) ? hb.regions_found.map((r) => (typeof r === 'string' ? r : r?.id)).filter((r): r is string => typeof r === 'string') : []
@@ -307,6 +311,16 @@ export function FineTune({
       </div>
       {visible.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
       {simpleShown.length > 0 && <div className="adjust-grid">{simpleShown.map((p) => renderField(p, false))}</div>}
+      {stage === 'concept' && addonsParam && painter && (
+        <AddonsHint
+          rows={rows}
+          painter={painter}
+          onShow={() => {
+            setAdvOpen(true)
+            window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(`[data-knob="${addonsParam.name}"]`)?.scrollIntoView({ block: 'center' }))
+          }}
+        />
+      )}
       {(advanced.length > 0 || turnaroundAddons.length > 0) && (
         <Disclosure label={advanced.length ? `Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})` : 'Advanced'} open={advOpen} onToggle={setAdvOpen}>
           {advanced.length > 0 && <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>}

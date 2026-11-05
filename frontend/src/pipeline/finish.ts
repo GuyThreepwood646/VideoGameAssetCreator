@@ -201,6 +201,14 @@ export function finishLines(asset: Asset): FinishLine[] {
     }
   }
 
+  // 4c. Attachment points on rigged characters and creatures (hands, back, head...).
+  const sk = exp.metrics.sockets as { count?: number; names?: string[] } | undefined
+  if (sk && typeof sk === 'object' && sk.count && Array.isArray(sk.names) && sk.names.length) {
+    const words: Record<string, string> = { Socket_Hand_R: 'right hand', Socket_Hand_L: 'left hand', Socket_Back: 'back', Socket_Hip_L: 'left hip', Socket_Hip_R: 'right hip', Socket_Head: 'head', Socket_Chest: 'chest', Socket_Mouth: 'mouth' }
+    const names = sk.names.map((n) => words[n] ?? n.replace(/^Socket_/, '').replace(/_/g, ' ').toLowerCase())
+    lines.push({ id: 'sockets', text: `Attachment points: ${joinAnd(names)}, ready for weapons and gear.`, state: 'ok', term: 'socket' })
+  }
+
   // 5a. Lighting (3.9): painted-on shadows removed by prep, or still in the colours.
   const bl = findCheck(asset, 'baked_light')
   if (failed(bl)) lines.push(warnFrom('lighting', bl!, 'baked_light'))
@@ -227,7 +235,7 @@ export function finishLines(asset: Asset): FinishLine[] {
   if (files.length) lines.push({ id: 'files', text: `Files: ${joinAnd(files)}.`, state: 'ok', term: 'formats' })
 
   // Six lines as the backend writes them, seven when the lighting line is there too.
-  return lines.slice(0, lines.some((l) => l.id === 'lighting') ? 7 : 6)
+  return lines.slice(0, 6 + (lines.some((l) => l.id === 'lighting') ? 1 : 0) + (lines.some((l) => l.id === 'sockets') ? 1 : 0))
 }
 
 const PRIMITIVE_WORD: Record<string, string> = { box: 'one box', sphere: 'one ball', capsule: 'one capsule', hull: 'one wrapped shape' }

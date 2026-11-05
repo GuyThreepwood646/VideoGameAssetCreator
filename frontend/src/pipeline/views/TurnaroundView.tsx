@@ -51,7 +51,16 @@ export function TurnaroundView({ version, onRegenerateView }: { version: Version
                 <img src={libraryUrl(path)} alt={view} />
               </div>
               <div className="row-between">
-                <strong>{VIEW_NAMES[view] ?? view}</strong>
+                <strong>
+                  {VIEW_NAMES[view] ?? view}
+                  {m?.supplied === true && (
+                    <>
+                      {' '}
+                      <span className="chip chip-accent">Your view</span>
+                      <Info term="term.supplied_view" />
+                    </>
+                  )}
+                </strong>
                 {m && m.passed !== undefined && (
                   <span className={'traffic-line ' + (m.passed ? 'ok' : 'bad')}>
                     <TrafficDot state={m.passed ? 'ok' : 'bad'} />

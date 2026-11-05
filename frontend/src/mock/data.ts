@@ -425,7 +425,7 @@ type MockCheck = {
   limit?: unknown
   message?: string
   help?: string
-  fix?: { stage?: string; params?: Record<string, unknown>; label?: string; ui?: string }
+  fix?: { stage?: string; params?: Record<string, unknown>; label?: string; ui?: string; op?: 'refine'; instruction?: string }
   severity?: 'block' | 'warn'
   vars?: Record<string, unknown>
 }
@@ -612,6 +612,29 @@ export function addBackendFinish(asset: Asset, version: Version) {
   ]
 }
 
+// The backend's readiness checks for your own picture, as the mock fakes them: a person's arms are always "close to
+// the body" on the first upload so the warning and its "Redraw it ready for 3D" fix show.
+const REDRAW_HUMANOID = 'Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose, whole body in frame, plain light grey background, even lighting'
+function uploadReadiness(asset: Asset): MockCheck[] {
+  const redraw = asset.category === 'humanoid' ? REDRAW_HUMANOID : `Redraw this same subject with the same design, colours and materials. ${categories.find((c) => c.id === asset.category)?.pose_block ?? ''}`.trim()
+  const fix = { stage: 'concept', op: 'refine' as const, instruction: redraw, params: {}, label: 'Redraw it ready for 3D' }
+  const out = [
+    chk('one_subject', true, 1, 1, { severity: 'warn', help: 'The picture shows one subject.' }),
+    chk('in_frame', true, 0.04, 0.01, { severity: 'warn', help: 'The whole subject is in the picture, with space around it.' }),
+    chk('big_enough', true, 820, 400, { severity: 'warn', vars: { measure: asset.category === 'humanoid' ? 'tall' : 'across' } }),
+  ]
+  if (asset.category === 'humanoid')
+    out.push(
+      chk('arms_away', false, 0.05, 0.2, {
+        severity: 'warn',
+        help: 'The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.',
+        fix,
+        vars: { redraw, span_ratio: 1.3 },
+      }),
+    )
+  return out
+}
+
 // Fill in files and metrics for a finished version.
 export function fabricate(asset: Asset, version: Version) {
   const seed = Number(version.params.seed ?? 1) || 1
@@ -623,6 +646,27 @@ export function fabricate(asset: Asset, version: Version) {
   const recipe = recipeFor(asset)
   switch (version.stage) {
     case 'concept': {
+      // Your own picture (the mock upload handler stored it as files.image): kept, "cut out", and checked.
+      if ((version.params.source === 'upload' || version.params.source === 'upload_edit') && version.files.image && !version.params.instruction) {
+        f.image = version.files.image
+        if (asset.category === 'material') {
+          f.raw = version.files.image
+          m.source = version.params.source
+          m.checks = [
+            chk('even_lighting', true, 0.08, 0.25, { severity: 'warn', help: 'The light is even across the photo.' }),
+            chk('straight_on', true, 1.2, 2, { severity: 'warn', help: 'The photo looks taken straight on.' }),
+          ]
+          m.gate_ok = true
+          break
+        }
+        f.cutout = version.files.image
+        f.cutout_white = version.files.image
+        m.source = version.params.source
+        m.cutout = { coverage: 0.2, empty: false, aspect: 0.44 }
+        m.checks = uploadReadiness(asset)
+        m.gate_ok = (m.checks as MockCheck[]).every((c) => c.passed)
+        break
+      }
       f.image = putDataFile(`${base}/concept.png`, makeImage({ w: 512, h: 512, hue, seed, figure, label: `seed ${seed}` }))
       f.cutout = putDataFile(`${base}/cutout.png`, makeImage({ w: 512, h: 512, hue, seed, figure, transparent: true }))
       m.cutout = { coverage: Number((0.15 + (seed % 7) / 100).toFixed(3)), empty: false, aspect: 0.44 }
@@ -643,6 +687,26 @@ export function fabricate(asset: Asset, version: Version) {
       const views = (version.params.views as ViewName[] | undefined) ?? VIEWS
       const perView: Record<string, unknown> = {}
       views.forEach((view, i) => {
+        const own = version.files[`supplied_${view}`]
+        if (own) {
+          // Your own view: kept as it is; the mock warns on the back view so the "warns but kept" state shows.
+          f[`supplied_${view}`] = own
+          f[view] = own
+          f[`${view}_cutout`] = own
+          const warn = view === 'back'
+          perView[view] = {
+            supplied: true,
+            seed: null,
+            rerolls: 0,
+            coverage: 0.16,
+            height_ratio: warn ? 0.7 : 1.0,
+            passed: !warn,
+            ok: !warn,
+            flagged: warn,
+            checks: [chk('coverage', true, 0.16, 0.02), chk('height_ratio', !warn, warn ? 0.7 : 1.0, [0.75, 1.3])],
+          }
+          return
+        }
         f[view] = putDataFile(`${base}/${view}.png`, makeImage({ w: 384, h: 512, hue, seed: seed + i, figure, view, label: view }))
         f[`${view}_cutout`] = putDataFile(`${base}/${view}_cutout.png`, makeImage({ w: 384, h: 512, hue, seed: seed + i, figure, view, transparent: true }))
         const bad = (seed + i) % 5 === 1
@@ -662,6 +726,7 @@ export function fabricate(asset: Asset, version: Version) {
       m.views_total = views.length
       m.consistency_ok = m.views_passed === views.length
       m.flagged_views = views.filter((v) => !(perView[v] as { passed: boolean }).passed)
+      m.supplied_views = views.filter((v) => (perView[v] as { supplied?: boolean }).supplied)
       break
     }
     case 'mesh': {

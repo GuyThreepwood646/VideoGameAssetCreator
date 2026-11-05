@@ -77,9 +77,29 @@ def _measure(cutout: Path, stats: dict[str, Any] | None, other_cutout: Path | No
     return stats, mirror, hists
 
 
+def supplied_files(sc: StageContext, views: list[str] | None = None) -> dict[str, Path]:
+    """The person's own pictures on this version (files supplied_<view>, written by the API)."""
+    out: dict[str, Path] = {}
+    for v in views or list(reference.TURNAROUND_VIEWS):
+        p = sc.file(f"supplied_{v}")
+        if p is not None:
+            out[v] = p
+    return out
+
+
+async def _supplied_view(sc: StageContext, view: str, path: Path, base: float, span: float) -> dict[str, Any]:
+    """A view the person supplied: kept as it is (copied as the view picture) and cut out like a drawn one."""
+    raw = sc.copy_in(path, f"{view}_raw.png")
+    res = await sc.cutout(raw, view, base=base, span=span)
+    return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
+
+
 async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
-                     keep: dict[str, dict[str, Any]] | None = None, extra: str = "") -> None:
-    """Generate and check `views` from the concept image of `source`."""
+                     keep: dict[str, dict[str, Any]] | None = None, extra: str = "",
+                     supplied: dict[str, Path] | None = None) -> None:
+    """Generate and check `views` from the concept image of `source`. Views in `supplied` are the person's own
+    pictures: cut out and checked like the rest, never redrawn; one that fails a check warns and is kept."""
+    supplied = dict(supplied or {})
     src = _source_image(sc, source)
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
     rec = stage_recipe(sc)
@@ -105,8 +125,12 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         attempts = 0
         seed = int(base_seed) + i if base_seed else random_seed()
         while True:
-            sc.progress(0.05 + 0.9 * i / n, f"view {view} attempt {attempts + 1}")
-            files = await _generate_view(sc, src_name, view, seed, lora_strength, extra, 0.05 + 0.9 * i / n, 0.9 / n)
+            if view in supplied:
+                sc.progress(0.05 + 0.9 * i / n, f"your {view} view")
+                files = await _supplied_view(sc, view, supplied[view], 0.05 + 0.9 * i / n, 0.9 / n)
+            else:
+                sc.progress(0.05 + 0.9 * i / n, f"view {view} attempt {attempts + 1}")
+                files = await _generate_view(sc, src_name, view, seed, lora_strength, extra, 0.05 + 0.9 * i / n, 0.9 / n)
             sc.register(view, files["raw"])
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
@@ -122,19 +146,22 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             stats, mirror, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
             hist_cache.update(new_hists)
             info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror)
-            info["seed"] = seed
+            info["seed"] = None if view in supplied else seed
             info["rerolls"] = attempts
+            if view in supplied:
+                info["supplied"] = True
             results[view] = info
             if other in results and mirror is not None:
                 results[other]["mirror_iou"] = round(mirror, 4)
-            if info["passed"] or not auto_reroll or attempts >= MAX_REROLLS:
+            if view in supplied or info["passed"] or not auto_reroll or attempts >= MAX_REROLLS:
                 info["flagged"] = not info["passed"]
                 break
             attempts += 1
             seed = random_seed()
         _publish_views(sc, results)
     sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed,
-                  lora_strength_source="chosen" if chosen is not None else "recipe")
+                  lora_strength_source="chosen" if chosen is not None else "recipe",
+                  supplied_views=sorted({*(params.get("supplied_views") or []), *supplied}))
     sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"),
                    addons=[{"id": "qwen_lightning", "value": 1.0, "required": True},
                            {"id": "qwen_angles", "value": lora_strength, "required": True}])
@@ -144,12 +171,49 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
 def _publish_views(sc: StageContext, results: dict[str, dict[str, Any]]) -> None:
     sc.set_metrics(views=results, views_total=len(results), views_passed=sum(1 for r in results.values() if r.get("passed")),
                    flagged_views=[v for v, r in results.items() if r.get("flagged")],
+                   supplied_views=[v for v, r in results.items() if r.get("supplied")],
                    consistency_ok=not any(r.get("flagged") for r in results.values()))
 
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
     views = list(params.get("views") or sc.category.get("views") or DEFAULT_VIEWS)
-    await _run_views(sc, views, params, sc.parent)
+    supplied = supplied_files(sc)
+    views += [v for v in supplied if v not in views]
+    await _run_views(sc, views, params, sc.parent, supplied=supplied)
+
+
+async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:
+    """POST /api/versions/{vid}/views/{view}/upload: a new turnaround version with the person's own picture for one
+    view (files supplied_<view>) and every other view copied forward from the parent turnaround."""
+    parent = sc.parent
+    if parent is None or parent.stage != "turnaround":
+        raise ValueError("your own view needs a turnaround version to add it to")
+    if not view:
+        raise ValueError("which view the picture is for was not given")
+    path = sc.file(f"supplied_{view}")
+    if path is None:
+        raise FileNotFoundError("your picture for this view is missing")
+    keep: dict[str, dict[str, Any]] = {}
+    for v, info in (parent.metrics.get("views") or {}).items():
+        if v == view:
+            continue
+        for key in (v, f"{v}_cutout", f"{v}_white", f"supplied_{v}"):
+            p = library.version_file(parent, key, sc.settings)
+            if p is not None:
+                sc.register(key, sc.copy_in(p, p.name))
+        keep[v] = info
+    views = list(parent.params.get("views") or DEFAULT_VIEWS)
+    if view not in views:
+        views.append(view)
+    merged = {**inherit(parent.params, params), "views": views, "supplied_of": parent.id,
+              "supplied_views": sorted({*(parent.params.get("supplied_views") or []), view})}
+    sc.set_params(**merged)
+    sc.set_metrics(views=keep)
+    grand = sc.db.get(Version, parent.parent_version_id) if parent.parent_version_id else None
+    if grand is None:
+        raise ValueError("turnaround parent has no concept parent")
+    await _run_views(sc, [view], merged, grand, keep=keep, supplied={view: path})
+    sc.set_params(views=views)
 
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:

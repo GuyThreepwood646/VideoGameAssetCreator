@@ -75,6 +75,10 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
 
 
 async def judge(sc: StageContext) -> None:
+    if sc.version.stage == "concept":
+        if sc.version.params.get("source") in ("upload", "upload_edit"):
+            await photo_judge(sc)
+        return
     files = {k: library.version_file(sc.version, k, sc.settings) for k in ("base_color", "normal", "roughness", "height", "metallic")}
     checks = quality.texture_checks(files, sc.budget["texture"], keys=tuple(files))
     se = sc.version.metrics.get("seam_error")
@@ -152,8 +156,56 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_metrics(skipped=True, reason="material category")
 
 
+async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:
+    """Material from a photo: files.image is the person's photo (written by the upload endpoint). It is kept as the
+    raw surface for the seamless and derived-maps step, and checked for even light and a straight-on view."""
+    if sc.version.stage != "concept":
+        raise ValueError("only the first step of a material takes a photo")
+    img = sc.file("image")
+    if img is None:
+        raise FileNotFoundError("the uploaded photo is missing")
+    if not sc.version.params.get("source"):
+        sc.set_params(source="upload")
+    sc.register("raw", img)
+    await photo_judge(sc)
+
+
+async def photo_judge(sc: StageContext) -> None:
+    from .. import readiness
+
+    img = sc.file("image")
+    if img is None:
+        return
+    sc.progress(0.5, "checking the photo")
+    checks = await asyncio.to_thread(readiness.photo_checks, img)
+    sc.set_metrics(source=sc.version.params.get("source"), size=list(image_size(img)), **quality.summarise(checks))
+
+
+async def _edit_photo(sc: StageContext, parent, instruction: str, params: dict[str, Any]) -> None:
+    """Change something on a photo-based material: an instruction edit of the photo (the concept refine graph),
+    never a fresh surface from the description."""
+    from ..graphs.qwen_edit import edit_graph
+
+    src = library.version_file(parent, "image", sc.settings)
+    if src is None:
+        raise FileNotFoundError("the photo is missing")
+    seed = int(params.get("seed") or random_seed())
+    sc.set_params(**{**parent.params, **params, "seed": seed, "instruction": instruction, "refine_of": parent.id, "source": "upload_edit"})
+    sc.use_model("qwen_edit")
+    sc.use_model("qwen_lightning_lora")
+    name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_refine_src.png")
+    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit")), message="instruction edit", base=0.05, span=0.8)
+    img = await sc.download_image(entry, "save", sc.dir / "image.png")
+    sc.register("image", img)
+    sc.register("raw", img)
+    await photo_judge(sc)
+
+
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
     parent = sc.parent
+    if sc.version.stage == "concept" and parent is not None and parent.params.get("source") in ("upload", "upload_edit"):
+        await _edit_photo(sc, parent, instruction, params)
+        return
     merged = {**(parent.params if parent else {}), **params, "instruction": instruction}
     if sc.version.stage == "concept":
         merged["prompt_override"] = f"{_prompt(sc, parent.params if parent else {})} {instruction}".strip()
@@ -163,5 +215,14 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
+    if sc.version.stage == "concept" and parent is not None and parent.params.get("source") in ("upload", "upload_edit") \
+            and not params.get("prompt_override"):
+        src = library.version_file(parent, "image", sc.settings)
+        if src is None:
+            raise FileNotFoundError("the photo is missing")
+        sc.set_params(**{**parent.params, **params})
+        sc.register("image", sc.copy_in(src, "image.png"))
+        await upload(sc, params)
+        return
     merged = {**(parent.params if parent else {}), **params}
     await run(sc, merged)

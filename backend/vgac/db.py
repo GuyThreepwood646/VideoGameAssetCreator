@@ -165,6 +165,8 @@ class Job(Base):
     progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     message: Mapped[str] = mapped_column(Text, nullable=False, default="")
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # What a job that makes no version hands back (the style description from a picture), as JSON.
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -177,6 +179,14 @@ class Job(Base):
     @payload.setter
     def payload(self, value: dict[str, Any]) -> None:
         self.payload_json = _dumps(value or {})
+
+    @property
+    def result(self) -> dict[str, Any] | None:
+        return _loads(self.result_json, None) if self.result_json else None
+
+    @result.setter
+    def result(self, value: dict[str, Any] | None) -> None:
+        self.result_json = _dumps(value) if value is not None else None
 
 
 _engine: Engine | None = None
@@ -217,7 +227,8 @@ def init_db() -> None:
     _ensure_columns(engine)
 
 
-_ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT"}}
+_ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT"},
+                  "job": {"result_json": "TEXT"}}
 
 
 def _ensure_columns(engine) -> None:
@@ -270,8 +281,19 @@ def project_to_dict(p: Project) -> dict[str, Any]:
     }
 
 
+# A version the person stopped (Stop button, or cancel in the job log) is "rejected" with this error. It can be
+# resumed: the same job goes back in the queue with the same settings. Setting it aside changes the error.
+STOPPED_ERROR = "cancelled"
+SET_ASIDE_ERROR = "stopped and set aside"
+
+
+def is_stopped(v: "Version") -> bool:
+    return v.status == "rejected" and v.error == STOPPED_ERROR
+
+
 def version_to_dict(v: Version) -> dict[str, Any]:
     return {
+        "stopped": is_stopped(v),
         "id": v.id,
         "asset_id": v.asset_id,
         "stage": v.stage,
@@ -327,4 +349,5 @@ def job_to_dict(j: Job) -> dict[str, Any]:
         "started_at": _iso(j.started_at),
         "finished_at": _iso(j.finished_at),
         "error": j.error,
+        "result": j.result,
     }

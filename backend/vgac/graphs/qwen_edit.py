@@ -47,14 +47,31 @@ def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_stren
     }
 
 
-def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width: int = 1024, height: int = 1024) -> dict[str, Any]:
-    """Instruction edit of one image: the angle graph without the angles LoRA."""
-    g = angle_graph(image_name, instruction, seed, prefix)
+def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
+               reference_name: str | None = None) -> dict[str, Any]:
+    """Instruction edit of one image: the angle graph without the angles LoRA.
+
+    EXPERIMENTAL, reference_name: a second picture wired into image2 of both TextEncodeQwenImageEditPlus nodes (the
+    node takes image1 to image3 and adds each as "Picture N" plus a reference latent). The prompt then names the
+    pictures. The wiring matches the node's inputs; how well the model follows a reference is not yet measured."""
+    prompt = reference_prompt(instruction) if reference_name else instruction
+    g = angle_graph(image_name, prompt, seed, prefix)
     del g["l2"]
     g["ms"]["inputs"]["model"] = ["l1", 0]
     g["lat"]["inputs"]["width"] = width
     g["lat"]["inputs"]["height"] = height
+    if reference_name:
+        g["img2"] = {"class_type": "LoadImage", "inputs": {"image": reference_name}}
+        g["sc2"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["img2", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}}
+        g["pos"]["inputs"]["image2"] = ["sc2", 0]
+        g["neg"]["inputs"]["image2"] = ["sc2", 0]
     return g
+
+
+def reference_prompt(instruction: str) -> str:
+    """The edit prompt when a reference picture rides along as Picture 2."""
+    return (f"Edit Picture 1. {instruction.strip()} Use Picture 2 only as a reference for what is asked; keep the "
+            "subject, pose, framing and background of Picture 1.")
 
 
 def view_prompt(view: str, extra: str = "") -> str:

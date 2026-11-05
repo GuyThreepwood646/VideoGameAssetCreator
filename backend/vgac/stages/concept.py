@@ -13,6 +13,7 @@ records the recipe (metrics.recipe) and the add-ons applied (params.addons_appli
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,41 @@ async def _cutout(sc: StageContext, image: Path) -> None:
     sc.register("cutout", res["cutout"])
     sc.register("cutout_white", res["white"])
     sc.set_metrics(cutout=res["stats"])
+    await readiness_judge(sc, Path(res["cutout"]))
+
+
+async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
+    """Is the picture ready for 3D? One subject, whole in frame, big enough, and for people arms away from the body
+    (readiness.concept_checks, all warnings). Written as metrics.checks with the gate summary."""
+    from .. import quality, readiness
+
+    cutout = cutout or sc.file("cutout")
+    if cutout is None:
+        return
+    sc.progress(0.96, "checking it is ready for 3D")
+    try:
+        checks = await asyncio.to_thread(readiness.concept_checks, cutout, sc.category)
+    except (OSError, ValueError) as e:  # an unreadable cutout: no readiness checks, never a failed picture
+        sc.set_metrics(readiness_error=str(e)[:200])
+        return
+    sc.set_metrics(**quality.summarise(checks))
+
+
+async def judge(sc: StageContext) -> None:
+    """Recompute checks (POST judge mode=metrics): the readiness checks from the stored cutout."""
+    await readiness_judge(sc)
+
+
+async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:
+    """A concept made from the person's own picture (files.image written by the upload endpoint): the same cutout
+    the painted pictures get, then the readiness checks."""
+    image = sc.file("image")
+    if image is None:
+        raise FileNotFoundError("the uploaded picture is missing")
+    if not sc.version.params.get("source"):
+        sc.set_params(source="upload")
+    sc.set_metrics(source=sc.version.params.get("source"), models=list(sc.models_used.values()))
+    await _cutout(sc, image)
 
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
@@ -123,11 +159,19 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     if src is None:
         raise FileNotFoundError("parent image missing on disk")
     seed = int(params.get("seed") or random_seed())
-    sc.set_params(**{**parent.params, **params, "seed": seed, "instruction": instruction, "refine_of": parent.id})
+    # An edit of the person's own picture is no longer their picture as it came, but still not a painted one.
+    source = "upload_edit" if parent.params.get("source") in ("upload", "upload_edit") else parent.params.get("source")
+    sc.set_params(**{**parent.params, **params, "seed": seed, "instruction": instruction, "refine_of": parent.id, "source": source})
     sc.use_model("qwen_edit")
     sc.use_model("qwen_lightning_lora")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_refine_src.png")
-    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit")), message="instruction edit", base=0.05, span=0.6)
+    # EXPERIMENTAL: a reference picture (files.reference, written by the refine endpoint) as Picture 2.
+    ref = sc.file("reference")
+    ref_name = await sc.stage_input(ref, f"vgac_{sc.version.id[:8]}_refine_ref.png") if ref is not None else None
+    if ref_name:
+        sc.set_params(reference_experimental=True)
+    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name),
+                           message="instruction edit" + (" with a reference picture" if ref_name else ""), base=0.05, span=0.6)
     edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
     if mask_png is not None:
         sc.register("edit_raw", edited)
@@ -139,6 +183,17 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
+    if parent is not None and parent.params.get("source") in ("upload", "upload_edit") and not params.get("prompt_override"):
+        # Fine-tune on the person's own picture keeps the picture: copy it and cut it out again, never paint over it.
+        from .. import library
+
+        src = library.version_file(parent, "image", sc.settings)
+        if src is None:
+            raise FileNotFoundError("the uploaded picture is missing")
+        sc.set_params(**{**parent.params, **params})
+        sc.register("image", sc.copy_in(src, "image.png"))
+        await upload(sc, params)
+        return
     merged = {**(parent.params if parent else {}), **params}
     merged.pop("prompt", None)
     merged.pop("addons_applied", None)

@@ -41,6 +41,9 @@ unity_project: F:/Projects/VideoGameAssetCreator/unity-sandbox
 # Shared ComfyUI input directory (both instances use it). LoadImage reads from here.
 comfy_input_dir: C:/Projects/Comfy/input
 
+# ComfyUI's loras folder. Your own add-ons are kept in its VGAC/mine/ folder; the app never lists anything else in it.
+loras_dir: F:/Projects/ComfyUI/models/loras
+
 # CC0 humanoid clip libraries, by id used in export params clips_library.
 clips_libraries:
   ual1: "F:/Projects/VideoGameAssetCreator/data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"

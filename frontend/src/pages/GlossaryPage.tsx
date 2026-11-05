@@ -24,6 +24,16 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: 'Painting the picture',
+    intro: 'The first step paints a picture with one of the painters; add-ons push it toward a look.',
+    items: [
+      { id: 'addons', term: 'term.addons', title: 'Add-ons (LoRAs)' },
+      { id: 'addon-mine', term: 'term.addon_mine' },
+      { id: 'addon-painter', term: 'term.addon_painter' },
+      { id: 'addon-trigger', term: 'term.addon_trigger' },
+    ],
+  },
+  {
     title: 'The six steps',
     intro: 'Every asset goes through these in order. The technical name is the one in the page address.',
     items: [
@@ -44,6 +54,7 @@ const GROUPS: Group[] = [
       { id: 'skin-weights', term: 'term.skin_weights' },
       { id: 'lod', term: 'term.lod', title: 'LOD (detail levels)' },
       { id: 'collider', term: 'term.collider', title: 'Collider (collision shape)' },
+      { id: 'attachment-point', term: 'term.socket', title: 'Attachment point (socket)' },
     ],
   },
 ]

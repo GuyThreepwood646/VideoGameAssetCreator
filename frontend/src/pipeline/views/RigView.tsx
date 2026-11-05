@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import { joinAnd, movesLine, movesPlain } from '../../help'
+import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
@@ -88,6 +88,7 @@ export function RigView({ version }: { version: Version }) {
   const restore = m.rig_restore && typeof m.rig_restore === 'object' ? (m.rig_restore as { bone_names?: { corrected?: boolean } }) : null
   const namesFixed = restore?.bone_names?.corrected === true
   const moves = movesLine(m.clips)
+  const movesFrom = movesSourceLine(m)
   const missing = movesPlain(m.missing_clips)
   const clipData = clipFile.data
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
@@ -117,6 +118,12 @@ export function RigView({ version }: { version: Version }) {
             <div>
               {moves}
               <Info term="term.moves" />
+            </div>
+          )}
+          {moves && movesFrom && (
+            <div>
+              {movesFrom}
+              <Info term="term.clips_source" />
             </div>
           )}
           {missing.length > 0 && (

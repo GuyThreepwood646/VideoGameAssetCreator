@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type PlatformId, type Project, type Suggestion } from '../api'
+import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
@@ -149,6 +150,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [error, setError] = useState<unknown>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
   const [autopilot, setAutopilot] = useState(autopilotDefault())
+  const [startFrom, setStartFrom] = useState<'words' | 'picture'>('words')
+  const [picture, setPicture] = useState<PickedImage | null>(null)
   const { presets } = usePresets()
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -196,13 +199,17 @@ function CreateAssetForm({ project }: { project: Project }) {
   if (suggestion?.model && !modelOptions.includes(suggestion.model)) modelOptions.push(suggestion.model)
   const optionLabel = (m: string) => (suggestion && m === suggestion.model && !(STYLE_MODELS as readonly string[]).includes(m) ? suggestion.model_label : modelLabel(m))
 
+  const fromPicture = startFrom === 'picture'
+  const ready = !!category && (fromPicture ? !!picture : !!prompt.trim())
+  const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || 'Untitled'
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!category || !prompt.trim()) return
+    if (!ready) return
     setBusy(true)
     setError(null)
     try {
-      const finalName = name.trim() || autoName(prompt) || 'Untitled'
+      const finalName = name.trim() || fallbackName
       const a = await api.createAsset(project.id, {
         name: finalName,
         category,
@@ -210,7 +217,8 @@ function CreateAssetForm({ project }: { project: Project }) {
         platform_target: platform,
         prompt: prompt.trim(),
         parts,
-        ...(chosenModel ? { concept_model: chosenModel } : {}),
+        ...(chosenModel && !fromPicture ? { concept_model: chosenModel } : {}),
+        ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       rememberAutopilotDefault(autopilot)
@@ -234,22 +242,54 @@ function CreateAssetForm({ project }: { project: Project }) {
     <form className="card" onSubmit={submit}>
       <h2 className="card-title">New asset</h2>
       <ErrorText error={refError} />
-      <Field label="Describe it" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
-        <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
-      </Field>
+      <div className="field">
+        <span className="field-label">
+          Start from
+          <Info term="term.start_from" />
+        </span>
+        <div className="segmented" role="radiogroup" aria-label="Start from">
+          <label className="check-item">
+            <input type="radio" name="start-from" checked={!fromPicture} onChange={() => setStartFrom('words')} />
+            <span>A description</span>
+          </label>
+          <label className="check-item">
+            <input type="radio" name="start-from" checked={fromPicture} onChange={() => setStartFrom('picture')} />
+            <span>A picture I have</span>
+          </label>
+        </div>
+      </div>
+      {fromPicture && (
+        <ImageDrop
+          value={picture}
+          onChange={setPicture}
+          label="Your picture"
+          hint="Best: one subject on a plain background, all of it in the picture. The app cuts it out and checks it is ready for 3D."
+        />
+      )}
+      {fromPicture ? (
+        <Field label="What is it? (optional, helps the later steps)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
+          <SubmitTextarea rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" />
+        </Field>
+      ) : (
+        <Field label="Describe it" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
+          <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
+        </Field>
+      )}
       {described && (
         <div className="muted small described-size">
           Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
         </div>
       )}
-      <div className="examples">
-        <span className="muted small">Examples:</span>
-        {examples.map((ex) => (
-          <button key={ex} type="button" className="example-btn" onClick={() => setPrompt(ex)} title="Click to use this description">
-            {ex}
-          </button>
-        ))}
-      </div>
+      {!fromPicture && (
+        <div className="examples">
+          <span className="muted small">Examples:</span>
+          {examples.map((ex) => (
+            <button key={ex} type="button" className="example-btn" onClick={() => setPrompt(ex)} title="Click to use this description">
+              {ex}
+            </button>
+          ))}
+        </div>
+      )}
       <Field label="What is it" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
         <select value={category} onChange={(e) => changeCategory(e.target.value)}>
           {ref?.categories.map((c) => (
@@ -280,7 +320,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           </select>
         </Field>
       </div>
-      {suggestion && (
+      {suggestion && !fromPicture && (
         <div className="suggest-line">
           {overridden ? (
             <>
@@ -307,8 +347,8 @@ function CreateAssetForm({ project }: { project: Project }) {
       ))}
       <Disclosure label="Advanced">
         <div className="col">
-          <Field label="Name" hint={`Optional. We will call it "${autoName(prompt) || 'Untitled'}" if you leave this empty.`}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={autoName(prompt) || 'Knight'} />
+          <Field label="Name" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
           </Field>
           <Field
             label="Painter"
@@ -358,10 +398,12 @@ function CreateAssetForm({ project }: { project: Project }) {
         </span>
       </label>
       <div className="row-gap">
-        <button type="submit" className="primary" disabled={busy || !prompt.trim() || !category}>
+        <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? 'Creating...' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>
-        <span className="muted small">{autopilot ? 'Next: every step runs by itself.' : 'Next: we paint the first picture.'}</span>
+        <span className="muted small">
+          {autopilot ? 'Next: every step runs by itself.' : fromPicture ? 'Next: we cut out your picture and check it is ready for 3D.' : 'Next: we paint the first picture.'}
+        </span>
         <ErrorText error={error} />
       </div>
     </form>

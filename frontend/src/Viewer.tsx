@@ -419,6 +419,69 @@ function buildShape(s: HitShape, color: THREE.Color, label: string): THREE.Group
   return g
 }
 
+// Attachment points: the export adds an empty node named Socket_* under a bone for each spot an item can be
+// attached to (hand, back, head...). The marker is a child of that node, so it follows every animation.
+const SOCKET_LABELS: Record<string, string> = {
+  Socket_Hand_R: 'Right hand',
+  Socket_Hand_L: 'Left hand',
+  Socket_Back: 'Back',
+  Socket_Hip_L: 'Left hip',
+  Socket_Hip_R: 'Right hip',
+  Socket_Head: 'Head',
+  Socket_Chest: 'Chest',
+  Socket_Mouth: 'Mouth',
+}
+
+export function socketLabel(name: string): string {
+  return SOCKET_LABELS[name] ?? name.replace(/^Socket_/, '').replace(/_/g, ' ')
+}
+
+function labelSprite(text: string, height: number): THREE.Sprite {
+  const pad = 12
+  const font = '600 28px system-ui, sans-serif'
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')!
+  ctx.font = font
+  canvas.width = Math.ceil(ctx.measureText(text).width) + pad * 2
+  canvas.height = 44
+  ctx.font = font
+  ctx.fillStyle = 'rgba(15, 18, 22, 0.82)'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#ffffff'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, pad, canvas.height / 2 + 1)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }))
+  sprite.renderOrder = 1000
+  sprite.scale.set((height * canvas.width) / canvas.height, height, 1)
+  sprite.center.set(0, 0)
+  sprite.raycast = () => {}
+  return sprite
+}
+
+// A small diamond, three axis lines (red right, green up, blue forward) and the name. No Mesh inside, so the
+// wireframe and normals views leave it alone.
+function buildSocketMarker(node: THREE.Object3D, model: THREE.Object3D, size: number, color: THREE.Color): THREE.Group {
+  const g = new THREE.Group()
+  g.name = 'socket-marker'
+  const axes = new THREE.AxesHelper(size)
+  ;(axes.material as THREE.Material).depthTest = false
+  axes.renderOrder = 999
+  axes.raycast = () => {}
+  const diamond = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.OctahedronGeometry(size * 0.3)), new THREE.LineBasicMaterial({ color, depthTest: false }))
+  diamond.renderOrder = 999
+  diamond.raycast = () => {}
+  const label = labelSprite(socketLabel(node.name), size * 0.55)
+  label.position.set(size * 0.35, size * 0.35, 0)
+  g.add(axes, diamond, label)
+  // Same size on screen whatever scale the bone carries.
+  const ns = node.getWorldScale(new THREE.Vector3())
+  const ms = model.getWorldScale(new THREE.Vector3())
+  g.scale.setScalar(ms.x / (ns.x || 1))
+  return g
+}
+
 function disposeGroup(g: THREE.Object3D) {
   g.traverse((o) => {
     const m = o as THREE.Mesh
@@ -501,6 +564,11 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const [showHits, setShowHits] = useState(false)
   const [showMove, setShowMove] = useState(false)
   const showHitsRef = useRef(showHits)
+  // Attachment points (Socket_* nodes in the file); off until asked for.
+  const [showSockets, setShowSockets] = useState(false)
+  const [socketCount, setSocketCount] = useState(0)
+  const showSocketsRef = useRef(showSockets)
+  const socketGroupsRef = useRef<THREE.Group[]>([])
   const showMoveRef = useRef(showMove)
   const [hoverLabel, setHoverLabel] = useState<string | null>(null)
 
@@ -657,6 +725,25 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned = true
         })
         setHasSkeleton(skinned)
+        // Attachment points: mark every Socket_* node the export put on a bone.
+        socketGroupsRef.current = []
+        const socketNodes: THREE.Object3D[] = []
+        model.traverse((o) => {
+          if (/^Socket_/.test(o.name)) socketNodes.push(o)
+        })
+        if (socketNodes.length) {
+          model.updateWorldMatrix(true, true)
+          const tall = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3())
+          const markerSize = Math.max(0.02, Math.max(tall.x, tall.y, tall.z) * 0.045)
+          const ok = tokenColor('--ok', '#5fbf7a')
+          for (const node of socketNodes) {
+            const g = buildSocketMarker(node, model, markerSize, ok)
+            g.visible = showSocketsRef.current
+            node.add(g)
+            socketGroupsRef.current.push(g)
+          }
+        }
+        setSocketCount(socketNodes.length)
         // Rest pose as drawn, sampled before any animation moves it.
         const rest = captureRest(model)
         restRef.current = rest
@@ -802,6 +889,11 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       moveGroupRef.current = g
     }
   }
+
+  useEffect(() => {
+    showSocketsRef.current = showSockets
+    for (const g of socketGroupsRef.current) g.visible = showSockets
+  }, [showSockets])
 
   // Hit boxes arrive separately (hitboxes.json is fetched by the rig view).
   useEffect(() => {
@@ -955,6 +1047,14 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
               Hit boxes ({hitCount})
             </button>
             <Info term="term.hitboxes" />
+          </span>
+        )}
+        {socketCount > 0 && (
+          <span className="viewer-toggle">
+            <button type="button" aria-pressed={showSockets} onClick={() => setShowSockets((s) => !s)} title="Shows where a weapon, hat or backpack can be attached">
+              Attachment points ({socketCount})
+            </button>
+            <Info term="term.socket" />
           </span>
         )}
         {hasMoveShape && (
