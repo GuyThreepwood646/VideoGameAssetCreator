@@ -26,7 +26,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
 import gait  # noqa: E402  (pure maths next to this script)
-from mathutils import Quaternion, Vector  # noqa: E402
+from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 # ---- arguments -----------------------------------------------------------------------------------------------
 _VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed")
@@ -423,22 +423,67 @@ def local_axis(name, world_axis):
     return _local_cache[key]
 
 
+def basis_of(P, name):
+    """(rotation, location) a Pose gives one pose bone. Roots also carry the whole-body turn about the same world
+    axis and the move of the bone's head."""
+    q = P.rot.get(name, Quaternion())
+    b = byname[name]
+    if b.parent is not None:
+        return q, Vector()
+    h = head[name]
+    m = (W @ b.matrix_local).to_3x3()
+    if P.root_q.angle > 1e-6:
+        ax_local = (m.inverted() @ P.root_q.axis).normalized()
+        q = Quaternion(ax_local, P.root_q.angle) @ q
+    shift = (P.root_q @ h) + P.root_t - h + P.offset
+    return q, m.inverted() @ shift
+
+
 def apply_pose(P):
     """Write a Pose into the pose bones (no keys)."""
     for pb in arm.pose.bones:
+        q, loc = basis_of(P, pb.name)
         pb.rotation_mode = "QUATERNION"
-        pb.rotation_quaternion = P.rot.get(pb.name, Quaternion())
-        pb.location = Vector()
-    for rb in roots:
-        pb = arm.pose.bones[rb.name]
-        h = head[rb.name]
-        m = (W @ rb.matrix_local).to_3x3()
-        # World rotation of the body: bone rotation about the same world axis, plus the move of the bone's head.
-        if P.root_q.angle > 1e-6:
-            ax_local = (m.inverted() @ P.root_q.axis).normalized()
-            pb.rotation_quaternion = Quaternion(ax_local, P.root_q.angle) @ pb.rotation_quaternion
-        shift = (P.root_q @ h) + P.root_t - h + P.offset
-        pb.location = m.inverted() @ shift
+        pb.rotation_quaternion = q
+        pb.location = loc
+
+
+# ---- forward kinematics without the depsgraph (for the leg and limb IK) --------------------------------------
+REST = {b.name: b.matrix_local.copy() for b in bones}
+REST_INV = {n: m.inverted() for n, m in REST.items()}
+REST_W_INV = {n: (W @ m).inverted() for n, m in REST.items()}
+TOPO = []
+
+
+def _topo(b):
+    TOPO.append(b.name)
+    for c in b.children:
+        _topo(c)
+
+
+for _r in roots:
+    _topo(_r)
+
+
+def fk(P):
+    """World matrix of every bone for a Pose, the same as Blender's pose evaluation (no scale, inherited
+    rotation)."""
+    M = {}
+    for n in TOPO:
+        q, loc = basis_of(P, n)
+        B = Matrix.Translation(loc) @ q.to_matrix().to_4x4()
+        p = byname[n].parent
+        M[n] = REST[n] @ B if p is None else M[p.name] @ REST_INV[p.name] @ REST[n] @ B
+    return {n: W @ m for n, m in M.items()}
+
+
+def orient(Mw, n):
+    return Mw[n].to_3x3().normalized().to_quaternion()
+
+
+def posed_point(Mw, n, rest_point):
+    """Where a rest-pose world point carried by bone n is in the pose."""
+    return Mw[n] @ (REST_W_INV[n] @ rest_point)
 
 
 # ---- building blocks -----------------------------------------------------------------------------------------
@@ -630,6 +675,137 @@ def hind_pivot():
     return Vector((p.x, p.y, lo.z))
 
 
+# ---- limb IK: planted feet, settled limbs --------------------------------------------------------------------
+
+
+def limb_chain(bone_list, leaf_end):
+    """The two-bone part of a limb for the IK: the longest pair of consecutive bones whose end is a real joint
+    (the head of the next bone), so a dog's leg uses upper arm and forearm, a person's thigh and shin. Bones below
+    the end keep their world orientation while the IK moves the pair."""
+    if len(bone_list) < 2:
+        return None
+    joints = [head[n] for n in bone_list] + [leaf_end]
+    last = len(bone_list) - 3 if len(bone_list) >= 3 else 0
+    best = None
+    for i in range(0, last + 1):
+        l1, l2 = (joints[i + 1] - joints[i]).length, (joints[i + 2] - joints[i + 1]).length
+        if best is None or l1 + l2 > best[0] + 1e-9:
+            best = (l1 + l2, i, l1, l2)
+    _, i, l1, l2 = best
+    end_bone = bone_list[i + 2] if i + 2 < len(bone_list) else None
+    d0 = (joints[i + 2] - joints[i]).length
+    mid_off = joints[i + 1] - (joints[i] + joints[i + 2]) / 2
+    return {"a": bone_list[i], "m": bone_list[i + 1], "end_bone": end_bone, "end_rest": joints[i + 2].copy(),
+            "l1": l1, "l2": l2, "rest_reach": d0, "below": bone_list[i + 3:] if end_bone else [],
+            "bend_rest": mid_off if mid_off.length > 0.03 * (l1 + l2) else None}
+
+
+for li in leg_info:
+    li["ik"] = None if li["splayed"] else limb_chain(li["bones"], low[li["leaf"]])
+for a_ in arm_info:
+    i0 = a_["bones"].index(a_["upper"])
+    a_["ik"] = limb_chain(a_["bones"][i0:i0 + 3], head[a_["bones"][min(len(a_["bones"]) - 1, i0 + 2)]]) if len(a_["bones"]) >= i0 + 3 else None
+    if a_["ik"] and a_["ik"]["a"] != a_["upper"]:
+        a_["ik"] = None
+
+
+def chain_points(Mw, ch):
+    ha = Mw[ch["a"]].translation
+    hm = Mw[ch["m"]].translation
+    he = Mw[ch["end_bone"]].translation if ch["end_bone"] else posed_point(Mw, ch["m"], ch["end_rest"])
+    return ha, hm, he
+
+
+def chain_pole(P, Mw, ch, fallback_dir):
+    """A point the middle joint should bend toward: the limb's own rest bend carried by the body, else the
+    fallback direction (world, before the body's turn)."""
+    ha, hm, he = chain_points(Mw, ch)
+    if ch["bend_rest"] is not None:
+        d = (Mw[ch["a"]].to_3x3().normalized() @ (REST_W_INV[ch["a"]].to_3x3().normalized() @ ch["bend_rest"])).normalized()
+    else:
+        d = (P.root_q @ fallback_dir).normalized()
+    return hm + d * (ch["l1"] + ch["l2"])
+
+
+def ik_chain(P, ch, target, pole, end_orient=None, max_bend=150.0, Mw=None):
+    """Turn the chain's two bones (rotations appended to the Pose) so its end reaches `target` (world), bending
+    toward `pole`. end_orient: the world orientation the end bone should have afterwards (None: it rides along).
+    -> distance left between the end and the target."""
+    Mw = Mw or fk(P)
+    ha, hm, he = chain_points(Mw, ch)
+    mid, end, _ = gait.two_bone_ik(tuple(ha), tuple(target), ch["l1"], ch["l2"], tuple(pole), max_bend_deg=max_bend)
+    mid, end = Vector(mid), Vector(end)
+    Oa = orient(Mw, ch["a"])
+    r1 = (hm - ha).rotation_difference(mid - ha)
+    P.rot[ch["a"]] = P.rot.get(ch["a"], Quaternion()) @ (Oa.inverted() @ r1 @ Oa)
+    Om = r1 @ orient(Mw, ch["m"])
+    he1 = mid + r1 @ (he - hm)
+    r2 = (he1 - mid).rotation_difference(end - mid)
+    P.rot[ch["m"]] = P.rot.get(ch["m"], Quaternion()) @ (Om.inverted() @ r2 @ Om)
+    if ch["end_bone"] and end_orient is not None:
+        Oe = r2 @ r1 @ orient(Mw, ch["end_bone"])
+        P.rot[ch["end_bone"]] = P.rot.get(ch["end_bone"], Quaternion()) @ (Oe.inverted() @ end_orient)
+    return (end - Vector(target)).length
+
+
+def set_world_orient(P, name, want, Mw=None):
+    Mw = Mw or fk(P)
+    O = orient(Mw, name)
+    P.rot[name] = P.rot.get(name, Quaternion()) @ (O.inverted() @ want)
+
+
+REST_ORIENT = {b.name: (W @ b.matrix_local).to_3x3().normalized().to_quaternion() for b in bones}
+
+
+def foot_geometry(ch):
+    """(toe bone or None, horizontal ankle-to-ball length) for heel raises."""
+    if not ch or not ch["below"]:
+        return None, 0.0
+    toe = ch["below"][0]
+    d = head[toe] - ch["end_rest"]
+    return toe, Vector((d.x, d.y, 0)).length
+
+
+def plant_feet(P, feet, biped_feet):
+    """feet: [(leg, fwd, up, pitch, toe_flat)] -> IK every leg so its end joint follows its foot path (world,
+    relative to the rest place), the foot keeps its rest orientation turned by the path's pitch, and a planted
+    foot's toes stay flat while the heel lifts."""
+    for li, fwd_, up_, pitch, toe_flat in feet:
+        ch = li["ik"]
+        toe, toe_len = foot_geometry(ch)
+        raise_ = toe_len * math.sin(math.radians(-pitch)) if pitch < 0 else 0.0
+        target = ch["end_rest"] + forward * fwd_ + up * (up_ + raise_)
+        Mw = fk(P)
+        pole = chain_pole(P, Mw, ch, forward if biped_feet else -forward)
+        want = None
+        if ch["end_bone"]:
+            want = Quaternion(lateral, math.radians(-pitch)) @ REST_ORIENT[ch["end_bone"]]
+        ik_chain(P, ch, target, pole, end_orient=want, max_bend=160.0, Mw=Mw)
+        if toe and toe_flat > 0:
+            Mw = fk(P)
+            cur = orient(Mw, toe)
+            set_world_orient(P, toe, cur.slerp(REST_ORIENT[toe], toe_flat), Mw)
+
+
+def planted_drop(feet, lmax_frac):
+    """How far the hips must come down so every planted leg reaches its foot (0 when they all reach)."""
+    drop = 0.0
+    for li, fwd_, up_, pitch, _ in feet:
+        ch = li["ik"]
+        if up_ > 1e-6 or ch is None:
+            continue
+        toe, toe_len = foot_geometry(ch)
+        raise_ = toe_len * math.sin(math.radians(-pitch)) if pitch < 0 else 0.0
+        E = ch["end_rest"] + forward * fwd_ + up * raise_
+        H = head[ch["a"]]
+        hor = E - H
+        hor.z = 0
+        lmax = max(ch["rest_reach"], lmax_frac * (ch["l1"] + ch["l2"]))
+        allowed = math.sqrt(max(0.0, lmax * lmax - hor.length_squared))
+        drop = max(drop, (H.z - E.z) - allowed)
+    return drop
+
+
 # ---- clips ---------------------------------------------------------------------------------------------------
 # Each clip is fn(P, t, u_frames) where t is 0..1 over the clip's motion frames (held at 1 during a death hold).
 n_legs = len(leg_info)
@@ -679,16 +855,68 @@ def _walk_like(P, t, run):
         return
     g = run_gait if run else walk_gait
     stride = gait.RUN_STRIDE if run else 1.0
-    legs_cycle(P, t, g, a_sw * stride, a_li * stride, a_kn * (1.35 if run else 1.0))
+    ik_idx = [i for i, li in enumerate(leg_info) if li.get("ik")]
+    other = [i for i in range(n_legs) if i not in ik_idx]
+    if other:
+        legs_cycle(P, t, g, a_sw * stride, a_li * stride, a_kn * (1.35 if run else 1.0), only=other)
     steps = 2 if g in ("alternate", "run2", "trot", "tripod", "alternating") else (4 if g == "walk4" else (1 if g == "gallop" else 2))
     bob_amp = (0.045 if run else 0.018) * height * A
+    # Planted feet: each IK leg's end follows gait.foot_path, so it stays put on the ground for an implied forward
+    # speed of stride / (duty * cycle) while the hips come down just enough for the legs to reach.
+    feet = []
+    if ik_idx:
+        ph = gait.leg_phases(leg_info, g)
+        duty = gait.DUTY[g]
+        L = leg_len
+        if biped:
+            S_, lift = (0.7 * L, 0.42 * L) if run else (0.62 * L, 0.11 * L)
+        else:
+            S_, lift = (0.75 * L, 0.3 * L) if run else (0.5 * L, 0.16 * L)
+        S_, lift = S_ * A, lift * A
+        for i in ik_idx:
+            uu = gait.wrap(t + ph[i])
+            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped)
+            if not biped:
+                pitch *= 0.6
+            toe_flat = 1.0 if uu < duty else 1.0 - gait.smoothstep((uu - duty) / (1.0 - duty) / 0.3)
+            feet.append((leg_info[i], fwd_, up_, pitch, toe_flat))
     if biped:
-        P.move(up * bob_amp * (gait.body_bob(t, 2) - 0.5))
-        spine_yaw(P, (6 if run else 4) * A * math.sin(2 * math.pi * t))
-        spine_pitch(P, (12 if run else 3) * A)
-        head_pitch(P, -(6 if run else 2) * A)
-        arms_relax(P, 10 * A)
-        arms_swing(P, t, (38 if run else 22) * A, elbow=(75 if run else 12) * A)
+        L = leg_len
+        hips_p = head[roots[0].name]
+        drop = planted_drop(feet, 0.985) if feet else 0.0
+        if run:
+            # Lowest at mid stance (the leg takes the landing), highest in the flight between steps.
+            u_mid = gait.DUTY[g] / 2
+            dz = min(-0.035 * L - 0.03 * L * math.cos(4 * math.pi * (t - u_mid)), -drop) * A
+        else:
+            dz = -(drop + 0.008 * L)
+        P.move(up * dz)
+        # Weight over the planted foot, pelvis turning with the swinging leg and the shoulders the other way.
+        P.move(lateral * 0.012 * L * A * math.cos(2 * math.pi * (t - 0.3)) * (0.4 if run else 1.0))
+        pelvis = (7 if run else 5) * A
+        P.root_rotate(up, -pelvis * math.cos(2 * math.pi * t), hips_p)
+        P.root_rotate(forward, (2 if run else 3) * A * math.cos(2 * math.pi * (t - 0.25)), hips_p)
+        lean = (7 if run else 2) * A
+        P.root_rotate(lateral, -lean * 0.4, hips_p)
+        spine_yaw(P, 1.7 * pelvis * math.cos(2 * math.pi * t))
+        spine_pitch(P, lean * 0.6 + (2.5 * A * math.cos(4 * math.pi * t) if run else 0))
+        head_pitch(P, -lean * 0.8)
+        head_yaw(P, -0.6 * pelvis * math.cos(2 * math.pi * t))
+        arms_relax(P, (14 if run else 11) * A)
+        # Arms swing from the shoulder against the same-side leg; the elbow stays bent in the run.
+        for a in arm_info:
+            sgn = -1.0 if a["left"] else 1.0
+            s = sgn * math.cos(2 * math.pi * t)
+            if run:
+                P.r(a["upper"], a["swing_axis"], A * (8 + 38 * s))
+                if a["fore"]:
+                    P.r(a["fore"], a["swing_axis"], A * (82 + 12 * s))
+            else:
+                P.r(a["upper"], a["swing_axis"], A * 20 * s)
+                if a["fore"]:
+                    P.r(a["fore"], a["swing_axis"], A * (14 + 8 * max(0.0, s)))
+        if feet:
+            plant_feet(P, feet, True)
     elif g == "gallop":
         # Spine flexes and extends once per stride; the body rocks nose-down when the front feet land.
         hind = gait.foot_cycle(t, gait.DUTY["gallop"])[0]
@@ -709,6 +937,9 @@ def _walk_like(P, t, run):
         wings_folded(P, 1.0)
         for w in wing_info:
             P.r(w["bones"][0], w["flap_axis"], 4 * A * math.sin(4 * math.pi * t))
+    if feet and not biped:
+        P.move(-up * planted_drop(feet, 0.97))
+        plant_feet(P, feet, False)
 
 
 def clip_walk(P, t):

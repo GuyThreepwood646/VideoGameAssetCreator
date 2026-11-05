@@ -4,6 +4,7 @@
 //      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
+//      [-vgacSockets <sockets.json>]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -22,6 +23,15 @@
 // left in Assets/VGAC/<name>. The report records textureFilter, textureMipmaps, textureCompression and normalMap.
 // Without these arguments the importer keeps Unity's defaults (bilinear, mipmaps, compression) as before.
 //
+// Sockets (Version 8): a rigged character's FBX carries attachment points, empties named Socket_Hand_R, Socket_Back
+// and so on, parented to their bones (backend/vgac/sockets.py). They arrive as plain child transforms under the bones
+// and stay in the prefab, with nothing visible added. With -vgacSockets the importer checks each one against
+// sockets.json (the right bone, and its position and axes, glTF model space like hitboxes.json), records how far the
+// FBX's own placement was off (socketMaxError in metres, socketMaxAngle in degrees), then sets the file's placement
+// exactly: forward +Z and up +Y as the file gives them. A socket the FBX lacks is added from the file. The Humanoid
+// mapping never treats a socket as a bone. The report lists the sockets found in the saved prefab (sockets) and
+// their bones (socketBones, "Socket_Hand_R>mixamorig:RightHand").
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -37,7 +47,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "7";
+    public const string Version = "8";
 
     [Serializable]
     class ClipInfo
@@ -103,7 +113,28 @@ public static class VgacImport
         public bool textureMipmaps = true;
         public string textureCompression = "";
         public bool normalMap = true;          // false when the look has no surface bumps
+        public List<string> sockets = new List<string>();      // Socket_* transforms in the saved prefab
+        public List<string> socketBones = new List<string>();  // "Socket_Hand_R>mixamorig:RightHand"
+        public float socketMaxError;           // metres: worst gap between the FBX's socket and sockets.json
+        public float socketMaxAngle;           // degrees: worst forward or up mismatch between the FBX and the file
+        public int socketsAdded;               // sockets the FBX lacked, added from the file
     }
+
+    // sockets.json (backend/vgac/sockets.py to_json): glTF model space, Y up, metres; forward +Z, up +Y.
+    [Serializable]
+    class SocketItem
+    {
+        public string name = "", label = "", bone = "";
+        public float[] position = new float[3], forward = new float[3], up = new float[3];
+    }
+
+    [Serializable]
+    class SocketDoc
+    {
+        public List<SocketItem> sockets = new List<SocketItem>();
+    }
+
+    static bool IsSocketName(string n) => n.StartsWith("Socket_", StringComparison.Ordinal);
 
     // colliders.json (backend/vgac/stages/export.py _write_colliders): the kind of each collision part.
     [Serializable]
@@ -165,7 +196,7 @@ public static class VgacImport
     // one of these and call Import, so the two paths cannot drift apart.
     public class ImportArgs
     {
-        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders;
+        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets;
         public bool humanoid, keepPose;
         public string filter = "bilinear";     // recipes: bilinear | point
         public bool mipmaps = true, compress = true, normalMap = true;
@@ -199,6 +230,7 @@ public static class VgacImport
                 clipInfo = F("-vgacClipInfo"),
                 clips = F("-vgacClips"),
                 colliders = F("-vgacColliders"),
+                sockets = F("-vgacSockets"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
                 filter = (A("-vgacFilter") ?? "bilinear").ToLowerInvariant() == "point" ? "point" : "bilinear",
@@ -321,6 +353,8 @@ public static class VgacImport
             var hitPath = a.hitboxes;
             if (hitPath != null && File.Exists(hitPath) && rigged)
                 bodyShape = AddHitboxes(instance, hitPath, a.movementShape ?? "auto", a.scale, report);
+            // Sockets: child transforms of the bones from the FBX, checked and placed from sockets.json.
+            if (rigged) PlaceSockets(instance, a.sockets, a.scale, report);
 
             // Collision (G16): one component per collision mesh under a Colliders child of the root, of the kind
             // colliders.json names: box, sphere and capsule become primitive colliders fitted to the mesh's bounds; hull
@@ -441,6 +475,15 @@ public static class VgacImport
             PrefabUtility.SaveAsPrefabAsset(instance, prefabPath);
             UnityEngine.Object.DestroyImmediate(instance);
             built = null;
+            // What the game gets: the sockets as saved in the prefab.
+            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (saved != null)
+                foreach (var t in saved.GetComponentsInChildren<Transform>(true).Where(t => IsSocketName(t.name)).OrderBy(t => t.name))
+                {
+                    report.sockets.Add(t.name);
+                    report.socketBones.Add(t.name + ">" + (t.parent != null ? t.parent.name : ""));
+                    if (t.GetComponents<Component>().Length > 1) report.warnings.Add("socket " + t.name + " carries components");
+                }
             report.prefab = prefabPath;
             report.ok = true;
         }
@@ -722,6 +765,59 @@ public static class VgacImport
             c.direction = Mathf.Clamp(m.direction, 0, 2);
         }
         return true;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Sockets (Version 8)
+
+    static void PlaceSockets(GameObject root, string path, float scale, Report report)
+    {
+        var rt = root.transform;
+        var all = rt.GetComponentsInChildren<Transform>(true);
+        if (path == null || !File.Exists(path)) return;  // the FBX's own sockets stay as they are
+        SocketDoc doc = null;
+        try { doc = JsonUtility.FromJson<SocketDoc>(File.ReadAllText(path)); }
+        catch (Exception e) { report.warnings.Add("sockets.json not readable: " + e.Message); return; }
+        if (doc == null || doc.sockets == null) return;
+        Transform Find(string n) => string.IsNullOrEmpty(n) ? null
+            : (all.FirstOrDefault(t => t.name == n) ?? all.FirstOrDefault(t => StripName(t.name) == StripName(n)));
+        float worst = 0f, worstAngle = 0f;
+        foreach (var s in doc.sockets)
+        {
+            if (string.IsNullOrEmpty(s.name)) continue;
+            var bone = Find(s.bone);
+            if (bone == null)
+            {
+                report.warnings.Add("socket " + s.name + ": bone " + s.bone + " not found; placed on the root");
+                bone = rt;
+            }
+            var want = rt.TransformPoint(U(s.position, scale));
+            var fwd = rt.TransformDirection(U(s.forward, 1f));
+            var up = rt.TransformDirection(U(s.up, 1f));
+            if (fwd.sqrMagnitude < 1e-8f) fwd = rt.forward;
+            if (up.sqrMagnitude < 1e-8f || Vector3.Cross(fwd, up).sqrMagnitude < 1e-8f) up = rt.up;
+            var t = all.FirstOrDefault(x => x.name == s.name);
+            if (t == null)
+            {
+                t = new GameObject(s.name).transform;
+                report.socketsAdded++;
+                report.warnings.Add("socket " + s.name + " was not in the FBX; added from sockets.json");
+            }
+            else
+            {
+                worst = Mathf.Max(worst, (t.position - want).magnitude);
+                worstAngle = Mathf.Max(worstAngle, Mathf.Max(Vector3.Angle(t.forward, fwd), Vector3.Angle(t.up, up)));
+                if (t.parent != bone) report.warnings.Add("socket " + s.name + " was under " + (t.parent ? t.parent.name : "nothing") + "; moved to " + bone.name);
+            }
+            t.SetParent(bone, true);
+            t.position = want;
+            t.rotation = Quaternion.LookRotation(fwd, up);
+            // An item parented here keeps its own size: undo any scale on the bone.
+            var ls = bone.lossyScale;
+            t.localScale = new Vector3(1f / Mathf.Max(1e-6f, ls.x), 1f / Mathf.Max(1e-6f, ls.y), 1f / Mathf.Max(1e-6f, ls.z));
+        }
+        report.socketMaxError = worst;
+        report.socketMaxAngle = worstAngle;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -1113,6 +1209,8 @@ public static class VgacImport
                 var bones = new HashSet<Transform>(smr != null ? smr.bones.Where(b => b != null) : new Transform[0]);
                 // Bones the skin does not reference (end bones) are still part of the skeleton.
                 foreach (var b in bones.ToList()) foreach (var d in b.GetComponentsInChildren<Transform>(true)) if (d.GetComponent<Renderer>() == null) bones.Add(d);
+                // Attachment sockets hang under bones but are not bones: they must not change the shape-based mapping.
+                bones.RemoveWhere(t => IsSocketName(t.name));
                 var hips = bones.Where(b => b.parent == null || !bones.Contains(b.parent)).OrderByDescending(b => Subtree(b, bones).Count()).FirstOrDefault();
                 if (hips != null)
                 {

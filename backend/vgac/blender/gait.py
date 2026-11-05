@@ -299,3 +299,374 @@ def clip_table(clips: list[str], motion: str, fps: int, speed: float = 1.0) -> l
         rows.append({"name": c, "loop": c in LOOPING, "frame_start": 0, "frame_end": total, "frames": total + 1,
                      "seconds": round(total / fps, 4), "motion_frames": n, "hold_last": c == "death", "in_place": True})
     return rows
+
+
+# ---- vectors and quaternions (w, x, y, z), for the retarget and the IK ---------------------------------------
+
+def v_add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def v_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def v_scale(a, s):
+    return (a[0] * s, a[1] * s, a[2] * s)
+
+
+def v_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def v_cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def v_len(a):
+    return math.sqrt(v_dot(a, a))
+
+
+def v_norm(a, fallback=(0.0, 0.0, 1.0)):
+    n = v_len(a)
+    return v_scale(a, 1.0 / n) if n > 1e-12 else tuple(fallback)
+
+
+def q_mul(a, b):
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw)
+
+
+def q_conj(q):
+    return (q[0], -q[1], -q[2], -q[3])
+
+
+def q_normalize(q):
+    n = math.sqrt(sum(c * c for c in q)) or 1.0
+    return tuple(c / n for c in q)
+
+
+def q_axis_angle(axis, rad):
+    ax = v_norm(axis)
+    s = math.sin(rad / 2)
+    return (math.cos(rad / 2), ax[0] * s, ax[1] * s, ax[2] * s)
+
+
+def q_rotate(q, v):
+    """Rotate vector v by unit quaternion q."""
+    p = q_mul(q_mul(q, (0.0, v[0], v[1], v[2])), q_conj(q))
+    return (p[1], p[2], p[3])
+
+
+def q_from_to(u, v):
+    """The smallest rotation taking direction u onto direction v."""
+    a, b = v_norm(u), v_norm(v)
+    d = v_dot(a, b)
+    if d > 1.0 - 1e-12:
+        return (1.0, 0.0, 0.0, 0.0)
+    if d < -1.0 + 1e-12:
+        ortho = v_cross(a, (1.0, 0.0, 0.0))
+        if v_len(ortho) < 1e-6:
+            ortho = v_cross(a, (0.0, 1.0, 0.0))
+        return q_axis_angle(ortho, math.pi)
+    c = v_cross(a, b)
+    return q_normalize((1.0 + d, c[0], c[1], c[2]))
+
+
+def q_angle_deg(a, b):
+    """Angle in degrees of the rotation between two orientations (0 .. 180)."""
+    d = abs(sum(x * y for x, y in zip(q_normalize(a), q_normalize(b))))
+    return math.degrees(2 * math.acos(min(1.0, d)))
+
+
+# ---- retarget maths ------------------------------------------------------------------------------------------
+
+def compensate(src_q, src_ref_q, tgt_ref_q):
+    """Rest-pose compensated retarget of one bone, all orientations in armature (world) space:
+
+        target(frame) = source(frame) * inverse(source_reference) * target_reference
+
+    source(frame) * inverse(source_reference) is how far the source bone has turned away from its reference pose;
+    the same world turn is applied to the target bone in its own reference pose. When both skeletons stand in the
+    same reference pose (a T-pose), the limbs point the same way in every frame whatever each skeleton's rest pose
+    and bone roll were."""
+    return q_normalize(q_mul(q_mul(src_q, q_conj(src_ref_q)), tgt_ref_q))
+
+
+# Library bone names (Quaternius UAL1 Rigify "DEF-" names, UAL2 Unreal names) -> Mixamo names without the prefix.
+_SIDE = {"L": "Left", "R": "Right", "l": "Left", "r": "Right"}
+_FINGERS = {"index": "Index", "middle": "Middle", "ring": "Ring", "pinky": "Pinky"}
+_TORSO_MAP = {
+    "DEF-hips": "Hips", "DEF-spine.001": "Spine", "DEF-spine.002": "Spine1", "DEF-spine.003": "Spine2",
+    "DEF-neck": "Neck", "DEF-head": "Head",
+    "pelvis": "Hips", "spine_01": "Spine", "spine_02": "Spine1", "spine_03": "Spine2", "neck_01": "Neck", "Head": "Head",
+}
+_LIMB_RIGIFY = {"shoulder": "Shoulder", "upper_arm": "Arm", "forearm": "ForeArm", "hand": "Hand",
+                "thigh": "UpLeg", "shin": "Leg", "foot": "Foot", "toe": "ToeBase"}
+_LIMB_UE = {"clavicle": "Shoulder", "upperarm": "Arm", "lowerarm": "ForeArm", "hand": "Hand",
+            "thigh": "UpLeg", "calf": "Leg", "foot": "Foot", "ball": "ToeBase"}
+
+
+def mixamo_short(name: str) -> str:
+    """'mixamorig:LeftArm' -> 'LeftArm' (any prefix up to a colon, as Mixamo exports vary the prefix)."""
+    return name.split(":")[-1]
+
+
+def library_to_mixamo(name: str) -> str | None:
+    """Mixamo short name for one library bone, or None when the bone has no Mixamo counterpart (root, leaf ends).
+    A library that already uses Mixamo names maps to itself."""
+    if name in _TORSO_MAP:
+        return _TORSO_MAP[name]
+    short = mixamo_short(name)
+    if short in MIXAMO_BONES:
+        return short
+    n = name[4:] if name.startswith("DEF-") else name
+    # Rigify: upper_arm.L, f_index.01.L, thumb.01.L
+    if "." in n and n.rsplit(".", 1)[1] in ("L", "R"):
+        base, side = n.rsplit(".", 1)
+        side = _SIDE[side]
+        if base in _LIMB_RIGIFY:
+            return side + _LIMB_RIGIFY[base]
+        parts = base.split(".")
+        if len(parts) == 2 and parts[1].isdigit():
+            finger = parts[0][2:] if parts[0].startswith("f_") else parts[0]
+            k = int(parts[1])
+            if finger == "thumb" and 1 <= k <= 3:
+                return f"{side}HandThumb{k}"
+            if finger in _FINGERS and 1 <= k <= 3:
+                return f"{side}Hand{_FINGERS[finger]}{k}"
+        return None
+    # Unreal: upperarm_l, index_01_l, ball_l (leaf bones such as index_04_leaf_l have no counterpart)
+    if "_" in n and n.rsplit("_", 1)[1] in ("l", "r") and "leaf" not in n:
+        base, side = n.rsplit("_", 1)
+        side = _SIDE[side]
+        if base in _LIMB_UE:
+            return side + _LIMB_UE[base]
+        parts = base.split("_")
+        if len(parts) == 2 and parts[1].isdigit():
+            k = int(parts[1])
+            if parts[0] == "thumb" and 1 <= k <= 3:
+                return f"{side}HandThumb{k}"
+            if parts[0] in _FINGERS and 1 <= k <= 3:
+                return f"{side}Hand{_FINGERS[parts[0]]}{k}"
+    return None
+
+
+MIXAMO_BONES = frozenset(
+    ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head"]
+    + [s + b for s in ("Left", "Right") for b in ("Shoulder", "Arm", "ForeArm", "Hand", "UpLeg", "Leg", "Foot", "ToeBase")]
+    + [f"{s}Hand{f}{k}" for s in ("Left", "Right") for f in ("Thumb", "Index", "Middle", "Ring", "Pinky") for k in (1, 2, 3)])
+# The bones a retarget cannot do without; fingers and toes are optional.
+CORE_BONES = ("Hips", "Spine", "Head", "LeftArm", "LeftForeArm", "RightArm", "RightForeArm",
+              "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot")
+
+
+def bone_map(source_names, target_names) -> tuple[dict[str, str], list[str]]:
+    """({target_name: source_name}, missing). missing lists the target bones (short names) the library has no
+    bone for, such as fingers it lacks: they are left out and follow their parent."""
+    by_short = {}
+    for s in source_names:
+        m = library_to_mixamo(s)
+        if m and m not in by_short:
+            by_short[m] = s
+    out, missing = {}, []
+    for t in target_names:
+        short = mixamo_short(t)
+        if short in by_short:
+            out[t] = by_short[short]
+        elif short in MIXAMO_BONES:
+            missing.append(short)
+    return out, missing
+
+
+# Bones the T-pose reference aims, with the direction each one points in that pose (+X is the character's left
+# when it faces -Y, the glTF front). Other bones keep their rest direction relative to their parent.
+TPOSE_DIRS = {
+    "LeftArm": (1.0, 0.0, 0.0), "LeftForeArm": (1.0, 0.0, 0.0), "LeftHand": (1.0, 0.0, 0.0),
+    "RightArm": (-1.0, 0.0, 0.0), "RightForeArm": (-1.0, 0.0, 0.0), "RightHand": (-1.0, 0.0, 0.0),
+    "LeftUpLeg": (0.0, 0.0, -1.0), "LeftLeg": (0.0, 0.0, -1.0), "RightUpLeg": (0.0, 0.0, -1.0), "RightLeg": (0.0, 0.0, -1.0),
+}
+# Feet keep their rest pitch (standing flat) but point straight ahead.
+TPOSE_FLAT = ("LeftFoot", "RightFoot")
+
+
+def tpose_turns(rest_dirs: dict, parents: dict) -> dict:
+    """World turn per bone that moves a skeleton from its rest pose into the T-pose reference (as the Unity
+    Humanoid importer does: arms level, legs straight down).
+
+    rest_dirs: {mixamo_short: rest direction of the bone segment (joint to child joint), world space, facing -Y}.
+    parents:   {mixamo_short: parent's mixamo_short or None}.
+    Aimed bones (TPOSE_DIRS) get the smallest turn onto their T-pose direction; feet turn to point straight ahead
+    keeping their rest pitch; every other bone inherits its parent's turn (fingers follow the hand, toes the foot).
+    A bone's reference orientation is turn * rest orientation."""
+    turns: dict = {}
+
+    def turn(n):
+        if n in turns:
+            return turns[n]
+        if n in TPOSE_DIRS and n in rest_dirs:
+            q = q_from_to(rest_dirs[n], TPOSE_DIRS[n])
+        elif n in TPOSE_FLAT and n in rest_dirs:
+            d = rest_dirs[n]
+            q = q_from_to(d, (0.0, d[1] if abs(d[1]) > 1e-6 else -1e-6, d[2]))
+        else:
+            p = parents.get(n)
+            q = turn(p) if p else (1.0, 0.0, 0.0, 0.0)
+        turns[n] = q
+        return q
+
+    for n in list(rest_dirs) + list(parents):
+        turn(n)
+    return turns
+
+
+def contact_weight(clearance: float, near: float, far: float) -> float:
+    """1 when a foot is on the ground (clearance <= near), 0 when clear of it (>= far), smooth between."""
+    if far <= near:
+        return 1.0 if clearance <= near else 0.0
+    return 1.0 - smoothstep((clearance - near) / (far - near))
+
+
+def contact_segments(flags: list, cyclic: bool) -> list:
+    """Runs of consecutive True frames. With cyclic, the last frame repeats the first (a loop), and a run that
+    wraps from the end to the start is one run."""
+    n = len(flags)
+    if n == 0:
+        return []
+    m = n - 1 if cyclic and n > 1 else n
+    segs, cur = [], []
+    for i in range(m):
+        if flags[i]:
+            cur.append(i)
+        elif cur:
+            segs.append(cur)
+            cur = []
+    if cur:
+        segs.append(cur)
+    if cyclic and len(segs) > 1 and segs[0][0] == 0 and segs[-1][-1] == m - 1:
+        segs[0] = segs[-1] + segs[0]
+        segs.pop()
+    if cyclic and m < n and flags[0]:
+        for s in segs:
+            if 0 in s:
+                s.append(n - 1)
+    return segs
+
+
+# ---- two-bone IK and limb settling ---------------------------------------------------------------------------
+
+def two_bone_ik(root, target, l1, l2, pole, max_bend_deg=160.0, min_bend_deg=0.0):
+    """Analytic two-bone IK. -> (mid, end, reached).
+
+    root: the upper joint (shoulder or hip); target: where the end (wrist or ankle) should go; l1, l2: segment
+    lengths; pole: a point the middle joint (elbow or knee) should bend toward. The bend at the middle joint is
+    clamped to [min_bend_deg, max_bend_deg] (0 = straight), so an unreachable target gives the straightest allowed
+    limb pointing at it and a target too close gives the tightest allowed bend."""
+    d = v_sub(target, root)
+    dist = v_len(d)
+    axis = v_norm(d, (0.0, 0.0, -1.0))
+
+    def reach(bend):
+        inner = math.radians(180.0 - bend)  # angle inside the middle joint
+        return math.sqrt(max(0.0, l1 * l1 + l2 * l2 - 2 * l1 * l2 * math.cos(inner)))
+
+    far_r, near_r = reach(min_bend_deg), reach(max_bend_deg)
+    dist_c = min(far_r, max(near_r, dist))
+    cos_a = (l1 * l1 + dist_c * dist_c - l2 * l2) / max(1e-12, 2 * l1 * dist_c)
+    a = math.acos(max(-1.0, min(1.0, cos_a)))  # angle at the root between the root-to-end line and the upper bone
+    pv = v_sub(pole, root)
+    side = v_sub(pv, v_scale(axis, v_dot(pv, axis)))
+    if v_len(side) < 1e-9:
+        side = v_cross(axis, (1.0, 0.0, 0.0))
+        if v_len(side) < 1e-9:
+            side = v_cross(axis, (0.0, 1.0, 0.0))
+    side = v_norm(side)
+    mid = v_add(root, v_add(v_scale(axis, l1 * math.cos(a)), v_scale(side, l1 * math.sin(a))))
+    end = v_add(root, v_scale(axis, dist_c))
+    return mid, end, abs(dist_c - dist) < 1e-6
+
+
+def bend_deg(root, mid, end):
+    """Bend at the middle joint in degrees: 0 straight, 180 folded back."""
+    a, b = v_sub(mid, root), v_sub(end, mid)
+    return math.degrees(math.acos(max(-1.0, min(1.0, v_dot(v_norm(a), v_norm(b))))))
+
+
+def ground_target(root, end, ground_z, reach, outward=None, min_out=0.0):
+    """Where a limb's end should rest for a settled pose (death): below its current place at ground_z, pushed at
+    least `min_out` along `outward` (a horizontal direction away from the body, so an arm lies beside the body
+    rather than across it), then pulled toward the root until the root can reach it."""
+    x, y = end[0], end[1]
+    if outward is not None:
+        o = v_norm((outward[0], outward[1], 0.0), (1.0, 0.0, 0.0))
+        cur = (x - root[0]) * o[0] + (y - root[1]) * o[1]
+        if cur < min_out:
+            x += o[0] * (min_out - cur)
+            y += o[1] * (min_out - cur)
+    dz = ground_z - root[2]
+    horiz_max = math.sqrt(max(0.0, reach * reach - dz * dz))
+    hx, hy = x - root[0], y - root[1]
+    h = math.hypot(hx, hy)
+    if h > horiz_max and h > 1e-9:
+        x, y = root[0] + hx * horiz_max / h, root[1] + hy * horiz_max / h
+    return (x, y, ground_z)
+
+
+# ---- foot paths for procedural walking and running -----------------------------------------------------------
+
+def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False) -> tuple:
+    """(forward, up, pitch_deg) of one foot relative to its rest place at cycle fraction u.
+
+    While planted (the first `duty` of the cycle) the foot moves backward at constant speed from +stride/2 to
+    -stride/2 at ground height: on a body moving forward at stride / (duty * cycle seconds) it does not slide. In
+    the air it swings forward again; a run lifts the heel high early in the swing (toward the seat), a walk keeps
+    it low. pitch_deg: toes up positive (heel strike), toes down negative (push off). Periodic and continuous."""
+    u = wrap(u)
+    duty = min(0.95, max(0.05, duty))
+    push = 22.0 if run else 18.0
+    if u < duty:
+        s = u / duty
+        pitch = 12.0 * (1.0 - smoothstep(s / 0.2)) - push * smoothstep((s - 0.7) / 0.3)
+        return stride * (0.5 - s), 0.0, pitch
+    s = (u - duty) / (1.0 - duty)
+    fwd = -stride * 0.5 + stride * smoothstep(s)
+    if run:
+        up = lift * math.sin(math.pi * s) ** 1.5 * (1.0 - 0.35 * s)
+        fwd -= stride * 0.3 * math.sin(math.pi * s) * (1.0 - s) ** 2  # the heel rises behind before swinging through
+    else:
+        up = lift * math.sin(math.pi * s) ** 1.2
+    pitch = -push * (1.0 - smoothstep(s / 0.4)) + 12.0 * smoothstep((s - 0.6) / 0.4)
+    return fwd, up, pitch
+
+
+# ---- library clip choice -------------------------------------------------------------------------------------
+
+def parse_clip_spec(spec) -> list:
+    """'idle=Idle_Loop,run=Jog_Fwd_Loop|Run_Loop' -> [('idle', ['Idle_Loop']), ('run', ['Jog_Fwd_Loop', 'Run_Loop'])].
+    Also takes a list of {name, from} dicts (the category yaml). A bare name maps to itself."""
+    out = []
+    if not spec:
+        return out
+    if isinstance(spec, str):
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            name, _, rest = part.partition("=")
+            cands = [c.strip() for c in (rest or name).split("|") if c.strip()]
+            out.append((name.strip(), cands))
+        return out
+    for row in spec:
+        if isinstance(row, dict):
+            src = row.get("from") or [row["name"]]
+            out.append((str(row["name"]), [str(c) for c in (src if isinstance(src, (list, tuple)) else [src])]))
+    return out
+
+
+def clip_spec_text(rows) -> str:
+    """The inverse of parse_clip_spec, for the command line."""
+    return ",".join(f"{n}={'|'.join(c)}" for n, c in rows)
