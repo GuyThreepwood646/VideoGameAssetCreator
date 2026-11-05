@@ -614,15 +614,73 @@ def tone_match(new: np.ndarray, old: np.ndarray, region: np.ndarray, sigma_frac:
     return np.clip(new + masked_blur(old, region, s) - masked_blur(new, region, s), 0.0, 1.0)
 
 
+def tone_to_reference(pic: np.ndarray, ref: np.ndarray, ref_mask: np.ndarray, sigma_frac: float = 0.03) -> np.ndarray:
+    """pic with its colour and tone moved to ref's where ref is to be trusted (ref_mask: what the front painting
+    covers, seen from this side): the difference ref - pic is blurred over ref_mask and carried outward from it; far
+    from any trusted pixel the mean difference is used. Fine detail stays pic's."""
+    s = sigma_frac * pic.shape[0]
+    m = ref_mask.astype(np.float64)
+    if m.sum() < 50:
+        return pic.copy()
+    diff = ref - pic
+    num = blur(diff * m[..., None], s)
+    den = blur(m, s)[..., None]
+    mean = (diff * m[..., None]).sum(axis=(0, 1)) / m.sum()
+    t = np.clip(den / 0.3, 0.0, 1.0)  # how much trusted surface is near
+    local = np.where(den > 1e-6, num / np.maximum(den, 1e-6), mean)
+    return np.clip(pic + local * t + mean * (1 - t), 0.0, 1.0)
+
+
+def silhouette_fit(pic_alpha: np.ndarray, render_mask: np.ndarray, rows: tuple[int, int],
+                   scales: tuple[float, float] = (0.85, 1.15)) -> dict[str, Any]:
+    """Line a side picture up with a render of the model from the same side by their outlines (the profile of the
+    forehead, nose, lips and chin and the back of the head; the model has no eye sockets or ears to go on), inside the
+    rows given (the head, not the shoulders). Returns the alignment (as align) plus iou: how well the two head
+    outlines overlap after it (1 is the same shape)."""
+    S = render_mask.shape[0]
+    band_rows = np.zeros((S, S), dtype=bool)
+    band_rows[rows[0]:rows[1]] = True
+    a_img = np.repeat(pic_alpha[..., None].astype(np.float64), 3, axis=2)
+    r_img = np.repeat(render_mask[..., None].astype(np.float64), 3, axis=2)
+    region = dilate_mask(render_mask | (pic_alpha > 0.5), max(2, S // 40)) & band_rows
+    a = align(a_img, r_img, region, work=128, scales=scales, max_aspect=0.06)
+    moved = apply_alignment(a_img, a)[..., 0] > 0.5
+    inter = (moved & render_mask & band_rows).sum()
+    union = ((moved | render_mask) & band_rows).sum()
+    a["iou"] = round(float(inter) / float(max(union, 1)), 4)
+    return a
+
+
+def side_skin(old: np.ndarray, mask: np.ndarray, skin_lab: Any, hair_lab: Any, top_rows: int, margin: float = 6.0,
+              tolerance: float = 22.0) -> dict[str, np.ndarray]:
+    """Skin and hair on a side render of the model's old texture, by colour distance to the front's skin tone and hair
+    colour (Lab, lightness half). Hair is the hair-coloured surface joined to the hair in the first top_rows rows of
+    the picture; skin is near the skin tone and not hair."""
+    lab = to_lab(np.clip(old, 0, 1))
+    k = np.array([0.5, 1.0, 1.0])
+    d_s = np.linalg.norm((lab - np.asarray(skin_lab)) * k, axis=-1)
+    d_h = np.linalg.norm((lab - np.asarray(hair_lab)) * k, axis=-1)
+    hairy = mask & (d_h < d_s - margin)
+    seed = hairy.copy()
+    seed[top_rows:] = False
+    hair = grow(seed, hairy)
+    skin = mask & ~hair & (d_s < tolerance)
+    return {"skin": skin, "hair": hair}
+
+
 def tone_match_local(new: np.ndarray, old: np.ndarray, region: np.ndarray, weight: np.ndarray,
                      broad: float = 0.1, near: float = 0.025, keep: np.ndarray | None = None) -> np.ndarray:
     """tone_match, with the tone taken at a much finer scale toward the edge of the painted area (where weight falls
     below 1): inside, the old texture only lends its broad tone (its blurred eyes must not come back); along the edge
     the painted face takes the old texture's local tone, so there is no step where the paint stops."""
-    # inside, only the lightness is matched: the colours (eyes, lips, skin hue) stay the painting's
-    s_ = broad * new.shape[0]
-    shift = masked_blur(luminance(old), region, s_) - masked_blur(luminance(new), region, s_)
-    far = np.clip(new + shift[..., None], 0.0, 1.0)
+    # inside, the painting stays as it is (its colours and its own light and shade); broad > 0 also matches the
+    # lightness at that scale (the knight showed that this brightens the painting's shaded cheek into a patch)
+    if broad > 0:
+        s_ = broad * new.shape[0]
+        shift = masked_blur(luminance(old), region, s_) - masked_blur(luminance(new), region, s_)
+        far = np.clip(new + shift[..., None], 0.0, 1.0)
+    else:
+        far = new
     close = tone_match(new, old, region, near)
     edge = np.clip(1.0 - weight, 0.0, 1.0)
     edge = blur(edge, near * new.shape[0])  # a smooth hand-over between the two
@@ -739,12 +797,14 @@ def screen_weight(region: np.ndarray, feather_frac: float = 0.008) -> np.ndarray
 
 
 def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, picture: np.ndarray, weight: np.ndarray,
-                 facing: tuple[float, float] = (0.3, 0.7), strength: float = 1.0, soften_m: float = 0.0) -> dict[str, Any]:
+                 facing: tuple[float, float] = (0.3, 0.7), strength: float = 1.0, soften_m: float = 0.0,
+                 cover: np.ndarray | None = None) -> dict[str, Any]:
     """Paint `picture` (seen through cam) onto the texture through the model's UVs. Each texel the camera sees
     takes weight(screen) * smoothstep(facing) * strength of the picture's colour, where facing is the cosine between
     the surface and the view (surfaces seen edge-on keep their old colour). Texels the camera does not see (behind
     something nearer, or facing away) are untouched. Returns {texture, texel_weight (T,T), changed (texels with weight
-    over 0.5), touched (texels with any weight), bbox}."""
+    over 0.5), touched (texels with any weight), bbox}. With cover (T,T), how much of each texel an earlier camera
+    already painted (0..1), this camera only fills the rest: its weight is multiplied by 1 - cover."""
     T = texture.shape[0]
     verts, faces = mesh["verts"], mesh["faces"]
     view = view_raster(mesh, cam)
@@ -793,6 +853,8 @@ def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, 
             sw, sn = _box3(sw, 1), _box3(sn, 1)
         wa = _trilinear(sw / np.maximum(sn, 1e-9), (pos - lo) / cell - 0.5)
         w = w * smoothstep(0.3, 0.85, wa)
+    if cover is not None:
+        w = w * (1.0 - np.clip(cover[covered], 0.0, 1.0))
     col = sample(picture, sp[:, 0], sp[:, 1])
     out = texture.copy()
     tw = np.zeros((T, T))
@@ -968,9 +1030,12 @@ def painted_head(cutout: np.ndarray, head: Head, cam: Camera, size: int = 1024, 
     sy = box[1] + Y / size * (box[3] - box[1])
     # a box filter first when the crop is shrunk, else plain bilinear (the crop is usually enlarged)
     img = sample(rgb, sx, sy)
+    alpha = sample(cutout[..., 3:4], sx, sy)[..., 0]
     outside = (sx < 0) | (sy < 0) | (sx > rgb.shape[1]) | (sy > rgb.shape[0])
     img[outside] = background
-    return {"image": img, "box": tuple(round(float(v), 2) for v in box), "px_per_m": round(float(ppm), 2), "head_px": round(float(2 * half), 1)}
+    alpha[outside] = 0.0
+    return {"image": img, "alpha": alpha, "box": tuple(round(float(v), 2) for v in box), "px_per_m": round(float(ppm), 2),
+            "head_px": round(float(2 * half), 1)}
 
 
 def covered_head(info: dict[str, Any], head: Head, cam: Camera, min_width: float = 0.35) -> bool:

@@ -49,6 +49,11 @@ RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the in
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
 EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
+# Side views (the turnaround's pictures): which picture, from where. The quarter view's side is found by its outline.
+SIDE_VIEWS = (("quarter", (40.0, -40.0)), ("left", (90.0,)), ("right", (-90.0,)))
+SIDE_IOU_MIN = 0.85  # the side picture's head outline against the model's; under it the side is not used
+SIDE_FACING = (0.25, 0.7)
+DEBUG_SIDES = False  # write side_<view>.png (picture, toned, render; weight, front cover, skin) into the face folder
 LANDMARK_RESIDUAL_MAX = 0.12  # the eye-and-mouth fit's eye error, as a share of the face's width
 REDRAW_KEEP_MIN = 0.5  # the sharpened picture against the crop: under it the redraw moved things
 COVERED_WIDTH_MIN = 0.35
@@ -92,6 +97,17 @@ def target_texels(tex: int) -> int:
     return max(64, int(round(TARGET_FRACTION * tex)))
 
 
+SIDE_WORDS = {"quarter": "the three-quarter view", "left": "the left side", "right": "the right side"}
+
+
+def side_words(used: list[str]) -> str:
+    """'the three-quarter view and the right side' for the sides used."""
+    words = [SIDE_WORDS.get(u, u) for u in used]
+    if not words:
+        return ""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     """face_matches_picture (warn), from the "face_detail" metrics block. Nothing when the pass does not apply (off,
     not a humanoid, a crisp or flat look, no picture, no face or a covered one): there is nothing to measure. A soft
@@ -113,7 +129,7 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     ok = sharp >= SHARP_MIN and match >= MATCH_MIN and colour_ok
     reason = None if ok else ("blurry" if sharp < SHARP_MIN else "off_picture" if match < MATCH_MIN else "eye_colour")
     return [quality.check("face_matches_picture", ok, round(sharp, 3), SHARP_MIN,
-                          vars={"reason": reason, "eye_shift": shift,
+                          vars={"reason": reason, "eye_shift": shift, "sides": side_words(fd.get("sides_used") or []),
                                 "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after")})]
 
 
@@ -156,7 +172,7 @@ def redraw_kept(sharp: Path, crop: Path) -> float:
 
 
 def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, before_tex: Path, crop: Path, out_dir: Path,
-                  strength: float) -> dict[str, Any]:
+                  strength: float, sides: dict[str, Path] | None = None) -> dict[str, Any]:
     """Steps 3 and 5 on the final layout: fit the picture to the render, paint it back, measure, and draw the before
     and after sheet. Writes base_color_face.png and face_before_after.png into out_dir."""
     mesh = face.load_mesh(glb)
@@ -220,6 +236,17 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     uvm = imaging.load_uv_mesh(glb)
     coverage = imaging.rasterise_uv(uvm, T)["labels"] > 0
     new_tex = face.grow_into_gutter(spread, coverage, res["bbox"], imaging.dilation_px(T))
+    # The cheeks, jaw sides and temples from the side pictures, only where the front painted little or nothing.
+    side_record: dict[str, Any] = {}
+    if sides and seg.get("found"):
+        # the eyes are the front painting's alone: the side pictures never paint them, even where the front faded
+        side_cover = res["texel_weight"]
+        if keep is not None:
+            eyes_tw = face.project_back(mesh, np.zeros_like(tex), cam, np.ones_like(view["image"]),
+                                        face.dilate_mask(keep, int(0.02 * view["image"].shape[0])).astype(np.float64), facing=(0.0, 0.05))["texel_weight"]
+            side_cover = np.maximum(side_cover, eyes_tw)
+        new_tex, side_record = paint_sides(mesh, tex, new_tex, side_cover, head, info, seg["hair_lab"], sides, coverage,
+                                           debug_dir=out_dir if DEBUG_SIDES else None)
     out = face.save_rgb(new_tex, out_dir / "base_color_face.png")
     after = face.render_view(mesh, new_tex, cam)
     old_mesh = face.load_mesh(before_glb)
@@ -236,9 +263,96 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
         **eye_colour_measure(painted_fitted, after["image"], fitted, info, paint),
+        "sides": side_record, "sides_used": [k for k, v in side_record.items() if v.get("used")],
     }
     sheet = before_after_sheet(crop, (old_mesh, old_tex, old_head), (mesh, new_tex, head), out_dir / "face_before_after.png")
     return {"ok": True, "base_color": out, "sheet": sheet, "metrics": metrics}
+
+
+def paint_sides(mesh: dict[str, Any], old_tex: np.ndarray, tex: np.ndarray, cover: np.ndarray, head: Any, info: dict[str, Any],
+                hair_lab: Any, sides: dict[str, Path], coverage: np.ndarray, debug_dir: Path | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    """Second projections from the side pictures. Each picture's head is cut out with the model's framing, lined up
+    by its outline with a render of the model from that side (not used under SIDE_IOU_MIN, with the reason
+    recorded), cleaned of hair and background over the model's bare skin, given the colour and tone the front
+    painting already put on the surface where both see it, and painted only on the share of each skin texel the
+    front (and earlier sides) left unpainted, weighted by how squarely it faces this camera. The quarter view goes
+    first, then the full sides. Returns (texture, record per side)."""
+    record: dict[str, Any] = {}
+    T = tex.shape[0]
+    cover = np.clip(cover.copy(), 0.0, 1.0)
+    for name, yaws in SIDE_VIEWS:
+        path = sides.get(name)
+        if path is None or not Path(path).is_file():
+            continue
+        rgba = np.asarray(Image.open(path).convert("RGBA"), dtype=np.float64) / 255.0
+        best = None
+        for yaw in yaws:
+            cam = face.head_camera(head, yaw, 1024)
+            crop = face.painted_head(rgba, head, cam)
+            if crop is None:
+                continue
+            view_o = face.render_view(mesh, old_tex, cam)
+            pos = face.interpolate(mesh["verts"], mesh["faces"], view_o["raster"])
+            rows_head = np.nonzero((view_o["mask"] & (pos[..., 1] >= head.top - 0.15 * head.height)).any(axis=1))[0]
+            if len(rows_head) < 20:
+                continue
+            rows = (int(rows_head[0]), int(rows_head[-1]) + 1)
+            fit = face.silhouette_fit(crop["alpha"], view_o["mask"], rows)
+            if best is None or fit["iou"] > best[0]["iou"]:
+                best = (fit, yaw, cam, crop, view_o, rows)
+        if best is None:
+            record[name] = {"used": False, "reason": "no head in the picture"}
+            continue
+        fit, yaw, cam, crop, view_o, rows = best
+        rec = {"yaw": yaw, "outline_match": fit["iou"], "scale": [fit["sx"], fit["sy"]], "shift_px": [fit["tx"], fit["ty"]]}
+        if fit["iou"] < SIDE_IOU_MIN:
+            record[name] = {**rec, "used": False, "reason": "the outline does not match the model's"}
+            continue
+        pic = face.apply_alignment(crop["image"], fit)
+        alpha = face.apply_alignment(np.repeat(crop["alpha"][..., None], 3, axis=2), fit)[..., 0]
+        sk = face.side_skin(view_o["image"], view_o["mask"], info["skin"], hair_lab, rows[0] + max(4, (rows[1] - rows[0]) // 5))
+        skin = sk["skin"] & face.erode(view_o["mask"], 2)
+        rows_m = np.zeros_like(skin)
+        rows_m[rows[0]:rows[1] + (rows[1] - rows[0]) // 4] = True  # the head and the top of the neck
+        skin &= rows_m
+        if skin.sum() < 500:
+            record[name] = {**rec, "used": False, "reason": "no bare skin seen from this side"}
+            continue
+        # the picture: hair or background over the model's bare skin is filled from the picture's skin around it
+        lab_p = face.to_lab(np.clip(pic, 0, 1))
+        kk = np.array([0.5, 1.0, 1.0])
+        on = skin & (alpha > 0.5)
+        skin_p = np.median(lab_p[on], axis=0) if on.sum() > 50 else np.asarray(info["skin"])
+        hair_src = sk["hair"] & (alpha > 0.5)
+        hair_p = np.median(lab_p[hair_src], axis=0) if hair_src.sum() > 50 else np.asarray(hair_lab)
+        pic_hair = np.linalg.norm((lab_p - hair_p) * kk, axis=-1) < np.linalg.norm((lab_p - skin_p) * kk, axis=-1) - 6.0
+        bad = skin & (pic_hair | (alpha < 0.5))
+        good = skin & ~bad
+        if good.sum() < 300:
+            record[name] = {**rec, "used": False, "reason": "the picture shows little bare skin where the model has it"}
+            continue
+        if bad.any():
+            pic = np.where(bad[..., None], face.inpaint(pic, good), pic)
+        # colour and tone: the front painting's, where it covers the surface seen from this side
+        view_now = face.render_view(mesh, tex, cam)
+        cov_img = face.render_view(mesh, np.repeat(cover[..., None], 3, axis=2), cam)["image"][..., 0]
+        trusted = skin & (cov_img > 0.6)
+        toned = face.tone_to_reference(pic, view_now["image"], trusted)
+        weight = face.screen_weight(skin)
+        if debug_dir is not None:
+            g = lambda m: np.repeat(m[..., None].astype(np.float64), 3, axis=2)  # noqa: E731
+            face.save_rgb(np.concatenate([np.concatenate([pic, toned, view_now["image"]], axis=1),
+                                          np.concatenate([g(weight), g(cov_img), g(skin) * 0.5 + g(trusted) * 0.5], axis=1)], axis=0)[::2, ::2],
+                          Path(debug_dir) / f"side_{name}.png")
+        res = face.project_back(mesh, tex, cam, toned, weight, facing=SIDE_FACING, soften_m=SOFTEN_M, cover=cover)
+        tex = face.grow_into_gutter(res["texture"], coverage, res["bbox"], imaging.dilation_px(T))
+        cover = np.clip(cover + res["texel_weight"], 0.0, 1.0)
+        used = res["changed"] > 0
+        record[name] = {**rec, "used": used, "texels_painted": res["changed"], "hair_filled_px": int(bad.sum()),
+                        "trusted_px": int(trusted.sum())}
+        if not used:
+            record[name]["reason"] = "the front and the earlier views already cover the skin this side sees"
+    return tex, record
 
 
 def eye_colour_measure(painted: np.ndarray, after: np.ndarray, fitted: np.ndarray, info: dict[str, Any],
@@ -272,40 +386,47 @@ def eyes_moved(before: np.ndarray, after: np.ndarray, info: dict[str, Any]) -> f
     return round(d / max(float(info["width_px"]), 1.0), 4)
 
 
-def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell: int = 384) -> Path:
-    """Painted head | 3D face before | 3D face after, from the front, then from the left and the right three-quarter;
-    a last row of close-ups of the new face: the brow and the bridge of the nose from the front, and the cheek where
-    the painted face meets the old texture from each side."""
+def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell: int = 320) -> Path:
+    """Painted head | 3D face before | 3D face after, from the front, both three-quarter sides and both full sides;
+    then close-ups of the new face: both eyes and the brow from the front, the cheeks from the three-quarter sides
+    and from the full sides (where the front painting hands over to the side pictures)."""
+    views = ((0, "From the front"), (35, "From the left"), (-35, "From the right"), (90, "Left side"), (-90, "Right side"))
     rows = []
-    for yaw in (0, 35, -35):
-        imgs = []
-        for m, t, h in (before, after):
-            imgs.append(face.render_view(m, t, face.head_camera(h, yaw, 768))["image"])
-        rows.append((yaw, imgs))
-    pad = 28
-    sheet = Image.new("RGB", (cell * 3, pad + cell * 4 + pad), (32, 32, 32))
+    for yaw, label in views:
+        imgs = [face.render_view(m, t, face.head_camera(h, yaw, 768))["image"] for m, t, h in (before, after)]
+        rows.append((label, imgs))
+    pad = 24
+    n_close = 2
+    sheet = Image.new("RGB", (cell * 3, pad + cell * (len(rows) + n_close) + pad * n_close), (32, 32, 32))
     d = ImageDraw.Draw(sheet)
     for i, label in enumerate(("Painted picture", "3D face before", "3D face after")):
-        d.text((i * cell + 8, 8), label, fill=(230, 230, 230))
+        d.text((i * cell + 8, 6), label, fill=(230, 230, 230))
     painted = Image.open(crop).convert("RGB").resize((cell, cell), Image.LANCZOS)
-    for r, (yaw, imgs) in enumerate(rows):
+    for r, (label, imgs) in enumerate(rows):
         y = pad + r * cell
         if r == 0:
             sheet.paste(painted, (0, y))
         else:
-            d.text((8, y + 8), "From the left" if yaw > 0 else "From the right", fill=(230, 230, 230))
+            d.text((8, y + 8), label, fill=(230, 230, 230))
         for c, img in enumerate(imgs):
             sheet.paste(Image.fromarray(face.to_uint8(img)).resize((cell, cell), Image.LANCZOS), ((c + 1) * cell, y))
     # close-ups of the new face (fractions of the 768 px renders: the framing of head_camera)
-    y = pad + 3 * cell
-    d.text((8, y + 4), "Close-ups after: brow, left cheek, right cheek", fill=(230, 230, 230))
-    boxes = ((0, (0.25, 0.3, 0.75, 0.62)), (1, (0.2, 0.35, 0.6, 0.85)), (2, (0.4, 0.35, 0.8, 0.85)))
-    for c, (row, (fx0, fy0, fx1, fy1)) in enumerate(boxes):
-        img = Image.fromarray(face.to_uint8(rows[row][1][1]))
-        W = img.size[0]
-        part = img.crop((int(fx0 * W), int(fy0 * W), int(fx1 * W), int(fy1 * W)))
-        part.thumbnail((cell, cell), Image.LANCZOS)
-        sheet.paste(part, (c * cell + (cell - part.size[0]) // 2, y + pad))
+    closes = (
+        ("Close-ups after: both eyes, left cheek, right cheek",
+         ((0, (0.22, 0.3, 0.78, 0.62)), (1, (0.2, 0.35, 0.6, 0.85)), (2, (0.4, 0.35, 0.8, 0.85)))),
+        ("Close-ups after: left side cheek, right side cheek",
+         ((3, (0.0, 0.3, 0.5, 0.8)), (4, (0.5, 0.3, 1.0, 0.8)))),
+    )
+    y = pad + len(rows) * cell
+    for title, boxes in closes:
+        d.text((8, y + 4), title, fill=(230, 230, 230))
+        for c, (row, (fx0, fy0, fx1, fy1)) in enumerate(boxes):
+            img = Image.fromarray(face.to_uint8(rows[row][1][1]))
+            W = img.size[0]
+            part = img.crop((int(fx0 * W), int(fy0 * W), int(fx1 * W), int(fy1 * W)))
+            part.thumbnail((cell, cell), Image.LANCZOS)
+            sheet.paste(part, (c * cell + (cell - part.size[0]) // 2, y + pad))
+        y += cell + pad
     sheet.save(dest)
     return dest
 
@@ -436,8 +557,9 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
 
     # 3 and 5. Fit and paint.
     sc.progress(0.88, "Painting the face")
+    sides = side_pictures(sc)
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
-                                   crop, out_dir, strength)
+                                   crop, out_dir, strength, sides)
     if not done.get("ok"):
         return _skipped(done.get("reason") or "error", t0, {**record, "alignment": done.get("alignment")})
     files: dict[str, Path] = {k: p for k, p in work_maps.items() if k != "base_color"} if relayout else {}
@@ -455,6 +577,16 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
                   layout=None if not relayout else {k: relayout.get(k) for k in ("layout_mode", "gain", "rest_scale", "island_scale", "islands", "rebake_seconds")},
                   seconds=round(time.time() - t0, 1))
     return {"files": files, "metrics": {"face_detail": record}, "relayout": bool(relayout)}
+
+
+def side_pictures(sc: StageContext) -> dict[str, Path]:
+    """The side-views step's cut-out pictures this pass can paint from (quarter, left, right), the ones that exist."""
+    out: dict[str, Path] = {}
+    for name, _ in SIDE_VIEWS:
+        p = sc.lineage_file(f"{name}_cutout", ("turnaround",))
+        if p is not None and Path(p).is_file():
+            out[name] = Path(p)
+    return out
 
 
 def _skipped(reason: str, t0: float, extra: dict[str, Any] | None = None) -> dict[str, Any]:
