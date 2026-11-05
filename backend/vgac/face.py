@@ -615,15 +615,21 @@ def tone_match(new: np.ndarray, old: np.ndarray, region: np.ndarray, sigma_frac:
 
 
 def tone_match_local(new: np.ndarray, old: np.ndarray, region: np.ndarray, weight: np.ndarray,
-                     broad: float = 0.1, near: float = 0.025) -> np.ndarray:
+                     broad: float = 0.1, near: float = 0.025, keep: np.ndarray | None = None) -> np.ndarray:
     """tone_match, with the tone taken at a much finer scale toward the edge of the painted area (where weight falls
     below 1): inside, the old texture only lends its broad tone (its blurred eyes must not come back); along the edge
     the painted face takes the old texture's local tone, so there is no step where the paint stops."""
-    far = tone_match(new, old, region, broad)
+    # inside, only the lightness is matched: the colours (eyes, lips, skin hue) stay the painting's
+    s_ = broad * new.shape[0]
+    shift = masked_blur(luminance(old), region, s_) - masked_blur(luminance(new), region, s_)
+    far = np.clip(new + shift[..., None], 0.0, 1.0)
     close = tone_match(new, old, region, near)
     edge = np.clip(1.0 - weight, 0.0, 1.0)
     edge = blur(edge, near * new.shape[0])  # a smooth hand-over between the two
-    edge = np.clip(edge * 1.5, 0.0, 1.0)[..., None]
+    edge = np.clip(edge * 1.5, 0.0, 1.0)
+    if keep is not None:  # the eyes keep the painting's colour even next to an edge
+        edge = edge * (1.0 - np.clip(blur(keep.astype(np.float64), near * new.shape[0] / 3), 0, 1))
+    edge = edge[..., None]
     return far * (1 - edge) + close * edge
 
 
@@ -669,6 +675,44 @@ def hair_and_skin(old: np.ndarray, picture: np.ndarray, info: dict[str, Any], ma
     pic_background = (d(lab_p, bg) < 6.0)
     return {"old_hair": old_hair, "pic_hair": pic_hair, "pic_background": pic_background, "found": True,
             "hair_lab": [round(float(v), 1) for v in hair_o]}
+
+
+def merge_detail(painted: np.ndarray, sharp: np.ndarray, sigma: float = 3.0) -> np.ndarray:
+    """The painting decides colour and broad tone, the sharpened picture only adds fine detail: the painted crop's
+    colours below sigma pixels (at 1024) plus the sharpened picture's luminance above it. So the eyes, skin and lips
+    keep the painting's hue everywhere, and the broad look stays the painting's (the redraw cannot make a stylised
+    painting look photographed at any scale bigger than sigma)."""
+    s = sigma * painted.shape[0] / 1024.0
+    lum = luminance(sharp)
+    detail = lum - blur(lum, s)
+    return np.clip(blur(painted, s) + detail[..., None], 0.0, 1.0)
+
+
+def eye_boxes(shape: tuple[int, int], eyes: list[tuple[float, float]], width_px: float, grow: float = 1.6) -> np.ndarray:
+    """A mask of the boxes eye_colour measures, made `grow` times bigger (the whole eye and its lids)."""
+    m = np.zeros(shape, dtype=bool)
+    hx, hy = max(2, int(0.05 * width_px * grow)), max(2, int(0.025 * width_px * grow))
+    for x, y in eyes:
+        m[max(0, int(y) - hy): int(y) + hy + 1, max(0, int(x) - hx): int(x) + hx + 1] = True
+    return m
+
+
+def eye_colour(img: np.ndarray, eyes: list[tuple[float, float]], width_px: float) -> list[list[float]]:
+    """Mean colour (Lab a and b: hue and how colourful, not how light) in a small box around each eye point: the iris
+    and the white around it."""
+    out = []
+    lab = to_lab(np.clip(img, 0, 1))
+    hx, hy = max(2, int(0.05 * width_px)), max(2, int(0.025 * width_px))
+    for x, y in eyes:
+        xi, yi = int(x), int(y)
+        box = lab[max(0, yi - hy): yi + hy + 1, max(0, xi - hx): xi + hx + 1]
+        out.append([round(float(box[..., 1].mean()), 2), round(float(box[..., 2].mean()), 2)])
+    return out
+
+
+def colour_shift(a: list[list[float]], b: list[list[float]]) -> float:
+    """The largest difference in hue and colourfulness (Lab a, b distance) between matching eyes of two lists."""
+    return round(max(float(np.hypot(p[0] - q[0], p[1] - q[1])) for p, q in zip(a, b)), 2) if a and b else 0.0
 
 
 def inpaint(img: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -849,8 +893,19 @@ def spread_tone(mesh: dict[str, np.ndarray], old: np.ndarray, new: np.ndarray, t
     skin = np.linalg.norm((lab - np.asarray(skin_lab)) * np.array([0.5, 1.0, 1.0]), axis=-1) < skin_tolerance
     f = (pos[inbox] - lo) / cell_m - 0.5
     amount = (1.0 - np.clip(tw[inbox], 0, 1)) * _trilinear(frac, f) * skin
+    # the painted colour itself, smoothed: skin the front camera could not see (a cheek behind a hair flap) takes it
+    # where most of the surface around is painted, so the hand-over is a gradual blend, not a line
+    cs = np.zeros(tuple(dims) + (3,))
+    np.add.at(cs, tuple(idx_p.T), new[painted])
+    cn = np.zeros(tuple(dims))
+    np.add.at(cn, tuple(idx_p.T), 1.0)
+    for _ in range(2):
+        cs, cn = _box3(cs, r), _box3(cn, r)
+    C = _trilinear(cs / np.maximum(cn, 1e-9)[..., None], f)
     out = new.copy()
     vals = out[inbox] + _trilinear(D, f) * amount[:, None]
+    take = np.clip(amount * 1.2, 0.0, 1.0)[:, None]
+    vals = vals * (1 - take) + C * take
     out[inbox] = np.clip(vals, 0.0, 1.0)
     return out, int((amount > 0.05).sum())
 

@@ -301,3 +301,27 @@ def test_spread_tone_carries_the_painted_tone_onto_nearby_skin_only():
     assert out[32, 28, 0] - old[32, 28, 0] > 0.02
     assert np.allclose(out[:, 58:], old[:, 58:])  # not skin: untouched
     assert np.allclose(out[:, :24], new[:, :24])  # painted: as painted
+
+
+# --- third round: the painting decides colour --------------------------------------------------------------
+
+
+def test_merge_detail_keeps_the_paintings_colour_and_takes_only_fine_detail():
+    rng = np.random.default_rng(5)
+    painted = np.empty((256, 256, 3))
+    painted[:] = (0.5, 0.6, 0.55)  # grey-green
+    sharp = np.empty((256, 256, 3))
+    sharp[:] = (0.45, 0.3, 0.2)  # brown: a redraw that changed the colour
+    sharp += rng.normal(0, 0.05, (256, 256, 1))  # and fine detail
+    out = face.merge_detail(painted, sharp, sigma=3.0 * 1024 / 256)
+    assert np.abs(out.mean(axis=(0, 1)) - painted[0, 0]).max() < 0.01  # the painting's colour
+    assert out[..., 0].std() > 0.02  # the redraw's fine detail
+    assert face.colour_shift(face.eye_colour(out, [(128, 128)], 200), face.eye_colour(painted, [(128, 128)], 200)) < 1.0
+
+
+def test_eye_colour_check_fails_softly_when_the_eyes_drift():
+    bad = fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.4, "feature_match_after": 0.85, "eye_colour_shift": 12.4}})[0]
+    assert not bad["ok"] and "eyes' colour" in bad["help"] and bad["fix_label"] == "Paint the face again"
+    good = fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.4, "feature_match_after": 0.85, "eye_colour_shift": 5.3}})[0]
+    assert good["ok"]
+    assert fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.4, "feature_match_after": 0.85, "eye_colour_shift": None}})[0]["ok"]

@@ -562,6 +562,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
             "error": "The face was not painted from the picture: something went wrong on the way.",
             "blurry": "The face is still blurry after painting it from the picture (detail {value:n}, sharp from {limit:n}).",
             "off_picture": "The face was painted, but it follows the picture poorly (match {match:n} of 1).",
+            "eye_colour": "The face was painted, but the eyes' colour differs from the picture's (by {eye_shift:n}, fine up to 8).",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
         "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None}},
         "fix_label": "Paint the face again",
