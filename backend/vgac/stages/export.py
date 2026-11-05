@@ -181,6 +181,154 @@ def sync_importer(src: Path | str, editor_dir: Path | str) -> dict[str, Any]:
     return {"action": "current" if old == new else "kept_newer", "version": old, "previous": old}
 
 
+# --- Hand-off to an open Unity Editor ---------------------------------------------------------------------------------
+# Unity refuses to open a project in batch mode while the Editor has it open, which is the usual case for a game
+# maker's own project. Then the export leaves the importer's inputs and a request file in the project and the Editor
+# (VgacImportWatcher in VgacImport.cs, Version 6 and later) runs the same import when it next refreshes.
+
+HANDOFF_MIN_IMPORTER = 6
+HANDOFF_REQUEST = "vgac_import.json"
+HANDOFF_DONE = "vgac_import.done.json"
+HANDOFF_NOTE = "Sent to your open Unity project. It finishes importing when you switch to Unity."
+# The importer's own texture inputs (VgacImport.Import copies these from its input folder).
+HANDOFF_TEXTURES = ("base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png")
+
+
+def _open_exclusive(path: Path):
+    """Open a file for writing the way another process would have to; fails while Unity holds it (Windows opens it
+    without sharing; on macOS and Linux Unity holds an flock on it)."""
+    f = open(path, "r+b")
+    try:
+        import fcntl  # noqa: PLC0415  (POSIX only)
+    except ImportError:
+        return f
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        f.close()
+        raise
+    return f
+
+
+def unity_project_open(path: Path | str, opener=None) -> bool:
+    """True when a Unity Editor has this project open: <project>/Temp/UnityLockfile exists and cannot be opened for
+    exclusive write. A lock file left behind by a crashed Editor opens fine, so it reads as closed. `opener` is for
+    tests (a function path -> file handle that may raise)."""
+    lock = Path(path) / "Temp" / "UnityLockfile"
+    if not lock.is_file():
+        return False
+    try:
+        f = (opener or _open_exclusive)(lock)
+    except FileNotFoundError:
+        return False
+    except OSError:  # PermissionError on Windows, BlockingIOError from flock
+        return True
+    try:
+        f.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def handoff_folder(project: Path | str, name: str) -> Path:
+    """<project>/Assets/VGAC/<name>/_incoming: the importer builds the prefab in Assets/VGAC/<name>/."""
+    return Path(project) / "Assets" / "VGAC" / name / "_incoming"
+
+
+def _remove_with_meta(p: Path) -> None:
+    for q in (p, p.with_name(p.name + ".meta")):
+        if q.is_file():
+            q.unlink()
+
+
+def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args: dict[str, Any], flags: list[str],
+                      importer: dict[str, Any] | None = None, version_id: str | None = None) -> dict[str, Any]:
+    """Copy the importer's inputs (the FBX, the textures and packed maps, hitboxes.json, colliders.json, the clip
+    sidecar) into <project>/Assets/VGAC/<name>/_incoming/ and write vgac_import.json there with every argument the
+    batch call would have passed. File arguments become names in that folder; the shared clip library keeps its own
+    path. -> the metrics.unity_project_import value (state "sent", or "failed" when the project's importer is too old
+    to take a hand-off)."""
+    import uuid  # noqa: PLC0415
+
+    src, proj = Path(src_dir), Path(project)
+    folder = handoff_folder(proj, name)
+    imp = importer or {}
+    have = imp.get("version") if imp.get("version") is not None else imp.get("previous")
+    base = {"project": str(proj), "folder": str(folder), "importer": importer}
+    if have is None or int(have) < HANDOFF_MIN_IMPORTER:
+        return {**base, "ok": False, "state": "failed", "request_id": None,
+                "error": f"the importer script in your project (Assets/Editor/VgacImport.cs) is version {have}; "
+                         f"importing into an open project needs version {HANDOFF_MIN_IMPORTER} or later"}
+    folder.mkdir(parents=True, exist_ok=True)
+    # A report or done marker from an earlier request must not be read as this one's result.
+    for stale in ("unity_report.json", HANDOFF_DONE):
+        _remove_with_meta(folder / stale)
+    copied: list[str] = []
+
+    def put(p: Path) -> str:
+        shutil.copy2(p, folder / p.name)
+        copied.append(p.name)
+        return p.name
+
+    fbx = src / f"{name}.fbx"
+    if not fbx.is_file():
+        raise FileNotFoundError(f"no FBX to hand off: {fbx}")
+    put(fbx)
+    for t in (*HANDOFF_TEXTURES, f"T_{name}_MetallicSmoothness.png", f"T_{name}_ORM.png"):
+        if (src / t).is_file():
+            put(src / t)
+    argv: list[str] = [f for f in flags if f != "-nographics"]  # -nographics is a batch-mode switch
+    arguments: dict[str, str] = {}
+    rel_folder = folder.relative_to(proj).as_posix()
+    for k, v in args.items():
+        if k == "-vgacInput":
+            value = rel_folder  # the Editor reads its inputs from the request's own folder
+        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips")):
+            p = Path(v)
+            # Inputs from this export's folder travel with the request; anything else (the shared clip library)
+            # is read where it is.
+            value = put(p) if p.is_file() and p.parent.resolve() == src.resolve() else str(p)
+        else:
+            value = str(v)
+        arguments[k] = value
+        argv += [k, value]
+    request_id = uuid.uuid4().hex
+    req = {"request_id": request_id, "importer_version": str(have), "name": name, "args": argv, "arguments": arguments,
+           "flags": [f for f in flags if f != "-nographics"], "files": copied, "source_version": version_id,
+           "created_at": _iso(utcnow()), "prefab": f"Assets/VGAC/{name}/{name}.prefab"}
+    tmp = folder / (HANDOFF_REQUEST + ".tmp~")  # Unity ignores names ending in ~, so it never sees a half-written file
+    tmp.write_text(json.dumps(req, indent=1), encoding="utf-8")
+    tmp.replace(folder / HANDOFF_REQUEST)
+    return {**base, "ok": None, "state": "sent", "request_id": request_id, "note": HANDOFF_NOTE, "prefab": "", "error": "",
+            "importer_version": str(have)}
+
+
+def collect_unity_import(version: Any) -> dict[str, Any] | None:
+    """Pick up the open Editor's result for a hand-off: when metrics.unity_project_import is "sent" and its folder
+    holds a unity_report.json with the same request id, update the metrics to state "imported" or "failed" and return
+    the new value; None when there is nothing new (no hand-off, already collected, or the Editor has not run yet)."""
+    m = (getattr(version, "metrics", None) or {}).get("unity_project_import")
+    if not isinstance(m, dict) or m.get("state") != "sent" or not m.get("folder") or not m.get("request_id"):
+        return None
+    rp = Path(m["folder"]) / "unity_report.json"
+    if not rp.is_file():
+        return None
+    try:
+        report = json.loads(rp.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None  # still being written
+    if report.get("request_id") != m["request_id"]:
+        return None
+    ok = bool(report.get("ok"))
+    new = {**m, "ok": ok, "state": "imported" if ok else "failed", "prefab": report.get("prefab", "") if ok else "",
+           "error": "" if ok else (report.get("error") or "Unity reported a failure without a message")[:300],
+           "importer_version": report.get("importer_version"), "report": str(rp)}
+    new.pop("note", None)
+    library.update_metrics(version, unity_project_import=new)
+    return new
+
+
 def _input_glb(sc: StageContext) -> tuple[Path, str]:
     for key, stages in (("anim_glb", ("rig",)), ("glb", ("rig",)), ("glb", ("prep",)), ("glb", ("mesh",))):
         p = sc.lineage_file(key, stages)
@@ -682,6 +830,16 @@ async def judge(sc: StageContext) -> None:
         if u.get("ok"):
             checks += unity_checks(u, _is_humanoid(sc), rigged)
     sc.set_metrics(**quality.summarise(checks))
+    # A hand-off to an open Unity Editor finishes later; POST /api/versions/{id}/judge (mode metrics) picks it up.
+    picked = collect_unity_import(sc.version)
+    if picked is not None:
+        sc.set_metrics(unity_project_import=picked)
+        try:
+            dest = sc.dir / "unity_project_report.json"
+            shutil.copy2(picked["report"], dest)
+            sc.register("unity_project_report", dest)
+        except Exception:  # noqa: BLE001  (the metrics are what matters; the copy is a convenience)
+            pass
 
 
 async def _export(sc: StageContext, params: dict[str, Any]) -> None:
@@ -757,6 +915,15 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
         script_src = Path(sc.settings.unity_project) / "Assets" / "Editor" / "VgacImport.cs" if sc.settings.unity_project else None
         importer = sync_importer(script_src, editor_dir) if script_src else {"action": "no_source", "version": None, "previous": None}
         args, flags, _ = _unity_args(sc, params, name)  # the sandbox import already recorded any clips warning
+        unity_ok = bool(sc.settings.unity_exe) and Path(sc.settings.unity_exe).is_file()
+        if unity_ok and unity_project_open(proj):
+            # The Editor has the project open, so batch mode would be refused: hand the import to the open Editor.
+            sc.progress(0.97, f"Unity hand-off to the open project {proj.name}")
+            try:
+                sc.set_metrics(unity_project_import=handoff_to_editor(sc.dir, proj, name, args, flags, importer, version_id=sc.version.id))
+            except Exception as e:  # noqa: BLE001
+                sc.set_metrics(unity_project_import={"ok": False, "state": "failed", "project": str(proj), "error": str(e)[-500:], "importer": importer})
+            return
         sc.progress(0.97, f"Unity import into {proj.name}")
         # The importer always writes <input>/unity_report.json; the sandbox step already produced one, so move it
         # aside and read only a report this run wrote (B4 in docs/CODE-AUDIT.md).
