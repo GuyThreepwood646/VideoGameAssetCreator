@@ -48,8 +48,16 @@ tex_size = int(_common.opt("--tex", 2048))
 padding_px = int(_common.opt("--padding", max(4, tex_size // 256)))
 margin_px = int(_common.opt("--margin", max(8, tex_size // 128)))
 max_loss = float(_common.opt("--max-loss", 0.12))
+# The hair pass (stages/hair_detail.py) shares this relayout: its triangles' centres and the gain it wants. The face
+# keeps what it gets without the hair; the hair gets what still fits within --max-loss for the rest of the body.
+hair_json = _common.opt("--hair-points", None)
+hair_gain_target = float(_common.opt("--hair-gain", 1.0))
 with open(points_json) as f:
     points = json.load(f)
+hair_points = []
+if hair_json:
+    with open(hair_json) as f:
+        hair_points = json.load(f)
 with open(maps_json) as f:
     maps = {k: v for k, v in json.load(f).items() if v and os.path.isfile(v)}
 
@@ -63,23 +71,37 @@ mesh.select_set(True)
 bpy.context.view_layer.objects.active = mesh
 source = rebake.copy_object(mesh, "vgac_bake_source")
 
-# glTF (x, y, z) with Y up -> Blender (x, -z, y)
-kd = KDTree(len(points))
-for i, p in enumerate(points):
-    kd.insert(Vector((p[0], -p[2], p[1])), i)
-kd.balance()
+def tree(pts):
+    # glTF (x, y, z) with Y up -> Blender (x, -z, y)
+    kd = KDTree(max(1, len(pts)))
+    for i, p in enumerate(pts):
+        kd.insert(Vector((p[0], -p[2], p[1])), i)
+    kd.balance()
+    return kd
+
 
 bm = bmesh.new()
 bm.from_mesh(mesh.data)
 bm.faces.ensure_lookup_table()
 uv = bm.loops.layers.uv.active
 mw = mesh.matrix_world
-face_set = set()
-for f in bm.faces:
-    c = mw @ f.calc_center_median()
-    _, _, dist = kd.find(c)
-    if dist is not None and dist < 1e-4:
-        face_set.add(f.index)
+
+
+def faces_at(pts):
+    out = set()
+    if not pts:
+        return out
+    kd = tree(pts)
+    for f in bm.faces:
+        c = mw @ f.calc_center_median()
+        _, _, dist = kd.find(c)
+        if dist is not None and dist < 1e-4:
+            out.add(f.index)
+    return out
+
+
+face_set = faces_at(points)
+hair_set = faces_at(hair_points)
 
 
 def uv_key(loop):
@@ -111,6 +133,7 @@ for e in bm.edges:
             parent[rb] = ra
 island_of = [find(f.index) for f in bm.faces]
 face_islands = {island_of[i] for i in face_set}
+hair_islands = {island_of[i] for i in hair_set} - face_islands
 
 
 def uv_area(faces):
@@ -129,6 +152,9 @@ isl_faces = [f for f in bm.faces if island_of[f.index] in face_islands]
 isl_area = uv_area(isl_faces)
 face_area_before = uv_area([bm.faces[i] for i in face_set])
 share = isl_area / max(all_area, 1e-12)
+hair_isl_area = uv_area([f for f in bm.faces if island_of[f.index] in hair_islands])
+hair_area_before = uv_area([bm.faces[i] for i in hair_set])
+hair_only_before = uv_area([bm.faces[i] for i in hair_set if island_of[i] in hair_islands])
 
 original_uv = {(f.index, i): l[uv].uv.copy() for f in bm.faces for i, l in enumerate(f.loops)}
 bm.to_mesh(mesh.data)
@@ -139,9 +165,9 @@ bm.free()
 margin = max(1.0, padding_px / 2.0) / float(max(1, tex_size))
 
 
-def set_layout(k, pin_rest):
-    """Start from the original layout, scale every face island by k about its own centre, and pin (or unpin) the
-    UVs of every other island."""
+def set_layout(k, pin_rest, k_hair=1.0):
+    """Start from the original layout, scale every face island by k (and every hair island by k_hair) about its own
+    centre, and pin (or unpin) the UVs of every other island."""
     b = bmesh.new()
     b.from_mesh(mesh.data)
     b.faces.ensure_lookup_table()
@@ -150,14 +176,15 @@ def set_layout(k, pin_rest):
         for i, l in enumerate(f.loops):
             l[lay].uv = original_uv[(f.index, i)]
             l[lay].pin_uv = bool(pin_rest) and island_of[f.index] not in face_islands
-    for isl in face_islands:
+    for isl in list(face_islands) + (list(hair_islands) if k_hair != 1.0 else []):
+        kk = k if isl in face_islands else k_hair
         fs = [f for f in b.faces if island_of[f.index] == isl]
         loops = [l for f in fs for l in f.loops]
         cx = sum(l[lay].uv.x for l in loops) / len(loops)
         cy = sum(l[lay].uv.y for l in loops) / len(loops)
         for l in loops:
             u = l[lay].uv
-            l[lay].uv = Vector((cx + (u.x - cx) * k, cy + (u.y - cy) * k))
+            l[lay].uv = Vector((cx + (u.x - cx) * kk, cy + (u.y - cy) * kk))
     b.to_mesh(mesh.data)
     b.free()
     mesh.data.update()
@@ -315,6 +342,94 @@ if mode is None and gain_target > 1.0:
 if mode is None:
     k, mode = 1.0, "unchanged"
     set_layout(1.0, pin_rest=False)
+
+
+# 3. The hair (when the hair pass asked): with the face's layout as decided above, the hair islands are scaled up too
+#    and everything packed again. The face must keep at least 97 percent of the gain it had, and the rest (neither
+#    face nor hair) at least 1 - max_loss of its texels across; the hair scale is cut back until both hold (at most
+#    four packs). Otherwise the face's layout stays as it was.
+def measure_all():
+    b = bmesh.new()
+    b.from_mesh(mesh.data)
+    b.faces.ensure_lookup_table()
+    lay = b.loops.layers.uv.active
+    global uv
+    uv = lay
+    fa = uv_area([b.faces[i] for i in face_set])
+    ha = uv_area([b.faces[i] for i in hair_set if island_of[i] in hair_islands])
+    ra = uv_area([f for f in b.faces if island_of[f.index] not in face_islands and island_of[f.index] not in hair_islands])
+    b.free()
+    rest0 = all_area - isl_area - hair_isl_area
+    return (math.sqrt(fa / face_area_before) if face_area_before > 0 else 1.0,
+            math.sqrt(ha / hair_only_before) if hair_only_before > 0 else 1.0,
+            math.sqrt(ra / rest0) if rest0 > 0 else 1.0)
+
+
+def snapshot():
+    b = bmesh.new()
+    b.from_mesh(mesh.data)
+    b.faces.ensure_lookup_table()
+    lay = b.loops.layers.uv.active
+    s = {(f.index, i): l[lay].uv.copy() for f in b.faces for i, l in enumerate(f.loops)}
+    b.free()
+    return s
+
+
+def restore(s):
+    b = bmesh.new()
+    b.from_mesh(mesh.data)
+    b.faces.ensure_lookup_table()
+    lay = b.loops.layers.uv.active
+    for f in b.faces:
+        for i, l in enumerate(f.loops):
+            l[lay].uv = s[(f.index, i)]
+    b.to_mesh(mesh.data)
+    b.free()
+    mesh.data.update()
+
+
+hair_mode, k_hair, hair_try = "none", 1.0, []
+HAIR_PACKS = 3  # each pack takes about 10 s on a 20,000-triangle character
+if hair_islands and hair_gain_target > 1.0:
+    face_now, _, rest_now = measure_all()
+    phase1 = snapshot()
+    kh = hair_gain_target
+    # the packer shrinks everything to fit the bigger hair; the face's scale is raised by the same factor up front
+    # (from the islands' areas), so most layouts are right on the first pack
+    t_old = all_area - isl_area + isl_area * k * k
+    kf2 = k * math.sqrt((t_old + hair_isl_area * (kh * kh - 1.0)) / max(t_old, 1e-12)) if face_area_before > 0 else k
+    lo, hi = 1.0, None  # hair scales known to fit, and known not to
+    best_h = None  # (hair gain, kh, face scale, the layout)
+    for _ in range(HAIR_PACKS):
+        set_layout(kf2, pin_rest=False, k_hair=kh)
+        pack(scale=True)
+        gf, gh, rest = measure_all()
+        face_ok = gf >= 0.985 * face_now
+        ok = rest >= 1 - max_loss and face_ok
+        hair_try.append({"k": round(kh, 3), "k_face": round(kf2, 3), "face": round(gf, 3), "hair": round(gh, 3), "rest": round(rest, 3), "ok": ok})
+        print("FACEUV hair k", round(kh, 3), "face k", round(kf2, 3), "face", round(gf, 3), "hair", round(gh, 3), "rest", round(rest, 3), ok)
+        if ok and (best_h is None or gh > best_h[0]):
+            best_h = (gh, kh, kf2, snapshot())
+        if ok:
+            lo = kh
+            if gh >= 0.95 * hair_gain_target:
+                break
+        if not face_ok and rest >= 1 - max_loss and face_area_before > 0:
+            kf2 *= face_now / max(gf, 1e-6)  # the face first gets back what the bigger hair took; same hair scale again
+            continue
+        if not ok:
+            hi = kh
+        kh = 0.5 * (lo + hi) if hi is not None else kh * hair_gain_target / max(gh, 1e-6)
+        if hi is not None and hi - lo < 0.08:
+            break
+    if best_h is not None and best_h[0] > 1.05:
+        k_hair, hair_mode, k = best_h[1], "repack", best_h[2]
+        restore(best_h[3])  # the best layout as it was packed (no pack again)
+        if mode == "unchanged":
+            mode = "repack"
+    else:
+        hair_mode = "no_room"
+        restore(phase1)
 uv = None
 print("FACEUV islands", len(face_islands), "faces", len(face_set), "share", round(share, 5), "gain asked", gain_target,
       "mode", mode, "planned", round(g, 3), "k", round(k, 3))
@@ -337,9 +452,21 @@ all_after = uv_area(bm.faces)
 face_area_after = uv_area([bm.faces[i] for i in face_set])
 rest_before = all_area - isl_area
 rest_after = uv_area([f for f in bm.faces if island_of[f.index] not in face_islands])
+hair_area_after = uv_area([bm.faces[i] for i in hair_set])
 bm.free()
-gain = math.sqrt(face_area_after / max(face_area_before, 1e-12))
+gain = math.sqrt(face_area_after / max(face_area_before, 1e-12)) if face_area_before > 0 else 1.0
 rest_scale = math.sqrt(rest_after / max(rest_before, 1e-12)) if rest_before > 0 else 1.0
+hair_record = {}
+if hair_set:
+    _, _, rest_excl = measure_all()
+    uv = None
+    hair_record = {"hair_faces": len(hair_set), "hair_islands": len(hair_islands), "hair_gain_asked": hair_gain_target,
+                   "hair_mode": hair_mode, "hair_island_scale": round(k_hair, 4),
+                   "hair_gain": round(math.sqrt(hair_area_after / max(hair_area_before, 1e-12)), 3),
+                   "hair_atlas_share_before": round(hair_area_before, 5), "hair_atlas_share_after": round(hair_area_after, 5),
+                   "rest_scale_without_hair": round(rest_excl, 4), "hair_tries": hair_try}
+    # with the hair in, "the rest" is everything but the face and the hair
+    rest_scale = rest_excl if hair_mode == "repack" else rest_scale
 
 t0 = time.time()
 rebake.triangulate(mesh)
@@ -351,7 +478,7 @@ report = {
     "faces": len(face_set), "islands": len(face_islands), "face_share_before": round(share, 5),
     "gain_asked": gain_target, "layout_mode": mode, "gain_planned": round(g, 3), "island_scale": round(k, 4), "gain": round(gain, 3),
     "rest_scale": round(rest_scale, 4), "uv_area_before": round(all_area, 5), "uv_area_after": round(all_after, 5),
-    "glb": dst, **bake,
+    "glb": dst, **hair_record, **bake,
 }
 with open(os.path.splitext(dst)[0] + "_report.json", "w") as f:
     json.dump(report, f, indent=1)

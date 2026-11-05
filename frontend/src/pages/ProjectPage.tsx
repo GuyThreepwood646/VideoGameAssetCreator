@@ -7,6 +7,7 @@ import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } fro
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { hairNotes } from '../hairNotes'
 import { presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
@@ -303,6 +304,12 @@ function CreateAssetForm({ project }: { project: Project }) {
           Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
         </div>
       )}
+      {hairNotes(prompt, style, category).map((n) => (
+        <div className="muted small hair-note" key={n.id} data-note={n.id}>
+          Good to know: {n.text}
+          <Info term="term.hair_pictures" />
+        </div>
+      ))}
       {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
       {!fromPicture && (
         <div className="examples">

@@ -55,7 +55,7 @@ from PIL import Image
 
 from .. import imaging, quality, reference
 from ..blender import gridfit
-from . import face_detail
+from . import face_detail, hair_detail
 from .base import StageContext
 from .concept import stage_recipe
 
@@ -223,12 +223,23 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
         sc.set_params(face_detail=params.get("face_detail") is not False, face_strength=face_detail.strength_of(params),
                       face_density=face_detail.density_choice(params), face_closeup=face_detail.closeup_on(params))
-        fd = await face_detail.run(sc, out, current, rec, params)
+        # The hair detail pass (stages/hair_detail.py): the hair is found first, so the face pass's one relayout can give
+        # it more texels too; it is painted after the face, on the final layout, and never writes the face's texels.
+        sc.set_params(hair_detail=hair_detail.on(params), hair_strength=hair_detail.strength_of(params))
+        hf = await hair_detail.find(sc, out, current, rec, params)
+        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"))
         for key, p in fd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**fd["metrics"])
         if fd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex))
+        after_face = {**current, **{k: Path(p) for k, p in fd["files"].items() if k in TEXTURE_KEYS}}
+        hd = await hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout"))
+        for key, p in hd["files"].items():
+            sc.register(key, p)
+        sc.set_metrics(**hd["metrics"])
+        if hd["relayout"]:
+            sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "hair detail"))
         if int(fd.get("base_color_size") or 0) > tex:
             # "High" face detail on a 4096 platform: the base colour ships at 4096, the other maps stay at the atlas size
             sc.set_metrics(base_color_size=int(fd["base_color_size"]), texture_size_shipped=int(fd["base_color_size"]))
@@ -405,9 +416,9 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     return {"metrics": metrics, "files": files}
 
 
-def layout_measures(final_glb: Path, tex: int) -> dict[str, Any]:
-    """The texture layout measures of texture_pass, again, after the face detail pass laid the texture out anew and
-    baked every map onto the final mesh (so the maps match it by construction)."""
+def layout_measures(final_glb: Path, tex: int, reason: str = "face detail") -> dict[str, Any]:
+    """The texture layout measures of texture_pass, again, after the face (or hair) detail pass laid the texture out
+    anew and baked every map onto the final mesh (so the maps match it by construction)."""
     uvf = imaging.load_uv_mesh(final_glb)
     if uvf is None:
         return {}
@@ -416,7 +427,7 @@ def layout_measures(final_glb: Path, tex: int) -> dict[str, Any]:
     h = imaging.uv_hash(uvf)
     return {"atlas_used": round(imaging.atlas_used(labels), 4), "texture_padding_px": imaging.gutter_px(labels, pad // 2 + 2),
             "texture_padding_target_px": pad, "bake_mesh_hash": h, "export_mesh_hash": h, "bake_match": 1.0, "rebaked": True,
-            "rebake_reason": "face detail"}
+            "rebake_reason": reason}
 
 
 def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path], files: dict[str, Path], new_base: Any, size: int,
@@ -603,6 +614,7 @@ async def judge(sc: StageContext) -> None:
     checks += surface_checks(m, sc.version.params)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
+    checks += hair_detail.hair_checks(m)
     sc.set_metrics(**quality.summarise(checks))
 
 
