@@ -5,7 +5,7 @@
 import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
-import { mockAddItem, mockApplied, mockDetect, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
+import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
 import { addedOf, changeMoves, characterMoves, moveLibrary, mockReadMoveFile, myMoveFiles, removedOf } from './moves'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
@@ -707,7 +707,7 @@ on('POST', '/api/projects/:id/style-from-image', (m, body) => {
       version_id: null,
       status: 'queued',
       progress: 0,
-      message: 'Waiting for the review engine',
+      message: 'Waiting for the vision model',
       created_at: nowIso(),
       started_at: null,
       finished_at: null,
@@ -737,7 +737,7 @@ on('POST', '/api/projects/:id/style-from-image', (m, body) => {
       }
       broadcast({ type: 'job', job: clone(job) })
     }, 3500 / simulationSpeed)
-    return { ...pal, job: clone(job), needs_review_engine: false, message: 'The review engine is describing the style. It takes about a minute.' }
+    return { ...pal, job: clone(job), needs_review_engine: false, message: 'The vision model is describing the style. It takes about a minute.' }
   })
 })
 on('POST', '/api/versions/:vid/adjust', (m, body) => {
@@ -1322,6 +1322,16 @@ on('POST', '/api/assets/:id/items/apply', (m) => {
   return { job: clone(job), version: clone(nv) }
 })
 on('POST', '/api/assets/:id/items/build', (m) => mockPanel(findAsset(m.groups!.id)))
+on('POST', '/api/assets/:id/attachments/:att/fit', (m) => {
+  const a = findAsset(m.groups!.id)
+  const ex = a.stages.export?.find((v) => v.id === a.selected.export && v.status === 'done')
+  if (!ex) throw new HttpError(409, 'finish the character first')
+  const at = itemsErr(() => mockFit(a, m.groups!.att))
+  const nv = newVersion(a, 'export', ex.id, { ...ex.params })
+  const job = startJob(a, nv, 'export.adjust')
+  mockApplied(a)
+  return { job: clone(job), version: clone(nv), attachment: clone(at) }
+})
 
 on('GET', '/api/jobs', (_m, _b, query) => {
   let list = store.jobs

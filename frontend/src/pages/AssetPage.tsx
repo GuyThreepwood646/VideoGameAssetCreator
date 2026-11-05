@@ -344,7 +344,7 @@ export default function AssetPage() {
         </nav>
         <div className="rail-prompt">
           <div className="field-label">
-            Description
+            Prompt (description)
             <Info term="term.prompt" />
           </div>
           <div className="small">{asset.prompt}</div>

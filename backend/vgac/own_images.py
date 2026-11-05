@@ -197,7 +197,7 @@ class StyleIn(BaseModel):
     colors: int = 8
 
 
-NEEDS_REVIEW_ENGINE = ("Describing the style needs the review engine (the local picture reader on a graphics card), "
+NEEDS_REVIEW_ENGINE = ("Describing the style needs the vision model (review engine), which reads pictures on a graphics card here, "
                        "and none is on right now. The colours are ready; turn a card on and try again for the words.")
 
 
@@ -221,5 +221,5 @@ def style_from_image(pid: str, body: StyleIn, db: Session = Depends(get_session)
     payload = {"task": "style_from_image", "project_id": pid, "image": library.rel_path(path, get_settings()),
                "palette": pal["palette"], "swatches": pal["swatches"]}
     job = q.submit(instance, "concept.judge", None, None, payload)
-    out.update(job=job_to_dict(job), message="The review engine is describing the style. It takes about a minute.")
+    out.update(job=job_to_dict(job), message="The vision model is describing the style. It takes about a minute.")
     return out
