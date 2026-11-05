@@ -427,6 +427,16 @@ def _user_addons() -> dict[str, dict[str, Any]]:
     return {a["id"]: a for a in items if a["id"] not in builtin}
 
 
+def _mine_file_present(a: dict[str, Any]) -> bool:
+    """Whether a user add-on's file is still in VGAC/mine/ (the only folder this checks)."""
+    from . import user_addons
+
+    try:
+        return (user_addons.mine_dir() / str(a.get("file_name") or "")).is_file() and bool(a.get("file_name"))
+    except (OSError, ValueError):
+        return False
+
+
 def addons() -> list[dict[str, Any]]:
     return list(_data()["addons"].values()) + list(_user_addons().values())
 
@@ -527,6 +537,11 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
             return
         if model not in (a.get("base_models") or []):
             ignored.append({"id": aid, "reason": f"does not work with {model_label(model) or model}", "source": source})
+            picked.pop(aid, None)
+            return
+        if a.get("mine") and name != "off" and not _mine_file_present(a):
+            # Never send ComfyUI a file it does not have: its "not in list" error would name every LoRA file.
+            ignored.append({"id": aid, "reason": "its file is no longer in the add-on folder", "source": source})
             picked.pop(aid, None)
             return
         if name == "off":

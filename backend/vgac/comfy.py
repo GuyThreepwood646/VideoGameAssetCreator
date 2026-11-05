@@ -9,14 +9,44 @@ caller can inspect the exception type (SkinToken raises AssertionError for rigid
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
+import re
 import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
+
+
+_LIST_TAIL = re.compile(r"\s+not in (?:\[|\().*$", re.S)
+_LIST_ANYWHERE = re.compile(r"not in (?:\[|\().*?(?:\]|\))(?=[\"',}\s]|$)", re.S)
+
+
+def scrub_node_errors(obj: Any) -> Any:
+    """A copy of ComfyUI's validation errors without the lists of installed files. "Value not in list" carries the
+    whole folder listing in `details` and in `extra_info.input_config`; only the input name and the value asked for
+    are kept."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k == "input_config":
+                continue
+            if k == "details" and isinstance(v, str):
+                out[k] = _LIST_TAIL.sub(" is not one of the installed files", v)
+            else:
+                out[k] = scrub_node_errors(v)
+        return out
+    if isinstance(obj, list):
+        return [scrub_node_errors(x) for x in obj]
+    return obj
+
+
+def scrub_error_text(text: str) -> str:
+    """The same for a reply that could not be read as JSON."""
+    return _LIST_ANYWHERE.sub("not one of the installed files", text)
 
 
 class ComfyError(RuntimeError):
@@ -164,14 +194,20 @@ class ComfyClient:
             body["client_id"] = client_id
         r = await self._client().post("/prompt", json=body)
         if r.status_code >= 400:
+            # Never pass the reply on verbatim: a "Value not in list" error lists every file in a model folder.
             try:
-                data = r.json()
+                data = scrub_node_errors(r.json())
+                text = json.dumps(data)
             except Exception:
                 data = {}
-            raise ComfyError(f"/prompt returned {r.status_code}: {r.text[:2000]}", node_errors=data.get("node_errors") or {})
+                text = scrub_error_text(r.text)
+            if not isinstance(data, dict):
+                data = {}
+            raise ComfyError(f"/prompt returned {r.status_code}: {text[:2000]}", node_errors=data.get("node_errors") or {})
         data = r.json()
         if data.get("node_errors"):
-            raise ComfyError("node_errors: " + str(data["node_errors"])[:4000], node_errors=data["node_errors"])
+            errors = scrub_node_errors(data["node_errors"])
+            raise ComfyError("node_errors: " + str(errors)[:4000], node_errors=errors)
         prompt_id = data.get("prompt_id")
         if not prompt_id:
             raise ComfyError(f"/prompt did not return a prompt_id: {data}")
