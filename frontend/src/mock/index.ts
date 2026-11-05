@@ -3,7 +3,7 @@
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
 import { GPU_KINDS, setLibraryResolver, STAGES, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
-import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, stages, store, styles, uid } from './data'
+import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
 type Route = { method: string; re: RegExp; handler: Handler }
@@ -353,6 +353,7 @@ on('GET', '/api/health', () => ({
   },
 }))
 on('GET', '/api/gpus', () => gpuList())
+on('GET', '/api/setup', () => setupReport())
 on('PUT', '/api/gpus/:instance', (m, body) => {
   const name = m.groups!.instance
   if (name !== 'a' && name !== 'b') throw new HttpError(404, `unknown graphics card '${name}'`)
