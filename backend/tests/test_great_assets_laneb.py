@@ -49,6 +49,15 @@ SAMPLES = {
     "controller_ready": ((True, True), (False, True)),
     "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
+    "collider_triangles": ((236, 255), (300, 255)),
+    "collider_count": ((3, 8), (12, 8)),
+    "openings_clear": ((0, 0), (1, 0)),
+    "bake_matches": ((1.0, 0.99), (0.45, 0.99)),
+    "texture_padding": ((8, 8), (1, 8)),
+    "atlas_used": ((0.57, 0.5), (0.28, 0.5)),
+    "baked_light": ((0.1, 0.2), (0.4, 0.2)),
+    "albedo_range": ((0.004, 0.01), (0.18, 0.01)),
+    "metal_mixed": ((0.02, 0.05), (0.61, 0.05)),
 }
 
 

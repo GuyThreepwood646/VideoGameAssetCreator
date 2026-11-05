@@ -2,6 +2,9 @@
 
 bakeoff/convert.py node for node. RemeshMesh takes dotted sub-inputs "sign_mode.fill" and "sign_mode.qef".
 Output nodes: glb (SaveGLB) and SaveImage nodes s_base, s_met, s_rough, s_nrm, s_ao, s_in.
+
+padding (G03) is UnwrapMesh's texel gap between charts; the node accepts 0 to 16. The bake nodes have no margin input;
+the mesh stage dilates the downloaded maps instead (imaging.dilate).
 """
 
 from __future__ import annotations
@@ -11,8 +14,11 @@ from typing import Any
 IMAGE_NODES = {"s_base": "base_color", "s_met": "metallic", "s_rough": "roughness", "s_nrm": "normal", "s_ao": "ao", "s_in": "input"}
 
 
+UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
+
+
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
-                  remesh: bool = True) -> dict[str, Any]:
+                  remesh: bool = True, padding: int = 1) -> dict[str, Any]:
     g: dict[str, Any] = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
@@ -52,7 +58,7 @@ def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: 
     g.update({
         "dec": {"class_type": "DecimateMesh", "inputs": {"mesh": [high, 0], "target_face_count": target_faces, "placement_mode": "midpoint"}},
         "sm": {"class_type": "MeshSmoothNormals", "inputs": {"mesh": ["dec", 0], "crease_angle": 180.0}},
-        "unwrap": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["sm", 0], "segmenter": "pec", "resolution": tex, "padding": 1, "weld_distance": 0.0002}},
+        "unwrap": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["sm", 0], "segmenter": "pec", "resolution": tex, "padding": max(0, min(UNWRAP_PADDING_MAX, int(padding))), "weld_distance": 0.0002}},
         "bake": {"class_type": "BakeTextureFromVoxel", "inputs": {"mesh": ["unwrap", 0], "voxel_colors": ["dtex", 0], "reference_mesh": ["dshape", 0], "texture_size": tex}},
         "nrm": {"class_type": "BakeNormalMapFromMesh", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": tex, "cage_distance": 0.05, "ignore_backfaces": True}},
         "ao": {"class_type": "BakeAmbientOcclusion", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": max(512, tex // 2), "samples": 64, "max_distance": 0.71, "strength": 1.0, "bias": 0.01}},

@@ -2,7 +2,15 @@
 
 Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8] [--size-axis height|horizontal|longest]
      [--yaw 0] [--symmetric] [--pivot base|center] [--smooth-angle 60] [--budget N]
+     [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never]
      (--height H is the old form of --size H --size-axis height)
+
+Re-bake (G05, rebake.py): with --maps (a JSON file {key: png} of the mesh stage's base_color, metallic, roughness,
+normal and ao), a copy of the mesh is kept as the bake source after it is turned, scaled, moved and (when asked)
+symmetrized. When the surface then changes (symmetrize, or the budget decimation) or --rebake always, every map is
+baked again from that copy onto the final mesh and written next to <out> as <key>.png; after symmetrize the texture
+layout is first re-packed so the half of the atlas symmetrize leaves empty is used again. The report records
+rebaked, rebake_reason and rebake_seconds.
 
 Does, in order: import; join meshes; apply transforms; turn about the up axis by --yaw degrees (counter-clockwise seen
 from above, so the concept's front ends up facing Blender -Y, which is +Z in glTF and Unity); scale uniformly so the
@@ -21,6 +29,7 @@ import bpy
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
+import rebake  # noqa: E402
 from mathutils import Vector
 
 argv = _common.after_double_dash()
@@ -35,6 +44,15 @@ yaw = float(_common.opt("--yaw", 0.0)) % 360
 symmetric = _common.flag("--symmetric")
 pivot = _common.opt("--pivot", "base")
 smooth_angle = float(_common.opt("--smooth-angle", 60.0))
+maps_json = _common.opt("--maps", None)
+tex_size = int(_common.opt("--tex", 2048))
+padding_px = int(_common.opt("--padding", max(4, tex_size // 256)))
+margin_px = int(_common.opt("--margin", max(8, tex_size // 128)))
+rebake_mode = _common.opt("--rebake", "auto")
+maps = {}
+if maps_json and os.path.isfile(maps_json):
+    with open(maps_json) as f:
+        maps = {k: v for k, v in json.load(f).items() if v and os.path.isfile(v)}
 os.makedirs(os.path.dirname(dst), exist_ok=True)
 
 _common.open_glb(src)
@@ -120,13 +138,25 @@ if symmetric:
     bpy.ops.mesh.normals_make_consistent(inside=False)
     bpy.ops.object.mode_set(mode="OBJECT")
 
+# The bake source: the mesh as the 3D builder painted it, turned, scaled and moved like the final mesh and, when
+# symmetrized, already mirrored (its mirrored half samples the kept half's texels, so the colours and the bumps match
+# the symmetric shape exactly instead of being fetched from the original, lopsided surface).
+bake_source = rebake.copy_object(mesh, "vgac_bake_source") if maps and rebake_mode != "never" else None
+
 # Triangle budget: symmetrize and welding can push the count over the platform budget; decimate back to it.
 budget = int(_common.opt("--budget", 0))
 mesh.data.calc_loop_triangles()
-if budget and len(mesh.data.loop_triangles) > budget:
+triangles_before_budget = len(mesh.data.loop_triangles)
+decimated = bool(budget and len(mesh.data.loop_triangles) > budget)
+if decimated:
     mod = mesh.modifiers.new("budget", "DECIMATE")
     mod.ratio = budget / len(mesh.data.loop_triangles) * 0.995
     mod.use_collapse_triangulate = True
+    if symmetric:
+        # Keep the mirror plane: collapses across it leave faces straddling x = 0 whose UVs fold over themselves,
+        # and the re-bake then shows a bright or dark patch along the centre line (seen on the knight's nose).
+        mod.use_symmetry = True
+        mod.symmetry_axis = "X"
     bpy.ops.object.modifier_apply(modifier="budget")
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
@@ -147,12 +177,28 @@ bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.mesh.normals_make_consistent(inside=False)
 bpy.ops.object.mode_set(mode="OBJECT")
 
+reasons = [r for r, on in (("symmetrize", symmetric), ("decimate", decimated), ("asked", rebake_mode == "always")) if on]
+if bake_source is not None and reasons:
+    rebake.triangulate(mesh)  # before the auto-smooth modifier, so the bake and the export see the same triangles
+
 # Smooth shading, split only at hard edges above the crease angle.
+bpy.ops.object.select_all(action="DESELECT")
+mesh.select_set(True)
+bpy.context.view_layer.objects.active = mesh
 bpy.ops.object.shade_smooth()
 try:
     bpy.ops.object.shade_auto_smooth(angle=math.radians(smooth_angle))
 except Exception:
     pass
+
+# Re-bake (G05) when the surface the maps were baked on changed, or when asked.
+bake_report = {"rebaked": False, "rebake_reason": None, "rebake_seconds": 0.0}
+if bake_source is not None and reasons:
+    bake_report = rebake.rebake(bake_source, mesh, maps, os.path.dirname(dst), tex_size, padding_px, margin_px,
+                                repack=symmetric)
+    bake_report["rebake_reason"] = ", ".join(reasons)
+elif bake_source is not None:
+    bpy.data.objects.remove(bake_source, do_unlink=True)
 
 mesh.data.calc_loop_triangles()
 bm = bmesh.new()
@@ -182,6 +228,10 @@ report = {
     "dims_m": [hi.x - lo.x, hi.y - lo.y, hi.z - lo.z],
     "min_m": [lo.x, lo.y, lo.z],
     "max_m": [hi.x, hi.y, hi.z],
+    "decimated": decimated,
+    "triangles_before_budget": triangles_before_budget,
+    "texture_size": tex_size,
+    **bake_report,
 }
 
 bpy.ops.object.select_all(action="SELECT")
