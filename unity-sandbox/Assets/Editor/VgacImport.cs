@@ -2,7 +2,9 @@
 // Run: Unity.exe -batchmode -nographics -quit -projectPath <sandbox> -executeMethod VgacImport.Run -vgacInput <dir> -vgacName <name>
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]
 //      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
-// Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional <name>_collider, optional armature), textures
+//      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
+// Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
+// <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
 // Writes <dir>/unity_report.json.
 //
@@ -21,7 +23,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "4";
+    public const string Version = "5";
 
     [Serializable]
     class ClipInfo
@@ -72,7 +74,39 @@ public static class VgacImport
         public int hitboxCount;
         public string movementShape = "";      // upright | along | box | none; "" when no hit-box file was given
         public float hitboxMaxBoneError;       // metres: worst bone-position mismatch between the file and the prefab
+        public int colliderCount;              // collision components under the Colliders child (G16)
+        public List<string> colliderKinds = new List<string>();
+        public int colliderTrianglesMax;       // most triangles in one convex MeshCollider (Unity's cap is 255)
+        public float colliderBoundsError;      // metres between the shapes' combined box and the LOD0 renderer's box
+        public bool secondaryUV;               // lightmap UVs generated on import (G17)
+        public bool secondaryUVOnMesh;         // LOD0's mesh really has a UV1 channel after import
+        public string secondaryUVSettings = "";
+        public List<string> staticFlags = new List<string>();
+        public string lodFadeMode = "";        // G20: CrossFade for foliage
+        public float lodFadeWidth;
     }
+
+    // colliders.json (backend/vgac/stages/export.py _write_colliders): the kind of each collision part.
+    [Serializable]
+    class ColPart
+    {
+        public string name = "", kind = "";
+        public int triangles, vertices;
+    }
+
+    [Serializable]
+    class ColDoc
+    {
+        public string chosen = "";
+        public List<ColPart> parts = new List<ColPart>();
+    }
+
+    // G17: categories that get lightmap UVs (environment also gets static flags); G20: categories that cross-fade.
+    static readonly string[] LightmapCategories = { "environment", "prop_rigid" };
+    static readonly string[] CrossFadeCategories = { "foliage" };
+    const float CrossFadeWidth = 0.25f;
+
+    static bool IsColliderName(string n) => n.Contains("_collider");
 
     // hitboxes.json (backend/vgac/blender/hitboxes.py to_json): glTF model space, Y up, metres.
     [Serializable]
@@ -113,6 +147,7 @@ public static class VgacImport
         var input = Arg("-vgacInput");
         var name = Arg("-vgacName");
         var humanoid = Flag("-vgacHumanoid");
+        var category = Arg("-vgacCategory") ?? "";
         float speedScale = 1f;
         if (Arg("-vgacSpeedScale") != null) float.TryParse(Arg("-vgacSpeedScale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out speedScale);
         if (speedScale <= 0.01f) speedScale = 1f;
@@ -149,7 +184,24 @@ public static class VgacImport
             importer.importAnimation = true;
             importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
             importer.clipAnimations = new ModelImporterClipAnimation[0];
+            // G17: lightmap UVs (UV1) for scenery and still props. Unity's defaults for the unwrap, with the margin
+            // calculated from the lightmap resolution (40 texels per unit, objects at scale 1) so charts do not bleed.
+            importer.generateSecondaryUV = LightmapCategories.Contains(category);
+            if (importer.generateSecondaryUV)
+            {
+                importer.secondaryUVHardAngle = 88f;
+                importer.secondaryUVAngleDistortion = 8f;
+                importer.secondaryUVAreaDistortion = 15f;
+                importer.secondaryUVMarginMethod = ModelImporterSecondaryUVMarginMethod.Calculate;
+                importer.secondaryUVMinLightmapResolution = 40f;
+                importer.secondaryUVMinObjectScale = 1f;
+            }
             importer.SaveAndReimport();
+            report.secondaryUV = importer.generateSecondaryUV;
+            if (report.secondaryUV)
+                report.secondaryUVSettings = "margin " + importer.secondaryUVMarginMethod + " (min lightmap resolution " + importer.secondaryUVMinLightmapResolution
+                    + ", min object scale " + importer.secondaryUVMinObjectScale + "), hard angle " + importer.secondaryUVHardAngle
+                    + ", angle distortion " + importer.secondaryUVAngleDistortion + ", area distortion " + importer.secondaryUVAreaDistortion;
 
             if (humanoid)
             {
@@ -168,6 +220,14 @@ public static class VgacImport
             instance.name = name;
             var renderers = instance.GetComponentsInChildren<Renderer>(true);
             foreach (var r in renderers) r.sharedMaterial = mat;
+            if (report.secondaryUV)
+            {
+                var r0 = renderers.FirstOrDefault(r => r.name.EndsWith("_LOD0")) ?? renderers.FirstOrDefault();
+                var m0 = r0 is SkinnedMeshRenderer s0 ? s0.sharedMesh : r0?.GetComponent<MeshFilter>()?.sharedMesh;
+                var uv1 = new List<Vector2>();
+                if (m0 != null) m0.GetUVs(1, uv1);
+                report.secondaryUVOnMesh = uv1.Count > 0;
+            }
 
             // Hit boxes and the body shape for moving (G34): a rigged character gets trigger shapes on its bones and a
             // simple body shape on the root, which replaces the convex hull (a hull does not follow the animation).
@@ -177,25 +237,21 @@ public static class VgacImport
             if (hitPath != null && File.Exists(hitPath) && rigged)
                 bodyShape = AddHitboxes(instance, hitPath, Arg("-vgacMovementShape") ?? "auto", ParseFloat(Arg("-vgacScale"), 1f), report);
 
-            // Collider: convex MeshCollider from <name>_collider, renderer disabled. Props keep it as their collider.
-            var colObj = instance.GetComponentsInChildren<MeshFilter>(true).FirstOrDefault(m => m.name.EndsWith("_collider"));
-            if (colObj != null)
+            // Collision (G16): one component per collision mesh under a Colliders child of the root, of the kind
+            // colliders.json names: box, sphere and capsule become primitive colliders fitted to the mesh's bounds; hull
+            // and cylinder a convex MeshCollider; mesh (static scenery) a non-convex MeshCollider. The source meshes stay
+            // in the model, switched off. A rigged character with a body shape for moving (G34) gets none of them.
+            var colMeshes = instance.GetComponentsInChildren<MeshFilter>(true).Where(m => IsColliderName(m.name)).OrderBy(m => m.name).ToList();
+            if (colMeshes.Count > 0)
             {
-                if (!bodyShape)
-                {
-                    var mc = instance.AddComponent<MeshCollider>();
-                    mc.sharedMesh = colObj.sharedMesh;
-                    mc.convex = true;
-                    report.colliderVertices = colObj.sharedMesh.vertexCount;
-                }
-                var cr = colObj.GetComponent<Renderer>();
-                if (cr) cr.enabled = false;
+                if (!bodyShape) AddColliders(instance, colMeshes, ReadColliders(Arg("-vgacColliders"), report), report);
+                foreach (var mf in colMeshes) mf.gameObject.SetActive(false);
             }
             else if (!bodyShape) report.warnings.Add("no collider mesh");
 
             // LODGroup: Unity creates it from _LODn names; verify, else build one.
             var lodGroup = instance.GetComponentInChildren<LODGroup>();
-            var lodRenderers = renderers.Where(r => r.name.Contains("_LOD")).OrderBy(r => r.name).ToList();
+            var lodRenderers = renderers.Where(r => r.name.Contains("_LOD") && !IsColliderName(r.name)).OrderBy(r => r.name).ToList();
             if (lodGroup == null && lodRenderers.Count > 0)
             {
                 lodGroup = instance.AddComponent<LODGroup>();
@@ -223,6 +279,27 @@ public static class VgacImport
                 }
             }
             else report.warnings.Add("no LODGroup");
+            // G20 part one: foliage fades between detail levels instead of popping. Not time-animated: each level
+            // fades over the last quarter of its screen-height range.
+            if (lodGroup != null && CrossFadeCategories.Contains(category))
+            {
+                lodGroup.fadeMode = LODFadeMode.CrossFade;
+                lodGroup.animateCrossFading = false;
+                var fl = lodGroup.GetLODs();
+                for (int i = 0; i < fl.Length; i++) fl[i].fadeTransitionWidth = CrossFadeWidth;
+                lodGroup.SetLODs(fl);
+                report.lodFadeWidth = CrossFadeWidth;
+            }
+            if (lodGroup != null) report.lodFadeMode = lodGroup.fadeMode.ToString();
+
+            // G17: environment pieces are static for baked light and batching.
+            if (category == "environment")
+            {
+                var flags = StaticEditorFlags.ContributeGI | StaticEditorFlags.BatchingStatic;
+                foreach (var t in instance.GetComponentsInChildren<Transform>(true)) GameObjectUtility.SetStaticEditorFlags(t.gameObject, flags);
+                report.staticFlags.Add("ContributeGI");
+                report.staticFlags.Add("BatchingStatic");
+            }
 
             // Rig and avatar. In-place cycles with root motion off: the game moves the object, the clips animate it.
             var animator = instance.GetComponent<Animator>() ?? instance.AddComponent<Animator>();
@@ -290,6 +367,72 @@ public static class VgacImport
         File.WriteAllText(Path.Combine(input ?? ".", "unity_report.json"), json);
         Debug.Log("VGAC_REPORT " + json);
         if (!report.ok) EditorApplication.Exit(1);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Collision shapes (G16, G35)
+
+    static ColDoc ReadColliders(string path, Report report)
+    {
+        if (path == null || !File.Exists(path)) return null;
+        try { return JsonUtility.FromJson<ColDoc>(File.ReadAllText(path)); }
+        catch (Exception e) { report.warnings.Add("colliders.json not readable: " + e.Message); return null; }
+    }
+
+    static void AddColliders(GameObject root, List<MeshFilter> meshes, ColDoc doc, Report report)
+    {
+        var holder = new GameObject("Colliders");
+        holder.transform.SetParent(root.transform, false);
+        foreach (var mf in meshes)
+        {
+            var mesh = mf.sharedMesh;
+            if (mesh == null) continue;
+            var part = doc?.parts?.FirstOrDefault(p => p.name == mf.name);
+            var kind = part != null && !string.IsNullOrEmpty(part.kind) ? part.kind : (mf.name.EndsWith("_collider_mesh") ? "mesh" : "hull");
+            var go = new GameObject(mf.name);
+            go.transform.SetParent(holder.transform, false);
+            go.transform.SetPositionAndRotation(mf.transform.position, mf.transform.rotation);
+            var ls = mf.transform.lossyScale; var hs = holder.transform.lossyScale;
+            go.transform.localScale = new Vector3(ls.x / Mathf.Max(1e-6f, hs.x), ls.y / Mathf.Max(1e-6f, hs.y), ls.z / Mathf.Max(1e-6f, hs.z));
+            var b = mesh.bounds;
+            if (kind == "box")
+            {
+                var c = go.AddComponent<BoxCollider>(); c.center = b.center; c.size = b.size;
+            }
+            else if (kind == "sphere")
+            {
+                var c = go.AddComponent<SphereCollider>(); c.center = b.center; c.radius = Mathf.Max(b.extents.x, Mathf.Max(b.extents.y, b.extents.z));
+            }
+            else if (kind == "capsule")
+            {
+                var s = b.size;
+                int dir = s.x >= s.y && s.x >= s.z ? 0 : (s.y >= s.z ? 1 : 2);
+                var c = go.AddComponent<CapsuleCollider>();
+                c.center = b.center; c.direction = dir; c.height = s[dir];
+                c.radius = Mathf.Max(s[(dir + 1) % 3], s[(dir + 2) % 3]) / 2f;
+            }
+            else
+            {
+                var c = go.AddComponent<MeshCollider>();
+                c.sharedMesh = mesh;
+                c.convex = kind != "mesh";
+                if (c.convex) report.colliderTrianglesMax = Math.Max(report.colliderTrianglesMax, mesh.triangles.Length / 3);
+            }
+            report.colliderVertices += mesh.vertexCount;
+            report.colliderCount++;
+            if (!report.colliderKinds.Contains(kind)) report.colliderKinds.Add(kind);
+        }
+        // Check: the shapes together should span the drawn model (metres, worst side of the two boxes).
+        Physics.SyncTransforms();
+        var cols = holder.GetComponentsInChildren<Collider>(true);
+        var lod0 = root.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r.name.EndsWith("_LOD0") || r.name == root.name);
+        if (cols.Length > 0 && lod0 != null)
+        {
+            var cb = cols[0].bounds;
+            foreach (var c in cols) cb.Encapsulate(c.bounds);
+            var rb = lod0.bounds;
+            report.colliderBoundsError = Mathf.Max((cb.min - rb.min).magnitude, (cb.max - rb.max).magnitude);
+        }
     }
 
     static float ParseFloat(string s, float fallback) =>
