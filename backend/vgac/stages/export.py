@@ -8,6 +8,7 @@ Textures come from the prep stage in the lineage (the mesh stage when prep has n
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
@@ -17,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, library, quality
+from .. import colliders, guidance, library, quality
 from ..db import _iso, utcnow
 from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
@@ -38,6 +39,20 @@ _PACK_DEFAULTS = {"metallic": 0, "roughness": 128, "ao": 255}
 
 
 LOD_SCREEN_HEIGHTS = [0.6, 0.3, 0.12, 0.03]
+
+# G17 (plan 3.8 A5): the Unity importer generates lightmap UVs (UV1) for these categories; environment pieces also get
+# the static flags Contribute GI and Batching Static. The settings are the ones VgacImport.cs uses (the plan gives
+# none; these are Unity's defaults with the margin calculated from the lightmap resolution, which avoids bleeding).
+LIGHTMAP_CATEGORIES = ("environment", "prop_rigid")
+LIGHTMAP_SETTINGS = {"margin_method": "Calculate", "min_lightmap_resolution": 40, "min_object_scale": 1, "hard_angle": 88,
+                     "angle_distortion": 8, "area_distortion": 15}
+# G20 part one (plan 3.13): foliage LODGroups cross-fade instead of popping.
+CROSSFADE_CATEGORIES = ("foliage",)
+CROSSFADE_WIDTH = 0.25
+CROSSFADE_NOTE = ("LODGroup fadeMode CrossFade, each level fading over the last quarter of its range; URP needs "
+                  "'LOD Cross Fade' on in the pipeline asset for the dither to show.")
+# Collision checks (G16, G35): Unity's convex MeshCollider cap.
+UNITY_CONVEX_TRIANGLES = 255
 
 
 def parse_lods(value: Any) -> list[float] | None:
@@ -180,14 +195,48 @@ def _is_humanoid(sc: StageContext) -> bool:
     return sc.category.get("rig_engine") == "skintoken_mixamo" and bones > 0
 
 
+async def _colliders(sc: StageContext, params: dict[str, Any], name: str, src: Path) -> tuple[str, dict[str, Any]]:
+    """G16 with G35: decide and build the collision shapes in the backend (vgac/colliders.py; CoACD runs here, not in
+    Blender). -> (pack.py --collider value, the plan written to colliders.json). Any failure falls back to one hull."""
+    mode = colliders.normalise_mode(params.get("collider"))
+    category = sc.asset.category
+    try:
+        sc.progress(0.03, "collision shapes")
+        plan = await asyncio.to_thread(colliders.build, src, sc.dir, name, category, mode, sc.platform, params.get("collider_max_parts"))
+    except Exception as e:  # noqa: BLE001
+        plan = {"mode": mode, "chosen": "none" if mode == "none" else ("mesh" if mode == "mesh" else "hull"), "parts": [], "obj": None,
+                "error": str(e)[-400:], "cap": colliders.max_parts(category, sc.platform, params.get("collider_max_parts"))}
+    chosen = plan.get("chosen") or "hull"
+    pack_mode = "parts" if plan.get("obj") else (chosen if chosen in ("hull", "mesh", "none") else "hull")
+    plan["pack_mode"] = pack_mode
+    return pack_mode, plan
+
+
+def _write_colliders(sc: StageContext, plan: dict[str, Any], report: dict[str, Any]) -> None:
+    """colliders.json: the plan plus what pack.py built (the Unity importer reads part kinds from it)."""
+    doc = {k: v for k, v in plan.items() if k != "obj"}
+    doc["parts"] = report.get("collider_parts") or []
+    doc["count"] = report.get("collider_count", len(doc["parts"]))
+    doc["triangles_max"] = report.get("collider_triangles_max")
+    doc["vertices_total"] = report.get("collider_verts")
+    doc["fit_scale"] = report.get("collider_fit_scale")
+    p = sc.dir / "colliders.json"
+    p.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    sc.register("colliders", p)
+    if plan.get("obj") and Path(plan["obj"]).is_file():
+        sc.register("collider_parts", plan["obj"])
+
+
 async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any]:
     src, src_key = _input_glb(sc)
     lods = parse_lods(params.get("lods"))
     if lods is None:
         lods = list(sc.category.get("lod_ratios") or [0.5, 0.25])
-    collider = params.get("collider") or "hull"
+    collider = colliders.normalise_mode(params.get("collider"))
     formats = list(params.get("formats") or ["fbx", "glb"])
     sc.set_params(lods=lods, collider=collider, formats=formats, input=src_key)
+    pack_mode, col_plan = await _colliders(sc, params, name, src)
+    sc.set_params(collider_shape=col_plan.get("chosen"))
     sc.use_model("blender")
     textures: dict[str, Path] = {}
     for key in TEXTURE_KEYS:
@@ -207,7 +256,9 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         sc.register(key, p)
     sc.progress(0.05, "Blender pack")
     # "none" asks pack.py for LOD0 only; leaving --lods out would fall back to pack.py's own default chain.
-    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", collider, "--formats", ",".join(formats)]
+    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode, "--formats", ",".join(formats)]
+    if pack_mode == "parts":
+        args += ["--collider-obj", col_plan["obj"]]
     # The rig stage's GLB has no UVs; pack.py copies them from the prep GLB (same faces) when the input lacks them.
     uv_src = sc.lineage_file("glb", ("prep",)) if src_key.startswith("rig.") else None
     for flag, p in (("--base-color", textures.get("base_color")), ("--normal", textures.get("normal")), ("--orm", packs.get("orm")),
@@ -223,11 +274,18 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         sc.register("glb", sc.dir / f"{name}.glb")
     if (sc.dir / f"{name}_godot.glb").is_file():
         sc.register("glb_godot", sc.dir / f"{name}_godot.glb")
+    if (sc.dir / f"{name}_unreal.fbx").is_file():
+        sc.register("fbx_unreal", sc.dir / f"{name}_unreal.fbx")
     for level, p in sorted((report.get("glb_lods") or {}).items()):
         if Path(p).is_file():
             sc.register(f"glb_{level.lower()}", p)
+    _write_colliders(sc, col_plan, report)
     sc.set_metrics(lods=lod_list(report.get("lods") or {}), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
-                   non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"))
+                   non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"),
+                   collider_count=report.get("collider_count", 0), collider_shape=col_plan.get("chosen"),
+                   collider_kinds=sorted({p.get("kind") for p in report.get("collider_parts") or []}),
+                   collider_triangles_max=report.get("collider_triangles_max"), collider_seconds=col_plan.get("seconds"),
+                   openings=col_plan.get("openings"), collider_error=col_plan.get("error"))
     return report
 
 
@@ -256,6 +314,14 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     humanoid = _is_humanoid(sc)
     flags = ["-nographics"] + (["-vgacHumanoid"] if humanoid else [])
     args: dict[str, Any] = {"-vgacInput": sc.dir, "-vgacName": name}
+    # The category drives the lightmap UVs and static flags (G17) and the cross-fade (G20); colliders.json the kind of
+    # each collision part (G16).
+    category = getattr(getattr(sc, "asset", None), "category", None)
+    if category:
+        args["-vgacCategory"] = category
+    cj = Path(sc.dir) / "colliders.json"
+    if cj.is_file():
+        args["-vgacColliders"] = cj
     scale = _speed_scale(sc, humanoid)
     if scale is not None:
         args["-vgacSpeedScale"] = f"{scale:.3f}"
@@ -290,7 +356,13 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "importer_version": report.get("importer_version"), "avatar_mapping": report.get("avatar_mapping"),
             "avatar_mapping_by": report.get("avatar_mapping_by"), "shader": report.get("shader"),
             "controller": report.get("controller"), "hitboxCount": report.get("hitboxCount"), "movementShape": report.get("movementShape"),
-            "hitboxMaxBoneError": report.get("hitboxMaxBoneError")}
+            "hitboxMaxBoneError": report.get("hitboxMaxBoneError"), "colliderCount": report.get("colliderCount"),
+            "colliderKinds": report.get("colliderKinds"), "colliderTrianglesMax": report.get("colliderTrianglesMax"),
+            "colliderBoundsError": report.get("colliderBoundsError"),
+            "secondaryUV": report.get("secondaryUV"), "secondaryUVOnMesh": report.get("secondaryUVOnMesh"),
+            "secondaryUVSettings": report.get("secondaryUVSettings"),
+            "staticFlags": report.get("staticFlags"), "lodFadeMode": report.get("lodFadeMode"),
+            "lodFadeWidth": report.get("lodFadeWidth")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -389,6 +461,50 @@ def _hitbox_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> d
             "triggers": True, "note": HITBOX_NOTE}
 
 
+def _collision_manifest(sc: StageContext, pack_report: dict[str, Any] | None, unity_report: dict[str, Any] | None) -> dict[str, Any]:
+    """What the manifest says about collision (G16): the shape chosen, the parts and how each engine gets them."""
+    pr = pack_report or {}
+    plan = _read_json(sc.file("colliders"))
+    u = unity_report or {}
+    parts = pr.get("collider_parts") or []
+    out: dict[str, Any] = {"mode": sc.version.params.get("collider"), "shape": plan.get("chosen"), "count": len(parts),
+                           "parts": parts, "triangles_max": pr.get("collider_triangles_max"), "vertices_total": pr.get("collider_verts"),
+                           "openings": plan.get("openings"), "unity": None, "godot": None, "unreal": None}
+    if parts:
+        out["godot"] = f"{len(parts)} -convcolonly or -colonly mesh(es) in the _godot.glb"
+        if pr.get("unreal_collision"):
+            out["unreal"] = {"file": Path(pr.get("fbx_unreal", "")).name, "ucx": pr.get("unreal_collision"), "verified": False}
+    if u:
+        out["unity"] = {"count": u.get("colliderCount"), "kinds": u.get("colliderKinds"), "triangles_max": u.get("colliderTrianglesMax"),
+                        "where": "Colliders child of the prefab root"}
+    return out
+
+
+def _lighting_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dict[str, Any] | None:
+    """G17 and G20 in the manifest: lightmap UVs and static flags for scenery and still props, cross-fade for foliage."""
+    cat = sc.asset.category
+    u = unity_report or {}
+    out: dict[str, Any] = {}
+    if cat in LIGHTMAP_CATEGORIES:
+        out["lightmap_uv"] = {"generated": bool(u.get("secondaryUV")) if u else None, "on_mesh": u.get("secondaryUVOnMesh"),
+                              "by": "Unity ModelImporter.generateSecondaryUV (UV1)",
+                              "settings": u.get("secondaryUVSettings") or LIGHTMAP_SETTINGS, "static_flags": u.get("staticFlags"),
+                              "unreal": "Unreal generates lightmap UVs on import; none written for it"}
+    if cat in CROSSFADE_CATEGORIES:
+        out["lod_fade"] = {"mode": u.get("lodFadeMode") or "CrossFade", "transition_width": u.get("lodFadeWidth") or CROSSFADE_WIDTH,
+                           "note": CROSSFADE_NOTE}
+    return out or None
+
+
+def _read_json(p: Path | str | None) -> dict[str, Any]:
+    if p is None or not Path(p).is_file():
+        return {}
+    try:
+        return json.loads(Path(p).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | None, unity_report: dict[str, Any] | None) -> dict[str, Any]:
     prov = manifest_provenance(sc)
     models, seeds, lineage = prov["models"], prov["seeds"], prov["lineage"]
@@ -417,6 +533,8 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "triangles_per_lod": (pack_report or {}).get("lods"),
         "lod_ratios": sc.version.params.get("lods"),
         "collider_vertices": (pack_report or {}).get("collider_verts"),
+        "collision": _collision_manifest(sc, pack_report, unity_report),
+        "lighting": _lighting_manifest(sc, unity_report),
         "lods": lod_list((pack_report or {}).get("lods") or {}),
         "textures": textures,
         "glb_files": _glb_files(sc),
@@ -511,13 +629,42 @@ def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def collider_checks(report: dict[str, Any], plan: dict[str, Any], category: str | None, mode: Any = None) -> list[dict[str, Any]]:
+    """Collision checks (plan 3.4 B; replaces quality.collider_checks for the export stage):
+    collider_present (block) unless the shape is none; collider_triangles, the most triangles in one convex part
+    against Unity's 255; collider_count, the number of shapes against the platform's most (with the vertex total);
+    openings_clear for prop_rigid, environment and vehicle when the openings were measured."""
+    if "none" in (plan.get("chosen"), report.get("collider_mode"), mode):
+        return []
+    parts = report.get("collider_parts")
+    if parts is None:  # a pack report from before G16: one hull, vertices only
+        verts = report.get("collider_verts", 0) or 0
+        return [quality.check("collider_present", verts > 0, verts, ">0")]
+    count = len(parts)
+    checks = [quality.check("collider_present", count > 0, count, ">0")]
+    convex = [p for p in parts if p.get("kind") != "mesh"]
+    if convex:
+        worst = max(int(p.get("triangles") or 0) for p in convex)
+        checks.append(quality.check("collider_triangles", worst <= UNITY_CONVEX_TRIANGLES, worst, UNITY_CONVEX_TRIANGLES,
+                                    {"parts": len(convex)}))
+        cap = plan.get("cap") or colliders.max_parts(category, None)
+        checks.append(quality.check("collider_count", len(convex) <= cap, len(convex), cap,
+                                    {"vertices": sum(int(p.get("vertices") or 0) for p in convex)}))
+    op = plan.get("openings")
+    if category in colliders.OPENINGS_CATEGORIES and op:
+        checks.append(quality.check("openings_clear", bool(op.get("ok")), int(op.get("blocked_openings") or 0), 0,
+                                    {"openings": int(op.get("openings") or 0), "blocked": f"{round(100 * float(op.get('blocked_fraction') or 0))}%",
+                                     "category": category}))
+    return checks
+
+
 async def judge(sc: StageContext) -> None:
     rp = sc.file("pack_report")
     report = json.loads(Path(rp).read_text()) if rp else {}
     checks: list[dict[str, Any]] = []
     checks += quality.geometry_checks(report, sc.budget["triangles"] or None)
     checks += quality.lod_checks(report, sc.version.params.get("lods"))
-    checks += quality.collider_checks(report, expected=(sc.version.params.get("collider", "hull") == "hull"))
+    checks += collider_checks(report, _read_json(sc.file("colliders")), sc.asset.category, sc.version.params.get("collider"))
     checks += quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, sc.budget["texture"])
     rig_v = sc.stage_version("rig")
     rigged = False
@@ -569,7 +716,7 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
     return dest
 
 
-DELIVER_KEYS = ("fbx", "glb", "glb_godot", "manifest", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
 
