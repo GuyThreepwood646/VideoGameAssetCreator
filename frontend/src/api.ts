@@ -346,8 +346,17 @@ export type Gpu = {
   effective_kinds: GpuKind[]
   kind_notes: Partial<Record<GpuKind, string>>
   free_after_job: boolean
+  // The card's ComfyUI: started by itself when a step needs it (when can_start), stopped only if the app started it
+  // (owned). "off" when the card is turned off in the app.
+  state?: GpuEngineState
+  owned?: boolean
+  can_start?: boolean
+  // Shut down an engine the app started after this many minutes without work; 0 = never.
+  stop_when_idle_minutes?: number
+  last_error?: string
 }
-export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean }
+export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'off'
+export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown> }
@@ -427,6 +436,8 @@ export const api = {
   health: () => get<Health>('/api/health'),
   gpus: () => get<Gpu[]>('/api/gpus'),
   setGpu: (instance: string, body: GpuPatch) => put<Gpu[]>(`/api/gpus/${instance}`, body),
+  startGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/start`),
+  stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),

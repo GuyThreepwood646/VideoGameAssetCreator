@@ -401,6 +401,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gpu_kind_model: H('3D model', 'Turning the pictures into a 3D shape with painted surfaces.', 'The heaviest step: it needs a lot of the card\'s memory for a few minutes.', 'mesh stage'),
   gpu_kind_rigging: H('Rigging', 'Adding a skeleton so the model can move.', 'This step only works on the card set up for it, because it needs Blender wired in.', 'rig stage (SkinToken)'),
   gpu_kind_review: H('Review', 'The app looking at a result and saying what it thinks of it.', 'Optional; a review waits if no card may do it, nothing else stops.', 'local judge (judge job)'),
+  gpu_engine: H('Graphics engine', 'The program on this card that paints the pictures and builds the 3D models (ComfyUI). The app starts it by itself when a step needs it, which takes about a minute.', 'The app only ever shuts down an engine it started itself. One started by ComfyUI Desktop or the launcher is left running.', 'ComfyUI instance (POST /api/gpus/{instance}/start and /stop)'),
+  gpu_idle_stop: H('Shut down when idle', 'After this long with nothing to do, the app shuts down the card\'s graphics engine. That frees the whole card between bursts of work.', 'The next step then waits about a minute while the engine starts again. Only applies to an engine the app started itself; one started by ComfyUI Desktop or the launcher is left running.', 'stop_when_idle_minutes (prefs.json)'),
   gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
 }
 

@@ -91,6 +91,10 @@ class ComfyClient:
         r.raise_for_status()
         return r.json()
 
+    def forget_cache(self) -> None:
+        """Drop the cached /system_stats answer (the instance was just started or stopped)."""
+        self._vram_cache = None
+
     async def cached_vram_summary(self, max_age: float = 5.0) -> dict[str, Any]:
         """vram_summary(), reused for `max_age` seconds: /api/health is polled every 2 s."""
         now = time.monotonic()
