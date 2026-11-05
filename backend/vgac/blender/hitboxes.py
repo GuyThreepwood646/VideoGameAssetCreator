@@ -33,8 +33,16 @@ MIN_BOX_THICKNESS = 0.05
 # A surface vertex counts as covered when it lies inside a shape or within this fraction of the shape's radius
 # (half the box thickness for boxes) of it: hits "land where they look" to within a few millimetres to centimetres.
 COVER_TOLERANCE = 0.15
-COVER_MIN = 0.85
-OVERREACH_MAX = 1.6
+# Check limits by mode, (cover at least, overreach at most). The plan's starting values were 0.85 and 1.6 (shapes'
+# volume over mesh volume); measured on the knight, cloaked knight, goblin and wolf, a good default fit has an
+# overreach of 1.3 to 2.1 (detailed) and 1.7 to 3.4 (simple, where one capsule spans arms and legs), so the limits
+# are set where good fits pass and the Fix moves a failing one across.
+LIMITS = {"detailed": (0.85, 2.75), "simple": (0.80, 4.0)}
+COVER_MIN, OVERREACH_MAX = LIMITS["detailed"]
+
+
+def limits(mode, fallback=False):
+    return LIMITS["simple" if (fallback or mode != "detailed") else "detailed"]
 FORWARD = np.array([0.0, -1.0, 0.0])  # glTF +Z (the model's front) after the glTF importer's axis change
 UP = np.array([0.0, 0.0, 1.0])
 
@@ -160,12 +168,18 @@ class Skeleton:
         return out
 
     def end(self, n):
-        """Where the bone really ends: the head of its main child (the one with the largest subtree), else its
-        tail. glTF has no bone tails, so the importer's guessed tails can point anywhere."""
+        """Where the bone really ends: the head of the child that continues its direction (for a root, the child
+        with the largest subtree), else its tail. glTF has no bone tails, so the importer's guessed tails can point anywhere."""
         kids = self.children.get(n) or []
         if not kids:
             return self.tail(n)
-        main = max(kids, key=lambda k: len(self.subtree(k)))
+        par = self.by_name[n]["parent"]
+        incoming = _unit(self.head(n) - self.head(par)) if par in self.by_name else None
+        if incoming is not None:
+            # The child that carries on in the same direction (the spine past the shoulders, not a leg).
+            main = max(kids, key=lambda k: float(np.dot(_unit(self.head(k) - self.head(n)) if _unit(self.head(k) - self.head(n)) is not None else incoming * 0, incoming)))
+        else:
+            main = max(kids, key=lambda k: len(self.subtree(k)))
         e = self.head(main)
         return e if float(np.linalg.norm(e - self.head(n))) > 1e-6 else self.tail(n)
 
@@ -253,7 +267,7 @@ def classify_standing(sk, lo, hi, category):
     legs = []
     for n in leg_leaves:
         p = sk.head(n)
-        if all(np.linalg.norm((p - sk.head(c))[:2]) > 0.15 * span for c in legs):
+        if all(np.linalg.norm((p - sk.head(c))[:2]) > 0.1 * span for c in legs):
             legs.append(n)
     legs = legs[:max_legs]
     if len(legs) < 2:
@@ -286,6 +300,8 @@ def classify_standing(sk, lo, hi, category):
             leg_chains[n] = own
     if len(leg_chains) < 2:
         return None
+    # Where each limb hangs from the spine, taken before any leading torso bones are moved to the body.
+    attach = [spine.index(sk.by_name[c[0]]["parent"]) for c in leg_chains.values() if sk.by_name[c[0]]["parent"] in spine_set]
     if category != "humanoid":
         # A leg chain often starts with a shoulder or hip bone inside the torso; its vertices are body, not leg.
         # Leading bones whose head sits above three quarters of the way from the ground to the spine go to the body.
@@ -305,10 +321,12 @@ def classify_standing(sk, lo, hi, category):
             if s_c:
                 best = max(s_c, key=side)
                 own = _own_chain(sk, best, used)
+                if own and sk.by_name[own[0]]["parent"] in spine_set:
+                    attach.append(spine.index(sk.by_name[own[0]]["parent"]))
                 if category == "humanoid" and len(own) >= 3:
                     # The collarbone starts at the spine: it belongs to the chest, not the upper arm.
                     reach = max(side(n) for n in own)
-                    while len(own) > 2 and side(own[0]) < 0.35 * reach:
+                    while len(own) > 2 and side(own[0]) < 0.3 * reach:
                         own.pop(0)
                 if own:
                     side_chains[key] = own
@@ -321,12 +339,9 @@ def classify_standing(sk, lo, hi, category):
             tleaf = min(rear, key=lambda n: float(np.dot(sk.head(n) - centre, forward)))
             tail_chain = _own_chain(sk, tleaf, used)
             used |= set(tail_chain)
+            if tail_chain and sk.by_name[tail_chain[0]]["parent"] in spine_set:
+                attach.append(spine.index(sk.by_name[tail_chain[0]]["parent"]))
     # Head group: spine bones after the last bone a leg, arm, wing or tail hangs from.
-    attach = []
-    for chain in list(leg_chains.values()) + list(side_chains.values()) + ([tail_chain] if tail_chain else []):
-        par = sk.by_name[chain[0]]["parent"]
-        if par in spine_set:
-            attach.append(spine.index(par))
     last = max(attach) if attach else 0
     group = spine[last + 1:] if last + 1 < len(spine) else spine[-1:]
     body_spine = [n for n in spine if n not in group] or spine[:1]
@@ -394,6 +409,8 @@ def classify_serpent(sk, lo, hi, detailed=True):
     if len(sk.bones) < 3:
         return None
     paths = {leaf: sk.chain_to_root(leaf)[::-1] for leaf in sk.leaves}  # root first
+    for root in sk.roots:  # a root at one end of the body is an end of the spine too
+        paths.setdefault(root, [root])
     best, best_len = None, -1.0
     leaves = list(paths)
     for i, a in enumerate(leaves):
@@ -899,8 +916,8 @@ def to_json(result, bones):
         "shapes_volume_sum": result.get("shapes_volume_sum"),
         "mesh_volume": round(float(result.get("mesh_volume") or 0.0), 6),
         "verts": result["verts"],
-        "cover_min": COVER_MIN,
-        "overreach_max": OVERREACH_MAX,
+        "cover_min": limits(result["mode"], result["fallback"])[0],
+        "overreach_max": limits(result["mode"], result["fallback"])[1],
     }
 
 
