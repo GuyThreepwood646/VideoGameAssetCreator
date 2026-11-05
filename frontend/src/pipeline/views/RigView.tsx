@@ -3,6 +3,7 @@ import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
 import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
+import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
@@ -134,6 +135,7 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
+      <MovesPanel version={version} />
       {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} /> : <div className="placeholder-box">No 3D model in this version.</div>}
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
       {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}

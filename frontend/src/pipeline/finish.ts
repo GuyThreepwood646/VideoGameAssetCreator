@@ -278,8 +278,21 @@ export function finishLineFix(asset: Asset, line: FinishLine): FixAction | null 
   return c ? checkFix(c) : null
 }
 
-// "Using it in Unity": the export's own lines, else the controller lines (3.3) when a Speed controller was built.
+// The showcase scene the Unity import placed the asset in (PHOTOREAL-PLAN phase 1), as one plain line.
+export function showcaseLine(exp: Version | undefined): string | null {
+  const path = (unityReport(exp) as { showcase?: unknown } | null)?.showcase
+  return typeof path === 'string' && path ? `Open the scene \`VGAC Showcase\` (in \`${path.replace(/\/[^/]*$/, '')}\`) to see it in good light.` : null
+}
+
+// "Using it in Unity": the export's own lines, else the controller lines (3.3) when a Speed controller was built;
+// then the showcase line when there is a showcase scene.
 export function unityHowto(asset: Asset): string[] | null {
+  const lines = unityHowtoLines(asset)
+  const show = showcaseLine(selectedVersion(asset, 'export'))
+  return show ? [...(lines ?? []), show] : lines
+}
+
+function unityHowtoLines(asset: Asset): string[] | null {
   const exp = selectedVersion(asset, 'export')
   if (!exp) return null
   const own = exp.metrics.unity_howto

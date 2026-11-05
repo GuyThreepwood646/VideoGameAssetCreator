@@ -17,14 +17,19 @@
 // the bones overlay's alignment correction, so it follows the playing clip. The body shape for moving stays on
 // the model. Clips (3.7): the sidecar (anim_clips.json) gives the order and which clips loop; one-shot clips play
 // once and stop on their last frame.
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Info } from './components/Info'
+import { LightPicker } from './components/LightPicker'
 import { clipLabel, clipLoopsByName } from './help'
+import { keepOverlayColours, LIGHT_EVENT, lightEventApplies, PreviewLight, rememberedLight, rememberLight, ViewerLookContext, type LightId } from './previewLight'
 
 export type BoneSegment = { name?: string; head: number[]; tail: number[] }
+// An item shown on an attachment point (items): its GLB (pivot at the grip) under the Socket_* node, at an offset in
+// the socket's own frame (metres; rotation a quaternion x, y, z, w), so it moves with every clip.
+export type ViewerAttachment = { id: string; url: string; socket: string; position: number[]; rotation: number[]; scale: number }
 export type HitShape = {
   name?: string
   region?: string
@@ -47,7 +52,7 @@ export type HitboxDoc = {
   movement?: ({ default?: string } & Record<string, HitShape | string | undefined>) | null
 }
 // One row of the clip sidecar (anim_clips.json).
-export type ClipInfo = { name: string; loop?: boolean; seconds?: number; hold_last?: boolean }
+export type ClipInfo = { name: string; loop?: boolean; seconds?: number; hold_last?: boolean; label?: string }
 export type Shading = 'textured' | 'wireframe' | 'normals'
 // 'gltf': segments already in glTF axes (rig_info bone_segments_gltf).
 // 'unknown': older rig_info without them; may be Blender Z-up, so that is tried too.
@@ -68,6 +73,11 @@ type Props = {
   hitboxes?: HitboxDoc | null
   // The clip sidecar: order, plain names and which clips loop.
   clipInfo?: ClipInfo[] | null
+  // Items on attachment points, and a clip to play chosen outside the viewer (n changes on every press).
+  attachments?: ViewerAttachment[] | null
+  clipRequest?: { name: string; n: number } | null
+  // The asset's look (style_preset), for the default preview light; the asset page provides it otherwise.
+  look?: string | null
 }
 
 type SceneHandles = {
@@ -82,7 +92,8 @@ type SceneHandles = {
   clock: THREE.Clock
 }
 
-const normalMaterial = new THREE.MeshNormalMaterial()
+// Not tone mapped: the normals view shows the same colours under every preview light.
+const normalMaterial = new THREE.MeshNormalMaterial({ toneMapped: false })
 
 // Reduce Motion (plan 2.7): the system setting "reduce motion" (prefers-reduced-motion: reduce), followed live.
 const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
@@ -312,6 +323,7 @@ function buildBoneOverlay(bones: BoneSegment[]): THREE.Group {
   const points = new THREE.Points(pointGeo, new THREE.PointsMaterial({ color: 0xffc44d, size: 6, sizeAttenuation: false, depthTest: false, transparent: true }))
   points.renderOrder = 1000
   g.add(points)
+  keepOverlayColours(g)
   return g
 }
 
@@ -416,6 +428,7 @@ function buildShape(s: HitShape, color: THREE.Color, label: string): THREE.Group
   line.raycast = () => {} // hover picks the fill only
   const g = new THREE.Group()
   g.add(fill, line)
+  keepOverlayColours(g)
   return g
 }
 
@@ -479,6 +492,7 @@ function buildSocketMarker(node: THREE.Object3D, model: THREE.Object3D, size: nu
   const ns = node.getWorldScale(new THREE.Vector3())
   const ms = model.getWorldScale(new THREE.Vector3())
   g.scale.setScalar(ms.x / (ns.x || 1))
+  keepOverlayColours(g)
   return g
 }
 
@@ -520,7 +534,13 @@ export function hitShapesOf(doc: HitboxDoc | null | undefined): HitShape[] {
   return doc.hitboxes.filter((h) => h && Array.isArray(h.center) && h.center.length >= 3)
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo }: Props) {
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest }: Props) {
+  // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
+  const lookCtx = useContext(ViewerLookContext)
+  const look = lookProp ?? lookCtx
+  const [light, setLight] = useState<LightId>(() => rememberedLight(look))
+  const [lightNote, setLightNote] = useState<string | null>(null)
+  const lightRigRef = useRef<PreviewLight | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const handlesRef = useRef<SceneHandles | null>(null)
   const modelRef = useRef<THREE.Object3D | null>(null)
@@ -589,15 +609,20 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     controls.enableDamping = true
     controls.target.set(0, 0.5, 0)
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x50545c, 1.2))
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x50545c, 1.2)
+    scene.add(hemi)
     const key = new THREE.DirectionalLight(0xffffff, 1.6)
     key.position.set(4, 8, 5)
     scene.add(key)
     const fill = new THREE.DirectionalLight(0xffffff, 0.5)
     fill.position.set(-5, 3, -4)
     scene.add(fill)
+    // The three lights above are the "Flat" choice; the others light the model from an environment.
+    const lightRig = new PreviewLight(renderer, scene, [hemi, key, fill])
+    lightRigRef.current = lightRig
 
     const gridHelper = new THREE.GridHelper(10, 20, 0x5a5f69, 0x3a3e46)
+    keepOverlayColours(gridHelper)
     scene.add(gridHelper)
     const modelRoot = new THREE.Group()
     const frame = new THREE.Group()
@@ -670,11 +695,38 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       renderer.domElement.removeEventListener('pointerleave', onLeave)
       ro.disconnect()
       controls.dispose()
+      lightRig.dispose()
+      lightRigRef.current = null
       renderer.dispose()
       if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement)
       handlesRef.current = null
     }
   }, [])
+
+  // Show the chosen preview light (built the first time it is shown, kept until the viewer closes).
+  useEffect(() => {
+    let alive = true
+    lightRigRef.current?.apply(light).then((note) => alive && setLightNote(note))
+    return () => {
+      alive = false
+    }
+  }, [light])
+
+  // Another viewer on the page changed the light for this look: follow it. A new asset's look picks its own.
+  useEffect(() => {
+    setLight(rememberedLight(look))
+    const on = (e: Event) => {
+      const id = lightEventApplies(e, look)
+      if (id) setLight(id)
+    }
+    window.addEventListener(LIGHT_EVENT, on)
+    return () => window.removeEventListener(LIGHT_EVENT, on)
+  }, [look])
+
+  const chooseLight = (id: LightId) => {
+    setLight(id)
+    rememberLight(look, id)
+  }
 
   // Load the model whenever the url changes.
   useEffect(() => {
@@ -755,6 +807,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           group.name = 'skeleton-helper'
           group.matrixAutoUpdate = false
           group.add(helper)
+          keepOverlayColours(group)
           hh.scene.add(group)
           skelGroupRef.current = group
           const corr = pickAlignment(rest.skeletonPoints ?? [], rest, false, 'skeleton')
@@ -771,7 +824,11 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           hh.mixer.addEventListener('finished', () => setPlaying(false))
           const wanted = defaultClip ? defaultClip.toLowerCase() : ''
           const ordered = orderClips(names, clipInfoRef.current)
-          const first = (wanted && clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted))) || clipsRef.current.find((c) => (c.name || 'clip') === ordered[0]) || clipsRef.current[0]
+          // The clip asked for by its exact name first ("walk" must not pick "crouch_walk"), then by a name containing it.
+          const first =
+            (wanted && (clipsRef.current.find((c) => (c.name || '').toLowerCase() === wanted) || clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted)))) ||
+            clipsRef.current.find((c) => (c.name || 'clip') === ordered[0]) ||
+            clipsRef.current[0]
           const action = hh.mixer.clipAction(first)
           applyLoop(action, first.name || 'clip')
           action.play()
@@ -786,6 +843,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           setClip('')
         }
         attachOverlay(hh)
+        placeAttachments()
+        applyClipRequest()
         setStatus(`${Math.round(tris).toLocaleString('en-US')} tris${skinned ? ', skinned' : ''}${names.length ? `, ${names.length} clips` : ''}`)
       },
       undefined,
@@ -975,6 +1034,62 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     if (modelRef.current) setShading(modelRef.current, s, originalsRef.current)
   }
 
+  // Items on attachment points: each GLB loaded once, a copy parented to its Socket_* node with the saved offset.
+  const attachRef = useRef<ViewerAttachment[] | null | undefined>(attachments)
+  attachRef.current = attachments
+  const itemCacheRef = useRef(new Map<string, Promise<THREE.Object3D>>())
+  const placedRef = useRef<THREE.Object3D[]>([])
+  function placeAttachments() {
+    for (const o of placedRef.current) o.parent?.remove(o)
+    placedRef.current = []
+    const model = modelRef.current
+    const list = attachRef.current ?? []
+    if (!model || !list.length) return
+    for (const a of list) {
+      const sock = model.getObjectByName(a.socket)
+      if (!sock || !a.url) continue
+      let p = itemCacheRef.current.get(a.url)
+      if (!p) {
+        p = new GLTFLoader().loadAsync(a.url).then((g) => g.scene)
+        itemCacheRef.current.set(a.url, p)
+      }
+      p.then((scene) => {
+        if (modelRef.current !== model || attachRef.current !== list) return
+        const item = scene.clone(true)
+        item.name = 'item:' + a.id
+        item.position.fromArray(a.position)
+        item.quaternion.fromArray(a.rotation).normalize()
+        // An item keeps its own size: undo any scale on the bone chain above the socket.
+        const ws = sock.getWorldScale(new THREE.Vector3())
+        const ms = model.getWorldScale(new THREE.Vector3())
+        item.scale.setScalar((a.scale || 1) * (ms.x / (ws.x || 1)))
+        setShading(item, shading, originalsRef.current)
+        sock.add(item)
+        placedRef.current.push(item)
+      }).catch(() => setStatus('The item could not be loaded'))
+    }
+  }
+  useEffect(() => {
+    placeAttachments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachments])
+  // A clip chosen by buttons outside the viewer (Stand, Walk, Run, Attack): the exact name, else one containing it.
+  // Also applied when a model finishes loading, so the first request wins over the default clip.
+  const clipRequestRef = useRef(clipRequest)
+  clipRequestRef.current = clipRequest
+  function applyClipRequest() {
+    const req = clipRequestRef.current
+    if (!req) return
+    const want = req.name.toLowerCase()
+    const names = clipsRef.current.map((c) => c.name || 'clip')
+    const hit = names.find((n) => n.toLowerCase() === want) ?? names.find((n) => n.toLowerCase().includes(want))
+    if (hit) changeClip(hit)
+  }
+  useEffect(() => {
+    applyClipRequest()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipRequest])
+
   const changeClip = (name: string) => {
     const h = handlesRef.current
     if (!h?.mixer) return
@@ -1070,7 +1185,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             <select value={clip} onChange={(e) => changeClip(e.target.value)} aria-label="Animation clip">
               {orderedClips.map((c) => (
                 <option key={c} value={c}>
-                  {clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
+                  {/* The plain name the moves list uses, when the clip file gives one (added moves). */}
+                  {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
                 </option>
               ))}
             </select>
@@ -1086,7 +1202,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           {hoverLabel ?? status}
         </span>
       </div>
-      <div className="canvas-host" ref={hostRef} />
+      <div className="canvas-host" ref={hostRef}>
+        <LightPicker value={light} onChange={chooseLight} note={lightNote} />
+      </div>
     </section>
   )
 }

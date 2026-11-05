@@ -230,6 +230,13 @@ async def _run(aid: str) -> None:
                     break
                 if target is None:
                     _set(aid, status="done", stage=None, job_id=None, reason=None, stages_done=stages_done)
+                    # Items set aside from a character are made after it, then put on it (vgac/items.py).
+                    try:
+                        from . import items
+
+                        items.after_autopilot(aid)
+                    except Exception:  # noqa: BLE001  (the character is done either way)
+                        log.exception("items after the autopilot of %s", aid)
                     return
                 # Versions already queued or running in this stage are waited for, never duplicated.
                 inflight = [v for v in a.versions if v.stage == target and v.status in ("queued", "running")]

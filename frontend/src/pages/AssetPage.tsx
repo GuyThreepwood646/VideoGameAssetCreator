@@ -7,7 +7,9 @@ import { Disclosure, ErrorText, Field, ResumeButton, StopButton, SubmitTextarea,
 import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
+import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { StagePanel } from '../pipeline/StagePanel'
+import { ViewerLookContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
 export default function AssetPage() {
@@ -21,6 +23,8 @@ export default function AssetPage() {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
   const [showLog, setShowLog] = useState(false)
   const [variantOpen, setVariantOpen] = useState(false)
+  // "Add an item" (items): the panel on a character with a skeleton.
+  const [itemsOpen, setItemsOpen] = useState(false)
   const [baseName, setBaseName] = useState<string | null>(null)
   // The autopilot state has one home: asset.autopilot. Asset reloads, the websocket
   // event, the mount fetch and the action responses all go through newerAutopilot.
@@ -256,6 +260,7 @@ export default function AssetPage() {
   const status = statusLine(asset, jobs, ref, suggestion, autopilot)
 
   return (
+    <ViewerLookContext.Provider value={asset.style_preset}>
     <div className={'pipeline-layout' + (showLog ? ' with-log' : '')}>
       <aside className="stage-rail">
         <div className="rail-head">
@@ -277,6 +282,24 @@ export default function AssetPage() {
             {platformPlain(asset.platform_target)}
             <Info term={'platform.' + asset.platform_target} />
           </div>
+          {asset.held_item?.character_id && (
+            <div className="muted small">
+              item for <Link to={`/assets/${asset.held_item.character_id}`}>{asset.held_item.character_name ?? 'its character'}</Link>
+              <Info term="term.items" />
+            </div>
+          )}
+          {(asset.equipment?.set_aside?.length ?? 0) > 0 && (
+            <div className="muted small">
+              made separately:{' '}
+              {asset.equipment!.set_aside.map((it, i) => (
+                <span key={it.item_asset_id}>
+                  {i > 0 ? ', ' : ''}
+                  <Link to={`/assets/${it.item_asset_id}`}>{it.label}</Link>
+                </span>
+              ))}
+              <Info term="term.items" />
+            </div>
+          )}
           {asset.parts.length > 0 && (
             <div className="muted small">
               parts: {asset.parts.join(', ')}
@@ -346,12 +369,18 @@ export default function AssetPage() {
               Make a variant
             </button>
             <Info term="term.variant" />
+            {['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'].includes(asset.category) && (
+              <button type="button" className="small-btn" aria-pressed={itemsOpen} onClick={() => setItemsOpen((v) => !v)} title="Give the character a sword, a shield, a hat or a backpack">
+                Add an item
+              </button>
+            )}
             <button type="button" className="small-btn" aria-pressed={showLog} onClick={() => setShowLog((v) => !v)} title="Show the job log">
               Details
             </button>
           </div>
         </header>
         {variantOpen && <VariantPanel asset={asset} onClose={() => setVariantOpen(false)} onError={setError} />}
+        {itemsOpen && <ItemsPanel asset={asset} onClose={() => setItemsOpen(false)} />}
         <ErrorText error={error} />
         <StagePanel
           key={stage}
@@ -377,6 +406,7 @@ export default function AssetPage() {
         </aside>
       )}
     </div>
+    </ViewerLookContext.Provider>
   )
 }
 

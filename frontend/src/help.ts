@@ -337,8 +337,16 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   clips_source: H('Where the moves come from', 'Human-shaped characters can use a library of hand-made moves; every other skeleton gets moves built for it.', 'The hand-made moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
   move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
   move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
+  // Add a move (rig step)
+  add_move: H('Add a move', 'Pick more hand-made moves for a human-shaped character, such as sitting, blocking with a shield or casting a spell, or take some off.', 'Only the moves are made again; the skeleton and hit boxes stay as they are. Once you hand it off to the game again (step 6), each added move is in the files and in Unity, ready to use.', 'Quaternius Universal Animation Library packs 1 and 2 (CC0), retargeted in Blender; rig params added_moves, removed_moves'),
+  my_moves: H('Your own animation file', 'An FBX, GLB or BVH file of a human-shaped skeleton that you bring, for example a Mixamo download without skin or a motion capture file.', 'The app recognises the bones by their names and copies the moves onto your character. You are responsible for being allowed to use the file in your game.', 'Bone names: Mixamo, Unreal, Rigify, Unity Humanoid and common BVH names; library/my_moves'),
+  moves_from: H('Where moves come from', 'Human-shaped characters get hand-made moves from a free library (CC0, fine in commercial games), copied onto their own skeleton, and you can add more from that library or bring your own animation file. Other creatures, such as animals, spiders, birds and snakes, get moves the app builds for their own skeleton.', 'Hand-made moves look natural; the built ones fit any skeleton and need nothing extra.', 'Library retarget (retarget.py) for humanoids, procedural clips (procanim.py) for every other skeleton'),
+  // Preview in realistic light (PHOTOREAL-PLAN phase 1)
+  preview_light: H('Preview light', 'The light the 3D preview is shown in: Studio, Outdoors, Overcast, Night, or Flat for plain lights that make the shape easy to check.', 'Metal and shiny parts only look right when there is something around them to reflect. Only the preview changes; your game uses its own lights.', 'Image-based lighting from a CC0 HDRI (three.js RoomEnvironment for Studio), PMREM, Khronos PBR Neutral tone mapping'),
+  beauty_render: H('Beauty picture', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Blender Eevee render of the final model under a CC0 HDRI, Filmic or AgX view transform'),
   // Hit boxes and the body shape for moving (4.2)
   socket: H('Attachment point', 'A named spot on the skeleton where your game can attach a weapon, hat or backpack.', 'The item then follows the hand, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
+  items: H('Items', 'A sword, shield, bow, quiver, hat or backpack made as its own asset and put on an attachment point of a character, instead of being part of the body.', 'The character can then really hold the sword when he attacks, and you can swap or take items off in your game. Clothes that bend with the body, such as a cloak or armour, stay part of the body. The hand does not close around the handle (no finger bones).', 'Item asset (prop_rigid, Asset.held_item) with its pivot at the detected grip; attachments.json, <name>_equipped.glb and the Unity prefab "<name> (equipped)"'),
   hitboxes: H('Hit boxes', 'Invisible shapes on each body part that tell the game where an attack landed.', 'Hits count where they look like they land, and you can tell a head hit from an arm hit.', 'Per-bone trigger capsules and boxes, fitted from skin weights'),
   hitbox_fit: H('How snug', 'How tightly the hit boxes wrap the body.', 'Snug is fairer for the player being hit; loose is kinder to the player aiming.', 'Radius factor 0.9, 1.0 or 1.15 on the 80th-percentile vertex distance'),
   hitbox_regions: H('Body parts with hit boxes', 'Which body parts get their own hit box.', 'Leave out parts your game never needs to tell apart.', 'Region ids from hitboxes.json regions_found'),
@@ -1085,9 +1093,12 @@ const CLIP_LABELS: Record<string, string> = {
 
 // "Moves: 15 hand-made (free library) and 2 built in." from the rig version's metrics; '' when it does not say.
 export function movesSourceLine(metrics: Record<string, unknown>): string {
-  const lib = Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0
+  // Moves from the person's own files ("Add a move", metrics.moves source "mine") are counted on their own.
+  const mine = Array.isArray(metrics.moves) ? metrics.moves.filter((m) => (m as { source?: string; made?: boolean })?.source === 'mine' && (m as { made?: boolean }).made !== false).length : 0
+  const lib = (Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0) - mine
   const proc = Array.isArray(metrics.procedural_clips) ? metrics.procedural_clips.length : 0
-  if (metrics.clips_source === 'library' && lib) return `Where they come from: ${lib} hand-made (a free library, fine for commercial games)${proc ? ` and ${proc} built in` : ''}.`
+  const yours = mine ? `, ${mine} from your own file${mine > 1 ? 's' : ''}` : ''
+  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} hand-made (a free library, fine for commercial games)${yours}${proc ? ` and ${proc} built in` : ''}.`
   if (metrics.clips_source === 'procedural') return 'Where they come from: built in, made for this skeleton.'
   return ''
 }
