@@ -424,8 +424,54 @@ def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, he
         return {"found": False, "reason": "no_skin", "nose": (int(ix), int(iy))}
     x0, x1 = np.percentile(xs, [2, 98])
     y0, y1 = np.percentile(ys, [2, 98])
+    region, added = close_eye_gaps(region, m, lab, skin, (int(ix), int(iy)), (int(x0), int(y0), int(x1), int(y1)))
     return {"found": True, "reason": None, "nose": (int(ix), int(iy)), "skin": [round(float(v), 2) for v in skin], "region": region,
-            "box": (int(x0), int(y0), int(x1), int(y1)), "width_px": float(x1 - x0), "area_px": int(region.sum())}
+            "box": (int(x0), int(y0), int(x1), int(y1)), "width_px": float(x1 - x0), "area_px": int(region.sum()),
+            "eye_gap_px": added}
+
+
+def hair_colour_above(lab: np.ndarray, m: np.ndarray, region: np.ndarray, nose: tuple[int, int],
+                      box: tuple[int, int, int, int]) -> np.ndarray | None:
+    """The middle colour (Lab) of the head above the face: the model's surface outside the face region, in the top
+    quarter of the face's box and up, within 0.8 face widths of the nose. None when there is too little of it."""
+    S = m.shape[0]
+    x0, y0, x1, y1 = box
+    w = float(x1 - x0)
+    Y, X = np.mgrid[0:S, 0:S]
+    above = m & ~dilate_mask(region, max(2, int(w / 40))) & (Y < y0 + 0.25 * (y1 - y0)) & (np.abs(X - nose[0]) < 0.8 * w)
+    if above.sum() < 200:
+        return None
+    return np.median(lab[above], axis=0)
+
+
+def close_eye_gaps(region: np.ndarray, m: np.ndarray, lab: np.ndarray, skin: np.ndarray, nose: tuple[int, int],
+                   box: tuple[int, int, int, int], margin: float = 6.0) -> tuple[np.ndarray, int]:
+    """The face region with the eye smudges that touch the hair put back. find_face fills the holes in the skin (eyes,
+    brows, lips), but an eye smudge that runs into a lock of hair is no hole: it joins the hair, and the eye was left
+    out of the face (the second knight: her right eye stayed a dark smudge). Here the hair is a wall too: what the skin
+    and the hair together enclose, in the band of the eyes and brows, joins the face, except what is hair-coloured
+    itself (nearer the hair colour than the skin tone by margin, Lab with lightness half), so hair that covers the face
+    on the model stays out of it. Returns (region, how many pixels were added)."""
+    hair = hair_colour_above(lab, m, region, nose, box)
+    if hair is None:
+        return region, 0
+    k = np.array([0.5, 1.0, 1.0])
+    skin = np.asarray(skin, dtype=np.float64)
+    if np.linalg.norm((hair - skin) * k) < 2 * margin:
+        return region, 0
+    d_h = np.linalg.norm((lab - hair) * k, axis=-1)
+    d_s = np.linalg.norm((lab - skin) * k, axis=-1)
+    hairy = m & (d_h < d_s - margin)
+    enclosed = fill_holes(region | hairy) & m & ~hairy & ~region
+    S = m.shape[0]
+    x0, y0, x1, y1 = box
+    w = float(x1 - x0)
+    Y, X = np.mgrid[0:S, 0:S]
+    band_ = (np.abs(X - nose[0]) <= 0.45 * w) & (Y >= nose[1] - 0.5 * w) & (Y <= nose[1] - 0.02 * w)
+    add = enclosed & band_
+    # only pieces that touch the face (a gap in the hair far from the skin is not an eye)
+    add = grow(add & dilate_mask(region, 1), add) if add.any() else add
+    return region | add, int(add.sum())
 
 
 def features_box(info: dict[str, Any]) -> np.ndarray:
@@ -591,6 +637,22 @@ def align(src: np.ndarray, dst: np.ndarray, region: np.ndarray, work: int = 256,
 
 def apply_alignment(img: np.ndarray, a: dict[str, Any]) -> np.ndarray:
     return scale_image(img, a["sx"], a["sy"], a["tx"], a["ty"], a["centre"])
+
+
+def compose_alignment(first: dict[str, Any], then: dict[str, Any]) -> dict[str, Any]:
+    """One alignment that does `first` and then `then` (so the picture is resampled once): about first's centre, the
+    scales multiplied and the shift worked out so apply_alignment(img, result) equals
+    apply_alignment(apply_alignment(img, first), then)."""
+    c1 = np.array(first["centre"], dtype=np.float64)
+    c2 = np.array(then["centre"], dtype=np.float64)
+    s1 = np.array([first["sx"], first["sy"]], dtype=np.float64)
+    s2 = np.array([then["sx"], then["sy"]], dtype=np.float64)
+    t1 = np.array([first["tx"], first["ty"]], dtype=np.float64)
+    t2 = np.array([then["tx"], then["ty"]], dtype=np.float64)
+    s = s1 * s2
+    t = c2 + t2 - s2 * (c2 - c1 - t1) - c1
+    return {"sx": round(float(s[0]), 4), "sy": round(float(s[1]), 4), "tx": round(float(t[0]), 2), "ty": round(float(t[1]), 2),
+            "centre": (float(c1[0]), float(c1[1]))}
 
 
 def feature_match(a: np.ndarray, b: np.ndarray, region: np.ndarray, lo: float = 3.0, hi: float = 12.0) -> float:
