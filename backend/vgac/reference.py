@@ -92,7 +92,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
         # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.
-        _param("padding", "integer", None, min=1, max=16, label="Space around texture pieces (pixels)",
+        _param("padding", "integer", None, min=1, max=16, label="UV padding (seam space, in pixels)",
                description="Automatic when empty: 4 px at 1024, 8 at 2048, 16 at 4096"),
     ],
     "prep": [
@@ -115,11 +115,16 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("shading", "select", "auto", label="Shading", options=list(SHADING_OPTIONS), categories=SURFACE_CATEGORIES,
                description="Automatic follows the recipe: flat for low-poly, smooth for the rest"),
         # G07, G08: the style decides when empty (data/styles.yaml delight_default and pbr_fix_default).
-        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Painted-on shadows"),
-        _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="Keep colours in a realistic range",
+        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Delight (remove painted-on shadows)"),
+        _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="PBR range check (realistic colour range)",
                description="On for realistic styles, off for others, when empty"),
-        _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Paint the surface again",
+        _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Rebake (paint the surface again)",
                description="Prep repaints by itself when mirroring or shrinking changes the shape"),
+        # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for crisp and flat looks.
+        _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
+               description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
+        _param("face_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Face strength",
+               description="How much of the painted face goes onto the model: 1 is all of it"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),
@@ -146,10 +151,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
-        _param("collider", "select", "auto", label="Collision shape", options=["auto", "hull", "decompose", "mesh", "none"],
+        _param("collider", "select", "auto", label="Collider (collision shape)", options=["auto", "hull", "decompose", "mesh", "none"],
                categories=["prop_rigid", "prop_articulated", "vehicle", "environment", "foliage"],
                description="The invisible shapes the game uses to know where this is solid."),
-        _param("collider_max_parts", "integer", None, label="Most shapes", min=1, max=32,
+        _param("collider_max_parts", "integer", None, label="Max collider parts (most shapes)", min=1, max=32,
                categories=["prop_rigid", "prop_articulated", "vehicle", "environment"],
                description="Automatic when empty: 8 for props, 16 for scenery, 6 for vehicles, half on Phone"),
         _param("movement_shape", "select", "auto", options=["auto", "upright", "along", "box", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),

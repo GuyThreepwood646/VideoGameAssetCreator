@@ -145,7 +145,7 @@ function CreateProjectForm({ onCreated, primary }: { onCreated: (p: Project) => 
       {presets && presets.length > 0 && (
         <div className="col">
           <div className="field-label">
-            Pick a look
+            Pick a style preset (look)
             <Info term="term.look" />
             <span className="muted small"> (you can change it later)</span>
           </div>
@@ -236,11 +236,11 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
           </button>
         </div>
       </div>
-      <div className="muted small">The look every asset in this project shares. Pick one once; every new asset follows it.</div>
+      <div className="muted small">The style preset every asset in this project shares. Pick one once; every new asset follows it.</div>
       <div className="col">
         <div className="row-between">
           <div className="field-label">
-            Look
+            Style preset (look)
             <Info term="term.look" />
           </div>
           <span className="small">
@@ -278,7 +278,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       />
       <Disclosure label="Advanced (edit the look by hand)" defaultOpen={!current && !!presets}>
       <div className="col">
-      <Field label="Style words" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">
+      <Field label="Style prompt (style words)" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">
         <SubmitTextarea rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
       </Field>
       <div className="grid-2">

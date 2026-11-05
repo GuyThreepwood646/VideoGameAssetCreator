@@ -294,7 +294,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <SubmitTextarea rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" />
         </Field>
       ) : (
-        <Field label="Describe it" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
+        <Field label="Prompt (description)" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
           <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
         </Field>
       )}
@@ -324,12 +324,12 @@ function CreateAssetForm({ project }: { project: Project }) {
         </select>
       </Field>
       <div className="grid-2">
-        <Field label="Look" term={'style.' + style} hint={projectLook ? (style === projectStyleId ? `Your project's look: ${projectLook.label}.` : `Different from your project's look (${projectLook.label}).`) : undefined}>
+        <Field label="Style preset (look)" term={'style.' + style} hint={projectLook ? (style === projectStyleId ? `Your project's style preset: ${projectLook.label}.` : `Different from your project's style preset (${projectLook.label}).`) : undefined}>
           <select value={style} onChange={(e) => setStyle(e.target.value)}>
             {ref?.styles.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
-                {projectLook && s.id === projectStyleId ? ` (${projectLook.label}, the project look)` : ''}
+                {projectLook && s.id === projectStyleId ? ` (${projectLook.label}, the project style preset)` : ''}
               </option>
             ))}
           </select>

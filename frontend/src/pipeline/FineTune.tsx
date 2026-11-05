@@ -190,7 +190,7 @@ export function FineTune({
       ]
       if (curN !== null && !levels.some((l) => l.value === curN)) levels.push({ label: `Current (${curN.toLocaleString('en-US')} triangles)`, value: curN })
       return (
-        <Field key={p.name} label="Detail level" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
+        <Field key={p.name} label="Triangle count (detail level)" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
           <select value={cur === null || cur === undefined ? '' : String(cur)} disabled={disabled} onChange={(e) => set('target_faces', e.target.value === '' ? null : Number(e.target.value))}>
             {levels.map((l) => (
               <option key={String(l.value)} value={l.value === null ? '' : String(l.value)}>

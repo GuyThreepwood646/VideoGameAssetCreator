@@ -204,9 +204,9 @@ export function finishLines(asset: Asset): FinishLine[] {
   // 4c. Attachment points on rigged characters and creatures (hands, back, head...).
   const sk = exp.metrics.sockets as { count?: number; names?: string[] } | undefined
   if (sk && typeof sk === 'object' && sk.count && Array.isArray(sk.names) && sk.names.length) {
-    const words: Record<string, string> = { Socket_Hand_R: 'right hand', Socket_Hand_L: 'left hand', Socket_Back: 'back', Socket_Hip_L: 'left hip', Socket_Hip_R: 'right hip', Socket_Head: 'head', Socket_Chest: 'chest', Socket_Mouth: 'mouth' }
+    const words: Record<string, string> = { Socket_Hand_R: 'right hand', Socket_Hand_L: 'left hand', Socket_Forearm_R: 'right forearm', Socket_Forearm_L: 'left forearm', Socket_Back: 'back', Socket_Hip_L: 'left hip', Socket_Hip_R: 'right hip', Socket_Head: 'head', Socket_Chest: 'chest', Socket_Mouth: 'mouth' }
     const names = sk.names.map((n) => words[n] ?? n.replace(/^Socket_/, '').replace(/_/g, ' ').toLowerCase())
-    lines.push({ id: 'sockets', text: `Attachment points: ${joinAnd(names)}, ready for weapons and gear.`, state: 'ok', term: 'socket' })
+    lines.push({ id: 'sockets', text: `Sockets (attachment points): ${joinAnd(names)}, ready for weapons and gear.`, state: 'ok', term: 'socket' })
   }
 
   // 5a. Lighting (3.9): painted-on shadows removed by prep, or still in the colours.

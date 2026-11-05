@@ -56,10 +56,10 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
         }
         if (j.status === 'error' || j.status === 'cancelled') {
           setWaiting(null)
-          setNote(j.status === 'error' ? 'The review engine could not describe this picture. Try again, or write the style words yourself.' : 'Stopped.')
+          setNote(j.status === 'error' ? 'The vision model could not describe this picture. Try again, or write the style prompt yourself.' : 'Stopped.')
           return
         }
-        setWaiting(j.message && j.status === 'queued' ? j.message : 'The review engine is describing the style. It takes about a minute.')
+        setWaiting(j.message && j.status === 'queued' ? j.message : 'The vision model is describing the style. It takes about a minute.')
         poll.current = window.setTimeout(() => waitFor(jobId), 2000)
       },
       (e) => {
@@ -78,10 +78,10 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
       const r = await api.styleFromImage(projectId, picture.dataUrl)
       if (!swatches) setSwatches(r.swatches)
       if (r.job) {
-        setWaiting(r.message ?? 'The review engine is describing the style.')
+        setWaiting(r.message ?? 'The vision model is describing the style.')
         waitFor(r.job.id)
       } else {
-        setNote(r.message ?? 'Describing the style needs the review engine. The colours are ready.')
+        setNote(r.message ?? 'Describing the style needs the vision model (review engine). The colours are ready.')
       }
     } catch (e) {
       setError(e)
@@ -152,7 +152,7 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
             </span>
             <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} />
           </label>
-          <div className="muted small">This guides the look in words: it becomes the project's style words, which the image model reads before every description. Edit it freely.</div>
+          <div className="muted small">This guides the look in words: it becomes the project's style prompt (style words), which the image model reads before every prompt. Edit it freely.</div>
           <div className="row-gap">
             <button type="button" className="primary" disabled={busy || !text.trim()} onClick={() => { onApply({ prompt_block: text.trim() }); setText(null) }}>
               Apply

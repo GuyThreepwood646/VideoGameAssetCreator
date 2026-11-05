@@ -53,6 +53,8 @@ SAMPLES = {
     # Items: the grip guess and the item staying clear of the body.
     "grip_found": ((0.9, 0.6), (0.3, 0.6)),
     "item_clear_of_body": ((0.0, 0.03), (0.08, 0.03)),
+    "item_above_ground": ((0.0, 0.02), (0.06, 0.02)),
+    "items_apart": ((0.0, 0.02), (0.05, 0.02)),
     "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
     "collider_triangles": ((236, 255), (300, 255)),
@@ -67,6 +69,7 @@ SAMPLES = {
     "grid_fit": (([2.0, 0.3, 3.0], 1), ([2.4, 0.3, 3.0], 1)),
     "tiles_cleanly": ((0.0, 0.5), (45.0, 0.5)),
     "look_applied": (("about 1,250 triangles, flat faces, 512 px textures", "abc123"), ("about 1,250 triangles", "abc123")),
+    "face_matches_picture": ((1.33, 1.0), (0.8, 1.0)),  # face detail pass: sharpness of the face after it
     # Start from your own images: concept readiness and material photos.
     "one_subject": ((1, 1), (3, 1)),
     "in_frame": ((0.05, 0.01), (0.0, 0.01)),

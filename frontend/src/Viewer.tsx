@@ -440,6 +440,8 @@ function buildShape(s: HitShape, color: THREE.Color, label: string): THREE.Group
 const SOCKET_LABELS: Record<string, string> = {
   Socket_Hand_R: 'Right hand',
   Socket_Hand_L: 'Left hand',
+  Socket_Forearm_R: 'Right forearm',
+  Socket_Forearm_L: 'Left forearm',
   Socket_Back: 'Back',
   Socket_Hip_L: 'Left hip',
   Socket_Hip_R: 'Right hip',
@@ -1234,8 +1236,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         )}
         {socketCount > 0 && (
           <span className="viewer-toggle">
-            <button type="button" aria-pressed={showSockets} onClick={() => setShowSockets((s) => !s)} title="Shows where a weapon, hat or backpack can be attached">
-              Attachment points ({socketCount})
+            <button type="button" aria-pressed={showSockets} onClick={() => setShowSockets((s) => !s)} title="Sockets (attachment points): shows where a weapon, hat or backpack can be attached">
+              Sockets ({socketCount})
             </button>
             <Info term="term.socket" />
           </span>
