@@ -85,6 +85,10 @@ class Asset(Base):
     variant_change: Mapped[str | None] = mapped_column(Text, nullable=True)
     concept_model: Mapped[str | None] = mapped_column(String(50), nullable=True)
     autopilot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Items (vgac/items.py). On an item: what it is and whose it is ({type, label, kind, phrase, character_id}). On a
+    # character: the items set aside from its description and what is attached where ({choice, set_aside, attachments}).
+    held_item_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    equipment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="assets")
@@ -99,6 +103,22 @@ class Asset(Base):
     @autopilot.setter
     def autopilot(self, value: dict[str, Any] | None) -> None:
         self.autopilot_json = _dumps(value) if value is not None else None
+
+    @property
+    def held_item(self) -> dict[str, Any] | None:
+        return _loads(self.held_item_json, None) if self.held_item_json else None
+
+    @held_item.setter
+    def held_item(self, value: dict[str, Any] | None) -> None:
+        self.held_item_json = _dumps(value) if value is not None else None
+
+    @property
+    def equipment(self) -> dict[str, Any] | None:
+        return _loads(self.equipment_json, None) if self.equipment_json else None
+
+    @equipment.setter
+    def equipment(self, value: dict[str, Any] | None) -> None:
+        self.equipment_json = _dumps(value) if value is not None else None
 
     @property
     def parts(self) -> list[str]:
@@ -227,7 +247,8 @@ def init_db() -> None:
     _ensure_columns(engine)
 
 
-_ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT"},
+_ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
+                                                                                          "held_item_json": "TEXT", "equipment_json": "TEXT"},
                   "job": {"result_json": "TEXT"}}
 
 
@@ -323,6 +344,8 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
         "variant_change": a.variant_change,
         "concept_model": a.concept_model,
         "autopilot": a.autopilot,
+        "held_item": a.held_item,
+        "equipment": a.equipment,
         "created_at": _iso(a.created_at),
         "selected": {},
         "stages": {s: [] for s in STAGES},

@@ -1,0 +1,277 @@
+# Carried items: things a character or creature holds or carries that do not bend with the body. When a description
+# names one, the character is made empty-handed and the item is made as its own asset (vgac/items.py), then attached
+# to an attachment point (vgac/sockets.py). Served by GET /api/item-words. This is the one list; the asset form and
+# the backend both read it from here.
+#
+# Per type:
+#   words       the words that name it in a description (whole words, any case; longer phrases are matched first)
+#   label       the plain name used in sentences and in the item's name ("Ranger - sword")
+#   kind        how the grip is found on the item's mesh (vgac/grip.py):
+#                 blade   a short handle, a guard and a long flat blade (sword, dagger)
+#                 haft    a long handle with a head at one end (axe, mace, torch); held near the far end
+#                 pole    a long shaft with no clear handle (staff, spear, wand); held at `grip_fraction` from the butt
+#                 bow     held at the thickest slice near the middle
+#                 shield  held at the middle of the back
+#                 worn    carried, not held (quiver, backpack, bag); pivot at the middle of the side that touches the body
+#                 head    worn on the head; pivot at the middle of the inner rim
+#                 hang    hangs from the hand by a handle at the top (lantern)
+#   size_m      the usual length along its longest side, written into the item's description ("about 0.9 m")
+#   socket      where it goes by default (humanoid attachment points)
+#   creature    where it goes on a creature (Socket_Head, Socket_Back, Socket_Mouth), or null when it does not suit one
+#   stow        where it goes when put away (optional)
+#   rotation    the default turn from the attachment point, in degrees about the point's own right, up and forward
+#               axes (x, y, z), applied after the item's own grip frame (see vgac/grip.py for the frame)
+#   view        how the item's own picture is painted: upright (standing up, seen from the side, handle at the
+#               bottom), front (seen from the front, three-quarter) or worn (as it would be worn, three-quarter)
+#   clip_set    the clip set a game would use with it (attachments.json; the library's attack is already a sword swing)
+version: 1
+types:
+  sword:
+    words: [sword, swords, short sword, shortsword, longsword, long sword, broadsword, greatsword, sabre, saber, katana, scimitar, rapier, cutlass, falchion]
+    label: sword
+    kind: blade
+    size_m: 0.9
+    socket: Socket_Hand_R
+    creature: Socket_Mouth
+    stow: Socket_Hip_L
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: sword
+  dagger:
+    words: [dagger, daggers, knife, knives, dirk]
+    label: dagger
+    kind: blade
+    size_m: 0.35
+    socket: Socket_Hand_R
+    creature: Socket_Mouth
+    stow: Socket_Hip_R
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: sword
+  axe:
+    words: [axe, axes, battleaxe, battle axe, hatchet, ax]
+    label: axe
+    kind: haft
+    size_m: 0.7
+    socket: Socket_Hand_R
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: sword
+  mace:
+    words: [mace, maces, warhammer, war hammer, hammer, club, flail, morningstar]
+    label: mace
+    kind: haft
+    size_m: 0.7
+    socket: Socket_Hand_R
+    creature: null
+    stow: Socket_Hip_L
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: sword
+  bow:
+    words: [bow, bows, longbow, long bow, shortbow, short bow]
+    label: bow
+    kind: bow
+    size_m: 1.2
+    socket: Socket_Hand_L
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: bow
+  crossbow:
+    words: [crossbow, crossbows]
+    label: crossbow
+    kind: pole
+    grip_fraction: 0.3
+    size_m: 0.7
+    socket: Socket_Hand_R
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: front
+    clip_set: bow
+  quiver:
+    words: [quiver, quivers, quiver of arrows, arrows, arrow]
+    label: quiver
+    kind: worn
+    size_m: 0.65
+    socket: Socket_Back
+    creature: Socket_Back
+    rotation: [0, 0, -20]
+    view: worn
+    clip_set: none
+  shield:
+    words: [shield, shields, buckler, round shield, kite shield, tower shield]
+    label: shield
+    kind: shield
+    size_m: 0.6
+    socket: Socket_Hand_L
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: front
+    clip_set: shield
+  staff:
+    words: [staff, staffs, staves, quarterstaff]
+    label: staff
+    kind: pole
+    grip_fraction: 0.38
+    size_m: 1.7
+    socket: Socket_Hand_R
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: staff
+  wand:
+    words: [wand, wands]
+    label: wand
+    kind: pole
+    grip_fraction: 0.2
+    size_m: 0.35
+    socket: Socket_Hand_R
+    creature: Socket_Mouth
+    stow: Socket_Hip_R
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: staff
+  spear:
+    words: [spear, spears, lance, pike, halberd, trident, javelin]
+    label: spear
+    kind: pole
+    grip_fraction: 0.38
+    size_m: 2.0
+    socket: Socket_Hand_R
+    creature: null
+    stow: Socket_Back
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: staff
+  backpack:
+    words: [backpack, backpacks, rucksack, knapsack, pack]
+    label: backpack
+    kind: worn
+    size_m: 0.5
+    socket: Socket_Back
+    creature: Socket_Back
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  bag:
+    words: [bag, bags, sack, pouch]
+    label: bag
+    kind: worn
+    size_m: 0.35
+    socket: Socket_Hip_R
+    creature: Socket_Back
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  satchel:
+    words: [satchel, satchels, shoulder bag]
+    label: satchel
+    kind: worn
+    size_m: 0.35
+    socket: Socket_Hip_R
+    creature: Socket_Back
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  hat:
+    words: [hat, hats, cap, wizard hat, top hat, tricorn]
+    label: hat
+    kind: head
+    size_m: 0.35
+    socket: Socket_Head
+    creature: Socket_Head
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  helmet:
+    words: [helmet, helmets, helm, horned helmet]
+    label: helmet
+    kind: head
+    size_m: 0.32
+    socket: Socket_Head
+    creature: Socket_Head
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  crown:
+    words: [crown, crowns, tiara, circlet]
+    label: crown
+    kind: head
+    size_m: 0.2
+    socket: Socket_Head
+    creature: Socket_Head
+    rotation: [0, 0, 0]
+    view: worn
+    clip_set: none
+  lantern:
+    words: [lantern, lanterns, lamp]
+    label: lantern
+    kind: hang
+    size_m: 0.35
+    socket: Socket_Hand_L
+    creature: Socket_Mouth
+    stow: Socket_Hip_R
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: none
+  torch:
+    words: [torch, torches]
+    label: torch
+    kind: haft
+    size_m: 0.5
+    socket: Socket_Hand_L
+    creature: Socket_Mouth
+    rotation: [0, 0, 0]
+    view: upright
+    clip_set: none
+
+# Worn things that bend with the body stay part of it and are never listed (the help sentence names a few).
+worn_words: [cloak, cape, scarf, belt, armour, armor, boots, boot, gloves, gauntlets, hood, robe, tunic, coat, jacket,
+             dress, skirt, trousers, pants, shirt, vest, bracers, sash, mantle, shawl, poncho, apron]
+
+# Words before an item word that mean the character does not have it ("without a sword", "no shield").
+negations: ["no", "without", "not", "never", "unarmed"]
+
+# A word after an item word that means it is not the item ("bow tie", "pack of wolves", "hat trick").
+not_followed_by:
+  bow: [tie, tied, legged, legs, ing]
+  pack: [of, animal, leader]
+  hat: [trick]
+  club: [foot]
+  cap: [sleeve, sleeves]
+  hammer: [toe, toes]
+  staff: [member, members]
+
+# Categories whose descriptions are checked (characters and creatures). Everything else keeps its description as is.
+categories: [humanoid, quadruped, multileg, winged, serpent]
+
+# Added to the character's picture description when items are made separately.
+empty_hands: >-
+  The hands are open and empty, nothing is held in them, nothing is carried on the back and nothing hangs at the
+  belt.
+empty_hands_creature: >-
+  Nothing is held in the mouth, nothing is carried on the back and nothing is worn on the head.
+
+# How an item's own picture is painted, by view (replaces the rigid prop's pose block for a held item).
+pose_blocks:
+  upright: >-
+    The {label} is shown alone, standing upright with its handle or grip at the bottom and its tip or head at the
+    top, seen straight from the side so its whole length and shape are clear, the whole item visible with margin
+    above and below, centred in frame. Plain flat light grey background. Soft even studio lighting with no hard
+    shadows. No hands, no person, no stand, no wall mount, no other objects, no text, no motion blur, no cropping.
+  front: >-
+    The {label} is shown alone, upright, seen from a three-quarter front angle so its face and its thickness are both
+    clear, the whole item visible with margin around it, centred in frame. Plain flat light grey background. Soft
+    even studio lighting with no hard shadows. No hands, no person, no stand, no other objects, no text, no motion
+    blur, no cropping.
+  worn: >-
+    The {label} is shown alone, upright as it would be worn, seen from a three-quarter front angle, the whole item
+    visible with margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting with
+    no hard shadows. No person, no mannequin, no stand, no other objects, no text, no motion blur, no cropping.

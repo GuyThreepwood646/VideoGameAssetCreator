@@ -308,8 +308,11 @@ class FakeSC:
             if self.fail_retarget:
                 rep.write_text(json.dumps({"ok": False, "error": "bones not found on the character or in the library: ['Head']"}))
                 raise RuntimeError("blender exited 2")
-            spec = gait.parse_clip_spec(args[args.index("--clips") + 1])
-            lib = [n for n, _ in spec if n != "roll"]
+            if "--spec" in args:
+                names = [r["name"] for r in json.loads(Path(args[args.index("--spec") + 1]).read_text())]
+            else:
+                names = [n for n, _ in gait.parse_clip_spec(args[args.index("--clips") + 1])]
+            lib = [n for n in names if n != "roll"]
             rep.write_text(json.dumps({"ok": True, "clips": lib + ["turn_left"], "library_clips": lib, "procedural_clips": ["turn_left"],
                                        "missing_clips": ["roll"], "leg_ratio": 1.04, "missing_bones": [], "seconds": 3.6,
                                        "detail": {"walk": {"segment_angle": {"LeftArm": {"max_deg": 0.0}, "LeftUpLeg": {"max_deg": 5.5}}}}}))

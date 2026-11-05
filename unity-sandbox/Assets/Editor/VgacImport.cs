@@ -4,7 +4,7 @@
 //      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
-//      [-vgacSockets <sockets.json>]
+//      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -47,7 +47,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "9";
+    public const string Version = "10";
 
     [Serializable]
     class ClipInfo
@@ -67,6 +67,7 @@ public static class VgacImport
         public List<string> locomotion = new List<string>();  // "clip@speed" for each blend tree child
         public List<string> roles = new List<string>();       // "Attack=Rig|Sword_Attack" and so on
         public int moreMoves;
+        public List<string> added = new List<string>();       // "SwordBlock:Trigger", "SitIdle:Bool": moves the person added
         public bool applyRootMotion;
     }
 
@@ -78,6 +79,7 @@ public static class VgacImport
         public string importer_version = Version;
         public string request_id = "";         // set for an Editor hand-off request; "" for a batch import
         public string prefab = "";
+        public string showcase = "";          // the showcase scene the asset now stands in ("" when not updated)
         public int lodCount;
         public List<int> lodTriangles = new List<int>();
         public int bones;
@@ -119,7 +121,25 @@ public static class VgacImport
         public float bindPoseMoved;            // metres: how far the model's default pose was from its bind pose
         public float socketMaxAngle;           // degrees: worst forward or up mismatch between the FBX and the file
         public int socketsAdded;               // sockets the FBX lacked, added from the file
+        public string equippedPrefab = "";     // items: "<Name> (equipped).prefab", a variant with the items on
+        public List<string> equippedItems = new List<string>();  // "Ranger - sword>Socket_Hand_R"
     }
+
+    // attachments.json (backend/vgac/items.py equip): per item, its socket and offset in the socket's glTF frame.
+    [Serializable]
+    class AttachFiles { public string fbx = "", glb = ""; }
+
+    [Serializable]
+    class AttachItem
+    {
+        public string item = "", export_name = "", label = "", socket = "", unity_prefab = "";
+        public float[] position = new float[3], rotation = new float[] { 0, 0, 0, 1 };
+        public float scale = 1f;
+        public AttachFiles files = new AttachFiles();
+    }
+
+    [Serializable]
+    class AttachDoc { public List<AttachItem> items = new List<AttachItem>(); }
 
     // sockets.json (backend/vgac/sockets.py to_json): glTF model space, Y up, metres; forward +Z, up +Y.
     [Serializable]
@@ -197,7 +217,7 @@ public static class VgacImport
     // one of these and call Import, so the two paths cannot drift apart.
     public class ImportArgs
     {
-        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets;
+        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments;
         public bool humanoid, keepPose;
         public string filter = "bilinear";     // recipes: bilinear | point
         public bool mipmaps = true, compress = true, normalMap = true;
@@ -232,6 +252,7 @@ public static class VgacImport
                 clips = F("-vgacClips"),
                 colliders = F("-vgacColliders"),
                 sockets = F("-vgacSockets"),
+                attachments = F("-vgacAttachments"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
                 filter = (A("-vgacFilter") ?? "bilinear").ToLowerInvariant() == "point" ? "point" : "bilinear",
@@ -440,6 +461,7 @@ public static class VgacImport
 
             // Clips: the shared library for a valid Humanoid, else the clips baked into the model FBX itself.
             List<AnimationClip> clipSet = null;
+            HashSet<string> addedClips = null;  // moves the person added ("Add a move"), by clip name
             var clipsSrc = a.clips;
             if (clipsSrc != null && File.Exists(clipsSrc) && avatar != null && avatar.isHuman && avatar.isValid)
             {
@@ -455,11 +477,21 @@ public static class VgacImport
                 ci.SaveAndReimport();
                 SetClipLoops(ci, report, null);
                 clipSet = LoadClips(clipsPath);
+                // Moves the person added are only in the model's own FBX: add those to the shared set.
+                var side = ReadClipInfo(a.clipInfo, report);
+                addedClips = AddedClips(side);
+                if (addedClips.Count > 0)
+                {
+                    SetClipLoops(importer, report, side, addedClips);
+                    clipSet.AddRange(LoadClips(fbxPath).Where(c => addedClips.Contains(ShortName(c.name))));
+                }
             }
             else
             {
                 if (clipsSrc != null) report.warnings.Add("clips library skipped: avatar not humanoid or file missing");
-                SetClipLoops(importer, report, ReadClipInfo(a.clipInfo, report));
+                var side = ReadClipInfo(a.clipInfo, report);
+                SetClipLoops(importer, report, side);
+                addedClips = AddedClips(side);
                 clipSet = LoadClips(fbxPath);
             }
             // Read Loop Time back from the imported clips: that is what the game gets.
@@ -470,7 +502,7 @@ public static class VgacImport
             }
             if (clipSet.Count > 0)
             {
-                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller);
+                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips);
                 animator.runtimeAnimatorController = ctrl;
                 report.clipCount = clipSet.Count;
             }
@@ -490,7 +522,10 @@ public static class VgacImport
                     if (t.GetComponents<Component>().Length > 1) report.warnings.Add("socket " + t.name + " carries components");
                 }
             report.prefab = prefabPath;
+            // Items: a second prefab with them under their sockets; the bare prefab above stays clean.
+            if (rigged && a.attachments != null) BuildEquipped(prefabPath, a.attachments, assetDir, name, input, report);
             report.ok = true;
+            report.showcase = PlaceInShowcase(prefabPath, Arg("-vgacHdri"), report.warnings);
         }
         catch (Exception e)
         {
@@ -847,6 +882,81 @@ public static class VgacImport
         }
         report.socketMaxError = worst;
         report.socketMaxAngle = worstAngle;
+    }
+
+    // Items: "<Name> (equipped).prefab", a variant of the bare prefab with each item's prefab (made by the item's own
+    // import, Assets/VGAC/<item>/<item>.prefab) under its socket at the offset from attachments.json. The offset is in
+    // the socket's glTF frame; Unity's import mirrors X, so the position flips x and the rotation flips y and z. An
+    // item without its prefab falls back to its FBX from items/<item>/ (no material) with a warning. Held items' own
+    // colliders become triggers, so they do not push the character's own body shape.
+    static void BuildEquipped(string prefabPath, string path, string assetDir, string name, string input, Report report)
+    {
+        if (!File.Exists(path)) return;
+        AttachDoc doc;
+        try { doc = JsonUtility.FromJson<AttachDoc>(File.ReadAllText(path)); }
+        catch (Exception e) { report.warnings.Add("attachments.json not readable: " + e.Message); return; }
+        if (doc == null || doc.items == null || doc.items.Count == 0) return;
+        var bare = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        if (bare == null) return;
+        var inst = (GameObject)PrefabUtility.InstantiatePrefab(bare);
+        try
+        {
+            inst.name = name + " (equipped)";
+            var all = inst.GetComponentsInChildren<Transform>(true);
+            foreach (var it in doc.items)
+            {
+                var sock = all.FirstOrDefault(t => t.name == it.socket);
+                if (sock == null) { report.warnings.Add("item " + it.item + ": no " + it.socket + " on the character"); continue; }
+                GameObject src = string.IsNullOrEmpty(it.unity_prefab) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(it.unity_prefab);
+                if (src == null && it.files != null && !string.IsNullOrEmpty(it.files.fbx) && input != null)
+                {
+                    var fbx = Path.Combine(input, it.files.fbx);
+                    if (File.Exists(fbx))
+                    {
+                        Directory.CreateDirectory(assetDir + "/items");
+                        var dst = assetDir + "/items/" + Path.GetFileName(fbx);
+                        File.Copy(fbx, dst, true);
+                        AssetDatabase.ImportAsset(dst, ImportAssetOptions.ForceSynchronousImport);
+                        src = AssetDatabase.LoadAssetAtPath<GameObject>(dst);
+                        report.warnings.Add("item " + it.item + ": its prefab was not found, so its plain model is used");
+                    }
+                }
+                if (src == null) { report.warnings.Add("item " + it.item + ": no prefab or model found"); continue; }
+                var go = (GameObject)PrefabUtility.InstantiatePrefab(src);
+                go.name = string.IsNullOrEmpty(it.item) ? src.name : it.item;
+                go.transform.SetParent(sock, false);
+                go.transform.localPosition = U(it.position, 1f);
+                var q = it.rotation != null && it.rotation.Length == 4 ? it.rotation : new float[] { 0, 0, 0, 1 };
+                go.transform.localRotation = new Quaternion(q[0], -q[1], -q[2], q[3]);
+                go.transform.localScale = Vector3.one * (it.scale > 0 ? it.scale : 1f);
+                var anim = go.GetComponent<Animator>();
+                if (anim != null && anim.runtimeAnimatorController == null) UnityEngine.Object.DestroyImmediate(anim);
+                foreach (var c in go.GetComponentsInChildren<Collider>(true))
+                {
+                    if (c is MeshCollider mc && !mc.convex) mc.enabled = false;
+                    else c.isTrigger = true;
+                }
+                report.equippedItems.Add(go.name + ">" + it.socket);
+            }
+            if (report.equippedItems.Count == 0) return;
+            var eqPath = assetDir + "/" + name + " (equipped).prefab";
+            PrefabUtility.SaveAsPrefabAsset(inst, eqPath);
+            report.equippedPrefab = eqPath;
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(inst);
+        }
+        // What the game gets: each item under its socket in the saved prefab.
+        var saved = AssetDatabase.LoadAssetAtPath<GameObject>(report.equippedPrefab);
+        var found = new List<string>();
+        if (saved != null)
+            foreach (var t in saved.GetComponentsInChildren<Transform>(true).Where(t => IsSocketName(t.name)))
+                foreach (Transform child in t)
+                    found.Add(child.name + ">" + t.name);
+        foreach (var want in report.equippedItems.Where(w => !found.Contains(w)).ToList())
+            report.warnings.Add("equipped prefab: " + want + " not found after saving");
+        report.equippedItems = found;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -1357,7 +1467,11 @@ public static class VgacImport
     }
 
     // anim_clips.json from the rig stage (procanim.py): the loop flag per clip, which the GLB and FBX do not carry.
-    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; }
+    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; }
+
+    static HashSet<string> AddedClips(Dictionary<string, SidecarClip> side) =>
+        side == null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                     : new HashSet<string>(side.Values.Where(c => c.added).Select(c => c.name), StringComparer.OrdinalIgnoreCase);
     [Serializable] class Sidecar { public int version; public string motion = ""; public List<SidecarClip> clips = new List<SidecarClip>(); }
 
     static Dictionary<string, SidecarClip> ReadClipInfo(string path, Report report)
@@ -1374,12 +1488,13 @@ public static class VgacImport
         catch (Exception e) { report.warnings.Add("clip info not readable: " + e.Message); return null; }
     }
 
-    static void SetClipLoops(ModelImporter mi, Report report, Dictionary<string, SidecarClip> sidecar)
+    static void SetClipLoops(ModelImporter mi, Report report, Dictionary<string, SidecarClip> sidecar, HashSet<string> only = null)
     {
         var defs = mi.defaultClipAnimations;
         if (defs == null || defs.Length == 0) return;
         foreach (var d in defs)
         {
+            if (only != null && !only.Contains(ShortName(d.name))) continue;
             var info = new ClipInfo { name = d.name, defaultLoop = d.loopTime };
             SidecarClip side = null;
             if (sidecar != null) sidecar.TryGetValue(ShortName(d.name), out side);
@@ -1419,12 +1534,16 @@ public static class VgacImport
             .Select(x => x.c).FirstOrDefault();
     }
 
-    static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info)
+    static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info,
+                                              HashSet<string> added = null)
     {
         AssetDatabase.DeleteAsset(path);
         var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
         var sm = ctrl.layers[0].stateMachine;
         var used = new HashSet<AnimationClip>();
+        // Moves the person added get their own state and parameter below, never a role such as Attack.
+        var extra = added == null ? new List<AnimationClip>() : clips.Where(c => added.Contains(ShortName(c.name))).ToList();
+        foreach (var c in extra) used.Add(c);
         AnimationClip Take(AnimationClip c) { if (c != null) used.Add(c); return c; }
 
         var idle = Take(Pick(clips, used, "idle"));
@@ -1566,6 +1685,31 @@ public static class VgacImport
                 Back(hitSt, loco);
                 actionStates.Add(hitSt);
             }
+            // Added moves: a trigger per one-off move, a bool per looping one (true to play it, false to go back),
+            // named after the move: "sword_block" -> SetTrigger("SwordBlock").
+            for (int k = 0; k < extra.Count; k++)
+            {
+                var c = extra[k];
+                var param = UniqueParam(ctrl, Pascal(ShortName(c.name)));
+                var pos = new Vector3(900, 240 + 60 * k, 0);
+                AnimatorState st;
+                if (AnimationUtility.GetAnimationClipSettings(c).loopTime)
+                {
+                    ctrl.AddParameter(param, AnimatorControllerParameterType.Bool);
+                    st = sm.AddState(UniqueState(sm, ShortName(c.name)), pos);
+                    st.motion = c;
+                    var t = loco.AddTransition(st); t.AddCondition(AnimatorConditionMode.If, 0, param); t.hasExitTime = false; t.duration = 0.15f;
+                    var b = st.AddTransition(loco); b.AddCondition(AnimatorConditionMode.IfNot, 0, param); b.hasExitTime = false; b.duration = 0.15f;
+                    info.added.Add(param + ":Bool");
+                }
+                else
+                {
+                    st = OneShot(UniqueState(sm, ShortName(c.name)), param, c, pos, new[] { loco });
+                    Back(st, loco);
+                    info.added.Add(param + ":Trigger");
+                }
+                actionStates.Add(st);
+            }
             if (die)
             {
                 var from = new List<AnimatorState> { loco };
@@ -1604,11 +1748,241 @@ public static class VgacImport
         return ctrl;
     }
 
+    // "sword_block" -> "SwordBlock"; a parameter name the controller does not have yet.
+    static string Pascal(string name) =>
+        string.Concat(name.Split(new[] { '_', ' ', '-', '.' }, StringSplitOptions.RemoveEmptyEntries)
+                          .Select(w => char.ToUpperInvariant(w[0]) + w.Substring(1)));
+
+    static string UniqueParam(AnimatorController ctrl, string name)
+    {
+        if (string.IsNullOrEmpty(name)) name = "Move";
+        var n = name; int k = 2;
+        while (ctrl.parameters.Any(p => p.name == n)) n = name + k++;
+        return n;
+    }
+
     static string UniqueState(AnimatorStateMachine sm, string name)
     {
         var n = name; int k = 2;
         while (sm.states.Any(s => s.state.name == n)) n = name + " " + k++;
         return n;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Showcase scene (PHOTOREAL-PLAN phase 1, "Preview in realistic light"). Assets/VGAC/_Showcase/VGAC Showcase.unity:
+    // the outdoor light picture the app viewer uses (a CC0 Poly Haven HDRI, passed as -vgacHdri and copied in once) as
+    // the sky, the ambient light and what metal reflects, a sun matched to it with soft shadows, a plain ground and a
+    // camera. The last imported asset stands in the "Showcased asset" slot. Only this scene is ever written: it is
+    // opened next to whatever is open and closed again, so a person's own scenes are never touched. Without a light
+    // picture the built-in procedural sky stands in. The snapshot (Snapshot below) is rendered in this scene.
+    public const string ShowcaseDir = "Assets/VGAC/_Showcase";
+    public const string ShowcaseScene = ShowcaseDir + "/VGAC Showcase.unity";
+    const string ShowcaseSky = ShowcaseDir + "/VGAC Sky.hdr";
+    const string ShowcaseSlot = "Showcased asset";
+    // Measured once from the Outdoors light picture (kloofendal_48d_partly_cloudy_1k.hdr): average linear colour of the
+    // sky, the horizon band and the ground, with the sun clipped out (it comes from the Sun light instead).
+    static readonly Color ShowcaseSkyAmbient = new Color(0.41f, 0.48f, 0.70f);
+    static readonly Color ShowcaseEquatorAmbient = new Color(0.25f, 0.27f, 0.34f);
+    static readonly Color ShowcaseGroundAmbient = new Color(0.19f, 0.13f, 0.07f);
+    // The camera looks at the asset's front from 30 degrees to its right; the sun comes from 60 degrees left of the
+    // camera, 45 degrees up (front-left light, as in the app's beauty picture).
+    static readonly Vector3 ShowcaseCamDir = new Vector3(0.5f, 0.2f, 0.85f).normalized;
+    const float ShowcaseSunAzimuth = 90f, ShowcaseSunElevation = 45f;
+
+    // GetComponent returns Unity's fake null, which ?? does not see.
+    static T Comp<T>(GameObject g) where T : Component { var c = g.GetComponent<T>(); return c != null ? c : g.AddComponent<T>(); }
+
+    static GameObject RootIn(UnityEngine.SceneManagement.Scene s, string n) => s.GetRootGameObjects().FirstOrDefault(g => g.name == n);
+
+    static Cubemap ShowcaseCubemap(string hdri)
+    {
+        Directory.CreateDirectory(ShowcaseDir);
+        // Copied in when missing or when the app sends a different picture (a newer sky).
+        if (!string.IsNullOrEmpty(hdri) && File.Exists(hdri) && (!File.Exists(ShowcaseSky) || !File.ReadAllBytes(hdri).SequenceEqual(File.ReadAllBytes(ShowcaseSky))))
+        {
+            File.Copy(hdri, ShowcaseSky, true);
+            AssetDatabase.ImportAsset(ShowcaseSky, ImportAssetOptions.ForceSynchronousImport);
+        }
+        if (!File.Exists(ShowcaseSky)) return null;
+        var ti = AssetImporter.GetAtPath(ShowcaseSky) as TextureImporter;
+        if (ti != null)
+        {
+            var st = new TextureImporterSettings();
+            ti.ReadTextureSettings(st);
+            // Blurred like a rough surface sees it; a plain mip chain spreads the sun into a bright sheen on cloth.
+            if (st.textureShape != TextureImporterShape.TextureCube || st.cubemapConvolution != TextureImporterCubemapConvolution.Specular)
+            {
+                st.textureShape = TextureImporterShape.TextureCube;
+                st.generateCubemap = TextureImporterGenerateCubemap.AutoCubemap;
+                st.cubemapConvolution = TextureImporterCubemapConvolution.Specular;
+                st.mipmapEnabled = true;
+                ti.SetTextureSettings(st);
+                ti.SaveAndReimport();
+            }
+        }
+        return AssetDatabase.LoadAssetAtPath<Cubemap>(ShowcaseSky);
+    }
+
+    static Material ShowcaseMaterial(string path, Shader shader)
+    {
+        var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (m == null) { m = new Material(shader); AssetDatabase.CreateAsset(m, path); }
+        else if (m.shader != shader) m.shader = shader;
+        return m;
+    }
+
+    // Sets up the showcase's light, ground and camera in scene s (idempotent; objects are found by name).
+    static void DressShowcase(UnityEngine.SceneManagement.Scene s, string hdri)
+    {
+        var cube = ShowcaseCubemap(hdri);
+        var prev = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+        UnityEngine.SceneManagement.SceneManager.SetActiveScene(s);
+        try
+        {
+            var sky = ShowcaseMaterial(ShowcaseDir + "/VGAC Sky.mat", Shader.Find(cube != null ? "Skybox/Cubemap" : "Skybox/Procedural"));
+            if (cube != null)
+            {
+                sky.SetTexture("_Tex", cube);
+                sky.SetFloat("_Exposure", 1f);
+                sky.SetFloat("_Rotation", 0f);
+            }
+            EditorUtility.SetDirty(sky);
+            RenderSettings.skybox = sky;
+            // Colours in RenderSettings are entered as the Inspector shows them (sRGB), whatever the project's colour space.
+            RenderSettings.ambientMode = AmbientMode.Trilight;
+            RenderSettings.ambientSkyColor = ShowcaseSkyAmbient.gamma;
+            RenderSettings.ambientEquatorColor = ShowcaseEquatorAmbient.gamma;
+            RenderSettings.ambientGroundColor = ShowcaseGroundAmbient.gamma;
+            RenderSettings.ambientIntensity = 0.6f;
+            if (cube != null)
+            {
+                RenderSettings.defaultReflectionMode = DefaultReflectionMode.Custom;
+                RenderSettings.customReflectionTexture = cube;
+            }
+            RenderSettings.reflectionIntensity = 0.6f;
+            RenderSettings.fog = false;
+
+            var sunGo = RootIn(s, "Sun") ?? new GameObject("Sun");
+            var sun = Comp<Light>(sunGo);
+            sun.type = LightType.Directional;
+            sun.color = new Color(1f, 0.95f, 0.88f);
+            sun.intensity = 1.0f;
+            sun.shadows = LightShadows.Soft;
+            sun.shadowStrength = 0.85f;
+            float az = ShowcaseSunAzimuth * Mathf.Deg2Rad, el = ShowcaseSunElevation * Mathf.Deg2Rad;
+            var toSun = new Vector3(Mathf.Sin(az) * Mathf.Cos(el), Mathf.Sin(el), Mathf.Cos(az) * Mathf.Cos(el));
+            sunGo.transform.rotation = Quaternion.LookRotation(-toSun);
+            RenderSettings.sun = sun;
+
+            var ground = RootIn(s, "Ground");
+            if (ground == null)
+            {
+                ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                ground.name = "Ground";
+            }
+            var gm = ShowcaseMaterial(ShowcaseDir + "/VGAC Ground.mat", Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit"));
+            gm.color = new Color(0.2f, 0.2f, 0.21f);
+            if (gm.HasProperty("_Glossiness")) gm.SetFloat("_Glossiness", 0.15f);
+            if (gm.HasProperty("_Smoothness")) gm.SetFloat("_Smoothness", 0.15f);
+            EditorUtility.SetDirty(gm);
+            ground.GetComponent<Renderer>().sharedMaterial = gm;
+
+            var camGo = RootIn(s, "Showcase camera") ?? new GameObject("Showcase camera");
+            var cam = Comp<Camera>(camGo);
+            cam.clearFlags = CameraClearFlags.Skybox;
+            cam.fieldOfView = 30f;
+            camGo.tag = "MainCamera";
+            if (RootIn(s, ShowcaseSlot) == null) new GameObject(ShowcaseSlot);
+        }
+        finally
+        {
+            if (prev.IsValid() && prev != s) UnityEngine.SceneManagement.SceneManager.SetActiveScene(prev);
+        }
+    }
+
+    // Puts the camera where it frames everything under `target` (three-quarter front, a little above), and the
+    // ground just under it. Returns the distance.
+    static float FrameShowcase(Camera cam, GameObject target, GameObject ground)
+    {
+        var rs = target.GetComponentsInChildren<Renderer>().Where(r => r.enabled).ToList();
+        var b = rs.Count > 0 ? rs[0].bounds : new Bounds(target.transform.position, Vector3.one);
+        foreach (var r in rs) b.Encapsulate(r.bounds);
+        float radius = Mathf.Max(b.extents.magnitude, 0.05f);
+        float dist = radius / Mathf.Sin(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * 1.02f;
+        cam.transform.position = b.center + ShowcaseCamDir * dist;
+        cam.transform.LookAt(b.center);
+        cam.nearClipPlane = Mathf.Max(0.01f, dist / 1000f);
+        cam.farClipPlane = dist * 50f;
+        if (ground != null)
+        {
+            ground.transform.position = new Vector3(b.center.x, b.min.y - 0.002f, b.center.z);
+            float s = Mathf.Max(20f, radius * 20f);
+            ground.transform.localScale = new Vector3(s, 1f, s);
+        }
+        return dist;
+    }
+
+    // Opens the showcase scene next to whatever is open, creating and dressing it as needed. openedHere says whether
+    // the caller should close it again.
+    static UnityEngine.SceneManagement.Scene OpenShowcase(string hdri, out bool openedHere)
+    {
+        var s = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(ShowcaseScene);
+        openedHere = !(s.IsValid() && s.isLoaded);
+        if (openedHere)
+        {
+            Directory.CreateDirectory(ShowcaseDir);
+            if (File.Exists(ShowcaseScene))
+                s = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(ShowcaseScene, UnityEditor.SceneManagement.OpenSceneMode.Additive);
+            else
+            {
+                // Unity cannot add a new scene next to an unsaved untitled one. In batch mode nothing is lost by
+                // replacing it; in an open Editor the person is asked to save their scene first.
+                bool untitled = Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
+                    .Any(i => string.IsNullOrEmpty(UnityEngine.SceneManagement.SceneManager.GetSceneAt(i).path));
+                if (untitled && !Application.isBatchMode) throw new Exception("save the open scene once, then import again to make the showcase scene");
+                s = UnityEditor.SceneManagement.EditorSceneManager.NewScene(UnityEditor.SceneManagement.NewSceneSetup.EmptyScene,
+                    untitled ? UnityEditor.SceneManagement.NewSceneMode.Single : UnityEditor.SceneManagement.NewSceneMode.Additive);
+                UnityEditor.SceneManagement.EditorSceneManager.SaveScene(s, ShowcaseScene);
+            }
+        }
+        DressShowcase(s, hdri);
+        return s;
+    }
+
+    // Stands the prefab in the showcase's slot (replacing the last one), frames the camera on it and saves the scene.
+    // Returns the scene path, or "" when there is nothing to show. Never throws.
+    public static string PlaceInShowcase(string prefabPath, string hdri, List<string> warnings)
+    {
+        UnityEngine.SceneManagement.Scene s = default;
+        bool openedHere = false;
+        try
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (prefab == null) return "";
+            s = OpenShowcase(hdri, out openedHere);
+            var slot = RootIn(s, ShowcaseSlot);
+            for (int i = slot.transform.childCount - 1; i >= 0; i--) UnityEngine.Object.DestroyImmediate(slot.transform.GetChild(i).gameObject);
+            var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab, slot.transform);
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            ResetToBindPose(inst);
+            var cam = RootIn(s, "Showcase camera").GetComponent<Camera>();
+            FrameShowcase(cam, inst, RootIn(s, "Ground"));
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(s);
+            UnityEditor.SceneManagement.EditorSceneManager.SaveScene(s);
+            AssetDatabase.SaveAssets();
+            return ShowcaseScene;
+        }
+        catch (Exception e)
+        {
+            warnings?.Add("showcase scene not updated: " + e.Message);
+            return "";
+        }
+        finally
+        {
+            if (openedHere && s.IsValid() && UnityEngine.SceneManagement.SceneManager.sceneCount > 1)
+                UnityEditor.SceneManagement.EditorSceneManager.CloseScene(s, true);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -1632,18 +2006,21 @@ public static class VgacImport
             Directory.CreateDirectory(outDir);
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/VGAC/" + name + "/" + name + ".prefab");
             if (prefab == null) throw new Exception("prefab missing for " + name);
-            UnityEditor.SceneManagement.EditorSceneManager.NewScene(UnityEditor.SceneManagement.NewSceneSetup.DefaultGameObjects, UnityEditor.SceneManagement.NewSceneMode.Single);
+            // Rendered in the showcase scene (its light, sky, reflections and ground), with its own slot hidden.
+            var hdri = Arg("-vgacHdri");
+            var made = OpenShowcase(hdri, out var openedHere);
+            UnityEditor.SceneManagement.EditorSceneManager.SaveScene(made);
+            var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(ShowcaseScene, UnityEditor.SceneManagement.OpenSceneMode.Single);
+            var slot = RootIn(scene, ShowcaseSlot);
+            if (slot != null) slot.SetActive(false);
+            var showcaseCam = RootIn(scene, "Showcase camera");
+            if (showcaseCam != null) showcaseCam.SetActive(false);
             var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-            var bounds = new Bounds(go.transform.position, Vector3.one * 0.1f);
-            foreach (var r in go.GetComponentsInChildren<Renderer>()) if (r.enabled) bounds.Encapsulate(r.bounds);
             var camGo = new GameObject("snapcam");
             var cam = camGo.AddComponent<Camera>();
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.45f, 0.45f, 0.45f, 1f);
-            float dist = bounds.extents.magnitude * 2.4f;
-            camGo.transform.position = bounds.center + new Vector3(0.9f, 0.35f, -1f).normalized * dist;
-            camGo.transform.LookAt(bounds.center);
-            cam.nearClipPlane = 0.01f; cam.farClipPlane = dist * 10f;
+            cam.clearFlags = CameraClearFlags.Skybox;
+            cam.fieldOfView = 30f;
+            FrameShowcase(cam, go, RootIn(scene, "Ground"));
             var rt = new RenderTexture(size, size, 24);
             cam.targetTexture = rt;
             var animator = go.GetComponent<Animator>();
@@ -1706,7 +2083,14 @@ public static class VgacImport
                            + (strides.Count > 0 ? " feet_apart_m=" + string.Join("/", strides) : ""));
                 graph.Destroy();
             }
-            File.WriteAllText(Path.Combine(outDir, "snapshot_report.json"), JsonUtility.ToJson(new SnapReport { ok = true, files = log, loopProbes = probes }, true));
+            // Leave the showcase as it was, with this asset standing in its slot, and save it.
+            UnityEngine.Object.DestroyImmediate(go);
+            UnityEngine.Object.DestroyImmediate(camGo);
+            if (slot != null) slot.SetActive(true);
+            if (showcaseCam != null) showcaseCam.SetActive(true);
+            var snapWarnings = new List<string>();
+            PlaceInShowcase("Assets/VGAC/" + name + "/" + name + ".prefab", hdri, snapWarnings);
+            File.WriteAllText(Path.Combine(outDir, "snapshot_report.json"), JsonUtility.ToJson(new SnapReport { ok = true, files = log, loopProbes = probes, showcase = ShowcaseScene, warnings = snapWarnings }, true));
             Debug.Log("VGAC_SNAPSHOT ok " + log.Count);
         }
         catch (Exception e)
@@ -1717,7 +2101,7 @@ public static class VgacImport
         }
     }
 
-    [Serializable] class SnapReport { public bool ok; public string error = ""; public List<string> files = new List<string>(); public List<string> loopProbes = new List<string>(); }
+    [Serializable] class SnapReport { public bool ok; public string error = ""; public List<string> files = new List<string>(); public List<string> loopProbes = new List<string>(); public string showcase = ""; public List<string> warnings = new List<string>(); }
 }
 
 // Runs inside an open Editor: after any import that brings in a hand-off request, and once after each script load

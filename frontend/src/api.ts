@@ -173,6 +173,9 @@ export type Asset = {
   variant_change?: string | null
   // Autopilot state, when the backend has the feature (null when idle).
   autopilot?: AutopilotState | null
+  // Items: on an item, what it is and whose; on a character, the items set aside and attached.
+  held_item?: HeldItem | null
+  equipment?: Equipment | null
   selected: Partial<Record<StageId, string>>
   stages: Partial<Record<StageId, Version[]>>
 }
@@ -585,7 +588,7 @@ export const api = {
   createAsset: (
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep' },
   ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
 
   // Your own pictures
@@ -768,4 +771,172 @@ export function stoppedVersions(asset: AssetSummary, stage: StageId): Version[] 
 
 export function isMock(): boolean {
   return import.meta.env.VITE_MOCK === '1'
+}
+
+// ---------------------------------------------------------------------------
+// Add a move (rig step): the hand-made move library, a character's moves, your own animation files
+// ---------------------------------------------------------------------------
+
+export type MovePack = { id: string; label: string; licence: string; count: number }
+export type MoveGroup = { id: string; label: string }
+// One clip in the picker. preview: a PNG strip with `frames` square cells side by side; `still` is the cell shown
+// when it is not playing.
+export type MoveClip = {
+  id: string
+  pack: string
+  action: string
+  label: string
+  group: string
+  loop: boolean
+  seconds: number
+  name: string
+  moves_character?: boolean
+  preview: string | null
+  frames: number
+  still: number
+}
+export type MoveLibrary = { packs: MovePack[]; groups: MoveGroup[]; clips: MoveClip[]; previews: { ready: number; total: number; making: boolean } }
+export type CharacterMove = { name: string; label: string; clip: string | null; source: 'library' | 'mine' | 'built-in'; loop: boolean; added: boolean; default: boolean; made: boolean }
+export type CharacterMoves = {
+  can_add: boolean
+  reason: string
+  instead: string[]
+  rig_version: string | null
+  busy: boolean
+  moves: CharacterMove[]
+  added: { clip: string; name: string; loop: boolean }[]
+  removed: string[]
+  others: { asset_id: string; name: string; added: number; removed: number }[]
+}
+export type MyMoveClip = { id: string; action: string; label: string; loop: boolean; seconds: number; preview: string | null; frames: number; still: number }
+export type MyMoveFile = {
+  id: string
+  label: string
+  file_name: string
+  kind: 'fbx' | 'glb' | 'bvh'
+  source: string
+  recognised: number
+  total: number
+  sentence: string
+  missing: string[]
+  clips: MyMoveClip[]
+  added_at: string
+}
+export type MyMovesListing = { files: MyMoveFile[]; responsibility: string; max_mb: number; kinds: string[] }
+export type MyMoveUpdate = { label?: string; source?: string; clips?: { action: string; label: string; loop: boolean }[] }
+
+export const movesApi = {
+  library: () => get<MoveLibrary>('/api/moves/library'),
+  ofAsset: (aid: string) => get<CharacterMoves>(`/api/assets/${aid}/moves`),
+  change: (aid: string, body: { add?: string[]; remove?: string[]; copy_from?: string }) => post<RunResult>(`/api/assets/${aid}/moves`, body),
+  mine: () => get<MyMovesListing>('/api/my-moves'),
+  updateMine: (id: string, body: MyMoveUpdate) => put<MyMoveFile>(`/api/my-moves/${encodeURIComponent(id)}`, body),
+  removeMine: (id: string) => del<{ removed: string }>(`/api/my-moves/${encodeURIComponent(id)}`),
+  uploadMine: (file: File, onProgress?: (fraction: number) => void) => uploadMoveFile(file, onProgress),
+}
+
+// POST /api/my-moves/upload: the file is the body (as for your own add-ons). The backend then reads it in Blender,
+// so the answer comes some seconds after the last byte is sent.
+function uploadMoveFile(file: File, onProgress?: (fraction: number) => void): Promise<MyMoveFile> {
+  const path = '/api/my-moves/upload?name=' + encodeURIComponent(file.name)
+  if (isMock()) return request<MyMoveFile>('POST', path + '&bytes=' + file.size)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as MyMoveFile)
+      else {
+        const d = (body as { detail?: unknown } | null)?.detail
+        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The file could not be added (HTTP ${xhr.status}).`, body))
+      }
+    }
+    xhr.send(file)
+  })
+}
+
+// --- Items (backend vgac/items.py): characters made empty-handed and "Add an item" ---------------------------------
+
+export type ItemFound = { type: string; label: string; word: string; phrase: string; place: string; socket: string | null }
+export type ItemDetect = { checked: boolean; items: ItemFound[]; worn: string[]; sentence?: string }
+export type HeldItem = { type: string; label: string; kind?: string; phrase?: string; character_id?: string; character_name?: string }
+export type Attachment = {
+  id: string
+  item_asset_id: string
+  item_name: string
+  type: string
+  label: string
+  socket: string
+  stow_socket: string | null
+  position: [number, number, number]
+  rotation: [number, number, number, number]
+  rotation_deg: [number, number, number]
+  scale: number
+}
+export type SetAsideItem = { type: string; label: string; phrase: string; item_asset_id: string }
+export type Equipment = {
+  choice: 'separate' | 'keep' | null
+  found?: { type: string; label: string; phrase: string }[]
+  set_aside: SetAsideItem[]
+  attachments: Attachment[]
+  build?: ItemsBuild | null
+}
+export type ItemsBuild = { status: 'items' | 'equipping' | 'done' | 'error' | 'stopped'; item?: string; reason?: string; version_id?: string }
+export type GripInfo = { found: boolean; confidence?: number; sure?: boolean; method?: string; reasons?: string[]; label?: string; error?: string }
+export type ItemStatus = {
+  id: string
+  name: string
+  status: 'done' | 'making' | 'paused' | 'error' | 'started' | 'not_started'
+  stage: string | null
+  reason: string | null
+  held_item: HeldItem | null
+  glb: string | null
+  fbx: string | null
+  export_version_id: string | null
+  grip: GripInfo | null
+  thumbnail: string | null
+  autopilot: string | null
+}
+export type ItemPlace = { socket: string; label: string }
+export type ItemsPanel = {
+  asset_id: string
+  can_add: boolean
+  reason: string | null
+  category: string
+  places: ItemPlace[]
+  equipment: Equipment
+  items: Record<string, ItemStatus>
+  character_glb: string | null
+  saved: boolean
+  needs_update: boolean
+  build: ItemsBuild | null
+  others: ItemStatus[]
+  types: { id: string; label: string; place: string }[]
+  limit: string
+  step_cm: number
+  step_deg: number
+}
+export type NudgeBody = { move?: [number, number, number]; turn?: [number, number, number]; slide?: number; scale_steps?: number; big?: boolean; reset?: boolean }
+
+export const itemsApi = {
+  detect: (prompt: string, category: string) => post<ItemDetect>('/api/items/detect', { prompt, category }),
+  panel: (aid: string) => get<ItemsPanel>(`/api/assets/${aid}/items`),
+  add: (aid: string, body: { type?: string; description?: string; item_asset_id?: string; socket?: string; build?: boolean }) =>
+    post<{ attachment: Attachment; item: Asset; panel: ItemsPanel }>(`/api/assets/${aid}/items`, body),
+  update: (aid: string, attId: string, body: { socket?: string; stow_socket?: string; position?: number[]; rotation_deg?: number[]; scale?: number }) =>
+    put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`, body),
+  nudge: (aid: string, attId: string, body: NudgeBody) => post<{ attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/nudge`, body),
+  remove: (aid: string, attId: string) => del<{ removed: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`),
+  apply: (aid: string) => post<RunResult>(`/api/assets/${aid}/items/apply`),
+  build: (aid: string) => post<ItemsPanel>(`/api/assets/${aid}/items/build`),
 }

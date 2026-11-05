@@ -465,13 +465,179 @@ CORE_BONES = ("Hips", "Spine", "Head", "LeftArm", "LeftForeArm", "RightArm", "Ri
               "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot")
 
 
+# The 22 main bones a person's skeleton is counted against ("We recognised 21 of the 22 main bones"): the body
+# without fingers. A file is usable when every CORE_BONES one is found.
+BODY_BONES = (("Hips", "Spine", "Spine1", "Spine2", "Neck", "Head")
+              + tuple(s + b for s in ("Left", "Right") for b in ("Shoulder", "Arm", "ForeArm", "Hand", "UpLeg", "Leg", "Foot", "ToeBase")))
+# Plain names for the recognition sentence ("We could not find: the left toes").
+BODY_PLAIN = {"Hips": "the hips", "Spine": "the lower back", "Spine1": "the middle of the back", "Spine2": "the chest",
+              "Neck": "the neck", "Head": "the head", "Shoulder": "shoulder", "Arm": "upper arm", "ForeArm": "forearm",
+              "Hand": "hand", "UpLeg": "thigh", "Leg": "shin", "Foot": "foot", "ToeBase": "toes"}
+
+
+def body_plain(short: str) -> str:
+    for side in ("Left", "Right"):
+        if short.startswith(side):
+            return f"the {side.lower()} {BODY_PLAIN.get(short[len(side):], short[len(side):])}"
+    return BODY_PLAIN.get(short, short)
+
+
+# ---- names from other tools (a person's own animation file) ------------------------------------------------------
+# Unity humanoid names, Rigify ORG/MCH names, 3ds Max Biped, Blender's .L/_l and "Left..." styles and BVH joint
+# names (LeftHip, LeftKnee, LeftAnkle, LeftShoulder as the upper arm when the file also has elbows). The direct
+# rules in library_to_mixamo run first; these only fill what is left.
+_NOISE = {"mixamorig", "bip", "bip01", "bip001", "def", "org", "mch", "drv", "cc", "base", "j", "jnt", "joint", "bone",
+          "b", "sk", "rig", "armature", "c", "ctrl", "skel", "bn", "jt", "g", "the"}
+_SKIP = {"twist", "roll", "helper", "nub", "end", "leaf", "ik", "pole", "target", "tip", "top", "ctrl", "socket", "prop",
+         "weapon", "attach", "dummy", "null", "share", "corrective", "jiggle", "breast", "eye", "eyes", "jaw", "tongue",
+         "teeth", "hair", "cape", "skirt", "tail", "wing", "ear", "brow", "lid", "lip", "cheek", "nose", "metacarpal", "carpal"}
+_LEFT = {"left", "l", "lf", "lft"}
+_RIGHT = {"right", "r", "rt", "rgt"}
+_FINGER_WORDS = {"thumb": "Thumb", "index": "Index", "middle": "Middle", "mid": "Middle", "ring": "Ring", "pinky": "Pinky",
+                 "little": "Pinky", "pinkie": "Pinky"}
+
+
+def name_tokens(name: str) -> list[str]:
+    """'mixamorig:LeftUpLeg' -> ['left', 'up', 'leg']; 'Bip01 L Thigh' -> ['bip01', 'l', 'thigh'];
+    'upper_arm.L.001' -> ['upper', 'arm', 'l', '001']. Splits on separators, case changes and letter-digit
+    boundaries (keeping 'spine1' as 'spine', '1')."""
+    import re
+
+    n = name.split(":")[-1].split("|")[-1]
+    parts = re.split(r"[^A-Za-z0-9]+", n)
+    out: list[str] = []
+    for p in parts:
+        if not p:
+            continue
+        for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", p):
+            out.append(w.lower())
+    return out
+
+
+def _side_of(tokens: list[str]) -> tuple[str | None, list[str]]:
+    side, rest = None, []
+    for t in tokens:
+        if side is None and t in _LEFT:
+            side = "Left"
+        elif side is None and t in _RIGHT:
+            side = "Right"
+        else:
+            rest.append(t)
+    return side, rest
+
+
+def joint_style(names) -> bool:
+    """True when a skeleton names its joints rather than its bones (LeftHip, LeftKnee, LeftShoulder, LeftElbow): then
+    'shoulder' is the upper arm and 'hip' the thigh."""
+    toks = {t for n in names for t in name_tokens(n)}
+    return ("elbow" in toks or "knee" in toks) and not ({"forearm", "fore", "lower", "calf", "shin"} & toks)
+
+
+def generic_to_mixamo(name: str, joints: bool = False) -> str | None:
+    """Mixamo short name for a bone named the way another tool names it, or None. Spine bones are 'Spine' here and
+    are numbered by source_shorts."""
+    toks = name_tokens(name)
+    if not toks or any(t in _SKIP for t in toks):
+        return None
+    side, rest = _side_of(toks)
+    words = [t for t in rest if t not in _NOISE]
+    digits = [int(t) for t in words if t.isdigit()]
+    words = [t for t in words if not t.isdigit()]
+    ws = set(words)
+    joined = "".join(words)
+    if side is None:
+        if joined in ("hips", "hip", "pelvis"):
+            return "Hips"
+        if joined in ("spine", "chest", "upperchest", "abdomen", "torso", "waist", "lowerback", "back", "spinelower", "spineupper",
+                      "spinemid", "spinemiddle", "abdomenupper", "abdomenlower", "chestupper", "chestlower"):
+            return "Spine"
+        if joined in ("neck",):
+            return "Neck" if not digits or digits[0] <= 1 else None
+        if joined in ("head",):
+            return "Head"
+        return None
+    finger = next((f for w, f in _FINGER_WORDS.items() if w in ws), None)
+    if finger is not None:
+        k = digits[0] if digits else 1
+        if 0 in digits:
+            k += 1
+        return f"{side}Hand{finger}{k}" if 1 <= k <= 3 else None
+    # A numbered piece after the side ('upper_arm.L.001', a Rigify twist segment) is not the limb bone itself.
+    after = toks[next(i for i, t in enumerate(toks) if t in _LEFT or t in _RIGHT) + 1:]
+    if any(t.isdigit() and int(t) >= 1 for t in after):
+        return None
+    if joined in ("clavicle", "collar", "collarbone") or (joined == "shoulder" and not joints):
+        return side + "Shoulder"
+    if joined in ("upperarm", "uparm", "arm", "armupper") or (joined == "shoulder" and joints):
+        return side + "Arm"
+    if joined in ("forearm", "lowerarm", "elbow", "armlower", "lowarm"):
+        return side + "ForeArm"
+    if joined in ("hand", "wrist"):
+        return side + "Hand"
+    if joined in ("thigh", "upleg", "upperleg", "legupper", "femur") or (joined == "hip" and joints):
+        return side + "UpLeg"
+    if joined in ("calf", "shin", "leg", "lowerleg", "knee", "leglower", "lowleg"):
+        return side + "Leg"
+    if joined in ("foot", "ankle"):
+        return side + "Foot"
+    if joined in ("toe", "toes", "toebase", "ball", "toesbase"):
+        return side + "ToeBase"
+    return None
+
+
+def source_shorts(names) -> dict[str, str]:
+    """{source bone name: Mixamo short name} for every bone of a skeleton that can be recognised, each short name
+    once. Direct rules first (Mixamo, Quaternius Rigify DEF, Unreal mannequin), then other tools' names. Spine bones
+    found by the generic rule are numbered in file order (parents come first): Spine, Spine1, Spine2, and a fourth
+    or later one is left out."""
+    names = list(names)
+    out: dict[str, str] = {}
+    taken: set[str] = set()
+    joints = joint_style(names)
+    for n in names:
+        m = library_to_mixamo(n)
+        if joints and m and m.endswith("Shoulder"):
+            continue  # a joint-named file: its "LeftShoulder" is the upper arm (the generic rule decides)
+        if m and m not in taken:
+            out[n] = m
+            taken.add(m)
+    spine_free = [s for s in ("Spine", "Spine1", "Spine2") if s not in taken]
+    for n in names:
+        if n in out:
+            continue
+        m = generic_to_mixamo(n, joints)
+        if m == "Spine":
+            if not spine_free:
+                continue
+            m = spine_free.pop(0)
+        if m and m not in taken:
+            out[n] = m
+            taken.add(m)
+    return out
+
+
+def recognise(names) -> dict:
+    """How well a skeleton is recognised: {recognised, total, found (short names), missing (short names of the main
+    bones not found), usable (every core bone found), sentence}. The sentence is what the person reads."""
+    shorts = set(source_shorts(names).values())
+    found = [b for b in BODY_BONES if b in shorts]
+    missing = [b for b in BODY_BONES if b not in shorts]
+    usable = all(b in shorts for b in CORE_BONES)
+    total = len(BODY_BONES)
+    if usable:
+        sentence = f"We recognised {len(found)} of the {total} main bones."
+    else:
+        sentence = "This file's skeleton is not human-shaped, so we cannot use it."
+    return {"recognised": len(found), "total": total, "found": found, "missing": missing, "usable": usable,
+            "missing_core": [b for b in CORE_BONES if b not in shorts], "sentence": sentence}
+
+
 def bone_map(source_names, target_names) -> tuple[dict[str, str], list[str]]:
     """({target_name: source_name}, missing). missing lists the target bones (short names) the library has no
     bone for, such as fingers it lacks: they are left out and follow their parent."""
     by_short = {}
-    for s in source_names:
-        m = library_to_mixamo(s)
-        if m and m not in by_short:
+    for s, m in source_shorts(source_names).items():
+        if m not in by_short:
             by_short[m] = s
     out, missing = {}, []
     for t in target_names:

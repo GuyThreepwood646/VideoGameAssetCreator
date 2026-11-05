@@ -1,15 +1,27 @@
 """Blender headless: retarget hand-made library clips onto a Mixamo-named humanoid (CC0 Quaternius Universal
-Animation Library) and write them into the character's animated GLB.
+Animation Library packs 1 and 2, and a person's own animation files) and write them into the character's animated
+GLB.
 
-Run: blender -b --python retarget.py -- <in.glb> <out.glb> --library <file.glb|.fbx>[;<file2>]
-         --clips "idle=Idle_Loop,walk=Walk_Loop,run=Jog_Fwd_Loop|Run_Loop,..." [--loops idle,walk,...]
+Run: blender -b --python retarget.py -- <in.glb> <out.glb> --library [<id>=]<file>[;[<id2>=]<file2>...]
+         (--clips "idle=Idle_Loop,walk=Walk_Loop,run=Jog_Fwd_Loop|ual2:Run_Loop,..." [--loops idle,walk,...]
+          | --spec <clips.json>)
          [--fps 24] [--keep turn_left,turn_right] [--report <json>]
 
 <in.glb> is the rigged character, normally procanim's anim.glb with its procedural clips; <out.glb> may be the
-same path. Each --clips entry names the output clip and the library actions to try in order. Procedural clips in
-<in.glb> whose names are not replaced by a library clip stay in the file (the turns: the library has none);
---keep limits which ones stay (none = drop them all). Writes <out>_clips.json (the sidecar, every clip with its
-source "library" or "procedural", loop flag and duration) and, with --report, a JSON report.
+same path. Each library is a .glb, .fbx or .bvh file with one skeleton; its id (default lib0, lib1, ...) names it in
+the clip list, and every library may have its own skeleton (pack 2 uses Unreal names, a person's file Mixamo or
+BVH names): each clip is moved across from its own library's skeleton. Each --clips entry names the output clip and
+the actions to try in order, as "<library id>:<action>" or a bare action (any library, in --library order).
+--spec is the same as JSON, for action names with commas or bars in them:
+  [{"name": "shield_block", "from": [{"library": "ual2", "action": "Idle_Shield_Loop"}], "loop": true,
+    "added": true, "label": "Stand behind a shield", "origin": "", "in_place": true}, ...]
+Procedural clips in <in.glb> whose names are not replaced by a library clip stay in the file (the turns: the
+library has none); --keep limits which ones stay (none = drop them all). Writes <out>_clips.json (the sidecar,
+every clip with its source "library" or "procedural", loop flag, duration and, for library clips, which library and
+action it came from) and, with --report, a JSON report.
+
+Frame rates: a library's frames are read at its own rate (the FBX and BVH importers say what it is) and resampled
+to --fps, so a 30 or 120 frames-per-second file keeps its speed.
 
 How a clip is moved across (the standard rest-pose compensated method):
   1. Map the library bones to the target's Mixamo names (gait.bone_map; fingers the target lacks are skipped,
@@ -40,20 +52,62 @@ import gait  # noqa: E402
 import numpy as np  # noqa: E402  (bundled with Blender)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
+import motionfile  # noqa: E402
+
 T0 = time.time()
-_VALUE_FLAGS = ("--library", "--clips", "--loops", "--fps", "--keep", "--report")
+_VALUE_FLAGS = ("--library", "--clips", "--loops", "--fps", "--keep", "--report", "--spec")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src_glb, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
-libraries = [p for p in _common.opt("--library", "").split(";") if p.strip()]
-clip_spec = gait.parse_clip_spec(_common.opt("--clips", ""))
+
+
+def _libraries(text):
+    """'ual1=C:/a.glb;ual2=C:/b.glb' or 'C:/a.glb;C:/b.glb' -> [(id, path)]. A Windows drive letter is not an id."""
+    out = []
+    for i, part in enumerate(p.strip() for p in text.split(";")):
+        if not part:
+            continue
+        lid, sep, path = part.partition("=")
+        if not sep or not lid or "/" in lid or "\\" in lid or (len(lid) == 1 and path.startswith(("/", "\\"))):
+            lid, path = f"lib{i}", part
+        out.append((lid.strip(), path.strip()))
+    return out
+
+
+library_list = _libraries(_common.opt("--library", ""))
+libraries = [p for _, p in library_list]
+lib_ids = [i for i, _ in library_list]
+spec_path = _common.opt("--spec", None)
+clip_meta = {}
+if spec_path:
+    with open(spec_path, encoding="utf-8") as f:
+        _rows = json.load(f)
+    clip_spec = []
+    for r in _rows:
+        cands = []
+        for c in r.get("from") or []:
+            if isinstance(c, dict):
+                cands.append((c.get("library"), str(c.get("action"))))
+            else:
+                lid, sep, act = str(c).partition(":")
+                cands.append((lid, act) if sep and lid in lib_ids else (None, str(c)))
+        clip_spec.append((str(r["name"]), cands))
+        clip_meta[str(r["name"])] = r
+else:
+    clip_spec = []
+    for name, cands in gait.parse_clip_spec(_common.opt("--clips", "")):
+        out = []
+        for c in cands:
+            lid, sep, act = c.partition(":")
+            out.append((lid, act) if sep and lid in lib_ids else (None, c))
+        clip_spec.append((name, out))
 loops_arg = _common.opt("--loops", None)
 fps = int(_common.opt("--fps", "24"))
 keep_arg = _common.opt("--keep", None)
 report_path = _common.opt("--report", None)
 
 report = {"ok": False, "library": libraries, "clips": [], "library_clips": [], "procedural_clips": [], "missing_clips": [],
-          "fps": fps}
+          "fps": fps, "libraries": {}, "library_errors": {}}
 
 
 def fail(msg):
@@ -97,42 +151,34 @@ if os.path.isfile(_sc):
 old_rows = {c["name"]: c for c in old_sidecar.get("clips", [])}
 
 # ---- library ----------------------------------------------------------------------------------------------
-lib_actions = {}
-src = None
-src_ground = [None]
-for path in libraries:
-    before = set(bpy.data.objects)
-    acts_before = set(bpy.data.actions)
-    if path.lower().endswith(".fbx"):
-        bpy.ops.import_scene.fbx(filepath=path, automatic_bone_orientation=False)
-    else:
-        _common.import_glb(path)
-    new = [o for o in bpy.data.objects if o not in before]
-    arm = next((o for o in new if o.type == "ARMATURE"), None)
-    for o in new:
-        if o.type == "MESH" and o.vertex_groups and src_ground[0] is None:
-            src_ground[0] = min((o.matrix_world @ v.co).z for v in o.data.vertices)
-    for o in new:
-        if o.type != "ARMATURE":
-            bpy.data.objects.remove(o, do_unlink=True)
-    if arm is None:
+# Each library keeps its own skeleton and the actions that belong to it; a clip is moved across from its own one.
+LIBS = {}
+lib_actions = {}  # (library id, action name) -> (library id, action)
+for lid, path in library_list:
+    info = motionfile.load(path)
+    if info["arm"] is None:
+        report["library_errors"][lid] = "no skeleton in this file"
         continue
-    if src is None:
-        src = arm
-    elif arm is not src:
-        # A second library: its skeleton must have the same bone names (UAL2 uses Unreal names, so it brings its
-        # own armature); keep the actions with the armature they belong to.
-        pass
-    for a in bpy.data.actions:
-        if a not in acts_before and a.name not in lib_actions:
-            lib_actions[a.name] = (arm, a)
-    if arm.animation_data:
-        arm.animation_data.action = None
-        for tr in list(arm.animation_data.nla_tracks):
-            arm.animation_data.nla_tracks.remove(tr)
-if src is None:
+    info["id"], info["path"] = lid, path
+    LIBS[lid] = info
+    for name, a in info["actions"].items():
+        lib_actions[(lid, name)] = (lid, a)
+if not LIBS:
     fail("no armature in the library file")
 report["library_actions"] = len(lib_actions)
+
+
+def find_action(cands):
+    """The first candidate that exists: (library id, action name) or a bare name searched in --library order."""
+    for lid, act in cands:
+        if lid is not None:
+            if (lid, act) in lib_actions:
+                return lid, act
+            continue
+        for l2 in lib_ids:
+            if (l2, act) in lib_actions:
+                return l2, act
+    return None
 
 # ---- skeleton descriptions --------------------------------------------------------------------------------
 SEG_CHILD = {"LeftArm": ["LeftForeArm"], "LeftForeArm": ["LeftHand"], "LeftHand": ["LeftHandMiddle1", "LeftHandIndex1", "LeftHandRing1"],
@@ -202,18 +248,56 @@ class Skel:
 
 
 tgt_names = [b.name for b in tgt.data.bones]
-mapping, missing_bones = gait.bone_map([b.name for b in src.data.bones], tgt_names)
-missing_core = [c for c in gait.CORE_BONES if not any(gait.mixamo_short(t) == c for t in mapping)]
-report["bone_map"] = {gait.mixamo_short(t): s for t, s in mapping.items()}
-report["missing_bones"] = missing_bones
-if missing_core:
-    fail(f"bones not found on the character or in the library: {missing_core}")
-T = Skel(tgt, {t: gait.mixamo_short(t) for t in mapping})
-S = Skel(src, {s: gait.mixamo_short(t) for t, s in mapping.items()})
-Tref, Sref = T.references(), S.references()
-ratio = T.leg_length() / max(1e-6, S.leg_length())
-report["leg_ratio"] = round(ratio, 4)
-mapped_short = list(T.name_of)
+_tgt_core_missing = [c for c in gait.CORE_BONES if not any(gait.mixamo_short(t) == c for t in tgt_names)]
+if _tgt_core_missing:
+    fail(f"bones not found on the character or in the library: {_tgt_core_missing}")
+# The whole target skeleton by Mixamo name: rest data, torso and hands (whichever library a clip comes from).
+T_all = Skel(tgt, {t: gait.mixamo_short(t) for t in tgt_names if gait.mixamo_short(t) in gait.MIXAMO_BONES})
+
+# Per-library binding: the bone map, both skeletons' references and the leg ratio. bind() sets these globals, which
+# the functions below read; a clip is retargeted after binding its own library.
+src = S = T = Tref = Sref = None
+mapping, missing_bones, ratio, mapped_short, src_pbs, S_rest_canon, T_rest_canon = {}, [], 1.0, [], {}, {}, {}
+src_ground = [None]
+src_fps = [float(fps)]
+bound = [None]
+
+
+def bind(lid):
+    """Bind library `lid`. -> None, or a plain reason when its skeleton cannot drive this character."""
+    global src, S, T, Tref, Sref, mapping, missing_bones, ratio, mapped_short, src_pbs, S_rest_canon, T_rest_canon
+    if bound[0] == lid:
+        return None
+    lib = LIBS[lid]
+    arm = lib["arm"]
+    mp, miss = gait.bone_map([b.name for b in arm.data.bones], tgt_names)
+    core = [c for c in gait.CORE_BONES if not any(gait.mixamo_short(t) == c for t in mp)]
+    rep = report["libraries"].setdefault(lid, {})
+    rep.update({"bone_map": {gait.mixamo_short(t): s for t, s in mp.items()}, "missing_bones": miss, "fps": round(lib["fps"], 3)})
+    if core:
+        rep["error"] = f"bones not found on the character or in the library: {core}"
+        return rep["error"]
+    src, mapping, missing_bones = arm, mp, miss
+    T = Skel(tgt, {t: gait.mixamo_short(t) for t in mapping})
+    S = Skel(src, {s: gait.mixamo_short(t) for t, s in mapping.items()})
+    Tref, Sref = T.references(), S.references()
+    ratio = T.leg_length() / max(1e-6, S.leg_length())
+    rep["leg_ratio"] = round(ratio, 4)
+    mapped_short = list(T.name_of)
+    src_pbs = {s: src.pose.bones[S.name_of[s]] for s in mapped_short}
+    src.animation_data_create()
+    S_rest_canon = {s: S.G @ S.head(s) for s in mapped_short}
+    T_rest_canon = {s: T.G @ T.head(s) for s in mapped_short}
+    g = lib.get("ground")
+    if g is None:
+        g = min(S.head(x).z for x in ("LeftToeBase", "RightToeBase", "LeftFoot", "RightFoot") if S.has(x))
+    src_ground[0] = g
+    src_fps[0] = float(lib.get("fps") or fps)
+    if "bone_map" not in report:  # the first library bound, as reports before multi-library had it
+        report["bone_map"], report["missing_bones"], report["leg_ratio"] = rep["bone_map"], miss, rep["leg_ratio"]
+    bound[0] = lid
+    return None
+
 
 # Target bone order (parents first) and rest relations for forward kinematics.
 order = []
@@ -228,21 +312,14 @@ def _visit(b):
 for b in tgt.data.bones:
     if b.parent is None:
         _visit(b)
-t_rest_q = T.rest_q
-t_rest_h = T.rest_head
-hips_name = T.name_of["Hips"]
-
-# Source evaluation: library pose bone orientations in the canonical frame.
-src_pbs = {s: src.pose.bones[S.name_of[s]] for s in mapped_short}
+t_rest_q = T_all.rest_q
+t_rest_h = T_all.rest_head
+hips_name = T_all.name_of["Hips"]
 
 
 def sample_source(arm, act, frame):
     """{short: canonical orientation}, {short: canonical head position} of the source at a (fractional) frame."""
-    ad = arm.animation_data
-    if ad.action is not act:
-        ad.action = act
-        if hasattr(ad, "action_slot") and len(getattr(act, "slots", [])) > 0:
-            ad.action_slot = act.slots[0]
+    motionfile.use_action(arm, act)
     f = int(math.floor(frame))
     scene.frame_set(f, subframe=frame - f)
     Wq, W = S.Wq, S.W
@@ -251,11 +328,6 @@ def sample_source(arm, act, frame):
         qs[s] = S.G @ (Wq @ pb.matrix.to_quaternion())
         ps[s] = S.G @ (W @ pb.head)
     return qs, ps
-
-
-src.animation_data_create()
-S_rest_canon = {s: S.G @ S.head(s) for s in mapped_short}
-T_rest_canon = {s: T.G @ T.head(s) for s in mapped_short}
 
 
 def target_frame(qs, ps):
@@ -350,7 +422,7 @@ def knee_forward(posf, fwd):
 # Target meshes: the rest ground (lowest vertex standing) and the torso vertices, for the sinking check.
 tgt_meshes = [o for o in tgt_objects if o.type == "MESH" and o.vertex_groups]
 _TORSO = ("Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "LeftShoulder", "RightShoulder", "LeftUpLeg", "RightUpLeg")
-_torso_names = {T.name_of[x] for x in _TORSO if T.has(x)}
+_torso_names = {T_all.name_of[x] for x in _TORSO if T_all.has(x)}
 torso_mask = {}
 tgt_ground = None
 for _o in tgt_meshes:
@@ -360,14 +432,14 @@ for _o in tgt_meshes:
     _z = min((_o.matrix_world @ v.co).z for v in _o.data.vertices)
     tgt_ground = _z if tgt_ground is None else min(tgt_ground, _z)
 if tgt_ground is None:
-    tgt_ground = min(T.rest_head[n].z for n in T.rest_head)
+    tgt_ground = min(T_all.rest_head[n].z for n in T_all.rest_head)
 # Half the thickness of each hand (its palm vertices across the body's width at rest, where the arms hang with the
 # palms inward): a hand resting on the ground keeps its wrist at least this high so the glove stays above ground.
 hand_radius = {}
 for _side in ("Left", "Right"):
-    if not T.has(_side + "Hand"):
+    if not T_all.has(_side + "Hand"):
         continue
-    _hn = T.name_of[_side + "Hand"]
+    _hn = T_all.name_of[_side + "Hand"]
     _xs = []
     for _o in tgt_meshes:
         _gi = _o.vertex_groups.get(_hn)
@@ -375,10 +447,8 @@ for _side in ("Left", "Right"):
             continue
         for v in _o.data.vertices:
             if v.groups and max(v.groups, key=lambda g: g.weight).group == _gi.index:
-                _xs.append((T.G @ (_o.matrix_world @ v.co)).x)
+                _xs.append((T_all.G @ (_o.matrix_world @ v.co)).x)
     hand_radius[_side] = 0.5 * (max(_xs) - min(_xs)) if len(_xs) > 3 else 0.0
-if src_ground[0] is None:
-    src_ground[0] = min(S.head(x).z for x in ("LeftToeBase", "RightToeBase", "LeftFoot", "RightFoot") if S.has(x))
 
 
 def torso_lowest():
@@ -480,7 +550,8 @@ def solve_frames(frames, loop, lift):
 def retarget_clip(name, arm, act, loop):
     fr = act.frame_range
     start, end = float(fr[0]), float(fr[1])
-    n = max(1, int(round(end - start)))
+    # The library's frames count at its own rate: sample the clip's length in seconds at the output rate.
+    n = max(1, int(round((end - start) * fps / max(1e-6, src_fps[0]))))
     base = []
     for i in range(n + 1):
         f = start + (end - start) * i / n
@@ -624,24 +695,38 @@ def write_keys(act, bones_out, rot_keys, hips, loc_keys):
 loops = set(c.strip() for c in loops_arg.split(",")) if loops_arg else None
 made = []
 detail = {}
+clip_reasons = {}
 for name, candidates in clip_spec:
-    pick = next((c for c in candidates if c in lib_actions), None)
-    if pick is None:
+    found = find_action(candidates)
+    if found is None:
         report["missing_clips"].append(name)
+        clip_reasons[name] = "not in the library"
         continue
-    arm, act = lib_actions[pick]
-    if arm is not src:
-        continue  # a clip from a second library skeleton is not supported in one pass
-    loop = (name in loops) if loops is not None else (pick.lower().endswith("_loop") or name in gait.LOOPING)
+    lid, pick = found
+    why = bind(lid)
+    if why:
+        report["missing_clips"].append(name)
+        clip_reasons[name] = why
+        continue
+    _, act = lib_actions[(lid, pick)]
+    meta = clip_meta.get(name) or {}
+    if "loop" in meta:
+        loop = bool(meta["loop"])
+    else:
+        loop = (name in loops) if loops is not None else (pick.lower().endswith("_loop") or name in gait.LOOPING)
     t1 = time.time()
-    a_out, frames_, ik_moves_, sank_ = retarget_clip(name, arm, act, loop)
+    a_out, frames_, ik_moves_, sank_ = retarget_clip(name, src, act, loop)
     nfr = len(frames_)
     det = clip_quality(frames_, ik_moves_, sank_)
     det["from"] = pick
+    det["library"] = lid
     det["seconds"] = round(time.time() - t1, 2)
     detail[name] = det
-    made.append({"name": name, "action": a_out, "frames": nfr, "loop": loop, "from": pick})
+    made.append({"name": name, "action": a_out, "frames": nfr, "loop": loop, "from": pick, "library": lid, "meta": meta})
 report["detail"] = detail
+report["clip_reasons"] = clip_reasons
+if not made and clip_reasons and all(r.startswith("bones not found") for r in clip_reasons.values()):
+    fail(next(iter(clip_reasons.values())))
 
 # ---- assemble the clip list: library first in the requested order, procedural clips kept for what is left ----
 lib_names = {m["name"] for m in made}
@@ -649,10 +734,11 @@ keep = None if keep_arg is None else {c.strip() for c in keep_arg.split(",") if 
 kept_proc = [n for n in proc_actions if n not in lib_names and (keep is None or n in keep)]
 
 # Remove the library skeleton and its actions, and the replaced procedural clips.
-for arm in {a for a, _ in lib_actions.values()}:
-    bpy.data.objects.remove(arm, do_unlink=True)
+for lib in LIBS.values():
+    bpy.data.objects.remove(lib["arm"], do_unlink=True)
 for nm, (_, a) in list(lib_actions.items()):
-    bpy.data.actions.remove(a)
+    if a.name in bpy.data.actions:
+        bpy.data.actions.remove(a)
 ad = tgt.animation_data
 for tr in list(ad.nla_tracks):
     if tr.name not in kept_proc:
@@ -710,9 +796,14 @@ for kind, n in final:
     if kind == "library":
         m = by_made[n]
         total = m["frames"] - 1
-        rows.append({"name": n, "loop": m["loop"], "frame_start": 0, "frame_end": total, "frames": m["frames"],
-                     "seconds": round(total / fps, 4), "motion_frames": total, "hold_last": n == "death", "in_place": True,
-                     "source": "library", "from": m["from"]})
+        meta = m.get("meta") or {}
+        row = {"name": n, "loop": m["loop"], "frame_start": 0, "frame_end": total, "frames": m["frames"],
+               "seconds": round(total / fps, 4), "motion_frames": total, "hold_last": n == "death",
+               "in_place": bool(meta.get("in_place", True)), "source": "library", "from": m["from"], "library": m["library"]}
+        for k in ("label", "added", "origin", "licence"):
+            if meta.get(k) not in (None, ""):
+                row[k] = meta[k]
+        rows.append(row)
     else:
         r = dict(old_rows.get(n) or {})
         if not r:
@@ -741,6 +832,9 @@ sidecar = {k: v for k, v in old_sidecar.items() if k not in ("clips",)}
 sidecar.update({"version": 2, "fps": fps, "root_motion": False, "clips": rows,
                 "clips_source": "library" if made else "procedural",
                 "library": [os.path.basename(p) for p in libraries], "licence": "CC0 (Quaternius Universal Animation Library)"})
+_lic = list(dict.fromkeys(r["licence"] for r in rows if r.get("licence")))
+if _lic:
+    sidecar["licence"] = "; ".join(_lic)
 with open(base + "_clips.json", "w") as f:
     json.dump(sidecar, f, indent=1)
 

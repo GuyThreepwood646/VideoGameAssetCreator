@@ -34,6 +34,9 @@ def manifest_provenance(sc: "StageContext") -> dict[str, Any]:
     seeds: dict[str, Any] = {}
     chain = list(reversed(list(sc.iter_lineage())))
     for v in chain:
+        if any(isinstance(m, dict) and m.get("role") == "moves" for m in v.metrics.get("models") or []):
+            # A rig version lists every source of its moves ("Add a move"): a newer one replaces an older list.
+            models = {k: m for k, m in models.items() if m.get("role") != "moves"}
         for m in v.metrics.get("models") or []:
             models[m.get("id", m.get("name"))] = m
         if v.params.get("seed") is not None:

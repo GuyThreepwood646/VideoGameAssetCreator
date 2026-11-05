@@ -3,6 +3,7 @@
 import type { Asset, Category, Job, LookPreset, Platform, Project, SetupItem, SetupReport, StageId, StageInfo, StylePreset, Version } from '../api'
 import { CONCEPT_CATALOG, LOOK_OF, lookSummary, mockRecipe, recipeRecord } from './recipes'
 import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, makeTiling, type Figure, type ViewName } from './images'
+import { clipNamesFor } from './moves'
 
 const RIGGED_IDS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'] as const
 export const files = new Map<string, string>() // library-relative path -> data URL
@@ -869,6 +870,9 @@ export function fabricate(asset: Asset, version: Version) {
         lineage: Object.values(asset.selected),
       }
       f.manifest = putText(`${base}/manifest.json`, JSON.stringify(manifest, null, 2))
+      // The beauty picture (PHOTOREAL-PLAN phase 1): a real Eevee render kept in library/samples, like sample.glb.
+      f.beauty = 'samples/beauty.jpg'
+      m.beauty = { seconds: 3.8, size: 1024, view_transform: 'Khronos PBR Neutral', hdri: 'kloofendal_48d_partly_cloudy_1k.hdr' }
       if (version.params.sprites) {
         f.sprite_sheet = putDataFile(`${base}/sprites.png`, makeSpriteSheet(hue, clips, Number(version.params.sprite_directions ?? 8), Number(version.params.sprite_size ?? 64)))
         f.sprite_atlas = putText(`${base}/sprites.json`, JSON.stringify({ clips, directions: version.params.sprite_directions ?? 8, size: version.params.sprite_size ?? 64 }))
@@ -887,6 +891,7 @@ export function fabricate(asset: Asset, version: Version) {
       m.unity_report = {
         ok: true,
         prefab: `Assets/VGAC/${asset.name}/${asset.name}.prefab`,
+        showcase: 'Assets/VGAC/_Showcase/VGAC Showcase.unity',
         ...(rigged ? (asset.category === 'humanoid' ? { avatar: 'Humanoid', avatar_mapping: 'explicit', humanoidValid: true } : { avatar: 'Generic' }) : {}),
         importer_version: 4,
         colliderCount: col.count,
@@ -975,6 +980,8 @@ function rigMoveMetrics(category: string, params: Record<string, unknown>, fail:
       ? { count: 0, mode: 'none', fit, fallback: false, regions_found: [], cover: null, overreach: null, movement_default: s.movement }
       : { count: s.hitboxes, mode, fit, fallback: false, regions_found: s.regions.map(([id, label]) => ({ id, label })), cover: fail ? 0.78 : s.cover, overreach: s.overreach, movement_default: s.movement }
   const out: Record<string, unknown> = { motion: 'legs', anim_kind: category === 'humanoid' ? 'biped' : 'quadruped', clips: SAMPLE_CLIPS, missing_clips: [], hitboxes }
+  // Add a move: a humanoid whose moves were changed lists the default set with the changes.
+  if (category === 'humanoid' && (params.added_moves || params.removed_moves)) Object.assign(out, { clips: clipNamesFor(params), clips_source: 'library' })
   if (category === 'quadruped') Object.assign(out, { legs_moved: 4, legs_total: 4 })
   return out
 }
