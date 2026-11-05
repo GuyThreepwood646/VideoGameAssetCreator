@@ -14,14 +14,37 @@ topology: quad
 input_view_default: quarter
 motion: legs
 clips: [idle, walk, run, turn_left, turn_right, attack, hit, death]
+# Hand-made clips moved onto the character from the CC0 clip library (rig stage, clips_source auto or library).
+# name: the clip name in anim.glb; from: library actions to try in order (UAL1 names first, UAL2 names after);
+# move: the moves-knob option that selects it (when the moves knob is set, only matching clips are made); loop:
+# plays on repeat. The library has no turn on the spot, so turn_left and turn_right stay procedural. Order here is
+# the order in the file and the strip.
+library_clips:
+  - {name: idle, from: [Idle_Loop], move: idle, loop: true}
+  - {name: walk, from: [Walk_Loop], move: walk, loop: true}
+  - {name: run, from: [Jog_Fwd_Loop], move: run, loop: true}
+  - {name: sprint, from: [Sprint_Loop], move: run, loop: true}
+  - {name: attack, from: [Sword_Attack, Sword_Regular_A], move: attack, loop: false}
+  - {name: punch, from: [Punch_Jab, Punch_Cross], move: attack, loop: false}
+  - {name: hit, from: [Hit_Chest, Hit_Head], move: hit, loop: false}
+  - {name: death, from: [Death01], move: death, loop: false}
+  - {name: jump_start, from: [Jump_Start], move: jump, loop: false}
+  - {name: jump_loop, from: [Jump_Loop], move: jump, loop: true}
+  - {name: jump_land, from: [Jump_Land], move: jump, loop: false}
+  - {name: crouch_idle, from: [Crouch_Idle_Loop], move: crouch, loop: true}
+  - {name: crouch_walk, from: [Crouch_Fwd_Loop], move: crouch, loop: true}
+  - {name: roll, from: [Roll], move: roll, loop: false}
+  - {name: interact, from: [Interact, PickUp_Table], move: interact, loop: false}
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
-  The character stands in a relaxed A-pose, arms held slightly away from the body, palms inward,
-  feet shoulder-width apart, facing the camera directly, whole figure visible from head to toe with
-  margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting
-  from the front with no hard shadows. No text, no logos, no background scenery, no motion blur,
-  no cropping, nothing held in the hands.
+  The character stands in a relaxed A-pose, both arms straight and angled about thirty degrees out from
+  the body with a clear gap between each arm and the torso, palms inward, feet shoulder-width apart,
+  facing the camera directly. The whole figure from the top of the head to the soles of the feet fits
+  inside the middle four fifths of the image height, with empty background above the head and below
+  the feet, centred in frame. Plain flat light grey background. Soft even studio lighting from the
+  front with no hard shadows. No text, no logos, no background scenery, no floor shadow, no motion
+  blur, no cropping, nothing held in the hands.
 budgets:
   mobile_low: {triangles: 5000, texture: 1024}
   pc_mid: {triangles: 20000, texture: 2048}

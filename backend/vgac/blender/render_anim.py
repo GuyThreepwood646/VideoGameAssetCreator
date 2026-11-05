@@ -4,7 +4,8 @@ Run: blender -b --python render_anim.py -- <anim.glb> <out_dir> [frames=6] [size
          [--view three_quarter|front|side|back|top|<degrees>] [--clips walk,run] [--margin 1.3]
 
 Writes <out_dir>/<clip>_<i>.png and <out_dir>/frames.json ({clips: {name: [files]}, frames, size, view, order,
-loop}). The camera is fixed for every clip, framed on the rest pose, so turns, lunges and falls show as movement.
+loop}). The camera is fixed within each clip, framed on the rest pose and grown when a clip reaches past it (a
+death lying down), so turns, lunges and falls show as movement.
 Clip order and loop flags come from procanim's <anim>_clips.json sidecar when it sits next to the GLB, otherwise
 from the NLA tracks. animation_data.action must be None before the NLA tracks are evaluated, otherwise the
 active action overrides every strip. Frames are spread from the first to the last frame of each strip, so a
@@ -46,8 +47,35 @@ meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 pts = [o.matrix_world @ Vector(c) for o in meshes for c in o.bound_box]
 lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
 hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
-centre, extent = (lo + hi) / 2, max(hi - lo)
 scene = bpy.context.scene
+centre, extent = (lo + hi) / 2, max(hi - lo)
+rest_centre, rest_extent = centre.copy(), extent
+
+
+def clip_frame(track):
+    """(centre, extent) for one clip: the rest framing, grown (never shrunk) to hold every joint of the clip as the
+    camera sees it, so a death that ends lying down or a lunge stays in the picture while a standing clip keeps
+    its usual size. The camera is still fixed within the clip, so turns, lunges and falls show as movement."""
+    if view == "top" or arm is None:
+        return rest_centre, rest_extent
+    pad = 0.06 * rest_extent
+    r = Vector((math.cos(math.radians(azimuth)), math.sin(math.radians(azimuth)), 0.0))
+    pts_ = list(pts)
+    st = track.strips[0]
+    for i in range(7):
+        scene.frame_set(int(round(st.frame_start + (st.frame_end - st.frame_start) * i / 6)))
+        pts_ += [arm.matrix_world @ pb.head for pb in arm.pose.bones]
+    h = [p_.dot(r) for p_ in pts_]
+    z = [p_.z for p_ in pts_]
+    h0, h1, z0, z1 = min(h) - pad, max(h) + pad, min(z), max(z) + pad
+    span = max(rest_extent, h1 - h0, z1 - z0)
+    if span <= rest_extent * 1.001:
+        return rest_centre, rest_extent
+    c = rest_centre + r * ((h0 + h1) / 2 - rest_centre.dot(r))
+    c.z = (z0 + z1) / 2
+    return c, span
+
+
 scene.render.resolution_x = scene.render.resolution_y = size
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.render.film_transparent = False
@@ -63,13 +91,20 @@ cam = bpy.data.objects.new("cam", cam_data)
 scene.collection.objects.link(cam)
 scene.camera = cam
 a = math.radians(azimuth)
-cam.location = centre + Vector((math.sin(a) * 4, -math.cos(a) * 4, 0.6)) * extent
-cam.rotation_euler = (math.radians(82), 0, a)
-if view == "top":  # straight down, front (-Y) at the bottom of the image: shows slither waves and turns
-    cam.location = centre + Vector((0, 0, 4 * extent))
-    cam.rotation_euler = (0, 0, 0)
+
+
+def place_camera(c, ext):
+    cam_data.ortho_scale = ext * margin
+    cam.location = c + Vector((math.sin(a) * 4, -math.cos(a) * 4, 0.6)) * ext
+    cam.rotation_euler = (math.radians(82), 0, a)
+    if view == "top":  # straight down, front (-Y) at the bottom of the image: shows slither waves and turns
+        cam.location = c + Vector((0, 0, 4 * ext))
+        cam.rotation_euler = (0, 0, 0)
+
+
+place_camera(centre, extent)
 # A ground line helps judge drops and lifts: a thin dark plane at the rest pose's lowest point.
-bpy.ops.mesh.primitive_plane_add(size=extent * 6, location=(centre.x, centre.y, lo.z - 0.002 * extent))
+bpy.ops.mesh.primitive_plane_add(size=extent * 12, location=(centre.x, centre.y, lo.z - 0.002 * extent))
 ground = bpy.context.active_object
 gmat = bpy.data.materials.new("ground")
 gmat.diffuse_color = (0.3, 0.3, 0.3, 1.0)
@@ -91,6 +126,7 @@ for name in order:
     for t in tracks:
         t.mute = (t != track)
     strip = track.strips[0]
+    place_camera(*clip_frame(track))
     files[name] = []
     for i in range(nframes):
         scene.frame_set(int(round(strip.frame_start + (strip.frame_end - strip.frame_start) * i / max(1, nframes - 1))))

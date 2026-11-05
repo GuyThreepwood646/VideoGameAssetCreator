@@ -766,6 +766,14 @@ def foot_geometry(ch):
     return toe, Vector((d.x, d.y, 0)).length
 
 
+def heel_raise(toe_len, pitch):
+    """How far the ankle rises when the foot pitches: about the ball for toes down (push off), about the heel
+    (taken as a third of the ankle-to-ball length behind the ankle) for toes up (heel strike)."""
+    if pitch < 0:
+        return toe_len * math.sin(math.radians(-pitch))
+    return 0.35 * toe_len * math.sin(math.radians(pitch))
+
+
 def plant_feet(P, feet, biped_feet):
     """feet: [(leg, fwd, up, pitch, toe_flat)] -> IK every leg so its end joint follows its foot path (world,
     relative to the rest place), the foot keeps its rest orientation turned by the path's pitch, and a planted
@@ -773,7 +781,7 @@ def plant_feet(P, feet, biped_feet):
     for li, fwd_, up_, pitch, toe_flat in feet:
         ch = li["ik"]
         toe, toe_len = foot_geometry(ch)
-        raise_ = toe_len * math.sin(math.radians(-pitch)) if pitch < 0 else 0.0
+        raise_ = heel_raise(toe_len, pitch)
         target = ch["end_rest"] + forward * fwd_ + up * (up_ + raise_)
         Mw = fk(P)
         pole = chain_pole(P, Mw, ch, forward if biped_feet else -forward)
@@ -795,7 +803,7 @@ def planted_drop(feet, lmax_frac):
         if up_ > 1e-6 or ch is None:
             continue
         toe, toe_len = foot_geometry(ch)
-        raise_ = toe_len * math.sin(math.radians(-pitch)) if pitch < 0 else 0.0
+        raise_ = heel_raise(toe_len, pitch)
         E = ch["end_rest"] + forward * fwd_ + up * raise_
         H = head[ch["a"]]
         hor = E - H
@@ -1104,9 +1112,13 @@ def _death_pose(P, t, drop):
                 P.r(b[1], li["swing_axis"], -55 * buckle * (1 - 0.7 * fall))
         spine_pitch(P, 15 * buckle - 10 * fall)
         head_pitch(P, -20 * fall + 15 * buckle * (1 - fall))
+        head_yaw(P, 22 * gait.envelope(t, [(0.6, 0), (1.0, 1)]))
+        # Arms fling out a little as he goes over; death_settle then lays them on the ground beside the body.
         for a in arm_info:
-            P.r(a["upper"], a["out_axis"], 35 * fall)
-            P.r(a["upper"], a["swing_axis"], 30 * fall)
+            P.r(a["upper"], a["out_axis"], 25 * fall + 20 * buckle * (1 - fall))
+            P.r(a["upper"], a["swing_axis"], 25 * buckle * (1 - fall))
+            if a["fore"]:
+                P.r(a["fore"], a["swing_axis"], 30 * buckle * (1 - fall) + 15 * fall)
     else:
         # Legs buckle, then the body rolls onto its right side (quadrupeds) or settles flat with the legs curled
         # in (multileg).
@@ -1125,10 +1137,101 @@ def _death_pose(P, t, drop):
     P.move(up * (drop * fall + settle * height * fall * 0.3))
 
 
+def death_settle(P, ground_z, lift=None):
+    """Lay every limb of a final death pose on the ground: for each arm and leg chain, aim its end (wrist,
+    ankle, paw) at ground height below where it is (gait.ground_target), arms pushed out beside the body, then
+    solve the two-bone IK with the bend clamped to 150 degrees. lift: {end bone: height of the end joint above
+    the ground}, measured from the mesh by clip_death. -> {bone: local correction quaternion}."""
+    lift = lift or {}
+    before = {n: q.copy() for n, q in P.rot.items()}
+    chains = [("arm", a, a["ik"]) for a in arm_info if a.get("ik")] + [("leg", li, li["ik"]) for li in leg_info if li.get("ik")]
+    body_fwd = P.root_q @ forward
+    # Quadrupeds on their side: the upper legs land a little ahead of (front) or behind (hind) the lower ones.
+    leg_root_z = {}
+    if chains:
+        Mw = fk(P)
+        for kind_, limb, ch in chains:
+            leg_root_z[id(limb)] = Mw[ch["a"]].translation.z
+    mean_z = sum(leg_root_z.values()) / max(1, len(leg_root_z))
+    for kind_, limb, ch in chains:
+        Mw = fk(P)
+        ha, hm, he = chain_points(Mw, ch)
+        L = ch["l1"] + ch["l2"]
+        reach = 0.97 * L
+        if kind_ == "arm":
+            out_dir = P.root_q @ (lateral if limb["left"] else -lateral)
+            r = lift.get(ch["end_bone"] or ch["m"], 0.022 * height)
+            target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=0.35 * L)
+            # The elbow bends along the ground toward the feet, never down into it.
+            pole = hm + (-(P.root_q @ up) * 0.8 + out_dir * 0.2) * L
+        else:
+            r = lift.get(ch["end_bone"] or ch["m"], 0.7 * max(0.0, ch["end_rest"].z - lo.z) if biped else max(0.0, ch["end_rest"].z - lo.z))
+            end = he.copy()
+            if not biped and leg_root_z[id(limb)] > mean_z:
+                end += body_fwd * (0.18 if limb["front"] else -0.18) * L
+            target = gait.ground_target(tuple(ha), tuple(end), ground_z + r, reach)
+            pole = hm + up * L if biped else chain_pole(P, Mw, ch, -forward)
+        ik_chain(P, ch, Vector(target), pole, end_orient=None, max_bend=150.0, Mw=Mw)
+        hand = ch["end_bone"]
+        if kind_ == "arm" and hand and byname[hand].children:
+            # Lay the hand flat on the ground: its direction (wrist to knuckles) turned level.
+            Mw = fk(P)
+            kn = max(byname[hand].children, key=lambda c: (head[c.name] - head[hand]).length).name
+            d = Mw[kn].translation - Mw[hand].translation
+            flat = Vector((d.x, d.y, 0.0))
+            if flat.length > 1e-6:
+                r = d.rotation_difference(flat.normalized() * d.length)
+                set_world_orient(P, hand, r @ orient(Mw, hand), Mw)
+    return {n: before.get(n, Quaternion()).inverted() @ q for n, q in P.rot.items()
+            if n not in before or before[n].rotation_difference(q).angle > 1e-6}
+
+
+def apply_fix(P, fix, w):
+    if w <= 0:
+        return
+    for n, q in fix.items():
+        P.rot[n] = P.rot.get(n, Quaternion()) @ Quaternion().slerp(q, min(1.0, w))
+
+
+_death = {}
+
+
 def clip_death(P, t):
-    if _death_drop[0] is None:
-        _death_drop[0] = ground_fix(lambda Q: (_death_pose(Q, 1.0, 0.0), finish_serpent(Q)))
-    _death_pose(P, t, _death_drop[0])
+    if not _death:
+        def final(Q):
+            _death_pose(Q, 1.0, 0.0)
+            finish_serpent(Q)
+
+        drop = ground_fix(final)
+        fix = {}
+        if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
+            # The ground is where the body lies before the limbs settle; the limbs are aimed at it, then the
+            # whole pose is put back on the ground (nothing below it) with the settled limbs.
+            g = _rest_low[0] - drop
+            lift = {}
+            for _ in range(3):
+                Q = Pose()
+                final(Q)
+                fix = death_settle(Q, g, lift)
+                # Measure where each settled limb's mesh really touches (a hand or a boot is thicker than its
+                # joint) and aim again so the mesh, not the joint, rests on the ground.
+                R = Pose()
+                final(R)
+                apply_fix(R, fix, 1.0)
+                lows = limb_lowest(R)
+                Mw = fk(R)
+                done = True
+                for end_bone, z in lows.items():
+                    joint_h = Mw[end_bone].translation.z - g
+                    lift[end_bone] = max(0.0, joint_h - (z - g))
+                    if abs(z - g) > 0.004 * height:
+                        done = False
+                if done:
+                    break
+            drop = ground_fix(lambda R, f=fix: (final(R), apply_fix(R, f, 1.0)))
+        _death.update(drop=drop, fix=fix)
+    _death_pose(P, t, _death["drop"])
+    apply_fix(P, _death["fix"], gait.envelope(t, [(0.45, 0), (0.9, 1)]))
 
 
 def clip_flap(P, t):
@@ -1218,6 +1321,47 @@ def lowest_z(P):
 
 
 _rest_low = [None]
+_vertex_bone = {}
+
+
+def _limb_ends():
+    """{end bone: set of bones whose vertices belong to that limb end (the end bone and everything below it)}."""
+    out = {}
+    chains = [a["ik"] for a in arm_info if a.get("ik")] + [li["ik"] for li in leg_info if li.get("ik")]
+    for ch in chains:
+        e = ch["end_bone"] or ch["m"]
+        s = set()
+        stack = [byname[e]]
+        while stack:
+            b = stack.pop()
+            s.add(b.name)
+            stack.extend(b.children)
+        out[e] = s
+    return out
+
+
+def limb_lowest(P):
+    """{end bone: lowest mesh z of the vertices mostly weighted to that limb end} for a pose."""
+    ends = _limb_ends()
+    if not _vertex_bone:
+        for o in meshes:
+            names = {g.index: g.name for g in o.vertex_groups}
+            _vertex_bone[o.name] = [names.get(max(v.groups, key=lambda g: g.weight).group) if v.groups else None for v in o.data.vertices]
+    apply_pose(P)
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = {}
+    for o in meshes:
+        ev = o.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ev.matrix_world
+        vb = _vertex_bone.get(o.name, [])
+        for e, names in ends.items():
+            zs = [(mw @ v.co).z for i, v in enumerate(me.vertices) if i < len(vb) and vb[i] in names]
+            if zs:
+                out[e] = min(out.get(e, zs[0]), min(zs))
+        ev.to_mesh_clear()
+    return out
 
 
 def ground_fix(pose_fn):
