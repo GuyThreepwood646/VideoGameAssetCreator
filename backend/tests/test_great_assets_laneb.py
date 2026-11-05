@@ -38,12 +38,16 @@ SAMPLES = {
     "clips": ((["idle", "walk"], ["idle", "walk"]), (None, ["idle", "walk"])),
     "silhouette_iou": ((0.8, 0.6), (0.4, 0.6)),
     "unity_import": ((True, True), (False, True)),
-    "unity_humanoid_avatar": ((True, True), (False, True)),
+    "unity_humanoid_avatar": ((46, True), (0, True)),
     "seam_error": ((0.01, 0.05), (0.2, 0.05)),
     "hitbox_cover": ((0.9, 0.85), (0.6, 0.85)),
     "hitbox_overreach": ((1.5, 2.75), (3.4, 2.75)),
     "hitbox_fit": ((True, True), (False, True)),
     "legs_moved": ((8, 8), (4, 8)),
+    "materials_connected": ((True, True), (False, True)),
+    "clips_loop": ((True, True), ("walk", True)),
+    "controller_ready": ((True, True), (False, True)),
+    "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
 }
 
@@ -82,7 +86,7 @@ def test_passing_check_never_carries_the_fail_sentence():
 
 def test_existing_severities_kept():
     sev = {n: g["severity"] for n, g in guidance.CHECK_GUIDE.items()}
-    assert {n for n, s in sev.items() if s == "block"} == {"triangle_budget", "lod_count", "collider_present", "bones"}
+    assert {n for n, s in sev.items() if s == "block"} == {"triangle_budget", "lod_count", "collider_present", "bones", "clips_loop"}
 
 
 def test_fix_labels_and_default_label(monkeypatch):

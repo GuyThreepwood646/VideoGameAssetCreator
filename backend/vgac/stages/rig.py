@@ -178,7 +178,14 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     rig_glb = sc.dir / "rig.glb"
     try:
         # Repair weights: unweighted vertices inherit the nearest weighted vertex, 4 influences max, normalised.
-        await sc.blender("rig_fix.py", [raw_glb, rig_glb], log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
+        # It also restores what the rigger drops: texture coordinates, the material and the size cleanup set.
+        fix_report = sc.dir / "rig_fix.json"
+        await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report], log_name="rig_fix.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        if fix_report.is_file():
+            ref = (json.loads(fix_report.read_text(encoding="utf-8")) or {}).get("reference") or {}
+            sc.set_metrics(rig_restore={"ok": bool(ref.get("ok")), "uvs": ref.get("uvs"), "scale_factor": ref.get("scale_factor"),
+                                        "size_m": ref.get("size_after_m"), "reason": ref.get("reason")})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(rig_fix_error=str(e)[:500])
     if not rig_glb.is_file():
@@ -375,6 +382,8 @@ async def judge(sc: StageContext) -> None:
         checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=True)
     if sc.version.metrics.get("anim_glb") or sc.file("anim_glb"):
         m = sc.version.metrics
+        if m.get("rig_restore") is not None:
+            checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
         if sc.asset.category in ("quadruped", "multileg") and m.get("legs_total"):
