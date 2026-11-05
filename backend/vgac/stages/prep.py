@@ -38,6 +38,12 @@ bumps; every map shrunk to the recipe's texture size (whole pixels, nearest neig
 average otherwise); for crisp looks the base colour limited to the project palette (style lock colours) or to the
 recipe's number of colours, the original kept as base_color_original; and the prep GLB sampled nearest-neighbour.
 The look_applied check says in plain words what the recipe did and whether the shipped files match it.
+
+More triangles on the head (vgac/headtris.py, blender/headweight.py): when the 3D model was built over the budget on
+purpose (mesh params head_room), the budget decimation is weighted so the head keeps about twice the triangles an even
+decimation leaves it; the option head_triangles turns it off (then the decimation is even). The report's head counts
+become metrics (head_weighted, head_triangles, head_triangles_even, head_weight_seconds) and the triangle_budget
+check sentence says how many triangles the head has. A model built at the budget is not decimated, as before.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import imaging, quality, reference
+from .. import guidance, headtris, imaging, quality, reference
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -159,10 +165,13 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     shading = resolve_shading(rec, params)
     mesh_v_params = sc.stage_version("mesh").params if sc.stage_version("mesh") else {}
     tri_limit = prep_triangle_limit(rec, mesh_v_params, sc.budget)
+    head = headtris.plan(rec, sc.asset.category, params, shading["shading"], mesh_v_params)
     sc.set_params(size_m=size["size_m"], size_axis=size["size_axis"], size_word=size["size_word"],
                   face_yaw=face_yaw if face_yaw not in (None, "") else "auto", symmetric=symmetric, pivot=pivot, smooth_angle=smooth,
                   delight=params.get("delight") or "auto", pbr_fix=surface["pbr_fix"], rebake=bool(params.get("rebake") or False),
                   shading=params.get("shading") if params.get("shading") in reference.SHADING_OPTIONS else "auto", **(grid or {}))
+    if headtris.applies(rec, sc.asset.category):
+        sc.set_params(**{headtris.PARAM: headtris.on(params)})
     sc.set_metrics(size_source=size["size_source"], shading_applied=shading["shading"], shading_source=shading["source"],
                    triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"],
                    recipe=reference.recipe_record(rec, "mesh", "surface"), **facing)
@@ -172,6 +181,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                        "--pivot", pivot, "--smooth-angle", smooth, "--shading", shading["shading"]]
     if tri_limit["limit"]:
         args += ["--budget", int(tri_limit["limit"])]
+        if head["weighted"]:
+            args += ["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
     if symmetric:
         args.append("--symmetric")
     if grid:
@@ -203,7 +214,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"),
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
-                   decimated=bool(report.get("decimated")), texture_size=tex)
+                   decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
+                   **head_metrics(report, head))
     if report.get("grid"):
         sc.set_metrics(**grid_metrics(report["grid"]))
         tiling = report.get("tiling_png")
@@ -246,6 +258,22 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     elif not keep_normal:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     await judge(sc)
+
+
+def head_metrics(report: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
+    """The prep metrics for the head's triangles from the Blender report: head_triangles always (the final model's top
+    13 percent); head_weighted and, when the weighted decimation ran, what an even one would have left the head, what
+    the 3D model had there, the factor and the seconds; head_weight_reason when it did not run (off, look, flat,
+    no_room) and head_weight_error when it failed and the plain decimation ran instead."""
+    out: dict[str, Any] = {"head_triangles": report.get("head_triangles"), "head_weighted": bool(report.get("head_weighted"))}
+    if out["head_weighted"]:
+        out.update(head_triangles_even=report.get("head_triangles_even"), head_triangles_source=report.get("head_triangles_source"),
+                   head_weight_factor=report.get("head_weight_factor"), head_weight_seconds=report.get("head_weight_seconds"))
+    else:
+        out["head_weight_reason"] = head.get("reason") or ("error" if report.get("head_weight_error") else None)
+    if report.get("head_weight_error"):
+        out["head_weight_error"] = report["head_weight_error"]
+    return out
 
 
 def grid_metrics(g: dict[str, Any]) -> dict[str, Any]:
@@ -589,6 +617,7 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
         for c in checks:
             if c.get("name") == "triangle_budget":
                 c["vars"] = {**(c.get("vars") or {}), **tri_vars}
+                c.update(guidance.describe_check(c))  # the sentence again, with the new values
     if on_grid:
         checks += quality.grid_checks(report["grid"], params)
     best = metrics.get("face_best_turn")
@@ -610,6 +639,9 @@ async def judge(sc: StageContext) -> None:
         from .mesh import look_vars
 
         tri_vars = {**look_vars(rec, sc.budget), "recipe": True}
+    hv = headtris.head_vars(m)
+    if hv:
+        tri_vars = {**(tri_vars or {}), **hv}
     checks = prep_checks(report, sc.version.params, m, sc.asset.category, limit, tri_vars)
     checks += surface_checks(m, sc.version.params)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)

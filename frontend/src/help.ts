@@ -292,6 +292,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
   face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024, checked by likeness at the painting\'s resolution, eye, skin and hair colour, and feature positions'),
   hair_detail: H('Hair detail (strands and shading painted on)', 'Strands and clumps along the way the hair falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.', 'The 3D builder makes hair as one flat-coloured shape; this makes it read as hair without adding to the shape. It stands back when hair cannot be told from skin or clothes.', 'Colour vote over the model and turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels in the face relayout'),
+  head_triangles: H('Weighted decimation (more triangles on the head)', 'When the model is shrunk to your platform\'s triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.', 'Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Characters in the Low-poly, Pixel-art and Retro 64 looks never get it.', 'The 3D step builds twice the target; Blender Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake'),
   hair_strength: H('Hair strength', 'How strongly the hair detail is painted: 1 is full, 0 changes nothing.', 'Lower it if the strands look too busy for your look.', 'Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1'),
   textures_full_size: H('Textures at full size', 'Whether Unity imports each texture at the size of its file.', 'Unity shrinks textures over 2048 px unless told otherwise, which softens a 4096 texture.', 'TextureImporter.maxTextureSize against the source size'),
   face_matches_picture: H('Face matches the picture', 'Whether the face was painted from the picture and came out sharp.', 'A blurred face is the first thing people notice on a character.', 'Sharpness of the front render and feature match to the fitted picture'),
@@ -558,11 +559,25 @@ const mapName = (id: string): string => {
   return m[1].replace(/_/g, ' ') + ' texture'
 }
 
+// The clean-up step's line on the head after weighted decimation (vars head_weighted, head_triangles, head_share,
+// head_even; backend headtris.head_vars), or nothing.
+const headLine = (vars: Record<string, unknown>): string => {
+  if (!vars.head_weighted || num(vars.head_triangles) === null) return ''
+  let line = ` The head has ${n0(vars.head_triangles)} of them`
+  if (num(vars.head_share) !== null) line += ` (${pct(vars.head_share)})`
+  if (num(vars.head_even) !== null) line += `; an even spread would have left it ${n0(vars.head_even)}`
+  return line + '.'
+}
+
 const CHECK_TEXT: Record<string, CheckText> = {
-  triangle_budget: (v, l, ok, ctx) => {
+  triangle_budget: (v, l, ok, ctx, vars) => {
     const over = num(v) !== null && num(l) !== null ? num(v)! - num(l)! : null
     const who = ctx.platform ? platformPlain(ctx.platform).split(':')[0].toLowerCase() : 'this platform'
-    return ok ? `The model has ${n0(v)} triangles, within the ${n0(l)} ${who} allows.` : `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than ${who === 'phone' ? 'a phone' : who} can handle (${n0(v)} of ${n0(l)}).`
+    // The 3D step's model built over the budget on purpose, so the clean-up step can give the head more (vars head_room).
+    if (vars.head_room && ok)
+      return `The model has ${n0(v)} triangles, more than the ${n0(vars.platform_triangles)} ${who} allows on purpose: Clean up for the game brings it back to the budget with weighted decimation (more triangles on the head).`
+    if (vars.head_room) return `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than the 3D step asked for (${n0(v)} of ${n0(l)}, which already leaves room for the head).`
+    return ok ? `The model has ${n0(v)} triangles, within the ${n0(l)} ${who} allows.${headLine(vars)}` : `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than ${who === 'phone' ? 'a phone' : who} can handle (${n0(v)} of ${n0(l)}).`
   },
   manifold: (v, _l, ok) => (ok ? 'The surface has no overlapping or broken edges.' : `The surface has ${n0(v)} broken or overlapping edges.`),
   watertight: (v, _l, ok) => (ok ? 'The surface is closed with no holes.' : `The surface has ${n0(v)} open holes.`),
