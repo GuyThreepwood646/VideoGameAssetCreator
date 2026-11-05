@@ -1,0 +1,451 @@
+{
+ "project": "f07f7d0d-a0d0-4825-be66-d809c0008899",
+ "assets": {
+  "humanoid": {
+   "seconds": 396,
+   "autopilot": "done",
+   "reason": null,
+   "stages": {
+    "concept": {
+     "status": "done",
+     "checks": "0/0",
+     "failed": [],
+     "files": [
+      "cutout",
+      "cutout_white",
+      "image"
+     ],
+     "metrics": {},
+     "error": null
+    },
+    "turnaround": {
+     "status": "done",
+     "checks": "0/0",
+     "failed": [],
+     "files": [
+      "back",
+      "back_cutout",
+      "back_white",
+      "front",
+      "front_cutout",
+      "front_white",
+      "left",
+      "left_cutout",
+      "left_white",
+      "quarter",
+      "quarter_cutout",
+      "quarter_white",
+      "right",
+      "right_cutout",
+      "right_white"
+     ],
+     "metrics": {},
+     "error": null
+    },
+    "mesh": {
+     "status": "done",
+     "checks": "17/17",
+     "failed": [],
+     "files": [
+      "ao",
+      "base_color",
+      "glb",
+      "input",
+      "metallic",
+      "normal",
+      "preview",
+      "roughness",
+      "sheet",
+      "views_dir"
+     ],
+     "metrics": {
+      "triangles": 19598,
+      "silhouette_iou": 0.7917,
+      "atlas_used": 0.4516
+     },
+     "error": null
+    },
+    "prep": {
+     "status": "done",
+     "checks": "9/13",
+     "failed": [
+      [
+       "texture_padding",
+       "warn",
+       "Texture pieces have only 4 px of space, so thin dark seams may show at a distance."
+      ],
+      [
+       "atlas_used",
+       "warn",
+       "The model uses only 45.2% of its texture, so it looks less sharp than it could."
+      ],
+      [
+       "albedo_range",
+       "warn",
+       "7.4% of the colours are darker or brighter than real materials get, so they may look flat or glow under game l"
+      ],
+      [
+       "metal_mixed",
+       "warn",
+       "50.8% of the surface is half metal, which looks dull and grey in game engines."
+      ]
+     ],
+     "files": [
+      "ao",
+      "base_color",
+      "glb",
+      "metallic",
+      "normal",
+      "report",
+      "roughness"
+     ],
+     "metrics": {
+      "triangles": 19598,
+      "bones": 0,
+      "size_source": "description",
+      "size_extent_m": 1.7999999523162842,
+      "face_yaw_applied": 0,
+      "rebaked": false,
+      "atlas_used": 0.4516,
+      "light_score": 0.2488,
+      "delight_applied": false
+     },
+     "error": null
+    },
+    "rig": {
+     "status": "done",
+     "checks": "9/9",
+     "failed": [],
+     "files": [
+      "anim_clips",
+      "anim_glb",
+      "anim_report",
+      "anim_strip",
+      "ao",
+      "base_color",
+      "bend_35",
+      "bend_90",
+      "bend_strip",
+      "bones",
+      "glb",
+      "hitboxes",
+      "metallic",
+      "normal",
+      "rest",
+      "rig_info",
+      "roughness"
+     ],
+     "metrics": {
+      "bones": 40,
+      "motion": "biped",
+      "clips": [
+       "idle",
+       "walk",
+       "run",
+       "turn_left",
+       "turn_right",
+       "attack",
+       "hit",
+       "death"
+      ],
+      "missing_clips": [],
+      "rig_restore": {
+       "bone_names": {
+        "corrected": true,
+        "count": 36,
+        "left_is": "+x",
+        "reason": null
+       },
+       "ok": true,
+       "scale_factor": 0.9,
+       "size_m": [
+        0.782,
+        0.3897,
+        1.8
+       ]
+      },
+      "hitboxes": {
+       "count": 11,
+       "cover": 0.8718,
+       "fallback": false,
+       "mode": "detailed",
+       "overreach": 1.654
+      }
+     },
+     "error": null
+    },
+    "export": {
+     "status": "done",
+     "checks": "35/35",
+     "failed": [],
+     "files": [
+      "anim_clips",
+      "ao",
+      "base_color",
+      "colliders",
+      "fbx",
+      "glb",
+      "glb_godot",
+      "glb_lod1",
+      "glb_lod2",
+      "glb_lod3",
+      "hitboxes",
+      "manifest",
+      "metallic",
+      "metallic_smoothness",
+      "normal",
+      "orm",
+      "pack_report",
+      "roughness",
+      "unity_report",
+      "unity_strip"
+     ],
+     "metrics": {
+      "bones": 40,
+      "clips": [
+       "attack",
+       "death",
+       "hit",
+       "idle",
+       "run",
+       "turn_left",
+       "turn_right",
+       "walk"
+      ],
+      "collider_count": 1,
+      "collider_shape": "hull",
+      "delivered_to": "F:\\Projects\\VideoGameAssetCreator\\exports\\Live_check_11_04_1910\\Ranger",
+      "unity": {
+       "ok": true,
+       "humanoidValid": true,
+       "avatar_mapping": "explicit",
+       "avatar_mapping_by": "names",
+       "clipCount": 46,
+       "texturesAssigned": [
+        "base_color",
+        "normal",
+        "ao",
+        "metallic_smoothness"
+       ],
+       "hitboxCount": 11,
+       "movementShape": "upright",
+       "colliderCount": 0,
+       "colliderKinds": [],
+       "secondaryUV": false,
+       "importer_version": "5",
+       "controller": {
+        "states": [
+         "Locomotion",
+         "Attack",
+         "Jump",
+         "Jump Land",
+         "Hit",
+         "Dead",
+         "More moves"
+        ],
+        "parameters": [
+         "Speed:Float",
+         "Attack:Trigger",
+         "Jump:Trigger",
+         "Hit:Trigger",
+         "Die:Trigger"
+        ]
+       }
+      }
+     },
+     "error": null
+    }
+   }
+  },
+  "prop_rigid": {
+   "seconds": 903,
+   "autopilot": "done",
+   "reason": null,
+   "stages": {
+    "concept": {
+     "status": "done",
+     "checks": "0/0",
+     "failed": [],
+     "files": [
+      "cutout",
+      "cutout_white",
+      "image"
+     ],
+     "metrics": {},
+     "error": null
+    },
+    "turnaround": {
+     "status": "done",
+     "checks": "0/0",
+     "failed": [],
+     "files": [
+      "back",
+      "back_cutout",
+      "back_white",
+      "front",
+      "front_cutout",
+      "front_white",
+      "left",
+      "left_cutout",
+      "left_white",
+      "quarter",
+      "quarter_cutout",
+      "quarter_white",
+      "right",
+      "right_cutout",
+      "right_white"
+     ],
+     "metrics": {},
+     "error": null
+    },
+    "mesh": {
+     "status": "done",
+     "checks": "17/17",
+     "failed": [],
+     "files": [
+      "ao",
+      "base_color",
+      "glb",
+      "input",
+      "metallic",
+      "normal",
+      "preview",
+      "roughness",
+      "sheet",
+      "views_dir"
+     ],
+     "metrics": {
+      "triangles": 4890,
+      "silhouette_iou": 0.6922,
+      "atlas_used": 0.5267
+     },
+     "error": null
+    },
+    "prep": {
+     "status": "done",
+     "checks": "10/13",
+     "failed": [
+      [
+       "facing",
+       "warn",
+       "The model may face the wrong way: it matches the front picture best when turned 120 degrees."
+      ],
+      [
+       "texture_padding",
+       "warn",
+       "Texture pieces have only 3 px of space, so thin dark seams may show at a distance."
+      ],
+      [
+       "metal_mixed",
+       "warn",
+       "5.5% of the surface is half metal, which looks dull and grey in game engines."
+      ]
+     ],
+     "files": [
+      "ao",
+      "base_color",
+      "glb",
+      "metallic",
+      "normal",
+      "report",
+      "roughness"
+     ],
+     "metrics": {
+      "triangles": 4885,
+      "bones": 0,
+      "size_source": "category",
+      "size_extent_m": 0.6000000238418579,
+      "face_yaw_applied": 0,
+      "rebaked": false,
+      "atlas_used": 0.5267,
+      "light_score": 0.4853,
+      "delight_applied": false
+     },
+     "error": null
+    },
+    "rig": {
+     "status": "done",
+     "checks": "1/1",
+     "failed": [],
+     "files": [
+      "ao",
+      "base_color",
+      "glb",
+      "metallic",
+      "normal",
+      "roughness"
+     ],
+     "metrics": {
+      "bones": 0
+     },
+     "error": null
+    },
+    "export": {
+     "status": "done",
+     "checks": "27/28",
+     "failed": [
+      [
+       "openings_clear",
+       "warn",
+       "The collision shape fills 9 opening(s), so players cannot pass through."
+      ]
+     ],
+     "files": [
+      "ao",
+      "base_color",
+      "collider_parts",
+      "colliders",
+      "fbx",
+      "fbx_unreal",
+      "glb",
+      "glb_godot",
+      "glb_lod1",
+      "glb_lod2",
+      "manifest",
+      "metallic",
+      "metallic_smoothness",
+      "normal",
+      "orm",
+      "pack_report",
+      "roughness",
+      "unity_report",
+      "unity_strip"
+     ],
+     "metrics": {
+      "bones": 0,
+      "clips": [],
+      "collider_count": 8,
+      "collider_shape": "decompose",
+      "delivered_to": "F:\\Projects\\VideoGameAssetCreator\\exports\\Live_check_11_04_1910\\Market_cart",
+      "unity": {
+       "ok": true,
+       "humanoidValid": false,
+       "avatar_mapping": "none",
+       "avatar_mapping_by": "",
+       "clipCount": 0,
+       "texturesAssigned": [
+        "base_color",
+        "normal",
+        "ao",
+        "metallic_smoothness"
+       ],
+       "hitboxCount": 0,
+       "movementShape": "",
+       "colliderCount": 8,
+       "colliderKinds": [
+        "hull"
+       ],
+       "secondaryUV": true,
+       "importer_version": "5",
+       "controller": {
+        "states": [],
+        "parameters": []
+       }
+      }
+     },
+     "error": null
+    }
+   }
+  }
+ }
+}
