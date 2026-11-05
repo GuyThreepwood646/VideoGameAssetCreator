@@ -9,6 +9,11 @@ after the bake (G03); metrics record the atlas share used, the measured gutter a
 After the job: silhouette audit at 15-degree steps against the turnaround cutouts (Blender on the host).
 refine has no instruction engine for meshes: it re-runs with a new seed and records the instruction. adjust
 re-runs with merged params.
+
+Recipes (reference.recipe): when the version does not choose them, the triangle target is the recipe's share of the
+budget (a quarter for low-poly, 40 percent for Retro 64) and the texture size the recipe's cap (never over the
+platform's). A look without surface bumps (mesh.normal_map false) never registers the normal map the builder bakes,
+and its model.glb loses its copy. The checks measure against the recipe's targets, and say so.
 """
 
 from __future__ import annotations
@@ -18,13 +23,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import library, quality
+from .. import imaging, library, quality, reference
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
 from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dilate_png, dilation_px, gutter_px, image_size,
                        load_uv_mesh, rasterise_uv, silhouette, unwrap_padding, uv_hash)
 from .base import StageContext, random_seed
+from .concept import stage_recipe
 
 TEXTURE_KEYS = ("base_color", "metallic", "roughness", "normal", "ao")
 # G05 (a): the mesh stage aims this far under the platform budget so prep does not have to decimate again.
@@ -56,6 +62,34 @@ def default_target_faces(budget_triangles: int | None) -> int:
     if not budget_triangles:
         return 20000
     return max(500, int(int(budget_triangles) * BUDGET_HEADROOM))
+
+
+# The fewest triangles a recipe's target may ask the builder for.
+RECIPE_FACES_MIN = 200
+
+
+def recipe_target_faces(rec: dict[str, Any], budget_triangles: int | None) -> int:
+    """The triangle target from the recipe: its share of the budget (reference.recipe mesh.triangles) less the same
+    headroom as the budget default; the budget default itself when the recipe keeps the full budget."""
+    t = (rec.get("mesh") or {}).get("triangles")
+    if not t or not budget_triangles or int(t) >= int(budget_triangles):
+        return default_target_faces(budget_triangles)
+    return max(RECIPE_FACES_MIN, int(int(t) * BUDGET_HEADROOM))
+
+
+def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any]) -> dict[str, Any]:
+    """{target_faces, target_faces_source, texture_size, texture_source}: the version's choice ("chosen"), else the
+    recipe's ("recipe"; the platform budget for looks that keep it)."""
+    m = rec.get("mesh") or {}
+    if params.get("target_faces"):
+        faces, fsrc = int(params["target_faces"]), "chosen"
+    else:
+        faces, fsrc = recipe_target_faces(rec, budget.get("triangles")), "recipe"
+    if params.get("texture_size"):
+        tex, tsrc = int(params["texture_size"]), "chosen"
+    else:
+        tex, tsrc = int(m.get("texture") or budget.get("texture") or 2048), "recipe"
+    return {"target_faces": faces, "target_faces_source": fsrc, "texture_size": tex, "texture_source": tsrc}
 
 
 def resolve_padding(params: dict[str, Any], tex: int) -> int:
@@ -91,24 +125,32 @@ def finish_maps(glb: Path, maps: dict[str, Path], tex: int) -> dict[str, Any]:
 
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     input_view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
-    target_faces = int(params.get("target_faces") or default_target_faces(sc.budget["triangles"]))
-    tex = int(params.get("texture_size") or sc.budget["texture"] or 2048)
+    rec = stage_recipe(sc)
+    targets = resolve_targets(rec, params, sc.budget)
+    target_faces, tex = targets["target_faces"], targets["texture_size"]
+    keep_normal = bool(rec["mesh"]["normal_map"])
+    crisp = rec["surface"]["texture_filter"] == "crisp"
     upsample = int(params.get("upsample") or 1024)
     seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)
     src = _input_image(sc, input_view)
     sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=seed, remesh=remesh,
-                  padding=padding)
+                  padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"])
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
     sc.register("input", sc.copy_in(src, "input_image.png"))
     entry = await sc.comfy(convert_graph(name, sc.prefix(), target_faces, tex, upsample, seed, remesh, padding=padding),
                            poll=5.0, message="TRELLIS.2 convert", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
+    if not keep_normal or crisp:
+        # The recipe's look: no bump map (the GLB's own copy goes too); crisp textures sampled nearest-neighbour.
+        imaging.glb_replace_images(glb, drop_normal=not keep_normal, nearest=crisp)
     sc.register("glb", glb)
     maps: dict[str, Path] = {}
     for node, key in IMAGE_NODES.items():
+        if key == "normal" and not keep_normal:
+            continue  # the builder always bakes one; a look without surface bumps never registers or ships it
         imgs = ComfyClient.images_of(entry, node)
         if imgs:
             p = await sc.client().download_output(imgs[0], sc.dir / f"{key}.png")
@@ -116,7 +158,8 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
             if key in TEXTURE_KEYS:
                 maps[key] = Path(p)
     sc.set_metrics(engine="trellis", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), target_faces=target_faces, texture_size=tex,
-                   unwrap_padding_px=padding)
+                   unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
+                   normal_map=keep_normal, recipe=reference.recipe_record(rec, "mesh", "surface"))
     try:
         sc.progress(0.76, "Growing the textures into the seams")
         sc.set_metrics(**await asyncio.to_thread(finish_maps, Path(glb), maps, tex))
@@ -177,11 +220,54 @@ async def audit(sc: StageContext) -> None:
 DEFAULT_SILHOUETTE_MIN = 0.6
 
 
+def look_vars(rec: dict[str, Any], budget: dict[str, Any]) -> dict[str, Any]:
+    """Placeholder values for checks measured against the recipe's own target instead of the platform budget."""
+    known = {s["id"]: s for s in reference.styles()}
+    look = (known.get(rec.get("style")) or {}).get("look") or rec.get("style")
+    return {"look": look, "platform_triangles": budget.get("triangles"), "platform_texture": budget.get("texture")}
+
+
+def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any]) -> tuple[int | None, dict[str, Any] | None]:
+    """The triangle limit a check measures against, and the check's vars: the recipe's target when the look asks for
+    fewer triangles than the platform allows (and the version did not choose more), else the platform budget and no
+    vars."""
+    platform = budget.get("triangles")
+    target = (rec.get("mesh") or {}).get("triangles")
+    chosen = params.get("target_faces_source") == "chosen" or (params.get("target_faces") and "target_faces_source" not in params)
+    if chosen and int(params.get("target_faces") or 0) > int(target or 0):
+        return platform, None
+    if target and platform and int(target) < int(platform):
+        return int(target), {**look_vars(rec, budget), "recipe": True}
+    return platform, None
+
+
+def texture_target(rec: dict[str, Any], budget: dict[str, Any]) -> tuple[int | None, dict[str, Any] | None]:
+    """The texture size limit a check measures against: the recipe's when smaller than the platform's."""
+    platform = budget.get("texture")
+    tex = (rec.get("mesh") or {}).get("texture")
+    if tex and platform and int(tex) < int(platform):
+        return int(tex), {**look_vars(rec, budget), "recipe": True}
+    return platform, None
+
+
+def with_vars(checks: list[dict[str, Any]], vars: dict[str, Any] | None, suffix: str) -> list[dict[str, Any]]:
+    """Add vars to the checks whose name ends with suffix."""
+    if vars:
+        for c in checks:
+            if str(c.get("name") or c.get("id") or "").endswith(suffix):
+                c["vars"] = {**(c.get("vars") or {}), **vars}
+    return checks
+
+
 async def judge(sc: StageContext) -> None:
-    checks = quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, sc.budget["texture"])
+    rec = stage_recipe(sc)
+    tex_limit, tex_vars = texture_target(rec, sc.budget)
+    checks = with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
+                       tex_vars, "_budget")
     tris = sc.version.metrics.get("triangles")
-    if tris is not None and sc.budget["triangles"]:
-        checks.append(quality.check("triangle_budget", tris <= sc.budget["triangles"] * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, sc.budget["triangles"]))
+    limit, tvars = triangle_target(rec, sc.version.params, sc.budget)
+    if tris is not None and limit:
+        checks.append(quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=tvars))
     iou = sc.version.metrics.get("silhouette_iou")
     if iou is not None:
         # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,
@@ -202,16 +288,27 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
     await audit(sc)
 
 
+def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Parent params under the new ones, without the triangle target and texture size the parent took from the recipe
+    (only a chosen value carries over, so a new run follows the recipe as it is now)."""
+    base = dict(parent_params or {})
+    for key, src in (("target_faces", "target_faces_source"), ("texture_size", "texture_source")):
+        if base.get(src) == "recipe" and key not in params:
+            base.pop(key, None)
+        base.pop(src, None)
+    return {**base, **params}
+
+
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
     parent = sc.parent
-    merged = {**(parent.params if parent else {}), **params, "seed": params.get("seed") or random_seed(), "instruction": instruction}
+    merged = {**inherit(parent.params if parent else {}, params), "seed": params.get("seed") or random_seed(), "instruction": instruction}
     sc.set_params(instruction=instruction, refine_of=parent.id if parent else None)
     await _rerun_from_mesh_parent(sc, merged)
 
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
-    merged = {**(parent.params if parent else {}), **params}
+    merged = inherit(parent.params if parent else {}, params)
     await _rerun_from_mesh_parent(sc, merged)
 
 

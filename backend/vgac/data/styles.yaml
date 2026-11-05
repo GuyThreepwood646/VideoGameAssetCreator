@@ -4,12 +4,29 @@
 # because painted shading is part of a stylised look (owner's decision: only the realistic style removes them).
 # `pbr_fix_default` (G08): bring colours, metal and shine into physically based ranges in prep (realistic only;
 # other styles are measured and reported).
+#
+# Recipes (reference.recipe): how the look carries through every step after the concept picture.
+#   look         the style word in the recipe's plain sentence ("Low-poly character: ...")
+#   plain        the rest of that sentence, in plain words
+#   recipe       per-step settings; anything left out keeps today's behaviour (reference.RECIPE_DEFAULTS):
+#     concept    {steps, negative}         steps empty: the model's own default
+#     addons     [{id, strength}]          add-ons from data/addons.yaml, strength subtle | normal | strong
+#     turnaround {lora_strength, prompt_suffix}
+#     mesh       {triangle_scale, triangle_floor, texture_cap, normal_map}
+#                triangle_scale times the platform budget, never under triangle_floor and never over the budget;
+#                texture_cap is the largest texture size, under the platform's own
+#     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap}
+#                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended
+#     engine     {filter_mode: bilinear | point, mipmaps, compress}   what the Unity importer sets on the textures
+#   by_category  {category id: {plain, recipe}} overrides for one kind of asset, merged over the style's own
 styles:
   - id: painted
     delight_default: keep
     pbr_fix_default: false
     label: Painted
     model: zturbo
+    look: Painted
+    plain: smooth painted colours and full detail for your platform.
     prompt_block: >-
       A full-body painted concept art reference for a video game, a real digital painting with
       smooth painterly shading, clean readable shapes, slightly exaggerated proportions, muted
@@ -19,6 +36,8 @@ styles:
     pbr_fix_default: false
     label: Cel shaded
     model: anima
+    look: Cel-shaded
+    plain: flat colour regions and two-tone shading, full detail for your platform.
     prompt_block: >-
       Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and
       simple readable shapes, suitable for a stylized video game character.
@@ -27,29 +46,49 @@ styles:
     pbr_fix_default: false
     label: Pixel art
     model: pixel
+    look: Pixel-art
+    plain: small crisp textures with a limited palette, chunky shapes, no smoothing.
     prompt_block: >-
       16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.
+    recipe:
+      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false}
+      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true}
+      engine: {filter_mode: point, mipmaps: false, compress: false}
   - id: retro64
     delight_default: keep
     pbr_fix_default: false
     label: Retro 64
     model: zturbo
+    look: Retro 64
+    plain: chunky shapes with fewer triangles, small soft textures, no surface bumps.
     prompt_block: >-
       Late 1990s low-polygon console style, chunky simple shapes, flat vertex-lit shading, small
       blurry textures, bold saturated colours, as if rendered on a 64-bit era console.
+    recipe:
+      mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false}
   - id: lowpoly_flat
     delight_default: keep
     pbr_fix_default: false
     label: Low-poly flat
     model: zturbo
+    look: Low-poly
+    plain: faceted shapes with one flat colour per face, a quarter of the usual triangles, simple textures.
     prompt_block: >-
       Low-poly flat-shaded style, faceted geometric surfaces, solid flat colour per face, no
       texture detail, clean silhouettes, soft pastel palette.
+    recipe:
+      mesh: {triangle_scale: 0.25, triangle_floor: 300, texture_cap: 512, normal_map: false}
+      surface: {shading: flat}
+    by_category:
+      material:
+        plain: a simple flat-coloured tile with little texture detail.
   - id: realistic_pbr
     delight_default: remove
     pbr_fix_default: true
     label: Realistic PBR
     model: zbase
+    look: Realistic
+    plain: full detail, painted-in shadows removed, colours and shine kept in real-world ranges.
     prompt_block: >-
       Photorealistic physically based rendering reference, real material response, subtle wear
       and surface detail, neutral studio lighting, accurate proportions.
@@ -58,6 +97,8 @@ styles:
     pbr_fix_default: false
     label: Clay
     model: klein
+    look: Clay
+    plain: soft sculpted shapes and matte colours, full detail for your platform.
     prompt_block: >-
       Stop-motion clay style, soft matte sculpted surfaces with fingerprint texture, rounded
       simplified shapes, warm muted colours, as if photographed on a tabletop set.

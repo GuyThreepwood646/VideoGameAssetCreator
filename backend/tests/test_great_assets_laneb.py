@@ -60,6 +60,7 @@ SAMPLES = {
     "metal_mixed": ((0.02, 0.05), (0.61, 0.05)),
     "grid_fit": (([2.0, 0.3, 3.0], 1), ([2.4, 0.3, 3.0], 1)),
     "tiles_cleanly": ((0.0, 0.5), (45.0, 0.5)),
+    "look_applied": (("about 1,250 triangles, flat faces, 512 px textures", "abc123"), ("about 1,250 triangles", "abc123")),
 }
 
 

@@ -43,7 +43,7 @@ def test_budget_lookup():
 def test_stage_schemas_shape():
     stages = reference.stages()
     assert [s["id"] for s in stages] == list(reference.STAGE_ORDER)
-    allowed = {"number", "integer", "boolean", "select", "multiselect", "string"}
+    allowed = {"number", "integer", "boolean", "select", "multiselect", "string", "addons"}
     for s in stages:
         assert s["label"]
         for p in s["adjust_schema"]:

@@ -4,6 +4,12 @@ quality gate.
 
 Input mesh: the rig stage's animated GLB when present, else its (rigged or pass-through) GLB, else the prep GLB.
 Textures come from the prep stage in the lineage (the mesh stage when prep has none).
+
+Recipes (reference.recipe): a look without surface bumps ships no normal map (none is copied, packed or put in the
+GLB material, and the importer leaves the slot empty); pack.py gets the prep stage's shading (flat for low-poly) and
+the texture filter (crisp: nearest-neighbour samplers in the GLB); the Unity importer gets the engine settings
+(-vgacFilter point|bilinear, -vgacMipmaps, -vgacCompress, -vgacNormalMap). The manifest and metrics.recipe record the
+recipe that ran.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, library, quality
+from .. import colliders, guidance, library, quality, reference
 from ..db import _iso, utcnow
 from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
@@ -278,6 +284,8 @@ def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args:
     for t in (*HANDOFF_TEXTURES, f"T_{name}_MetallicSmoothness.png", f"T_{name}_ORM.png"):
         if (src / t).is_file():
             put(src / t)
+        else:
+            _remove_with_meta(folder / t)  # a map an earlier request carried (a normal map the new look drops)
     argv: list[str] = [f for f in flags if f != "-nographics"]  # -nographics is a batch-mode switch
     arguments: dict[str, str] = {}
     rel_folder = folder.relative_to(proj).as_posix()
@@ -375,6 +383,42 @@ def _write_colliders(sc: StageContext, plan: dict[str, Any], report: dict[str, A
         sc.register("collider_parts", plan["obj"])
 
 
+def export_recipe(sc: Any) -> dict[str, Any] | None:
+    """The asset's recipe, or None when the context cannot name one (a test double without a style)."""
+    try:
+        from .concept import stage_recipe
+
+        return stage_recipe(sc)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def ships_normal(sc: Any) -> bool:
+    rec = export_recipe(sc)
+    return True if rec is None else bool(rec["mesh"]["normal_map"])
+
+
+def pack_look(sc: Any) -> dict[str, str]:
+    """pack.py's --shading and --texture-filter: the shading the prep stage applied (else the recipe's), and the
+    recipe's texture filter."""
+    rec = export_recipe(sc)
+    prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
+    shading = (getattr(prep_v, "metrics", None) or {}).get("shading_applied") or ((rec or {}).get("surface") or {}).get("shading") or "smooth"
+    filt = ((rec or {}).get("surface") or {}).get("texture_filter") or "smooth"
+    return {"shading": shading if shading in ("smooth", "flat") else "smooth", "texture_filter": filt if filt in ("smooth", "crisp") else "smooth"}
+
+
+def engine_args(sc: Any) -> dict[str, str]:
+    """The importer's texture settings from the recipe (nothing when there is no recipe, so the importer keeps its
+    own defaults)."""
+    rec = export_recipe(sc)
+    if rec is None:
+        return {}
+    e = rec["engine"]
+    return {"-vgacFilter": e["filter_mode"], "-vgacMipmaps": "on" if e["mipmaps"] else "off",
+            "-vgacCompress": "on" if e["compress"] else "off", "-vgacNormalMap": "on" if rec["mesh"]["normal_map"] else "off"}
+
+
 async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any]:
     src, src_key = _input_glb(sc)
     lods = parse_lods(params.get("lods"))
@@ -387,7 +431,18 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     sc.set_params(collider_shape=col_plan.get("chosen"))
     sc.use_model("blender")
     textures: dict[str, Path] = {}
+    keep_normal = ships_normal(sc)
+    look = pack_look(sc)
+    rec = export_recipe(sc)
+    if rec is not None:
+        sc.set_metrics(recipe=reference.recipe_record(rec, "mesh", "surface", "engine"), shading=look["shading"],
+                       texture_filter=look["texture_filter"], normal_map=keep_normal)
     for key in TEXTURE_KEYS:
+        if key == "normal" and not keep_normal:
+            stale = sc.dir / "normal.png"
+            if stale.is_file():
+                stale.unlink()
+            continue
         p = sc.lineage_file(key, ("prep", "mesh"))
         if p is not None:
             textures[key] = sc.copy_in(p, f"{key}.png")
@@ -404,7 +459,8 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         sc.register(key, p)
     sc.progress(0.05, "Blender pack")
     # "none" asks pack.py for LOD0 only; leaving --lods out would fall back to pack.py's own default chain.
-    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode, "--formats", ",".join(formats)]
+    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode, "--formats", ",".join(formats),
+                       "--shading", look["shading"], "--texture-filter", look["texture_filter"]]
     if pack_mode == "parts":
         args += ["--collider-obj", col_plan["obj"]]
     # The rig stage's GLB has no UVs; pack.py copies them from the prep GLB (same faces) when the input lacks them.
@@ -473,6 +529,7 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     scale = _speed_scale(sc, humanoid)
     if scale is not None:
         args["-vgacSpeedScale"] = f"{scale:.3f}"
+    args.update(engine_args(sc))
     warnings: list[str] = []
     # Hit boxes (G34): the rig stage's hitboxes.json, copied next to the FBX by _pack; the body shape for moving is
     # the export knob movement_shape (auto takes the file's movement.default).
@@ -510,7 +567,9 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "secondaryUV": report.get("secondaryUV"), "secondaryUVOnMesh": report.get("secondaryUVOnMesh"),
             "secondaryUVSettings": report.get("secondaryUVSettings"),
             "staticFlags": report.get("staticFlags"), "lodFadeMode": report.get("lodFadeMode"),
-            "lodFadeWidth": report.get("lodFadeWidth")}
+            "lodFadeWidth": report.get("lodFadeWidth"), "textureFilter": report.get("textureFilter"),
+            "textureMipmaps": report.get("textureMipmaps"), "textureCompression": report.get("textureCompression"),
+            "normalMap": report.get("normalMap"), "textureSettings": report.get("textureSettings")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -676,6 +735,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "style_lock": sc.project.style_lock,
         "platform_target": sc.platform,
         "budget": sc.budget,
+        "recipe": sc.version.metrics.get("recipe"),
         "prompt": sc.asset.prompt,
         "parts": sc.asset.parts,
         "triangles_per_lod": (pack_report or {}).get("lods"),
@@ -729,14 +789,17 @@ def _role_clips(u: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool) -> list[dict[str, Any]]:
-    """Checks from a Unity report that imported (u["ok"]): materials_connected always; clips_loop and controller_ready
-    when the asset has clips; unity_humanoid_avatar for humanoids."""
+def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool, expect_normal: bool = True) -> list[dict[str, Any]]:
+    """Checks from a Unity report that imported (u["ok"]): materials_connected always (without the bump map when the
+    recipe's look has none); clips_loop and controller_ready when the asset has clips; unity_humanoid_avatar for
+    humanoids."""
     checks: list[dict[str, Any]] = []
     assigned = set(u.get("texturesAssigned") or [])
-    missing = next(((plain, effect) for key, plain, effect in UNITY_MAPS if key not in assigned), None)
-    checks.append(_check("materials_connected", missing is None, len(assigned & {k for k, _, _ in UNITY_MAPS}), len(UNITY_MAPS),
-                         {"missing": missing[0] if missing else "", "effect": missing[1] if missing else ""}))
+    wanted = [m for m in UNITY_MAPS if expect_normal or m[0] != "normal"]
+    missing = next(((plain, effect) for key, plain, effect in wanted if key not in assigned), None)
+    checks.append(_check("materials_connected", missing is None, len(assigned & {k for k, _, _ in wanted}), len(wanted),
+                         {"missing": missing[0] if missing else "", "effect": missing[1] if missing else "",
+                          **({} if expect_normal else {"no_bumps": True})}))
     clips = [c for c in (u.get("clips") or []) if isinstance(c, dict)]
     if rigged and clips:
         loops = {c.get("name"): bool(c.get("loop")) for c in clips}
@@ -810,10 +873,19 @@ async def judge(sc: StageContext) -> None:
     rp = sc.file("pack_report")
     report = json.loads(Path(rp).read_text()) if rp else {}
     checks: list[dict[str, Any]] = []
-    checks += quality.geometry_checks(report, sc.budget["triangles"] or None)
+    rec = export_recipe(sc)
+    from .mesh import look_vars, texture_target, with_vars
+
+    prep_m = (getattr(sc.stage_version("prep"), "metrics", None) or {})
+    tri_limit, tri_vars = sc.budget["triangles"] or None, None
+    if rec is not None and prep_m.get("triangle_limit_source") == "recipe" and prep_m.get("triangle_limit"):
+        tri_limit, tri_vars = int(prep_m["triangle_limit"]), {**look_vars(rec, sc.budget), "recipe": True}
+    tex_limit, tex_vars = texture_target(rec, sc.budget) if rec is not None else (sc.budget["texture"], None)
+    checks += with_vars(quality.geometry_checks(report, tri_limit), tri_vars, "triangle_budget")
     checks += quality.lod_checks(report, sc.version.params.get("lods"))
     checks += collider_checks(report, _read_json(sc.file("colliders")), sc.asset.category, sc.version.params.get("collider"))
-    checks += quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, sc.budget["texture"])
+    checks += with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
+                        tex_vars, "_budget")
     rig_v = sc.stage_version("rig")
     rigged = False
     if rig_v is not None:
@@ -828,7 +900,7 @@ async def judge(sc: StageContext) -> None:
     if u:
         checks.append(quality.check("unity_import", bool(u.get("ok")), u.get("ok"), True))
         if u.get("ok"):
-            checks += unity_checks(u, _is_humanoid(sc), rigged)
+            checks += unity_checks(u, _is_humanoid(sc), rigged, expect_normal=ships_normal(sc))
     sc.set_metrics(**quality.summarise(checks))
     # A hand-off to an open Unity Editor finishes later; POST /api/versions/{id}/judge (mode metrics) picks it up.
     picked = collect_unity_import(sc.version)

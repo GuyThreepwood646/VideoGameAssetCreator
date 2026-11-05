@@ -573,11 +573,33 @@ def clamp_roughness(roughness: np.ndarray) -> np.ndarray:
 # --- GLB image replacement --------------------------------------------------------------------------------------
 
 
+GL_NEAREST = 9728
+# A 1 x 1 flat normal (128, 128, 255) PNG: what a dropped normal map's image becomes, so the file loses its bytes
+# without renumbering every buffer view.
+_FLAT_NORMAL_PNG: bytes | None = None
+
+
+def _flat_normal_png() -> bytes:
+    global _FLAT_NORMAL_PNG
+    if _FLAT_NORMAL_PNG is None:
+        import io
+
+        buf = io.BytesIO()
+        Image.new("RGB", (1, 1), (128, 128, 255)).save(buf, "PNG")
+        _FLAT_NORMAL_PNG = buf.getvalue()
+    return _FLAT_NORMAL_PNG
+
+
 def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, metallic: Path | str | None = None,
-                       roughness: Path | str | None = None) -> bool:
+                       roughness: Path | str | None = None, *, drop_normal: bool = False, nearest: bool = False,
+                       mr_size: int | None = None) -> bool:
     """Swap, in place, the base colour image and the green (roughness) and blue (metallic) channels of the
     metallic-roughness image of a GLB's first material. The binary chunk is rebuilt view by view; every other view
-    keeps its bytes. Returns False, leaving the file alone, when there is nothing to replace."""
+    keeps its bytes. Returns False, leaving the file alone, when there is nothing to change.
+
+    Recipes: mr_size resizes the metallic-roughness image (and with it the occlusion in its red channel, when the
+    material shares it) to mr_size square first; drop_normal removes every material's normal map (its image becomes a
+    1 x 1 flat normal, unreferenced); nearest sets every texture sampler to nearest-neighbour without mipmaps."""
     import io
     import struct
 
@@ -596,6 +618,23 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
     if not mats or not images:
         return False
     pbr = mats[0].get("pbrMetallicRoughness") or {}
+    changed_json = False
+    if drop_normal:
+        for m in mats:
+            ref = m.pop("normalTexture", None)
+            if ref is None:
+                continue
+            changed_json = True
+    if nearest and gltf.get("textures"):
+        samplers = gltf.setdefault("samplers", [])
+        if not samplers:
+            samplers.append({})
+        for s in samplers:
+            s["magFilter"] = GL_NEAREST
+            s["minFilter"] = GL_NEAREST
+        for t in gltf["textures"]:
+            t.setdefault("sampler", 0)
+        changed_json = True
 
     def image_index(ref: dict[str, Any] | None) -> int | None:
         if not ref:
@@ -613,10 +652,21 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
     if base_color and bi is not None:
         replace[images[bi]["bufferView"]] = Path(base_color).read_bytes()
         images[bi]["mimeType"] = "image/png"
+    if drop_normal:
+        used = {(gltf.get("textures") or [])[ref["index"]].get("source")
+                for m in mats for ref in [*(m.get("pbrMetallicRoughness") or {}).values(), m.get("occlusionTexture"), m.get("emissiveTexture")]
+                if isinstance(ref, dict) and "index" in ref}
+        for i, im in enumerate(images):
+            if i not in used and "bufferView" in im and im["bufferView"] not in replace:
+                replace[im["bufferView"]] = _flat_normal_png()
+                im["mimeType"] = "image/png"
     mi = image_index(pbr.get("metallicRoughnessTexture"))
-    if mi is not None and (metallic or roughness):
+    if mi is not None and (metallic or roughness or mr_size):
         with Image.open(io.BytesIO(view_bytes(images[mi]["bufferView"]))) as im:
-            arr = np.array(im.convert("RGB"))
+            rgb = im.convert("RGB")
+            if mr_size and rgb.size != (mr_size, mr_size):
+                rgb = rgb.resize((mr_size, mr_size), Image.NEAREST if nearest else Image.LANCZOS)
+            arr = np.array(rgb)
         for path, ch in ((roughness, 1), (metallic, 2)):
             if path:
                 with Image.open(path) as src:
@@ -625,7 +675,7 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
         Image.fromarray(arr, "RGB").save(buf, "PNG")
         replace[images[mi]["bufferView"]] = buf.getvalue()
         images[mi]["mimeType"] = "image/png"
-    if not replace:
+    if not replace and not changed_json:
         return False
     new_bin = bytearray()
     for vi, bv in enumerate(views):
@@ -646,3 +696,120 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
     p.write_bytes(struct.pack("<4sII", b"glTF", 2, total) + struct.pack("<I", len(js)) + b"JSON" + js
                   + struct.pack("<I", len(new_bin)) + b"BIN\x00" + bytes(new_bin))
     return True
+
+
+# --- Recipes: palettes and texture treatment (reference.recipe surface) ------------------------------------------
+
+# Plain colour names for the palette sentence of the concept prompt (painters read words, not hex codes).
+COLOUR_NAMES: tuple[tuple[str, tuple[int, int, int]], ...] = (
+    ("black", (20, 20, 20)), ("charcoal", (54, 54, 58)), ("dark grey", (85, 85, 85)), ("grey", (128, 128, 128)),
+    ("light grey", (190, 190, 190)), ("white", (245, 245, 245)), ("cream", (236, 222, 190)), ("beige", (200, 180, 140)),
+    ("dark brown", (80, 50, 25)), ("brown", (130, 85, 45)), ("tan", (190, 150, 100)), ("gold", (205, 165, 75)),
+    ("yellow", (245, 215, 60)), ("pale yellow", (250, 235, 150)), ("orange", (240, 130, 40)), ("coral", (240, 125, 90)),
+    ("red", (200, 40, 40)), ("dark red", (130, 25, 30)), ("crimson", (175, 30, 60)), ("pink", (240, 150, 180)),
+    ("maroon", (95, 30, 50)), ("purple", (120, 50, 140)), ("plum", (95, 40, 95)), ("lavender", (180, 160, 220)),
+    ("navy", (25, 35, 80)), ("dark blue", (30, 50, 120)), ("blue", (55, 95, 200)), ("steel blue", (50, 80, 115)),
+    ("sky blue", (120, 180, 230)), ("teal", (20, 120, 130)), ("turquoise", (40, 200, 180)), ("mint green", (150, 230, 170)),
+    ("lime green", (165, 235, 110)), ("green", (55, 160, 80)), ("dark green", (30, 85, 45)), ("olive", (100, 110, 60)),
+    ("sage", (140, 160, 120)),
+)
+
+
+def parse_hex(value: Any) -> tuple[int, int, int] | None:
+    """"#5b3a1e", "5b3a1e" or "#fff" -> (r, g, b); None for anything else."""
+    if not isinstance(value, str):
+        return None
+    h = value.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return None
+    try:
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return None
+
+
+def parse_palette(palette: Any, limit: int = 64) -> list[tuple[int, int, int]]:
+    out = []
+    for v in palette or []:
+        c = parse_hex(v)
+        if c is not None and c not in out:
+            out.append(c)
+    return out[:limit]
+
+
+def _colour_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """The "redmean" weighted RGB distance: close enough to how people see colour for naming."""
+    rm = (a[0] + b[0]) / 2
+    dr, dg, db = a[0] - b[0], a[1] - b[1], a[2] - b[2]
+    return ((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db) ** 0.5
+
+
+def colour_name(rgb: tuple[int, int, int]) -> str:
+    return min(COLOUR_NAMES, key=lambda nc: _colour_distance(rgb, nc[1]))[0]
+
+
+def palette_names(palette: Any, limit: int = 8) -> list[str]:
+    """The palette's colours as plain names, without repeats, at most `limit`."""
+    out: list[str] = []
+    for c in parse_palette(palette):
+        n = colour_name(c)
+        if n not in out:
+            out.append(n)
+    return out[:limit]
+
+
+def shrink_image(path: Path | str, size: int, crisp: bool, dest: Path | str | None = None) -> Path:
+    """Resize a map to size x size when it is larger: nearest neighbour for crisp looks (every texel is one whole
+    source texel, no blended in-between colours), a box filter otherwise (an even average, the classic small soft
+    texture). Writes dest (default: in place) in the same mode; a map already at or under the size is copied as is."""
+    p = Path(path)
+    out = Path(dest) if dest else p
+    with Image.open(p) as im:
+        im.load()
+        if max(im.size) > size:
+            im = im.resize((size, size), Image.NEAREST if crisp else Image.BOX)
+        im.save(out)
+    return out
+
+
+def quantise_colours(base: np.ndarray, mask: np.ndarray | None = None, colours: int | None = None,
+                     palette: list[tuple[int, int, int]] | None = None) -> np.ndarray:
+    """A base colour (h, w, 3, floats 0..1) limited to a few colours, without dithering: to the fixed `palette` when
+    given (each texel takes the nearest palette colour), else to `colours` picked from the texels inside `mask` (median
+    cut). Texels outside the mask take their nearest colour too, so the gutter matches its piece."""
+    a = np.clip(np.round(base * 255.0), 0, 255).astype(np.uint8)
+    h, w = a.shape[:2]
+    if palette:
+        pal = np.asarray(palette, dtype=np.float32)
+    else:
+        n = max(2, min(256, int(colours or 32)))
+        sample = a[mask] if mask is not None and mask.any() else a.reshape(-1, 3)
+        side = int(np.ceil(np.sqrt(len(sample))))
+        pad = np.zeros((side * side, 3), np.uint8)
+        pad[:len(sample)] = sample
+        pad[len(sample):] = sample[0] if len(sample) else 0
+        q = Image.fromarray(pad.reshape(side, side, 3), "RGB").quantize(colors=n, method=Image.Quantize.MEDIANCUT,
+                                                                        dither=Image.Dither.NONE)
+        pal = np.asarray(q.getpalette()[:3 * n], dtype=np.float32).reshape(-1, 3)
+        used = np.unique(np.asarray(q))
+        pal = pal[used[used < len(pal)]]
+    flat = a.reshape(-1, 3).astype(np.float32)
+    best = np.zeros(len(flat), dtype=np.int64)
+    best_d = np.full(len(flat), np.inf, dtype=np.float32)
+    for i, c in enumerate(pal):  # a loop over palette colours keeps memory at one distance row
+        rm = (flat[:, 0] + c[0]) / 2
+        d = (2 + rm / 256) * (flat[:, 0] - c[0]) ** 2 + 4 * (flat[:, 1] - c[1]) ** 2 + (2 + (255 - rm) / 256) * (flat[:, 2] - c[2]) ** 2
+        closer = d < best_d
+        best[closer] = i
+        best_d[closer] = d[closer]
+    return (pal[best].reshape(h, w, 3) / 255.0).astype(np.float32)
+
+
+def colour_count(path: Path | str, mask: np.ndarray | None = None) -> int:
+    """How many different colours a map uses (inside mask when given)."""
+    with Image.open(path) as im:
+        a = np.asarray(im.convert("RGB"))
+    px = a[mask] if mask is not None and mask.shape == a.shape[:2] else a.reshape(-1, 3)
+    return int(len(np.unique(px.reshape(-1, 3), axis=0)))
