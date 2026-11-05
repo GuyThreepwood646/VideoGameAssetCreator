@@ -47,7 +47,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "8";
+    public const string Version = "9";
 
     [Serializable]
     class ClipInfo
@@ -116,6 +116,7 @@ public static class VgacImport
         public List<string> sockets = new List<string>();      // Socket_* transforms in the saved prefab
         public List<string> socketBones = new List<string>();  // "Socket_Hand_R>mixamorig:RightHand"
         public float socketMaxError;           // metres: worst gap between the FBX's socket and sockets.json
+        public float bindPoseMoved;            // metres: how far the model's default pose was from its bind pose
         public float socketMaxAngle;           // degrees: worst forward or up mismatch between the FBX and the file
         public int socketsAdded;               // sockets the FBX lacked, added from the file
     }
@@ -349,6 +350,10 @@ public static class VgacImport
             // Hit boxes and the body shape for moving (G34): a rigged character gets trigger shapes on its bones and a
             // simple body shape on the root, which replaces the convex hull (a hull does not follow the animation).
             bool rigged = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(s => s.bones.Length > 0);
+            // Unity takes a model's default pose from the first clip's first frame, not from the file's rest pose
+            // (arms down for the hand-made library's idle). Hit boxes and sockets are fitted against the rest pose,
+            // so the instance stands in its bind pose before anything is placed on its bones.
+            if (rigged) report.bindPoseMoved = ResetToBindPose(instance);
             bool bodyShape = false;
             var hitPath = a.hitboxes;
             if (hitPath != null && File.Exists(hitPath) && rigged)
@@ -769,6 +774,30 @@ public static class VgacImport
 
     // ---------------------------------------------------------------------------------------------------------------
     // Sockets (Version 8)
+
+    // Stand a rigged instance in its bind pose (the rest pose the mesh was skinned in). Returns how far the bone
+    // that moved most was from it, in metres.
+    static float ResetToBindPose(GameObject root)
+    {
+        var smr = root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+            .Where(x => x.sharedMesh != null && x.bones.Length > 0 && x.sharedMesh.bindposes.Length == x.bones.Length)
+            .OrderByDescending(x => x.bones.Length).FirstOrDefault();
+        if (smr == null) return 0f;
+        var binds = smr.sharedMesh.bindposes;
+        var bones = smr.bones;
+        var meshToWorld = smr.transform.localToWorldMatrix;
+        int Depth(Transform t) { int d = 0; while (t.parent != null) { d++; t = t.parent; } return d; }
+        float worst = 0f;
+        // Parents first, so a child set afterwards keeps its place.
+        foreach (var i in Enumerable.Range(0, bones.Length).Where(i => bones[i] != null).OrderBy(i => Depth(bones[i])))
+        {
+            var m = meshToWorld * binds[i].inverse;
+            Vector3 pos = m.GetColumn(3);
+            worst = Mathf.Max(worst, (bones[i].position - pos).magnitude);
+            bones[i].SetPositionAndRotation(pos, m.rotation);
+        }
+        return worst;
+    }
 
     static void PlaceSockets(GameObject root, string path, float scale, Report report)
     {

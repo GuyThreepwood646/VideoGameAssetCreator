@@ -850,6 +850,10 @@ def _role_clips(u: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+# Hit boxes and attachment points may land this far from their fitted place in the Unity prefab, in metres.
+PLACEMENT_MAX_M = 0.02
+
+
 def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool, expect_normal: bool = True) -> list[dict[str, Any]]:
     """Checks from a Unity report that imported (u["ok"]): materials_connected always (without the bump map when the
     recipe's look has none); clips_loop and controller_ready when the asset has clips; unity_humanoid_avatar for
@@ -975,6 +979,13 @@ async def judge(sc: StageContext) -> None:
         checks.append(quality.check("unity_import", bool(u.get("ok")), u.get("ok"), True))
         if u.get("ok"):
             checks += unity_checks(u, _is_humanoid(sc), rigged, expect_normal=ships_normal(sc))
+            # Hit boxes and attachment points must sit where they were fitted: the importer measures how far each
+            # landed from its place on the rest pose (30 cm off once, when the file's default pose was not the rest pose).
+            off = [float(u[k]) for k in ("hitboxMaxBoneError", "socketMaxError") if isinstance(u.get(k), (int, float))]
+            if off and (u.get("hitboxCount") or u.get("sockets")):
+                worst = max(off)
+                checks.append(quality.check("placement_exact", worst <= PLACEMENT_MAX_M, round(worst, 4), PLACEMENT_MAX_M,
+                                            vars={"cm": round(worst * 100, 1)}))
     sc.set_metrics(**quality.summarise(checks))
     # A hand-off to an open Unity Editor finishes later; POST /api/versions/{id}/judge (mode metrics) picks it up.
     picked = collect_unity_import(sc.version)
