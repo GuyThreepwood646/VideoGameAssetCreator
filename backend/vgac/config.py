@@ -22,8 +22,22 @@ DATA_DIR = PACKAGE_DIR / "data"
 BLENDER_SCRIPTS_DIR = PACKAGE_DIR / "blender"
 
 
+class DiscoverConfig(BaseModel):
+    """Find an instance by the graphics card it runs on instead of trusting a fixed port (instances.Supervisor.locate).
+
+    ComfyUI Desktop picks its own port, so when `url` does not answer, or answers from a ComfyUI whose /system_stats
+    device name does not contain `gpu_match`, the backend tries `ports` on the same host and uses the first ComfyUI
+    whose device name contains `gpu_match` for the rest of the session. With no ports it only checks the card: a
+    ComfyUI on the configured port that runs on another card is reported, never sent this instance's jobs."""
+
+    gpu_match: str
+    ports: list[int] = Field(default_factory=list)
+
+
 class InstanceConfig(BaseModel):
     url: str
+    # Optional: check (and find) this instance by its card (DiscoverConfig).
+    discover: DiscoverConfig | None = None
     gpu: str = ""
     role: str = ""
     # Local output directory of that ComfyUI instance, for nodes that save files without

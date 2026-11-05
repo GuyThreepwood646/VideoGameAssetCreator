@@ -195,6 +195,12 @@ function GpuRow({ gpu: g, busy, onChange, onStart, onStop }: RowProps) {
             <Info term="gpu_memory" />
           </div>
         )}
+        {g.setup_problem && (
+          <div className="warn small">
+            Setup problem: {g.setup_problem}
+            <Info term="gpu_setup_problem" />
+          </div>
+        )}
         <div className="muted small">{g.note}</div>
       </div>
       <div className="gpu-switch">
@@ -271,6 +277,11 @@ function GpuRow({ gpu: g, busy, onChange, onStart, onStop }: RowProps) {
           {idle > 0 && g.reachable && !g.owned && (
             <span className="muted small">The app did not start this engine, so it leaves it running.</span>
           )}
+        </div>
+        <div className="gpu-kind muted small">
+          Address: {g.url}
+          {g.found_by_card ? ' (found by its card)' : ''}
+          <Info term="gpu_address" />
         </div>
         {(canStartNow || canStopNow) && (
           <div className="gpu-kind">

@@ -241,7 +241,7 @@ async def health() -> dict[str, Any]:
     summaries = await asyncio.gather(*(c.cached_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values()))
     instances = {}
     for (name, inst), summary in zip(settings.instances.items(), summaries):
-        instances[name] = {"url": inst.url, "gpu": inst.gpu, "role": inst.role, **summary,
+        instances[name] = {"url": clients[name].base_url, "gpu": inst.gpu, "role": inst.role, **summary,
                            "enabled": queue.is_enabled(name) if queue else True}
     instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe), "unity": str(settings.unity_exe)}
     vm = psutil.virtual_memory()
@@ -262,6 +262,33 @@ async def health() -> dict[str, Any]:
         "job_statuses": list(JOB_STATUSES),
         "version_statuses": list(VERSION_STATUSES),
     }
+
+
+SETUP_CACHE_SECONDS = 60.0
+_setup_cache: dict[str, Any] = {"at": 0.0, "report": None}
+
+
+@app.get("/api/setup")
+async def setup_check(refresh: bool = False) -> dict[str, Any]:
+    """Is everything the app needs in place? (preflight.py): {summary: {ok, fails, warns, unknown, affected}, items,
+    groups, checked_at}. Kept for 60 s; ?refresh=1 checks again now. Read-only: it asks each graphics engine about
+    one node at a time and reports only found or missing for each expected model file."""
+    import time as _time
+
+    from . import preflight
+
+    now = _time.monotonic()
+    if not refresh and _setup_cache["report"] is not None and now - _setup_cache["at"] < SETUP_CACHE_SECONDS:
+        return _setup_cache["report"]
+    settings = get_settings()
+    queue = active_queue()
+    clients = {name: (queue.clients.get(name) if queue else None) or _health_client(name, inst.url)
+               for name, inst in settings.instances.items()}
+    items = await preflight.run_checks(settings, clients, disabled=set(queue.disabled) if queue else set(),
+                                       supervisor=queue.supervisor if queue else None)
+    rep = preflight.report(items)
+    _setup_cache.update(at=_time.monotonic(), report=rep)
+    return rep
 
 
 _health_clients: dict[str, ComfyClient] = {}

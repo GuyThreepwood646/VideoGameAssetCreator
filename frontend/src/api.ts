@@ -354,6 +354,30 @@ export type Gpu = {
   // Shut down an engine the app started after this many minutes without work; 0 = never.
   stop_when_idle_minutes?: number
   last_error?: string
+  // True when the card's ComfyUI was found at another address than the configured one (config discover).
+  found_by_card?: boolean
+  // A plain setup problem, for example another ComfyUI on the other card holding this card's port.
+  setup_problem?: string
+}
+
+// GET /api/setup: "Is everything ready?" (backend/vgac/preflight.py).
+export type SetupState = 'ok' | 'warn' | 'fail' | 'unknown'
+export type SetupGroup = 'tools' | 'engines' | 'models' | 'storage'
+export type SetupItem = {
+  id: string
+  group: SetupGroup
+  label: string
+  state: SetupState
+  detail: string
+  fix: string
+  needed_for: string[]
+  technical: string
+}
+export type SetupReport = {
+  summary: { ok: boolean; fails: number; warns: number; unknown: number; affected: string[] }
+  items: SetupItem[]
+  groups: { id: SetupGroup; label: string }[]
+  checked_at: string
 }
 export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'off'
 export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
@@ -438,6 +462,7 @@ export const api = {
   setGpu: (instance: string, body: GpuPatch) => put<Gpu[]>(`/api/gpus/${instance}`, body),
   startGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/start`),
   stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
+  setup: (refresh = false) => get<SetupReport>('/api/setup' + (refresh ? '?refresh=1' : '')),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),

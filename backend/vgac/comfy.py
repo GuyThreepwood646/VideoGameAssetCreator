@@ -77,6 +77,34 @@ class ComfyClient:
             self._http_loop = loop
         return self._http
 
+    def set_base_url(self, url: str) -> None:
+        """Point the client at another address (the instance was found on another port, instances.Supervisor.locate).
+        The pooled connections to the old address are dropped and the cached /system_stats answer forgotten."""
+        url = url.rstrip("/")
+        if url == self.base_url:
+            return
+        old = self._http
+        self.base_url = url
+        self._http, self._http_loop, self._vram_cache = None, None, None
+        if old is not None and not old.is_closed:
+            try:
+                asyncio.get_running_loop().create_task(old.aclose())
+            except RuntimeError:
+                pass  # no loop: the old client is simply dropped
+
+    async def object_info(self, node_class: str) -> dict[str, Any] | None:
+        """GET /object_info/<node_class>: the node's description, or None when this ComfyUI has no such node. Raises on
+        a connection error. Asks about one node only (never the full list)."""
+        r = await self._client().get(f"/object_info/{node_class}", timeout=10.0)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, dict):
+            return None
+        info = data.get(node_class)
+        return info if isinstance(info, dict) else None
+
     async def aclose(self) -> None:
         http, self._http, self._http_loop = self._http, None, None
         if http is not None and not http.is_closed:

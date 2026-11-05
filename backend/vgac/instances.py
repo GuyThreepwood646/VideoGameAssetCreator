@@ -14,6 +14,13 @@ nothing answers its /system_stats. ensure_running(name):
 stop(name) only ever stops a process tree the backend started itself (taskkill /PID <pid> /T /F on Windows); for
 anything else it raises NotOwned. An instance run by ComfyUI Desktop or the desktop launcher is never stopped.
 
+Finding an instance by its card (config.DiscoverConfig): an instance with `discover` counts as answering only when
+its /system_stats device name contains `gpu_match`. When the configured url does not answer, or answers from another
+card, locate() tries the listed ports on the same host (at most once every PROBE_SECONDS) and points the instance's
+client at the first ComfyUI on the right card for the rest of the session, never at one whose device matches another
+instance's gpu_match. A ComfyUI on the instance's own port that runs on another card is a setup problem (conflict()):
+the start fails at once with a plain fix instead of sending the work to the wrong card.
+
 State per instance: running | starting | stopped | failed, owned, last_error. Every change calls `on_change` (the job
 queue publishes the "gpus" event). The operating-system calls are in ProcessOps, which tests replace with a stub.
 """
@@ -30,16 +37,105 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
-from urllib.parse import urlparse
+from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse, urlunparse
 
-from .config import PROJECT_DIR, Settings
+from .config import PROJECT_DIR, InstanceConfig, Settings
 
 log = logging.getLogger("vgac.instances")
 
 STATES = ("running", "starting", "stopped", "failed")
 OWNED_FILE = "engines.json"
 POLL_SECONDS = 2.0
+PROBE_SECONDS = 5.0  # the other ports are tried at most this often per instance
+PROBE_TIMEOUT = 2.0
+
+
+def device_names(summary: dict[str, Any] | None) -> str:
+    """The device names of a vram_summary() answer, joined ("cuda:0 NVIDIA GeForce RTX 3060 : cudaMallocAsync")."""
+    if not summary or not summary.get("reachable"):
+        return ""
+    return " | ".join(str(d.get("name") or "") for d in summary.get("devices") or [] if isinstance(d, dict))
+
+
+def card_matches(summary: dict[str, Any] | None, gpu_match: str) -> bool:
+    return bool(gpu_match) and gpu_match.lower() in device_names(summary).lower()
+
+
+def with_port(url: str, port: int) -> str:
+    u = urlparse(url)
+    host = u.hostname or "127.0.0.1"
+    return urlunparse((u.scheme or "http", f"{host}:{port}", "", "", "", "")).rstrip("/")
+
+
+def port_of(url: str) -> int | None:
+    try:
+        return urlparse(url).port
+    except ValueError:
+        return None
+
+
+def owner_of(settings: Settings, devices: str, name: str) -> tuple[str, InstanceConfig] | None:
+    """The other instance whose gpu_match these device names contain, if any."""
+    for other, oi in settings.instances.items():
+        if other != name and oi.discover is not None and oi.discover.gpu_match.lower() in devices.lower():
+            return other, oi
+    return None
+
+
+def conflict_message(settings: Settings, name: str, url: str, devices: str) -> str:
+    """Plain words for "the ComfyUI on this instance's port runs on another card", with the fix."""
+    inst = settings.instances[name]
+    port = port_of(url)
+    where = f"port {port}" if port else url
+    gpu = inst.gpu or f"card {name}"
+    owner = owner_of(settings, devices, name)
+    if owner is not None:
+        oi = owner[1]
+        who = oi.external_owner or "Another copy of ComfyUI"
+        return (f"{who} is using {where} on the {oi.gpu or 'other card'}; close it or change its port so the "
+                f"{gpu} can use {where}.")
+    return (f"The graphics engine on {where} runs on another card ({devices or 'unknown'}), not the {gpu}; close "
+            f"it or change its port so the {gpu} can use {where}.")
+
+
+async def search_ports(settings: Settings, name: str, here: str,
+                       probe: Callable[[str], Awaitable[dict[str, Any] | None]]) -> str | None:
+    """The first address among the configured url and the `discover` ports (other than `here`) where a ComfyUI runs on
+    this instance's card and not on another instance's, or None. Read-only requests, all at once."""
+    inst = settings.instances[name]
+    d = inst.discover
+    if d is None:
+        return None
+    here = here.rstrip("/")
+    candidates: list[str] = []
+    for u in [inst.url.rstrip("/")] + [with_port(inst.url, p) for p in d.ports]:
+        if u != here and u not in candidates:
+            candidates.append(u)
+    if not candidates:
+        return None
+    answers = await asyncio.gather(*(probe(u) for u in candidates))
+    for u, ans in zip(candidates, answers):
+        if card_matches(ans, d.gpu_match) and owner_of(settings, device_names(ans), name) is None:
+            return u
+    return None
+
+
+async def probe_url(url: str) -> dict[str, Any] | None:
+    """A vram_summary()-shaped answer from <url>/system_stats (device names only), or None when nothing answers there.
+    Read-only."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as http:
+            r = await http.get(url.rstrip("/") + "/system_stats")
+            r.raise_for_status()
+            stats = r.json()
+    except Exception:  # noqa: BLE001  (refused, timeout, not ComfyUI)
+        return None
+    if not isinstance(stats, dict) or not isinstance(stats.get("devices"), list):
+        return None
+    return {"reachable": True, "devices": [{"name": d.get("name")} for d in stats["devices"] if isinstance(d, dict)]}
 
 
 class StartFailed(Exception):
@@ -149,7 +245,8 @@ class EngineState:
 class Supervisor:
     def __init__(self, settings: Settings, clients: dict[str, Any], ops: ProcessOps | None = None,
                  on_change: Callable[[str], None] | None = None, poll_seconds: float | None = None,
-                 clock: Callable[[], float] = time.monotonic, project_dir: Path = PROJECT_DIR) -> None:
+                 clock: Callable[[], float] = time.monotonic, project_dir: Path = PROJECT_DIR,
+                 probe: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None) -> None:
         self.settings = settings
         self.clients = clients
         self.ops = ops or ProcessOps()
@@ -159,6 +256,12 @@ class Supervisor:
         self.project_dir = project_dir
         self.engines: dict[str, EngineState] = {n: EngineState(last_busy=clock()) for n in settings.instances}
         self._tasks: dict[str, asyncio.Task] = {}
+        self.probe = probe or probe_url
+        # Instances found at another address than the configured one (url by name), and the setup problem of an
+        # instance whose port answers from another card (plain message by name).
+        self.found: dict[str, str] = {}
+        self.conflicts: dict[str, str] = {}
+        self._probed_at: dict[str, float] = {}
         self._load_owned()
 
     # --- facts -------------------------------------------------------------------------------------------------
@@ -201,7 +304,11 @@ class Supervisor:
         return t is not None and not t.done()
 
     async def answers(self, name: str) -> bool:
-        """Whether the instance answers /system_stats now (a fresh request; the answer is cached for GET /api/gpus)."""
+        """Whether the instance answers /system_stats now (a fresh request; the answer is cached for GET /api/gpus).
+        For an instance with `discover`, only an answer from its own card counts (locate())."""
+        inst = self.settings.instances.get(name)
+        if inst is not None and inst.discover is not None:
+            return await self.locate(name)
         client = self.clients.get(name)
         if client is None:
             return False
@@ -210,6 +317,70 @@ class Supervisor:
         except Exception:  # noqa: BLE001
             return False
         return bool(summary and summary.get("reachable"))
+
+    # --- finding an instance by its card --------------------------------------------------------------------------
+
+    def current_url(self, name: str) -> str:
+        client = self.clients.get(name)
+        url = getattr(client, "base_url", None)
+        return str(url).rstrip("/") if url else self.settings.instances[name].url.rstrip("/")
+
+    def conflict(self, name: str) -> str:
+        return self.conflicts.get(name, "")
+
+    def identity_ok(self, name: str, summary: dict[str, Any] | None) -> bool:
+        """Whether a vram_summary() answer comes from this instance's card (any answer, without `discover`)."""
+        inst = self.settings.instances.get(name)
+        if inst is None or inst.discover is None:
+            return bool(summary and summary.get("reachable"))
+        return card_matches(summary, inst.discover.gpu_match)
+
+    def _switch(self, name: str, url: str) -> None:
+        client = self.clients.get(name)
+        if client is not None and hasattr(client, "set_base_url"):
+            client.set_base_url(url)
+        configured = self.settings.instances[name].url.rstrip("/")
+        if url.rstrip("/") == configured:
+            self.found.pop(name, None)
+        else:
+            self.found[name] = url.rstrip("/")
+        log.info("graphics engine %s: using the ComfyUI on the %s at %s", name, self.settings.instances[name].gpu, url)
+
+    async def locate(self, name: str, force: bool = False) -> bool:
+        """True when the instance answers from its own card, at its current address or, after trying the configured
+        url and the `discover` ports, at a new one (which the instance then keeps for the session). Read-only."""
+        inst = self.settings.instances[name]
+        d = inst.discover
+        client = self.clients.get(name)
+        summary: dict[str, Any] | None = None
+        if client is not None:
+            try:
+                summary = await client.cached_vram_summary(0)
+            except Exception:  # noqa: BLE001
+                summary = None
+        reachable = bool(summary and summary.get("reachable"))
+        if d is None:
+            return reachable
+        if reachable and card_matches(summary, d.gpu_match):
+            self.conflicts.pop(name, None)
+            return True
+        here = self.current_url(name)
+        now = self.clock()
+        if force or now - self._probed_at.get(name, -1e18) >= PROBE_SECONDS:
+            self._probed_at[name] = now
+            url = await search_ports(self.settings, name, here, self.probe)
+            if url is not None:
+                self._switch(name, url)
+                self.conflicts.pop(name, None)
+                return True
+        if reachable:
+            msg = conflict_message(self.settings, name, here, device_names(summary))
+            if self.conflicts.get(name) != msg:
+                log.warning("graphics engine %s: %s", name, msg)
+            self.conflicts[name] = msg
+        else:
+            self.conflicts.pop(name, None)
+        return False
 
     # --- changes -----------------------------------------------------------------------------------------------
 
@@ -276,13 +447,15 @@ class Supervisor:
             if await self.answers(name):
                 self._set(name, "running", "")
                 return
+            if self.conflict(name):
+                raise StartFailed(self.conflict(name))
             self._set(name, "starting", "")
             spawned = False
             if self.owned(name):
                 log.info("graphics engine %s: the copy the app started (pid %s) is still loading; waiting", name, e.owned_pid)
             else:
                 others = self.ops.find(inst.process_match) if inst.process_match else []
-                if others or self.ops.port_open(inst.url):
+                if others or self.ops.port_open(self.current_url(name)):
                     log.info("graphics engine %s: already being started outside the app (%s); waiting for it", name,
                              f"pid {others[0]}" if others else "its port is open")
                 else:
@@ -309,6 +482,8 @@ class Supervisor:
                     e.last_busy = self.clock()
                     self._set(name, "running", "")
                     return
+                if self.conflict(name):
+                    raise StartFailed(self.conflict(name))
                 if e.abort:
                     raise StartAborted("the start was stopped")
                 if spawned and e.owned_pid is not None and not self.ops.alive(e.owned_pid):

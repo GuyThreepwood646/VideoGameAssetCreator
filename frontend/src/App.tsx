@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { isMock } from './api'
 import { HealthBadge } from './HealthPanel'
+import { SetupBadge } from './SetupCheck'
 import { useEventMode } from './events'
 import { closeGuide, openGuide, useGuide } from './guide'
 
@@ -30,6 +31,7 @@ export default function App() {
         <span className="pill" title="Event channel: WebSocket or 3 s polling fallback">
           events: {mode === 'ws' ? 'live' : mode === 'poll' ? 'polling' : 'connecting'}
         </span>
+        <SetupBadge />
         <HealthBadge />
       </header>
       <main className="page">

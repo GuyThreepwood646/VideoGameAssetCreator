@@ -284,6 +284,41 @@ def parse_kind(kind: str) -> tuple[str, str, bool]:
     raise ValueError(f"bad job kind {kind!r}")
 
 
+ENGINE_RETRY_KEY = "engine_retries"  # in the job payload: times the job went back to queued after an engine crash
+MAX_ENGINE_RETRIES = 1
+ENGINE_RETRY_MESSAGE = "The graphics engine stopped; starting it again and retrying once"
+
+
+def _connection_classes() -> tuple[type[BaseException], ...]:
+    import httpx
+
+    return (httpx.NetworkError, httpx.RemoteProtocolError, httpx.TimeoutException, ConnectionError)
+
+
+def is_engine_lost(err: BaseException) -> bool:
+    """Whether a job failed because its ComfyUI went away (connection refused or reset, the instance stopped
+    answering), looking through the exception's causes. A workflow error ComfyUI reported (ComfyError, including its
+    own "timed out after" job time limit) is not, and neither is anything else."""
+    from .comfy import ComfyError
+
+    classes = _connection_classes()
+    seen: set[int] = set()
+    e: BaseException | None = err
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, ComfyError):
+            return False
+        if isinstance(e, classes):
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
+def engine_lost_message(instance: str, settings: Settings | None = None) -> str:
+    return (f"The graphics engine on {gpu_name(instance, settings)} stopped twice while working on this step. Check that "
+            f"it starts (the Health page shows it), then run the step again.")
+
+
 def free_ram_gb() -> float:
     return psutil.virtual_memory().available / GB
 
@@ -547,6 +582,7 @@ class InstanceWorker:
         cancelled = False
         requeued = False
         rerouted = False
+        engine_retry = False  # the engine went away mid-job: back to queued once, the start-on-demand path restarts it
         try:
             await stages.execute(ctx, kind, payload)
         except JobCancelled:
@@ -573,6 +609,16 @@ class InstanceWorker:
                 # Killing its child processes or interrupting ComfyUI made the stage fail first; it still moves.
                 rerouted = True
                 error = "rerouted"
+            elif self.name in self.settings.instances and is_engine_lost(e) and not ctx.cancelled:
+                technical = f"{type(e).__name__}: {e}"
+                if int(payload.get(ENGINE_RETRY_KEY) or 0) < MAX_ENGINE_RETRIES:
+                    engine_retry = True
+                    error = ENGINE_RETRY_MESSAGE
+                    log.warning("job %s: the graphics engine on %s went away (%s); re-queued once", job_id[:8], self.name,
+                                technical)
+                else:
+                    error = f"{engine_lost_message(self.name, self.settings)}\n{technical}"
+                    log.error("job %s failed: the graphics engine on %s went away again (%s)", job_id, self.name, technical)
             else:
                 error = f"{type(e).__name__}: {e}"
                 log.error("job %s failed: %s\n%s", job_id, e, traceback.format_exc()[-4000:])
@@ -584,7 +630,14 @@ class InstanceWorker:
                 job = db.get(Job, job_id)
                 if job is not None:
                     job.finished_at = utcnow()
-                    if requeued or rerouted:
+                    if engine_retry:
+                        job.status = "queued"
+                        job.started_at = None
+                        job.finished_at = None
+                        job.progress = 0.0
+                        job.message = ENGINE_RETRY_MESSAGE
+                        job.payload = {**job.payload, ENGINE_RETRY_KEY: int(job.payload.get(ENGINE_RETRY_KEY) or 0) + 1}
+                    elif requeued or rerouted:
                         job.status = "queued"
                         job.started_at = None
                         job.finished_at = None
@@ -619,7 +672,7 @@ class InstanceWorker:
                                     v.metrics = m
                             elif v.status == "rejected":
                                 pass  # the person rejected it while it ran; the files are kept, the verdict stands
-                            elif requeued or rerouted:
+                            elif requeued or rerouted or engine_retry:
                                 v.status = "queued"
                             elif error is None:
                                 v.status = "done"
@@ -638,6 +691,12 @@ class InstanceWorker:
                 log.exception("worker %s: after re-routing job %s", self.name, job_id)
         if requeued:
             raise asyncio.CancelledError()
+        if engine_retry:
+            # The next pick asks the engine afresh (prepare -> Supervisor.ensure_running starts it when it is down).
+            client = self.clients.get(self.name)
+            if client is not None and hasattr(client, "forget_cache"):
+                client.forget_cache()
+            return
         if self.free_after_job and not rerouted:
             client = self.clients.get(self.name)
             if client is not None:
@@ -668,6 +727,7 @@ class JobQueue:
         self.stop_when_idle_minutes: dict[str, int] = {n: 0 for n in self.settings.instances}
         self.supervisor: Supervisor | None = None
         self._idle_task: asyncio.Task | None = None
+        self._locate_task: asyncio.Task | None = None
 
     def _requeue_orphans(self) -> None:
         """Jobs left 'running' by a crashed server go back to queued."""
@@ -709,10 +769,33 @@ class JobQueue:
         for w in self.workers.values():
             w.start()
         self._idle_task = asyncio.create_task(self._idle_loop(), name="vgac-engine-idle")
+        if any(i.discover is not None for i in self.settings.instances.values()):
+            self._locate_task = asyncio.create_task(self._locate_all(), name="vgac-engine-locate")
         _active = self
+
+    async def _locate_all(self) -> None:
+        """At start: find each card that has `discover` (its ComfyUI may be on another port), read-only."""
+        sup = self.supervisor
+        if sup is None:
+            return
+        for name, inst in self.settings.instances.items():
+            if inst.discover is None or name in self.disabled:
+                continue
+            try:
+                await sup.locate(name, force=True)
+            except Exception:  # noqa: BLE001
+                log.exception("graphics card %s: could not look for its engine", name)
+        self.publish_gpus()
 
     async def stop(self) -> None:
         global _active
+        if self._locate_task is not None and not self._locate_task.done():
+            self._locate_task.cancel()
+            try:
+                await self._locate_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._locate_task = None
         if self._idle_task is not None:
             self._idle_task.cancel()
             try:
@@ -1102,10 +1185,13 @@ class JobQueue:
             if sup.starting(name) or name in self.disabled:
                 continue
             try:
-                summary = await client.cached_vram_summary(5.0)
+                if self.settings.instances[name].discover is not None:
+                    up = await sup.answers(name)  # only its own card counts; finds it on another port (locate)
+                else:
+                    summary = await client.cached_vram_summary(5.0)
+                    up = bool(summary and summary.get("reachable"))
             except Exception:  # noqa: BLE001
                 continue
-            up = bool(summary and summary.get("reachable"))
             was = sup.state(name)
             if up and was != "running":
                 sup.mark_running(name)
@@ -1193,12 +1279,21 @@ class JobQueue:
             client = self.clients.get(name)
             summary = (summaries or {}).get(name) if summaries is not None else (client.last_vram_summary() if client else None)
             reachable = bool(summary and summary.get("reachable"))
+            sup = self.supervisor
+            # A ComfyUI that answers from another card is not this card's engine (instances.Supervisor.locate).
+            setup_problem = sup.conflict(name) if sup is not None else ""
+            if reachable and inst.discover is not None and (setup_problem or (sup is not None and not sup.identity_ok(name, summary))):
+                reachable = False
             s = st.get(name, {})
             cur = s.get("current_job_id")
             allowed = self.allowed_kinds.get(name, set(KIND_GROUPS))
             possible = possible_kinds(name, self.settings)
             entry: dict[str, Any] = {
-                "instance": name, "gpu": inst.gpu, "url": inst.url, "enabled": self.is_enabled(name),
+                "instance": name, "gpu": inst.gpu, "enabled": self.is_enabled(name),
+                # The address in use: the configured one, or where the card was found (found_by_card).
+                "url": sup.current_url(name) if sup is not None else inst.url,
+                "found_by_card": bool(sup is not None and name in sup.found),
+                "setup_problem": setup_problem,
                 "reachable": reachable, "current_job_id": cur, "current_job": current.get(cur) if cur else None,
                 "queued": int(s.get("queued", 0)),
                 "can_run": effective_capabilities(name, self.settings, self.allowed_kinds),
@@ -1209,7 +1304,6 @@ class JobQueue:
                 "kind_notes": kind_notes(name, self.settings),
                 "free_after_job": self.free_after_job.get(name, False),
             }
-            sup = self.supervisor
             state = self.engine_state(name, reachable)
             owned = bool(sup is not None and sup.owned(name))
             can_start = bool(sup is not None and sup.can_start(name))
