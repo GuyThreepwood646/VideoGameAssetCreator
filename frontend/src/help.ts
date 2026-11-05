@@ -291,8 +291,11 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   face_strength: H('Face strength', 'How much of the painted face goes onto the model.', 'Lower it if the painted face looks pasted on; 1 uses all of it.', 'Projection weight multiplier, 0 to 1'),
   face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
   face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024, checked by likeness at the painting\'s resolution, eye, skin and hair colour, and feature positions'),
+  hair_detail: H('Hair detail (strands and shading painted on)', 'Strands and clumps along the way the hair falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.', 'The 3D builder makes hair as one flat-coloured shape; this makes it read as hair without adding to the shape. It stands back when hair cannot be told from skin or clothes.', 'Colour vote over the model and turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels in the face relayout'),
+  hair_strength: H('Hair strength', 'How strongly the hair detail is painted: 1 is full, 0 changes nothing.', 'Lower it if the strands look too busy for your look.', 'Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1'),
   textures_full_size: H('Textures at full size', 'Whether Unity imports each texture at the size of its file.', 'Unity shrinks textures over 2048 px unless told otherwise, which softens a 4096 texture.', 'TextureImporter.maxTextureSize against the source size'),
   face_matches_picture: H('Face matches the picture', 'Whether the face was painted from the picture and came out sharp.', 'A blurred face is the first thing people notice on a character.', 'Sharpness of the front render and feature match to the fitted picture'),
+  hair_matches_picture: H('Hair detail (strands and shading painted on)', 'Whether the hair got strands and shading, or why the pass stood back.', 'Flat-coloured hair reads as a helmet; painted strands read as hair.', 'Hair mask, flow, texels per cm before and after, the face measures before and after'),
   pbr_fix: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pbr_range: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pivot: H('Pivot (anchor point)', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
@@ -350,6 +353,11 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Preview in realistic light (PHOTOREAL-PLAN phase 1)
   preview_light: H('Preview light', 'The light the 3D preview is shown in: Studio, Outdoors, Overcast, Night, or Flat for plain lights that make the shape easy to check.', 'Metal and shiny parts only look right when there is something around them to reflect. Only the preview changes; your game uses its own lights.', 'Image-based lighting from a CC0 HDRI (three.js RoomEnvironment for Studio), PMREM, Khronos PBR Neutral tone mapping'),
   beauty_render: H('Beauty render (beauty picture)', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Blender Eevee render of the final model under a CC0 HDRI, Filmic or AgX view transform'),
+  // Hair and fur (docs/HAIR-RESEARCH.md 5.4)
+  hair_pictures: H('Hair-friendly pictures', 'For characters with hair the app adds a short hair sentence to the picture request: in the Painted look, hair as one smooth, simple shape with both eyes clearly visible; in Photoreal, tidy hair with nothing over the face; in Low-poly, Pixel and Retro 64, one simple solid shape. Cel and Clay characters get none, because every wording tried changed the character. Creatures get fur lying flat in clear clumps.', 'The 3D builder turns the outline of the picture into one solid shape, so wispy hair becomes loose flakes and separated locks become jagged edges. Your description always wins: long loose hair, a fringe over one eye, dreadlocks or curls are kept, and long loose hair gets no hair sentence at all.', 'Hair sentence per look in the concept prompt (data/styles.yaml hair, vgac/hairpic.py)'),
+  hair_cards: H('Hair cards (flat strips with a see-through picture of hair on them)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'This app does not make them yet. Its hair is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Alpha-tested hair cards'),
+  spring_bones: H('Spring bones (small extra bones that sway on their own)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'This app does not add them yet, so hair and capes move only with the body.', 'Spring bone (jiggle bone) chains'),
+  anisotropic_highlight: H('Anisotropic highlight (a shine stretched into a band)', 'The bright band across hair, running across the strands instead of sitting as a round spot.', 'It is much of what makes hair look like hair rather than plastic. The app does not add one yet; in painted looks the picture may already have one painted in.', 'Anisotropic specular (Kajiya-Kay, Marschner hair shading)'),
   // Hit boxes and the body shape for moving (4.2)
   socket: H('Socket (attachment point)', 'A named spot on the skeleton where your game can attach a weapon, hat, backpack, or a shield strapped to the forearm.', 'The item then follows the hand, forearm, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
   items: H('Items', 'A sword, shield, bow, quiver, hat or backpack made as its own asset and put on a socket (attachment point) of a character, instead of being part of the body.', 'The character can then really hold the sword when he attacks, and you can swap or take items off in your game. Clothes that bend with the body, such as a cloak or armour, stay part of the body. A shield is strapped to the outside of the forearm. Items you have not moved yourself are fitted to the moves automatically so they stay clear of the body; Fit it for me does the same for one you placed. The hand does not close around the handle (no finger bones).', 'Item asset (prop_rigid, Asset.held_item) with its pivot at the detected grip; attachments.json, <name>_equipped.glb and the Unity prefab "<name> (equipped)"'),
@@ -461,6 +469,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   in_frame: H('Whole subject in the picture', 'Whether there is space around the subject on every side.', 'A part cut off at the edge is missing from the 3D model.', 'cutout margin on every side, at least 1 percent'),
   big_enough: H('Big enough', 'How many pixels tall (or across) the subject is.', 'The 3D step reads about 500 pixels; a small subject loses its detail.', 'subject height in pixels, at least 400'),
   arms_away: H('Arms away from the body', 'Whether the arms stand clear of the sides, as in an A-pose or a T-pose.', 'Arms pressed to the body get joined to it in the 3D model, and the skeleton step cannot tell them apart.', 'silhouette gap between arm and torso, or arm span against waist width'),
+  hair_off_eyes: H('Eyes clear of hair', 'Whether hair hangs over the eyes in the picture, found by telling the hair colour from the skin colour.', 'The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly. "Move the hair off the face" asks the picture editor to sweep it aside; it makes a new version and your picture stays. When your description asks for hair over the eyes, the app does not check this.', 'hair_off_eyes check (vgac/hairpic.py): hair against skin in each eye area'),
   redraw_ready: H('Redraw it ready for 3D', 'Asks the image edit model (picture editor) to redraw the same subject, same design and colours, in the standard pose on a plain light grey background.', 'It makes a new version; your picture stays as it was.', 'concept refine with the category pose block'),
   even_lighting: H('Even light', 'Whether the photo is about as bright on one side as on the other.', 'A tiling texture repeats the photo side by side, so a bright side and a dark side show as stripes.', 'brightness plane fitted across the photo'),
   straight_on: H('Taken straight on', 'Whether the photo looks at the surface square on, not at an angle.', 'A photo taken at an angle has finer detail at the far side, and the texture looks stretched.', 'local detail in opposite thirds of the photo'),
@@ -599,6 +608,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
   texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
   atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
   face_matches_picture: (_v, _l, ok) => (ok ? 'The face was painted from the picture and is sharp.' : 'The face does not match the picture yet.'),
+  hair_matches_picture: (_v, _l, ok) => (ok ? 'Strands and shading were painted on the hair, or the pass stood back where hair could not be told apart.' : 'The hair detail did not come out as it should.'),
   baked_light: (_v, _l, ok, _ctx, vars) => {
     if (!ok) return "The colours still carry shadows from the picture, so they will fight your game's lights."
     if (vars.kept) return 'Painted shading is kept on purpose for this look.'
@@ -748,6 +758,7 @@ const CHECK_HELP: Record<string, string> = {
   in_frame: 'in_frame',
   big_enough: 'big_enough',
   arms_away: 'arms_away',
+  hair_off_eyes: 'hair_off_eyes',
   even_lighting: 'even_lighting',
   straight_on: 'straight_on',
 }
@@ -776,7 +787,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|face_matches_picture|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|even_lighting|straight_on)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|even_lighting|straight_on)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -824,6 +835,7 @@ const FIX_LABELS: Record<string, string> = {
   texture_padding: 'Add more space',
   atlas_used: 'Repaint the surface',
   face_matches_picture: 'Paint the face again',
+  hair_matches_picture: 'Paint the hair again',
   baked_light: 'Remove painted-on shadows',
   albedo_range: 'Bring colours into range',
   metal_mixed: 'Make metal clearly metal',
@@ -873,6 +885,7 @@ export function checkFix(check: Check): FixAction | null {
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }
   if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null }, label }
+  if (id === 'hair_matches_picture') return { stage: 'prep', params: { hair_detail: true }, label }
   return null
 }
 
@@ -880,6 +893,7 @@ export function checkFix(check: Check): FixAction | null {
 export function fixTooltip(fix: FixAction, stages?: StageInfo[] | null): string {
   const name = stagePlain(fix.stage, stages?.find((s) => s.id === fix.stage) ?? null)
   if (fix.ui) return `Opens ${FIX_TOOLS[fix.ui]?.plain ?? 'the tool'} in "${name}". Nothing changes until you apply it.`
+  if (fix.op === 'refine' && fix.label === 'Move the hair off the face') return 'Asks the picture editor to move the hair away from the eyes and keep everything else the same. It makes a new version; this one stays.'
   if (fix.op === 'refine') return 'Asks the picture editor to redraw the same subject in the standard pose on a plain background. It makes a new version; this one stays.'
   return `Makes a new version of "${name}" with this change.`
 }
@@ -956,7 +970,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
-  prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight', 'face_detail'],
+  prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight', 'face_detail', 'hair_detail'],
   rig: ['template', 'motion', 'moves', 'clips_source', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
 }

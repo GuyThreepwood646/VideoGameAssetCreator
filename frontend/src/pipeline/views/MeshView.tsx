@@ -29,6 +29,10 @@ export function MeshView({ version, category }: { version: Version; category?: s
   // The close-up of the painted face the pass drew and checked, when it was used; and the face's texels across.
   const faceCloseup = version.stage === 'prep' ? libraryUrl(version.files.face_closeup) : null
   const faceMetrics = (version.metrics?.face_detail ?? null) as { face_texels_after?: number; density?: { level?: string; note?: string | null } } | null
+  // The hair detail pass's pictures: before and after, and what was taken as hair; or why it stood back.
+  const hairSheet = version.stage === 'prep' ? libraryUrl(version.files.hair_before_after) : null
+  const hairMask = version.stage === 'prep' ? libraryUrl(version.files.hair_mask) : null
+  const hairMetrics = (version.metrics?.hair_detail ?? null) as { ran?: boolean; texels_per_cm_before?: number; texels_per_cm_after?: number } | null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -110,6 +114,30 @@ export function MeshView({ version, category }: { version: Version; category?: s
               <div className="small">
                 <a href={faceCloseup} target="_blank" rel="noreferrer">
                   The close-up of the face it was painted from
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+        {hairSheet && (
+          <div>
+            <div className="field-label">
+              Hair: before and after
+              <Info term="term.hair_detail" />
+            </div>
+            <a href={hairSheet} target="_blank" rel="noreferrer" className="tiling-thumb" title="Open the full picture">
+              <img src={hairSheet} alt="The hair before and after its strands and shading were painted, plain and lit" />
+            </a>
+            <div className="small muted">The hair from five sides before and after, then lit, before and after.</div>
+            {hairMetrics?.texels_per_cm_after ? (
+              <div className="small muted">
+                {hairMetrics.texels_per_cm_before} texels (texture pixels) per cm on the hair before, {hairMetrics.texels_per_cm_after} now.
+              </div>
+            ) : null}
+            {hairMask && (
+              <div className="small">
+                <a href={hairMask} target="_blank" rel="noreferrer">
+                  What was taken as hair
                 </a>
               </div>
             )}

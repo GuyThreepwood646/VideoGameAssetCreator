@@ -184,6 +184,12 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_closeup": {"simple": False, "help": {"meaning": "Close-up source (a larger picture of the face): when the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.",
                                                "why": "A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.",
                                                "technical": "Qwen-Image-Edit close-up at 1024, checked by likeness at the painting's resolution, eye, skin and hair colour, and feature positions"}},
+    "hair_detail": {"simple": True, "help": {"meaning": "Hair detail (strands and shading painted on): the hair gets strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
+                                             "why": "The 3D builder makes hair as one flat-coloured shape; this makes it read as hair. Nothing is added to the shape. It stands back when hair cannot be told from skin or clothes.",
+                                             "technical": "Hair mask by a colour vote over the model and the turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels for the hair in the face's relayout"}},
+    "hair_strength": {"simple": False, "help": {"meaning": "How strongly the hair detail is painted: 1 is full, 0 changes nothing.",
+                                                "why": "Lower it if the strands look too busy for your look.",
+                                                "technical": "Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1"}},
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
@@ -586,6 +592,24 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None}},
         "fix_label": "Paint the face again",
     },
+    # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
+    # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the
+    # face's own measures moved.
+    "hair_matches_picture": {
+        "severity": "warn",
+        "ok": lambda c: ("Hair detail (strands and shading painted on) was not added: {why}. The hair keeps its colours from the 3D step."
+                         if _var(c, "skipped") else
+                         "Hair detail (strands and shading painted on): strands, clumps, darker roots and lighter tips were painted along the hair"
+                         + (", with a soft highlight band" if _var(c, "highlight") else "")
+                         + ". Texels (texture pixels) on the hair: {before} per cm before, {after} now."
+                         + (" {room_note}" if _var(c, "room_note") else "")),
+        "fail": lambda c: {
+            "error": "Hair detail (strands and shading painted on) was not added: something went wrong on the way.",
+            "face_changed": "Hair detail was painted, but the face changed with it (its sharpness or the eyes' places moved). Paint the hair again with less strength.",
+        }.get(_var(c, "reason") or "", "The hair detail did not come out as it should."),
+        "fix": lambda c: {"stage": "prep", "params": {"hair_detail": True, **({"hair_strength": 0.5} if _var(c, "reason") == "face_changed" else {})}},
+        "fix_label": "Paint the hair again",
+    },
     # G15 (plan 3.8): scenery on the grid, checked in prep.
     "grid_fit": {
         "severity": "warn",
@@ -666,6 +690,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.",
         "fix": _redraw_fix,
         "fix_label": REDRAW_LABEL,
+    },
+    # Hair-friendly pictures (vgac/hairpic.py): hair over the eyes on a character's concept picture, found by colour.
+    # The Fix runs the concept refine with vars.redraw, which asks the picture editor to move the hair off the face.
+    "hair_off_eyes": {
+        "severity": "warn",
+        "ok": "Both eyes are clear of hair, so the face can be built and painted cleanly.",
+        "fail": lambda c: ("Hair covers {side_text} ({value:pct} of the eye area). The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly."
+                           if _var(c, "side_text") else
+                           "Hair covers the eyes ({value:pct} of the eye area). The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly."),
+        "fix": _redraw_fix,
+        "fix_label": "Move the hair off the face",
     },
     # Material from a photo (readiness.photo_checks). No automatic fix: a better photo is the fix.
     "even_lighting": {

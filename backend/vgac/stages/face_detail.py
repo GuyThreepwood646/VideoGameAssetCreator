@@ -698,10 +698,14 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
         pass
 
 
-async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
+              hair_plan: dict[str, Any] | None = None) -> dict[str, Any]:
     """The pass on the prepared model `glb` (changed in place) with the current maps. Returns {files: {key: path},
-    metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int}. Never raises for a reason that should not
-    fail the clean-up step (those are recorded as skipped); Stop still stops it."""
+    metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int, layout: the relayout report or None}. Never
+    raises for a reason that should not fail the clean-up step (those are recorded as skipped); Stop still stops it.
+
+    hair_plan: {points (Path), gain} from the hair pass (stages/hair_detail.py find): the one relayout gives the hair
+    more texels too (blender/faceuv.py --hair-points), and runs for the hair even when the face needs none."""
     t0 = time.time()
     out_dir = sc.dir / "face"
     cutout = sc.lineage_file("cutout", ("concept",))
@@ -789,16 +793,21 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     scale = plan["ship"] / atlas  # the face's texels across at the shipped size, per texel at the atlas size
     gain = face.gain_needed(found["face_width_texels"] * scale, plan["target"], HIGH_GAIN_MOST if plan["level"] == "high" else 3.0)
     work_glb, work_maps, relayout = Path(glb), dict(maps), None
-    if gain >= GAIN_MIN:
-        sc.progress(0.82, "Giving the face more of the texture")
+    layout_report: dict[str, Any] | None = None
+    hair_wants = bool(hair_plan) and float(hair_plan.get("gain") or 1.0) > 1.0
+    if gain >= GAIN_MIN or hair_wants:
+        sc.progress(0.82, "Giving the face more of the texture" if not hair_wants else "Giving the face and the hair more of the texture")
         (out_dir / "face_points.json").write_text(json.dumps(found["face_triangles"]), encoding="utf-8")
         (out_dir / "face_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
         new_glb = out_dir / "face.glb"
+        hair_args: list[Any] = ["--hair-points", hair_plan["points"], "--hair-gain", hair_plan["gain"]] if hair_wants else []
         await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
-                                       "--gain", round(gain, 3), "--tex", atlas, "--padding", imaging.unwrap_padding(atlas),
-                                       "--margin", imaging.dilation_px(atlas), "--max-loss", MAX_LOSS], log_name="faceuv.log")
+                                       "--gain", round(gain, 3) if gain >= GAIN_MIN else 1.0, "--tex", atlas,
+                                       "--padding", imaging.unwrap_padding(atlas),
+                                       "--margin", imaging.dilation_px(atlas), "--max-loss", MAX_LOSS, *hair_args], log_name="faceuv.log")
         rep_path = out_dir / "face_report.json"
         relayout = json.loads(rep_path.read_text()) if rep_path.is_file() else None
+        layout_report = relayout
         if relayout and relayout.get("layout_mode") != "unchanged" and new_glb.is_file():
             work_glb = new_glb
             work_maps = {k: Path(p) for k, p in (relayout.get("rebake_maps") or {}).items() if Path(p).is_file()}
@@ -843,7 +852,8 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
                   **done["metrics"],
                   layout=None if not relayout else {k: relayout.get(k) for k in ("layout_mode", "gain", "rest_scale", "island_scale", "islands", "rebake_seconds")},
                   seconds=round(time.time() - t0, 1))
-    return {"files": files, "metrics": {"face_detail": record}, "relayout": bool(relayout), "base_color_size": int(plan["ship"])}
+    return {"files": files, "metrics": {"face_detail": record}, "relayout": bool(relayout), "base_color_size": int(plan["ship"]),
+            "layout": layout_report}
 
 
 def enlarge(src: Path, size: int, dest: Path) -> Path:

@@ -13,6 +13,8 @@ size_hint: "In metres, head to tail as it lies. A python is about 4 m."
 parts_default: []
 topology: quad
 input_view_default: quarter
+# Hair-friendly pictures (vgac/hairpic.py): the look's fur sentence only when the description names fur or a mane.
+hair: fur_if_named
 motion: wave
 clips: [idle, slither, turn_left, turn_right, attack, hit, death]
 lod_ratios: [0.5, 0.25, 0.1]

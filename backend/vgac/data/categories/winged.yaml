@@ -13,6 +13,8 @@ size_hint: "In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-size
 parts_default: []
 topology: quad
 input_view_default: quarter
+# Hair-friendly pictures (vgac/hairpic.py): the look's fur sentence only when the description names fur or a mane.
+hair: fur_if_named
 motion: wings
 clips: [idle, walk, flap, glide, takeoff, land, attack, hit, death]
 lod_ratios: [0.5, 0.25, 0.1]

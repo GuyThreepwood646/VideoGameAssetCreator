@@ -71,11 +71,13 @@ SAMPLES = {
     "tiles_cleanly": ((0.0, 0.5), (45.0, 0.5)),
     "look_applied": (("about 1,250 triangles, flat faces, 512 px textures", "abc123"), ("about 1,250 triangles", "abc123")),
     "face_matches_picture": ((1.33, 1.0), (0.8, 1.0)),  # face detail pass: sharpness of the face after it
+    "hair_matches_picture": ((15.6, 6.6), ("error", None)),  # hair detail pass: hair texels per cm after it, before it
     # Start from your own images: concept readiness and material photos.
     "one_subject": ((1, 1), (3, 1)),
     "in_frame": ((0.05, 0.01), (0.0, 0.01)),
     "big_enough": ((900, 400), (220, 400)),
     "arms_away": ((0.4, 0.2), (0.0, 0.2)),
+    "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
     "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }

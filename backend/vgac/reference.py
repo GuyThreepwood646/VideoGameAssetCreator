@@ -130,6 +130,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Automatic picks High where the platform's texture allows it and the picture has the detail, else Standard"),
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
+        # The hair detail pass (stages/hair_detail.py): humanoids; skipped by itself for crisp and flat looks.
+        _param("hair_detail", "boolean", True, categories=["humanoid"], label="Hair detail (strands and shading painted on)",
+               description="Paints strands, clumps and shading along the hair; skipped when the hair cannot be told from skin or clothes"),
+        _param("hair_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Hair strength",
+               description="How strongly the hair detail is painted: 1 is full, 0 changes nothing"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),
