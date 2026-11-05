@@ -191,7 +191,8 @@ function unityLines(rep: UnityReport): UnityLine[] {
   }
   if (rep.avatar) {
     const human = /human/i.test(rep.avatar)
-    const fellBack = rep.avatar_mapping === 'generic' || rep.humanoidValid === false
+    // avatar_mapping is recorded for humanoids; generic there means the person mapping failed and it fell back.
+    const fellBack = rep.avatar_mapping === 'generic'
     out.push({
       id: 'avatar',
       state: !human && fellBack ? 'warn' : 'ok',

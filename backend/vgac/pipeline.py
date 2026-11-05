@@ -52,10 +52,11 @@ def queue() -> JobQueue:
     return q
 
 
-def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]:
-    """Adjust knobs checked against the stage schema (BadRequest on a bad value)."""
+def validate_params(stage: str, params: dict[str, Any] | None, category: str | None = None) -> dict[str, Any]:
+    """Adjust knobs checked against the stage schema (BadRequest on a bad value). With a category, knobs that do
+    not apply to it are dropped."""
     try:
-        return reference.validate_params(stage, params)
+        return reference.validate_params(stage, params, category)
     except ValueError as e:
         raise BadRequest(str(e)) from None
 
@@ -139,7 +140,7 @@ def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[st
                 raise Conflict(f"no selected {prev} version to build on")
         if parent.status != "done":
             raise Conflict(f"parent version is {parent.status}, not done")
-    base_params = validate_params(stage, params)
+    base_params = validate_params(stage, params, a.category)
     if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
         base_params["model"] = a.concept_model
     versions, jobs = [], []
