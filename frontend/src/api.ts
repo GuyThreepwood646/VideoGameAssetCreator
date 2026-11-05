@@ -122,6 +122,8 @@ export type Check = {
   message?: string
   help?: string
   fix?: CheckFix | null
+  // The Fix button's words when the backend puts them on the check rather than on fix.label.
+  fix_label?: string
   severity?: 'block' | 'warn'
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>
@@ -208,6 +210,8 @@ export type Category = {
   size_axis?: 'height' | 'horizontal' | 'longest' | 'grid' | string | null
   size_label?: string | null
   size_hint?: string | null
+  // "tall", "long" or "across".
+  size_word?: string | null
 }
 
 export type StylePreset = { id: string; label: string; model: string; prompt_block: string }
@@ -240,6 +244,9 @@ export type AdjustParam = {
   categories?: string[]
   // A one-line hint shown under the control, when the backend has one.
   hint?: string
+  // Per-category settings of a knob (prep size_m, 3.2): the axis it measures, its default, the axis word and the
+  // question and hint the control shows. Without a categories list the knob applies to the categories listed here.
+  by_category?: Record<string, { axis?: 'height' | 'horizontal' | 'longest' | string; default?: number; word?: 'tall' | 'long' | 'across' | string; label?: string; hint?: string }>
 }
 
 export type HelpText = { meaning?: string; why?: string; technical?: string }

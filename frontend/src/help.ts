@@ -606,7 +606,7 @@ const quarterTurn = (v: number | null): number | null => {
 export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null
   const id = check.id ?? check.name
-  const label = check.fix?.label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
+  const label = check.fix?.label || check.fix_label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
   const f = check.fix
   if (f && f.ui) {
     const tool = FIX_TOOLS[f.ui]
@@ -719,9 +719,12 @@ export function optionLabel(p: { name: string; option_labels?: Record<string, st
   return p.option_labels?.[k] ?? OPTION_LABELS[p.name]?.[k] ?? k
 }
 
-// Knobs that apply to some categories only (2.3): no list means every category.
-export function knobApplies(p: { categories?: string[] | null }, category: string): boolean {
-  return !Array.isArray(p.categories) || p.categories.length === 0 || p.categories.includes(category)
+// Knobs that apply to some categories only (2.3): no list means every category. A knob with by_category (size_m)
+// and no categories list applies to the categories it has an entry for.
+export function knobApplies(p: { categories?: string[] | null; by_category?: Record<string, unknown> | null }, category: string): boolean {
+  if (Array.isArray(p.categories) && p.categories.length > 0) return p.categories.includes(category)
+  if (p.by_category && typeof p.by_category === 'object' && Object.keys(p.by_category).length > 0) return category in p.by_category
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -734,14 +737,14 @@ type SizeInfo = { axis: SizeAxis | null; size_m: number; label: string; hint: st
 
 export const SIZE_INFO: Record<string, SizeInfo> = {
   humanoid: { axis: 'height', size_m: 1.8, label: 'How tall is it?', hint: 'In metres, from the ground to the top of the head. A person is about 1.8 m.' },
-  quadruped: { axis: 'horizontal', size_m: 1.5, label: 'How long is it?', hint: 'In metres, nose to rump, not counting the tail. A wolf is about 1.4 m; a horse about 2.4 m.', word: 'long' },
+  quadruped: { axis: 'horizontal', size_m: 1.5, label: 'How long is it?', hint: 'In metres, from the nose to the tip of the tail. A wolf is about 1.8 m; a horse about 3 m.', word: 'long' },
   winged: { axis: 'horizontal', size_m: 1.5, label: 'How wide are the wings?', hint: 'In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m.', word: 'across' },
   multileg: { axis: 'horizontal', size_m: 1.0, label: 'How wide is it?', hint: 'In metres, across the legs. A large spider is about 0.2 m; a giant cave spider about 2 m.', word: 'across' },
   serpent: { axis: 'longest', size_m: 2.0, label: 'How long is it?', hint: 'In metres, head to tail as it lies. A python is about 4 m.', word: 'long' },
   vehicle: { axis: 'horizontal', size_m: 4.5, label: 'How long is it?', hint: 'In metres, front to back. A car is about 4.5 m; a tank about 7 m.', word: 'long' },
-  prop_rigid: { axis: 'longest', size_m: 0.6, label: 'How big is it?', hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.' },
-  prop_articulated: { axis: 'longest', size_m: 0.8, label: 'How big is it?', hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.' },
-  environment: { axis: 'grid', size_m: 3.0, label: 'Size on the grid', hint: 'Set by the grid.' },
+  prop_rigid: { axis: 'longest', size_m: 0.6, label: 'How big is it?', hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.', word: 'across' },
+  prop_articulated: { axis: 'longest', size_m: 0.8, label: 'How big is it?', hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.', word: 'across' },
+  environment: { axis: 'longest', size_m: 3.0, label: 'How big is it?', hint: 'In metres, along its longest side. A wall section is about 3 m wide; a floor tile about 2 m. Pieces are not rounded to a grid yet.', word: 'across' },
   foliage: { axis: 'height', size_m: 2.5, label: 'How tall is it?', hint: 'In metres, from the ground to the top. A bush is about 1 m; an oak about 15 m.' },
   material: { axis: null, size_m: 1.0, label: '', hint: '' },
 }
@@ -760,51 +763,60 @@ function catOf(category: Category | string | null | undefined): Category | undef
 }
 const idOf = (category: Category | string | null | undefined): string => (typeof category === 'string' ? category : (category?.id ?? ''))
 
+// The prep size_m knob's per-category entry (backend by_category), when the schema has been loaded.
+export type SizeByCategory = { axis?: string; default?: number; word?: string; label?: string; hint?: string }
+let sizeKnob: Record<string, SizeByCategory> = {}
+export function rememberSizeKnob(stages: StageInfo[]): void {
+  const p = stages.find((s) => s.id === 'prep')?.adjust_schema.find((x) => x.name === 'size_m')
+  sizeKnob = p?.by_category ?? {}
+}
+
 export function sizeAxisOf(category: Category | string | null | undefined): SizeAxis | null {
   const c = catOf(category)
-  const a = c?.size_axis ?? SIZE_INFO[idOf(category)]?.axis ?? null
+  const a = sizeKnob[idOf(category)]?.axis ?? c?.size_axis ?? SIZE_INFO[idOf(category)]?.axis ?? null
   return a === 'height' || a === 'horizontal' || a === 'longest' || a === 'grid' ? a : null
 }
 
 export function sizeQuestion(category: Category | string | null | undefined): string {
-  return catOf(category)?.size_label || SIZE_INFO[idOf(category)]?.label || 'How big is it?'
+  return sizeKnob[idOf(category)]?.label || catOf(category)?.size_label || SIZE_INFO[idOf(category)]?.label || 'How big is it?'
 }
 
 export function sizeHint(category: Category | string | null | undefined): string {
-  return catOf(category)?.size_hint || SIZE_INFO[idOf(category)]?.hint || 'In metres.'
+  return sizeKnob[idOf(category)]?.hint || catOf(category)?.size_hint || SIZE_INFO[idOf(category)]?.hint || 'In metres.'
 }
 
-// "tall", "long" or "across". Horizontal is "long" except for wings and legs, which are measured across;
-// longest is "tall" when the longest side is the height.
+// "tall", "long" or "across": the backend's word for the category (by_category, then size_word), else the table.
+// Longest without a word of its own is "tall" when the longest side is the height, else "long".
 export function axisWord(axis: SizeAxis | null, category?: string, longestIsUp?: boolean): string {
+  const own = category ? sizeKnob[category]?.word || catOf(category)?.size_word || SIZE_INFO[category]?.word : undefined
   if (axis === 'height') return 'tall'
+  if (own) return own
   if (axis === 'longest') return longestIsUp ? 'tall' : 'long'
-  if (axis === 'horizontal') return (category && SIZE_INFO[category]?.word) || 'long'
-  return 'tall'
+  return axis === 'horizontal' ? 'long' : 'tall'
 }
 
-// Width, height and depth in metres from metrics.dims ([x, y, z] or {x, y, z} / {width, height, depth}).
+// Prep's metrics.dims are Blender [x, y, z] in metres with Z up ({x, y, z} is read the same way).
 function dimsOf(metrics: Record<string, unknown>): [number, number, number] | null {
   const d = metrics.dims ?? metrics.dimensions
   if (Array.isArray(d) && d.length >= 3 && d.every((x) => typeof x === 'number')) return [d[0], d[1], d[2]] as [number, number, number]
   if (d && typeof d === 'object') {
     const o = d as Record<string, unknown>
-    const x = num(o.x ?? o.width)
-    const y = num(o.y ?? o.height)
-    const z = num(o.z ?? o.depth)
+    const x = num(o.x)
+    const y = num(o.y)
+    const z = num(o.z)
     if (x !== null && y !== null && z !== null) return [x, y, z]
   }
   return null
 }
 
 // What a prep version measures on its category's axis: the size check first (it carries the axis word), then
-// metrics.size_m, then the dims. Null when the version says nothing about its size.
+// metrics.size_m, then the dims (height is Z, horizontal the larger of X and Y). Null when nothing says.
 export function measuredSize(metrics: Record<string, unknown> | null | undefined, category: string): { value: number; word: string } | null {
   if (!metrics) return null
   const checks = Array.isArray(metrics.checks) ? (metrics.checks as Check[]) : []
   const axis = sizeAxisOf(category)
   const dims = dimsOf(metrics)
-  const longestUp = dims ? dims[1] >= Math.max(dims[0], dims[2]) : undefined
+  const longestUp = dims ? dims[2] >= Math.max(dims[0], dims[1]) : undefined
   const sc = checks.find((c) => (c.id ?? c.name) === 'size_m') ?? checks.find((c) => (c.id ?? c.name) === 'height_m')
   const scv = sc ? num(sc.value) : null
   if (sc && scv !== null) {
@@ -816,10 +828,15 @@ export function measuredSize(metrics: Record<string, unknown> | null | undefined
   if (sm !== null) return { value: sm, word: axisWord(axis, category, longestUp) }
   if (dims) {
     const [x, y, z] = dims
-    const v = axis === 'horizontal' ? Math.max(x, z) : axis === 'longest' ? Math.max(x, y, z) : y
+    const v = axis === 'horizontal' ? Math.max(x, y) : axis === 'longest' ? Math.max(x, y, z) : z
     return { value: v, word: axisWord(axis ?? 'height', category, longestUp) }
   }
   return null
+}
+
+// The category's default size: by_category, then the category, then the table.
+export function sizeDefault(category: string): number | null {
+  return sizeKnob[category]?.default ?? catOf(category)?.size_m ?? SIZE_INFO[category]?.size_m ?? null
 }
 
 // "About 1.8 m tall", "About 4.2 m long", "About 0.45 m long".
@@ -828,23 +845,30 @@ export function aboutSize(value: number, word: string): string {
   return `About ${v} m ${word}`
 }
 
-// Light G13: a size written in the description ("two metres wide", "6 ft tall", "4.5 m long"). Digits or the words
-// one to twenty; m, metre(s), meter(s), cm, ft, foot, feet; an optional axis word after it. Nothing else.
+// Light G13: a size written in the description ("two metres wide", "6 ft tall", "4.5 m long"). A port of the
+// backend's reference.parse_size, same rules: digits or the words one to twenty; units m, metre(s), meter(s), cm,
+// ft, foot, feet; axis words tall or high (height), long, wide or across (horizontal). Sizes outside 0.01 to 100 m
+// are ignored; a size with an axis word wins over one without; with defaultM (the category size) a size without an
+// axis word is ignored unless it is within a factor of four of it ("2 cm iron bands" does not size the chest).
 const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
-const SIZE_RE = new RegExp(`\\b(\\d+(?:\\.\\d+)?|${NUMBER_WORDS.join('|')})[\\s-]*(metres|meters|metre|meter|cm|m|feet|foot|ft)\\b(?:[\\s-]+(tall|high|long|wide|across))?`, 'i')
+const UNITS: Record<string, number> = { m: 1, metre: 1, metres: 1, meter: 1, meters: 1, cm: 0.01, ft: 0.3048, foot: 0.3048, feet: 0.3048 }
+const AXIS_WORDS: Record<string, ['height' | 'horizontal', string]> = { tall: ['height', 'tall'], high: ['height', 'tall'], long: ['horizontal', 'long'], wide: ['horizontal', 'across'], across: ['horizontal', 'across'] }
+// Longer number words first so "seventeen" is not read as "seven".
+const NUM_ALT = [...NUMBER_WORDS].sort((a, b) => b.length - a.length).join('|')
+const SIZE_RE = new RegExp(`(?<![\\w.])(\\d+(?:\\.\\d+)?|${NUM_ALT})\\s*-?\\s*(metres|metre|meters|meter|feet|foot|cm|ft|m)\\b(?:\\s*-?\\s*(tall|high|long|wide|across)\\b)?`, 'gi')
 
-export function sizeFromDescription(text: string): { value: number; axis: 'height' | 'horizontal' | null; word: string | null } | null {
-  const m = SIZE_RE.exec(text)
-  if (!m) return null
-  const raw = m[1].toLowerCase()
-  const n = /^\d/.test(raw) ? Number(raw) : NUMBER_WORDS.indexOf(raw) + 1
-  if (!Number.isFinite(n) || n <= 0) return null
-  const unit = m[2].toLowerCase()
-  const metresValue = unit === 'cm' ? n / 100 : unit === 'ft' || unit === 'foot' || unit === 'feet' ? n * 0.3048 : n
-  const w = m[3]?.toLowerCase() ?? null
-  const axis = w === 'tall' || w === 'high' ? 'height' : w ? 'horizontal' : null
-  const word = w === 'tall' || w === 'high' ? 'tall' : w === 'long' ? 'long' : w ? 'across' : null
-  return { value: Math.round(metresValue * 100) / 100, axis, word }
+export function sizeFromDescription(text: string, defaultM?: number | null): { value: number; axis: 'height' | 'horizontal' | null; word: string | null } | null {
+  const found: { value: number; axis: 'height' | 'horizontal' | null; word: string | null }[] = []
+  for (const m of (text ?? '').matchAll(SIZE_RE)) {
+    const raw = m[1].toLowerCase()
+    const n = NUMBER_WORDS.includes(raw) ? NUMBER_WORDS.indexOf(raw) + 1 : Number(raw)
+    const metresValue = Math.round(n * UNITS[m[2].toLowerCase()] * 1000) / 1000
+    if (!(metresValue >= 0.01 && metresValue <= 100)) continue
+    const aw = m[3] ? AXIS_WORDS[m[3].toLowerCase()] : undefined
+    if (!aw && defaultM && !(metresValue >= defaultM / 4 && metresValue <= defaultM * 4)) continue
+    found.push({ value: metresValue, axis: aw?.[0] ?? null, word: aw?.[1] ?? null })
+  }
+  return found.find((f) => f.axis) ?? found[0] ?? null
 }
 
 export function isSimpleParam(stage: StageId, p: { name: string; simple?: boolean }, schemaHasFlag: boolean): boolean {

@@ -44,7 +44,9 @@ export function FineTune({
     for (const p of visible) {
       // size_m was height_m in older versions (3.2): read the old name as an alias.
       const current = target.params?.[p.name] ?? (p.name === 'size_m' ? target.params?.height_m : undefined)
-      out[p.name] = current !== undefined ? current : p.default !== undefined ? p.default : defaultFor(p)
+      // A per-category default (by_category, 3.2) wins over the knob's single default.
+      const catDefault = p.by_category?.[asset.category]?.default
+      out[p.name] = current !== undefined ? current : catDefault !== undefined ? catDefault : p.default !== undefined ? p.default : defaultFor(p)
     }
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,17 +72,18 @@ export function FineTune({
     const knob = focus.knob && visible.some((p) => p.name === focus.knob) ? focus.knob : null
     if (!knob) return
     if (advanced.some((p) => p.name === knob)) setAdvOpen(true)
-    const raf = requestAnimationFrame(() => {
+    const show = window.setTimeout(() => {
       const el = formRef.current?.querySelector<HTMLElement>(`[data-knob="${knob}"]`)
       if (!el) return
       const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
-      el.querySelector<HTMLElement>('input:checked, input, select, button')?.focus({ preventScroll: true })
+      const target = el.querySelector<HTMLElement>('input:checked') ?? el.querySelector<HTMLElement>('input, select, textarea')
+      target?.focus({ preventScroll: true })
       setFlash(knob)
     })
     const t = window.setTimeout(() => setFlash(null), 2500)
     return () => {
-      cancelAnimationFrame(raf)
+      window.clearTimeout(show)
       window.clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,17 +175,18 @@ export function FineTune({
     // Size (3.2): the question and hint come from the category; the readout says what this version measures.
     if (stage === 'prep' && (p.name === 'size_m' || p.name === 'height_m')) {
       const now = measuredSize(target.metrics, asset.category)
+      const own = p.by_category?.[asset.category]
       return (
         <AdjustField
           param={p}
           value={values[p.name]}
           onChange={(v) => set(p.name, v)}
           disabled={disabled}
-          labelText={sizeQuestion(cat ?? asset.category)}
+          labelText={own?.label || sizeQuestion(cat ?? asset.category)}
           term="param.size_m"
           hintText={
             <>
-              {p.hint ?? sizeHint(cat ?? asset.category)}
+              {own?.hint || p.hint || sizeHint(cat ?? asset.category)}
               {now && <span className="size-now"> Now: {aboutSize(now.value, now.word).replace(/^About/, 'about')}.</span>}
             </>
           }
@@ -193,7 +197,9 @@ export function FineTune({
     if (p.name === 'face_yaw') {
       const meshGlb = libraryUrl(selectedVersion(asset, 'mesh')?.files.glb)
       const m = target.metrics ?? {}
-      const applied = [m.face_yaw_applied, m.applied_face_yaw, m.face_yaw].find((x) => typeof x === 'number') as number | undefined
+      // "chosen" marks the turn prep applied, only when this version asked for Automatic.
+      const wasAuto = target.params?.face_yaw === undefined || target.params?.face_yaw === 'auto'
+      const applied = wasAuto ? (typeof m.face_yaw_applied === 'number' ? m.face_yaw_applied : undefined) : undefined
       return (
         <FrontPicker
           value={values.face_yaw}

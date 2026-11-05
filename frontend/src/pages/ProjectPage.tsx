@@ -5,7 +5,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
@@ -187,7 +187,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   const budget = cat?.budgets?.[platform] ?? suggestion?.budgets
   const examples = examplePrompts(category)
   // Light G13: a size written in the description becomes the prep default (the backend reads the same words).
-  const described = category && category !== 'material' ? sizeFromDescription(prompt) : null
+  const described = category && category !== 'material' ? sizeFromDescription(prompt, sizeDefault(category)) : null
   const describedWord = described ? (described.word ?? axisWord(sizeAxisOf(cat ?? category), category)) : ''
   const chosenModel = model || suggestion?.model || ''
   const overridden = !!model && !!suggestion && model !== suggestion.model
