@@ -25,6 +25,9 @@ from .base import StageContext, manifest_provenance, slug
 
 TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 PACK_KEYS = ("metallic_smoothness", "orm")
+MOVEMENT_SHAPES = ("auto", "upright", "along", "box", "none")
+HITBOX_NOTE = ("Hit boxes are trigger colliders on the bones; Unity sends trigger events only when one of the two "
+               "objects has a Rigidbody (a kinematic one is enough).")
 # Channel layouts written to the manifest (G02).
 PACK_LAYOUTS = {
     "metallic_smoothness": "RGB metallic, A smoothness (1 - roughness); linear; Unity URP Lit and Standard _MetallicGlossMap",
@@ -192,6 +195,13 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         if p is not None:
             textures[key] = sc.copy_in(p, f"{key}.png")
             sc.register(key, textures[key])
+    hb = sc.lineage_file("hitboxes", ("rig",))
+    if hb is not None:
+        sc.register("hitboxes", sc.copy_in(hb, "hitboxes.json"))
+    # The clip sidecar (loop flags do not survive in the GLB or FBX); only when the input is the animated GLB.
+    ci = sc.lineage_file("anim_clips", ("rig",)) if src_key == "rig.anim_glb" else None
+    if ci is not None:
+        sc.register("anim_clips", sc.copy_in(ci, "anim_clips.json"))
     packs = pack_texture_maps(textures, sc.dir, name)
     for key, p in packs.items():
         sc.register(key, p)
@@ -250,6 +260,16 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     if scale is not None:
         args["-vgacSpeedScale"] = f"{scale:.3f}"
     warnings: list[str] = []
+    # Hit boxes (G34): the rig stage's hitboxes.json, copied next to the FBX by _pack; the body shape for moving is
+    # the export knob movement_shape (auto takes the file's movement.default).
+    hb = Path(sc.dir) / "hitboxes.json"
+    if hb.is_file():
+        args["-vgacHitboxes"] = hb
+        shape = params.get("movement_shape") or "auto"
+        args["-vgacMovementShape"] = shape if shape in MOVEMENT_SHAPES else "auto"
+    ci = Path(sc.dir) / "anim_clips.json"
+    if ci.is_file():
+        args["-vgacClipInfo"] = ci
     clips_lib = params.get("clips_library", "ual1")
     if humanoid and clips_lib and clips_lib != "none":
         lib = sc.settings.clips_libraries.get(clips_lib)
@@ -269,7 +289,8 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "texturesAssigned": report.get("texturesAssigned"), "clipCount": report.get("clipCount"), "clips": report.get("clips"),
             "importer_version": report.get("importer_version"), "avatar_mapping": report.get("avatar_mapping"),
             "avatar_mapping_by": report.get("avatar_mapping_by"), "shader": report.get("shader"),
-            "controller": report.get("controller")}
+            "controller": report.get("controller"), "hitboxCount": report.get("hitboxCount"), "movementShape": report.get("movementShape"),
+            "hitboxMaxBoneError": report.get("hitboxMaxBoneError")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -358,6 +379,16 @@ def _glb_files(sc: StageContext) -> dict[str, str]:
     return out
 
 
+def _hitbox_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What the manifest says about hit boxes (G34): the file, what Unity built, and the Rigidbody note."""
+    p = sc.file("hitboxes")
+    if p is None:
+        return None
+    u = unity_report or {}
+    return {"file": Path(p).name, "count": u.get("hitboxCount"), "movement_shape": u.get("movementShape"),
+            "triggers": True, "note": HITBOX_NOTE}
+
+
 def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | None, unity_report: dict[str, Any] | None) -> dict[str, Any]:
     prov = manifest_provenance(sc)
     models, seeds, lineage = prov["models"], prov["seeds"], prov["lineage"]
@@ -389,6 +420,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "lods": lod_list((pack_report or {}).get("lods") or {}),
         "textures": textures,
         "glb_files": _glb_files(sc),
+        "hitboxes": _hitbox_manifest(sc, unity_report),
         "bones": (pack_report or {}).get("bones"),
         "bone_names": (rig_v.metrics.get("bone_names") if rig_v else None),
         "rigid": bool(rig_v.metrics.get("rigid")) if rig_v else True,
@@ -474,6 +506,8 @@ def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
         first, rest = triggers[0], triggers[1:]
         extra = f' (or {", ".join(chr(34) + t + chr(34) for t in rest)})' if rest else ""
         lines.append(f'For one-off moves, call animator.SetTrigger("{first}");{extra}.')
+    if "Flying" in params:
+        lines.append('For flight, set animator.SetBool("Flying", true); set it back to false to land.')
     return lines
 
 
