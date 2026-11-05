@@ -2,7 +2,7 @@
 // Enabled when VITE_MOCK=1. Library files that the mock generates are data URLs
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
-import { setLibraryResolver, STAGES, type Asset, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
+import { GPU_KINDS, setLibraryResolver, STAGES, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, seedStore, setSelected, stages, store, styles, uid } from './data'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
@@ -108,16 +108,115 @@ const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T
 
 let simulationSpeed = 1
 
+// Graphics cards: on or off, what each may do, free after each step. Routing as the backend's jobs.route.
+type MockGpu = { enabled: boolean; allowed: GpuKind[]; free_after_job: boolean }
+const GPU_INFO: Record<'a' | 'b', { gpu: string; url: string; possible: GpuKind[]; vram_total_mb: number; note: string }> = {
+  a: { gpu: 'RTX 3060', url: 'http://127.0.0.1:8188', possible: ['pictures', 'model', 'review'], vram_total_mb: 12288, note: 'The other card can take over everything this card does.' },
+  b: { gpu: 'RTX 3080', url: 'http://127.0.0.1:8189', possible: [...GPU_KINDS], vram_total_mb: 10240, note: 'Rigging only runs on this card.' },
+}
+const gpuState: Record<'a' | 'b', MockGpu> = {
+  a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false },
+  b: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false },
+}
+
+function kindOfStage(stage: StageId, category: string): GpuKind | null {
+  if (stage === 'prep' || stage === 'export') return null
+  if (category === 'material') return stage === 'rig' ? null : 'pictures'
+  return stage === 'mesh' ? 'model' : stage === 'rig' ? 'rigging' : 'pictures'
+}
+
+function mayRun(inst: 'a' | 'b', k: GpuKind): boolean {
+  const g = gpuState[inst]
+  return g.enabled && g.allowed.includes(k) && GPU_INFO[inst].possible.includes(k)
+}
+
+function mockRoute(stage: StageId, category: string): { instance: Job['instance']; message: string } {
+  const preferred: Job['instance'] = category === 'material' && stage === 'mesh' ? 'b' : category === 'material' && stage === 'rig' ? 'host' : INSTANCE[stage]
+  const k = kindOfStage(stage, category)
+  if (preferred === 'host' || k === null) return { instance: preferred, message: 'queued' }
+  if (mayRun(preferred, k)) return { instance: preferred, message: 'queued' }
+  const other = preferred === 'a' ? 'b' : 'a'
+  if (mayRun(other, k)) return { instance: other, message: 'queued' }
+  const message = gpuState[preferred].enabled
+    ? `Waiting for a graphics card that is allowed to do ${k === 'model' ? '3D models' : k}`
+    : `Waiting for ${GPU_INFO[preferred].gpu} to be turned back on`
+  return { instance: preferred, message }
+}
+
+function jobCanStart(job: Pick<Job, 'instance'>, stage: StageId, category: string): boolean {
+  if (job.instance === 'host') return true
+  const k = kindOfStage(stage, category)
+  return k === null || mayRun(job.instance, k)
+}
+
+function gpuList(): Gpu[] {
+  return (['a', 'b'] as const).map((name) => {
+    const st = gpuState[name]
+    const info = GPU_INFO[name]
+    const running = store.jobs.find((j) => j.instance === name && j.status === 'running')
+    const asset = running ? store.assets.find((a) => a.id === running.asset_id) : undefined
+    const [stage, op] = running ? running.kind.split('.').slice(-2) : ['', '']
+    const used = !st.enabled ? 600 : running ? Math.round(info.vram_total_mb * 0.8) : 1400
+    return {
+      instance: name,
+      gpu: info.gpu,
+      url: info.url,
+      enabled: st.enabled,
+      reachable: true,
+      vram_total_mb: info.vram_total_mb,
+      vram_free_mb: info.vram_total_mb - used,
+      current_job_id: running?.id ?? null,
+      current_job: running
+        ? { id: running.id, kind: running.kind, stage, op, material: running.kind.startsWith('material.'), asset_id: running.asset_id, asset_name: asset?.name ?? null, progress: running.progress, message: running.message }
+        : null,
+      queued: store.jobs.filter((j) => j.instance === name && j.status === 'queued').length,
+      can_run: [],
+      note: info.note,
+      allowed_kinds: GPU_KINDS.filter((k) => st.allowed.includes(k)),
+      possible_kinds: info.possible,
+      effective_kinds: info.possible.filter((k) => st.allowed.includes(k)),
+      kind_notes: name === 'a' ? { rigging: "Rigging only runs on the RTX 3080's instance." } : {},
+      free_after_job: st.free_after_job,
+    }
+  })
+}
+
+// Queued jobs on a card that may not run them now move to the other card when it may, else wait with a message.
+function rebalanceGpus() {
+  for (const job of store.jobs) {
+    if (job.status !== 'queued' || job.instance === 'host') continue
+    const asset = store.assets.find((a) => a.id === job.asset_id)
+    const stage = job.kind.split('.').slice(-2)[0] as StageId
+    if (!asset || !STAGES.includes(stage)) continue
+    if (jobCanStart(job, stage, asset.category)) {
+      if (job.message.startsWith('Waiting for ')) {
+        job.message = 'queued'
+        broadcast({ type: 'job', job: clone(job) })
+      }
+      continue
+    }
+    const r = mockRoute(stage, asset.category)
+    if (r.instance !== job.instance && jobCanStart(r, stage, asset.category)) {
+      job.message = `Moved to ${GPU_INFO[r.instance as 'a' | 'b'].gpu} while ${GPU_INFO[job.instance].gpu} is off`
+      job.instance = r.instance
+    } else {
+      job.message = r.message
+    }
+    broadcast({ type: 'job', job: clone(job) })
+  }
+}
+
 function startJob(asset: Asset, version: Version, kind: string): Job {
+  const placed = mockRoute(version.stage, asset.category)
   const job: Job = {
     id: uid('j'),
-    instance: INSTANCE[version.stage],
+    instance: placed.instance,
     kind,
     asset_id: asset.id,
     version_id: version.id,
     status: 'queued',
     progress: 0,
-    message: 'queued',
+    message: placed.message,
     created_at: nowIso(),
     started_at: null,
     finished_at: null,
@@ -132,8 +231,13 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
   const stepMs = total / (steps.length + 1)
   let i = 0
   const queueDelay = 600 + Math.random() * 800
-  window.setTimeout(() => {
+  const begin = () => {
     if (job.status === 'cancelled') return
+    // A card that is off (or may not do this kind of work) holds the job until that changes.
+    if (!jobCanStart(job, version.stage, asset.category)) {
+      window.setTimeout(begin, 1000)
+      return
+    }
     job.status = 'running'
     job.started_at = nowIso()
     job.message = steps[0]
@@ -171,7 +275,8 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
       broadcast({ type: 'job', job: clone(job) })
       broadcast({ type: 'version', version: clone(version) })
     }, stepMs)
-  }, queueDelay)
+  }
+  window.setTimeout(begin, queueDelay)
   return job
 }
 
@@ -189,8 +294,8 @@ on('GET', '/api/health', () => ({
   ok: true,
   version: '0.2.0-mock',
   instances: {
-    a: { url: 'http://127.0.0.1:8188', gpu: 'RTX 3060', role: '3D', reachable: true, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3060', type: 'cuda', vram_total: 12_884_901_888, vram_free: 9_126_805_504 }] },
-    b: { url: 'http://127.0.0.1:8189', gpu: 'RTX 3080', role: 'images, rigging', reachable: true, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3080', type: 'cuda', vram_total: 10_737_418_240, vram_free: 4_294_967_296 }] },
+    a: { url: 'http://127.0.0.1:8188', gpu: 'RTX 3060', role: '3D', reachable: true, enabled: gpuState.a.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3060', type: 'cuda', vram_total: 12_884_901_888, vram_free: 9_126_805_504 }] },
+    b: { url: 'http://127.0.0.1:8189', gpu: 'RTX 3080', role: 'images, rigging', reachable: true, enabled: gpuState.b.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3080', type: 'cuda', vram_total: 10_737_418_240, vram_free: 4_294_967_296 }] },
   },
   host: { ram_total_bytes: 68_719_476_736, ram_free_bytes: 30_064_771_072, ram_free_gb: 28.0, min_free_ram_gb: 8, cpu_percent: 17 },
   queue: {
@@ -198,6 +303,23 @@ on('GET', '/api/health', () => ({
     b: { paused: false, current_job_id: store.jobs.find((j) => j.instance === 'b' && j.status === 'running')?.id ?? null },
   },
 }))
+on('GET', '/api/gpus', () => gpuList())
+on('PUT', '/api/gpus/:instance', (m, body) => {
+  const name = m.groups!.instance
+  if (name !== 'a' && name !== 'b') throw new HttpError(404, `unknown graphics card '${name}'`)
+  const st = gpuState[name]
+  if (typeof body.enabled === 'boolean') st.enabled = body.enabled
+  if (Array.isArray(body.allowed_kinds)) {
+    const bad = body.allowed_kinds.filter((k) => !GPU_KINDS.includes(k as GpuKind))
+    if (bad.length) throw new HttpError(400, `unknown kind(s) ${bad.join(', ')}`)
+    st.allowed = body.allowed_kinds as GpuKind[]
+  }
+  if (typeof body.free_after_job === 'boolean') st.free_after_job = body.free_after_job
+  rebalanceGpus()
+  const list = gpuList()
+  broadcast({ type: 'gpus', gpus: list })
+  return list
+})
 on('GET', '/api/categories', () => categories)
 on('GET', '/api/styles', () => styles)
 on('GET', '/api/platforms', () => platforms)

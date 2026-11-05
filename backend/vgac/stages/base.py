@@ -195,8 +195,10 @@ class StageContext:
 
     async def cutout(self, image_path: Path, name: str, instance: str | None = None, base: float = 0.0, span: float = 0.1) -> dict[str, Path]:
         """BiRefNet cutout of a local image: writes <name>.png (RGBA) and <name>_white.png next to it. Runs on the image
-        instance (the one Settings.stage_instances gives the concept stage) unless told otherwise."""
-        instance = instance or self.settings.stage_instances["concept"]
+        card the job runs on (concept and turnaround jobs run on an image card, which may be the one that took over
+        while the usual card is off), else the one Settings.stage_instances gives the concept stage."""
+        if instance is None:
+            instance = self.ctx.instance if self.ctx.instance in self.ctx.clients else self.settings.stage_instances["concept"]
         src_name = await self.stage_input(image_path, f"vgac_{self.version.id[:8]}_{name}_src.png", instance)
         entry = await self.comfy(cutout_graph(src_name, self.prefix(name)), instance=instance, message=f"cutout {name}", base=base, span=span)
         dest = self.dir / f"{name}.png"

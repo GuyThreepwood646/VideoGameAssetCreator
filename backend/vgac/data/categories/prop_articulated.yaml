@@ -3,6 +3,12 @@ label: Articulated prop
 rig_engine: none
 symmetric: false
 size_m: 0.8
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: longest
+size_word: across
+size_label: "How big is it?"
+size_hint: "In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall."
 parts_default: [lid]
 topology: triangle
 input_view_default: front

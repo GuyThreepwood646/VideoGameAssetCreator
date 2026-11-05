@@ -39,3 +39,14 @@ job_timeout_seconds: 3600
 # material_stage_instances: {concept: b, turnaround: b, mesh: b, prep: host, rig: host, export: host}
 # judge_instance: b
 # blender_timeout_seconds: 1800
+
+# Optional (defaults shown): what each graphics card can take over when the card a step prefers is turned off in
+# the app (Health page, "Graphics cards"; stored in <library_path>/prefs.json). Names are stages plus judge (the
+# local picture judge) and material (every graphics-card step of the material category). prep and export run on
+# the host and never need a card.
+# Rig stays on b only: the SkinToken node finds Blender only through the SKINTOKEN_BLENDER_BIN environment
+# variable, which runtime/start-comfy-b.ps1 sets for instance B. Instance A (Comfy Desktop) does not have it, so a
+# rig job waits for b to be turned back on instead of moving.
+# instance_capabilities:
+#   a: [concept, turnaround, mesh, material, judge]
+#   b: [concept, turnaround, mesh, rig, judge, material]

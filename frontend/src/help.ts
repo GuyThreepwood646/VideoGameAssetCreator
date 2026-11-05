@@ -189,13 +189,13 @@ export function platformConsequence(id: string): string {
 export const CATEGORY_HELP: Record<string, HelpEntry> = {
   humanoid: H('Humanoid', 'A person-shaped character: two arms, two legs, standing.', 'Gets a human skeleton with walk, idle and other shared clips.', 'humanoid'),
   quadruped: H('Quadruped', 'A four-legged animal or creature.', 'Gets a four-legged skeleton; animations are predicted from the shape.', 'quadruped'),
-  winged: H('Winged creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton with wing bones.', 'winged'),
-  multileg: H('Multi-leg creature', 'A creature with more than four legs, such as a spider.', 'Gets a many-legged skeleton predicted from the shape.', 'multileg'),
-  serpent: H('Serpent or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton that bends along its length.', 'serpent'),
-  vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; wheels, turret and doors are separate parts you can move.', 'vehicle'),
+  winged: H('Winged creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton fitted to its shape; for now it walks and idles but does not flap.', 'winged'),
+  multileg: H('Multi-leg creature', 'A creature with more than four legs, such as a spider.', 'Gets a skeleton fitted to its shape; for now the walk moves up to four legs.', 'multileg'),
+  serpent: H('Serpent or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
+  vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
   prop_rigid: H('Rigid prop', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
-  prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'The moving part becomes a separate piece on a hinge.', 'prop_articulated'),
-  environment: H('Environment piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; built to line up with other pieces.', 'environment'),
+  prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
+  environment: H('Environment piece', 'A piece of scenery, such as a wall or floor tile.', 'No skeleton; sized in metres, but not yet rounded to a grid, so check that pieces line up.', 'environment'),
   foliage: H('Foliage', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
   material: H('Tileable material', 'A repeating surface texture, such as cobblestones.', 'Produces a texture only, no 3D model.', 'material'),
 }
@@ -226,7 +226,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   category: H('Category', 'What kind of thing this is: a person, an animal, a prop.', 'It decides the pose, the skeleton and the size budget.', 'category'),
   style_preset: H('Style', 'The look: painted, cel shaded, pixel art and so on.', 'Picks the model and the wording added to every description.', 'style_preset'),
   platform: H('Platform', 'Where the game will run: phone, PC or showcase.', 'Sets how many triangles and how big a texture the model may have.', 'platform_target'),
-  parts: H('Parts', 'Pieces that must move or swap on their own, such as a weapon or a lid.', 'Each part becomes its own piece in the game.', 'parts'),
+  parts: H('Parts', 'Pieces that must move or swap on their own, such as a weapon or a lid.', 'We ask the painter to draw these as clearly separate pieces; for now they stay joined to the model.', 'parts'),
   style_lock: H('Style lock', 'The look every asset in this project shares.', 'Keeps a whole game looking like one game.', 'style_lock'),
   prompt_block: H('Style words', 'Words added in front of every description in this project.', 'This is how the style stays the same from asset to asset.', 'prompt_block'),
   palette: H('Palette', 'The handful of colours the project uses.', 'Shared colours make assets look like they belong together.', 'palette'),
@@ -277,7 +277,9 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   iou: H('Outline match', 'How closely two outlines overlap, from 0 to 1.', 'Low match means the shapes disagree.', 'IoU (intersection over union)'),
   silhouette: H('Outline', 'The shape of the model seen as a flat shadow.', 'A good outline is what makes a character readable in a game.', 'silhouette'),
   // Prep
-  height_m: H('Height', 'How tall the asset is in the game, in metres.', 'Keeps characters and props in proportion to each other.', 'height_m'),
+  height_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'height_m (older name of size_m)'),
+  size_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'Uniform scale so the extent on size_axis equals size_m'),
+  face_yaw: H('Front', 'Which side of the model the game treats as its front.', 'Characters walk and cars drive toward their front; if it is wrong, they move sideways.', 'Yaw about Y so the concept front faces +Z'),
   symmetric: H('Mirror left and right', 'Make the left and right halves identical.', 'Most characters are symmetric; turn it off for lopsided things.', 'symmetric'),
   pivot: H('Anchor point', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
   smooth_angle: H('Smoothing', 'The angle above which an edge looks sharp instead of smooth.', 'Lower keeps hard edges; higher rounds things off.', 'smooth_angle (auto smooth)'),
@@ -317,11 +319,20 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Export
   lod: H('Detail levels', 'Lighter copies of the model used when it is far away.', 'Keeps the game fast with many assets on screen.', 'LOD (level of detail)'),
   lods: H('Detail levels', 'Lighter copies of the model used when it is far away, as fractions of the full model.', 'Keeps the game fast with many assets on screen.', 'lods (LOD ratios)'),
-  lod_count: H('Number of detail levels', 'How many lighter copies were made.', 'Four is standard.', 'lod_count'),
-  collider: H('Collision shape', 'A simple invisible shape the game uses for bumping into things.', 'Without it the asset is walk-through.', 'collider (convex hull)'),
-  collider_vertices: H('Collision shape points', 'How many points the collision shape has.', 'Engines cap this at 255.', 'collider_vertices'),
-  collider_verts: H('Collision shape points', 'How many points the collision shape has.', 'Engines cap this at 255.', 'collider_verts'),
+  lod_count: H('Number of detail levels', 'How many lighter copies were made.', 'Characters and creatures get four; props and scenery get three.', 'lod_count'),
+  collider: H('Collision shape', 'Invisible simple shapes the game uses to know where the asset is solid.', 'Without them things pass straight through it; the right shapes keep doorways open and seats usable.', 'Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)'),
+  collider_triangles: H('Collision shape size', 'How many triangles the collision shape has.', 'Unity allows at most 255 in a simple shape and reshapes anything bigger.', 'MeshCollider convex triangle limit'),
+  collider_vertices: H('Collision shape points', 'How many points the collision shape has.', 'Unity allows at most 255 triangles in a simple collision shape; we keep the shape small to stay under it.', 'collider_vertices'),
+  collider_verts: H('Collision shape points', 'How many points the collision shape has.', 'Unity allows at most 255 triangles in a simple collision shape; we keep the shape small to stay under it.', 'collider_verts'),
   collider_present: H('Collision shape present', 'Whether a collision shape was made.', 'Needed for physics.', 'collider_present'),
+  metal_shine: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
+  metallic_smoothness: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
+  orm: H('Surface texture', 'One texture that holds shadowing, roughness and metal in its three colour channels.', 'Unreal, Godot and web viewers read all three from one file, which saves memory.', 'ORM pack (R occlusion, G roughness, B metallic); glTF metallicRoughness'),
+  animator_controller: H('Animation controller', 'The part of the game object that picks which animation plays: standing, walking or running, depending on speed.', 'Your game sets one number, Speed, and the character switches on its own.', 'AnimatorController: 1D blend tree on Speed; triggers Attack, Hit, Die, Jump; root motion off'),
+  loop: H('Loops', 'The animation runs again from the start as soon as it ends, with no jump.', 'Idle and walk must loop, or the character freezes after one step.', 'AnimationClip loopTime and loopPose'),
+  avatar: H('Skeleton in Unity', 'Whether Unity reads the skeleton as a person (Humanoid) or as its own shape (Generic).', 'Humanoid skeletons can play every shared human animation; Generic ones play only their own.', 'Unity Avatar: Humanoid (HumanDescription) or Generic'),
+  what_you_get: H('What you get', 'A short list of what the finished asset does in a game: its size, its surface, how it moves and what it bumps into.', 'Each line is checked; a line with a yellow dot has a problem, and the button next to it fixes it.', 'metrics.finish_lines (export stage)'),
+  unity_howto: H('Using it in Unity', 'The three things to do in Unity to put this asset in your game.', 'The prefab is already set up; these lines say how to drive it from your own scripts.', 'metrics.unity_howto (export stage)'),
   formats: H('File formats', 'Which file types to write: FBX for most engines, GLB for the web.', 'Pick what your engine imports.', 'formats (fbx | glb)'),
   unity: H('Unity check', 'Import the asset into Unity and build a ready-to-use prefab.', 'Proves the asset works in a real engine.', 'unity'),
   unity_import: H('Unity imported it', 'Whether Unity loaded the files without errors.', 'If this fails the asset needs fixing before use.', 'unity_import'),
@@ -350,6 +361,17 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Style presets
   look: H('Look', 'A ready-made style: the painter, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (GET /api/style-presets, stored as style_lock.preset)'),
   look_preset: H('Look', 'A ready-made style: the painter, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (style_lock.preset)'),
+  // Graphics cards (Health page)
+  gpus: H('Graphics cards', 'The cards in this computer that paint the pictures and build the 3D models. Only those generation steps use a card at full load; cleaning up, handing off and the Unity import run on the processor.', 'If you need a card for a game or another app, turn it off here and the app carries on with the other one.', 'ComfyUI instances (GET /api/gpus)'),
+  gpu_switch: H('On or off', 'Turning a card off hands its work to the other card so you can use it for games or other apps. A step only this card can do waits until it is back on. Nothing is lost.', 'You can switch it back on at any time; the app remembers your choice after a restart.', 'PUT /api/gpus/{instance} enabled (prefs.json disabled_instances)'),
+  gpu_memory: H('Memory used', 'How much of the card\'s own memory is in use right now, by this app and anything else.', 'A card keeps its models loaded between steps so the next step starts faster; that memory is released when you turn the card off.', 'VRAM (ComfyUI /system_stats)'),
+  gpu_advanced: H('Advanced', 'Finer control over one card: which kinds of work it may do, and whether it empties its memory after every step.', 'Most people never need these; turning the card off covers the usual case.', 'allowed_kinds, free_after_job'),
+  gpu_kinds: H('What this card may do', 'Untick a kind of work to keep it off this card. Work of that kind moves to another card that may do it, or waits until one may.', 'Useful when a card is busy with something else but can still help with lighter work. Greyed out boxes are work this card cannot do at all.', 'allowed_kinds (prefs.json)'),
+  gpu_kind_pictures: H('Pictures', 'Painting the first picture, drawing all sides, and making tileable materials.', 'These are the quickest steps and the ones you make the most of.', 'concept, turnaround and material stages'),
+  gpu_kind_model: H('3D model', 'Turning the pictures into a 3D shape with painted surfaces.', 'The heaviest step: it needs a lot of the card\'s memory for a few minutes.', 'mesh stage'),
+  gpu_kind_rigging: H('Rigging', 'Adding a skeleton so the model can move.', 'This step only works on the card set up for it, because it needs Blender wired in.', 'rig stage (SkinToken)'),
+  gpu_kind_review: H('Review', 'The app looking at a result and saying what it thinks of it.', 'Optional; a review waits if no card may do it, nothing else stops.', 'local judge (judge job)'),
+  gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
 }
 
 // Plain words for the autopilot's stop_on setting.
@@ -387,8 +409,9 @@ export const VARIANT_EXAMPLES = ['winter cloak and fur boots', 'rusted and battl
 // Checks: plain sentence per check id, with the value and limit filled in
 // ---------------------------------------------------------------------------
 
-type CheckText = (value: unknown, limit: unknown, passed: boolean, ctx: CheckContext) => string
-export type CheckContext = { platform?: string }
+type CheckText = (value: unknown, limit: unknown, passed: boolean, ctx: CheckContext, vars: Record<string, unknown>) => string
+// platform: for the triangle budget sentence; category: for the size sentence's axis word when the check has none.
+export type CheckContext = { platform?: string; category?: string }
 
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null)
 // Percent with one decimal when a whole number would hide the difference (98.9% vs 99%).
@@ -402,6 +425,21 @@ const n0 = (x: unknown): string => {
   const n = num(x)
   return n === null ? String(x ?? '?') : n.toLocaleString('en-US')
 }
+// Metres with at most two decimals: 1.8, 0.45, 4.25.
+export const metres = (x: unknown): string => {
+  const n = num(x)
+  if (n === null) return String(x ?? '?')
+  return String(Math.round(n * 100) / 100)
+}
+const str = (x: unknown): string => (typeof x === 'string' ? x : typeof x === 'number' ? String(x) : '')
+const listText = (x: unknown): string => (Array.isArray(x) ? joinAnd(x.map(String)) : str(x))
+// "a, b and c"
+export function joinAnd(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ''
+  return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1]
+}
+// The plain name of a missing surface map (materials_connected) and what the surface looks like without it.
+const MAP_EFFECT: Record<string, string> = { 'metal and shine': 'like plastic', bump: 'flat', shadow: 'a little flat', colour: 'grey' }
 const mapName = (id: string): string => {
   const m = id.match(/^texture_(.+)_(pow2|square|budget)$/)
   if (!m) return 'texture'
@@ -417,7 +455,9 @@ const CHECK_TEXT: Record<string, CheckText> = {
   manifold: (v, _l, ok) => (ok ? 'The surface has no overlapping or broken edges.' : `The surface has ${n0(v)} broken or overlapping edges.`),
   watertight: (v, _l, ok) => (ok ? 'The surface is closed with no holes.' : `The surface has ${n0(v)} open holes.`),
   degenerate_faces: (v, _l, ok) => (ok ? 'No zero-area triangles.' : `${n0(v)} triangles are squashed flat.`),
-  height_m: (v, l, ok) => (ok ? `The model is ${v} m tall, as intended.` : `The model is ${v} m tall; it should be ${l} m.`),
+  height_m: (v, l, ok, _ctx, vars) => sizeSentence(v, l, ok, str(vars.axis_word) || 'tall'),
+  size_m: (v, l, ok, ctx, vars) => sizeSentence(v, l, ok, str(vars.axis_word) || axisWord(sizeAxisOf(ctx.category), ctx.category)),
+  facing: (v, _l, ok) => (ok ? 'The front of the model faces forward in the game.' : `The model may face the wrong way: it matches the front picture best when turned ${n0(v)} degrees.`),
   uv_set: (v, _l, ok) => (ok ? 'The model has one texture layout.' : `The model has ${n0(v)} texture layouts; it needs exactly one.`),
   bones: (v, _l, ok) => (ok ? `The skeleton has ${n0(v)} bones.` : 'No skeleton was found.'),
   single_root: (v, _l, ok) => (ok ? 'The skeleton starts from one root bone.' : `The skeleton has ${n0(v)} root bones; it needs one.`),
@@ -429,7 +469,20 @@ const CHECK_TEXT: Record<string, CheckText> = {
   collider_present: (_v, _l, ok) => (ok ? 'A collision shape is present.' : 'No collision shape was made.'),
   collider_vertices: (v, l, ok) => (ok ? `The collision shape has ${n0(v)} points (limit ${n0(l)}).` : `The collision shape has ${n0(v)} points; engines allow ${n0(l)}.`),
   unity_import: (_v, _l, ok) => (ok ? 'Unity imported the asset without errors.' : 'Unity could not import the asset.'),
-  unity_humanoid_avatar: (_v, _l, ok) => (ok ? 'Unity recognised the humanoid skeleton.' : 'Unity did not recognise the skeleton as humanoid.'),
+  unity_humanoid_avatar: (v, _l, ok, _ctx, vars) => {
+    const n = num(vars.clips) ?? num(v)
+    return ok
+      ? `Unity recognised the skeleton as a person, so all ${n !== null ? n0(n) + ' ' : 'the '}shared animations work.`
+      : 'Unity could not read the skeleton as a person, so the shared animations are missing; it still has its own walk and idle.'
+  },
+  materials_connected: (v, _l, ok, _ctx, vars) => {
+    if (ok) return 'Unity uses all the surface textures: colour, bumps, shadows, metal and shine.'
+    const missing = str(vars.missing) || str(v) || 'metal and shine'
+    const effect = str(vars.effect) || MAP_EFFECT[missing] || 'flat'
+    return `Unity is missing the ${missing} texture, so the surface will look ${effect}.`
+  },
+  clips_loop: (v, _l, ok, _ctx, vars) => (ok ? 'Idle and walk loop smoothly.' : `The ${listText(vars.clip) || listText(v) || 'walk'} animation does not loop, so it would stop after one cycle.`),
+  controller_ready: (_v, _l, ok) => (ok ? 'An animation controller switches between idle, walk and run by speed.' : 'No animation controller was built, so you would have to set one up in Unity.'),
   silhouette_iou: (v, l, ok) => (ok ? `The model outline matches the drawing (${pct(v)}).` : `The model outline only matches the drawing ${pct(v)}; it needs ${pct(l)}.`),
   coverage: (v, l, ok) => (ok ? `The character fills ${pct(v)} of the picture.` : `The character fills only ${pct(v)} of the picture; it needs at least ${pct(l)}.`),
   height_ratio: (v, _l, ok) => (ok ? `This view is the same height as the front view (${num(v)?.toFixed(2) ?? v}x).` : `This view is ${num(v)?.toFixed(2) ?? v}x the height of the front view; it should be about the same.`),
@@ -439,6 +492,10 @@ const CHECK_TEXT: Record<string, CheckText> = {
   'single subject': (_v, _l, ok) => (ok ? 'The picture shows one subject.' : 'The picture shows more than one subject.'),
   'rig-ready pose': (_v, _l, ok) => (ok ? 'The pose is ready for a skeleton.' : 'The pose will not rig well.'),
   'plain background': (_v, _l, ok) => (ok ? 'The background is plain.' : 'The background is busy; the cutout may be rough.'),
+}
+
+function sizeSentence(v: unknown, l: unknown, ok: boolean, axis: string): string {
+  return ok ? `The model is ${metres(v)} m ${axis}, as intended.` : `The model is ${metres(v)} m ${axis}; it should be ${metres(l)} m.`
 }
 
 function checkTextFor(id: string): CheckText | null {
@@ -456,7 +513,12 @@ const CHECK_HELP: Record<string, string> = {
   manifold: 'manifold',
   watertight: 'watertight',
   degenerate_faces: 'degenerate_faces',
-  height_m: 'height_m',
+  height_m: 'size_m',
+  size_m: 'size_m',
+  facing: 'face_yaw',
+  materials_connected: 'metal_shine',
+  clips_loop: 'loop',
+  controller_ready: 'animator_controller',
   uv_set: 'uv_set',
   bones: 'bones',
   single_root: 'single_root',
@@ -476,13 +538,18 @@ const CHECK_HELP: Record<string, string> = {
   mirror_iou: 'mirror_iou',
 }
 
-// The sentence for a check: backend help first, then the registry, then the raw message.
+// The sentence for a check. The backend is the one source of check wording (2.1): it writes `help` from the
+// check's ok or fail sentence. Older backends wrote the fail sentence into `help` whether the check passed or not,
+// so for a passing check the value-filled sentence here wins when there is one; a failing check takes the backend
+// sentence first. Without either, the raw message.
 export function checkSentence(check: Check, ctx: CheckContext = {}): string {
-  if (check.help) return check.help
   const id = check.id ?? check.name
   const passed = check.passed ?? check.ok ?? false
   const fn = checkTextFor(id)
-  if (fn) return fn(check.value, check.limit, passed, ctx)
+  const local = fn ? fn(check.value, check.limit, passed, ctx, check.vars ?? {}) : null
+  if (passed && local) return local
+  if (check.help) return check.help
+  if (local) return local
   const label = id.replace(/_/g, ' ')
   if (check.message) return `${label}: ${check.message}`
   return passed ? `${label} passed.` : `${label} failed.`
@@ -499,15 +566,69 @@ export function checkSeverity(check: Check): 'block' | 'warn' {
   return 'block'
 }
 
-// Where the app can fix a failing check on its own (the backend's check.fix wins).
-export function checkFix(check: Check): { stage: StageId; params: Record<string, unknown> } | null {
-  if (check.fix && check.fix.stage && STAGES.includes(check.fix.stage as StageId)) return { stage: check.fix.stage as StageId, params: check.fix.params ?? {} }
+// A Fix button's action. Without `ui` it re-runs `stage` with `params`. With `ui` it opens a tool instead (2.5):
+// the page goes to `stage`, opens "Change something" and focuses the tool or the Fine-tune `knob`, with `params`
+// filled in but nothing run until the person applies it.
+export type FixAction = { stage: StageId; params: Record<string, unknown>; label: string; ui?: string; knob?: string }
+
+// The step and the Fine-tune setting each tool lives in.
+export const FIX_TOOLS: Record<string, { stage: StageId; knob?: string; plain: string }> = {
+  front_picker: { stage: 'prep', knob: 'face_yaw', plain: 'the front picker' },
+  parts_editor: { stage: 'rig', plain: 'the parts editor' },
+}
+
+// Button text when the backend sends no fix_label (2.1 item 4).
+const FIX_LABELS: Record<string, string> = {
+  triangle_budget: 'Shrink to the budget',
+  size_m: 'Set the size',
+  height_m: 'Set the size',
+  facing: 'Turn it to face forward',
+  lod_count: 'Rebuild the detail levels',
+  collider_present: 'Add a collision shape',
+  weight_coverage: 'Attach the loose surface',
+  weights_normalised: 'Balance the weights',
+  manifold: 'Close the holes',
+  watertight: 'Close the holes',
+  materials_connected: 'Rebuild for Unity',
+  clips_loop: 'Rebuild for Unity',
+  controller_ready: 'Rebuild for Unity',
+  unity_humanoid_avatar: 'Fit the standard skeleton again',
+}
+export const DEFAULT_FIX_LABEL = 'Fix automatically'
+
+const quarterTurn = (v: number | null): number | null => {
+  if (v === null) return null
+  const d = ((Math.round(v) % 360) + 360) % 360
+  return [0, 90, 180, 270].includes(d) ? d : null
+}
+
+// Where the app can fix a failing check (the backend's check.fix wins). Passing checks have no fix.
+export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null
   const id = check.id ?? check.name
+  const label = check.fix?.label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
+  const f = check.fix
+  if (f && f.ui) {
+    const tool = FIX_TOOLS[f.ui]
+    const stage = f.stage && STAGES.includes(f.stage as StageId) ? (f.stage as StageId) : tool?.stage
+    if (!stage) return null
+    return { stage, params: f.params ?? {}, label, ui: f.ui, knob: f.knob ?? tool?.knob }
+  }
+  if (f && f.stage && STAGES.includes(f.stage as StageId)) return { stage: f.stage as StageId, params: f.params ?? {}, label }
   const limit = num(check.limit)
-  if (id === 'triangle_budget' && limit) return { stage: 'mesh', params: { target_faces: limit } }
-  if (id === 'manifold' || id === 'watertight') return { stage: 'mesh', params: { remesh: true } }
+  if (id === 'triangle_budget' && limit) return { stage: 'mesh', params: { target_faces: limit }, label }
+  if (id === 'manifold' || id === 'watertight') return { stage: 'mesh', params: { remesh: true }, label }
+  if ((id === 'size_m' || id === 'height_m') && limit) return { stage: 'prep', params: { size_m: limit }, label }
+  const turn = quarterTurn(num(check.value))
+  if (id === 'facing' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
   return null
+}
+
+// The Fix button's tooltip: what pressing it does, in words (never the raw params).
+export function fixTooltip(fix: FixAction, stages?: StageInfo[] | null): string {
+  const name = stagePlain(fix.stage, stages?.find((s) => s.id === fix.stage) ?? null)
+  if (fix.ui) return `Opens ${FIX_TOOLS[fix.ui]?.plain ?? 'the tool'} in "${name}". Nothing changes until you apply it.`
+  return `Makes a new version of "${name}" with this change.`
 }
 
 export function checkHelpKey(check: Check): string | null {
@@ -568,9 +689,162 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
-  prep: ['height_m', 'symmetric'],
+  prep: ['size_m', 'height_m', 'face_yaw', 'symmetric'],
   rig: ['template'],
   export: ['lods', 'collider', 'formats', 'sprites'],
+}
+
+// ---------------------------------------------------------------------------
+// Plain labels for select options (2.2). The backend's option_labels win; this is the fallback for older
+// backends and the mock.
+// ---------------------------------------------------------------------------
+
+export const OPTION_LABELS: Record<string, Record<string, string>> = {
+  engine: { trellis: 'TRELLIS (most detail from one picture)', hy3d: 'Hunyuan (uses all four sides; good for long animals)' },
+  input_view: { concept: 'The first picture', front: 'Front view', quarter: 'Three-quarter view' },
+  texture_size: { '512': '512 px (smallest)', '1024': '1024 px', '2048': '2048 px', '4096': '4096 px (largest)' },
+  upsample: { '1024': 'Normal', '1536': 'Fine (several times slower)' },
+  pivot: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' },
+  template: { auto: 'Automatic (from the category)', mixamo: 'Standard human skeleton', generic: 'Fitted to the shape', none: 'No skeleton' },
+  formats: { fbx: 'FBX (Unity, Unreal, Godot)', glb: 'GLB (web, Godot, Blender)' },
+  clips_library: { ual1: 'Standard human moves (46 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
+  views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
+  collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
+  face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
+}
+
+export function optionLabel(p: { name: string; option_labels?: Record<string, string> }, value: unknown): string {
+  const k = String(value)
+  if (p.name === 'model') return modelLabel(k)
+  return p.option_labels?.[k] ?? OPTION_LABELS[p.name]?.[k] ?? k
+}
+
+// Knobs that apply to some categories only (2.3): no list means every category.
+export function knobApplies(p: { categories?: string[] | null }, category: string): boolean {
+  return !Array.isArray(p.categories) || p.categories.length === 0 || p.categories.includes(category)
+}
+
+// ---------------------------------------------------------------------------
+// Size (3.2): the axis each category is measured on, the question the size knob asks, and "About 1.8 m tall".
+// The category yaml (GET /api/categories size_axis, size_label, size_hint) wins; this table is the fallback.
+// ---------------------------------------------------------------------------
+
+export type SizeAxis = 'height' | 'horizontal' | 'longest' | 'grid'
+type SizeInfo = { axis: SizeAxis | null; size_m: number; label: string; hint: string; word?: 'tall' | 'long' | 'across' }
+
+export const SIZE_INFO: Record<string, SizeInfo> = {
+  humanoid: { axis: 'height', size_m: 1.8, label: 'How tall is it?', hint: 'In metres, from the ground to the top of the head. A person is about 1.8 m.' },
+  quadruped: { axis: 'horizontal', size_m: 1.5, label: 'How long is it?', hint: 'In metres, nose to rump, not counting the tail. A wolf is about 1.4 m; a horse about 2.4 m.', word: 'long' },
+  winged: { axis: 'horizontal', size_m: 1.5, label: 'How wide are the wings?', hint: 'In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m.', word: 'across' },
+  multileg: { axis: 'horizontal', size_m: 1.0, label: 'How wide is it?', hint: 'In metres, across the legs. A large spider is about 0.2 m; a giant cave spider about 2 m.', word: 'across' },
+  serpent: { axis: 'longest', size_m: 2.0, label: 'How long is it?', hint: 'In metres, head to tail as it lies. A python is about 4 m.', word: 'long' },
+  vehicle: { axis: 'horizontal', size_m: 4.5, label: 'How long is it?', hint: 'In metres, front to back. A car is about 4.5 m; a tank about 7 m.', word: 'long' },
+  prop_rigid: { axis: 'longest', size_m: 0.6, label: 'How big is it?', hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.' },
+  prop_articulated: { axis: 'longest', size_m: 0.8, label: 'How big is it?', hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.' },
+  environment: { axis: 'grid', size_m: 3.0, label: 'Size on the grid', hint: 'Set by the grid.' },
+  foliage: { axis: 'height', size_m: 2.5, label: 'How tall is it?', hint: 'In metres, from the ground to the top. A bush is about 1 m; an oak about 15 m.' },
+  material: { axis: null, size_m: 1.0, label: '', hint: '' },
+}
+
+// The front picker's hint (3.2).
+export const FACE_YAW_HINT = 'Pick the picture where the front faces you. The game treats that side as forward.'
+
+let categoryCache: Record<string, Category> = {}
+export function rememberCategories(list: Category[]): void {
+  categoryCache = Object.fromEntries(list.map((c) => [c.id, c]))
+}
+
+function catOf(category: Category | string | null | undefined): Category | undefined {
+  if (!category) return undefined
+  return typeof category === 'string' ? categoryCache[category] : category
+}
+const idOf = (category: Category | string | null | undefined): string => (typeof category === 'string' ? category : (category?.id ?? ''))
+
+export function sizeAxisOf(category: Category | string | null | undefined): SizeAxis | null {
+  const c = catOf(category)
+  const a = c?.size_axis ?? SIZE_INFO[idOf(category)]?.axis ?? null
+  return a === 'height' || a === 'horizontal' || a === 'longest' || a === 'grid' ? a : null
+}
+
+export function sizeQuestion(category: Category | string | null | undefined): string {
+  return catOf(category)?.size_label || SIZE_INFO[idOf(category)]?.label || 'How big is it?'
+}
+
+export function sizeHint(category: Category | string | null | undefined): string {
+  return catOf(category)?.size_hint || SIZE_INFO[idOf(category)]?.hint || 'In metres.'
+}
+
+// "tall", "long" or "across". Horizontal is "long" except for wings and legs, which are measured across;
+// longest is "tall" when the longest side is the height.
+export function axisWord(axis: SizeAxis | null, category?: string, longestIsUp?: boolean): string {
+  if (axis === 'height') return 'tall'
+  if (axis === 'longest') return longestIsUp ? 'tall' : 'long'
+  if (axis === 'horizontal') return (category && SIZE_INFO[category]?.word) || 'long'
+  return 'tall'
+}
+
+// Width, height and depth in metres from metrics.dims ([x, y, z] or {x, y, z} / {width, height, depth}).
+function dimsOf(metrics: Record<string, unknown>): [number, number, number] | null {
+  const d = metrics.dims ?? metrics.dimensions
+  if (Array.isArray(d) && d.length >= 3 && d.every((x) => typeof x === 'number')) return [d[0], d[1], d[2]] as [number, number, number]
+  if (d && typeof d === 'object') {
+    const o = d as Record<string, unknown>
+    const x = num(o.x ?? o.width)
+    const y = num(o.y ?? o.height)
+    const z = num(o.z ?? o.depth)
+    if (x !== null && y !== null && z !== null) return [x, y, z]
+  }
+  return null
+}
+
+// What a prep version measures on its category's axis: the size check first (it carries the axis word), then
+// metrics.size_m, then the dims. Null when the version says nothing about its size.
+export function measuredSize(metrics: Record<string, unknown> | null | undefined, category: string): { value: number; word: string } | null {
+  if (!metrics) return null
+  const checks = Array.isArray(metrics.checks) ? (metrics.checks as Check[]) : []
+  const axis = sizeAxisOf(category)
+  const dims = dimsOf(metrics)
+  const longestUp = dims ? dims[1] >= Math.max(dims[0], dims[2]) : undefined
+  const sc = checks.find((c) => (c.id ?? c.name) === 'size_m') ?? checks.find((c) => (c.id ?? c.name) === 'height_m')
+  const scv = sc ? num(sc.value) : null
+  if (sc && scv !== null) {
+    const isHeight = (sc.id ?? sc.name) === 'height_m'
+    const word = str(sc.vars?.axis_word) || (isHeight ? 'tall' : axisWord(axis, category, longestUp))
+    return { value: scv, word }
+  }
+  const sm = num(metrics.size_m)
+  if (sm !== null) return { value: sm, word: axisWord(axis, category, longestUp) }
+  if (dims) {
+    const [x, y, z] = dims
+    const v = axis === 'horizontal' ? Math.max(x, z) : axis === 'longest' ? Math.max(x, y, z) : y
+    return { value: v, word: axisWord(axis ?? 'height', category, longestUp) }
+  }
+  return null
+}
+
+// "About 1.8 m tall", "About 4.2 m long", "About 0.45 m long".
+export function aboutSize(value: number, word: string): string {
+  const v = value >= 10 ? String(Math.round(value)) : value >= 1 ? String(Math.round(value * 10) / 10) : String(Math.round(value * 100) / 100)
+  return `About ${v} m ${word}`
+}
+
+// Light G13: a size written in the description ("two metres wide", "6 ft tall", "4.5 m long"). Digits or the words
+// one to twenty; m, metre(s), meter(s), cm, ft, foot, feet; an optional axis word after it. Nothing else.
+const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+const SIZE_RE = new RegExp(`\\b(\\d+(?:\\.\\d+)?|${NUMBER_WORDS.join('|')})[\\s-]*(metres|meters|metre|meter|cm|m|feet|foot|ft)\\b(?:[\\s-]+(tall|high|long|wide|across))?`, 'i')
+
+export function sizeFromDescription(text: string): { value: number; axis: 'height' | 'horizontal' | null; word: string | null } | null {
+  const m = SIZE_RE.exec(text)
+  if (!m) return null
+  const raw = m[1].toLowerCase()
+  const n = /^\d/.test(raw) ? Number(raw) : NUMBER_WORDS.indexOf(raw) + 1
+  if (!Number.isFinite(n) || n <= 0) return null
+  const unit = m[2].toLowerCase()
+  const metresValue = unit === 'cm' ? n / 100 : unit === 'ft' || unit === 'foot' || unit === 'feet' ? n * 0.3048 : n
+  const w = m[3]?.toLowerCase() ?? null
+  const axis = w === 'tall' || w === 'high' ? 'height' : w ? 'horizontal' : null
+  const word = w === 'tall' || w === 'high' ? 'tall' : w === 'long' ? 'long' : w ? 'across' : null
+  return { value: Math.round(metresValue * 100) / 100, axis, word }
 }
 
 export function isSimpleParam(stage: StageId, p: { name: string; simple?: boolean }, schemaHasFlag: boolean): boolean {

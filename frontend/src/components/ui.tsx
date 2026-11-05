@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { Check, JobStatus, StageId, VersionStatus } from '../api'
-import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, metricPlain, type CheckContext } from '../help'
+import type { Check, JobStatus, VersionStatus } from '../api'
+import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
+import { useRefData } from '../refdata'
 import { Info } from './Info'
 
 export type Tone = 'neutral' | 'ok' | 'bad' | 'warn' | 'accent' | 'muted'
@@ -80,7 +81,7 @@ export function MetricChips({ metrics, max = 12, compact = false }: { metrics: R
       if (nums.length === entries.length && nums.length > 0) {
         const avg = nums.reduce((a, b) => a + b, 0) / nums.length
         out.push(
-          <Chip key={key} title={`${key}: ${JSON.stringify(value)}`}>
+          <Chip key={key} title={`${key}: ${Object.entries(value as Record<string, unknown>).map(([k, v]) => `${k} ${fmtNum(v as number)}`).join(', ')}`}>
             <span className="chip-key">{metricPlain(key)}</span> avg {fmtNum(avg)}
           </Chip>,
         )
@@ -114,10 +115,12 @@ export function TrafficDot({ state, title }: { state: TrafficState; title?: stri
   return <span className={'traffic traffic-' + state} title={title} aria-label={title} role={title ? 'img' : undefined} />
 }
 
-export type FixRequest = { stage: StageId; params: Record<string, unknown> }
+// What a Fix button asks for: re-run a stage with params, or open a tool (`ui`, 2.5).
+export type FixRequest = FixAction
 
 // Plain-language checks: one sentence each with a traffic-light dot, an Info icon
-// and a "Fix automatically" button when the app knows how to fix a failure.
+// and a Fix button (labelled by the check's fix_label) when the app knows how to fix a failure.
+// A passing check reads as a pass; failures come first.
 export function PlainChecks({
   checks,
   ctx,
@@ -132,6 +135,7 @@ export function PlainChecks({
   compact?: boolean
 }) {
   const [showPassed, setShowPassed] = useState(!compact)
+  const { ref } = useRefData()
   const failing = checks.filter((c) => !checkPassed(c))
   const passing = checks.filter((c) => checkPassed(c))
   const render = (c: Check) => {
@@ -143,13 +147,13 @@ export function PlainChecks({
     return (
       <li key={c.id ?? c.name} className={'plain-check ' + state}>
         <TrafficDot state={state} title={ok ? 'passed' : sev === 'warn' ? 'warning' : 'needs attention'} />
-        <span className="plain-check-text" title={c.message ? `${c.id ?? c.name}: ${c.message}` : (c.id ?? c.name)}>
+        <span className="plain-check-text" title={`Technical name: ${c.id ?? c.name}`}>
           {checkSentence(c, ctx)}
           {key && <Info term={'term.' + key} />}
         </span>
         {fix && onFix && (
-          <button type="button" className="small-btn" disabled={busy} onClick={() => onFix(fix, c)} title={`Re-runs ${fix.stage} with ${JSON.stringify(fix.params)}`}>
-            Fix automatically
+          <button type="button" className="small-btn" disabled={busy} onClick={() => onFix(fix, c)} title={fixTooltip(fix, ref?.stages)}>
+            {fix.label}
           </button>
         )}
       </li>
@@ -256,7 +260,7 @@ export function ChipInput({ value, onChange, placeholder }: { value: string[]; o
 }
 
 // Enter submits, Shift+Enter inserts a newline.
-export function SubmitTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { onSubmit?: () => void }) {
+export function SubmitTextarea(props: React.ComponentProps<'textarea'> & { onSubmit?: () => void }) {
   const { onSubmit, onKeyDown, ...rest } = props
   return (
     <textarea

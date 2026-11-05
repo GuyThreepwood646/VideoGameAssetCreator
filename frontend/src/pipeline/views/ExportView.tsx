@@ -1,10 +1,11 @@
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
-import { Chip, Disclosure } from '../../components/ui'
+import { Chip, Disclosure, TrafficDot } from '../../components/ui'
+import { joinAnd } from '../../help'
 import Viewer from '../../Viewer'
+import { controllerParams, CYCLIC_CLIP, unityClips, unityReport, type UnityReport } from '../finish'
 
 type Lod = { level?: number; triangles?: number; screen_height?: number; ratio?: number }
-type UnityReport = { ok?: boolean; prefab?: string; avatar?: string; warnings?: string[]; errors?: string[] }
 
 const FILE_NAMES: Record<string, string> = {
   fbx: 'FBX (most engines)',
@@ -13,20 +14,25 @@ const FILE_NAMES: Record<string, string> = {
   unitypackage: 'Unity package',
   base_color: 'colour texture',
   normal: 'bump texture',
-  orm: 'surface texture',
+  metallic_smoothness: 'metal and shine texture (Unity)',
+  orm: 'surface texture (Unreal, Godot, web)',
   ao: 'shadow texture',
   metallic: 'metal texture',
-  roughness: 'shine texture',
+  roughness: 'roughness texture',
   sprite_atlas: 'sprite atlas',
   sprite_sheet: 'sprite sheet',
   manifest: 'manifest',
 }
 
-const DELIVERABLE_KEYS = ['fbx', 'glb', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+const DELIVERABLE_KEYS = ['fbx', 'glb', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+// Once the packed maps exist (3.1) the separate metal and roughness maps leave the download row; they stay in
+// Details, Files.
+const PACKED_REPLACES = new Set(['metallic', 'roughness'])
 
 // The download buttons for an export version (also used by the finishing card).
 export function Deliverables({ version }: { version: Version }) {
-  const fileKeys = DELIVERABLE_KEYS.filter((k) => version.files[k])
+  const packed = !!(version.files.metallic_smoothness || version.files.orm)
+  const fileKeys = DELIVERABLE_KEYS.filter((k) => version.files[k] && !(packed && PACKED_REPLACES.has(k)))
   return (
     <div className="deliverables">
       {fileKeys.map((k) => (
@@ -43,7 +49,7 @@ export function Deliverables({ version }: { version: Version }) {
 export function ExportView({ version, hideReady = false }: { version: Version; hideReady?: boolean }) {
   const glb = libraryUrl(version.files.glb)
   const lods = Array.isArray(version.metrics.lods) ? (version.metrics.lods as Lod[]) : []
-  const unity = (version.metrics.unity_report ?? null) as UnityReport | null
+  const unity = unityReport(version)
   const sheet = libraryUrl(version.files.sprite_sheet ?? version.files.sheet)
   const clips = Array.isArray(version.metrics.clips) ? (version.metrics.clips as string[]) : []
   const lod0 = lods[0]?.triangles
@@ -53,7 +59,7 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
       {!hideReady && (
         <div className="ready-box">
           <div className="ready-title">Your asset is ready</div>
-          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot; GLB works on the web.</div>
+          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot. The GLB holds every detail level and the collision shape, so on the web or in Godot show only the first model.</div>
           <Deliverables version={version} />
         </div>
       )}
@@ -99,9 +105,9 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
               <div className="unity-report">
                 <div className="row-gap">
                   <Chip tone={unity.ok ? 'ok' : 'bad'}>{unity.ok ? 'works in Unity' : 'failed in Unity'}</Chip>
-                  {unity.avatar && <Chip>skeleton: {unity.avatar}</Chip>}
                   {clips.length > 0 && <Chip>{clips.length} animations</Chip>}
                 </div>
+                <UnityLines report={unity} />
                 {unity.prefab && <div className="mono small">{unity.prefab}</div>}
                 {unity.errors && unity.errors.length > 0 && (
                   <ul className="checks">
@@ -146,5 +152,71 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
         </div>
       )}
     </div>
+  )
+}
+
+type UnityLine = { id: string; state: 'ok' | 'warn'; text: string; term: string; title?: string }
+
+const listNames = (names: string[], max = 6): string => (names.length > max ? `${names.slice(0, max).join(', ')} and ${names.length - max} more` : joinAnd(names))
+
+// What the Unity import says about metal and shine (3.1), looping clips and the controller (3.3), and whether the
+// skeleton reads as a person (3.6). Each line shows only when the report has that field.
+function unityLines(rep: UnityReport): UnityLine[] {
+  const out: UnityLine[] = []
+  if (Array.isArray(rep.texturesAssigned)) {
+    out.push(
+      rep.texturesAssigned.includes('metallic_smoothness')
+        ? { id: 'metal', state: 'ok', text: 'Metal and shine: connected, so metal parts look like metal.', term: 'metal_shine' }
+        : { id: 'metal', state: 'warn', text: 'Metal and shine: not connected, so metal may look like plastic.', term: 'metal_shine' },
+    )
+  }
+  const clips = unityClips(rep).filter((c) => typeof c.loop === 'boolean')
+  if (clips.length) {
+    const cyclic = clips.filter((c) => CYCLIC_CLIP.test(c.name))
+    const stuck = cyclic.filter((c) => !c.loop).map((c) => c.name)
+    const loops = clips.filter((c) => c.loop).map((c) => c.name)
+    if (stuck.length) out.push({ id: 'loops', state: 'warn', text: `Does not loop: ${listNames(stuck)}, so ${stuck.length > 1 ? 'they' : 'it'} would stop after one cycle.`, term: 'loop' })
+    else if (loops.length) out.push({ id: 'loops', state: 'ok', text: `Loops smoothly: ${listNames(loops)}.`, term: 'loop' })
+  }
+  if (rep.controller === null) {
+    out.push({ id: 'controller', state: 'warn', text: 'No animation controller was built, so you would set one up in Unity.', term: 'animator_controller' })
+  } else if (rep.controller) {
+    const params = controllerParams(rep)
+    const triggers = params.filter((p) => p !== 'Speed')
+    out.push(
+      params.includes('Speed')
+        ? { id: 'controller', state: 'ok', text: `Animation controller: Speed switches between standing, walking and running${triggers.length ? `; ${joinAnd(triggers)} ${triggers.length > 1 ? 'are triggers' : 'is a trigger'}` : ''}.`, term: 'animator_controller' }
+        : { id: 'controller', state: 'ok', text: 'Animation controller: one state per animation, with no Speed switch.', term: 'animator_controller' },
+    )
+  }
+  if (rep.avatar) {
+    const human = /human/i.test(rep.avatar)
+    const fellBack = rep.avatar_mapping === 'generic' || rep.humanoidValid === false
+    out.push({
+      id: 'avatar',
+      state: !human && fellBack ? 'warn' : 'ok',
+      text: human ? 'Skeleton in Unity: Humanoid, so the shared human animations work.' : 'Skeleton in Unity: Generic, so it plays its own animations only.',
+      term: 'avatar',
+      title: rep.avatar_mapping ? `Technical: ${rep.avatar}, mapping ${rep.avatar_mapping}` : `Technical: ${rep.avatar}`,
+    })
+  }
+  return out
+}
+
+function UnityLines({ report }: { report: UnityReport }) {
+  const lines = unityLines(report)
+  if (!lines.length) return null
+  return (
+    <ul className="unity-lines">
+      {lines.map((l) => (
+        <li key={l.id} className={'unity-line ' + l.state} title={l.title}>
+          <TrafficDot state={l.state} title={l.state === 'ok' ? 'checked' : 'needs a look'} />
+          <span>
+            {l.text}
+            <Info term={'term.' + l.term} />
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }

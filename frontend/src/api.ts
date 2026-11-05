@@ -104,7 +104,11 @@ export type Project = {
 
 export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 
-export type CheckFix = { stage: string; params?: Record<string, unknown> }
+// How the app can fix a failing check. A re-run fix names a stage and params; a tool fix (`ui`) opens an editor
+// instead (2.5): the parts editor, or the front picker in prep. `label` is the button text (fix_label in the
+// backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
+export type FixTool = 'parts_editor' | 'front_picker'
+export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string }
 
 // A quality check. The backend sends {id, name, passed, ok, value, limit, message}
 // and may add help (plain sentence), fix (how the app can fix it) and severity.
@@ -119,7 +123,13 @@ export type Check = {
   help?: string
   fix?: CheckFix | null
   severity?: 'block' | 'warn'
+  // Extra values the sentence was filled from (axis_word, missing, effect, ...).
+  vars?: Record<string, unknown>
 }
+
+// One line of the finish card's "What you get" list (metrics.finish_lines on the export version, 2.4).
+// `check` names a check whose Fix button a warn line shows; without it the line's id is tried.
+export type FinishLine = { id: string; text: string; state: 'ok' | 'warn'; term?: string; check?: string }
 
 export type Version = {
   id: string
@@ -193,6 +203,11 @@ export type Category = {
   input_view_default?: 'concept' | 'front' | 'quarter' | string | null
   // Stages this category does not have (material: turnaround). Runs build on the stage before them.
   skips?: string[]
+  // How size_m is measured (3.2): height is the Y extent, horizontal the larger of X and Z, longest the largest of
+  // all three; grid means the grid sets it (environment). With the question and hint the size knob shows.
+  size_axis?: 'height' | 'horizontal' | 'longest' | 'grid' | string | null
+  size_label?: string | null
+  size_hint?: string | null
 }
 
 export type StylePreset = { id: string; label: string; model: string; prompt_block: string }
@@ -219,6 +234,12 @@ export type AdjustParam = {
   description?: string
   help?: HelpText
   simple?: boolean
+  // Plain words for select and multiselect values ({value: label}); help.ts OPTION_LABELS is the fallback.
+  option_labels?: Record<string, string>
+  // The categories this knob applies to; absent means every category (2.3).
+  categories?: string[]
+  // A one-line hint shown under the control, when the backend has one.
+  hint?: string
 }
 
 export type HelpText = { meaning?: string; why?: string; technical?: string }
@@ -278,7 +299,48 @@ export type GalleryItem = {
   glb: string | null
 }
 
-export type ServerEvent = { type: 'job'; job: Job } | { type: 'version'; version: Version } | { type: 'autopilot'; asset_id: string; autopilot: AutopilotState }
+export type ServerEvent =
+  | { type: 'job'; job: Job }
+  | { type: 'version'; version: Version }
+  | { type: 'autopilot'; asset_id: string; autopilot: AutopilotState }
+  | { type: 'gpus'; gpus: Gpu[] }
+
+// Graphics cards (GET /api/gpus). A card turned off hands its work to the other card; a step only it can do waits.
+// Kinds of work a card may do (Advanced): pictures = concept, turnaround and material steps; model = mesh;
+// rigging = rig; review = the local judge.
+export const GPU_KINDS = ['pictures', 'model', 'rigging', 'review'] as const
+export type GpuKind = (typeof GPU_KINDS)[number]
+export type GpuCurrentJob = {
+  id: string
+  kind: string
+  stage: string
+  op: string
+  material: boolean
+  asset_id: string | null
+  asset_name: string | null
+  progress: number
+  message: string
+}
+export type Gpu = {
+  instance: string
+  gpu: string
+  url: string
+  enabled: boolean
+  reachable: boolean
+  vram_total_mb?: number | null
+  vram_free_mb?: number | null
+  current_job_id: string | null
+  current_job?: GpuCurrentJob | null
+  queued: number
+  can_run: string[]
+  note: string
+  allowed_kinds: GpuKind[]
+  possible_kinds: GpuKind[]
+  effective_kinds: GpuKind[]
+  kind_notes: Partial<Record<GpuKind, string>>
+  free_after_job: boolean
+}
+export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown> }
@@ -342,18 +404,22 @@ export type HealthInstance = {
   error?: string
   comfyui_version?: string | null
   devices: HealthDevice[]
+  // False when the card is turned off in the app (Graphics cards).
+  enabled?: boolean
 }
 export type Health = {
   ok: boolean
   version: string
   instances: Record<string, HealthInstance>
   host: { ram_total_bytes: number; ram_free_bytes: number; ram_free_gb: number; min_free_ram_gb: number; cpu_percent: number }
-  queue: Record<string, { paused: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
+  queue: Record<string, { paused: boolean; enabled?: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
 }
 
 export const api = {
   // Reference data
   health: () => get<Health>('/api/health'),
+  gpus: () => get<Gpu[]>('/api/gpus'),
+  setGpu: (instance: string, body: GpuPatch) => put<Gpu[]>(`/api/gpus/${instance}`, body),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),

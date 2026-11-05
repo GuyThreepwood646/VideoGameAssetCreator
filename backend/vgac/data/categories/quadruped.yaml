@@ -3,7 +3,13 @@ label: Quadruped
 rig_engine: skintoken
 silhouette_min: 0.5
 symmetric: true
-size_m: 1.2
+size_m: 1.5
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: horizontal
+size_word: long
+size_label: "How long is it?"
+size_hint: "In metres, from the nose to the tip of the tail. A wolf is about 1.8 m; a horse about 3 m."
 parts_default: []
 topology: quad
 input_view_default: quarter

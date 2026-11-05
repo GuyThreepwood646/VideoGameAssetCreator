@@ -1,11 +1,15 @@
 """Blender headless: game-ready prep of a textured low-poly GLB (the first half of bakeoff/finish.py).
 
-Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--height 1.8] [--symmetric] [--pivot base|center] [--smooth-angle 60]
+Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8] [--size-axis height|horizontal|longest]
+     [--yaw 0] [--symmetric] [--pivot base|center] [--smooth-angle 60] [--budget N]
+     (--height H is the old form of --size H --size-axis height)
 
-Does, in order: import; join meshes; apply transforms; scale so the bounding-box height equals height_m; move the
-pivot (base centre or bounding-box centre) to the origin; weld vertices split along UV chart borders; optional
-symmetrize across X; smooth shading with auto-smooth at the crease angle; export GLB; write <out>_report.json with
-triangle count, dimensions, bone count and a manifold check.
+Does, in order: import; join meshes; apply transforms; turn about the up axis by --yaw degrees (counter-clockwise seen
+from above, so the concept's front ends up facing Blender -Y, which is +Z in glTF and Unity); scale uniformly so the
+bounding-box extent on the size axis equals --size (height: Z; horizontal: the larger of X and Y; longest: the largest
+of all three); move the pivot (base centre or bounding-box centre) to the origin; weld vertices split along UV chart
+borders; optional symmetrize across X; smooth shading with auto-smooth at the crease angle; export GLB; write
+<out>_report.json with triangle count, dimensions, the measured size, bone count and a manifold check.
 """
 import json
 import math
@@ -22,7 +26,12 @@ from mathutils import Vector
 argv = _common.after_double_dash()
 src, dst, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
 
-height = float(_common.opt("--height", 1.8))
+legacy_height = _common.opt("--height", None)
+size_m = float(_common.opt("--size", legacy_height if legacy_height is not None else 1.8))
+size_axis = _common.opt("--size-axis", "height")
+if size_axis not in ("height", "horizontal", "longest"):
+    size_axis = "height"
+yaw = float(_common.opt("--yaw", 0.0)) % 360
 symmetric = _common.flag("--symmetric")
 pivot = _common.opt("--pivot", "base")
 smooth_angle = float(_common.opt("--smooth-angle", 60.0))
@@ -57,8 +66,22 @@ def bounds():
     return lo, hi
 
 
+def extent(lo, hi):
+    d = hi - lo
+    if size_axis == "horizontal":
+        return max(d.x, d.y)
+    if size_axis == "longest":
+        return max(d.x, d.y, d.z)
+    return d.z
+
+
+if yaw:
+    root.rotation_mode = "XYZ"  # glTF imports use quaternions, which ignore rotation_euler
+    root.rotation_euler = (0.0, 0.0, math.radians(yaw))
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+
 lo, hi = bounds()
-s = height / max(1e-6, (hi.z - lo.z))
+s = size_m / max(1e-6, extent(lo, hi))
 root.scale = (s, s, s)
 bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 lo, hi = bounds()
@@ -140,7 +163,11 @@ degenerate = sum(1 for f in bm.faces if f.calc_area() < 1e-12)
 bm.free()
 report = {
     "asset": name,
-    "height_m": height,
+    "size_m": size_m,
+    "size_axis": size_axis,
+    "size_extent_m": extent(lo, hi),
+    "yaw_deg": yaw,
+    "height_m": hi.z - lo.z,
     "symmetric": symmetric,
     "pivot": pivot,
     "smooth_angle": smooth_angle,

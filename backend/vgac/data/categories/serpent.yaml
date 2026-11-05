@@ -4,6 +4,12 @@ rig_engine: skintoken
 silhouette_min: 0.45
 symmetric: true
 size_m: 2.0
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: longest
+size_word: long
+size_label: "How long is it?"
+size_hint: "In metres, head to tail as it lies. A python is about 4 m."
 parts_default: []
 topology: quad
 input_view_default: quarter

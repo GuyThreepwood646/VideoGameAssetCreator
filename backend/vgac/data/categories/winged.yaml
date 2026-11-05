@@ -4,6 +4,12 @@ rig_engine: skintoken
 silhouette_min: 0.5
 symmetric: true
 size_m: 1.5
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: horizontal
+size_word: across
+size_label: "How wide are the wings?"
+size_hint: "In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m."
 parts_default: []
 topology: quad
 input_view_default: quarter

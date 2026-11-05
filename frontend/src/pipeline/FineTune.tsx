@@ -1,11 +1,13 @@
 // Fine-tune (the Adjust form) with a simple layer and an Advanced disclosure.
 // Applying it posts /api/versions/{vid}/adjust: a new version with these settings.
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { libraryUrl, selectedVersion, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { fmtDuration, isSimpleParam, modelLabel, paramPlain, platformPlain, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, isSimpleParam, knobApplies, measuredSize, modelLabel, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
+import { FrontPicker } from './FrontPicker'
+import { type ToolFocus } from './openTool'
 
 const SIZE_OPTIONS = [768, 1024, 1280, 1536, 2048]
 
@@ -18,6 +20,7 @@ export function FineTune({
   suggestion,
   disabled,
   onSubmit,
+  focus,
 }: {
   stage: StageId
   schema: AdjustParam[]
@@ -27,15 +30,20 @@ export function FineTune({
   suggestion: Suggestion | null
   disabled: boolean
   onSubmit: (params: Record<string, unknown>) => void
+  // A Fix that opens a tool (2.5): fill these params in and bring this setting into view; nothing runs.
+  focus?: ToolFocus | null
 }) {
+  // Knobs that apply to some categories only are left out for the others (2.3); they are never sent.
+  const visible = useMemo(() => schema.filter((p) => knobApplies(p, asset.category)), [schema, asset.category])
   // Reset the form only when its content changes: another version, another schema or
   // other stored settings. Asset reloads hand over new objects with the same content,
   // and those must not wipe what the person is editing.
-  const resetKey = `${target.id}|${JSON.stringify(schema)}|${JSON.stringify(target.params ?? {})}`
+  const resetKey = `${target.id}|${JSON.stringify(visible)}|${JSON.stringify(target.params ?? {})}`
   const initial = useMemo(() => {
     const out: Record<string, unknown> = {}
-    for (const p of schema) {
-      const current = target.params?.[p.name]
+    for (const p of visible) {
+      // size_m was height_m in older versions (3.2): read the old name as an alias.
+      const current = target.params?.[p.name] ?? (p.name === 'size_m' ? target.params?.height_m : undefined)
       out[p.name] = current !== undefined ? current : p.default !== undefined ? p.default : defaultFor(p)
     }
     return out
@@ -45,11 +53,38 @@ export function FineTune({
   useEffect(() => setValues(initial), [initial])
 
   const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }))
-  const changed = schema.filter((p) => JSON.stringify(values[p.name] ?? null) !== JSON.stringify(initial[p.name] ?? null))
+  const changed = visible.filter((p) => JSON.stringify(values[p.name] ?? null) !== JSON.stringify(initial[p.name] ?? null))
 
-  const schemaHasFlag = schema.some((p) => p.simple !== undefined)
-  const simple = schema.filter((p) => isSimpleParam(stage, p, schemaHasFlag))
-  const advanced = schema.filter((p) => !simple.includes(p))
+  const schemaHasFlag = visible.some((p) => p.simple !== undefined)
+  const simple = visible.filter((p) => isSimpleParam(stage, p, schemaHasFlag))
+  const advanced = visible.filter((p) => !simple.includes(p))
+
+  // Tool focus: fill in the fix's params, open Advanced if the setting lives there, scroll to it and focus it.
+  const formRef = useRef<HTMLFormElement>(null)
+  const [advOpen, setAdvOpen] = useState(false)
+  const [flash, setFlash] = useState<string | null>(null)
+  useEffect(() => {
+    if (!focus) return
+    const known = Object.fromEntries(Object.entries(focus.params ?? {}).filter(([k]) => visible.some((p) => p.name === k)))
+    if (Object.keys(known).length) setValues((cur) => ({ ...cur, ...known }))
+    const knob = focus.knob && visible.some((p) => p.name === focus.knob) ? focus.knob : null
+    if (!knob) return
+    if (advanced.some((p) => p.name === knob)) setAdvOpen(true)
+    const raf = requestAnimationFrame(() => {
+      const el = formRef.current?.querySelector<HTMLElement>(`[data-knob="${knob}"]`)
+      if (!el) return
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
+      el.querySelector<HTMLElement>('input:checked, input, select, button')?.focus({ preventScroll: true })
+      setFlash(knob)
+    })
+    const t = window.setTimeout(() => setFlash(null), 2500)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.nonce])
   const hasSize = stage === 'concept' && simple.some((p) => p.name === 'width') && simple.some((p) => p.name === 'height')
   const simpleShown = hasSize ? simple.filter((p) => p.name !== 'height') : simple
 
@@ -65,7 +100,13 @@ export function FineTune({
   const plat = refData?.platforms.find((p) => p.id === asset.platform_target)
   const budget = cat?.budgets?.[asset.platform_target]?.triangles ?? suggestion?.budgets.triangles ?? plat?.triangles_character ?? 20000
 
-  const renderField = (p: AdjustParam, adv: boolean) => {
+  const renderField = (p: AdjustParam, adv: boolean) => (
+    <div key={p.name} data-knob={p.name} className={'knob' + (flash === p.name ? ' knob-flash' : '') + (p.name === 'face_yaw' ? ' knob-wide' : '')}>
+      {renderControl(p, adv)}
+    </div>
+  )
+
+  const renderControl = (p: AdjustParam, adv: boolean) => {
     if (hasSize && p.name === 'width') {
       const w = Number(values.width ?? 1024)
       const opts = SIZE_OPTIONS.filter((o) => (p.min === undefined || o >= p.min) && (p.max === undefined || o <= p.max))
@@ -128,11 +169,50 @@ export function FineTune({
         </Field>
       )
     }
-    return <AdjustField key={p.name} param={p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
+    // Size (3.2): the question and hint come from the category; the readout says what this version measures.
+    if (stage === 'prep' && (p.name === 'size_m' || p.name === 'height_m')) {
+      const now = measuredSize(target.metrics, asset.category)
+      return (
+        <AdjustField
+          param={p}
+          value={values[p.name]}
+          onChange={(v) => set(p.name, v)}
+          disabled={disabled}
+          labelText={sizeQuestion(cat ?? asset.category)}
+          term="param.size_m"
+          hintText={
+            <>
+              {p.hint ?? sizeHint(cat ?? asset.category)}
+              {now && <span className="size-now"> Now: {aboutSize(now.value, now.word).replace(/^About/, 'about')}.</span>}
+            </>
+          }
+          unit="m"
+        />
+      )
+    }
+    if (p.name === 'face_yaw') {
+      const meshGlb = libraryUrl(selectedVersion(asset, 'mesh')?.files.glb)
+      const m = target.metrics ?? {}
+      const applied = [m.face_yaw_applied, m.applied_face_yaw, m.face_yaw].find((x) => typeof x === 'number') as number | undefined
+      return (
+        <FrontPicker
+          value={values.face_yaw}
+          onChange={(v) => set('face_yaw', v)}
+          options={p.options}
+          optionLabels={p.option_labels}
+          label={p.label && !/yaw/i.test(p.label) ? p.label : undefined}
+          hint={p.hint}
+          glbUrl={meshGlb}
+          chosenYaw={applied ?? null}
+          disabled={disabled}
+        />
+      )
+    }
+    return <AdjustField param={p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
   }
 
   return (
-    <form className="finetune" onSubmit={submit}>
+    <form className="finetune" onSubmit={submit} ref={formRef}>
       <div className="row-between">
         <div className="field-label">
           Fine-tune
@@ -144,10 +224,10 @@ export function FineTune({
           </span>
         )}
       </div>
-      {schema.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
+      {visible.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
       {simpleShown.length > 0 && <div className="adjust-grid">{simpleShown.map((p) => renderField(p, false))}</div>}
       {advanced.length > 0 && (
-        <Disclosure label={`Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})`}>
+        <Disclosure label={`Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})`} open={advOpen} onToggle={setAdvOpen}>
           <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>
         </Disclosure>
       )}
@@ -190,10 +270,28 @@ function defaultFor(p: AdjustParam): unknown {
   }
 }
 
-function AdjustField({ param: p, value, onChange, disabled }: { param: AdjustParam; value: unknown; onChange: (v: unknown) => void; disabled: boolean }) {
-  const label = paramPlain(p.name, p.label)
-  const term = `param.${p.name}`
-  const hint = p.help?.meaning ?? p.description
+function AdjustField({
+  param: p,
+  value,
+  onChange,
+  disabled,
+  labelText,
+  hintText,
+  term: termOverride,
+  unit,
+}: {
+  param: AdjustParam
+  value: unknown
+  onChange: (v: unknown) => void
+  disabled: boolean
+  labelText?: string
+  hintText?: ReactNode
+  term?: string
+  unit?: string
+}) {
+  const label = labelText ?? paramPlain(p.name, p.label)
+  const term = termOverride ?? `param.${p.name}`
+  const hint = hintText ?? p.hint ?? p.help?.meaning ?? p.description
   const tech = <span className="mono muted">{p.name}</span>
   const hintNode = hint ? (
     <>
@@ -214,7 +312,7 @@ function AdjustField({ param: p, value, onChange, disabled }: { param: AdjustPar
           label={
             <span className="row-between">
               {label}
-              <span className="mono">{Number.isFinite(num) ? num : 'auto'}</span>
+              <span className="mono">{Number.isFinite(num) ? `${num}${unit ? ' ' + unit : ''}` : 'auto'}</span>
             </span>
           }
           term={term}
@@ -260,7 +358,7 @@ function AdjustField({ param: p, value, onChange, disabled }: { param: AdjustPar
             {(value === null || value === undefined) && <option value="">automatic</option>}
             {(p.options ?? []).map((o) => (
               <option key={String(o)} value={String(o)}>
-                {p.name === 'model' ? modelLabel(String(o)) : String(o)}
+                {optionLabel(p, o)}
               </option>
             ))}
           </select>
@@ -282,7 +380,7 @@ function AdjustField({ param: p, value, onChange, disabled }: { param: AdjustPar
                     onChange((p.options ?? []).filter((x) => next.includes(String(x))))
                   }}
                 />
-                {String(o)}
+                {optionLabel(p, o)}
               </label>
             ))}
           </div>

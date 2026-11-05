@@ -34,6 +34,9 @@ export const categories: Category[] = [
     symmetric: true,
     pose_block: 'full body, A-pose, arms slightly away from the body, neutral expression, facing camera',
     size_m: 1.8,
+    size_axis: 'height',
+    size_label: 'How tall is it?',
+    size_hint: 'In metres, from the ground to the top of the head. A person is about 1.8 m.',
     parts_default: ['weapon', 'shield'],
     budgets: { mobile_low: { triangles: 8000, texture: 1024 }, pc_mid: { triangles: 30000, texture: 2048 }, high: { triangles: 80000, texture: 4096 } },
   },
@@ -43,7 +46,10 @@ export const categories: Category[] = [
     rig_engine: 'skintoken',
     symmetric: true,
     pose_block: 'full body, standing neutral, side three-quarter view, all four legs visible',
-    size_m: 1.2,
+    size_m: 1.5,
+    size_axis: 'horizontal',
+    size_label: 'How long is it?',
+    size_hint: 'In metres, nose to rump, not counting the tail. A wolf is about 1.4 m; a horse about 2.4 m.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 6000, texture: 1024 }, pc_mid: { triangles: 24000, texture: 2048 }, high: { triangles: 60000, texture: 4096 } },
   },
@@ -53,7 +59,10 @@ export const categories: Category[] = [
     rig_engine: 'skintoken',
     symmetric: true,
     pose_block: 'full body, wings spread, standing, side three-quarter view',
-    size_m: 1.0,
+    size_m: 1.5,
+    size_axis: 'horizontal',
+    size_label: 'How wide are the wings?',
+    size_hint: 'In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 6000, texture: 1024 }, pc_mid: { triangles: 24000, texture: 2048 }, high: { triangles: 60000, texture: 4096 } },
   },
@@ -63,7 +72,10 @@ export const categories: Category[] = [
     rig_engine: 'hinge',
     symmetric: true,
     pose_block: 'full vehicle, three-quarter view, wheels on the ground, no background',
-    size_m: 4.0,
+    size_m: 4.5,
+    size_axis: 'horizontal',
+    size_label: 'How long is it?',
+    size_hint: 'In metres, front to back. A car is about 4.5 m; a tank about 7 m.',
     parts_default: ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr', 'turret'],
     budgets: { mobile_low: { triangles: 5000, texture: 1024 }, pc_mid: { triangles: 20000, texture: 2048 }, high: { triangles: 50000, texture: 4096 } },
   },
@@ -73,7 +85,10 @@ export const categories: Category[] = [
     rig_engine: 'none',
     symmetric: false,
     pose_block: 'single object, three-quarter view, resting on a flat surface',
-    size_m: 0.5,
+    size_m: 0.6,
+    size_axis: 'longest',
+    size_label: 'How big is it?',
+    size_hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 800, texture: 512 }, pc_mid: { triangles: 3000, texture: 1024 }, high: { triangles: 10000, texture: 2048 } },
   },
@@ -84,6 +99,9 @@ export const categories: Category[] = [
     symmetric: true,
     pose_block: 'single object, three-quarter view, closed state, resting on a flat surface',
     size_m: 0.8,
+    size_axis: 'longest',
+    size_label: 'How big is it?',
+    size_hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.',
     parts_default: ['lid'],
     budgets: { mobile_low: { triangles: 1200, texture: 512 }, pc_mid: { triangles: 5000, texture: 1024 }, high: { triangles: 15000, texture: 2048 } },
   },
@@ -93,7 +111,10 @@ export const categories: Category[] = [
     rig_engine: 'none',
     symmetric: false,
     pose_block: 'modular piece, orthographic three-quarter view, grid aligned',
-    size_m: 2.0,
+    size_m: 3.0,
+    size_axis: 'grid',
+    size_label: 'Size on the grid',
+    size_hint: 'Set by the grid; see G15.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 1500, texture: 1024 }, pc_mid: { triangles: 6000, texture: 2048 }, high: { triangles: 20000, texture: 4096 } },
   },
@@ -232,9 +253,21 @@ export const stages: StageInfo[] = [
     id: 'prep',
     label: 'Prep',
     adjust_schema: [
-      { name: 'height_m', label: 'Height (m)', type: 'number', min: 0.05, max: 20, step: 0.05, default: 1.8 },
+      // 3.2: size_m replaces height_m (read as an alias); null means the category's size. Not for scenery or materials.
+      { name: 'size_m', label: 'Size (m)', type: 'number', min: 0.01, max: 100, step: 0.05, default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage'] },
+      {
+        name: 'face_yaw',
+        label: 'Which way is the front?',
+        type: 'select',
+        options: ['auto', 0, 90, 180, 270],
+        default: 'auto',
+        option_labels: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
+        hint: 'Pick the picture where the front faces you. The game treats that side as forward.',
+        categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'],
+      },
       { name: 'symmetric', label: 'Symmetrize', type: 'boolean', default: true },
-      { name: 'pivot', label: 'Pivot', type: 'select', options: ['base', 'center'], default: 'base' },
+      // This one carries the backend's option_labels (2.2); the others fall back to help.ts OPTION_LABELS.
+      { name: 'pivot', label: 'Pivot', type: 'select', options: ['base', 'center'], default: 'base', option_labels: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' } },
       { name: 'smooth_angle', label: 'Smooth angle (deg)', type: 'number', min: 10, max: 90, step: 1, default: 60 },
     ],
   },
@@ -257,7 +290,8 @@ export const stages: StageInfo[] = [
       { name: 'collider', label: 'Collider', type: 'select', options: ['hull', 'none'], default: 'hull' },
       { name: 'formats', label: 'Formats', type: 'multiselect', options: ['fbx', 'glb'], default: ['fbx', 'glb'] },
       { name: 'unity', label: 'Build Unity prefab', type: 'boolean', default: true },
-      { name: 'clips_library', label: 'Clip library', type: 'select', options: ['ual1', 'ual2', 'none'], default: 'ual1' },
+      // Humanoids only (2.3): the shared human animation libraries.
+      { name: 'clips_library', label: 'Clip library', type: 'select', options: ['ual1', 'ual2', 'none'], default: 'ual1', categories: ['humanoid'] },
       { name: 'sprites', label: 'Render sprite sheet', type: 'boolean', default: false },
       { name: 'sprite_directions', label: 'Sprite directions', type: 'integer', min: 4, max: 16, step: 4, default: 8 },
       { name: 'sprite_size', label: 'Sprite size (px)', type: 'integer', min: 32, max: 256, step: 32, default: 64 },
@@ -283,7 +317,19 @@ function figureFor(asset: Asset): Figure {
   return asset.category.startsWith('prop') || asset.category === 'environment' || asset.category === 'vehicle' ? 'box' : 'biped'
 }
 
-type MockCheck = { id: string; name: string; passed: boolean; ok: boolean; value?: unknown; limit?: unknown; message?: string; help?: string; fix?: { stage: string; params: Record<string, unknown> }; severity?: 'block' | 'warn' }
+type MockCheck = {
+  id: string
+  name: string
+  passed: boolean
+  ok: boolean
+  value?: unknown
+  limit?: unknown
+  message?: string
+  help?: string
+  fix?: { stage?: string; params?: Record<string, unknown>; label?: string; ui?: string }
+  severity?: 'block' | 'warn'
+  vars?: Record<string, unknown>
+}
 
 const chk = (id: string, ok: boolean, value: unknown, limit: unknown, extra: Partial<MockCheck> = {}): MockCheck => ({
   id,
@@ -292,13 +338,31 @@ const chk = (id: string, ok: boolean, value: unknown, limit: unknown, extra: Par
   ok,
   value,
   limit,
-  message: `${Array.isArray(value) ? JSON.stringify(value) : String(value)} (limit ${Array.isArray(limit) ? JSON.stringify(limit) : String(limit)})`,
+  message: `${Array.isArray(value) ? value.join(' x ') : String(value)} (limit ${Array.isArray(limit) ? limit.join(' to ') : String(limit)})`,
   ...extra,
 })
 
-// Same shape as the real backend; some entries carry help/fix/severity to exercise
-// the plain-language checks and the "Fix automatically" button.
-const checksFor = (stage: StageId, seed: number, budget = 20000): MockCheck[] => {
+const RIGGED = /^(humanoid|quadruped|winged|multileg|serpent)$/
+const AXIS_WORD: Record<string, string> = { humanoid: 'tall', quadruped: 'long', winged: 'across', vehicle: 'long', prop_rigid: 'long', prop_articulated: 'long', environment: 'tall' }
+// Measured size per category on its axis, and the box it comes from ([x, y, z] metres).
+const MOCK_DIMS: Record<string, [number, number, number]> = {
+  humanoid: [0.62, 1.8, 0.35],
+  quadruped: [0.42, 0.92, 1.5],
+  winged: [1.5, 0.7, 0.9],
+  vehicle: [1.9, 1.5, 4.5],
+  prop_rigid: [0.45, 0.6, 0.45],
+  prop_articulated: [0.8, 0.55, 0.5],
+  environment: [2.0, 3.0, 0.4],
+}
+export function clipsFor(category: string): string[] {
+  if (category === 'humanoid') return ['idle', 'walk', 'run', 'jump', 'attack', 'hit', 'death']
+  if (RIGGED.test(category)) return ['idle', 'walk', 'run', 'attack', 'hit', 'death']
+  return []
+}
+
+// Same shape as the real backend under the 2.1 contract: help is the ok or fail sentence matching the outcome,
+// a failing fix carries its label, and some checks carry vars. A few leave help out so the frontend fallback runs.
+const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'humanoid'): MockCheck[] => {
   const fail = seed % 3 === 0
   switch (stage) {
     case 'mesh':
@@ -310,11 +374,32 @@ const checksFor = (stage: StageId, seed: number, budget = 20000): MockCheck[] =>
       ]
     case 'prep':
       return [
-        chk('triangle_budget', !fail, fail ? budget + 210 : budget - 1580, budget, fail ? { fix: { stage: 'mesh', params: { target_faces: budget } }, help: `The model has 210 more triangles than this platform can handle (${(budget + 210).toLocaleString('en-US')} of ${budget.toLocaleString('en-US')}).` } : {}),
+        chk(
+          'triangle_budget',
+          !fail,
+          fail ? budget + 210 : budget - 1580,
+          budget,
+          fail
+            ? { fix: { stage: 'mesh', params: { target_faces: budget }, label: 'Shrink to the budget' }, help: `The model has 210 more triangles than this platform can handle (${(budget + 210).toLocaleString('en-US')} of ${budget.toLocaleString('en-US')}).` }
+            : { help: `The model has ${(budget - 1580).toLocaleString('en-US')} triangles, within the ${budget.toLocaleString('en-US')} this platform allows.` },
+        ),
+        // No help and no label: the frontend sentence and fallback label "Close the holes" show.
         chk('manifold', !fail, fail ? 8 : 0, 0, fail ? { fix: { stage: 'mesh', params: { remesh: true } } } : {}),
         chk('watertight', true, 0, 0),
         chk('degenerate_faces', true, 0, 0),
-        chk('height_m', true, 1.8, 1.8),
+        ...(category === 'environment' || category === 'material'
+          ? []
+          : [
+              chk('size_m', true, sizeOn(category), sizeOn(category), { severity: 'warn', vars: { axis_word: AXIS_WORD[category] ?? 'tall' }, help: `The model is ${sizeOn(category)} m ${AXIS_WORD[category] ?? 'tall'}, as intended.` }),
+            ]),
+        // The front check. On the failing seed the best turn is not a quarter turn, so its fix opens the front
+        // picker instead of re-running (2.5).
+        chk('facing', !fail, fail ? 45 : 0, 20, {
+          severity: 'warn',
+          ...(fail
+            ? { fix: { ui: 'front_picker', label: 'Pick the front' }, help: 'The model may face the wrong way: it matches the front picture best when turned 45 degrees.' }
+            : { help: 'The front of the model faces forward in the game.' }),
+        }),
         chk('uv_set', true, 1, 1),
       ]
     case 'rig':
@@ -332,11 +417,43 @@ const checksFor = (stage: StageId, seed: number, budget = 20000): MockCheck[] =>
         chk('collider_present', true, 212, '>0'),
         chk('collider_vertices', true, 212, 255),
         chk('unity_import', true, true, true),
-        chk('unity_humanoid_avatar', true, true, true),
+        chk('materials_connected', true, 'metal and shine', null, { severity: 'warn', help: 'Unity uses all the surface textures: colour, bumps, shadows, metal and shine.' }),
+        ...(RIGGED.test(category)
+          ? [
+              chk('clips_loop', true, null, null, { severity: 'block', help: 'Idle and walk loop smoothly.' }),
+              chk('controller_ready', true, true, true, { severity: 'warn', help: 'An animation controller switches between idle, walk and run by speed.' }),
+            ]
+          : []),
+        ...(category === 'humanoid' ? [chk('unity_humanoid_avatar', true, 46, true, { severity: 'warn', vars: { clips: 46 } })] : []),
       ]
     default:
       return []
   }
+}
+
+function sizeOn(category: string): number {
+  const d = MOCK_DIMS[category] ?? MOCK_DIMS.prop_rigid
+  const axis = categories.find((c) => c.id === category)?.size_axis
+  return axis === 'horizontal' ? Math.max(d[0], d[2]) : axis === 'longest' ? Math.max(...d) : d[1]
+}
+
+// The export stage's finish card lines and "Using it in Unity" text (2.4), as the new backend writes them.
+// The seeded knight gets these; other exports leave them out so the frontend builds the lines itself.
+export function addBackendFinish(asset: Asset, version: Version) {
+  const prefab = `Assets/VGAC/${asset.name}/${asset.name}.prefab`
+  version.metrics.finish_lines = [
+    { id: 'size', text: 'Real size: 1.8 m tall, but the front may face the wrong way.', state: 'warn', term: 'face_yaw', check: 'facing' },
+    { id: 'surface', text: 'Looks right in Unity: colour, bumps, shadows, metal and shine are connected.', state: 'ok', term: 'metal_shine' },
+    { id: 'movement', text: 'Ready to move: set Speed and it idles, walks and runs; Attack, Hit and Die are one line each.', state: 'ok', term: 'animator_controller' },
+    { id: 'collision', text: 'Bumps into things: 1 collision shape.', state: 'ok', term: 'collider' },
+    { id: 'shared_animations', text: 'Shared animations: 46 human moves work on this character.', state: 'ok', term: 'avatar' },
+    { id: 'files', text: 'Files: FBX (Unity, Unreal, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },
+  ]
+  version.metrics.unity_howto = [
+    `Drag the prefab from \`${prefab}\` into your scene.`,
+    'In your movement script, set the speed every frame: `animator.SetFloat("Speed", speed);`',
+    'For one-off moves, call `animator.SetTrigger("Attack");` (or `"Hit"`, `"Die"`).',
+  ]
 }
 
 // Fill in files and metrics for a finished version.
@@ -407,7 +524,10 @@ export function fabricate(asset: Asset, version: Version) {
       m.uv_islands = 23
       m.texel_density = 10.2
       m.collider_vertices = 212
-      m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000)
+      m.dims = MOCK_DIMS[asset.category] ?? MOCK_DIMS.prop_rigid
+      // The turn prep applied when face_yaw was automatic (3.2); the front picker marks it "chosen".
+      m.face_yaw_applied = 0
+      m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000, asset.category)
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.checks_failed = (m.checks as MockCheck[]).filter((c) => !c.ok).map((c) => c.id)
       break
@@ -421,7 +541,7 @@ export function fabricate(asset: Asset, version: Version) {
       m.template = version.params.template === 'auto' || !version.params.template ? 'mixamo' : version.params.template
       m.max_influences = version.params.group_per_vertex ?? 4
       m.unweighted_vertices = 0
-      m.checks = checksFor('rig', seed)
+      m.checks = checksFor('rig', seed, 20000, asset.category)
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.elapsed_seconds = 95
       break
@@ -435,7 +555,14 @@ export function fabricate(asset: Asset, version: Version) {
         { level: 2, triangles: 4_600, screen_height: 0.12 },
         { level: 3, triangles: 1_840, screen_height: 0.03 },
       ]
-      const clips = ['idle', 'walk', 'run', 'jump', 'attack', 'hit', 'death']
+      const clips = clipsFor(asset.category)
+      // Packed maps (3.1); the separate metal and roughness maps are still written.
+      f.base_color = putDataFile(`${base}/T_${asset.name}_BaseColor.png`, makeTexture('base_color', hue, 256))
+      f.normal = putDataFile(`${base}/T_${asset.name}_Normal.png`, makeTexture('normal', hue, 256))
+      f.metallic_smoothness = putDataFile(`${base}/T_${asset.name}_MetallicSmoothness.png`, makeTexture('orm', hue, 256))
+      f.orm = putDataFile(`${base}/T_${asset.name}_ORM.png`, makeTexture('orm', hue + 40, 256))
+      f.metallic = putDataFile(`${base}/T_${asset.name}_Metallic.png`, makeTexture('orm', hue + 80, 256))
+      f.roughness = putDataFile(`${base}/T_${asset.name}_Roughness.png`, makeTexture('orm', hue + 120, 256))
       const manifest = {
         asset: asset.name,
         category: asset.category,
@@ -462,14 +589,24 @@ export function fabricate(asset: Asset, version: Version) {
       m.lods = lods
       m.clips = clips
       m.formats = version.params.formats ?? ['fbx', 'glb']
+      const rigged = RIGGED.test(asset.category)
+      m.collider_parts = version.params.collider === 'none' ? 0 : 1
       m.unity_report = {
         ok: true,
         prefab: `Assets/VGAC/${asset.name}/${asset.name}.prefab`,
-        avatar: 'Humanoid',
+        ...(rigged ? { avatar: asset.category === 'humanoid' ? 'Humanoid' : 'Generic', avatar_mapping: asset.category === 'humanoid' ? 'explicit' : 'generic', humanoidValid: asset.category === 'humanoid' } : {}),
+        importer_version: 2,
+        texturesAssigned: ['base_color', 'normal', 'occlusion', 'metallic_smoothness'],
+        ...(rigged
+          ? {
+              clips: clips.map((c) => ({ name: c, loop: /idle|walk|run/.test(c) })),
+              controller: { states: ['Locomotion', 'Attack', 'Hit', 'Dead'], parameters: ['Speed', 'Attack', 'Hit', 'Die', ...(asset.category === 'humanoid' ? ['Jump'] : [])] },
+            }
+          : {}),
         warnings: ['LOD3 is under 10 percent of LOD0; Unity will cull it at 3 percent screen height'],
         errors: [],
       }
-      m.checks = checksFor('export', seed)
+      m.checks = checksFor('export', seed, 20000, asset.category)
       m.gate_ok = true
       break
     }
@@ -615,13 +752,14 @@ export function seedStore() {
   setSelected(knight, m2)
 
   // seed 3 makes the mock prep checks fail (triangle budget and manifold) so the fix buttons show.
-  const pr1 = seedVersion(knight, 'prep', m2, { height_m: 1.8, symmetric: true, pivot: 'base', smooth_angle: 60, seed: 3 }, 120, 'host')
+  const pr1 = seedVersion(knight, 'prep', m2, { height_m: 1.8, face_yaw: 'auto', symmetric: true, pivot: 'base', smooth_angle: 60, seed: 3 }, 120, 'host')
   setSelected(knight, pr1)
 
   const r1 = seedVersion(knight, 'rig', pr1, { template: 'auto', target_faces: 20_000, group_per_vertex: 4, bottom_center_origin: true, bend_test: true }, 80, 'b')
   setSelected(knight, r1)
 
   const e1 = seedVersion(knight, 'export', r1, { lods: '1.0, 0.5, 0.25, 0.1', collider: 'hull', formats: ['fbx', 'glb'], unity: true, clips_library: 'ual1', sprites: true, sprite_directions: 8, sprite_size: 64 }, 30, 'host')
+  addBackendFinish(knight, e1)
   setSelected(knight, e1)
 
   const chest: Asset = {

@@ -1,6 +1,7 @@
 // Reference tables (categories, styles, platforms, stages) fetched once and shared.
 import { useEffect, useState } from 'react'
 import { api, type Category, type Platform, type StageInfo, type StylePreset } from './api'
+import { rememberCategories } from './help'
 
 export type RefData = { categories: Category[]; styles: StylePreset[]; platforms: Platform[]; stages: StageInfo[] }
 
@@ -8,12 +9,10 @@ let cached: Promise<RefData> | null = null
 
 export function loadRefData(): Promise<RefData> {
   if (!cached) {
-    cached = Promise.all([api.categories(), api.styles(), api.platforms(), api.stages()]).then(([categories, styles, platforms, stages]) => ({
-      categories,
-      styles,
-      platforms,
-      stages,
-    }))
+    cached = Promise.all([api.categories(), api.styles(), api.platforms(), api.stages()]).then(([categories, styles, platforms, stages]) => {
+      rememberCategories(categories)
+      return { categories, styles, platforms, stages }
+    })
     cached.catch(() => {
       cached = null
     })

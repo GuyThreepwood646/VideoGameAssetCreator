@@ -1971,3 +1971,293 @@ input[type='checkbox'] {
   gap: 2px;
   line-height: 1.5;
 }
+
+/* Graphics cards (Health page) */
+.dot.off {
+  background: var(--border-strong);
+}
+.gpu-card {
+  margin-bottom: var(--s3);
+}
+.gpu-card .warn {
+  color: var(--warn);
+}
+.gpu-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: var(--s3);
+  row-gap: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--s2) 10px;
+  background: var(--panel-2);
+}
+.gpu-row.gpu-off {
+  border-style: dashed;
+}
+.gpu-name {
+  font-weight: 600;
+}
+.gpu-status {
+  margin: 2px 0;
+}
+.gpu-off .gpu-status {
+  color: var(--muted);
+}
+.gpu-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  align-self: start;
+}
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 28px;
+  padding: 2px 10px 2px 4px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--input);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.switch:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.switch-knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: background 0.15s;
+}
+.switch-on {
+  border-color: var(--ok);
+  color: var(--text);
+}
+.switch-on .switch-knob {
+  background: var(--ok);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch-label {
+  min-width: 2em;
+  font-weight: 600;
+}
+.gpu-advanced {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.gpu-advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  width: max-content;
+}
+.gpu-kinds {
+  border: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.gpu-kinds legend {
+  padding: 0;
+  margin-bottom: var(--s1);
+  font-weight: 600;
+}
+.gpu-kind {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.gpu-advanced > .gpu-kind {
+  margin-top: var(--s2);
+}
+.gpu-kind label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.gpu-kind-na label {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Finish card: "What you get" and "Using it in Unity" (plan 2.4) */
+.finish-lines ul,
+.unity-lines {
+  list-style: none;
+  margin: var(--s1) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.finish-line,
+.unity-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.finish-line .traffic,
+.unity-line .traffic {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.finish-line-text {
+  flex: 1;
+}
+.unity-lines {
+  margin: var(--s2) 0;
+  font-size: 12px;
+}
+.unity-howto ol {
+  margin: var(--s1) 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.unity-howto code,
+.finish-line code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+/* Fine-tune: a setting opened by a Fix (plan 2.5) */
+.knob {
+  min-width: 0;
+  border-radius: var(--radius);
+  transition: box-shadow 0.4s;
+}
+.knob-wide {
+  grid-column: 1 / -1;
+}
+.knob-flash {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .knob {
+    transition: none;
+  }
+}
+.tool-note {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--s2);
+  margin-bottom: var(--s2);
+}
+.size-now {
+  color: var(--text);
+}
+.described-size {
+  margin: calc(-1 * var(--s1)) 0 var(--s2);
+}
+
+/* "Which way is the front?" (plan 3.2) */
+.front-picker {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.front-picker legend {
+  padding: 0;
+  margin-bottom: var(--s1);
+}
+.front-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.front-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  width: 132px;
+  padding: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  cursor: pointer;
+  text-align: center;
+}
+.front-option:hover {
+  border-color: var(--border-strong);
+}
+.front-option.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.front-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.front-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.front-pic {
+  position: relative;
+  width: 120px;
+  height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--input);
+  border-radius: var(--radius);
+  overflow: hidden;
+  color: var(--muted);
+}
+.front-pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.front-label {
+  font-size: 12px;
+  line-height: 1.25;
+}
+.front-chosen {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.front-picker:disabled .front-option {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Viewer: the Play button when Reduce Motion paused the clip (plan 2.7) */
+.viewer-play {
+  border-color: var(--accent);
+  color: var(--accent);
+}

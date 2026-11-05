@@ -487,3 +487,21 @@ def test_spa_fallback(tmp_path):
         assert c.get("/assets/x.js").text == "1"
         assert c.get("/api/ping").json() == {"ok": True}
         assert c.get("/api/nope").status_code == 404
+
+
+def test_stages_serve_option_labels_and_category_knobs(client):
+    st = client.get("/api/stages").json()
+    prep = {p["name"]: p for p in next(s for s in st if s["id"] == "prep")["adjust_schema"]}
+    assert prep["face_yaw"]["option_labels"] == {"auto": "Automatic", "0": "As built", "90": "Turned a quarter to the left",
+                                                 "180": "Turned around", "270": "Turned a quarter to the right"}
+    assert "material" not in prep["size_m"]["categories"] and prep["size_m"]["by_category"]["quadruped"]["label"] == "How long is it?"
+    export = {p["name"]: p for p in next(s for s in st if s["id"] == "export")["adjust_schema"]}
+    assert export["clips_library"]["option_labels"]["none"] == "Only its own walk and idle"
+    # A select value sent as text is matched to its option.
+    p, a = _project_asset(client, category="prop_rigid")
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()["job"]["id"])
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()["job"]["id"])
+    wait_job(client, client.post(f"/api/assets/{a['id']}/stages/mesh/run", json={}).json()["job"]["id"])
+    r = client.post(f"/api/assets/{a['id']}/stages/prep/run", json={"params": {"face_yaw": "90", "size_m": 0.9}})
+    assert r.status_code == 200 and r.json()["version"]["params"]["face_yaw"] == 90
+    assert client.post(f"/api/assets/{a['id']}/stages/prep/run", json={"params": {"face_yaw": 45}}).status_code == 400

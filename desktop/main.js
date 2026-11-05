@@ -188,8 +188,10 @@ function buildAppMenu() {
 
 function trayTooltip(snap) {
   if (!snap) return 'Video Game Asset Creator';
+  const off = snap.services.filter((s) => s.state === 'off').length;
   const up = snap.services.filter((s) => s.state === 'up').length;
-  return `Video Game Asset Creator: ${up}/${snap.services.length} services up`;
+  const total = snap.services.length - off;
+  return `Video Game Asset Creator: ${up}/${total} services up` + (off ? ` (${off} card off)` : '');
 }
 
 function createTray() {

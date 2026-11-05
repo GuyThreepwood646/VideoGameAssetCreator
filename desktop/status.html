@@ -24,6 +24,8 @@
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); justify-self: center; }
   .dot.up { background: var(--ok); }
   .dot.down, .dot.error { background: var(--bad); }
+  .dot.off { background: transparent; border: 2px solid var(--border-strong); }
+  .msg.off { color: var(--warn); }
   .dot.starting, .dot.building, .dot.checking, .dot.unknown { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .name { font-weight: 600; }

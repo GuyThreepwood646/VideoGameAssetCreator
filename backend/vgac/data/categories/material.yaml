@@ -4,6 +4,9 @@ rig_engine: none
 skips: [turnaround]
 symmetric: false
 size_m: 1.0
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: none
 parts_default: []
 topology: none
 input_view_default: concept
