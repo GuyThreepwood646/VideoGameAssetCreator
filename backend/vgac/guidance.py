@@ -215,7 +215,7 @@ STRENGTH_LABELS = {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong
 # Each entry: severity ("block" or "warn"); ok and fail, the sentence for each outcome (a format string, or a
 # function of the check returning one); optional vars, a function of the check returning extra placeholder values;
 # optional fix, a function of the check returning {"stage", "params"} or {"ui": ...} (None means no useful fix);
-# optional fix_label. Placeholders take a format spec: n (whole number with thousands separators), pct (ratio as a
+# optional fix_label (a string, or a function of the check returning one). Placeholders take a format spec: n (whole number with thousands separators), pct (ratio as a
 # percentage), m (metres, two decimals at most), x (two decimals), list (comma separated), dims (joined with " x ").
 # A placeholder the check does not have becomes an empty string; a value that is None prints as "?".
 # This is the one source of check wording; frontend help.ts CHECK_TEXT is only the mock fallback.
@@ -611,9 +611,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
             "blurry": "The face is still blurry after painting it from the picture (detail {value:n}, sharp from {limit:n}).",
             "off_picture": "The face was painted, but it follows the picture poorly (match {match:n} of 1).",
             "eye_colour": "The face was painted, but the eyes' colour differs from the picture's (by {eye_shift:n}, fine up to 8).",
+            "eye_missing": "The face was painted, but {eye_words} {eye_verb} not: the picture shows the eye, the model still has the blurred smudge from the 3D step.",
+            "eye_under_hair": ("The face was painted, but {eye_words} {eye_verb} not: the model's hair covers that eye, although the picture shows it. "
+                               "Painting the face again cannot change that; building the 3D model again can give hair that leaves the eye free."),
+            "eye_blurry": "The face was painted, but {eye_words} came out blurry, much softer than the picture's.",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
-        "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None}},
-        "fix_label": "Paint the face again",
+        "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") == "eye_under_hair"
+                          else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None}}),
+        "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") == "eye_under_hair" else "Paint the face again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the
@@ -891,7 +896,8 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
     if not passed and "fix" in g:
         fix = g["fix"](c)
         if fix:
-            label = g.get("fix_label") or DEFAULT_FIX_LABEL
+            label = g.get("fix_label")
+            label = (label(c) if callable(label) else label) or DEFAULT_FIX_LABEL
             out["fix"] = {**fix, "label": label}
             out["fix_label"] = label
     return out

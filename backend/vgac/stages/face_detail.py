@@ -49,6 +49,12 @@ RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the in
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
 EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
+# Each eye on its own (eye_measures, eye_state). Measured on the knights: painted eyes 0.98 to 1.0 painted, match 0.93
+# to 1.0, sharp 0.58 to 0.80 of the picture's; the eye left as a smudge 0.004 painted, match 0.19, sharp 0.25.
+EYE_PAINTED_MIN = 0.5  # the eye box's mean paint weight
+EYE_MATCH_MIN = 0.6  # the render's eye against the picture's (face.feature_match in the box)
+EYE_SHARP_MIN = 0.4  # the render's sharpness in the eye box over the picture's
+EYE_HAIR_COVER = 0.3  # an unpainted eye whose box is at least this much the model's hair is under the hair
 # Side views (the turnaround's pictures): which picture, from where. The quarter view's side is found by its outline.
 SIDE_VIEWS = (("quarter", (40.0, -40.0)), ("left", (90.0,)), ("right", (-90.0,)))
 SIDE_IOU_MIN = 0.85  # the side picture's head outline against the model's; under it the side is not used
@@ -236,16 +242,55 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     match = float(fd.get("feature_match_after") or 0.0)
     shift = fd.get("eye_colour_shift")
     colour_ok = shift is None or float(shift) <= EYE_COLOUR_MAX
-    ok = sharp >= SHARP_MIN and match >= MATCH_MIN and colour_ok
-    reason = None if ok else ("blurry" if sharp < SHARP_MIN else "off_picture" if match < MATCH_MIN else "eye_colour")
+    eye_reason, bad_eyes = eyes_verdict(fd.get("eyes"))
+    ok = sharp >= SHARP_MIN and match >= MATCH_MIN and colour_ok and eye_reason is None
+    reason = None if ok else ("blurry" if sharp < SHARP_MIN else eye_reason if eye_reason
+                              else "off_picture" if match < MATCH_MIN else "eye_colour")
     cu = fd.get("closeup") or {}
     dens = fd.get("density") or {}
     return [quality.check("face_matches_picture", ok, round(sharp, 3), SHARP_MIN,
                           vars={"reason": reason, "eye_shift": shift, "sides": side_words(fd.get("sides_used") or []),
+                                **eye_words(bad_eyes if reason == eye_reason else []),
                                 "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after"),
                                 "source": source_words(fd), "closeup_not_used": CLOSEUP_REASONS.get(cu.get("reason") or "", "")
                                 if cu.get("wanted") and not cu.get("used") else "",
                                 "density_note": dens.get("note") or "", "level": dens.get("level") or "standard"})]
+
+
+def eye_state(e: dict[str, Any]) -> str | None:
+    """What is wrong with one eye from eye_measures, or None when it was painted and is sharp: "eye_under_hair" (not
+    painted because the model's hair covers it), "eye_missing" (not painted, or the render does not show the
+    picture's eye), "eye_blurry" (painted but much softer than the picture's)."""
+    painted = float(e.get("painted") or 0.0)
+    if painted < EYE_PAINTED_MIN:
+        return "eye_under_hair" if float(e.get("hair") or 0.0) >= EYE_HAIR_COVER else "eye_missing"
+    if e.get("match") is not None and float(e["match"]) < EYE_MATCH_MIN:
+        return "eye_missing"
+    if e.get("sharp") is not None and float(e["sharp"]) < EYE_SHARP_MIN:
+        return "eye_blurry"
+    return None
+
+
+def eyes_verdict(eyes: list[dict[str, Any]] | None) -> tuple[str | None, list[str]]:
+    """The worst eye state over both eyes (under hair, then missing, then blurry) and the sides that have it. (None,
+    []) when both are fine or the eyes were not measured (older versions, eyes not found in the picture)."""
+    states = [(eye_state(e), e.get("side")) for e in (eyes or [])]
+    for reason in ("eye_under_hair", "eye_missing", "eye_blurry"):
+        sides = [s for r, s in states if r == reason]
+        if sides:
+            return reason, sides
+    return None, []
+
+
+def eye_words(sides: list[str]) -> dict[str, Any]:
+    """Placeholders for the eye sentences: eye_words ("the right eye (on the viewer's left)", or "both eyes") and
+    eye_verb (was or were). The side is the character's own."""
+    if not sides:
+        return {}
+    if len(sides) > 1:
+        return {"eye_words": "both eyes", "eye_verb": "were", "eye_sides": sides}
+    viewer = "left" if sides[0] == "right" else "right"
+    return {"eye_words": f"the {sides[0]} eye (on the viewer's {viewer})", "eye_verb": "was", "eye_sides": sides}
 
 
 def source_words(fd: dict[str, Any]) -> str:
@@ -307,7 +352,19 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     skin = inner & ~seg["pic_hair"]
     out["skin_shift"] = face.colour_distance(a, b, skin)
     out["hair_shift"] = face.colour_distance(a, b, seg["pic_hair"]) if seg.get("found") else None
-    la, lb, lm = face.landmarks(a, info), face.landmarks(b, info), face.landmarks(view["image"], info)
+    # When the crop's eyes and mouth as framed do not fit the model's, they are searched after lining the crop up with
+    # the model's face by the whole face, the close-up moved the same way (so how far its features moved from the crop's is unchanged), as fit_picture does: as framed,
+    # the crop's eyes can sit above the band face.landmarks searches, and the darkest spots found there are not eyes
+    # (the second knight's close-up was rejected as "moved" for that). The eye colours are measured on the moved pictures.
+    lm = face.landmarks(view["image"], info)
+    la = face.landmarks(a, info)
+    direct = face.fit_landmarks(la, lm, info["nose"]) if la and lm else None
+    if direct is None or direct["residual_px"] > LANDMARK_RESIDUAL_MAX * w:
+        pre = face.align(a, view["image"], inner)
+        if face.feature_match(face.apply_alignment(a, pre), view["image"], inner, 6.0, 24.0) >= ALIGN_MIN:
+            a, b = face.apply_alignment(a, pre), face.apply_alignment(b, pre)
+            out["lined_up_first"] = True
+    la, lb = face.landmarks(a, info), face.landmarks(b, info)
     reason = None
     if not la or not lb:
         reason = "no_features"
@@ -393,19 +450,9 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # width of the model's and the broad features agree; it keeps the eye line and the mouth where the model has them.
     # Otherwise the whole-face correlation (bounded stretch). Scores are on broad features: the model's face is
     # blurred, so its fine detail matches nothing.
-    lm_src, lm_dst = face.landmarks(src, info), face.landmarks(view["image"], info)
-    a = face.fit_landmarks(lm_src, lm_dst, info["nose"]) if lm_src and lm_dst else None
-    if a is not None:
-        a["how"] = "eyes and mouth"
-        a["score"] = face.feature_match(face.apply_alignment(src, a), view["image"], inner, 6.0, 24.0)
-        if a["residual_px"] > LANDMARK_RESIDUAL_MAX * float(info["width_px"]) or a["score"] < ALIGN_MIN:
-            a = None
-    if a is None and require_landmarks:
+    a = fit_picture(src, view["image"], info, inner)
+    if a["how"] != "eyes and mouth" and require_landmarks:
         return {"ok": False, "reason": "closeup_off_model"}
-    if a is None:
-        a = face.align(src, view["image"], inner)
-        a["how"] = "whole face"
-        a["score"] = face.feature_match(face.apply_alignment(src, a), view["image"], inner, 6.0, 24.0)
     if a["score"] < ALIGN_MIN:
         return {"ok": False, "reason": "not_lined_up", "alignment": a}
     # No local warping after this: block matching against the blurred model face moved the brows into a frown on the
@@ -464,11 +511,53 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "tone_spread_texels": spread_n,
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
+        "eyes": eye_measures(toned, after["image"], weight, seg["old_hair"], lm_fit, info),
         **eye_colour_measure(painted_fitted, after["image"], fitted, info, paint),
         "sides": side_record, "sides_used": [k for k, v in side_record.items() if v.get("used")],
     }
     sheet = before_after_sheet(crop, (old_mesh, old_tex, old_head), (mesh, new_tex, head), out_dir / "face_before_after.png")
     return {"ok": True, "base_color": out, "sheet": sheet, "metrics": metrics}
+
+
+def fit_picture(src: np.ndarray, render: np.ndarray, info: dict[str, Any], inner: np.ndarray) -> dict[str, Any]:
+    """The scale and shift that lay the picture on the model's face (see fit_and_paint), with "how" and "score".
+
+    1. The eye-and-mouth fit on the picture as framed (its eyes and mouth searched where the model has them).
+    2. When that fails: the same fit on the picture first lined up by the whole face. The painted head is framed from
+       the figure's height, so its eyes can sit a tenth of the face's width above the model's (the second knight's sat
+       0.45 of the face's width above the nose, the search band starts at 0.36): then the darkest spots found are not
+       her eyes, and the fit falls back to the whole face, which places the eyes less exactly.
+    3. Else the whole-face fit.
+    A fit is kept when its eyes land within LANDMARK_RESIDUAL_MAX of the face's width of the model's and the broad
+    features agree (ALIGN_MIN)."""
+    w = float(info["width_px"])
+    lm_dst = face.landmarks(render, info)
+
+    def scored(a: dict[str, Any], how: str) -> dict[str, Any]:
+        a["how"] = how
+        a["score"] = face.feature_match(face.apply_alignment(src, a), render, inner, 6.0, 24.0)
+        return a
+
+    def good(a: dict[str, Any] | None) -> bool:
+        return a is not None and a["residual_px"] <= LANDMARK_RESIDUAL_MAX * w and a["score"] >= ALIGN_MIN
+
+    lm_src = face.landmarks(src, info)
+    a = face.fit_landmarks(lm_src, lm_dst, info["nose"]) if lm_src and lm_dst else None
+    if a is not None:
+        a = scored(a, "eyes and mouth")
+        if good(a):
+            return a
+    whole = scored(face.align(src, render, inner), "whole face")
+    if lm_dst and whole["score"] >= ALIGN_MIN:
+        lm_pre = face.landmarks(face.apply_alignment(src, whole), info)
+        then = face.fit_landmarks(lm_pre, lm_dst, info["nose"]) if lm_pre else None
+        if then is not None:
+            b = {**face.compose_alignment(whole, then), "residual_px": then["residual_px"]}
+            b = scored(b, "eyes and mouth")
+            if good(b):
+                b["after_whole_face"] = True
+                return b
+    return whole
 
 
 def paint_sides(mesh: dict[str, Any], old_tex: np.ndarray, tex: np.ndarray, cover: np.ndarray, head: Any, info: dict[str, Any],
@@ -574,6 +663,30 @@ def eye_colour_measure(painted: np.ndarray, after: np.ndarray, fitted: np.ndarra
     a = face.eye_colour(painted, eyes, w)
     b = face.eye_colour(after, eyes, w)
     return {"eye_colour_painting": a, "eye_colour_model": b, "eye_colour_shift": face.colour_shift(a, b), "eyes_measured": len(eyes)}
+
+
+def eye_measures(picture: np.ndarray, after: np.ndarray, weight: np.ndarray, model_hair: np.ndarray,
+                 lm: dict[str, Any] | None, info: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Each eye of the picture (fitted to the model) against the painted model's front render, in a box around the eye
+    and its lids (face.eye_boxes): {side ("right" or "left": the character's own, so the eye on the viewer's left is
+    her right), painted (the box's mean paint weight, 0..1), hair (the share of the box that is the model's hair),
+    match (face.feature_match of the render and the picture in the box: 1 the same eye, 0 none of it), sharp (the
+    render's sharpness in the box over the picture's)}. None when the picture's eyes were not found."""
+    if not lm:
+        return None
+    w = float(info["width_px"])
+    shape = weight.shape
+    hair = face.dilate_mask(model_hair, 2)
+    out = []
+    for i, (x, y) in enumerate(lm["eyes"]):
+        box = face.eye_boxes(shape, [(x, y)], w)
+        wide = face.eye_boxes(shape, [(x, y)], w, grow=2.4)  # feature_match drops a rim of the box
+        sp = face.sharpness(picture, box)
+        out.append({"side": "right" if i == 0 else "left", "at": [round(x, 1), round(y, 1)],
+                    "painted": round(float(weight[box].mean()), 3), "hair": round(float(hair[box].mean()), 3),
+                    "match": face.feature_match(after, picture, wide),
+                    "sharp": round(face.sharpness(after, box) / sp, 3) if sp > 0 else None})
+    return out
 
 
 def eyes_moved(before: np.ndarray, after: np.ndarray, info: dict[str, Any]) -> float | None:
