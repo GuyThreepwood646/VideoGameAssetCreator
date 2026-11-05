@@ -271,3 +271,27 @@ Video and libraries
 - [M4] LAFAN1: https://github.com/ubisoft/ubisoft-laforge-animation-dataset
 - [M5] Bandai Namco Research Motion Dataset: https://github.com/BandaiNamcoResearchInc/Bandai-Namco-Research-Motiondataset
 - [M6] Truebones terms (secondary): https://truebones.gumroad.com/p/truebones-terms-of-use-for-truebones-motions-t-o-s
+
+## GEM-X checks before a trial (2026-11-05)
+
+Checked against the Hugging Face file listings and the repo's own docs (README, docs/PRETRAINED_MODELS.md, docs/INSTALL.md, ATTRIBUTIONS.md, the model card).
+
+Download size
+- nvidia/GEM-X lists 10.5 GB, but the pose detector is there twice (vitpose.pth 3.39 GB and the same model as ONNX 3.39 GB).
+- Body motion from a video needs: body_s240000.ckpt 3.54 GB, vitpose.pth 3.39 GB, motion_native77 checkpoint 0.19 GB, the person detector 0.37 GB (zip, from OpenMMLab), and SOMA-X assets up to 0.86 GB. About 8.4 GB, plus a Python environment with PyTorch 2.10.
+- Hands (optional): EgoHand-v1 checkpoint 10.66 GB plus an 0.08 GB hand detector.
+
+Memory
+- Still not stated. The only hardware named is an A100 80 GB. The motion model itself is small (46.8M parameters); the two large files are the pose detector and the body-pose feature model, about 3.4 to 3.5 GB each on disk. Estimate, not a measurement: about 4 to 5 GB of graphics memory if they run one after another, 8 GB or more if both stay loaded. Only a run on the 3060 (12 GB) and the 3080 (10 GB) settles it.
+- Windows is listed as a supported operating system on the model card. The rendering extra is Linux-only; VGAC does not need it.
+
+Licences of the detectors
+- Pose detector ("vitpose.pth"): not the public ViTPose weights. It is NVIDIA's own 77-point model (release id vitpose77-dinov3-huge-metrosim-256x192-v1), shipped inside nvidia/GEM-X under the NVIDIA Open Model License, so it falls under the card's "ready for commercial or non-commercial use". The name indicates a DINOv3 backbone (Meta); the card does not discuss that licence separately.
+- Person detector (YOLOX-X HumanArt, downloaded separately from OpenMMLab): the code is Apache-2.0, but the weights were trained on the Human-Art dataset, which its authors release "for non-commercial purposes". NVIDIA's commercial statement does not cover this file. It is optional: gem-infer takes person boxes from elsewhere (--boxes), so VGAC should supply boxes from a cleanly licensed detector instead of downloading this one.
+- ATTRIBUTIONS.md also lists SAM 3D Body under Meta's SAM License (commercial use allowed, with trade-control and weapons-use restrictions and a clause ending the licence if you sue Meta over it), and code pieces under MIT and BSD-3.
+
+Hand model
+- nvidia/EgoHand-v1 and nvidia/RT-DETR-Hand-Detector-v1 are not gated on Hugging Face today (the API reports gated: false), despite the repo saying access is "managed" there. Both are under OpenMDW-1.1, a permissive model licence. The cost is size: 10.66 GB.
+
+Output
+- PyTorch .pt files; no BVH or FBX export. VGAC would write the conversion to the SOMA skeleton itself (the same bone map Kimodo would need).
