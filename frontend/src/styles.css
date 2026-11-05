@@ -2284,3 +2284,62 @@ input[type='checkbox'] {
   flex-direction: column;
   gap: var(--s1);
 }
+
+/* "Is everything ready?" card (SetupCheck.tsx) */
+.dot.warn {
+  background: var(--warn);
+}
+.setup-ok {
+  color: var(--ok);
+}
+.setup-problems,
+.setup-rows {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.setup-problem {
+  border-left: 3px solid var(--warn);
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+.setup-problem.setup-fail {
+  border-left-color: var(--bad);
+}
+.setup-problem-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.setup-fix {
+  margin-top: 2px;
+}
+.setup-all {
+  margin-top: 10px;
+}
+.setup-all > summary {
+  cursor: pointer;
+}
+.setup-group-title {
+  font-size: 0.95rem;
+  margin: 10px 0 4px;
+}
+.setup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  flex-wrap: wrap;
+}
+.setup-row-label {
+  min-width: 14em;
+}
+.setup-row-detail {
+  flex: 1;
+}
+.setup-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}

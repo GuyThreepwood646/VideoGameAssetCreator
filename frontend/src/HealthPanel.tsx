@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type Health } from './api'
 import { Link } from 'react-router'
 import GpuCards from './GpuCards'
+import SetupCheck from './SetupCheck'
 import { useEvents } from './events'
 
 const GB = 1024 ** 3
@@ -87,6 +88,7 @@ export default function HealthPanel() {
   const { health, error, updated } = useHealth()
   return (
     <div className="panel">
+      {!error && <SetupCheck />}
       {!error && <GpuCards />}
       <h2>Health</h2>
       {error && <div className="error">Backend unreachable: {error}</div>}

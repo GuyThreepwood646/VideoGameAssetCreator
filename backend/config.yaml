@@ -13,6 +13,10 @@ instances:
     # ComfyUI Desktop starts it without --port, so the CUDA device is what identifies it.
     process_match: "--cuda-device 1"
     external_owner: ComfyUI Desktop
+    # ComfyUI Desktop picks its own port (it has used 8188 and 8189). When 8188 does not answer from the 3060, the
+    # backend looks for the ComfyUI running on the 3060 on these ports and uses it for the session. It never takes
+    # a ComfyUI running on the 3080 (instance b).
+    discover: {gpu_match: "3060", ports: [8188, 8189, 8190, 8191, 8000]}
   b:
     url: http://127.0.0.1:8189
     gpu: RTX 3080
@@ -24,6 +28,9 @@ instances:
     start_script: runtime/start-comfy-b.ps1
     start_timeout_seconds: 180
     process_match: ComfyUI\main.py --port 8189
+    # Only checks the card: a ComfyUI on 8189 that runs on the 3060 (ComfyUI Desktop taking the port) is reported as
+    # a setup problem, and no 3080 work is sent to it.
+    discover: {gpu_match: "3080", ports: []}
 
 library_path: F:\Projects\VideoGameAssetCreator\library
 

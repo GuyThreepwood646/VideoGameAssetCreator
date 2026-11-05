@@ -2,7 +2,7 @@
 // model, platform, category and style has an entry {plain, meaning, why, technical}.
 // The backend may send its own help (stage.help, param.help, check.help); the
 // functions below prefer that and fall back to this registry.
-import type { Category, Check, ModelInfo, Platform, StageId, StageInfo, StylePreset } from './api'
+import type { Category, Check, ModelInfo, Platform, SetupItem, StageId, StageInfo, StylePreset } from './api'
 import { api, STAGES, stageEstimateSeconds } from './api'
 
 export type HelpEntry = {
@@ -403,6 +403,17 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gpu_kind_review: H('Review', 'The app looking at a result and saying what it thinks of it.', 'Optional; a review waits if no card may do it, nothing else stops.', 'local judge (judge job)'),
   gpu_engine: H('Graphics engine', 'The program on this card that paints the pictures and builds the 3D models (ComfyUI). The app starts it by itself when a step needs it, which takes about a minute.', 'The app only ever shuts down an engine it started itself. One started by ComfyUI Desktop or the launcher is left running.', 'ComfyUI instance (POST /api/gpus/{instance}/start and /stop)'),
   gpu_idle_stop: H('Shut down when idle', 'After this long with nothing to do, the app shuts down the card\'s graphics engine. That frees the whole card between bursts of work.', 'The next step then waits about a minute while the engine starts again. Only applies to an engine the app started itself; one started by ComfyUI Desktop or the launcher is left running.', 'stop_when_idle_minutes (prefs.json)'),
+  gpu_address: H('Address', 'Where the app talks to this card\'s graphics engine. "Found by its card" means the engine was not at the usual address, so the app looked for the one running on this card and uses that.', 'ComfyUI Desktop picks its own address; the app follows it instead of failing. It never takes an engine running on the other card.', 'ComfyUI url, instances.<name>.discover in backend/config.yaml'),
+  gpu_setup_problem: H('Setup problem', 'Something on this computer stops the card\'s graphics engine from being used, for example another program holding its address.', 'The app does not send this card\'s work anywhere else by mistake; fix the problem and press Try again.', 'Supervisor.conflict (instances.py)'),
+  setup_check: H('Is everything ready?', 'A check of everything the app needs: Blender, the Unity editor, the graphics engines and their parts, the model files, disk space and memory.', 'A missing piece shows up here, with what to do, before a step fails halfway.', 'GET /api/setup (backend/vgac/preflight.py)'),
+  setup_check_again: H('Check again', 'Runs every check now instead of using the last result (results are kept for a minute).', 'Use it after you have fixed something.', 'GET /api/setup?refresh=1'),
+  setup_show_all: H('Show all checks', 'Every check, including the ones that passed, grouped by tools, graphics engines, models and storage.', 'Useful to confirm a fix, or to see exactly what the app looked for.', 'preflight items'),
+  setup_not_checked: H('Not checked', 'The app could not check this right now, usually because the card is off or its graphics engine is not running yet.', 'This is not a problem by itself; the check runs again once the engine is up.', 'state unknown'),
+  setup_group_tools: H('Tools', 'The programs the app uses on this computer: Blender for cleaning up, rigging and animation, the Unity editor for the test import, and the shared animation library.', 'Without Blender the last steps cannot run; without Unity only the test import is skipped.', 'blender_exe, unity_exe, unity_project, clips_libraries'),
+  setup_group_engines: H('Graphics engines', 'The programs on the graphics cards that paint the pictures and build the 3D models (ComfyUI), and the parts (nodes) each step needs in them.', 'A missing part stops only the steps that need it.', 'ComfyUI instances, /object_info'),
+  setup_group_models: H('Models', 'The large files the graphics engines learn from: one per painter, the side-view drawer, the 3D builder and the rigger.', 'A missing model file stops the step that uses it; you download it once.', 'data/models.yaml, loader node file choices'),
+  setup_group_storage: H('Storage', 'Free disk space where your assets are kept, and free memory on this computer.', 'Steps wait when memory is short, and fail to save when the disk is full.', 'library_path, export_path, min_free_ram_gb'),
+  setup_needs_attention: H('Setup needs attention', 'At least one thing the app needs is missing or broken.', 'Open the Health page to see what it is and how to fix it.', 'GET /api/setup summary.fails'),
   gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
 }
 
@@ -810,6 +821,20 @@ export function helpFor(term: string): HelpEntry | null {
     default:
       return TERM_HELP[term] ?? null
   }
+}
+
+// Setup check (GET /api/setup): plain names of the steps a problem holds up, and the Info entry of one check.
+const SETUP_STAGE_EXTRA: Record<string, string> = { judge: 'Review', material: 'Materials' }
+
+export function setupStagePlain(stage: string): string {
+  return STAGES.includes(stage as StageId) ? STAGE_TEXT[stage as StageId].plain : SETUP_STAGE_EXTRA[stage] ?? stage
+}
+
+export function setupItemHelp(item: SetupItem): HelpEntry {
+  const group = TERM_HELP[`setup_group_${item.group}`]
+  const steps = item.needed_for.map(setupStagePlain)
+  const why = steps.length ? `Needed for: ${steps.join(', ')}.` : group?.why ?? ''
+  return H(item.label, group?.meaning ?? item.detail, why, item.technical || group?.technical || item.id)
 }
 
 // The plain label for a parameter, with the backend label as a fallback for unknown names.
