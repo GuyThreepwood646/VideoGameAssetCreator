@@ -50,6 +50,7 @@ export function MeshView({ version, category }: { version: Version; category?: s
           <div className="small">
             {tris !== null ? `${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
+            {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}
           </div>
         </div>
         {look && (

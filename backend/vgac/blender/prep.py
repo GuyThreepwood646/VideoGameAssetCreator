@@ -4,6 +4,7 @@ Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8]
      [--yaw 0] [--symmetric] [--pivot base|center|corner] [--smooth-angle 60] [--shading smooth|flat] [--budget N]
      [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never]
      [--grid 1] [--grid-footprint auto|1x1|2x1|2x2|4x1|4x4] [--grid-height auto|0.5|1|3|4] [--tiling out.png]
+     [--protect-head 0.13 --head-gain 2]
      (--height H is the old form of --size H --size-axis height)
 
 Grid (G15, scenery): with --grid, after the turn and the size, the piece is scaled per side onto the grid by
@@ -19,6 +20,12 @@ symmetrized. When the surface then changes (symmetrize, or the budget decimation
 baked again from that copy onto the final mesh and written next to <out> as <key>.png; after symmetrize the texture
 layout is first re-packed so the half of the atlas symmetrize leaves empty is used again. The report records
 rebaked, rebake_reason and rebake_seconds.
+
+Weighted decimation (vgac/headtris.py, headweight.py): with --protect-head SHARE, the budget decimation keeps the head
+(the top SHARE of the height) at about --head-gain times the triangles an even decimation would leave it. If that
+fails, or the count is still over the budget, the plain decimation runs. The report always records head_triangles
+(the final model's triangles in the top 13 percent of its height) and, when the weighted decimation ran,
+head_weighted, head_triangles_even, head_triangles_source, head_weight_factor and head_weight_seconds.
 
 Does, in order: import; join meshes; apply transforms; turn about the up axis by --yaw degrees (counter-clockwise seen
 from above, so the concept's front ends up facing Blender -Y, which is +Z in glTF and Unity); scale uniformly so the
@@ -39,6 +46,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
 import gridfit  # noqa: E402  (pure maths next to this script)
+import headweight  # noqa: E402
 import rebake  # noqa: E402
 from mathutils import Matrix, Vector
 
@@ -71,6 +79,8 @@ grid_m = gridfit.grid_value(grid_arg) if grid_arg is not None else None
 grid_footprint = _common.opt("--grid-footprint", "auto")
 grid_height = _common.opt("--grid-height", "auto")
 tiling_png = _common.opt("--tiling", None)
+protect_head = float(_common.opt("--protect-head", 0) or 0)
+head_gain = float(_common.opt("--head-gain", 2.0))
 if grid_m is not None:
     pivot = "corner"
 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -184,8 +194,12 @@ budget = int(_common.opt("--budget", 0))
 mesh.data.calc_loop_triangles()
 triangles_before_budget = len(mesh.data.loop_triangles)
 decimated = bool(budget and len(mesh.data.loop_triangles) > budget)
-if decimated:
+head_report = {}
+
+
+def plain_decimate():
     mod = mesh.modifiers.new("budget", "DECIMATE")
+    mesh.data.calc_loop_triangles()
     mod.ratio = budget / len(mesh.data.loop_triangles) * 0.995
     mod.use_collapse_triangulate = True
     if symmetric:
@@ -194,10 +208,36 @@ if decimated:
         mod.use_symmetry = True
         mod.symmetry_axis = "X"
     bpy.ops.object.modifier_apply(modifier="budget")
+
+
+if decimated:
+    bpy.ops.object.select_all(action="DESELECT")
+    mesh.select_set(True)
+    bpy.context.view_layer.objects.active = mesh
+    weighted = False
+    if protect_head > 0:
+        try:
+            head_report = headweight.decimate(mesh, budget / len(mesh.data.loop_triangles) * 0.995, protect_head, head_gain, symmetric)
+            weighted = True
+        except Exception as exc:  # the plain decimation below still brings the model to the budget
+            for m in [m for m in mesh.modifiers if m.name == "budget"]:
+                mesh.modifiers.remove(m)
+            g = mesh.vertex_groups.get(headweight.GROUP)
+            if g is not None:
+                mesh.vertex_groups.remove(g)
+            head_report = {"head_weight_error": str(exc)[:300]}
+    if not weighted:
+        plain_decimate()
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.remove_doubles(threshold=0.00001)
     bpy.ops.object.mode_set(mode="OBJECT")
+    mesh.data.calc_loop_triangles()
+    if len(mesh.data.loop_triangles) > budget:
+        # Never hand on a model over the budget: decimate again, plainly.
+        plain_decimate()
+        head_report["head_weight_second_pass"] = True
+    head_report["head_weighted"] = weighted
 
 # Final manifold cleanup: weld the remaining non-manifold vertices a little more aggressively, fill small holes,
 # drop loose geometry. Done last so it also covers artefacts from the budget decimation.
@@ -309,6 +349,9 @@ report = {
     "max_m": [hi.x, hi.y, hi.z],
     "decimated": decimated,
     "triangles_before_budget": triangles_before_budget,
+    **head_report,
+    # after the clean-up below the decimation: the final model's head (top 13 percent of the height, face.find_head)
+    "head_triangles": headweight.head_count(mesh.data, headweight.head_cut(mesh, 0.13)[0]),
     "texture_size": tex_size,
     **bake_report,
 }

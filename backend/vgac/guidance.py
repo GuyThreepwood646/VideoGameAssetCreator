@@ -190,6 +190,9 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "hair_strength": {"simple": False, "help": {"meaning": "How strongly the hair detail is painted: 1 is full, 0 changes nothing.",
                                                 "why": "Lower it if the strands look too busy for your look.",
                                                 "technical": "Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1"}},
+    "head_triangles": {"simple": False, "help": {"meaning": "Weighted decimation (more triangles on the head): when the model is shrunk to your platform's triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.",
+                                                 "why": "Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Characters in the Low-poly, Pixel-art and Retro 64 looks never get it.",
+                                                 "technical": "The 3D step builds twice the target; Blender's Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake"}},
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
@@ -253,6 +256,19 @@ def _var(c: dict[str, Any], name: str) -> Any:
     return (c.get("vars") or {}).get(name)
 
 
+def _head_line(c: dict[str, Any]) -> str:
+    """The clean-up step's line on the head's triangles after the weighted decimation (vars head_weighted,
+    head_triangles, head_share, head_even; headtris.head_vars), or nothing."""
+    if not _var(c, "head_weighted") or _var(c, "head_triangles") is None:
+        return ""
+    line = " The head has {head_triangles:n} of them"
+    if _var(c, "head_share") is not None:
+        line += " ({head_share:pct})"
+    if _var(c, "head_even") is not None:
+        line += "; an even spread would have left it {head_even:n}"
+    return line + "."
+
+
 def _atlas_fix(c: dict[str, Any]) -> dict[str, Any]:
     """Mirroring stacks the halves on one painted side: stop mirroring. Otherwise the layout came from the 3D builder:
     build it again."""
@@ -283,9 +299,16 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "triangle_budget": {
         "severity": "block",
         # With the recipe's own target (vars recipe, look): a low-poly model is measured against its look, not the platform.
-        "ok": lambda c: ("The model's {value:n} triangles fit the {look} look's target of {limit:n}; your platform would allow up to {platform_triangles:n}."
-                         if _var(c, "recipe") else "The model's {value:n} triangles fit your platform's budget of {limit:n}."),
-        "fail": lambda c: ("The model has {over:n} more triangles than the {look} look calls for ({value:n} of {limit:n}), so it looks less chunky than it should."
+        # The 3D step's model with room for the head (vars head_room, headtris) is measured against its own target, which
+        # is over the platform's budget on purpose; the clean-up step's sentence adds the head's share (vars head_weighted).
+        "ok": lambda c: ("The model's {value:n} triangles are more than your platform's {platform_triangles:n} on purpose: Clean up for the game "
+                         "brings it back to the budget with weighted decimation (more triangles on the head)."
+                         if _var(c, "head_room") else
+                         "The model's {value:n} triangles fit the {look} look's target of {limit:n}; your platform would allow up to {platform_triangles:n}."
+                         if _var(c, "recipe") else "The model's {value:n} triangles fit your platform's budget of {limit:n}.") + _head_line(c),
+        "fail": lambda c: ("The model has {over:n} more triangles than the 3D step asked for ({value:n} of {limit:n}, which already leaves room for the head)."
+                           if _var(c, "head_room") else
+                           "The model has {over:n} more triangles than the {look} look calls for ({value:n} of {limit:n}), so it looks less chunky than it should."
                            if _var(c, "recipe") else
                            "The model has {over:n} more triangles than your platform allows ({value:n} of {limit:n}); it would run slower than it should."),
         "vars": _over,
