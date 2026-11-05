@@ -61,7 +61,9 @@ def default_target_faces(budget_triangles: int | None) -> int:
 def resolve_padding(params: dict[str, Any], tex: int) -> int:
     """UnwrapMesh padding in texels: the version's padding, else max(4, texture / 256), within the node's 1 to 16."""
     p = params.get("padding")
-    value = int(p) if p not in (None, "") else unwrap_padding(tex)
+    # The unwrap node leaves about half its padding as real space between pieces (measured live: 8 asked, 4 found),
+    # so ask for double the target; the node's own limit is 16.
+    value = int(p) if p not in (None, "") else 2 * unwrap_padding(tex)
     return max(1, min(UNWRAP_PADDING_MAX, value))
 
 

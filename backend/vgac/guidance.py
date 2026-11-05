@@ -488,7 +488,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "albedo_range": {
         "severity": "warn",
-        "ok": "Colours stay inside the range real materials have.",
+        "ok": lambda c: ("Painted darks and lights are kept on purpose for this look." if _var(c, "kept")
+                         else "Colours stay inside the range real materials have."),
         "fail": "{value:pct} of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.",
         "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
         "fix_label": "Bring colours into range",
