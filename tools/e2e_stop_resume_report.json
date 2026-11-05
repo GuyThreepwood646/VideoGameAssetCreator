@@ -1,0 +1,84 @@
+{
+ "steps": [
+  {
+   "t": 0,
+   "step": "autopilot started"
+  },
+  {
+   "t": 301,
+   "step": "mesh running",
+   "version": "f1dd2168-baf5-4a67-a971-4ed39d3e0d70",
+   "progress": 0.76,
+   "instance": "a"
+  },
+  {
+   "t": 301,
+   "step": "stop pressed",
+   "stopped": [
+    "f1dd2168-baf5-4a67-a971-4ed39d3e0d70"
+   ],
+   "autopilot": "paused",
+   "stopped_by_user": true
+  },
+  {
+   "t": 301,
+   "step": "mesh stopped",
+   "seconds_to_stop": 0.1,
+   "job": "cancelled",
+   "queue": {
+    "a": [
+     null,
+     0
+    ],
+    "b": [
+     null,
+     0
+    ],
+    "host": [
+     null,
+     0
+    ]
+   },
+   "autopilot": "paused",
+   "kept": {
+    "concept": true,
+    "turnaround": true
+   }
+  },
+  {
+   "t": 309,
+   "step": "resume pressed",
+   "autopilot": "running",
+   "resumed": [
+    "f1dd2168-baf5-4a67-a971-4ed39d3e0d70"
+   ]
+  },
+  {
+   "t": 433,
+   "step": "mesh finished after resume",
+   "versions": 1,
+   "same_version": true,
+   "same_settings": false,
+   "same_job": true,
+   "checks": "17/17"
+  },
+  {
+   "t": 433,
+   "step": "stopped again",
+   "autopilot": "paused",
+   "stage": "prep",
+   "prep": [
+    [
+     "rejected",
+     true
+    ]
+   ]
+  },
+  {
+   "t": 433,
+   "step": "resume from the side views",
+   "autopilot": "running"
+  }
+ ],
+ "asset": "276aacf6-be93-418a-863c-7bef8ef03110"
+}

@@ -58,7 +58,8 @@ export function AddonsList({
   painter?: string
 }) {
   const [adding, setAdding] = useState(false)
-  const [added, setAdded] = useState<string | null>(null)
+  // The line after adding one: "switched on" holds only while that add-on is still listed (Remove clears it).
+  const [added, setAdded] = useState<{ id: string; text: string; listed: boolean } | null>(null)
   if (!rows.length && !painter) return null
   const tested = rows.filter((r) => !r.entry.mine)
   const yours = rows.filter((r) => r.entry.mine)
@@ -67,8 +68,8 @@ export function AddonsList({
     setAdding(false)
     if (painter && a.base_models.includes(painter)) {
       onChange(a.id, a.default_strength)
-      setAdded(`${a.label} is added and switched on. Press Apply and re-run to paint with it.`)
-    } else setAdded(`${a.label} is added. It shows up when you choose a painter it was made for.`)
+      setAdded({ id: a.id, text: `${a.label} is added and switched on. Press Apply and re-run to paint with it.`, listed: true })
+    } else setAdded({ id: a.id, text: `${a.label} is added. It shows up when you choose a painter it was made for.`, listed: false })
   }
   return (
     <div className="addons">
@@ -110,9 +111,9 @@ export function AddonsList({
             >
               Add your own add-on
             </button>
-            {added && (
+            {added && (!added.listed || yours.some((r) => r.entry.id === added.id)) && (
               <span className="muted small" role="status">
-                {added}
+                {added.text}
               </span>
             )}
           </div>
