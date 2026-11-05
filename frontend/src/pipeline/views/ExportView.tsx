@@ -3,12 +3,13 @@ import { Info } from '../../components/Info'
 import { Chip, Disclosure, TrafficDot } from '../../components/ui'
 import { joinAnd } from '../../help'
 import Viewer from '../../Viewer'
-import { controllerParams, CYCLIC_CLIP, unityClips, unityReport, type UnityReport } from '../finish'
+import { collisionPhrase, controllerParams, CYCLIC_CLIP, unityClips, unityReport, type UnityReport } from '../finish'
 
 type Lod = { level?: number; triangles?: number; screen_height?: number; ratio?: number }
 
 const FILE_NAMES: Record<string, string> = {
   fbx: 'FBX (most engines)',
+  fbx_unreal: 'Unreal FBX with collision shapes',
   glb: 'GLB (web, Blender)',
   glb_godot: 'GLB for Godot (with collision)',
   glb_lod1: 'detail level 1 (GLB)',
@@ -28,7 +29,7 @@ const FILE_NAMES: Record<string, string> = {
   manifest: 'manifest',
 }
 
-const DELIVERABLE_KEYS = ['fbx', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+const DELIVERABLE_KEYS = ['fbx', 'fbx_unreal', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
 // Once the packed maps exist (3.1) the separate metal and roughness maps leave the download row; they stay in
 // Details, Files.
 const PACKED_REPLACES = new Set(['metallic', 'roughness'])
@@ -111,7 +112,7 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
                   <Chip tone={unity.ok ? 'ok' : 'bad'}>{unity.ok ? 'works in Unity' : 'failed in Unity'}</Chip>
                   {clips.length > 0 && <Chip>{clips.length} animations</Chip>}
                 </div>
-                <UnityLines report={unity} />
+                <UnityLines report={unity} version={version} />
                 {unity.prefab && <div className="mono small">{unity.prefab}</div>}
                 {unity.errors && unity.errors.length > 0 && (
                   <ul className="checks">
@@ -165,8 +166,15 @@ const listNames = (names: string[], max = 6): string => (names.length > max ? `$
 
 // What the Unity import says about metal and shine (3.1), looping clips and the controller (3.3), and whether the
 // skeleton reads as a person (3.6). Each line shows only when the report has that field.
-function unityLines(rep: UnityReport): UnityLine[] {
+function unityLines(rep: UnityReport, version: Version): UnityLine[] {
   const out: UnityLine[] = []
+  // Collision (3.4), from the shapes Unity put on the prefab.
+  if (typeof rep.colliderCount === 'number' && Array.isArray(rep.colliderKinds)) {
+    const phrase = rep.colliderCount > 0 ? collisionPhrase({ ...version, metrics: { collider_count: rep.colliderCount, collider_kinds: rep.colliderKinds, collider_shape: version.metrics.collider_shape } }, rep) : null
+    if (phrase) out.push({ id: 'collision', state: 'ok', text: `Collision: ${phrase}.`, term: 'collider', title: `Technical: ${rep.colliderCount} collider(s): ${rep.colliderKinds.join(', ')}` })
+  }
+  if (rep.secondaryUV === true) out.push({ id: 'lightmap', state: 'ok', text: 'Ready for baked lighting.', term: 'lightmap_uv' })
+  if (rep.lodFadeMode === 'CrossFade') out.push({ id: 'lodfade', state: 'ok', text: 'Detail levels fade smoothly.', term: 'lod_fade' })
   if (Array.isArray(rep.texturesAssigned)) {
     out.push(
       rep.texturesAssigned.includes('metallic_smoothness')
@@ -211,8 +219,8 @@ function unityLines(rep: UnityReport): UnityLine[] {
   return out
 }
 
-function UnityLines({ report }: { report: UnityReport }) {
-  const lines = unityLines(report)
+function UnityLines({ report, version }: { report: UnityReport; version: Version }) {
+  const lines = unityLines(report, version)
   if (!lines.length) return null
   return (
     <ul className="unity-lines">

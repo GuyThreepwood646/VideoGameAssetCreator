@@ -254,6 +254,8 @@ export const stages: StageInfo[] = [
       { name: 'upsample', label: 'Upsample', type: 'select', options: [1024, 1536], default: 1024 },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 5 },
       { name: 'remesh', label: 'Remesh to watertight', type: 'boolean', default: true },
+      // 3.9: seam space around texture pieces; Advanced (not in SIMPLE_PARAMS), empty means automatic.
+      { name: 'padding', label: 'Space around texture pieces (pixels)', type: 'integer', min: 1, max: 16, step: 1, default: null },
     ],
   },
   {
@@ -287,7 +289,11 @@ export const stages: StageInfo[] = [
         hint: 'Pick the picture where the front faces you. The game treats that side as forward.',
         categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'],
       },
-      { name: 'symmetric', label: 'Symmetrize', type: 'boolean', default: true },
+      { name: 'symmetric', label: 'Mirror the halves', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      // 3.9: painted-on shadows, colour range and repainting. No option_labels, so help.ts OPTION_LABELS shows.
+      { name: 'delight', label: 'Painted-on shadows', type: 'select', options: ['auto', 'remove', 'keep'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'pbr_fix', label: 'Keep colours in a realistic range', type: 'boolean', default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'rebake', label: 'Paint the surface again', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // This one carries the backend's option_labels (2.2); the others fall back to help.ts OPTION_LABELS.
       { name: 'pivot', label: 'Pivot', type: 'select', options: ['base', 'center'], default: 'base', option_labels: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' } },
       { name: 'smooth_angle', label: 'Smooth angle (deg)', type: 'number', min: 10, max: 90, step: 1, default: 60 },
@@ -324,7 +330,17 @@ export const stages: StageInfo[] = [
     label: 'Export',
     adjust_schema: [
       { name: 'lods', label: 'LOD ratios', type: 'string', default: '1.0, 0.5, 0.25, 0.1' },
-      { name: 'collider', label: 'Collider', type: 'select', options: ['hull', 'none'], default: 'hull' },
+      // 3.4: collision by category, with the backend's option_labels.
+      {
+        name: 'collider',
+        label: 'Collision shape',
+        type: 'select',
+        options: ['auto', 'hull', 'decompose', 'mesh', 'none'],
+        default: 'auto',
+        option_labels: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
+        categories: ['prop_rigid', 'prop_articulated', 'vehicle', 'environment', 'foliage'],
+      },
+      { name: 'collider_max_parts', label: 'Most shapes', type: 'integer', min: 1, max: 32, step: 1, default: null, categories: ['prop_rigid', 'prop_articulated', 'vehicle', 'environment'] },
       { name: 'movement_shape', label: 'Movement shape', type: 'select', options: ['auto', 'upright', 'along', 'box', 'none'], default: 'auto', categories: [...RIGGED_IDS] },
       { name: 'formats', label: 'Formats', type: 'multiselect', options: ['fbx', 'glb'], default: ['fbx', 'glb'] },
       { name: 'unity', label: 'Build Unity prefab', type: 'boolean', default: true },
@@ -401,6 +417,7 @@ export function clipsFor(category: string): string[] {
 // a failing fix carries its label, and some checks carry vars. A few leave help out so the frontend fallback runs.
 const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'humanoid'): MockCheck[] => {
   const fail = seed % 3 === 0
+  const collider = colliderFor(category)
   switch (stage) {
     case 'mesh':
       return [
@@ -438,6 +455,18 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
             : { help: 'The front of the model faces forward in the game.' }),
         }),
         chk('uv_set', true, 1, 1),
+        // Textures and light (3.9). Some leave help out so the frontend fallback sentences show.
+        chk('bake_matches', true, true, true, { severity: 'warn' }),
+        chk('texture_padding', true, 8, 8, { severity: 'warn', help: 'Texture pieces have 8 px of space around them, enough for distant views.' }),
+        chk('atlas_used', true, 0.71, 0.55, { severity: 'warn' }),
+        chk('baked_light', true, 0.12, 0.15, { severity: 'warn', vars: { kept: true, removed: false } }),
+        chk('albedo_range', false, 0.064, 0.02, {
+          severity: 'warn',
+          help: '6.4% of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.',
+          fix: { stage: 'prep', params: { pbr_fix: true }, label: 'Bring colours into range' },
+          vars: { pbr_fix_on: false },
+        }),
+        chk('metal_mixed', true, 0.01, 0.05, { severity: 'warn' }),
       ]
     case 'rig':
       return [
@@ -452,8 +481,13 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
       return [
         chk('lod_count', true, 4, 4),
         chk('lod1_ratio', true, 0.5, 0.5),
-        chk('collider_present', true, 212, '>0'),
-        chk('collider_vertices', true, 212, 255),
+        chk('collider_present', true, collider.count, '>0'),
+        ...(collider.count > 0 && collider.shape !== 'mesh'
+          ? [chk('collider_triangles', true, collider.shape === 'decompose' ? 188 : 12, 255, { severity: 'warn', vars: { parts: collider.count } }), chk('collider_count', true, collider.count, 8, { severity: 'warn', vars: { vertices: 212 } })]
+          : []),
+        ...(/^(prop_rigid|environment|vehicle)$/.test(category)
+          ? [chk('openings_clear', true, 0, 0, { severity: 'warn', vars: { openings: category === 'prop_rigid' ? 0 : 2, blocked: '0%', category } })]
+          : []),
         chk('unity_import', true, true, true),
         chk('materials_connected', true, 'metal and shine', null, { severity: 'warn', help: 'Unity uses all the surface textures: colour, bumps, shadows, metal and shine.' }),
         ...(RIGGED.test(category)
@@ -467,6 +501,15 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
     default:
       return []
   }
+}
+
+// The collision the export chooses on auto (3.4): one box for a barrel-like prop, fitted shapes for the chest and the
+// vehicle, the exact shape for scenery, one hull for creatures (their hit boxes are separate).
+function colliderFor(category: string): { shape: string; count: number; kinds: string[] } {
+  if (category === 'prop_rigid') return { shape: 'primitive', count: 1, kinds: ['box'] }
+  if (category === 'environment') return { shape: 'mesh', count: 1, kinds: ['mesh'] }
+  if (category === 'prop_articulated' || category === 'vehicle') return { shape: 'decompose', count: 3, kinds: ['hull'] }
+  return { shape: 'hull', count: 1, kinds: ['hull'] }
 }
 
 function sizeOn(category: string): number {
@@ -569,6 +612,13 @@ export function fabricate(asset: Asset, version: Version) {
       m.face_best_turn = 0
       m.facing_source = 'audit'
       m.size_source = 'category'
+      // Textures and light (3.9).
+      m.rebaked = false
+      m.light_score = 0.12
+      m.delight_applied = false
+      m.delight_mode = 'keep'
+      m.texture_padding_px = 8
+      m.atlas_used = 0.71
       m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000, asset.category)
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.checks_failed = (m.checks as MockCheck[]).filter((c) => !c.ok).map((c) => c.id)
@@ -588,6 +638,9 @@ export function fabricate(asset: Asset, version: Version) {
         if (version.params.hitboxes !== 'none') f.hitboxes = `${dir}/hitboxes.json`
         m.bones = sample.bones
         Object.assign(m, rigMoveMetrics(asset.category, version.params, seed % 3 === 0))
+        // The rig stage restores textures and size, and renames humanoid bones by geometry.
+        const human = asset.category === 'humanoid'
+        m.rig_restore = { ok: true, uvs: true, scale_factor: 1, size_m: 1.8, reason: null, bone_names: { count: human ? 22 : 0, corrected: human, left_is: human ? '+x' : null, reason: human ? null : 'not a humanoid skeleton' } }
       } else {
         f.glb = 'samples/sample.glb'
         const bones = bipedBones()
@@ -646,12 +699,22 @@ export function fabricate(asset: Asset, version: Version) {
       m.clips = clips
       m.formats = version.params.formats ?? ['fbx', 'glb']
       const rigged = RIGGED.test(asset.category)
-      m.collider_parts = version.params.collider === 'none' ? 0 : 1
+      const col = version.params.collider === 'none' ? { shape: 'none', count: 0, kinds: [] as string[] } : colliderFor(asset.category)
+      m.collider_count = col.count
+      m.collider_shape = col.shape
+      m.collider_kinds = col.kinds
+      m.collider_verts = 212
+      const scenery = /^(prop_rigid|environment)$/.test(asset.category)
+      if (!RIGGED.test(asset.category)) f.fbx_unreal = putText(`${base}/${asset.name}_unreal.fbx`, 'mock fbx', 'application/octet-stream')
       m.unity_report = {
         ok: true,
         prefab: `Assets/VGAC/${asset.name}/${asset.name}.prefab`,
         ...(rigged ? (asset.category === 'humanoid' ? { avatar: 'Humanoid', avatar_mapping: 'explicit', humanoidValid: true } : { avatar: 'Generic' }) : {}),
-        importer_version: 2,
+        importer_version: 4,
+        colliderCount: col.count,
+        colliderKinds: col.kinds,
+        ...(scenery ? { secondaryUV: true } : {}),
+        lodFadeMode: asset.category === 'environment' ? 'CrossFade' : 'None',
         texturesAssigned: ['base_color', 'normal', 'occlusion', 'metallic_smoothness'],
         ...(rigged
           ? {
@@ -953,6 +1016,38 @@ export function seedStore() {
   const we = seedVersion(wolf, 'export', wr, { lods: '1.0, 0.5, 0.25', collider: 'hull', movement_shape: 'auto', formats: ['fbx', 'glb'], unity: true }, 3, 'host')
   setSelected(wolf, we)
 
+  // A barrel, through to export, with painted-on shadows removed in prep (3.9) and one box for collision (3.4).
+  const barrel: Asset = {
+    id: uid('a'),
+    project_id: p1.id,
+    name: 'Oak barrel',
+    category: 'prop_rigid',
+    style_preset: 'realistic',
+    platform_target: 'pc_mid',
+    prompt: 'weathered oak barrel with rusted iron bands and a cracked stave',
+    parts: [],
+    created_at: nowIso(-40 * 60_000),
+    selected: {},
+    stages: {},
+  }
+  store.assets.push(barrel)
+  const bc = seedVersion(barrel, 'concept', null, { model: 'zbase', seed: 4, width: 1024, height: 1024, steps: 8, readiness_block: true }, 39, 'b')
+  setSelected(barrel, bc)
+  const bt = seedVersion(barrel, 'turnaround', bc, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true }, 38, 'b')
+  setSelected(barrel, bt)
+  const bm = seedVersion(barrel, 'mesh', bt, { engine: 'trellis', input_view: 'quarter', seed: 2, remesh: true }, 36, 'a')
+  setSelected(barrel, bm)
+  const bp = seedVersion(barrel, 'prep', bm, { size_m: 0.9, face_yaw: 'auto', symmetric: false, delight: 'auto', seed: 1 }, 34, 'host')
+  removeShadows(barrel, bp)
+  setSelected(barrel, bp)
+  // Props have no skeleton: the rig step keeps the model as one rigid piece.
+  const br = seedVersion(barrel, 'rig', bp, { template: 'none' }, 33, 'b')
+  br.metrics = { rigid: true, bones: 0, template: 'none', checks: [], gate_ok: true }
+  br.files = { glb: 'samples/sample.glb' }
+  setSelected(barrel, br)
+  const be = seedVersion(barrel, 'export', br, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 32, 'host')
+  setSelected(barrel, be)
+
   // A variant of the knight: same identity, winter outfit.
   const winter: Asset = {
     id: uid('a'),
@@ -981,6 +1076,19 @@ export function seedStore() {
   fabricate(winter, wc1)
   doneJob(winter, wc1, 'concept.refine', 'b', 24)
   setSelected(winter, wc1)
+}
+
+// A prep version whose painted-on shadows were removed (3.9): the corrected colour map and the one before it,
+// the light score before and after, and the baked_light check saying so.
+function removeShadows(asset: Asset, version: Version) {
+  const base = `projects/${asset.project_id}/assets/${asset.id}/prep/${version.id}`
+  const hue = hueFor(asset, 1)
+  version.files.base_color_original = putDataFile(`${base}/base_color_original.png`, makeTexture('base_color', hue, 512))
+  version.files.base_color = putDataFile(`${base}/base_color.png`, makeTexture('base_color', hue + 8, 512))
+  Object.assign(version.metrics, { delight_applied: true, delight_mode: 'remove', delight_strength: 0.6, light_score_before: 0.31, light_score: 0.06 })
+  const checks = version.metrics.checks as MockCheck[]
+  const i = checks.findIndex((c) => c.id === 'baked_light')
+  if (i >= 0) checks[i] = chk('baked_light', true, 0.06, 0.15, { severity: 'warn', vars: { kept: false, removed: true } })
 }
 
 // The axis word a category's size is said in: the category's size_word, else from its axis.

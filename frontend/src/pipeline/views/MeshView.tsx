@@ -64,6 +64,25 @@ export function MeshView({ version, category }: { version: Version; category?: s
             </table>
           </div>
         )}
+        {version.stage === 'prep' && version.files.base_color && version.files.base_color_original && (
+          <div>
+            <div className="field-label">
+              Painted-on shadows
+              <Info term="term.baked_light" />
+            </div>
+            <div className="texture-row before-after">
+              {[
+                ['base_color_original', 'Before: shadows painted in'],
+                ['base_color', 'After: shadows removed'],
+              ].map(([k, label]) => (
+                <a key={k} href={libraryUrl(version.files[k])} target="_blank" rel="noreferrer" className="texture-thumb" title={label}>
+                  <img src={libraryUrl(version.files[k])} alt={label} />
+                  <span className="small">{label}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
         {textures.length > 0 && (
           <div>
             <div className="field-label">

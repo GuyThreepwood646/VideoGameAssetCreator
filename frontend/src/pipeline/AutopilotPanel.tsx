@@ -276,7 +276,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         {howto && (
           <Disclosure label="Using it in Unity" className="unity-howto">
             <div className="muted small">
-              Three steps to put it in your game.
+              {howto.length === 1 ? 'One step' : `${['Two', 'Three', 'Four', 'Five', 'Six'][howto.length - 2] ?? howto.length} steps`} to put it in your game.
               <Info term="term.unity_howto" />
             </div>
             <ol>

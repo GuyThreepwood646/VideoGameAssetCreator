@@ -84,6 +84,9 @@ export function RigView({ version }: { version: Version }) {
   const hitDoc = hitFile.data && hitFile.data.mode !== 'none' ? hitFile.data : null
   const hbLine = hitboxLine(summary, hitFile.data)
   const hitNames = hitShapesOf(hitDoc).map((h) => h.label || h.region || h.name || '?')
+  // The rig stage renames humanoid bones by geometry (metrics.rig_restore.bone_names).
+  const restore = m.rig_restore && typeof m.rig_restore === 'object' ? (m.rig_restore as { bone_names?: { corrected?: boolean } }) : null
+  const namesFixed = restore?.bone_names?.corrected === true
   const moves = movesLine(m.clips)
   const missing = movesPlain(m.missing_clips)
   const clipData = clipFile.data
@@ -95,8 +98,14 @@ export function RigView({ version }: { version: Version }) {
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {(hbLine || moves || missing.length > 0) && (
+      {(hbLine || moves || missing.length > 0 || namesFixed) && (
         <div className="rig-lines small">
+          {namesFixed && (
+            <div>
+              Bone names: corrected to the standard names, so other tools recognise the skeleton.
+              <Info term="term.bone_names" />
+            </div>
+          )}
           {hbLine && (
             <div>
               {hbLine.warn && <span className="warn-mark">CHECK</span>}
