@@ -1,6 +1,7 @@
 // Batch-mode validation importer for Video Game Asset Creator.
 // Run: Unity.exe -batchmode -nographics -quit -projectPath <sandbox> -executeMethod VgacImport.Run -vgacInput <dir> -vgacName <name>
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]
+//      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional <name>_collider, optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
 // Writes <dir>/unity_report.json.
@@ -20,7 +21,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "2";
+    public const string Version = "4";
 
     [Serializable]
     class ClipInfo
@@ -67,6 +68,35 @@ public static class VgacImport
         public int clipCount;
         public List<ClipInfo> clips = new List<ClipInfo>();
         public ControllerInfo controller = new ControllerInfo();
+        public bool clipInfoUsed;              // loop flags came from anim_clips.json, not from the name rule
+        public int hitboxCount;
+        public string movementShape = "";      // upright | along | box | none; "" when no hit-box file was given
+        public float hitboxMaxBoneError;       // metres: worst bone-position mismatch between the file and the prefab
+    }
+
+    // hitboxes.json (backend/vgac/blender/hitboxes.py to_json): glTF model space, Y up, metres.
+    [Serializable]
+    class HitShape
+    {
+        public string name = "", region = "", label = "", bone = "", kind = "";
+        public float[] center = new float[3], axis = new float[3], forward = new float[3], size = new float[3];
+        public float[] bone_head = new float[3], offset = new float[3];
+        public float radius, height;
+        public int direction = 1;
+    }
+
+    [Serializable]
+    class HitMovement
+    {
+        public string @default = "";
+        public HitShape upright, along, box;
+    }
+
+    [Serializable]
+    class HitDoc
+    {
+        public List<HitShape> hitboxes = new List<HitShape>();
+        public HitMovement movement;
     }
 
     static string Arg(string key)
@@ -139,18 +169,29 @@ public static class VgacImport
             var renderers = instance.GetComponentsInChildren<Renderer>(true);
             foreach (var r in renderers) r.sharedMaterial = mat;
 
-            // Collider: convex MeshCollider from <name>_collider, renderer disabled.
+            // Hit boxes and the body shape for moving (G34): a rigged character gets trigger shapes on its bones and a
+            // simple body shape on the root, which replaces the convex hull (a hull does not follow the animation).
+            bool rigged = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(s => s.bones.Length > 0);
+            bool bodyShape = false;
+            var hitPath = Arg("-vgacHitboxes");
+            if (hitPath != null && File.Exists(hitPath) && rigged)
+                bodyShape = AddHitboxes(instance, hitPath, Arg("-vgacMovementShape") ?? "auto", ParseFloat(Arg("-vgacScale"), 1f), report);
+
+            // Collider: convex MeshCollider from <name>_collider, renderer disabled. Props keep it as their collider.
             var colObj = instance.GetComponentsInChildren<MeshFilter>(true).FirstOrDefault(m => m.name.EndsWith("_collider"));
             if (colObj != null)
             {
-                var mc = instance.AddComponent<MeshCollider>();
-                mc.sharedMesh = colObj.sharedMesh;
-                mc.convex = true;
-                report.colliderVertices = colObj.sharedMesh.vertexCount;
+                if (!bodyShape)
+                {
+                    var mc = instance.AddComponent<MeshCollider>();
+                    mc.sharedMesh = colObj.sharedMesh;
+                    mc.convex = true;
+                    report.colliderVertices = colObj.sharedMesh.vertexCount;
+                }
                 var cr = colObj.GetComponent<Renderer>();
                 if (cr) cr.enabled = false;
             }
-            else report.warnings.Add("no collider mesh");
+            else if (!bodyShape) report.warnings.Add("no collider mesh");
 
             // LODGroup: Unity creates it from _LODn names; verify, else build one.
             var lodGroup = instance.GetComponentInChildren<LODGroup>();
@@ -211,13 +252,13 @@ public static class VgacImport
                 ci.materialImportMode = ModelImporterMaterialImportMode.None;
                 ci.clipAnimations = new ModelImporterClipAnimation[0];
                 ci.SaveAndReimport();
-                SetClipLoops(ci, report);
+                SetClipLoops(ci, report, null);
                 clipSet = LoadClips(clipsPath);
             }
             else
             {
                 if (clipsSrc != null) report.warnings.Add("clips library skipped: avatar not humanoid or file missing");
-                SetClipLoops(importer, report);
+                SetClipLoops(importer, report, ReadClipInfo(Arg("-vgacClipInfo"), report));
                 clipSet = LoadClips(fbxPath);
             }
             // Read Loop Time back from the imported clips: that is what the game gets.
@@ -249,6 +290,87 @@ public static class VgacImport
         File.WriteAllText(Path.Combine(input ?? ".", "unity_report.json"), json);
         Debug.Log("VGAC_REPORT " + json);
         if (!report.ok) EditorApplication.Exit(1);
+    }
+
+    static float ParseFloat(string s, float fallback) =>
+        s != null && float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Hit boxes (G34)
+
+    // glTF model space to Unity model space for this FBX (Blender export, axis_forward -Z, axis_up Y): x flips.
+    static Vector3 U(float[] v, float scale) => v == null || v.Length < 3 ? Vector3.zero : new Vector3(-v[0], v[1], v[2]) * scale;
+
+    static bool AddHitboxes(GameObject root, string path, string choice, float scale, Report report)
+    {
+        var doc = JsonUtility.FromJson<HitDoc>(File.ReadAllText(path));
+        if (doc == null) { report.warnings.Add("hit boxes: file not readable"); return false; }
+        var all = root.GetComponentsInChildren<Transform>(true);
+        Transform Find(string n) => string.IsNullOrEmpty(n) ? null
+            : (all.FirstOrDefault(t => t.name == n) ?? all.FirstOrDefault(t => StripName(t.name) == StripName(n)));
+        var rt = root.transform;
+        float worst = 0f;
+        foreach (var h in doc.hitboxes ?? new List<HitShape>())
+        {
+            var bone = Find(h.bone);
+            if (bone == null)
+            {
+                if (!string.IsNullOrEmpty(h.bone)) report.warnings.Add("hit box " + h.name + ": bone " + h.bone + " not found; placed on the root");
+                bone = rt;
+            }
+            var go = new GameObject(string.IsNullOrEmpty(h.name) ? "Hit" : h.name);
+            go.transform.SetParent(bone, false);
+            go.transform.localPosition = bone.InverseTransformPoint(rt.TransformPoint(U(h.center, scale)));
+            var fwd = U(h.forward, 1f); var up = U(h.axis, 1f);
+            if (up.sqrMagnitude < 1e-8f) up = Vector3.up;
+            if (fwd.sqrMagnitude < 1e-8f || Vector3.Cross(fwd, up).sqrMagnitude < 1e-8f) fwd = Vector3.Cross(up, Vector3.right).sqrMagnitude > 1e-6f ? Vector3.Cross(Vector3.right, up) : Vector3.forward;
+            go.transform.rotation = rt.rotation * Quaternion.LookRotation(fwd, up);
+            // Undo any scale on the bone so collider sizes are in metres.
+            var ls = bone.lossyScale;
+            go.transform.localScale = new Vector3(1f / Mathf.Max(1e-6f, ls.x), 1f / Mathf.Max(1e-6f, ls.y), 1f / Mathf.Max(1e-6f, ls.z));
+            if (h.kind == "sphere")
+            {
+                var c = go.AddComponent<SphereCollider>(); c.radius = h.radius * scale; c.isTrigger = true;
+            }
+            else if (h.kind == "box")
+            {
+                var c = go.AddComponent<BoxCollider>(); c.size = new Vector3(h.size[0], h.size[1], h.size[2]) * scale; c.isTrigger = true;
+            }
+            else
+            {
+                var c = go.AddComponent<CapsuleCollider>(); c.direction = 1; c.radius = h.radius * scale; c.height = h.height * scale; c.isTrigger = true;
+            }
+            // Check: the file's bone head should sit where the prefab's bone is.
+            if (bone != rt && h.bone_head != null && h.bone_head.Length == 3)
+                worst = Mathf.Max(worst, (rt.TransformPoint(U(h.bone_head, scale)) - bone.position).magnitude);
+            report.hitboxCount++;
+        }
+        report.hitboxMaxBoneError = worst;
+
+        var pick = string.IsNullOrEmpty(choice) || choice == "auto" ? (doc.movement != null ? doc.movement.@default : "none") : choice;
+        HitShape m = doc.movement == null ? null : pick == "upright" ? doc.movement.upright : pick == "along" ? doc.movement.along : pick == "box" ? doc.movement.box : null;
+        if (m == null)
+        {
+            if (pick != "none") report.warnings.Add("movement shape " + pick + " is not in the hit-box file");
+            report.movementShape = "none";
+            return false;
+        }
+        report.movementShape = pick;
+        if (pick == "box")
+        {
+            var b = root.AddComponent<BoxCollider>();
+            b.center = U(m.center, scale);
+            b.size = new Vector3(Mathf.Abs(m.size[0]), Mathf.Abs(m.size[1]), Mathf.Abs(m.size[2])) * scale;
+        }
+        else
+        {
+            var c = root.AddComponent<CapsuleCollider>();
+            c.center = U(m.center, scale);
+            c.radius = m.radius * scale;
+            c.height = m.height * scale;
+            c.direction = Mathf.Clamp(m.direction, 0, 2);
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -516,6 +638,12 @@ public static class VgacImport
         float width = Mathf.Abs(Lateral(f, ra) - Lateral(f, la));
         if (Mathf.Abs(Lateral(f, head)) > 0.25f * width) return "head is off the centre line";
         if (head.y <= la.y || head.y <= ra.y) return "head is below the shoulders";
+        // Upright: the head stands well above the hips (at least half the leg length) and the arms start above the
+        // hips. A four-legged skeleton has a similar tree but fails this.
+        var hipY = map[HumanBodyBones.Hips].position.y;
+        float leg = hipY - 0.5f * (map[HumanBodyBones.LeftFoot].position.y + map[HumanBodyBones.RightFoot].position.y);
+        if (leg <= 0f || head.y - hipY < 0.5f * leg) return "not upright (head not well above the hips)";
+        if (la.y <= hipY || ra.y <= hipY) return "not upright (arms start below the hips)";
         foreach (var pair in new[] { (HumanBodyBones.LeftUpperArm, -1), (HumanBodyBones.LeftHand, -1), (HumanBodyBones.LeftUpperLeg, -1), (HumanBodyBones.LeftFoot, -1),
                                      (HumanBodyBones.RightUpperArm, 1), (HumanBodyBones.RightHand, 1), (HumanBodyBones.RightUpperLeg, 1), (HumanBodyBones.RightFoot, 1) })
             if (Mathf.Sign(Lateral(f, map[pair.Item1].position)) != pair.Item2) return pair.Item1 + " is on the wrong side";
@@ -736,18 +864,40 @@ public static class VgacImport
         return w.Any(CyclicWords.Contains) || clip.IndexOf("loop", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    static void SetClipLoops(ModelImporter mi, Report report)
+    // anim_clips.json from the rig stage (procanim.py): the loop flag per clip, which the GLB and FBX do not carry.
+    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; }
+    [Serializable] class Sidecar { public int version; public string motion = ""; public List<SidecarClip> clips = new List<SidecarClip>(); }
+
+    static Dictionary<string, SidecarClip> ReadClipInfo(string path, Report report)
+    {
+        if (path == null || !File.Exists(path)) return null;
+        try
+        {
+            var doc = JsonUtility.FromJson<Sidecar>(File.ReadAllText(path));
+            var map = new Dictionary<string, SidecarClip>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in doc.clips ?? new List<SidecarClip>()) if (!string.IsNullOrEmpty(c.name)) map[c.name] = c;
+            report.clipInfoUsed = map.Count > 0;
+            return map;
+        }
+        catch (Exception e) { report.warnings.Add("clip info not readable: " + e.Message); return null; }
+    }
+
+    static void SetClipLoops(ModelImporter mi, Report report, Dictionary<string, SidecarClip> sidecar)
     {
         var defs = mi.defaultClipAnimations;
         if (defs == null || defs.Length == 0) return;
         foreach (var d in defs)
         {
             var info = new ClipInfo { name = d.name, defaultLoop = d.loopTime };
-            if (IsCyclic(d.name))
+            SidecarClip side = null;
+            if (sidecar != null) sidecar.TryGetValue(ShortName(d.name), out side);
+            bool cyclic = side != null ? side.loop : IsCyclic(d.name);
+            bool inPlace = side != null ? side.in_place : !Words(d.name).Contains("rm");
+            if (cyclic)
             {
                 d.loopTime = true;
                 d.loopPose = true;
-                if (!Words(d.name).Contains("rm"))
+                if (inPlace)
                 {
                     // In-place cycle: bake root rotation, height and XZ into the pose, based on the original root.
                     d.lockRootRotation = true; d.keepOriginalOrientation = true;
@@ -786,7 +936,7 @@ public static class VgacImport
         AnimationClip Take(AnimationClip c) { if (c != null) used.Add(c); return c; }
 
         var idle = Take(Pick(clips, used, "idle"));
-        var walk = Take(Pick(clips, used, "walk"));
+        var walk = Take(Pick(clips, used, "walk") ?? Pick(clips, used, "slither"));
         var run = Take(Pick(clips, used, "run") ?? Pick(clips, used, "jog") ?? Pick(clips, used, "sprint"));
         var attack = Take(Pick(clips, used, "attack") ?? Pick(clips, used, "punch", "slash", "bite", "strike"));
         var hit = Take(Pick(clips, used, "hit", "hurt", "damage", "impact"));
@@ -802,7 +952,19 @@ public static class VgacImport
             }
             Take(jump); Take(jumpLand);
         }
-        foreach (var (role, c) in new[] { ("Idle", idle), ("Walk", walk), ("Run", run), ("Attack", attack), ("Hit", hit), ("Die", die), ("Jump", jump), ("JumpLand", jumpLand) })
+        AnimationClip Exact(params string[] words) => clips.FirstOrDefault(c => !used.Contains(c) && words.All(w => Words(c.name).Contains(w)));
+        var turnLeft = Take(Exact("turn", "left"));
+        var turnRight = Take(Exact("turn", "right"));
+        var flap = Take(Pick(clips, used, "flap"));
+        AnimationClip glide = null, takeoff = null, land = null;
+        if (flap)
+        {
+            glide = Take(Pick(clips, used, "glide"));
+            takeoff = Take(Pick(clips, used, "takeoff") ?? Exact("take", "off"));
+            land = Take(Pick(clips, used, "land", "landing"));
+        }
+        foreach (var (role, c) in new[] { ("Idle", idle), ("Walk", walk), ("Run", run), ("Attack", attack), ("Hit", hit), ("Die", die), ("Jump", jump), ("JumpLand", jumpLand),
+                                          ("TurnLeft", turnLeft), ("TurnRight", turnRight), ("Flap", flap), ("Glide", glide), ("Takeoff", takeoff), ("Land", land) })
             if (c != null) info.roles.Add(role + "=" + c.name);
 
         AnimatorState loco = null;
@@ -873,6 +1035,36 @@ public static class VgacImport
                     actionStates.Add(landSt);
                 }
                 else Back(jumpSt, loco);
+            }
+            if (turnLeft) { var st = OneShot("Turn Left", "TurnLeft", turnLeft, new Vector3(600, 240, 0), new[] { loco }); Back(st, loco); actionStates.Add(st); }
+            if (turnRight) { var st = OneShot("Turn Right", "TurnRight", turnRight, new Vector3(600, 360, 0), new[] { loco }); Back(st, loco); actionStates.Add(st); }
+            if (flap)
+            {
+                // Flying: Bool "Flying"; Locomotion -> Takeoff -> Fly while true, Fly -> Land -> Locomotion when false.
+                ctrl.AddParameter("Flying", AnimatorControllerParameterType.Bool);
+                var fly = sm.AddState("Fly", new Vector3(300, -250, 0));
+                if (glide)
+                {
+                    if (ctrl.parameters.All(p => p.name != "Speed")) ctrl.AddParameter("Speed", AnimatorControllerParameterType.Float);
+                    var ftree = new BlendTree { name = "Fly", blendType = BlendTreeType.Simple1D, blendParameter = "Speed", useAutomaticThresholds = false, hideFlags = HideFlags.HideInHierarchy };
+                    AssetDatabase.AddObjectToAsset(ftree, ctrl);
+                    ftree.AddChild(flap, 0f);
+                    ftree.AddChild(glide, 3.5f * speedScale);
+                    fly.motion = ftree;
+                }
+                else fly.motion = flap;
+                AnimatorStateTransition When(AnimatorState a, AnimatorState b, bool flying)
+                {
+                    var t = a.AddTransition(b);
+                    t.AddCondition(flying ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0, "Flying");
+                    t.hasExitTime = false; t.duration = 0.15f;
+                    return t;
+                }
+                if (takeoff) { var st = sm.AddState("Takeoff", new Vector3(50, -250, 0)); st.motion = takeoff; When(loco, st, true); Back(st, fly); actionStates.Add(st); }
+                else When(loco, fly, true);
+                if (land) { var st = sm.AddState("Land", new Vector3(550, -250, 0)); st.motion = land; When(fly, st, false); Back(st, loco); actionStates.Add(st); }
+                else When(fly, loco, false);
+                actionStates.Add(fly);
             }
             if (hit)
             {
@@ -957,7 +1149,7 @@ public static class VgacImport
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = new Color(0.45f, 0.45f, 0.45f, 1f);
             float dist = bounds.extents.magnitude * 2.4f;
-            camGo.transform.position = bounds.center + new Vector3(0.9f, 0.35f, 1f).normalized * dist;
+            camGo.transform.position = bounds.center + new Vector3(0.9f, 0.35f, -1f).normalized * dist;
             camGo.transform.LookAt(bounds.center);
             cam.nearClipPlane = 0.01f; cam.farClipPlane = dist * 10f;
             var rt = new RenderTexture(size, size, 24);
@@ -995,22 +1187,31 @@ public static class VgacImport
                 var clipName = clip.name.Replace("|", "_").Replace(" ", "_");
                 Vector3[] Sample(double t)
                 {
+                    // Evaluate twice: the first evaluation of a fresh Humanoid graph can still show the bind pose.
+                    playable.SetTime(t);
+                    graph.Evaluate(0f);
                     playable.SetTime(t);
                     graph.Evaluate(0f);
                     return boneTs.Select(b => b.position).ToArray();
                 }
+                Sample(0);  // warm-up: the first evaluation after the graph is built can still show the bind pose
+                var lf = animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.LeftFoot) : null;
+                var rf = animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.RightFoot) : null;
+                var strides = new List<string>();
                 Vector3[] first = null;
                 for (int i = 0; i < frames; i++)
                 {
                     var pose = Sample(clip.length * i / Math.Max(1, frames));
                     if (i == 0) first = pose;
+                    if (lf && rf) strides.Add((lf.position - rf.position).magnitude.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     Shoot(Path.Combine(outDir, $"{clipName}_{i:00}.png"));
                 }
                 var probe = Sample(clip.length * 1.5);
                 Shoot(Path.Combine(outDir, $"{clipName}_x1.5.png"));
                 float moved = 0f;
                 for (int b = 0; b < probe.Length; b++) moved = Mathf.Max(moved, (probe[b] - first[b]).magnitude);
-                probes.Add(clip.name + " loop=" + clip.isLooping + " moved_m=" + moved.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+                probes.Add(clip.name + " loop=" + clip.isLooping + " moved_m=" + moved.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)
+                           + (strides.Count > 0 ? " feet_apart_m=" + string.Join("/", strides) : ""));
                 graph.Destroy();
             }
             File.WriteAllText(Path.Combine(outDir, "snapshot_report.json"), JsonUtility.ToJson(new SnapReport { ok = true, files = log, loopProbes = probes }, true));
