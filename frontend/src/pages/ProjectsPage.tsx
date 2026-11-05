@@ -34,7 +34,7 @@ export default function ProjectsPage() {
                 <span className="project-name">{p.name}</span>
                 <span className="muted small">
                   {platformPlain(p.platform_target)} / {presetById(presets, p.style_lock.preset)?.label ?? modelLabel(p.style_lock.model)}
-                  {p.style_lock.loras.length ? ` / ${p.style_lock.loras.length} style add-on${p.style_lock.loras.length > 1 ? 's' : ''}` : ''} / created {timeAgo(p.created_at)}
+                  {p.style_lock.loras.length ? ` / ${p.style_lock.loras.length} LoRA${p.style_lock.loras.length > 1 ? 's' : ''}` : ''} / created {timeAgo(p.created_at)}
                 </span>
                 <span className="swatches">
                   {p.style_lock.palette.map((c, i) => (
@@ -282,7 +282,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
         <SubmitTextarea rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
       </Field>
       <div className="grid-2">
-        <Field label="Painter" term={'model.' + lock.model}>
+        <Field label="Model (the painter)" term={'model.' + lock.model}>
           <select value={lock.model} onChange={(e) => set('model', e.target.value as StyleModel)}>
             {STYLE_MODELS.map((m) => (
               <option key={m} value={m}>
@@ -291,8 +291,8 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
             ))}
           </select>
         </Field>
-        <Field label="Style add-ons" term="term.loras" hint="Optional. Enter adds one.">
-          <ChipInput value={lock.loras} onChange={(v) => set('loras', v)} placeholder="add-on name" />
+        <Field label="LoRAs (style add-ons)" term="term.loras" hint="Optional. Enter adds one.">
+          <ChipInput value={lock.loras} onChange={(v) => set('loras', v)} placeholder="LoRA name" />
         </Field>
       </div>
       <Field label="Palette" term="term.palette">
@@ -314,7 +314,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
           </span>
         </div>
       </Field>
-      <Field label="Avoid" term="term.negative" hint="Things the painter should leave out.">
+      <Field label="Negative prompt (things to avoid)" term="term.negative" hint="Things the model should leave out.">
         <SubmitTextarea rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
       </Field>
       </div>

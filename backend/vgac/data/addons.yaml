@@ -1,4 +1,4 @@
-# Add-ons: small trained helpers (LoRAs) a painter or the turnaround can load on top of its model.
+# LoRAs (called add-ons in the code): small trained files a concept model or the turnaround loads on top of its model.
 #
 # This file is the one list of add-ons the app knows. The app never lists a models folder: an add-on exists for the
 # app only when it is named here. Add one by adding an entry; nothing else lists them.
@@ -16,14 +16,14 @@
 #   required         true when the step cannot run without it (shown locked, cannot be switched off)
 #   built_in         model ids whose graph already loads this add-on (data/models.yaml builder); for those the
 #                    strength is passed to the graph instead of adding a second loader, and no trigger is appended
-#   required_for     model ids for which the add-on is part of the painter itself (shown locked for those)
+#   required_for     model ids for which the LoRA is part of the model itself (shown locked for those)
 #   licence, source  recorded in the export manifest
 addons:
   - id: pixel_art
-    label: Pixel-art painter add-on
+    label: Pixel-art LoRA
     help:
-      meaning: Pushes the painter toward crisp 16-bit pixel art with a small palette.
-      why: Gives the blocky, hand-placed pixel look; the Pixel Art painter is built on it.
+      meaning: Pushes the image model toward crisp 16-bit pixel art with a small palette.
+      why: Gives the blocky, hand-placed pixel look; the Z-Image Pixel Art model is built on it.
       technical: Z-Image Turbo pixel art style LoRA, model only, trigger "Pixel art style."
     file: ZImage/pixel_art_style_z_image_turbo.safetensors
     base_models: [zturbo, pixel]
@@ -36,9 +36,9 @@ addons:
     licence: Apache-2.0
     source: models.yaml entry "pixel" (Z-Image Turbo + pixel art LoRA)
   - id: qwen_lightning
-    label: Fast turnaround helper
+    label: Lightning LoRA (fast turnaround)
     help:
-      meaning: Lets the picture editor finish each side view in 4 quick passes instead of 40.
+      meaning: Lets the side-view model (Qwen-Image-Edit) finish each side view in 4 quick passes instead of 40.
       why: The turnaround takes seconds per view instead of minutes. It is part of the turnaround and cannot be switched off.
       technical: Qwen-Image-Edit-2511 Lightning 4-step LoRA at strength 1.0
     file: Qwen/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
@@ -50,9 +50,9 @@ addons:
     licence: Apache-2.0
     source: models.yaml entry "qwen_lightning_lora"
   - id: qwen_angles
-    label: Camera-angle helper
+    label: Multiple-angles LoRA (camera angles)
     help:
-      meaning: Teaches the picture editor to turn the camera around your asset for the side and back views.
+      meaning: Teaches the side-view model (Qwen-Image-Edit) to turn the camera around your asset for the side and back views.
       why: Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. It is part of the turnaround and cannot be switched off.
       technical: Qwen-Image-Edit-2511 multiple-angles LoRA (lora_strength)
     file: Qwen/qwen-image-edit-2511-multiple-angles-lora.safetensors
@@ -64,7 +64,7 @@ addons:
     licence: Apache-2.0
     source: models.yaml entry "qwen_angles_lora"
   # Optional looks from the add-on bake-off (docs/RECIPES-BAKEOFF.md). None is a recipe default: each is offered
-  # for the painters in base_models and switched on by the person.
+  # for the models in base_models and switched on by the person.
   - id: stylised_3d
     label: Stylised 3D look
     help:
@@ -112,7 +112,7 @@ addons:
     help:
       meaning: Bigger, blockier pixels with a smaller palette than the standard pixel-art look.
       why: Looks most like an old sprite on creatures and props. On people it can change the outfit, so the standard pixel look stays the default for characters.
-      technical: Z-Image Turbo PixelArt Redmond LoRA, trigger "Pixel Art, PixArFK". Offered for the plain Z-Image Turbo painter only; the Pixel Art painter keeps its built-in add-on (the two are never stacked). Bake-off 4.4.
+      technical: Z-Image Turbo PixelArt Redmond LoRA, trigger "Pixel Art, PixArFK". Offered for the plain Z-Image Turbo model only; the Z-Image Pixel Art model keeps its built-in LoRA (the two are never stacked). Bake-off 4.4.
     file: VGAC/zit_pixelart_redmond.safetensors
     base_models: [zturbo]
     stage: concept

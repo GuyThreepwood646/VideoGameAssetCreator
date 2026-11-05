@@ -1,13 +1,13 @@
-// Recipes and add-ons for the mock backend: the same shapes as backend reference.recipe_public and data/addons.yaml.
+// Recipes and LoRAs (add-ons) for the mock backend: the same shapes as backend reference.recipe_public and data/addons.yaml.
 import type { AddonEntry, Recipe, StrengthName } from '../api'
 
 export const ADDONS: AddonEntry[] = [
   {
     id: 'pixel_art',
-    label: 'Pixel-art painter add-on',
+    label: 'Pixel-art LoRA',
     help: {
-      meaning: 'Pushes the painter toward crisp 16-bit pixel art with a small palette.',
-      why: 'Gives the blocky, hand-placed pixel look; the Pixel Art painter is built on it.',
+      meaning: 'Pushes the image model toward crisp 16-bit pixel art with a small palette.',
+      why: 'Gives the blocky, hand-placed pixel look; the Z-Image Pixel Art model is built on it.',
       technical: 'Z-Image Turbo pixel art style LoRA, model only, trigger "Pixel art style."',
     },
     stage: 'concept',
@@ -22,9 +22,9 @@ export const ADDONS: AddonEntry[] = [
   },
   {
     id: 'qwen_lightning',
-    label: 'Fast turnaround helper',
+    label: 'Lightning LoRA (fast turnaround)',
     help: {
-      meaning: 'Lets the picture editor finish each side view in 4 quick passes instead of 40.',
+      meaning: 'Lets the side-view model (Qwen-Image-Edit) finish each side view in 4 quick passes instead of 40.',
       why: 'The turnaround takes seconds per view instead of minutes. It is part of the turnaround and cannot be switched off.',
       technical: 'Qwen-Image-Edit-2511 Lightning 4-step LoRA at strength 1.0',
     },
@@ -40,9 +40,9 @@ export const ADDONS: AddonEntry[] = [
   },
   {
     id: 'qwen_angles',
-    label: 'Camera-angle helper',
+    label: 'Multiple-angles LoRA (camera angles)',
     help: {
-      meaning: 'Teaches the picture editor to turn the camera around your asset for the side and back views.',
+      meaning: 'Teaches the side-view model (Qwen-Image-Edit) to turn the camera around your asset for the side and back views.',
       why: 'Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. It is part of the turnaround and cannot be switched off.',
       technical: 'Qwen-Image-Edit-2511 multiple-angles LoRA (lora_strength)',
     },
