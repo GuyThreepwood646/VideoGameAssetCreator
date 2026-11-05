@@ -61,9 +61,14 @@ styles:
     model: zturbo
     look: Retro 64
     plain: chunky shapes with fewer triangles, small soft textures, no surface bumps.
+    # Bake-off 6: starting with the medium stops the cube-headed voxel figures the old block gave.
     prompt_block: >-
-      Late 1990s low-polygon console style, chunky simple shapes, flat vertex-lit shading, small
-      blurry textures, bold saturated colours, as if rendered on a 64-bit era console.
+      An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh
+      rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading with soft
+      glossy specular highlights, slightly angular silhouettes, chunky simplified hands and details,
+      blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light
+      with one warm key light from the upper left, a soft round blob shadow underneath, the whole image
+      slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels.
     recipe:
       mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false}
   - id: lowpoly_flat
@@ -73,9 +78,13 @@ styles:
     model: zturbo
     look: Low-poly
     plain: faceted shapes with one flat colour per face, a quarter of the usual triangles, simple textures.
+    # Bake-off 6: the old block stayed smooth; this one names the facets.
     prompt_block: >-
-      Low-poly flat-shaded style, faceted geometric surfaces, solid flat colour per face, no
-      texture detail, clean silhouettes, soft pastel palette.
+      A low-poly 3D model rendered in real time with flat shading, built from a few hundred large flat
+      triangular facets, every facet one solid colour so each plane shows as a separate tone, sharp
+      angular edges everywhere including the face, hair, cloth and wood, no textures and no smooth or
+      rounded surfaces. Clean readable silhouette, soft pastel palette, simple soft ambient light.
+      No pixel art, no voxels, no fine surface detail.
     recipe:
       mesh: {triangle_scale: 0.25, triangle_floor: 300, texture_cap: 512, normal_map: false}
       surface: {shading: flat}
@@ -103,7 +112,8 @@ styles:
         negative: >-
           painting, illustration, drawing, sketch, cartoon, anime, stylised, cel shading, 3D render,
           video game screenshot, hard shadows, cast shadow, dramatic lighting, rim light, coloured
-          lighting, lens flare, depth of field, blurry background, motion blur, text, logo, watermark
+          lighting, lens flare, depth of field, blurry background, motion blur, text, logo, watermark,
+          softbox, light stand, umbrella light, studio equipment, lamp, tripod
       mesh:
         upsample: 1536
     # Honest notes per category: one generated shell with one painted skin cannot hold everything a photograph
@@ -112,7 +122,8 @@ styles:
       humanoid:
         caveat: >-
           Photoreal people are the hardest case: eyes, teeth and hair are painted onto the surface
-          rather than made separately, so faces look less real than armour, cloth and gear.
+          rather than made separately, and hair becomes a solid shape, so faces look less real than
+          armour, cloth and gear. Check the face in the side views before building the model.
       quadruped:
         caveat: >-
           Fur is painted onto a smooth surface rather than made of strands, and eyes are painted
@@ -155,9 +166,11 @@ styles:
     delight_default: keep
     pbr_fix_default: false
     label: Clay
-    model: klein
+    # Bake-off 6: Klein left the arms at the sides in every clay character; Z-Image Turbo keeps the pose.
+    # Never add "puppet" or "figure" to the block: a second clay figure then appears beside the subject.
+    model: zturbo
     look: Clay
     plain: soft sculpted shapes and matte colours, full detail for your platform.
     prompt_block: >-
-      Stop-motion clay style, soft matte sculpted surfaces with fingerprint texture, rounded
-      simplified shapes, warm muted colours, as if photographed on a tabletop set.
+      Clay animation, Clay. Stop-motion clay style, soft matte sculpted surfaces with fingerprint
+      texture, rounded simplified shapes, warm muted colours, as if photographed on a tabletop set.
