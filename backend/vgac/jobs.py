@@ -941,6 +941,12 @@ class JobQueue:
                     if job is None or job.status != "cancelled" or parse_kind(job.kind)[1] == "judge":
                         continue
                     instance, message = self.place(v.stage, a.category)
+                    # The same settings includes the random seed the stopped run had already picked.
+                    seed = (v.params or {}).get("seed")
+                    payload = dict(job.payload or {})
+                    if seed is not None and isinstance(payload.get("params"), dict) and payload["params"].get("seed") is None:
+                        payload["params"] = {**payload["params"], "seed": seed}
+                        job.payload = payload
                     job.status = "queued"
                     job.instance = instance
                     job.error = None
