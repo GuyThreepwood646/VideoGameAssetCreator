@@ -53,7 +53,7 @@ const LOOK_WORD: Record<string, string> = {
   pixel: 'Pixel-art',
   retro64: 'Retro 64',
   lowpoly_flat: 'Low-poly',
-  realistic_pbr: 'Realistic',
+  realistic_pbr: 'Photoreal',
   realistic: 'Realistic',
   clay: 'Clay',
 }

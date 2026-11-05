@@ -85,13 +85,32 @@ styles:
   - id: realistic_pbr
     delight_default: remove
     pbr_fix_default: true
-    label: Realistic PBR
+    label: Photoreal
     model: zbase
-    look: Realistic
-    plain: full detail, painted-in shadows removed, colours and shine kept in real-world ranges.
+    look: Photoreal
+    plain: the most detail your platform allows, lit evenly so it reacts to your game's lights, with real-world colours, metal and shine.
+    # Shown with the recipe when the platform is not one of these: the look needs detail to read as real.
+    recommend_platforms: [pc_mid, high]
+    platform_note: Photoreal shows best on PC or Showcase; with Phone budgets it will look softer.
     prompt_block: >-
-      Photorealistic physically based rendering reference, real material response, subtle wear
-      and surface detail, neutral studio lighting, accurate proportions.
+      A sharp studio product photograph taken for a 3D scanning reference, the real physical subject
+      with true materials, fine surface detail, natural wear and accurate real-world proportions.
+      Flat, even, shadowless lighting from a large soft light tent, with no cast shadows, no strong
+      highlights and no coloured light. Everything in sharp focus from front to back. Neutral,
+      unsaturated true-to-life colours.
+    recipe:
+      concept:
+        negative: >-
+          painting, illustration, drawing, sketch, cartoon, anime, stylised, cel shading, 3D render,
+          video game screenshot, hard shadows, cast shadow, dramatic lighting, rim light, coloured
+          lighting, lens flare, depth of field, blurry background, motion blur, text, logo, watermark
+      mesh:
+        upsample: 1536
+    by_category:
+      humanoid:
+        caveat: >-
+          Photoreal people are the hardest case: faces and hair come out less convincing than
+          armour, cloth and gear. It works best for props, scenery and creatures.
   - id: clay
     delight_default: keep
     pbr_fix_default: false

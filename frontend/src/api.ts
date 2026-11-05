@@ -274,6 +274,7 @@ export type Suggestion = {
   category_label?: string
   // The recipe's plain sentence ("Pixel-art character: small crisp textures ..."), when the backend has recipes.
   recipe_plain?: string
+  recipe_notes?: string[]
 }
 
 // Recipes (GET /api/recipe, backend reference.recipe_public): how the chosen look carries through every step.
