@@ -41,10 +41,13 @@ from .base import StageContext, random_seed
 
 CATEGORIES = ("humanoid",)
 TARGET_FRACTION = 0.125  # texels wanted across the face: an eighth of the texture's side (256 at 2048)
-GAIN_MIN = 1.5  # below this the layout is left alone: the repack costs the rest of the body about 12 percent of its texels across (Blender packs less tightly than the unwrapper) and can drop atlas_used under its bar
+GAIN_MIN = 1.15  # below this the layout is left alone (the repack and the re-bake take about 30 s)
 SHARP_MIN = 1.0  # face sharpness after the pass (face.sharpness of the front render); smeared faces score 0.6 to 0.8
 MATCH_MIN = 0.6  # the model's face against the fitted picture (face.feature_match)
 ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the face
+RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the inner face, as a share of the picture
+SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
+FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
 LANDMARK_RESIDUAL_MAX = 0.12  # the eye-and-mouth fit's eye error, as a share of the face's width
 REDRAW_KEEP_MIN = 0.5  # the sharpened picture against the crop: under it the redraw moved things
 COVERED_WIDTH_MIN = 0.35
@@ -164,8 +167,6 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     region = info["region"]
     src = face.read_rgb(picture, 1024)
     inner = face.inner_face(info)
-    # The eyes and the mouth first (they must land on the model's own); the whole-face correlation when they cannot
-    # be found on both pictures.
     # The eye-and-mouth fit is used when it explains the picture: its eyes land within LANDMARK_RESIDUAL_MAX of the face's
     # width of the model's and the broad features agree; it keeps the eye line and the mouth where the model has them.
     # Otherwise the whole-face correlation (bounded stretch). Scores are on broad features: the model's face is
@@ -187,12 +188,29 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # knight (tried and dropped); one scale and shift keeps the painted face as it was drawn.
     fitted = face.apply_alignment(src, a)
     match_fit = face.feature_match(fitted, view["image"], region)
-    toned = face.tone_match(fitted, view["image"], region)
-    weight = face.screen_weight(region)
-    res = face.project_back(mesh, tex, cam, toned, weight, strength=strength)
+    # Hair stays hair and skin stays skin: never paint onto the model's hair (a flap over an eye, the fringe), and
+    # where the picture has hair or background over the model's skin (its fringe and jaw are not where the model's
+    # are), fill that spot from the painted skin around it instead.
+    seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
+    paint = region & ~face.dilate_mask(seg["old_hair"], 2)
+    core = seg["pic_hair"] | (seg["pic_background"] & ~inner)
+    # Outside the eyes-nose-mouth area the painted face's own rim goes too (the shadow along its jaw and cheek, which
+    # lands inside the model's wider cheek and shows as a line from the side).
+    rim = face.dilate_mask(core, max(2, int(RIM_FRAC * view["image"].shape[0]))) & ~face.features_box(info)
+    bad = (core | rim) & paint
+    if bad.any():
+        filled = face.inpaint(fitted, paint & ~bad)
+        fitted = np.where(bad[..., None], filled, fitted)
+    weight = face.screen_weight(paint)
+    # where the paint will fade (the region's edge, and surface turning away from the camera) the tone is matched
+    # locally, so the cheeks do not show a step where the painted face hands over to the old texture
+    fade = weight * face.smoothstep(FACING[0], FACING[1] + 0.25, view["facing"])
+    toned = face.tone_match_local(fitted, view["image"], paint, fade)
+    res = face.project_back(mesh, tex, cam, toned, weight, facing=FACING, strength=strength, soften_m=SOFTEN_M)
+    spread, spread_n = face.spread_tone(mesh, tex, res["texture"], res["texel_weight"], info["skin"])
     uvm = imaging.load_uv_mesh(glb)
     coverage = imaging.rasterise_uv(uvm, T)["labels"] > 0
-    new_tex = face.grow_into_gutter(res["texture"], coverage, res["bbox"], imaging.dilation_px(T))
+    new_tex = face.grow_into_gutter(spread, coverage, res["bbox"], imaging.dilation_px(T))
     out = face.save_rgb(new_tex, out_dir / "base_color_face.png")
     after = face.render_view(mesh, new_tex, cam)
     old_mesh = face.load_mesh(before_glb)
@@ -205,7 +223,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "feature_match_after": face.feature_match(after["image"], toned, region),
         "fit_match": match_fit,
         "alignment": {k: a.get(k) for k in ("how", "sx", "sy", "tx", "ty", "score", "residual_px")},
-        "texels_painted": res["changed"],
+        "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "tone_spread_texels": spread_n,
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
     }
@@ -226,7 +244,9 @@ def eyes_moved(before: np.ndarray, after: np.ndarray, info: dict[str, Any]) -> f
 
 
 def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell: int = 384) -> Path:
-    """Painted head | 3D face before | 3D face after, from the front, then from the left and the right three-quarter."""
+    """Painted head | 3D face before | 3D face after, from the front, then from the left and the right three-quarter;
+    a last row of close-ups of the new face: the brow and the bridge of the nose from the front, and the cheek where
+    the painted face meets the old texture from each side."""
     rows = []
     for yaw in (0, 35, -35):
         imgs = []
@@ -234,7 +254,7 @@ def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell
             imgs.append(face.render_view(m, t, face.head_camera(h, yaw, 768))["image"])
         rows.append((yaw, imgs))
     pad = 28
-    sheet = Image.new("RGB", (cell * 3, pad + cell * 3), (32, 32, 32))
+    sheet = Image.new("RGB", (cell * 3, pad + cell * 4 + pad), (32, 32, 32))
     d = ImageDraw.Draw(sheet)
     for i, label in enumerate(("Painted picture", "3D face before", "3D face after")):
         d.text((i * cell + 8, 8), label, fill=(230, 230, 230))
@@ -247,6 +267,16 @@ def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell
             d.text((8, y + 8), "From the left" if yaw > 0 else "From the right", fill=(230, 230, 230))
         for c, img in enumerate(imgs):
             sheet.paste(Image.fromarray(face.to_uint8(img)).resize((cell, cell), Image.LANCZOS), ((c + 1) * cell, y))
+    # close-ups of the new face (fractions of the 768 px renders: the framing of head_camera)
+    y = pad + 3 * cell
+    d.text((8, y + 4), "Close-ups after: brow, left cheek, right cheek", fill=(230, 230, 230))
+    boxes = ((0, (0.25, 0.3, 0.75, 0.62)), (1, (0.2, 0.35, 0.6, 0.85)), (2, (0.4, 0.35, 0.8, 0.85)))
+    for c, (row, (fx0, fy0, fx1, fy1)) in enumerate(boxes):
+        img = Image.fromarray(face.to_uint8(rows[row][1][1]))
+        W = img.size[0]
+        part = img.crop((int(fx0 * W), int(fy0 * W), int(fx1 * W), int(fy1 * W)))
+        part.thumbnail((cell, cell), Image.LANCZOS)
+        sheet.paste(part, (c * cell + (cell - part.size[0]) // 2, y + pad))
     sheet.save(dest)
     return dest
 
