@@ -39,6 +39,7 @@ HOLLOW_RATIO = 0.7
 PRIMITIVE_COVER = 0.85
 PRIMITIVE_MAX_VOLUME = 1.3
 OPENING_BLOCKED_MAX = 0.10
+MIN_OPENING_M = 0.3        # a gap only counts as an opening when something could pass: at least this wide and this tall
 GRID = 64
 
 RIGGED = ("humanoid", "quadruped", "multileg", "winged", "serpent")
@@ -235,9 +236,13 @@ def _components(mask: np.ndarray) -> list[np.ndarray]:
     return out
 
 
-def openings(surf: np.ndarray, min_cells: int = 4) -> tuple[list[tuple[int, np.ndarray]], tuple[list[int], list[int]]]:
+def openings(surf: np.ndarray, min_cells: int = 4, pitch: float | None = None,
+             min_size_m: float = MIN_OPENING_M) -> tuple[list[tuple[int, np.ndarray]], tuple[list[int], list[int]]]:
     """[(axis, 2D mask)] for each opening seen along X (side to side) and Y (front to back); each 2D mask is over
-    (the other horizontal axis, Z) of the surface's occupied range. See the module docstring."""
+    (the other horizontal axis, Z) of the surface's occupied range. See the module docstring.
+
+    With `pitch` (metres per cell) a gap must be at least `min_size_m` wide and tall to count, so the spaces between
+    wheel spokes or chair slats on a small prop are not reported as doorways (found on the first live cart)."""
     occ = np.nonzero(surf)
     lo = [int(a.min()) for a in occ]
     hi = [int(a.max()) + 1 for a in occ]
@@ -251,8 +256,15 @@ def openings(surf: np.ndarray, min_cells: int = 4) -> tuple[list[tuple[int, np.n
         outside = flood(seed, miss)
         holes = miss & ~outside
         for comp in _components(holes):
-            if comp.sum() >= min_cells:
-                out.append((axis, comp))
+            if comp.sum() < min_cells:
+                continue
+            if pitch:
+                rows, cols = np.nonzero(comp)
+                wide = (rows.max() - rows.min() + 1) * pitch
+                tall = (cols.max() - cols.min() + 1) * pitch
+                if wide < min_size_m or tall < min_size_m:
+                    continue
+            out.append((axis, comp))
     return out, (lo, hi)
 
 
@@ -420,7 +432,7 @@ def analyse(v: np.ndarray, f: np.ndarray, res: int = GRID) -> dict[str, Any]:
     solid = solid_cells(surf)
     normals, offsets = kdop(v)
     hull = grid.mask(inside_planes(grid.centers, normals, offsets))
-    found = openings(surf)
+    found = openings(surf, pitch=grid.pitch)
     return {"grid": grid, "surf": surf, "solid": solid, "hull": hull, "found": found,
             "solid_ratio": min(1.0, float((solid & hull).sum()) / max(1, int(hull.sum()))),
             "hull_openings": openings_blocked(surf, hull, found)}
