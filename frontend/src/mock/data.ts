@@ -49,7 +49,8 @@ export const categories: Category[] = [
     size_m: 1.5,
     size_axis: 'horizontal',
     size_label: 'How long is it?',
-    size_hint: 'In metres, nose to rump, not counting the tail. A wolf is about 1.4 m; a horse about 2.4 m.',
+    size_hint: 'In metres, from the nose to the tip of the tail. A wolf is about 1.8 m; a horse about 3 m.',
+    size_word: 'long',
     parts_default: [],
     budgets: { mobile_low: { triangles: 6000, texture: 1024 }, pc_mid: { triangles: 24000, texture: 2048 }, high: { triangles: 60000, texture: 4096 } },
   },
@@ -63,6 +64,7 @@ export const categories: Category[] = [
     size_axis: 'horizontal',
     size_label: 'How wide are the wings?',
     size_hint: 'In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m.',
+    size_word: 'across',
     parts_default: [],
     budgets: { mobile_low: { triangles: 6000, texture: 1024 }, pc_mid: { triangles: 24000, texture: 2048 }, high: { triangles: 60000, texture: 4096 } },
   },
@@ -76,6 +78,7 @@ export const categories: Category[] = [
     size_axis: 'horizontal',
     size_label: 'How long is it?',
     size_hint: 'In metres, front to back. A car is about 4.5 m; a tank about 7 m.',
+    size_word: 'long',
     parts_default: ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr', 'turret'],
     budgets: { mobile_low: { triangles: 5000, texture: 1024 }, pc_mid: { triangles: 20000, texture: 2048 }, high: { triangles: 50000, texture: 4096 } },
   },
@@ -89,6 +92,7 @@ export const categories: Category[] = [
     size_axis: 'longest',
     size_label: 'How big is it?',
     size_hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.',
+    size_word: 'across',
     parts_default: [],
     budgets: { mobile_low: { triangles: 800, texture: 512 }, pc_mid: { triangles: 3000, texture: 1024 }, high: { triangles: 10000, texture: 2048 } },
   },
@@ -102,6 +106,7 @@ export const categories: Category[] = [
     size_axis: 'longest',
     size_label: 'How big is it?',
     size_hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.',
+    size_word: 'across',
     parts_default: ['lid'],
     budgets: { mobile_low: { triangles: 1200, texture: 512 }, pc_mid: { triangles: 5000, texture: 1024 }, high: { triangles: 15000, texture: 2048 } },
   },
@@ -112,9 +117,10 @@ export const categories: Category[] = [
     symmetric: false,
     pose_block: 'modular piece, orthographic three-quarter view, grid aligned',
     size_m: 3.0,
-    size_axis: 'grid',
-    size_label: 'Size on the grid',
-    size_hint: 'Set by the grid; see G15.',
+    size_axis: 'longest',
+    size_word: 'across',
+    size_label: 'How big is it?',
+    size_hint: 'In metres, along its longest side. A wall section is about 3 m wide; a floor tile about 2 m. Pieces are not rounded to a grid yet.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 1500, texture: 1024 }, pc_mid: { triangles: 6000, texture: 2048 }, high: { triangles: 20000, texture: 4096 } },
   },
@@ -254,7 +260,22 @@ export const stages: StageInfo[] = [
     label: 'Prep',
     adjust_schema: [
       // 3.2: size_m replaces height_m (read as an alias); null means the category's size. Not for scenery or materials.
-      { name: 'size_m', label: 'Size (m)', type: 'number', min: 0.01, max: 100, step: 0.05, default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage'] },
+      {
+        name: 'size_m',
+        label: 'Size (m)',
+        type: 'number',
+        min: 0.01,
+        max: 100,
+        step: 0.05,
+        default: 1.8,
+        categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'],
+        // As the backend serves it (3.2): axis, default, word, question and hint per category.
+        by_category: Object.fromEntries(
+          categories
+            .filter((c) => c.size_axis)
+            .map((c) => [c.id, { axis: c.size_axis!, default: c.size_m, word: wordOf(c.id), label: c.size_label ?? 'How big is it?', hint: c.size_hint ?? 'In metres.' }]),
+        ),
+      },
       {
         name: 'face_yaw',
         label: 'Which way is the front?',
@@ -343,16 +364,15 @@ const chk = (id: string, ok: boolean, value: unknown, limit: unknown, extra: Par
 })
 
 const RIGGED = /^(humanoid|quadruped|winged|multileg|serpent)$/
-const AXIS_WORD: Record<string, string> = { humanoid: 'tall', quadruped: 'long', winged: 'across', vehicle: 'long', prop_rigid: 'long', prop_articulated: 'long', environment: 'tall' }
-// Measured size per category on its axis, and the box it comes from ([x, y, z] metres).
+// Measured box per category as prep reports it: Blender [x, y, z] metres, Z up.
 const MOCK_DIMS: Record<string, [number, number, number]> = {
-  humanoid: [0.62, 1.8, 0.35],
-  quadruped: [0.42, 0.92, 1.5],
-  winged: [1.5, 0.7, 0.9],
-  vehicle: [1.9, 1.5, 4.5],
-  prop_rigid: [0.45, 0.6, 0.45],
-  prop_articulated: [0.8, 0.55, 0.5],
-  environment: [2.0, 3.0, 0.4],
+  humanoid: [0.62, 0.35, 1.8],
+  quadruped: [0.42, 1.5, 0.92],
+  winged: [1.5, 0.9, 0.7],
+  vehicle: [1.9, 4.5, 1.5],
+  prop_rigid: [0.45, 0.45, 0.6],
+  prop_articulated: [0.8, 0.5, 0.55],
+  environment: [3.0, 0.4, 2.4],
 }
 export function clipsFor(category: string): string[] {
   if (category === 'humanoid') return ['idle', 'walk', 'run', 'jump', 'attack', 'hit', 'death']
@@ -390,7 +410,7 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
         ...(category === 'environment' || category === 'material'
           ? []
           : [
-              chk('size_m', true, sizeOn(category), sizeOn(category), { severity: 'warn', vars: { axis_word: AXIS_WORD[category] ?? 'tall' }, help: `The model is ${sizeOn(category)} m ${AXIS_WORD[category] ?? 'tall'}, as intended.` }),
+              chk('size_m', true, sizeOn(category), sizeOn(category), { severity: 'warn', vars: { axis_word: wordOf(category) }, help: `The model is ${sizeOn(category)} m ${wordOf(category)}, as intended.` }),
             ]),
         // The front check. On the failing seed the best turn is not a quarter turn, so its fix opens the front
         // picker instead of re-running (2.5).
@@ -434,7 +454,7 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
 function sizeOn(category: string): number {
   const d = MOCK_DIMS[category] ?? MOCK_DIMS.prop_rigid
   const axis = categories.find((c) => c.id === category)?.size_axis
-  return axis === 'horizontal' ? Math.max(d[0], d[2]) : axis === 'longest' ? Math.max(...d) : d[1]
+  return axis === 'horizontal' ? Math.max(d[0], d[1]) : axis === 'longest' ? Math.max(...d) : d[2]
 }
 
 // The export stage's finish card lines and "Using it in Unity" text (2.4), as the new backend writes them.
@@ -527,6 +547,9 @@ export function fabricate(asset: Asset, version: Version) {
       m.dims = MOCK_DIMS[asset.category] ?? MOCK_DIMS.prop_rigid
       // The turn prep applied when face_yaw was automatic (3.2); the front picker marks it "chosen".
       m.face_yaw_applied = 0
+      m.face_best_turn = 0
+      m.facing_source = 'audit'
+      m.size_source = 'category'
       m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000, asset.category)
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.checks_failed = (m.checks as MockCheck[]).filter((c) => !c.ok).map((c) => c.id)
@@ -594,7 +617,7 @@ export function fabricate(asset: Asset, version: Version) {
       m.unity_report = {
         ok: true,
         prefab: `Assets/VGAC/${asset.name}/${asset.name}.prefab`,
-        ...(rigged ? { avatar: asset.category === 'humanoid' ? 'Humanoid' : 'Generic', avatar_mapping: asset.category === 'humanoid' ? 'explicit' : 'generic', humanoidValid: asset.category === 'humanoid' } : {}),
+        ...(rigged ? (asset.category === 'humanoid' ? { avatar: 'Humanoid', avatar_mapping: 'explicit', humanoidValid: true } : { avatar: 'Generic' }) : {}),
         importer_version: 2,
         texturesAssigned: ['base_color', 'normal', 'occlusion', 'metallic_smoothness'],
         ...(rigged
@@ -752,7 +775,7 @@ export function seedStore() {
   setSelected(knight, m2)
 
   // seed 3 makes the mock prep checks fail (triangle budget and manifold) so the fix buttons show.
-  const pr1 = seedVersion(knight, 'prep', m2, { height_m: 1.8, face_yaw: 'auto', symmetric: true, pivot: 'base', smooth_angle: 60, seed: 3 }, 120, 'host')
+  const pr1 = seedVersion(knight, 'prep', m2, { size_m: 1.8, size_axis: 'height', size_word: 'tall', face_yaw: 'auto', symmetric: true, pivot: 'base', smooth_angle: 60, seed: 3 }, 120, 'host')
   setSelected(knight, pr1)
 
   const r1 = seedVersion(knight, 'rig', pr1, { template: 'auto', target_faces: 20_000, group_per_vertex: 4, bottom_center_origin: true, bend_test: true }, 80, 'b')
@@ -831,4 +854,11 @@ export function seedStore() {
   fabricate(winter, wc1)
   doneJob(winter, wc1, 'concept.refine', 'b', 24)
   setSelected(winter, wc1)
+}
+
+// The axis word a category's size is said in: the category's size_word, else from its axis.
+function wordOf(category: string): string {
+  const c = categories.find((x) => x.id === category)
+  if (c?.size_word) return c.size_word
+  return c?.size_axis === 'height' ? 'tall' : c?.size_axis === 'horizontal' ? 'long' : 'across'
 }

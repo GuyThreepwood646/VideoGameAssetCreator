@@ -278,7 +278,8 @@ def _health_client(name: str, url: str) -> ComfyClient:
 @app.get("/api/categories")
 def categories() -> list[dict[str, Any]]:
     return [{"id": c["id"], "label": c["label"], "rig_engine": c["rig_engine"], "symmetric": bool(c["symmetric"]), "pose_block": c["pose_block"],
-             "size_m": c["size_m"], "parts_default": c.get("parts_default", []), "budgets": c.get("budgets", {}),
+             "size_m": c["size_m"], "size_axis": c.get("size_axis"), "size_word": c.get("size_word"),
+             "size_label": c.get("size_label"), "size_hint": c.get("size_hint"), "parts_default": c.get("parts_default", []), "budgets": c.get("budgets", {}),
              "views": c.get("views"), "lod_ratios": c.get("lod_ratios"), "topology": c.get("topology"), "input_view_default": c.get("input_view_default"),
              "skips": list(c.get("skips") or [])}
             for c in reference.categories()]
@@ -450,7 +451,7 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     copy.files = files
     db.commit()
     # Refine with the change so the identity holds.
-    vparams = _params("concept", body.params)
+    vparams = _params("concept", body.params, a.category)
     v = pipeline.new_version(db, a, "concept", copy, {**copy.params, **vparams})
     job = pipeline.submit(db, a, v, "refine", {"instruction": change, "view": None, "mask_png": None, "params": vparams})
     return {"asset": asset_to_dict(a), "job": job_to_dict(job), "version": version_to_dict(v)}
@@ -517,7 +518,7 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     a = _asset(db, aid)
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
-        body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"))}
+        body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
     try:
         return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix)
     except ValueError as e:
@@ -544,7 +545,7 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
     _check_mask(body.mask_png)
-    rparams = _params(parent.stage, body.params)
+    rparams = _params(parent.stage, body.params, a.category)
     v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **rparams})
     job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
@@ -556,7 +557,7 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
-    aparams = _params(parent.stage, body.params)
+    aparams = _params(parent.stage, body.params, a.category)
     v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
