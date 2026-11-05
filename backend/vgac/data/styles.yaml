@@ -106,11 +106,51 @@ styles:
           lighting, lens flare, depth of field, blurry background, motion blur, text, logo, watermark
       mesh:
         upsample: 1536
+    # Honest notes per category: one generated shell with one painted skin cannot hold everything a photograph
+    # shows. These are shown on the asset form under the recipe.
     by_category:
       humanoid:
         caveat: >-
-          Photoreal people are the hardest case: faces and hair come out less convincing than
-          armour, cloth and gear. It works best for props, scenery and creatures.
+          Photoreal people are the hardest case: eyes, teeth and hair are painted onto the surface
+          rather than made separately, so faces look less real than armour, cloth and gear.
+      quadruped:
+        caveat: >-
+          Fur is painted onto a smooth surface rather than made of strands, and eyes are painted
+          on, so it looks real at a distance and less so up close.
+      winged:
+        caveat: >-
+          Feathers and wing membranes are painted onto a solid surface, so wings look thicker and
+          less delicate than real ones.
+      multileg:
+        caveat: >-
+          Fine hairs, thin legs and glossy eyes are painted on or thickened, so it reads best at a
+          distance.
+      serpent:
+        caveat: >-
+          Scales come out well; eyes and the inside of the mouth are painted on.
+      prop_rigid:
+        caveat: >-
+          Glass, flames and anything that glows are painted as solid colour for now, and thin parts
+          like chains or rope come out thick. Solid objects in wood, metal, stone and leather look best.
+      prop_articulated:
+        caveat: >-
+          Glass and glowing parts are painted as solid colour for now. Solid objects in wood, metal,
+          stone and leather look best.
+      vehicle:
+        caveat: >-
+          Windows, lights and glossy paint are painted as solid colour for now, so vehicles look
+          best from a distance.
+      environment:
+        caveat: >-
+          Looks real at a few steps away; right up close the surface is softer than a photograph.
+      foliage:
+        caveat: >-
+          Leaves are painted onto a solid shape rather than made one by one, so plants look best
+          far away. This is the weakest category for Photoreal.
+      material:
+        caveat: >-
+          Height and shine are worked out from the colours, so deep cracks and wet surfaces are
+          approximate.
   - id: clay
     delight_default: keep
     pbr_fix_default: false
