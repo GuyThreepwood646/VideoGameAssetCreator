@@ -64,6 +64,10 @@ hmax = max(dims.x, dims.y, 1e-4)
 up = Vector((0, 0, 1))
 roots = [b for b in bones if b.parent is None]
 leaves = [b for b in bones if not b.children]
+# Leaf end points: the lower of head and tail (a foot can be a leaf's tail when the leaf starts at the knee),
+# and the end farther from the parent joint (a wing tip).
+low = {b.name: (head[b.name] if head[b.name].z <= tail[b.name].z else tail[b.name]) for b in leaves}
+far = {b.name: max((head[b.name], tail[b.name]), key=lambda p: (p - head[b.parent.name if b.parent else b.name]).length) for b in leaves}
 
 
 def chain_to_root(b):
@@ -97,19 +101,19 @@ none_req = gait.MOTION_ALIASES.get(_req, _req) == "none"
 # ---- legs ----------------------------------------------------------------------------------------------------
 # Leg chains: leaves whose head sits in the bottom 20 percent of the height, reduced to the lowest leaf per limb
 # cluster (cluster by horizontal distance). Every cluster is kept (G31: spiders move all eight legs).
-leg_leaves = [] if serpent_req else [b for b in leaves if zrel(head[b.name]) < 0.2]
-leg_leaves.sort(key=lambda b: head[b.name].z)
+leg_leaves = [] if serpent_req else [b for b in leaves if zrel(low[b.name]) < 0.2]
+leg_leaves.sort(key=lambda b: low[b.name].z)
 clusters = []
 for b in leg_leaves:
-    p = head[b.name]
-    if all((p - head[c.name]).xy.length > 0.12 * hmax for c in clusters):
+    p = low[b.name]
+    if all((p - low[c.name]).xy.length > 0.12 * hmax for c in clusters):
         clusters.append(b)
 legs = clusters
 leg_leaf_names = {b.name for b in leg_leaves}
 
 # ---- forward -------------------------------------------------------------------------------------------------
 upper_leaves = [b for b in leaves if b.name not in leg_leaf_names and zrel(head[b.name]) > 0.5]
-legs_centroid = (sum((head[b.name] for b in legs), Vector()) / len(legs)) if legs else centre.copy()
+legs_centroid = (sum((low[b.name] for b in legs), Vector()) / len(legs)) if legs else centre.copy()
 forward_reason = "default -Y (glTF front)"
 forward = Vector((0, -1, 0))
 serpent_path = []
@@ -148,7 +152,7 @@ if serpent_req:
         forward, forward_reason = snap(Vector((d.x, d.y, 0))), "serpent: tail end to head end"
 elif len(legs) == 2:
     # Bipeds (and birds): feet sit side by side, so the lateral axis joins them; the toes point forward.
-    sep = head[legs[0].name] - head[legs[1].name]
+    sep = low[legs[0].name] - low[legs[1].name]
     lat_axis = snap(Vector((sep.x, sep.y, 0)))
     fwd_axis = up.cross(lat_axis).normalized()
     toe = sum(((tail[b.name] - head[b.name]) for b in legs), Vector())
@@ -184,7 +188,7 @@ def lat_of(p):
 # ---- leg chains ----------------------------------------------------------------------------------------------
 leg_info = []
 for b in legs:
-    p = head[b.name]
+    p = low[b.name]
     leg_info.append({"leaf": b.name, "front": fwd_of(p) > fwd_of(legs_centroid), "left": lat_of(p) > 0, "fwd": fwd_of(p),
                      "chain": [x.name for x in chain_to_root(b)]})
 all_chains = [set(li["chain"]) for li in leg_info]
@@ -198,8 +202,22 @@ for li in leg_info:
     if len(li["bones"]) > 6:  # a leg that swallowed the spine (single-leg skeletons): keep the lower part
         li["bones"] = li["bones"][-6:]
 leg_info = [li for li in leg_info if li["bones"]]
+
+
+def _tail_like(li):
+    """A low chain that runs backward more than it drops is a tail lying on the ground, not a leg."""
+    d = low[li["leaf"]] - head[li["bones"][0]]
+    return -d.dot(forward) > max(0.0, -d.z) and abs(d.dot(lateral)) < 0.5 * abs(d.dot(forward))
+
+
+if len(leg_info) > 2:
+    leg_info = [li for li in leg_info if not _tail_like(li)]
+if leg_info:
+    _fc = sum(li["fwd"] for li in leg_info) / len(leg_info)
+    for li in leg_info:
+        li["front"] = li["fwd"] > _fc
 leg_bone_set = {n for li in leg_info for n in li["bones"]}
-leg_len = (sum((head[li["bones"][0]] - head[li["leaf"]]).length for li in leg_info) / len(leg_info)) if leg_info else 0.0
+leg_len = (sum((head[li["bones"][0]] - low[li["leaf"]]).length for li in leg_info) / len(leg_info)) if leg_info else 0.0
 
 # ---- wings ---------------------------------------------------------------------------------------------------
 # A wing leaves the torso sideways above the legs, reaches far out to the side, does not hang down, and is longer
@@ -210,12 +228,12 @@ if not serpent_req:
     for b in leaves:
         if b.name in leg_leaf_names:
             continue
-        p = head[b.name]
+        p = far[b.name]
         if abs(lat_of(p)) < 0.28 * span or zrel(p) < 0.3:
             continue
         chain = []
         for x in chain_to_root(b):
-            if abs(lat_of(head[x.name])) < 0.1 * span or x.name in leg_bone_set:
+            if abs(lat_of(head[x.name])) < 0.03 * span or x.name in leg_bone_set:
                 break
             chain.append(x.name)
         chain = chain[::-1]
@@ -223,7 +241,7 @@ if not serpent_req:
             continue
         root_p = head[chain[0]]
         reach = (p - root_p).length
-        if reach < max(0.9 * leg_len, 0.2 * span):
+        if reach < max(0.8 * leg_len, 0.2 * span):
             continue
         if p.z < root_p.z - 0.35 * reach:  # hangs down: an arm, not a wing
             continue
@@ -313,7 +331,7 @@ def unit(v, fallback):
 
 for li in leg_info:
     b0 = li["bones"][0]
-    d = head[li["leaf"]] - head[b0]
+    d = low[li["leaf"]] - head[b0]
     horiz = Vector((d.x, d.y, 0))
     li["splay"] = horiz.length / max(1e-6, d.length)
     li["swing_axis"] = unit(d.cross(forward), -lateral)        # positive rotates the foot forward
@@ -322,7 +340,7 @@ for li in leg_info:
     li["in_axis"] = unit(d.cross(-hdir), li["swing_axis"])   # positive pulls the foot in under the body
     li["splayed"] = li["splay"] > 0.45
 for w in wing_info:
-    d = head[w["leaf"]] - head[w["bones"][0]]
+    d = far[w["leaf"]] - head[w["bones"][0]]
     w["dir"] = d.normalized()
     w["flap_axis"] = unit(d.cross(up), forward if w["left"] else -forward)   # positive raises the tip
     w["sweep_axis"] = unit(d.cross(-forward), up)                           # positive sweeps the tip back
@@ -362,9 +380,13 @@ class Pose:
 
     def __init__(self):
         self.rot = {}
-        self.root_q = Quaternion()
-        self.pivot = ground.copy()
+        self.root_q = Quaternion()   # world rotation of the whole body ...
+        self.root_t = Vector()       # ... and translation: x -> root_q x + root_t, composed in call order
         self.offset = Vector()
+        self.serp = {"yaw": {}, "pitch": {}}  # serpent bends, applied degrees per bone, compensated in finish()
+
+    def bend(self, name, which, deg):
+        self.serp[which][name] = self.serp[which].get(name, 0.0) + deg
 
     def r(self, name, axis, deg):
         if name is None or abs(deg) < 1e-6:
@@ -373,9 +395,18 @@ class Pose:
         self.rot[name] = self.rot.get(name, Quaternion()) @ q
 
     def root_rotate(self, axis, deg, pivot=None):
-        if pivot is not None:
-            self.pivot = pivot.copy()
-        self.root_q = Quaternion(axis, math.radians(deg)) @ self.root_q
+        """Turn the whole body about a world axis through pivot (default: the ground under the centre)."""
+        c = ground if pivot is None else pivot
+        R = Quaternion(axis, math.radians(deg))
+        self.root_t = (R @ self.root_t) + c - (R @ c)
+        self.root_q = R @ self.root_q
+
+    def root_prepend(self, axis, deg, pivot):
+        """Like root_rotate, but applied before the turns already recorded (in the body's rest frame)."""
+        R = Quaternion(axis, math.radians(deg))
+        t_c = pivot - (R @ pivot)
+        self.root_t = (self.root_q @ t_c) + self.root_t
+        self.root_q = self.root_q @ R
 
     def move(self, offset):
         self.offset = self.offset + offset
@@ -402,12 +433,11 @@ def apply_pose(P):
         pb = arm.pose.bones[rb.name]
         h = head[rb.name]
         m = (W @ rb.matrix_local).to_3x3()
-        # World rotation about the pivot: bone rotation about the same world axis, plus (I - R)(pivot - head).
+        # World rotation of the body: bone rotation about the same world axis, plus the move of the bone's head.
         if P.root_q.angle > 1e-6:
             ax_local = (m.inverted() @ P.root_q.axis).normalized()
             pb.rotation_quaternion = Quaternion(ax_local, P.root_q.angle) @ pb.rotation_quaternion
-        rel = P.pivot - h
-        shift = rel - (P.root_q @ rel) + P.offset
+        shift = (P.root_q @ h) + P.root_t - h + P.offset
         pb.location = m.inverted() @ shift
 
 
@@ -450,11 +480,11 @@ def fold_legs(P, amount, curl=False):
     for li in leg_info:
         b = li["bones"]
         if li["splayed"]:
-            P.r(b[0], li["lift_axis"], (35 if curl else 15) * amount)
+            P.r(b[0], li["lift_axis"], (-10 if curl else 15) * amount)
             if len(b) > 1:
-                P.r(b[1], li["in_axis"], (75 if curl else 30) * amount)
+                P.r(b[1], li["in_axis"], (95 if curl else 30) * amount)
             if len(b) > 2:
-                P.r(b[2], li["in_axis"], (45 if curl else 15) * amount)
+                P.r(b[2], li["in_axis"], (40 if curl else 15) * amount)
         else:
             P.r(b[0], li["swing_axis"], 25 * amount)
             if len(b) > 1:
@@ -541,21 +571,62 @@ def wings_folded(P, amount):
 
 def wave_body(P, t, amp, waves=1.25):
     for s in serp:
-        P.r(s["bone"], up, s["sign"] * gait.wave_angle(s["u"], t, amp, waves))
+        P.bend(s["bone"], "yaw", s["sign"] * gait.wave_angle(s["u"], t, amp, waves))
 
 
 def serp_front(P, axis, deg, upto=0.35):
-    """Bend the head end of a serpent (u < upto), weighted toward the head."""
-    for s in serp:
-        if s["u"] < upto:
-            P.r(s["bone"], axis, s["sign"] * deg * (1.0 - s["u"] / upto))
+    """Bend the head end of a serpent (u < upto) by about deg in all, weighted toward the head. For pitch,
+    negative deg raises the head (checked by eye on a head-rooted snake; finish_serpent keeps the rest down)."""
+    which = "yaw" if axis is up else "pitch"
+    if which == "pitch":
+        deg = -deg
+    front = [s for s in serp if s["u"] < upto]
+    wsum = sum(1.0 - s["u"] / upto for s in front) or 1.0
+    for s in front:
+        P.bend(s["bone"], which, s["sign"] * deg * (1.0 - s["u"] / upto) / wsum)
+
+
+_serp_anc = {}
+
+
+def _abs_angle(bends, name):
+    """Sum of the bends on a bone and its spine ancestors: how far that segment turns from rest."""
+    if name not in _serp_anc:
+        chain, b = [], byname[name]
+        while b is not None and b.name in spine_set:
+            chain.append(b.name)
+            b = b.parent
+        _serp_anc[name] = chain
+    return sum(bends.get(n, 0.0) for n in _serp_anc[name])
+
+
+def finish_serpent(P):
+    """Write serpent bends as bone rotations, then turn the whole body back so the bends change its shape only:
+    the yaw wave keeps the body's mean heading, a pitch bend keeps the tail on the ground. Without this a skeleton
+    rooted at the head would swing its tail through the air for every head movement."""
+    if not serp:
+        return
+    for which, axis in (("yaw", up), ("pitch", lateral)):
+        bends = P.serp[which]
+        if not bends:
+            continue
+        for n, d in bends.items():
+            P.r(n, axis, d)
+        if which == "yaw":
+            mean = sum(_abs_angle(bends, s["bone"]) for s in serp) / len(serp)
+            P.root_prepend(up, -mean, Vector((centre.x, centre.y, lo.z)))
+        else:
+            # Pin the first unbent joint behind the bends, so only the head end lifts.
+            bent_u = max(s["u"] for s in serp if abs(bends.get(s["bone"], 0.0)) > 1e-6) if any(bends.values()) else 0.0
+            pin_s = next((s for s in serp if s["u"] > bent_u), serp[-1])
+            P.root_prepend(lateral, -_abs_angle(bends, pin_s["bone"]), head[pin_s["bone"]])
 
 
 def hind_pivot():
     hind = [li for li in leg_info if not li["front"]]
     if not hind:
         return ground - forward * 0.3 * length
-    p = sum((head[li["leaf"]] for li in hind), Vector()) / len(hind)
+    p = sum((low[li["leaf"]] for li in hind), Vector()) / len(hind)
     return Vector((p.x, p.y, lo.z))
 
 
@@ -582,8 +653,13 @@ def clip_idle(P, t):
     head_yaw(P, 8.0 * A * math.sin(2 * math.pi * t + 0.7))
     tail_wave(P, t, 7.0 * A)
     if biped:
-        arms_relax(P, 6 * A)
-        arms_swing(P, t, 2 * A, elbow=5 * A, phase_from_legs=False)
+        # Slow weight shift from foot to foot, a little torso twist and breathing in the arms.
+        P.move(lateral * 0.012 * height * A * math.sin(2 * math.pi * t))
+        spine_yaw(P, 3 * A * math.sin(2 * math.pi * t + 0.5))
+        for n in spine[1:2]:
+            P.r(n, forward, -3 * A * math.sin(2 * math.pi * t))
+        arms_relax(P, (6 + 3 * breath) * A)
+        arms_swing(P, t, 2 * A, elbow=(8 + 4 * breath) * A, phase_from_legs=False)
     if wing_info:
         wings_folded(P, 1.0)
         for w in wing_info:
@@ -653,7 +729,7 @@ def _turn(P, t, sign):
     if motion == "serpent" or (n_legs == 0 and serp):
         bend = 30.0 * A * math.sin(math.pi * t) * sign
         for s in serp:
-            P.r(s["bone"], up, s["sign"] * -bend / max(1, len(serp)) * 2.0 * (1.0 - s["u"]))
+            P.bend(s["bone"], "yaw", s["sign"] * -bend / max(1, len(serp)) * 2.0 * (1.0 - s["u"]))
         wave_body(P, t, 0.5 * gait.wave_amplitude_deg(len(serp)) * A)
         return
     if n_legs:
@@ -682,7 +758,7 @@ def clip_attack(P, t):
     windup = gait.envelope(t, [(0.0, 0), (0.35, 1), (0.5, 0), (1.0, 0)])
     strike = gait.envelope(t, [(0.0, 0), (0.35, 0), (0.5, 1), (0.62, 1), (1.0, 0)])
     if motion == "serpent":
-        serp_front(P, lateral, A * (-60 * windup + 30 * strike))
+        serp_front(P, lateral, A * (-55 * windup - 12 * strike))
         P.move(forward * length * A * (-0.06 * windup + 0.12 * strike))
         wave_body(P, t, 0.3 * gait.wave_amplitude_deg(len(serp)) * A)
         return
@@ -784,9 +860,10 @@ def _death_pose(P, t, drop):
     settle = math.sin(math.pi * gait.envelope(t, [(0.8, 0), (1.0, 1)])) * 0.04
     if motion == "serpent":
         # Belly up: roll half a turn about the body line while the wave dies out.
-        P.root_rotate(forward, 180 * fall, Vector((centre.x, centre.y, (head[spine[0]].z + lo.z) / 2)))
+        _zs = sorted(head[n].z for n in spine)
+        P.root_rotate(forward, 180 * fall, Vector((centre.x, centre.y, _zs[len(_zs) // 2])))
         wave_body(P, t, gait.wave_amplitude_deg(len(serp)) * A * (1 - fall))
-        serp_front(P, lateral, 20 * buckle * (1 - fall))
+        serp_front(P, lateral, -20 * buckle * (1 - fall))
     elif biped:
         P.root_rotate(lateral, -90 * fall, ground - forward * 0.12 * height)
         for li in leg_info:
@@ -813,20 +890,20 @@ def _death_pose(P, t, drop):
         tail_wave(P, 0.25, 15 * (1 - fall))
         if wing_info:
             for w in wing_info:
-                wing_pose(P, w, -20 - 30 * fall, sweep_deg=40 * (1 - fall), fold=70 * (1 - fall))
+                wing_pose(P, w, -20 - 10 * fall, sweep_deg=40, fold=70 + 20 * fall)
     P.move(up * (drop * fall + settle * height * fall * 0.3))
 
 
 def clip_death(P, t):
     if _death_drop[0] is None:
-        _death_drop[0] = ground_fix(lambda Q: _death_pose(Q, 1.0, 0.0))
+        _death_drop[0] = ground_fix(lambda Q: (_death_pose(Q, 1.0, 0.0), finish_serpent(Q)))
     _death_pose(P, t, _death_drop[0])
 
 
 def clip_flap(P, t):
     f = gait.flap_curve(t)
     for w in wing_info:
-        wing_pose(P, w, 45 * A * f, lag_curve=lambda k: 18 * A * gait.flap_curve(t - 0.07 * k) * (0.7 ** (k - 1)))
+        wing_pose(P, w, 38 * A * f, lag_curve=lambda k: 10 * A * gait.flap_curve(t - 0.07 * k) * (0.6 ** (k - 1)))
     tuck_legs(P, 1.0)
     P.move(up * 0.03 * height * A * -gait.flap_curve(t - 0.15))
     head_pitch(P, 4 * A * f)
@@ -931,6 +1008,7 @@ for row in table:
     for f in range(row["frame_end"] + 1):
         P = Pose()
         fn(P, min(1.0, f / n))
+        finish_serpent(P)
         frames.append(P)
     poses[row["name"]] = frames
 keyed = set()
@@ -956,7 +1034,6 @@ def make_action(name, frames, loop):
         act.frame_start, act.frame_end = 1, len(frames)
     if hasattr(act, "use_cyclic"):
         act.use_cyclic = bool(loop)
-    act["vgac_loop"] = bool(loop)
     return act
 
 
@@ -1049,9 +1126,12 @@ report["clip_table"] = table
 # ---- export --------------------------------------------------------------------------------------------------
 scene.frame_set(1)
 bpy.ops.object.select_all(action="SELECT")
-bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB", use_selection=True, export_animations=bool(table),
-                          export_animation_mode="NLA_TRACKS", export_force_sampling=True, export_apply=False,
-                          export_extras=True)
+_gltf_args = dict(filepath=dst, export_format="GLB", use_selection=True, export_animations=bool(table),
+                  export_animation_mode="NLA_TRACKS", export_force_sampling=True, export_apply=False)
+try:  # clips start at time 0, matching the sidecar's frame_start
+    bpy.ops.export_scene.gltf(**_gltf_args, export_anim_slide_to_zero=True)
+except TypeError:
+    bpy.ops.export_scene.gltf(**_gltf_args)
 base = os.path.splitext(dst)[0]
 sidecar = {"version": 1, "fps": fps, "motion": motion, "requested_motion": motion_arg, "size": SIZE, "speed": SPEED,
            "root_motion": False, "clips": table, "missing": missing, "unknown": unknown_clips,

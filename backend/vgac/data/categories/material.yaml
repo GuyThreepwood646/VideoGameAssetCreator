@@ -10,6 +10,8 @@ size_axis: none
 parts_default: []
 topology: none
 input_view_default: concept
+motion: none
+clips: []
 lod_ratios: []
 views: [front]
 pose_block: >-

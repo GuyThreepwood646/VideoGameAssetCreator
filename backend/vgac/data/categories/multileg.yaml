@@ -13,6 +13,8 @@ size_hint: "In metres, across the legs. A large spider is about 0.2 m; a giant c
 parts_default: []
 topology: quad
 input_view_default: quarter
+motion: legs
+clips: [idle, walk, run, turn_left, turn_right, attack, hit, death]
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-

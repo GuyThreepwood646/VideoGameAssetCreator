@@ -13,6 +13,8 @@ size_hint: "In metres, from the ground to the top. A bush is about 1 m; an oak a
 parts_default: []
 topology: triangle
 input_view_default: front
+motion: none
+clips: []
 lod_ratios: [0.5, 0.25]
 views: [front, left, back, right, quarter]
 pose_block: >-
