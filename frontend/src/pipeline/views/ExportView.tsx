@@ -69,7 +69,7 @@ export function ExportView({ version, hideReady = false, assetName = '', onChang
           <Deliverables version={version} />
         </div>
       )}
-      {!hideReady && (glb ? <Viewer url={glb} height={400} /> : <div className="placeholder-box">No 3D model in this version.</div>)}
+      {!hideReady && (glb ? <Viewer url={glb} height={400} showBonesDefault={false} /> : <div className="placeholder-box">No 3D model in this version.</div>)}
       {!hideReady && <UnityHandoff version={version} assetName={assetName} onChanged={onChanged} />}
       <Disclosure label="What is inside">
         <div className="export-grid">
