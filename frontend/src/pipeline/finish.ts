@@ -135,6 +135,16 @@ export function finishLines(asset: Asset): FinishLine[] {
       check: bad ? (bad.id ?? bad.name) : undefined,
     })
   }
+  // 1b. Scenery on a grid: snapped with its anchor on the corner, or the grid check that failed.
+  if (axis === 'grid') {
+    const pm = selectedVersion(asset, 'prep')?.metrics
+    const gf = findCheck(asset, 'grid_fit')
+    if (failed(gf)) lines.push(warnFrom('grid', gf!, 'grid'))
+    else if (pm?.grid_fit === true) {
+      const g = num(pm.grid_m) ?? num(gf?.vars?.grid)
+      lines.push({ id: 'grid', text: `Snaps to a ${g !== null ? metres(g) + ' m ' : ''}grid, pivot on the corner, ready for baked lighting.`, state: 'ok', term: 'grid' })
+    }
+  }
 
   // 2. Surface: metal and shine reach Unity (3.1).
   const mc = findCheck(asset, 'materials_connected')

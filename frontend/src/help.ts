@@ -195,7 +195,7 @@ export const CATEGORY_HELP: Record<string, HelpEntry> = {
   vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
   prop_rigid: H('Rigid prop', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
   prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
-  environment: H('Environment piece', 'A piece of scenery, such as a wall or floor tile.', 'No skeleton; sized in metres, but not yet rounded to a grid, so check that pieces line up.', 'environment'),
+  environment: H('Environment piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
   foliage: H('Foliage', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
   material: H('Tileable material', 'A repeating surface texture, such as cobblestones.', 'Produces a texture only, no 3D model.', 'material'),
 }
@@ -290,6 +290,12 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   pbr_fix: H('Realistic colour range', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pbr_range: H('Realistic colour range', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pivot: H('Anchor point', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
+  // Scenery on a grid
+  grid: H('Grid', 'An invisible floor of squares that scenery pieces line up on.', 'Pieces made to the grid fit together with no gaps or overlaps.', 'Modular grid, grid_m; dimensions rounded to grid steps'),
+  grid_m: H('Grid size', 'An invisible floor of squares that scenery pieces line up on.', 'Pieces made to the grid fit together with no gaps or overlaps.', 'Modular grid, grid_m; dimensions rounded to grid steps'),
+  corner_pivot: H('Corner anchor', 'The point the piece is placed by: its back-left bottom corner.', 'Every piece uses the same corner, so they snap edge to edge.', 'Origin at the bounding-box minimum corner'),
+  grid_footprint: H('Size on the grid', 'How many grid squares the piece covers on the ground, wide by deep.', 'Pieces made to whole squares fit together with no gaps or overlaps.', 'Footprint in grid cells; automatic rounds width and depth to the nearest whole step (at most 15 percent per side)'),
+  grid_height: H('Height on the grid', 'How tall the piece is, rounded to the grid.', 'Walls of the same height line up at the top, and floors sit flush.', 'Height snapped to half grid steps, or set to the chosen value'),
   smooth_angle: H('Smoothing', 'The angle above which an edge looks sharp instead of smooth.', 'Lower keeps hard edges; higher rounds things off.', 'smooth_angle (auto smooth)'),
   manifold: H('Clean surface', 'No holes or overlapping edges.', 'Game engines and the skeleton step need a clean surface.', 'manifold'),
   non_manifold_edges: H('Broken edges', 'Edges shared by too many faces or by none.', 'They cause shading errors and rigging problems.', 'non_manifold_edges'),
@@ -547,10 +553,37 @@ const CHECK_TEXT: Record<string, CheckText> = {
   height_ratio: (v, _l, ok) => (ok ? `This view is the same height as the front view (${num(v)?.toFixed(2) ?? v}x).` : `This view is ${num(v)?.toFixed(2) ?? v}x the height of the front view; it should be about the same.`),
   hist_dist: (v, _l, ok) => (ok ? 'The colours match the front view.' : `The colours differ from the front view (${num(v)?.toFixed(2) ?? v}).`),
   mirror_iou: (v, l, ok) => (ok ? `The left and right views mirror each other (${pct(v)}).` : `The left and right views do not mirror each other well (${pct(v)}, needs ${pct(l)}).`),
+  // Scenery on a grid
+  grid_fit: (v, _l, ok, _ctx, vars) => {
+    const [w, d, h] = gridDims(v, vars)
+    const g = metres(vars.grid ?? vars.grid_m)
+    if (ok) {
+      const size = `${metres(w)} x ${metres(d)} x ${metres(h)} m`
+      return vars.small ? `The piece is ${size}, smaller than one ${g} m square, so it sits inside one square.` : `The piece is ${size} and lines up with the ${g} m grid.`
+    }
+    const i = sideIndex(vars.side)
+    const word = str(vars.side_word) || ['wide', 'deep', 'tall'][i]
+    return `The piece is ${metres([w, d, h][i])} m ${word}, between grid steps, so it leaves a gap next to other pieces.`
+  },
+  tiles_cleanly: (v, _l, ok) => (ok ? 'Copies placed side by side meet without gaps.' : `Copies placed side by side leave a gap or overlap of ${n0(num(v) !== null ? Math.round(num(v)! * 10) / 10 : v)} cm.`),
   // Mock-era names
   'single subject': (_v, _l, ok) => (ok ? 'The picture shows one subject.' : 'The picture shows more than one subject.'),
   'rig-ready pose': (_v, _l, ok) => (ok ? 'The pose is ready for a skeleton.' : 'The pose will not rig well.'),
   'plain background': (_v, _l, ok) => (ok ? 'The background is plain.' : 'The background is busy; the cutout may be rough.'),
+}
+
+// grid_fit's measured size: value [w, d, h], else vars.w, vars.d, vars.h.
+function gridDims(v: unknown, vars: Record<string, unknown>): [unknown, unknown, unknown] {
+  if (Array.isArray(v) && v.length >= 3) return [v[0], v[1], v[2]]
+  return [vars.w, vars.d, vars.h]
+}
+// Which side failed: 0 width, 1 depth, 2 height (an index, or a name such as "w", "depth" or "height").
+function sideIndex(side: unknown): number {
+  if (typeof side === 'number' && side >= 0 && side <= 2) return Math.floor(side)
+  const s = str(side).toLowerCase()
+  if (s.startsWith('d') || s === 'y') return 1
+  if (s.startsWith('h') || s.startsWith('t') || s === 'z') return 2
+  return 0
 }
 
 function sizeSentence(v: unknown, l: unknown, ok: boolean, axis: string): string {
@@ -611,6 +644,8 @@ const CHECK_HELP: Record<string, string> = {
   height_ratio: 'height_ratio',
   hist_dist: 'hist_dist',
   mirror_iou: 'mirror_iou',
+  grid_fit: 'grid',
+  tiles_cleanly: 'grid',
 }
 
 // The sentence for a check. The backend is the one source of check wording (2.1): it writes `help` from the
@@ -683,6 +718,7 @@ const FIX_LABELS: Record<string, string> = {
   baked_light: 'Remove painted-on shadows',
   albedo_range: 'Bring colours into range',
   metal_mixed: 'Make metal clearly metal',
+  grid_fit: 'Snap to the grid',
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
@@ -791,7 +827,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
-  prep: ['size_m', 'height_m', 'face_yaw', 'symmetric', 'delight'],
+  prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight'],
   rig: ['template', 'motion', 'moves', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
 }
@@ -846,6 +882,9 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
     wings: 'Wings',
   },
   movement_shape: { auto: 'Automatic (by category)', upright: "Standing capsule (works with Unity's Character Controller)", along: 'Lying capsule along the body', box: 'Box', none: 'None' },
+  grid_footprint: { auto: 'Automatic (nearest fit)', '1x1': '1 x 1 squares', '2x1': '2 x 1 squares', '2x2': '2 x 2 squares', '4x1': '4 x 1 squares', '4x4': '4 x 4 squares' },
+  grid_height: { auto: 'Automatic', '0.5': 'Floor (0.5 m)', '1': 'Low (1 m)', '3': 'Wall (3 m)', '4': 'Tall (4 m)' },
+  grid_m: { '0.5': '0.5 m', '1': '1 m (standard)', '2': '2 m', '4': '4 m' },
 }
 
 // ---------------------------------------------------------------------------
@@ -945,7 +984,7 @@ export const SIZE_INFO: Record<string, SizeInfo> = {
   vehicle: { axis: 'horizontal', size_m: 4.5, label: 'How long is it?', hint: 'In metres, front to back. A car is about 4.5 m; a tank about 7 m.', word: 'long' },
   prop_rigid: { axis: 'longest', size_m: 0.6, label: 'How big is it?', hint: 'In metres, along its longest side. A barrel is about 0.9 m tall.', word: 'across' },
   prop_articulated: { axis: 'longest', size_m: 0.8, label: 'How big is it?', hint: 'In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall.', word: 'across' },
-  environment: { axis: 'longest', size_m: 3.0, label: 'How big is it?', hint: 'In metres, along its longest side. A wall section is about 3 m wide; a floor tile about 2 m. Pieces are not rounded to a grid yet.', word: 'across' },
+  environment: { axis: 'grid', size_m: 3.0, label: 'Size on the grid', hint: 'Rounded to whole grid squares; pick a footprint and a height below.', word: 'across' },
   foliage: { axis: 'height', size_m: 2.5, label: 'How tall is it?', hint: 'In metres, from the ground to the top. A bush is about 1 m; an oak about 15 m.' },
   material: { axis: null, size_m: 1.0, label: '', hint: '' },
 }
@@ -1016,6 +1055,8 @@ export function measuredSize(metrics: Record<string, unknown> | null | undefined
   if (!metrics) return null
   const checks = Array.isArray(metrics.checks) ? (metrics.checks as Check[]) : []
   const axis = sizeAxisOf(category)
+  // Scenery on a grid is read with gridReadout instead.
+  if (axis === 'grid') return null
   const dims = dimsOf(metrics)
   const longestUp = dims ? dims[2] >= Math.max(dims[0], dims[1]) : undefined
   const sc = checks.find((c) => (c.id ?? c.name) === 'size_m') ?? checks.find((c) => (c.id ?? c.name) === 'height_m')
@@ -1033,6 +1074,25 @@ export function measuredSize(metrics: Record<string, unknown> | null | undefined
     return { value: v, word: axisWord(axis ?? 'height', category, longestUp) }
   }
   return null
+}
+
+// Scenery on a grid (prep metrics grid_cells, grid_size_m, grid_m): "On the grid: 3 x 1 squares, 3 m tall".
+// Cells come from grid_cells, else grid_footprint_cells ("3x1"), else the size divided by the grid. Null when
+// the version says nothing about the grid.
+export function gridReadout(metrics: Record<string, unknown> | null | undefined): string | null {
+  if (!metrics) return null
+  const g = num(metrics.grid_m)
+  const sz = Array.isArray(metrics.grid_size_m) ? metrics.grid_size_m.map(num) : []
+  let cells: number[] | null = null
+  if (Array.isArray(metrics.grid_cells) && metrics.grid_cells.length >= 2 && metrics.grid_cells.every((c) => num(c) !== null)) cells = (metrics.grid_cells as number[]).slice(0, 2)
+  else if (typeof metrics.grid_footprint_cells === 'string' && /^\d+x\d+$/.test(metrics.grid_footprint_cells)) cells = metrics.grid_footprint_cells.split('x').map(Number)
+  else if (g && sz[0] !== null && sz[0] !== undefined && sz[1] !== null && sz[1] !== undefined) cells = [Math.max(1, Math.round(sz[0] / g)), Math.max(1, Math.round(sz[1] / g))]
+  const h = num(metrics.grid_height_m) ?? sz[2] ?? null
+  if (!cells && h === null) return null
+  const parts: string[] = []
+  if (cells) parts.push(`${cells[0]} x ${cells[1]} squares`)
+  if (h !== null) parts.push(`${metres(h)} m tall`)
+  return `On the grid: ${parts.join(', ')}`
 }
 
 // The category's default size: by_category, then the category, then the table.
