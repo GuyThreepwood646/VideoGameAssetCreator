@@ -295,3 +295,25 @@ Hand model
 
 Output
 - PyTorch .pt files; no BVH or FBX export. VGAC would write the conversion to the SOMA skeleton itself (the same bone map Kimodo would need).
+
+## GEM-X test on this machine (2026-11-05)
+
+Installed to F:\Tools\gemx (Python 3.12, PyTorch 2.10 cu128, about 12.4 GB without caches). The YOLOX HumanArt detector was never downloaded; the person boxes come from RT-DETRv2-S (PekingU/rtdetr_v2_r18vd, Apache-2.0, trained on COCO), swapped in for GEM-X's detector class only. Scripts: runtime/gemx (converter gemx_to_bvh.py, sheets), runner F:\Tools\gemx\scripts\run_gemx.py. Result sheets: runtime/gemx/results. Test footage: library/my_videos (Wikimedia Commons, see CREDITS.txt there).
+
+Results
+- Real footage of one man walking on a beach, hand-held panning camera, 17.8 s: works end to end. GEM-X output, converted to a 61-joint BVH, went through the existing "Use my own animation file" route ("We recognised 22 of the 22 main bones") onto the Ranger. Same walk, right facing, feet mostly planted (about 6 cm/s of slide while a foot is down), no visible shake. GEM-X's built-in camera-turn estimate is needed for a panning camera (without it the path curves about 60 degrees) and was enough; ViPE was not needed and not downloaded (part of it is CC BY-NC-SA).
+- Crowded street, 14 to 21 people per frame: fails as one person's motion. The followed person changes; only the span where one track was confirmed is usable. A feature must keep only confirmed frames and show who was picked.
+- Small far subject (about 15 percent of frame height): works.
+- Known motion (rendered Ranger, sanity check only): walk distance 93 percent of true; an on-the-spot attack drifts about 0.6 m; a jump sits about 14 cm high.
+- Hands are weak without the separate 10.7 GB hand model.
+
+Cost
+- RTX 3060, full precision, models one after another: peak about 4.4 GB of graphics memory; about 10 seconds of processing per second of video. GEM-X's limit is 60 s per run.
+
+Open licence questions before shipping a feature
+- ATTRIBUTIONS.md lists Meta's SAM License for SAM 3D Body; in the code it appears as an optional training warm-start. Whether the released body weights derive from it is not stated.
+- Both large models use a DINOv3 backbone (Meta); its licence is not discussed on the card.
+- RT-DETRv2-S: COCO images are Flickr photos under mixed licences (only the annotations are CC BY 4.0), and the backbone was probably pre-trained on ImageNet. The usual industry grey zone.
+
+What a "From a video" feature needs
+- A background job (GEM-X, converter, then the existing own-file route), a trim control, a picture of who was picked with a way to choose another person, an "in place" option for moves done on the spot, ground levelling limited to small slopes, and filming advice: one person, whole body in view, phone held still or turned slowly, 3 to 15 s, start and end standing still.
