@@ -32,3 +32,13 @@ def test_a_far_bone_stays_when_nothing_nearer_holds_the_vertex():
 def test_unknown_bones_and_zero_weights_are_left_alone():
     tip = (-0.62, 0.0, 0.88)
     assert rig_fix.stray_influences(tip, {"RightHand": 1.0, "Mystery": 0.5, "RightToeBase": 0.0}, SEGS, 1.8) == []
+
+
+def test_a_rig_cleaned_by_an_older_version_is_cleaned_again_on_reuse():
+    """Characters rigged before the stray-weights clean-up get it the next time their rig is reused."""
+    from vgac.stages import rig
+
+    assert rig.needs_weights_fix({})  # made before the marker existed
+    assert rig.needs_weights_fix({"weights_fix": 1})
+    assert not rig.needs_weights_fix({"weights_fix": rig.WEIGHTS_FIX})
+    assert not rig.needs_weights_fix({"rigid": True})  # nothing skinned to clean

@@ -592,6 +592,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   // What a plain drag does: turn the model (the default) or move the view sideways and up and down.
   const [dragMode, setDragMode] = useState<'turn' | 'move'>('turn')
   const controlsRef = useRef<OrbitControls | null>(null)
+  const followResetRef = useRef(false)
   // A taller preview on request, for looking at small parts.
   const [large, setLarge] = useState(false)
   useEffect(() => {
@@ -672,6 +673,12 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     const ro = new ResizeObserver(resize)
     ro.observe(host)
 
+    let followModel: THREE.Object3D | null = null
+    let followBone: THREE.Object3D | null = null
+    let followAnchor: THREE.Vector2 | null = null
+    let followLimit = 1
+    let followJump = false
+    const _fv = new THREE.Vector3()
     let raf = 0
     const tick = () => {
       raf = requestAnimationFrame(tick)
@@ -686,6 +693,52 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         modelRoot.updateMatrixWorld(true)
         sg.matrix.copy(model.matrixWorld).multiply(corr).multiply(_inv.copy(model.matrixWorld).invert())
         sg.matrixWorldNeedsUpdate = true
+      }
+      // A move that travels (a captured walk, a roll) would carry the character out of view: once the hips are more
+      // than a third of the model's height from where the view last settled, the view moves along with them. Moves
+      // done on the spot stay inside that margin, so the view holds still for them.
+      const model0 = modelRef.current
+      if (model0 !== followModel) {
+        followModel = model0
+        followBone = null
+        model0?.traverse((o) => {
+          if (!followBone && (o as THREE.Bone).isBone && /hips|pelvis/i.test(o.name)) followBone = o
+        })
+        model0?.traverse((o) => {
+          if (!followBone && (o as THREE.Bone).isBone) followBone = o
+        })
+        followAnchor = null
+        followLimit = model0 ? Math.max(0.05, new THREE.Box3().setFromObject(model0).getSize(_fv).y * 0.33) : 1
+      }
+      if (followBone && handles.mixer) {
+        ;(followBone as THREE.Object3D).getWorldPosition(_fv)
+        // Reset view puts the view back on the middle of the floor; the lines below then bring it to the character.
+        if (followResetRef.current) {
+          followResetRef.current = false
+          followAnchor = new THREE.Vector2(0, 0)
+          followJump = true
+        }
+        if (!followAnchor) followAnchor = new THREE.Vector2(_fv.x, _fv.z)
+        const dx = _fv.x - followAnchor.x
+        const dz = _fv.z - followAnchor.y
+        const d = Math.hypot(dx, dz)
+        if (d > followLimit * 4 || (d > followLimit && followAnchor.x === 0 && followAnchor.y === 0 && followJump)) {
+          followJump = false
+          // The clip started again from its first frame: go back with it in one step.
+          followAnchor.set(_fv.x, _fv.z)
+          controls.target.x += dx
+          controls.target.z += dz
+          camera.position.x += dx
+          camera.position.z += dz
+        } else if (d > followLimit) {
+          const k = (d - followLimit) / d
+          followAnchor.x += dx * k
+          followAnchor.y += dz * k
+          controls.target.x += dx * k
+          controls.target.z += dz * k
+          camera.position.x += dx * k
+          camera.position.z += dz * k
+        }
       }
       if (focus) {
         const k = Math.min(1, (performance.now() - focus.t0) / focus.ms)
@@ -1197,6 +1250,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     if (h && modelRef.current) {
       h.modelRoot.rotation.set(0, 0, 0)
       frameModel(h, modelRef.current)
+      followResetRef.current = true
     }
   }
 
