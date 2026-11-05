@@ -139,14 +139,22 @@ def graph_nodes(graphs_dir: Path = GRAPHS_DIR) -> list[dict[str, Any]]:
     return out
 
 
-def stage_instance(settings: Settings, stage: str) -> str | None:
-    """The instance that runs a stage first ("judge": the judge instance; "material": the material category's
-    picture step)."""
+def stage_instance(settings: Settings, stage: str, disabled: Any = ()) -> str | None:
+    """The instance that will run a stage ("judge": the judge instance; "material": the material category's picture
+    step). With cards switched off it follows the job router, so the check looks where the work will really run
+    (pictures on the other card while one is off); a step nothing else can take stays with its own card."""
     if stage == "judge":
-        return settings.judge_instance
-    if stage == "material":
-        return settings.material_stage_instances.get("concept")
-    return settings.stage_instances.get(stage)
+        preferred = settings.judge_instance
+    elif stage == "material":
+        preferred = settings.material_stage_instances.get("concept")
+    else:
+        preferred = settings.stage_instances.get(stage)
+    if not disabled:
+        return preferred
+    from .jobs import route  # late import: jobs is the heavier module
+
+    routed = route("concept" if stage == "material" else stage, "material" if stage == "material" else "", settings, disabled)
+    return routed or preferred
 
 
 def load_models() -> dict[str, dict[str, Any]]:
@@ -430,7 +438,7 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
                          probe: Callable[[str], Awaitable[dict[str, Any] | None]] = probe_url) -> list[dict[str, Any]]:
     inst = settings.instances[name]
     gpu = inst.gpu or f"card {name}"
-    stages_here = [s for s in ("concept", "turnaround", "mesh", "rig", "material", "judge") if stage_instance(settings, s) == name]
+    stages_here = [s for s in ("concept", "turnaround", "mesh", "rig", "material", "judge") if stage_instance(settings, s, disabled) == name]
     uses = [g for g in graph_nodes() if g["stage"] in stages_here]
     models = load_models()
     model_checks = [(mid, spec) for mid, spec in MODEL_LOADERS.items() if spec[2] in stages_here and models.get(mid, {}).get("file")]
