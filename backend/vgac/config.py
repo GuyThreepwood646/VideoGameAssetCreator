@@ -63,6 +63,8 @@ class Settings(BaseModel):
     unity_exe: Path | None = None
     unity_project: Path | None = None
     comfy_input_dir: Path | None = None
+    # ComfyUI's loras folder. The app only ever lists or writes its own VGAC/mine/ inside it (user_addons.py).
+    loras_dir: Path = Path("F:/Projects/ComfyUI/models/loras")
     clips_libraries: dict[str, Path] = Field(default_factory=dict)
     min_free_ram_gb: float = Field(default=24, ge=0)
     # Seconds a ComfyUI job may run before the worker gives up on it.

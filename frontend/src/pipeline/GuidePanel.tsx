@@ -3,13 +3,13 @@
 // the page: it lives here, except in the review state where it is the "Yes, keep it"
 // answer next to the picture.
 import { Link } from 'react-router'
-import { libraryUrl, previousStage, STAGES, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
+import { libraryUrl, previousStage, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, type FixRequest } from '../components/ui'
+import { Disclosure, ResumeButton, StopButton, type FixRequest } from '../components/ui'
 import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
-export type GuideState = 'blocked' | 'empty' | 'running' | 'error' | 'review' | 'selected' | 'finished'
+export type GuideState = 'blocked' | 'empty' | 'running' | 'stopped' | 'error' | 'review' | 'selected' | 'finished'
 
 type Props = {
   asset: Asset
@@ -29,7 +29,10 @@ type Props = {
   onRun: () => void
   onRunNext: (next: StageId) => void
   onRetry: (failed: Version) => void
-  onCancel: (jobId: string) => void
+  // Stop this step now, run the stopped step again with the same settings, or leave it stopped.
+  onStop: () => void
+  onResume: () => void
+  onDismissStopped: () => void
   // A check's Fix: re-run (onFix) or open a tool (onOpenTool, 2.5). Used by the finish card and the autopilot card.
   onFix?: (fix: FixRequest) => void
   onOpenTool?: (fix: FixRequest) => void
@@ -61,6 +64,8 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? asset.selected?.[prev] || versionsOf(asset, prev).some((v) => v.selected) : true
   if (versions.some((v) => v.status === 'running' || v.status === 'queued') || activeJobFor(jobs, versions)) return 'running'
+  // The newest thing that happened here is a Stop: offer Resume before anything else.
+  if (stoppedVersions(asset, stage).length) return 'stopped'
   if (selected && selected.status === 'done') return stage === 'export' ? 'finished' : 'selected'
   if (versions.some((v) => v.status === 'done')) return 'review'
   const last = versions[versions.length - 1]
@@ -69,7 +74,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel, onFix, onOpenTool, onChanged }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -91,7 +96,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // It is the primary button except while a result waits to be judged (review:
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
-    apAvailable !== false && state !== 'running' && !isFinished(asset) ? (
+    apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
       <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(body)} />
     ) : null
   const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' ? <span className="or-just">{node}</span> : node)
@@ -138,11 +143,24 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
           <span className="muted small">{job?.message || 'working'}</span>
         </div>
       )
-      action = job ? (
-        <button type="button" disabled={busy} onClick={() => onCancel(job.id)}>
-          Cancel
-        </button>
-      ) : null
+      const stopping = job?.message === 'cancelling'
+      if (stopping) now = 'Stopping this step. Everything you kept stays.'
+      action = <StopButton onClick={onStop} disabled={busy} stopping={stopping} />
+      break
+    }
+    case 'stopped': {
+      const n = stoppedVersions(asset, stage).length
+      happened = 'You stopped this step.'
+      now = `Nothing you kept was lost. Resume runs ${n > 1 ? `the ${n} stopped versions` : 'it'} again from the start with the same settings.`
+      action = <ResumeButton onClick={onResume} disabled={busy} est={fmtDuration(est)} />
+      extra = (
+        <div className="muted small">
+          Changed your mind?{' '}
+          <button type="button" className="link small" disabled={busy} onClick={onDismissStopped} title="Sets the stopped version aside so you can start this step differently or carry on with what you have">
+            Leave it stopped
+          </button>
+        </div>
+      )
       break
     }
     case 'error': {

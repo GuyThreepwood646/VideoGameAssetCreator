@@ -2462,3 +2462,199 @@ input[type='checkbox'] {
   margin-top: var(--s1);
   padding-left: 18px;
 }
+
+/* Stop and Resume: the same two buttons on every step. */
+button.stop-btn {
+  border-color: var(--bad);
+  color: var(--bad);
+  font-weight: 600;
+  gap: var(--s2);
+}
+button.stop-btn:hover:not(:disabled),
+button.stop-btn:focus-visible {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: var(--accent-ink);
+}
+.stop-icon {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+  flex: none;
+}
+button.resume-btn {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--accent-ink);
+  font-weight: 600;
+  gap: var(--s2);
+}
+button.resume-btn:hover:not(:disabled) {
+  border-color: var(--text, #fff);
+}
+.resume-icon {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 10px solid currentColor;
+  flex: none;
+}
+.guide-action .stop-btn,
+.guide-action .resume-btn {
+  padding: var(--s2) var(--s3);
+  font-size: 14px;
+}
+button.small-btn .stop-icon {
+  width: 8px;
+  height: 8px;
+}
+button.small-btn .resume-icon {
+  border-top-width: 5px;
+  border-bottom-width: 5px;
+  border-left-width: 8px;
+}
+.guide-stopped {
+  border-color: var(--warn);
+}
+.guide-stopped .guide-kicker {
+  color: var(--warn);
+}
+.rail-step-action {
+  flex: none;
+  margin-right: var(--s1);
+}
+.rail-stage.stopped .rail-meta {
+  color: var(--warn);
+}
+.candidate.stopped {
+  opacity: 0.75;
+}
+
+.resume-from {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s1);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--border);
+  text-align: right;
+}
+.resume-from select {
+  font-size: 12px;
+  padding: 2px var(--s1);
+}
+.stale-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin: var(--s2) 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* Start from your own images: ImageDrop, the asset page panels, Match a picture */
+.image-drop { display: flex; flex-direction: column; gap: var(--s2); }
+.image-drop-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s2);
+  min-height: 140px; padding: var(--s3); border: 2px dashed var(--border-strong); border-radius: 8px; text-align: center;
+}
+.image-drop.compact .image-drop-zone { min-height: 110px; padding: var(--s2); }
+.image-drop-zone:focus-visible, .image-drop-zone.over { border-color: var(--accent); outline: none; }
+.image-drop-zone[aria-disabled='true'] { opacity: 0.6; }
+.image-drop-empty { display: flex; flex-direction: column; align-items: center; gap: var(--s1, 4px); }
+.image-drop-preview { max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 4px; }
+.image-drop.compact .image-drop-preview { max-height: 120px; }
+.segmented { display: flex; flex-wrap: wrap; gap: var(--s3); }
+.own-pictures { display: flex; flex-direction: column; gap: var(--s2); margin-bottom: var(--s3); }
+.own-pictures-panel { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3); border: 1px solid var(--border); border-radius: 8px; }
+.own-views-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--s3); }
+.own-view-slot { display: flex; flex-direction: column; gap: var(--s2); }
+.facing-diagram { color: var(--muted); }
+.match-picture { padding: var(--s3) 0; border-top: 1px solid var(--border); }
+.rail-stage:has(.rail-step-action) .rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Your own add-ons (pipeline/Addons.tsx, pipeline/AddMyAddon.tsx) */
+.addon-section-title {
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: var(--s2);
+}
+.addon-add-row {
+  margin-top: var(--s2);
+  align-items: center;
+}
+.addon-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.addon-add p {
+  margin: 0;
+}
+.addon-add-ways {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.addon-add-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.addon-folder {
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius);
+  background: var(--input);
+  overflow-wrap: anywhere;
+}
+.addon-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.addon-files li {
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  gap: var(--s2);
+}
+.addon-painters {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.addon-painters legend {
+  padding: 0;
+}
+.addon-note {
+  color: var(--warn);
+}
+.addon-mine-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s1);
+}
+.addon-hint {
+  margin-top: var(--s2);
+}

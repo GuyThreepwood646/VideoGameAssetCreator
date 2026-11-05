@@ -20,16 +20,58 @@ const STATUS_WORDS: Record<string, string> = {
   running: 'working',
   queued: 'waiting',
   rejected: 'rejected',
-  cancelled: 'cancelled',
+  cancelled: 'stopped',
 }
 
-export function StatusBadge({ status }: { status: VersionStatus | JobStatus }) {
+export function StatusBadge({ status, stopped }: { status: VersionStatus | JobStatus; stopped?: boolean }) {
+  if (stopped) {
+    return (
+      <Chip tone="warn" title="You stopped this before it finished. Resume runs it again with the same settings.">
+        stopped
+      </Chip>
+    )
+  }
   const tone: Tone =
     status === 'done' ? 'ok' : status === 'error' ? 'bad' : status === 'running' ? 'accent' : status === 'queued' ? 'warn' : 'muted'
   return (
     <Chip tone={tone} title={status}>
       {STATUS_WORDS[status] ?? status}
     </Chip>
+  )
+}
+
+// Stop and Resume look and read the same wherever a step can be stopped or picked up again: a red square
+// for Stop, a green triangle for Resume, always with the word next to the shape.
+type StepButtonProps = { onClick: () => void; disabled?: boolean; small?: boolean; label?: string; title?: string }
+
+export function StopButton({ onClick, disabled, small, label = 'Stop', title, stopping }: StepButtonProps & { stopping?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={'stop-btn' + (small ? ' small-btn' : '')}
+      disabled={disabled || stopping}
+      onClick={onClick}
+      title={title ?? 'Stops this step now. Everything you kept stays, and Resume picks it up again.'}
+    >
+      <span className="stop-icon" aria-hidden="true" />
+      {stopping ? 'Stopping...' : label}
+    </button>
+  )
+}
+
+export function ResumeButton({ onClick, disabled, small, label = 'Resume', title, est }: StepButtonProps & { est?: string }) {
+  return (
+    <button
+      type="button"
+      className={'resume-btn' + (small ? ' small-btn' : '')}
+      disabled={disabled}
+      onClick={onClick}
+      title={title ?? 'Runs the stopped step again from its start, with the same settings.'}
+    >
+      <span className="resume-icon" aria-hidden="true" />
+      {label}
+      {est ? <span className="btn-est">{est}</span> : null}
+    </button>
   )
 }
 

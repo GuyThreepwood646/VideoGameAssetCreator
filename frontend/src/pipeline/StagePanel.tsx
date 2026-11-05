@@ -21,6 +21,8 @@ import {
   type Version,
 } from '../api'
 import { Info } from '../components/Info'
+import { firstStaleStage, isStopped, STAGES as STAGE_LIST } from '../api'
+import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain } from '../help'
@@ -28,6 +30,7 @@ import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
+import { OwnPictures, ReferencePicture } from './OwnPictures'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
 import { readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
@@ -48,10 +51,13 @@ type Props = {
   onMakeVariant: () => void
   onChanged: () => void
   onError: (e: unknown) => void
-  onCancelJob: (id: string) => void
+  // Stop this step now, run the stopped step again with the same settings, or leave it stopped.
+  onStop: () => void
+  onResume: () => void
+  onDismissStopped: () => void
 }
 
-export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onCancelJob }: Props) {
+export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped }: Props) {
   const navigate = useNavigate()
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
@@ -132,7 +138,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
       return
     }
     return act(async () => {
-      if (f.stage === stage && active) {
+      if (f.op === 'refine' && f.instruction && f.stage === stage && active) {
+        // "Redraw it ready for 3D": the refine on this version with the fixed instruction.
+        await api.refine(active.id, { instruction: f.instruction, params: f.params })
+      } else if (f.stage === stage && active) {
         await api.adjust(active.id, f.params)
       } else {
         await api.runStage(asset.id, f.stage, { params: f.params })
@@ -165,11 +174,29 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onRun={run}
         onRunNext={runNext}
         onRetry={retry}
-        onCancel={onCancelJob}
+        onStop={onStop}
+        onResume={onResume}
+        onDismissStopped={onDismissStopped}
         onFix={fix}
         onOpenTool={openTool}
         onChanged={onChanged}
       />
+
+      {(() => {
+        // An earlier step was changed after later steps were made: offer to rebuild them.
+        const stale = firstStaleStage(asset)
+        const apBusy = autopilot?.status === 'running' || autopilot?.status === 'paused' || autopilot?.status === 'error'
+        if (!stale || apBusy || apAvailable === false || jobs.some((j) => j.status === 'running' || j.status === 'queued')) return null
+        const name = stagePlain(stale, ref?.stages.find((s) => s.id === stale) ?? null)
+        return (
+          <div className="stale-note">
+            <span>
+              Step {STAGE_LIST.indexOf(stale) + 1} ("{name}") and the steps after it were built from an older result of an earlier step.
+            </span>
+            <ResumeButton small label={`Rebuild from "${name}"`} disabled={busy} onClick={() => autopilotActions.resumeFrom(stale)} title="Makes that step again from what you kept, and rebuilds every step after it. The results you have now stay in the history." />
+          </div>
+        )
+      })()}
 
       <section className="section">
         <div className="section-head">
@@ -182,6 +209,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
           </span>
         </div>
+        <OwnPictures asset={asset} stage={stage} active={active} canRun={canRun} busy={busy} act={act} onCreated={(id) => setActiveId(id)} />
         <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
         {versions.length === 0 && <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>}
         {active && (
@@ -190,7 +218,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
               <div className="row-gap">
                 <strong>Version {versions.indexOf(active) + 1}</strong>
                 <span className="muted small mono">{shortId(active.id)}</span>
-                <StatusBadge status={active.status} />
+                <StatusBadge status={active.status} stopped={isStopped(active)} />
                 {selected?.id === active.id && <span className="chip chip-ok">kept</span>}
                 {active.parent_version_id && <span className="muted small">changed from {shortId(active.parent_version_id)}</span>}
                 <span className="muted small">{timeAgo(active.created_at)}</span>
@@ -250,7 +278,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 suggestion={suggestion}
                 disabled={busy}
                 focus={toolFocus}
-                onRefine={(instruction, view) => act(() => api.refine(active.id, { instruction, view }))}
+                onRefine={(instruction, view, reference) => act(() => api.refine(active.id, { instruction, view, ...(reference ? { reference_image: reference } : {}) }))}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
             )}
@@ -286,6 +314,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
 
 function StageViewer({ stage, version, category, assetName, onChanged, hideReady, onRefineView }: { stage: StageId; version: Version; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; onRefineView: (view: string) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
+  if (isStopped(version)) {
+    return <div className="placeholder-box">You stopped this version before it finished. Resume (above) runs it again with the same settings.</div>
+  }
   if (version.status === 'rejected' && Object.keys(version.files).length === 0) {
     return <div className="placeholder-box">This version was stopped before it made a result.</div>
   }
@@ -547,11 +578,14 @@ function ChangePanel({
   suggestion: Suggestion | null
   disabled: boolean
   focus: ToolFocus | null
-  onRefine: (instruction: string, view?: string) => void
+  onRefine: (instruction: string, view?: string, reference?: string) => void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
   const [text, setText] = useState('')
   const [view, setView] = useState('')
+  const [reference, setReference] = useState<string | null>(null)
+  // The experimental reference picture only goes to the first picture of a character, creature or prop.
+  const takesReference = stage === 'concept' && asset.category !== 'material'
   const panelRef = useRef<HTMLDivElement>(null)
   const describeRef = useRef<HTMLTextAreaElement>(null)
   // A tool with no Fine-tune setting of its own (the parts editor until it is built) lands on "Describe the change".
@@ -568,8 +602,9 @@ function ChangePanel({
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    onRefine(text.trim(), view || undefined)
+    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined)
     setText('')
+    setReference(null)
   }
   const availableViews = TURNAROUND_VIEWS.filter((v) => v in target.files)
   return (
@@ -601,6 +636,7 @@ function ChangePanel({
           </button>
         </div>
         <div className="muted small">Enter sends it. The result is a new version; this one stays.</div>
+        {takesReference && <ReferencePicture value={reference} onChange={setReference} disabled={disabled} />}
       </form>
       <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} focus={focus} />
     </div>

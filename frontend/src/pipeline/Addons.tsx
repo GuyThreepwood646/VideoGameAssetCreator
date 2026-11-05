@@ -1,10 +1,14 @@
 // Fine-tune add-ons (concept, Advanced): one row per add-on that works with the chosen painter, with an on/off
 // switch, Subtle / Normal / Strong, and the one-line meaning. Required add-ons stay on and show a lock.
-// The turnaround's own helpers are listed read-only.
-import { type AddonChoice, type AddonEntry, type Recipe, type StrengthName, type Version } from '../api'
+// For the chosen painter the list shows the tested add-ons, then "Yours" (the person's own, each with Remove), then
+// "Add your own add-on" (AddMyAddon.tsx). The turnaround's own helpers are listed read-only.
+import { useState } from 'react'
+import { api, type AddonChoice, type AddonEntry, type Recipe, type StrengthName, type Version } from '../api'
 import { Info } from '../components/Info'
-import { joinAnd, STRENGTH_LABELS } from '../help'
+import { ErrorText } from '../components/ui'
+import { joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
 import { addonLocked, strengthsEqual } from '../recipe'
+import { AddMyAddon, reloadMyAddons } from './AddMyAddon'
 
 const STEPS: StrengthName[] = ['subtle', 'normal', 'strong']
 
@@ -44,30 +48,113 @@ export function AddonsList({
   disabled,
   onChange,
   notUsed,
+  painter,
 }: {
   rows: AddonRow[]
   disabled: boolean
   onChange: (id: string, choice: AddonChoice) => void
   notUsed?: string | null
+  // The chosen painter. With one, the list also offers your own add-ons and "Add your own add-on".
+  painter?: string
 }) {
-  if (!rows.length) return null
+  const [adding, setAdding] = useState(false)
+  const [added, setAdded] = useState<string | null>(null)
+  if (!rows.length && !painter) return null
+  const tested = rows.filter((r) => !r.entry.mine)
+  const yours = rows.filter((r) => r.entry.mine)
+  const painterName = painter ? modelLabel(painter) : ''
+  const onAdded = (a: AddonEntry) => {
+    setAdding(false)
+    if (painter && a.base_models.includes(painter)) {
+      onChange(a.id, a.default_strength)
+      setAdded(`${a.label} is added and switched on. Press Apply and re-run to paint with it.`)
+    } else setAdded(`${a.label} is added. It shows up when you choose a painter it was made for.`)
+  }
   return (
     <div className="addons">
       <div className="field-label">
-        Add-ons
+        Add-ons{painterName ? ` for ${painterName}` : ''}
         <Info term="term.addons" />
       </div>
-      <ul className="addon-list">
-        {rows.map((r) => (
-          <AddonRowView key={r.entry.id} row={r} disabled={disabled} onChange={(c) => onChange(r.entry.id, c)} />
+      {tested.length > 0 ? (
+        <ul className="addon-list">
+          {tested.map((r) => (
+            <AddonRowView key={r.entry.id} row={r} disabled={disabled} onChange={(c) => onChange(r.entry.id, c)} />
+          ))}
+        </ul>
+      ) : (
+        painter && <div className="muted small">No tested add-ons for this painter yet. You can add your own.</div>
+      )}
+      {yours.length > 0 && (
+        <>
+          <div className="addon-section-title small">Yours</div>
+          <ul className="addon-list">
+            {yours.map((r) => (
+              <AddonRowView key={r.entry.id} row={r} disabled={disabled} onChange={(c) => onChange(r.entry.id, c)} removable />
+            ))}
+          </ul>
+        </>
+      )}
+      {painter &&
+        (adding ? (
+          <AddMyAddon painter={painter} onAdded={onAdded} onClose={() => setAdding(false)} />
+        ) : (
+          <div className="row-gap addon-add-row">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                setAdded(null)
+                setAdding(true)
+              }}
+            >
+              Add your own add-on
+            </button>
+            {added && (
+              <span className="muted small" role="status">
+                {added}
+              </span>
+            )}
+          </div>
         ))}
-      </ul>
       {notUsed && <div className="muted small">{notUsed}</div>}
     </div>
   )
 }
 
-function AddonRowView({ row, disabled, onChange, readOnly = false }: { row: AddonRow; disabled: boolean; onChange?: (c: AddonChoice) => void; readOnly?: boolean }) {
+// One quiet line for the simple view, so people know add-ons exist without opening Advanced.
+export function AddonsHint({ rows, painter, onShow }: { rows: AddonRow[]; painter: string; onShow: () => void }) {
+  const on = rows.filter((r) => r.on).length
+  const name = modelLabel(painter)
+  const text =
+    rows.length === 0
+      ? `Add-ons: none tested for ${name} yet; you can add your own.`
+      : on > 0
+        ? `Add-ons: ${on} on, ${rows.length - on} more you can switch on for ${name}.`
+        : `Add-ons: ${rows.length} you can switch on for ${name}.`
+  return (
+    <div className="muted small addon-hint">
+      {text}{' '}
+      <button type="button" className="link" onClick={onShow}>
+        Show add-ons
+      </button>
+    </div>
+  )
+}
+
+function AddonRowView({
+  row,
+  disabled,
+  onChange,
+  readOnly = false,
+  removable = false,
+}: {
+  row: AddonRow
+  disabled: boolean
+  onChange?: (c: AddonChoice) => void
+  readOnly?: boolean
+  removable?: boolean
+}) {
   const { entry: a, locked, on, strength } = row
   const fixedStrength = strengthsEqual(a)
   const reason = a.stage === 'turnaround' ? 'Part of the turnaround, cannot be switched off' : 'Part of this painter, cannot be switched off'
@@ -120,12 +207,48 @@ function AddonRowView({ row, disabled, onChange, readOnly = false }: { row: Addo
         )}
       </div>
       {a.help?.meaning && <div className="muted small addon-meaning">{a.help.meaning}</div>}
+      {removable && <RemoveMine entry={a} disabled={disabled} />}
       {locked && (
         <div className="muted small addon-lock">
           <Lock /> {reason}
         </div>
       )}
     </li>
+  )
+}
+
+// Remove one of your own add-ons from the list. The file stays in the add-on folder.
+function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean }) {
+  const [asking, setAsking] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const remove = async () => {
+    setError(null)
+    try {
+      await api.removeMyAddon(entry.id)
+      await reloadMyAddons()
+    } catch (e) {
+      setError(e)
+    }
+  }
+  return (
+    <div className="addon-mine-actions small">
+      {asking ? (
+        <>
+          <span>Take it off your list? The file stays in the add-on folder, so you can set it up again later.</span>
+          <button type="button" onClick={remove}>
+            Remove
+          </button>
+          <button type="button" onClick={() => setAsking(false)}>
+            Keep
+          </button>
+        </>
+      ) : (
+        <button type="button" className="link" disabled={disabled} onClick={() => setAsking(true)}>
+          Remove
+        </button>
+      )}
+      <ErrorText error={error} />
+    </div>
   )
 }
 
