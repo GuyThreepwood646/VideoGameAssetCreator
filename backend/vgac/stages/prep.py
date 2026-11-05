@@ -18,6 +18,14 @@ every map again from the mesh stage's model onto the final mesh, and prep regist
 stage's. Metrics record whether that happened and how long it took, the UV hashes of the baked and the shipped mesh,
 the share of the atlas used and the gutter between texture pieces.
 
+Scenery on the grid (G15): for the grid categories (environment) prep sizes the piece as above, then blender/prep.py
+rounds width and depth to whole grid steps and the height to half steps (blender/gridfit.py: thin sides left alone, at
+most 15 percent per side), puts the pivot on the minimum corner and renders "How it tiles" (tiling.png). The knobs are
+grid_m (the step: the version's choice, else the category's grid_m, else 1 m; per asset, no project setting in v1),
+grid_footprint and grid_height. The size knob does not apply to scenery; a size in the description still sets the
+starting size. Metrics record the grid, the footprint in squares, the snapped size and the tiling gap; the checks are
+grid_fit and tiles_cleanly instead of size_m.
+
 Light and colour (G07, G08): prep scores light painted into the base colour (imaging.light_score). The style decides
 whether it is removed (styles.yaml delight_default; the delight knob overrides), and whether colours, metal and shine
 are brought into physically based ranges (pbr_fix_default; the pbr_fix knob overrides). Roughness is always kept at
@@ -35,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import imaging, quality, reference
+from ..blender import gridfit
 from .base import StageContext
 
 # The mesh stage's silhouette floor when the category does not set one (stages/mesh.py DEFAULT_SILHOUETTE_MIN).
@@ -79,6 +88,23 @@ def resolve_size(category_id: str, params: dict[str, Any], description: str | No
     return {"size_m": size, "size_axis": axis, "size_word": word, "size_source": source}
 
 
+def resolve_grid(category: dict[str, Any], params: dict[str, Any]) -> dict[str, Any] | None:
+    """{grid_m, grid_footprint, grid_height} for a grid category (G15), else None. grid_m: the version's choice, else
+    the category's grid_m, else 1 m. Footprint and height are "auto" unless the version chose one."""
+    if category.get("id") not in reference.GRID_CATEGORIES:
+        return None
+    grid = params.get("grid_m") if params.get("grid_m") not in (None, "") else category.get("grid_m")
+    fp = params.get("grid_footprint")
+    fp = fp if fp in gridfit.FOOTPRINTS else "auto"
+    h = gridfit.height_choice(params.get("grid_height"))
+    return {"grid_m": _num(gridfit.grid_value(grid)), "grid_footprint": fp, "grid_height": "auto" if h is None else _num(h)}
+
+
+def _num(x: float) -> int | float:
+    """1.0 -> 1, 0.5 -> 0.5: whole numbers as ints, so the stored params match the knob's options."""
+    return int(x) if float(x).is_integer() else float(x)
+
+
 def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[str, Any] | None) -> dict[str, Any]:
     """{face_yaw_applied, face_best_turn, facing_source}. face_best_turn is None when the mesh audit has no fit or
     its silhouette match is below the category floor (then nothing is checked)."""
@@ -110,13 +136,15 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     # G05 (b): mirroring halves the texture space the model uses and changes the surface the maps were painted for,
     # so it runs only when the version asks (the Fine-tune switch, or a Fix).
     symmetric = bool(params.get("symmetric") or False)
-    pivot = params.get("pivot") or sc.category.get("pivot") or "base"
+    grid = resolve_grid(sc.category, params)
+    pivot = "corner" if grid else (params.get("pivot") or sc.category.get("pivot") or "base")
     smooth = float(params.get("smooth_angle") or 60.0)
     face_yaw = params.get("face_yaw")
     surface = resolve_surface(sc.style, params)
     sc.set_params(size_m=size["size_m"], size_axis=size["size_axis"], size_word=size["size_word"],
                   face_yaw=face_yaw if face_yaw not in (None, "") else "auto", symmetric=symmetric, pivot=pivot, smooth_angle=smooth,
-                  delight=params.get("delight") or "auto", pbr_fix=surface["pbr_fix"], rebake=bool(params.get("rebake") or False))
+                  delight=params.get("delight") or "auto", pbr_fix=surface["pbr_fix"], rebake=bool(params.get("rebake") or False),
+                  **(grid or {}))
     sc.set_metrics(size_source=size["size_source"], **facing)
     sc.use_model("blender")
     out = sc.dir / "prep.glb"
@@ -126,6 +154,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         args += ["--budget", int(sc.budget["triangles"])]
     if symmetric:
         args.append("--symmetric")
+    if grid:
+        args += ["--grid", grid["grid_m"], "--grid-footprint", grid["grid_footprint"], "--grid-height", grid["grid_height"],
+                 "--tiling", sc.dir / "tiling.png"]
     mesh_maps = {k: sc.lineage_file(k, ("mesh",)) for k in TEXTURE_KEYS}
     mesh_maps = {k: p for k, p in mesh_maps.items() if p is not None}
     tex = texture_size_of(mesh_maps, mesh_v.params if mesh_v else {}, sc.budget.get("texture"))
@@ -152,6 +183,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
                    decimated=bool(report.get("decimated")), texture_size=tex)
+    if report.get("grid"):
+        sc.set_metrics(**grid_metrics(report["grid"]))
+        tiling = report.get("tiling_png")
+        if tiling and Path(tiling).is_file():
+            sc.register("tiling", Path(tiling))
     if maps.get("base_color"):
         sc.progress(0.7, "Checking the textures")
         bake_glb = src if not rebaked else out
@@ -161,6 +197,17 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
     await judge(sc)
+
+
+def grid_metrics(g: dict[str, Any]) -> dict[str, Any]:
+    """The prep metrics for a piece on the grid, from the Blender report's "grid" block. grid_size_m is the snapped
+    size as [width, depth, height] in metres (the same numbers as dims, which are Blender x, y, z)."""
+    dims = [round(float(v), 4) for v in (g.get("dims_m") or [])]
+    return {"grid_m": g.get("grid_m"), "grid_footprint_cells": g.get("footprint"), "grid_cells": g.get("cells"),
+            "grid_size_m": dims, "grid_height_m": round(float(g.get("height_m") or 0), 4), "grid_kind": g.get("kind"),
+            "grid_fit": bool(g.get("fit")), "grid_states": g.get("states"), "grid_scale": g.get("scale"),
+            "grid_size_before_m": [round(float(v), 4) for v in (g.get("dims_before_m") or [])],
+            "tile_gap_cm": g.get("tile_gap_cm"), "pivot_corner": True}
 
 
 def resolve_surface(style: dict[str, Any] | None, params: dict[str, Any]) -> dict[str, Any]:
@@ -314,12 +361,16 @@ def link_textures(sc: StageContext) -> None:
 
 def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[str, Any], category_id: str,
                 triangle_budget: int | None) -> list[dict[str, Any]]:
-    """Geometry, size along the version's axis, and facing when the mesh audit gave a trusted fit."""
+    """Geometry, size along the version's axis (on the grid for scenery: grid_fit and tiles_cleanly instead), and
+    facing when the mesh audit gave a trusted fit."""
     spec = reference.size_spec(category_id)
-    size = params.get("size_m") or params.get("height_m")
+    on_grid = category_id in reference.GRID_CATEGORIES and bool(report.get("grid"))
+    size = None if on_grid else (params.get("size_m") or params.get("height_m"))
     axis = params.get("size_axis") or ("height" if not params.get("size_m") and params.get("height_m") else spec["axis"])
     word = params.get("size_word") or (spec["word"] if axis == spec["axis"] else reference.AXIS_WORD_DEFAULT.get(axis, "tall"))
     checks = quality.geometry_checks(report, triangle_budget or None, float(size) if size else None, size_axis=axis, axis_word=word)
+    if on_grid:
+        checks += quality.grid_checks(report["grid"], params)
     best = metrics.get("face_best_turn")
     if best is not None:
         checks.append(quality.facing_check(best, metrics.get("face_yaw_applied") or 0))

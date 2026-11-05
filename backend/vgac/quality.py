@@ -122,6 +122,61 @@ def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, 
     return out
 
 
+# Scenery on the grid (G15): copies placed side by side may leave at most this gap or overlap, in centimetres.
+TILE_GAP_MAX_CM = 0.5
+
+
+def grid_fix_params(g: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The prep params that would put a piece that missed the grid onto it, or None. A chosen height that missed goes
+    back to automatic; else a chosen footprint goes back to automatic (plan 3.8: Snap to the grid). When both are
+    already automatic, the next finer grid on which every side fits (from the size before the grid), else None."""
+    from .blender import gridfit
+    p = params or {}
+    off = g.get("off_side")
+    height_chosen = p.get("grid_height") not in (None, "", "auto")
+    footprint_chosen = p.get("grid_footprint") not in (None, "", "auto")
+    if off == 2 and height_chosen:
+        return {"grid_height": "auto"}
+    if footprint_chosen:
+        return {"grid_footprint": "auto"}
+    if height_chosen:
+        return {"grid_height": "auto"}
+    before = g.get("dims_before_m")
+    grid = gridfit.grid_value(g.get("grid_m"))
+    if before:
+        for finer in sorted((o for o in gridfit.GRID_OPTIONS if o < grid), reverse=True):
+            if gridfit.plan_fit(before, finer)["fit"]:
+                return {"grid_m": finer}
+    return None
+
+
+def grid_checks(g: dict[str, Any], params: dict[str, Any] | None = None) -> list[Check]:
+    """grid_fit and tiles_cleanly from the Blender prep report's "grid" block (G15). grid_fit: every side the grid
+    rounds is a whole number of grid steps (half steps for the height) within 1 mm; value is the size [width, depth,
+    height] in metres, limit the grid step. tiles_cleanly: the largest gap or overlap between copies placed at the grid
+    pitch, in centimetres."""
+    from .blender import gridfit
+    out: list[Check] = []
+    dims = [float(v) for v in (g.get("dims_m") or [])]
+    if len(dims) < 3:
+        return out
+    grid = gridfit.grid_value(g.get("grid_m"))
+    judged = gridfit.judge_fit(dims, g.get("states") or ["snapped"] * 3, grid, g.get("targets_m"))
+    off = judged["off_side"]
+    smaller = all(s == "thin" for s in (g.get("states") or [])[:2])
+    vars_: dict[str, Any] = {"w": round(dims[0], 3), "d": round(dims[1], 3), "h": round(dims[2], 3), "grid": grid,
+                             "small": smaller}
+    if off is not None:
+        vars_.update(side=round(dims[off], 3), side_word=gridfit.SIDE_WORDS[off],
+                     fix_params=grid_fix_params({**g, "off_side": off}, params))
+    out.append(check("grid_fit", judged["fit"], [round(d, 3) for d in dims], grid, vars=vars_))
+    gap = g.get("tile_gap_cm")
+    if gap is not None:
+        out.append(check("tiles_cleanly", float(gap) <= TILE_GAP_MAX_CM, round(float(gap), 1), TILE_GAP_MAX_CM,
+                         vars={"kind": g.get("kind")}))
+    return out
+
+
 def lod_checks(report: dict[str, Any], expected_ratios: list[float] | None, tolerance: float = 0.25) -> list[Check]:
     """LOD chain from a pack report: count and each level's triangle ratio against LOD0."""
     out: list[Check] = []
