@@ -1,7 +1,7 @@
 // Sample data for the mock backend: reference tables, one project with a fully
 // staged asset, and the fabricators that fill in files and metrics for new versions.
 import type { Asset, Category, Job, LookPreset, Platform, Project, StageId, StageInfo, StylePreset, Version } from '../api'
-import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, type Figure, type ViewName } from './images'
+import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, makeTiling, type Figure, type ViewName } from './images'
 
 const RIGGED_IDS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'] as const
 export const files = new Map<string, string>() // library-relative path -> data URL
@@ -118,10 +118,10 @@ export const categories: Category[] = [
     symmetric: false,
     pose_block: 'modular piece, orthographic three-quarter view, grid aligned',
     size_m: 3.0,
-    size_axis: 'longest',
+    size_axis: 'grid',
     size_word: 'across',
-    size_label: 'How big is it?',
-    size_hint: 'In metres, along its longest side. A wall section is about 3 m wide; a floor tile about 2 m. Pieces are not rounded to a grid yet.',
+    size_label: 'Size on the grid',
+    size_hint: 'Rounded to whole grid squares; pick a footprint and a height below.',
     parts_default: [],
     budgets: { mobile_low: { triangles: 1500, texture: 1024 }, pc_mid: { triangles: 6000, texture: 2048 }, high: { triangles: 20000, texture: 4096 } },
   },
@@ -271,11 +271,12 @@ export const stages: StageInfo[] = [
         max: 100,
         step: 0.05,
         default: 1.8,
-        categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'],
+        // Scenery snaps to the grid instead (grid_footprint, grid_height, grid_m).
+        categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage'],
         // As the backend serves it (3.2): axis, default, word, question and hint per category.
         by_category: Object.fromEntries(
           categories
-            .filter((c) => c.size_axis)
+            .filter((c) => c.size_axis && c.size_axis !== 'grid')
             .map((c) => [c.id, { axis: c.size_axis!, default: c.size_m, word: wordOf(c.id), label: c.size_label ?? 'How big is it?', hint: c.size_hint ?? 'In metres.' }]),
         ),
       },
@@ -295,7 +296,44 @@ export const stages: StageInfo[] = [
       { name: 'pbr_fix', label: 'Keep colours in a realistic range', type: 'boolean', default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       { name: 'rebake', label: 'Paint the surface again', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // This one carries the backend's option_labels (2.2); the others fall back to help.ts OPTION_LABELS.
-      { name: 'pivot', label: 'Pivot', type: 'select', options: ['base', 'center'], default: 'base', option_labels: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' } },
+      // Scenery always gets the corner anchor, so the pivot knob is not offered for it.
+      {
+        name: 'pivot',
+        label: 'Pivot',
+        type: 'select',
+        options: ['base', 'center'],
+        default: 'base',
+        option_labels: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' },
+        categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage', 'material'],
+      },
+      // Scenery on a grid: footprint and height in grid steps, and the grid itself (Advanced).
+      {
+        name: 'grid_footprint',
+        label: 'Size on the grid',
+        type: 'select',
+        options: ['auto', '1x1', '2x1', '2x2', '4x1', '4x4'],
+        default: 'auto',
+        option_labels: { auto: 'Automatic (nearest fit)', '1x1': '1 x 1 squares', '2x1': '2 x 1 squares', '2x2': '2 x 2 squares', '4x1': '4 x 1 squares', '4x4': '4 x 4 squares' },
+        categories: ['environment'],
+      },
+      {
+        name: 'grid_height',
+        label: 'Height on the grid',
+        type: 'select',
+        options: ['auto', 0.5, 1, 3, 4],
+        default: 'auto',
+        option_labels: { auto: 'Automatic', '0.5': 'Floor (0.5 m)', '1': 'Low (1 m)', '3': 'Wall (3 m)', '4': 'Tall (4 m)' },
+        categories: ['environment'],
+      },
+      {
+        name: 'grid_m',
+        label: 'Grid size',
+        type: 'select',
+        options: [0.5, 1, 2, 4],
+        default: 1,
+        option_labels: { '0.5': '0.5 m', '1': '1 m (standard)', '2': '2 m', '4': '4 m' },
+        categories: ['environment'],
+      },
       { name: 'smooth_angle', label: 'Smooth angle (deg)', type: 'number', min: 10, max: 90, step: 1, default: 60 },
     ],
   },
@@ -512,6 +550,35 @@ function colliderFor(category: string): { shape: string; count: number; kinds: s
   return { shape: 'hull', count: 1, kinds: ['hull'] }
 }
 
+// Scenery on a grid, as prep reports it: a 3 m wall on the 1 m grid. On a failing seed the wall comes out 3.4 m
+// wide, between grid steps, until the grid is changed (the fix sets the 0.5 m grid). Some checks leave help out so
+// the frontend fallback sentences show.
+function gridFor(seed: number, params: Record<string, unknown>): { metrics: Record<string, unknown> & { grid_size_m: number[]; grid_fit: boolean }; checks: MockCheck[] } {
+  const chosen = Number(params.grid_m)
+  const grid = Number.isFinite(chosen) && chosen > 0 ? chosen : 1
+  const off = seed % 3 === 0 && params.grid_m === undefined
+  if (off) {
+    const size = [3.4, 0.3, 3]
+    return {
+      metrics: { grid_m: grid, grid_footprint_cells: '3x1', grid_cells: [3, 1], grid_size_m: size, grid_height_m: 3, grid_kind: 'wall', grid_fit: false, tile_gap_cm: 40, pivot_corner: true },
+      checks: [
+        chk('grid_fit', false, size, grid, { severity: 'warn', vars: { grid, side: 'w', side_word: 'wide' }, fix: { stage: 'prep', params: { grid_m: 0.5 }, label: 'Snap to the grid' } }),
+        chk('tiles_cleanly', false, 40, 0, { severity: 'warn' }),
+      ],
+    }
+  }
+  const width = grid <= 0.5 ? 3.5 : 3
+  const cells = [Math.max(1, Math.round(width / grid)), 1]
+  const size = [width, grid <= 0.5 ? 0.5 : 0.3, 3]
+  return {
+    metrics: { grid_m: grid, grid_footprint_cells: `${cells[0]}x${cells[1]}`, grid_cells: cells, grid_size_m: size, grid_height_m: 3, grid_kind: 'wall', grid_fit: true, tile_gap_cm: 0, pivot_corner: true },
+    checks: [
+      chk('grid_fit', true, size, grid, { severity: 'warn', vars: { grid } }),
+      chk('tiles_cleanly', true, 0, 0, { severity: 'warn', help: 'Copies placed side by side meet without gaps.' }),
+    ],
+  }
+}
+
 function sizeOn(category: string): number {
   const d = MOCK_DIMS[category] ?? MOCK_DIMS.prop_rigid
   const axis = categories.find((c) => c.id === category)?.size_axis
@@ -620,6 +687,13 @@ export function fabricate(asset: Asset, version: Version) {
       m.texture_padding_px = 8
       m.atlas_used = 0.71
       m.checks = checksFor('prep', seed, categories.find((c) => c.id === asset.category)?.budgets[asset.platform_target]?.triangles ?? 20000, asset.category)
+      if (asset.category === 'environment') {
+        const g = gridFor(seed, version.params)
+        Object.assign(m, g.metrics)
+        m.dims = g.metrics.grid_size_m
+        f.tiling = putDataFile(`${base}/tiling.png`, makeTiling(hue, g.metrics.grid_fit ? 0 : 14))
+        ;(m.checks as MockCheck[]).push(...g.checks)
+      }
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.checks_failed = (m.checks as MockCheck[]).filter((c) => !c.ok).map((c) => c.id)
       break
@@ -1047,6 +1121,38 @@ export function seedStore() {
   setSelected(barrel, br)
   const be = seedVersion(barrel, 'export', br, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 32, 'host')
   setSelected(barrel, be)
+
+  // A wall section snapped to the 1 m grid (scenery), through to export. An earlier prep attempt (seed 3) came out
+  // between grid steps, so its grid check fails with a "Snap to the grid" fix.
+  const wall: Asset = {
+    id: uid('a'),
+    project_id: p1.id,
+    name: 'Stone wall section',
+    category: 'environment',
+    style_preset: 'painterly',
+    platform_target: 'pc_mid',
+    prompt: 'mossy stone wall section, three metres wide, with a crumbling top edge',
+    parts: [],
+    created_at: nowIso(-50 * 60_000),
+    selected: {},
+    stages: {},
+  }
+  store.assets.push(wall)
+  const sc = seedVersion(wall, 'concept', null, { model: 'zturbo', seed: 6, width: 1024, height: 1024, steps: 8, readiness_block: true }, 49, 'b')
+  setSelected(wall, sc)
+  const st = seedVersion(wall, 'turnaround', sc, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true }, 48, 'b')
+  setSelected(wall, st)
+  const sm = seedVersion(wall, 'mesh', st, { engine: 'trellis', input_view: 'quarter', seed: 2, remesh: true }, 46, 'a')
+  setSelected(wall, sm)
+  seedVersion(wall, 'prep', sm, { face_yaw: 'auto', symmetric: false, delight: 'auto', grid_footprint: 'auto', grid_height: 'auto', seed: 3 }, 45, 'host')
+  const sp = seedVersion(wall, 'prep', sm, { face_yaw: 'auto', symmetric: false, delight: 'auto', grid_footprint: 'auto', grid_height: 'auto', grid_m: 1, seed: 1 }, 44, 'host')
+  setSelected(wall, sp)
+  const sr = seedVersion(wall, 'rig', sp, { template: 'none' }, 43, 'b')
+  sr.metrics = { rigid: true, bones: 0, template: 'none', checks: [], gate_ok: true }
+  sr.files = { glb: 'samples/sample.glb' }
+  setSelected(wall, sr)
+  const se = seedVersion(wall, 'export', sr, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 42, 'host')
+  setSelected(wall, se)
 
   // A variant of the knight: same identity, winter outfit.
   const winter: Asset = {

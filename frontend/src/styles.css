@@ -1058,6 +1058,17 @@ input[type='checkbox'] {
   border-radius: var(--radius);
   border: 1px solid var(--border);
 }
+.tiling-thumb {
+  display: block;
+}
+.tiling-thumb img {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
 .bone-list {
   color: var(--muted);
   max-height: 96px;

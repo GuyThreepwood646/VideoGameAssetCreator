@@ -175,6 +175,50 @@ export function makeImage(opts: Opts = {}): string {
   return c.toDataURL('image/png')
 }
 
+// Three wall sections side by side on a floor grid, as prep's tiling preview shows scenery. With gapPx the
+// sections stand apart, as a piece between grid steps would.
+export function makeTiling(hue: number, gapPx = 0, w = 640, h = 240): string {
+  const { c, ctx } = canvas(w, h)
+  drawBackground(ctx, w, h, hue)
+  const floorY = h * 0.82
+  const cell = w / 12
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+  ctx.lineWidth = 1
+  for (let x = 0; x <= w; x += cell) {
+    ctx.beginPath()
+    ctx.moveTo(x, floorY)
+    ctx.lineTo(x, h)
+    ctx.stroke()
+  }
+  ctx.beginPath()
+  ctx.moveTo(0, floorY)
+  ctx.lineTo(w, floorY)
+  ctx.stroke()
+  const pieceW = cell * 3
+  const total = pieceW * 3 + gapPx * 2
+  const x0 = (w - total) / 2
+  const top = floorY - cell * 3
+  for (let i = 0; i < 3; i++) {
+    const x = x0 + i * (pieceW + gapPx)
+    ctx.fillStyle = `hsl(${(hue + i * 6) % 360} 20% ${40 + i * 4}%)`
+    ctx.fillRect(x, top, pieceW, floorY - top)
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+    for (let r = top + cell / 2; r < floorY; r += cell / 2) {
+      ctx.beginPath()
+      ctx.moveTo(x, r)
+      ctx.lineTo(x + pieceW, r)
+      ctx.stroke()
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+    ctx.strokeRect(x + 0.5, top + 0.5, pieceW - 1, floorY - top - 1)
+    ctx.fillStyle = 'hsl(45 80% 60%)'
+    ctx.beginPath()
+    ctx.arc(x, floorY, 4, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  return c.toDataURL('image/png')
+}
+
 export function makeTexture(kind: 'base_color' | 'normal' | 'orm', hue: number, size = 256): string {
   const { c, ctx } = canvas(size, size)
   const rand = rng(hue * 7 + size)

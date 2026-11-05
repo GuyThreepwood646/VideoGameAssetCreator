@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { libraryUrl, selectedVersion, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { aboutSize, fmtDuration, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
@@ -200,6 +200,24 @@ export function FineTune({
             </>
           }
           unit="m"
+        />
+      )
+    }
+    // Scenery on a grid: the footprint knob says what this version measures on the grid.
+    if (stage === 'prep' && p.name === 'grid_footprint') {
+      const now = gridReadout(target.metrics)
+      return (
+        <AdjustField
+          param={p}
+          value={values[p.name]}
+          onChange={(v) => set(p.name, v)}
+          disabled={disabled}
+          hintText={
+            <>
+              {p.hint || sizeHint(cat ?? asset.category)}
+              {now && <span className="size-now"> Now: {now.replace(/^On the grid: /, '')}.</span>}
+            </>
+          }
         />
       )
     }

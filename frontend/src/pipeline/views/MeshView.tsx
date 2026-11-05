@@ -1,6 +1,6 @@
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
-import { aboutSize, measuredSize } from '../../help'
+import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import Viewer from '../../Viewer'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -20,6 +20,9 @@ export function MeshView({ version, category }: { version: Version; category?: s
   const glb = libraryUrl(version.files.glb)
   // Prep sets the size (3.2): "About 1.8 m tall", measured on the category's axis.
   const size = version.stage === 'prep' && category ? measuredSize(version.metrics, category) : null
+  // Scenery on a grid: "On the grid: 3 x 1 squares, 3 m tall".
+  const onGrid = version.stage === 'prep' && category && sizeAxisOf(category) === 'grid' ? gridReadout(version.metrics) : null
+  const tiling = version.stage === 'prep' ? libraryUrl(version.files.tiling) : null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -44,6 +47,27 @@ export function MeshView({ version, category }: { version: Version; category?: s
               <Info term="term.size_m" />
             </div>
             <div className="small">{aboutSize(size.value, size.word)}</div>
+          </div>
+        )}
+        {onGrid && (
+          <div>
+            <div className="field-label">
+              Size in the game
+              <Info term="term.grid_footprint" />
+            </div>
+            <div className="small">{onGrid}</div>
+          </div>
+        )}
+        {tiling && (
+          <div>
+            <div className="field-label">
+              How it tiles
+              <Info term="term.grid" />
+            </div>
+            <a href={tiling} target="_blank" rel="noreferrer" className="tiling-thumb" title="Three copies side by side">
+              <img src={tiling} alt="Three copies of the piece side by side" />
+            </a>
+            <div className="small muted">Three copies side by side, to show the edges meet.</div>
           </div>
         )}
         {iou !== null && typeof iou === 'object' && (
