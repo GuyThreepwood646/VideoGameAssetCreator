@@ -135,6 +135,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Paints strands, clumps and shading along the hair; skipped when the hair cannot be told from skin or clothes"),
         _param("hair_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Hair strength",
                description="How strongly the hair detail is painted: 1 is full, 0 changes nothing"),
+        # More triangles on the head (vgac/headtris.py): humanoids in looks with smooth shading and the full budget.
+        _param("head_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the head)",
+               description="When the 3D model was built with room for it, the head keeps about twice its share of the triangles and the body gives them up; the total stays inside the budget"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),

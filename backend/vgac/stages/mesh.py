@@ -14,6 +14,11 @@ Recipes (reference.recipe): when the version does not choose them, the triangle 
 budget (a quarter for low-poly, 40 percent for Retro 64) and the texture size the recipe's cap (never over the
 platform's). A look without surface bumps (mesh.normal_map false) never registers the normal map the builder bakes,
 and its model.glb loses its copy. The checks measure against the recipe's targets, and say so.
+
+More triangles on the head (vgac/headtris.py): for humanoids in a look that keeps the full budget with smooth shading,
+the TRELLIS target is headtris.HEAD_ROOM times the usual one (params head_room). The model is over the budget on
+purpose; its triangle_budget check measures it against its own target and says why. The clean-up step decimates it back
+to the budget with the head kept, and the rig step refuses a model that is still over (headtris.handoff_problem).
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import imaging, library, quality, reference
+from .. import guidance, headtris, imaging, library, quality, reference
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
@@ -77,19 +82,27 @@ def recipe_target_faces(rec: dict[str, Any], budget_triangles: int | None) -> in
     return max(RECIPE_FACES_MIN, int(int(t) * BUDGET_HEADROOM))
 
 
-def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any]) -> dict[str, Any]:
+def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any], category_id: str | None = None) -> dict[str, Any]:
     """{target_faces, target_faces_source, texture_size, texture_source}: the version's choice ("chosen"), else the
-    recipe's ("recipe"; the platform budget for looks that keep it)."""
+    recipe's ("recipe"; the platform budget for looks that keep it). With category_id, when the look and category get
+    more triangles on the head (headtris.applies) and the target is the recipe's, the target is headtris.HEAD_ROOM
+    times larger and the result has head_room: the clean-up step decimates back to the budget with the head kept."""
     m = rec.get("mesh") or {}
+    room = None
     if params.get("target_faces"):
         faces, fsrc = int(params["target_faces"]), "chosen"
     else:
         faces, fsrc = recipe_target_faces(rec, budget.get("triangles")), "recipe"
+        if category_id is not None and budget.get("triangles") and headtris.applies(rec, category_id):
+            faces, room = headtris.room_target(faces), headtris.HEAD_ROOM
     if params.get("texture_size"):
         tex, tsrc = int(params["texture_size"]), "chosen"
     else:
         tex, tsrc = int(m.get("texture") or budget.get("texture") or 2048), "recipe"
-    return {"target_faces": faces, "target_faces_source": fsrc, "texture_size": tex, "texture_source": tsrc}
+    out = {"target_faces": faces, "target_faces_source": fsrc, "texture_size": tex, "texture_source": tsrc}
+    if room:
+        out["head_room"] = room
+    return out
 
 
 def resolve_padding(params: dict[str, Any], tex: int) -> int:
@@ -126,7 +139,8 @@ def finish_maps(glb: Path, maps: dict[str, Path], tex: int) -> dict[str, Any]:
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     input_view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
     rec = stage_recipe(sc)
-    targets = resolve_targets(rec, params, sc.budget)
+    # The TRELLIS builder only: more triangles than the budget, on purpose, for the clean-up step's weighted decimation
+    targets = resolve_targets(rec, params, sc.budget, sc.asset.category)
     target_faces, tex = targets["target_faces"], targets["texture_size"]
     keep_normal = bool(rec["mesh"]["normal_map"])
     crisp = rec["surface"]["texture_filter"] == "crisp"
@@ -136,7 +150,8 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     padding = resolve_padding(params, tex)
     src = _input_image(sc, input_view)
     sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=seed, remesh=remesh,
-                  padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"])
+                  padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
+                  head_room=targets.get("head_room"))
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
     sc.register("input", sc.copy_in(src, "input_image.png"))
@@ -228,10 +243,14 @@ def look_vars(rec: dict[str, Any], budget: dict[str, Any]) -> dict[str, Any]:
 
 
 def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any]) -> tuple[int | None, dict[str, Any] | None]:
-    """The triangle limit a check measures against, and the check's vars: the recipe's target when the look asks for
-    fewer triangles than the platform allows (and the version did not choose more), else the platform budget and no
-    vars."""
+    """The triangle limit a check measures against, and the check's vars: the version's own target when it was built
+    over the budget on purpose for the head (headtris; vars head_room, platform_triangles); the recipe's target when
+    the look asks for fewer triangles than the platform allows (and the version did not choose more), else the
+    platform budget and no vars."""
     platform = budget.get("triangles")
+    room = headtris.mesh_limit(params, platform)
+    if room:
+        return room, {"head_room": True, "platform_triangles": platform}
     target = (rec.get("mesh") or {}).get("triangles")
     chosen = params.get("target_faces_source") == "chosen" or (params.get("target_faces") and "target_faces_source" not in params)
     if chosen and int(params.get("target_faces") or 0) > int(target or 0):
@@ -256,6 +275,7 @@ def with_vars(checks: list[dict[str, Any]], vars: dict[str, Any] | None, suffix:
         for c in checks:
             if str(c.get("name") or c.get("id") or "").endswith(suffix):
                 c["vars"] = {**(c.get("vars") or {}), **vars}
+                c.update(guidance.describe_check(c))  # the sentence again, with the new values
     return checks
 
 

@@ -22,7 +22,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, library, quality
+from .. import guidance, headtris, library, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -142,6 +142,24 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False)))
 
 
+def guard_budget(sc: StageContext, src: Path) -> None:
+    """Refuse a model over the triangle budget on purpose (the 3D step left room for the head, vgac/headtris.py) when
+    no clean-up model under the budget stands between it and the rig: the clean-up step was skipped or did not bring
+    it back. Models built at the budget pass as before."""
+    mesh_v = sc.stage_version("mesh")
+    if mesh_v is None:
+        return
+    prep_v = sc.stage_version("prep")
+    prep_glb = library.version_file(prep_v, "glb", sc.settings) if prep_v is not None else None
+    from_prep = prep_glb is not None and Path(prep_glb).resolve() == Path(src).resolve()
+    prep_tris = (prep_v.metrics or {}).get("triangles") if from_prep else None
+    if from_prep and prep_tris is None:
+        return  # an older clean-up version without a count: nothing to judge by
+    problem = headtris.handoff_problem(mesh_v.params, (mesh_v.metrics or {}).get("triangles"), prep_tris, sc.budget.get("triangles"))
+    if problem:
+        raise ValueError(problem)
+
+
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, rigid=True, reason="material category has no mesh")
@@ -149,6 +167,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     src = sc.lineage_file("glb", ("prep", "mesh"))
     if src is None:
         raise FileNotFoundError("no prep or mesh glb in lineage")
+    guard_budget(sc, src)
     template = resolve_template(sc, params)
     target_faces = int(params.get("target_faces") or 0)
     gpv = int(params.get("group_per_vertex") or 4)
