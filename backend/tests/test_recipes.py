@@ -169,7 +169,7 @@ def test_schemas_carry_the_addon_catalog_and_the_shading_knob():
     stages = {s["id"]: {p["name"]: p for p in s["adjust_schema"]} for s in reference.stages()}
     a = stages["concept"]["addons"]
     assert a["type"] == "addons" and a["options"] == ["off", "subtle", "normal", "strong"] and not a["simple"]
-    assert {e["id"] for e in a["catalog"]} == {"pixel_art"} and a["help"]["meaning"]
+    assert {e["id"] for e in a["catalog"]} == {"pixel_art", "stylised_3d", "clay_finish", "retro_lowpoly", "chunky_pixels"} and a["help"]["meaning"]
     sh = stages["prep"]["shading"]
     assert sh["options"] == ["auto", "smooth", "flat"] and sh["option_labels"]["flat"] == "Flat faces" and not sh["simple"]
     assert 256 in stages["mesh"]["texture_size"]["options"] and stages["mesh"]["texture_size"]["option_labels"]["256"]

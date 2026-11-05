@@ -63,3 +63,61 @@ addons:
     required: true
     licence: Apache-2.0
     source: models.yaml entry "qwen_angles_lora"
+  # Optional looks from the add-on bake-off (docs/RECIPES-BAKEOFF.md). None is a recipe default: each is offered
+  # for the painters in base_models and switched on by the person.
+  - id: stylised_3d
+    label: Stylised 3D look
+    help:
+      meaning: Makes the picture look like a rendered stylised 3D game character or prop.
+      why: Gives one consistent toy-like 3D look. It darkens the backdrop a little and can pull arms closer to the body, so use normal or subtle.
+      technical: Z-Image Turbo 3DRenderStyle Redmond LoRA, model only, trigger "3D Render Style. 3DRenderAF." Bake-off docs/RECIPES-BAKEOFF.md 4.1.
+    file: VGAC/zit_3drender_redmond.safetensors
+    base_models: [zturbo]
+    stage: concept
+    trigger: 3D Render Style. 3DRenderAF.
+    strengths: {subtle: 0.5, normal: 0.7, strong: 1.0}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE
+  - id: clay_finish
+    label: Hand-made clay finish
+    help:
+      meaning: Makes clay pictures look more matte and hand-sculpted.
+      why: The Clay style already looks like clay; this adds a stronger plasticine finish. Strong loses small details.
+      technical: Z-Image Turbo ClayAnimation Redmond LoRA, model only, trigger "Clay animation, Clay." Bake-off 4.2.
+    file: VGAC/zit_clay_redmond.safetensors
+    base_models: [zturbo]
+    stage: concept
+    trigger: Clay animation, Clay.
+    strengths: {subtle: 0.4, normal: 0.6, strong: 0.8}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE
+  - id: retro_lowpoly
+    label: Late-90s low-poly look
+    help:
+      meaning: Pushes the picture toward a late-1990s low-polygon game model with small blurry textures.
+      why: The best retro look found, and it keeps the backdrop plain. Strong starts to change outfits.
+      technical: Z-Image Turbo PS1Graphics Redmond LoRA, model only. Its trigger names a console but drew no lettering in 18 tests. Bake-off 4.3.
+    file: VGAC/zit_ps1_redmond.safetensors
+    base_models: [zturbo]
+    stage: concept
+    trigger: Playstation 1 Graphics. PS1 Game.
+    strengths: {subtle: 0.4, normal: 0.6, strong: 0.8}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO
+  - id: chunky_pixels
+    label: Chunky pixel sprites
+    help:
+      meaning: Bigger, blockier pixels with a smaller palette than the standard pixel-art look.
+      why: Looks most like an old sprite on creatures and props. On people it can change the outfit, so the standard pixel look stays the default for characters.
+      technical: Z-Image Turbo PixelArt Redmond LoRA, trigger "Pixel Art, PixArFK". Offered for the plain Z-Image Turbo painter only; the Pixel Art painter keeps its built-in add-on (the two are never stacked). Bake-off 4.4.
+    file: VGAC/zit_pixelart_redmond.safetensors
+    base_models: [zturbo]
+    stage: concept
+    trigger: Pixel Art, PixArFK
+    strengths: {subtle: 0.7, normal: 1.0, strong: 1.2}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO
