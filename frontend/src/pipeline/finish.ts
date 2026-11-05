@@ -1,7 +1,7 @@
 // The finish card's "What you get" list and "Using it in Unity" lines (plan 2.4).
 //
 // The export stage writes both: metrics.finish_lines (at most six {id, text, state, term}) and metrics.unity_howto
-// (three lines). Older exports have neither, so the same lines are built here from what the export, prep and rig
+// (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
 import { selectedVersion, type Asset, type Check, type FinishLine, type StageId, type Version } from '../api'
@@ -25,6 +25,11 @@ export type UnityReport = {
   avatar_mapping_by?: 'names' | 'shape' | string
   hitboxCount?: number
   movementShape?: string
+  // 3.4: the collision shapes on the prefab, lightmap UVs and how detail levels change.
+  colliderCount?: number
+  colliderKinds?: string[]
+  secondaryUV?: boolean
+  lodFadeMode?: string
   importer_version?: string | number
   warnings?: string[]
   errors?: string[]
@@ -171,18 +176,25 @@ export function finishLines(asset: Asset): FinishLine[] {
     if (bad) lines.push(warnFrom('collision', bad, 'hitboxes'))
     else lines.push({ id: 'collision', text: shape ? `Bumps into things: a ${shape} for moving and ${boxes}.` : `Bumps into things: ${boxes}.`, state: 'ok', term: 'hitboxes' })
   }
+  // 4b. Props and scenery: the collision shapes the export chose (3.4), or the first failing collision check.
   const cp = findCheck(asset, 'collider_present')
-  if (!hb && exp.params.collider !== 'none') {
-    if (failed(cp)) lines.push(warnFrom('collision', cp!, 'collider'))
+  if (!hb && exp.params.collider !== 'none' && exp.metrics.collider_shape !== 'none') {
+    const bad = ['collider_present', 'openings_clear', 'collider_count', 'collider_triangles'].map((id) => findCheck(asset, id)).find(failed)
+    if (bad) lines.push(warnFrom('collision', bad, bad.id === 'collider_present' ? 'collider' : (bad.id ?? 'collider')))
     else {
-      const m = exp.metrics
-      const count = num(m.collider_parts) ?? num(m.collider_count) ?? (Array.isArray(m.colliders) ? m.colliders.length : null) ?? (cp ? 1 : null)
-      if (count !== null && count > 0) {
+      const phrase = collisionPhrase(exp, rep, !!cp)
+      if (phrase) {
         const open = findCheck(asset, 'openings_clear')
-        lines.push({ id: 'collision', text: `Bumps into things: ${count} collision shape${count > 1 ? 's' : ''}${open && checkPassed(open) ? ', and openings stay open' : ''}.`, state: 'ok', term: 'collider' })
+        const opened = open && checkPassed(open) && num(open.vars?.openings) !== 0
+        lines.push({ id: 'collision', text: `Collision: ${phrase}${opened ? ', and doorways and gaps stay open' : ''}.`, state: 'ok', term: 'collider' })
       }
     }
   }
+
+  // 5a. Lighting (3.9): painted-on shadows removed by prep, or still in the colours.
+  const bl = findCheck(asset, 'baked_light')
+  if (failed(bl)) lines.push(warnFrom('lighting', bl!, 'baked_light'))
+  else if (selectedVersion(asset, 'prep')?.metrics.delight_applied === true) lines.push({ id: 'lighting', text: "Lighting: painted-on shadows removed, so it reacts to your game's lights.", state: 'ok', term: 'baked_light' })
 
   // 5. Category special: shared human animations (3.6).
   if (asset.category === 'humanoid') {
@@ -201,9 +213,29 @@ export function finishLines(asset: Asset): FinishLine[] {
   if (exp.files.fbx) files.push('FBX (Unity, Unreal, Godot)')
   if (exp.files.glb) files.push('GLB (web)')
   if (exp.files.prefab || exp.files.unitypackage || rep?.prefab) files.push('a ready Unity prefab')
+  if (exp.files.fbx_unreal) files.push('an Unreal FBX with collision shapes')
   if (files.length) lines.push({ id: 'files', text: `Files: ${joinAnd(files)}.`, state: 'ok', term: 'formats' })
 
-  return lines.slice(0, 6)
+  // Six lines as the backend writes them, seven when the lighting line is there too.
+  return lines.slice(0, lines.some((l) => l.id === 'lighting') ? 7 : 6)
+}
+
+const PRIMITIVE_WORD: Record<string, string> = { box: 'one box', sphere: 'one ball', capsule: 'one capsule', hull: 'one wrapped shape' }
+
+// The collision in a few words (3.4): "one box", "3 fitted shapes", "its exact shape". From the export metrics
+// (collider_count, collider_shape, collider_kinds), else the Unity report (colliderCount, colliderKinds), else the
+// older collider_parts count. Null when nothing says or there is no collision.
+export function collisionPhrase(exp: Version, rep: UnityReport | null, present = false): string | null {
+  const m = exp.metrics
+  const shape = typeof m.collider_shape === 'string' ? m.collider_shape : null
+  if (shape === 'none') return null
+  const kinds = (Array.isArray(m.collider_kinds) ? m.collider_kinds : Array.isArray(rep?.colliderKinds) ? rep!.colliderKinds : []).filter((k): k is string => typeof k === 'string')
+  const count = num(m.collider_count) ?? num(rep?.colliderCount) ?? num(m.collider_parts) ?? (Array.isArray(m.colliders) ? m.colliders.length : null) ?? (present ? 1 : null)
+  if (shape === 'mesh' || (kinds.length === 1 && kinds[0] === 'mesh')) return 'its exact shape'
+  if (count === null || count <= 0) return null
+  if (count > 1) return `${count.toLocaleString('en-US')} fitted shapes`
+  const kind = kinds[0] ?? (shape === 'trunk' ? 'capsule' : 'hull')
+  return PRIMITIVE_WORD[kind] ?? 'one wrapped shape'
 }
 
 type HitboxMetrics = { count: number; mode?: string; fallback?: boolean; movement_default?: string }

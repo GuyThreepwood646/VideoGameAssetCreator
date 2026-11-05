@@ -280,7 +280,15 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   height_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'height_m (older name of size_m)'),
   size_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'Uniform scale so the extent on size_axis equals size_m'),
   face_yaw: H('Front', 'Which side of the model the game treats as its front.', 'Characters walk and cars drive toward their front; if it is wrong, they move sideways.', 'Yaw about Y so the concept front faces +Z'),
-  symmetric: H('Mirror left and right', 'Make the left and right halves identical.', 'Most characters are symmetric; turn it off for lopsided things.', 'symmetric'),
+  symmetric: H('Mirror the halves', 'Mirror one half of the model onto the other.', 'Fixes mismatched arms or legs, but the two halves then share one painted side, so it is off unless you turn it on.', 'Symmetrize across X, then re-bake the maps onto the mirrored mesh'),
+  // Textures and light (3.9)
+  padding: H('Seam space', 'Extra painted space around each piece of the texture.', 'Stops thin dark lines appearing at seams when the model is far away.', 'UV island padding and edge dilation, in texels'),
+  bake: H('Surface painting', 'Copying the fine detail and colour from the raw model onto the clean game model.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Texture bake (normal, AO, colour) from source to target mesh'),
+  rebake: H('Paint the surface again', 'Paint the colours and surface detail onto the cleaned-up model again, even when its shape did not change.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Cycles selected-to-active bake from the mesh stage model'),
+  delight: H('Painted-on shadows', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
+  baked_light: H('Painted-on shadows', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
+  pbr_fix: H('Realistic colour range', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
+  pbr_range: H('Realistic colour range', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pivot: H('Anchor point', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
   smooth_angle: H('Smoothing', 'The angle above which an edge looks sharp instead of smooth.', 'Lower keeps hard edges; higher rounds things off.', 'smooth_angle (auto smooth)'),
   manifold: H('Clean surface', 'No holes or overlapping edges.', 'Game engines and the skeleton step need a clean surface.', 'manifold'),
@@ -308,6 +316,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   unnormalised_verts: H('Points with bad weights', 'Surface points whose weights do not add up to 1.', 'Should be zero.', 'unnormalised_verts'),
   single_root: H('One root bone', 'The skeleton starts from one bone.', 'Engines expect one root.', 'single_root'),
   bottom_center_origin: H('Stand on the ground', 'Put the anchor at the feet, centred.', 'The character then stands on the floor when placed.', 'bottom_center_origin'),
+  bone_names: H('Bone names', 'The label on every joint of the skeleton.', 'Engines and animation tools match animations to joints by name, so wrong names mean wrong limbs move.', 'Mixamo naming convention (mixamorig:Hips, LeftArm and so on), assigned by geometry'),
   bend_test: H('Bend test', 'Bend each limb and take pictures to check the skin follows.', 'Catches bad weights before export.', 'bend_test'),
   bent: H('Bent joints', 'The joints the bend test moved.', 'A joint missing from the list was not tested.', 'bent'),
   anim_kind: H('Animation set', 'Which family of animations fits: biped, quadruped and so on.', 'Decides which clips can be attached.', 'anim_kind'),
@@ -335,6 +344,11 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   collider_vertices: H('Collision shape points', 'How many points the collision shape has.', 'Unity allows at most 255 triangles in a simple collision shape; we keep the shape small to stay under it.', 'collider_vertices'),
   collider_verts: H('Collision shape points', 'How many points the collision shape has.', 'Unity allows at most 255 triangles in a simple collision shape; we keep the shape small to stay under it.', 'collider_verts'),
   collider_present: H('Collision shape present', 'Whether a collision shape was made.', 'Needed for physics.', 'collider_present'),
+  collider_max_parts: H('Most shapes', 'The most separate collision shapes the asset may get.', 'More shapes fit hollow things better; fewer keep physics cheap, which matters most on phones.', 'CoACD max_convex_hull; automatic is 8 for props, 16 for scenery, 6 for vehicles, half on Phone'),
+  collider_count: H('Number of collision shapes', 'How many separate simple shapes make up the collision.', 'Each shape costs a little physics time every frame, so phones get fewer.', 'Collider components under the Colliders child of the prefab'),
+  openings_clear: H('Openings stay open', 'Whether doorways, arches and gaps are left open by the collision shape.', 'A shape that fills a doorway stops players walking through it.', 'Horizontal ray grid; fails when more than 10 percent of opening rays hit the collider'),
+  lightmap_uv: H('Baked lighting ready', 'A second texture layout the engine uses to store pre-computed light and shadow.', 'Walls and floors can carry soft, realistic shadows without slowing the game.', 'Lightmap UV (UV1), Unity generateSecondaryUV'),
+  lod_fade: H('Smooth detail changes', 'Far-away copies blend into each other instead of switching at once.', 'Across a forest, sudden switches show as popping; a blend hides it.', 'LODGroup fadeMode CrossFade; URP needs LOD Cross Fade on'),
   metal_shine: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
   metallic_smoothness: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
   orm: H('Surface texture', 'One texture that holds shadowing, roughness and metal in its three colour channels.', 'Unreal, Godot and web viewers read all three from one file, which saves memory.', 'ORM pack (R occlusion, G roughness, B metallic); glTF metallicRoughness'),
@@ -342,7 +356,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   loop: H('Loops', 'The animation runs again from the start as soon as it ends, with no jump.', 'Idle and walk must loop, or the character freezes after one step.', 'AnimationClip loopTime and loopPose'),
   avatar: H('Skeleton in Unity', 'Whether Unity reads the skeleton as a person (Humanoid) or as its own shape (Generic).', 'Humanoid skeletons can play every shared human animation; Generic ones play only their own.', 'Unity Avatar: Humanoid (HumanDescription) or Generic'),
   what_you_get: H('What you get', 'A short list of what the finished asset does in a game: its size, its surface, how it moves and what it bumps into.', 'Each line is checked; a line with a yellow dot has a problem, and the button next to it fixes it.', 'metrics.finish_lines (export stage)'),
-  unity_howto: H('Using it in Unity', 'The three things to do in Unity to put this asset in your game.', 'The prefab is already set up; these lines say how to drive it from your own scripts.', 'metrics.unity_howto (export stage)'),
+  unity_howto: H('Using it in Unity', 'The few things to do in Unity to put this asset in your game.', 'The prefab is already set up; these lines say how to drive it from your own scripts.', 'metrics.unity_howto (export stage)'),
   formats: H('File formats', 'Which file types to write: FBX for most engines, GLB for the web.', 'Pick what your engine imports.', 'formats (fbx | glb)'),
   unity: H('Unity check', 'Import the asset into Unity and build a ready-to-use prefab.', 'Proves the asset works in a real engine.', 'unity'),
   unity_import: H('Unity imported it', 'Whether Unity loaded the files without errors.', 'If this fails the asset needs fixing before use.', 'unity_import'),
@@ -491,6 +505,28 @@ const CHECK_TEXT: Record<string, CheckText> = {
   lod_count: (v, l, ok) => (ok ? `${n0(v)} detail levels were made.` : `${n0(v)} detail levels were made; ${n0(l)} expected.`),
   collider_present: (_v, _l, ok) => (ok ? 'A collision shape is present.' : 'No collision shape was made.'),
   collider_vertices: (v, l, ok) => (ok ? `The collision shape has ${n0(v)} points (limit ${n0(l)}).` : `The collision shape has ${n0(v)} points; engines allow ${n0(l)}.`),
+  collider_triangles: (v, l, ok) =>
+    ok ? `Each collision shape has at most ${n0(v)} triangles, inside Unity's limit of ${n0(l)}.` : `The collision shape has ${n0(v)} triangles; Unity would simplify it on its own and it may stop fitting.`,
+  collider_count: (v, l, ok) =>
+    ok
+      ? `${n0(v)} collision shape${num(v) === 1 ? '' : 's'}, inside the ${n0(l)} your platform allows.`
+      : `The collision is ${n0(v)} shapes, more than the ${n0(l)} we aim for on your platform; physics costs a little more each frame.`,
+  openings_clear: (v, _l, ok, _ctx, vars) => {
+    if (ok) return num(vars.openings) === 0 ? 'There are no doorways or gaps for the collision shape to fill.' : 'Openings stay open: things can pass through doorways and gaps.'
+    return `The collision shape fills ${n0(v)} opening${num(v) === 1 ? '' : 's'}, so players cannot pass through.`
+  },
+  // Textures and light (3.9)
+  bake_matches: (_v, _l, ok) => (ok ? 'The surface detail was painted onto the final model.' : 'The surface detail was painted for an earlier copy of the model, so shading may look wavy.'),
+  texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
+  atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
+  baked_light: (_v, _l, ok, _ctx, vars) => {
+    if (!ok) return "The colours still carry shadows from the picture, so they will fight your game's lights."
+    if (vars.kept) return 'Painted shading is kept on purpose for this look.'
+    if (vars.removed) return "Painted-on shadows removed, so it reacts to your game's lights."
+    return 'No painted-on shadows found in the colours.'
+  },
+  albedo_range: (v, _l, ok) => (ok ? 'Colours stay inside the range real materials have.' : `${pct(v)} of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.`),
+  metal_mixed: (v, _l, ok) => (ok ? 'Metal parts are clearly metal and the rest clearly not.' : `${pct(v)} of the surface is half metal, which looks dull and grey in game engines.`),
   unity_import: (_v, _l, ok) => (ok ? 'Unity imported the asset without errors.' : 'Unity could not import the asset.'),
   unity_humanoid_avatar: (v, _l, ok, _ctx, vars) => {
     const n = num(vars.clips) ?? num(v)
@@ -559,6 +595,15 @@ const CHECK_HELP: Record<string, string> = {
   lod_count: 'lod_count',
   collider_present: 'collider_present',
   collider_vertices: 'collider_vertices',
+  collider_triangles: 'collider_triangles',
+  collider_count: 'collider_count',
+  openings_clear: 'openings_clear',
+  bake_matches: 'bake',
+  texture_padding: 'padding',
+  atlas_used: 'bake',
+  baked_light: 'baked_light',
+  albedo_range: 'pbr_range',
+  metal_mixed: 'pbr_range',
   unity_import: 'unity_import',
   unity_humanoid_avatar: 'unity_humanoid_avatar',
   silhouette_iou: 'silhouette_iou',
@@ -592,7 +637,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|baked_light|albedo_range|metal_mixed)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -629,6 +674,15 @@ const FIX_LABELS: Record<string, string> = {
   hitbox_overreach: 'Fit them snugger',
   hitbox_fit: 'Try again',
   movement_shape: 'Add a body shape',
+  collider_triangles: 'Simplify the collision shape',
+  collider_count: 'Use fewer shapes',
+  openings_clear: 'Use several shapes',
+  bake_matches: 'Repaint the surface',
+  texture_padding: 'Add more space',
+  atlas_used: 'Repaint the surface',
+  baked_light: 'Remove painted-on shadows',
+  albedo_range: 'Bring colours into range',
+  metal_mixed: 'Make metal clearly metal',
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
@@ -661,6 +715,14 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
   if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }
   if (id === 'movement_shape') return { stage: 'export', params: { movement_shape: 'auto' }, label }
+  // Collision and surface checks (3.4, 3.9): the same fixes the backend sends, for payloads without one.
+  const vars = check.vars ?? {}
+  if (id === 'collider_triangles') return { stage: 'export', params: {}, label }
+  if (id === 'collider_count' && limit) return { stage: 'export', params: { collider_max_parts: limit }, label }
+  if (id === 'openings_clear') return { stage: 'export', params: { collider: vars.category === 'environment' ? 'mesh' : 'decompose' }, label }
+  if (id === 'bake_matches' || id === 'atlas_used') return { stage: 'prep', params: { rebake: true }, label }
+  if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
+  if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   return null
 }
 
@@ -729,7 +791,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
-  prep: ['size_m', 'height_m', 'face_yaw', 'symmetric'],
+  prep: ['size_m', 'height_m', 'face_yaw', 'symmetric', 'delight'],
   rig: ['template', 'motion', 'moves', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
 }
@@ -750,6 +812,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   clips_library: { ual1: 'Standard human moves (46 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
+  delight: { auto: 'Automatic (by look)', remove: 'Remove them', keep: 'Keep them (part of the look)' },
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
   moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
