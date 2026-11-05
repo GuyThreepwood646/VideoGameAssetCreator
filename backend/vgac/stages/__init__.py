@@ -60,6 +60,12 @@ def _write_mask(sc: StageContext, mask_b64: str | None) -> Path | None:
 
 async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
     stage, op, is_material = parse_kind(kind)
+    if payload.get("task") == "style_from_image":
+        # A review-engine job with no version (POST /api/projects/{pid}/style-from-image).
+        from . import style
+
+        await style.describe(ctx, payload)
+        return
     mod = module_for(stage, is_material)
     with session_factory()() as db:
         version = db.get(Version, payload.get("version_id"))
@@ -74,6 +80,12 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             await mod.refine(sc, payload.get("instruction") or "", payload.get("view"), mask, params)
         elif op == "adjust":
             await mod.adjust(sc, params)
+        elif op == "upload":
+            # The person's own picture, already written into the version folder by the API (uploads.py).
+            upload = getattr(mod, "upload", None)
+            if upload is None:
+                raise ValueError(f"the {stage} step does not take your own picture")
+            await upload(sc, params, payload.get("view"))
         elif op == "judge":
             if (payload.get("mode") or "metrics") == "local":
                 from . import judge as judge_mod

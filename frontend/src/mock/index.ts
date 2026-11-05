@@ -2,8 +2,9 @@
 // Enabled when VITE_MOCK=1. Library files that the mock generates are data URLs
 // registered through setLibraryResolver; everything else under /api/library is
 // served by the Vite dev server from ../library (see vite.config.ts).
-import { GPU_KINDS, setLibraryResolver, STAGES, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
+import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
+import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
 type Route = { method: string; re: RegExp; handler: Handler }
@@ -501,7 +502,9 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
     selected: {},
     stages: {},
   }
+  if (typeof body.image === 'string') checkPicture(body.image) // a bad picture makes no asset, like the backend
   store.assets.push(a)
+  if (typeof body.image === 'string') return { ...a, upload: uploadConcept(a, body.image, null) }
   return a
 })
 on('GET', '/api/assets/:id', (m) => findAsset(m.groups!.id))
@@ -567,7 +570,15 @@ on('POST', '/api/assets/:id/stages/:stage/run', (m, body) => {
     // Like the backend: the painter chosen on the creation form is the default for concept runs.
     if (stage === 'concept' && a.concept_model && !((body.params as Record<string, unknown> | undefined)?.model)) params.model = a.concept_model
     if (!('seed' in ((body.params as Record<string, unknown>) ?? {}))) params.seed = Math.floor(Math.random() * 100000)
+    // Your own side and back views: checked, taken out of the params, stored on the version before it runs.
+    const provided = stage === 'turnaround' ? (params.provided_views as Record<string, string> | undefined) : undefined
+    delete params.provided_views
+    if (provided) {
+      for (const [view, img] of Object.entries(provided)) checkPicture(img, `${view} view picture`)
+      params.supplied_views = Object.keys(provided).sort()
+    }
     const v = newVersion(a, stage, parent, params)
+    if (provided) for (const [view, img] of Object.entries(provided)) v.files[`supplied_${view}`] = putUpload(v, `supplied_${view}`, img)
     const job = startJob(a, v, `${stage}.run`)
     results.push({ job: clone(job), version: clone(v) })
   }
@@ -579,9 +590,152 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
   if (!instruction) throw new HttpError(422, 'instruction is required')
   const params: Record<string, unknown> = { ...version.params, ...((body.params as Record<string, unknown>) ?? {}), instruction, seed: Math.floor(Math.random() * 100000) }
   if (body.view) params.view = body.view
+  delete params.reference_experimental
+  if (params.source === 'upload') params.source = 'upload_edit'
+  const reference = typeof body.reference_image === 'string' ? body.reference_image : null
+  if (reference) {
+    if (version.stage !== 'concept' || asset.category === 'material') throw new HttpError(400, 'A reference picture works only when changing the first picture of a character, creature or prop.')
+    checkPicture(reference, 'reference picture')
+    params.reference_experimental = true
+  }
   const v = newVersion(asset, version.stage, version.id, params)
+  if (reference) v.files.reference = putUpload(v, 'reference', reference)
   const job = startJob(asset, v, `${version.stage}.refine`)
   return { job: clone(job), version: clone(v) }
+})
+
+// ---------------------------------------------------------------------------
+// Start from your own images. The picture (a data: URL) becomes the version's file as it is; the mock "cutout" is
+// the same picture, and the readiness checks are faked in data.ts (a person's arms always warn, with the fix).
+// ---------------------------------------------------------------------------
+
+const PICTURE_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=\s]+$/
+function checkPicture(img: unknown, field = 'picture') {
+  if (typeof img !== 'string' || !img) throw new HttpError(400, `No ${field} was sent. Try adding it again.`)
+  if (img.startsWith('data:image/gif')) throw new HttpError(400, `That ${field} is a GIF. Use a PNG, JPEG or WebP picture.`)
+  if (!PICTURE_URL.test(img.slice(0, 200)) && !PICTURE_URL.test(img)) throw new HttpError(400, `That ${field} could not be read. Try adding it again.`)
+  if (img.length > (25 * 1024 * 1024 * 4) / 3 + 1024) throw new HttpError(400, `That ${field} is larger than 25 MB. Save a smaller copy and try again.`)
+}
+function putUpload(v: Version, key: string, img: string): string {
+  const path = `projects/mock/assets/${v.asset_id}/${v.stage}/${v.id}/${key}.png`
+  files.set(path, img)
+  return path
+}
+function uploadConcept(a: Asset, img: string, note: string | null) {
+  checkPicture(img)
+  if (note && !a.prompt.trim()) a.prompt = note
+  const v = newVersion(a, 'concept', null, { source: 'upload', note })
+  v.files.image = putUpload(v, 'image', img)
+  const job = startJob(a, v, a.category === 'material' ? 'material.concept.upload' : 'concept.upload')
+  return { job: clone(job), version: clone(v) }
+}
+on('POST', '/api/assets/:id/stages/concept/upload', (m, body) =>
+  uploadConcept(findAsset(m.groups!.id), String(body.image ?? ''), typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null),
+)
+on('POST', '/api/versions/:vid/views/:view/upload', (m, body) => {
+  const { asset, version } = findVersion(m.groups!.vid)
+  const view = m.groups!.view
+  if (version.stage !== 'turnaround') throw new HttpError(400, 'your own views go on a turnaround version')
+  if (version.status !== 'done') throw new HttpError(409, `version is ${version.status}, not done`)
+  if (!TURNAROUND_VIEWS.includes(view as (typeof TURNAROUND_VIEWS)[number])) throw new HttpError(400, `unknown view '${view}'`)
+  checkPicture(body.image, `${view} view picture`)
+  const views = [...((version.params.views as string[] | undefined) ?? ['front', 'left', 'back', 'right', 'quarter'])]
+  if (!views.includes(view)) views.push(view)
+  const supplied = [...new Set([...((version.params.supplied_views as string[] | undefined) ?? []), view])].sort()
+  const v = newVersion(asset, 'turnaround', version.id, { ...version.params, views, supplied_views: supplied })
+  for (const s of supplied) if (s !== view && version.files[`supplied_${s}`]) v.files[`supplied_${s}`] = version.files[`supplied_${s}`]
+  v.files[`supplied_${view}`] = putUpload(v, `supplied_${view}`, String(body.image))
+  const job = startJob(asset, v, 'turnaround.upload')
+  return { job: clone(job), version: clone(v) }
+})
+
+// The main colours of a picture, in the browser: a 64 px copy, see-through pixels and a plain border colour left out,
+// colours grouped on a coarse grid and the largest groups kept, most used first.
+async function mockPalette(img: string, colors: number) {
+  checkPicture(img)
+  if (![8, 16, 32].includes(colors)) throw new HttpError(400, 'colors must be one of [8, 16, 32]')
+  const el = new Image()
+  el.src = img
+  await el.decode()
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(el, 0, 0, size, size)
+  const px = ctx.getImageData(0, 0, size, size).data
+  const at = (x: number, y: number) => (y * size + x) * 4
+  const border: number[][] = []
+  for (let i = 0; i < size; i++) for (const [x, y] of [[i, 0], [i, size - 1], [0, i], [size - 1, i]]) if (px[at(x, y) + 3] >= 128) border.push([px[at(x, y)], px[at(x, y) + 1], px[at(x, y) + 2]])
+  const median = (k: number) => border.map((c) => c[k]).sort((a, b) => a - b)[Math.floor(border.length / 2)] ?? 0
+  const bg = border.length ? [median(0), median(1), median(2)] : null
+  const near = (r: number, g: number, b: number) => !!bg && Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]) <= 40
+  const plain = !!bg && border.filter((c) => near(c[0], c[1], c[2])).length >= border.length * 0.8
+  const groups = new Map<number, { n: number; r: number; g: number; b: number }>()
+  let total = 0
+  for (let i = 0; i < px.length; i += 4) {
+    const [r, g, b, a] = [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    if (a < 128 || (plain && near(r, g, b))) continue
+    const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5)
+    const e = groups.get(key) ?? { n: 0, r: 0, g: 0, b: 0 }
+    e.n += 1
+    e.r += r
+    e.g += g
+    e.b += b
+    groups.set(key, e)
+    total += 1
+  }
+  if (!total) throw new HttpError(400, 'The picture has no visible colours to take.')
+  const hex = (n: number) => Math.round(n).toString(16).padStart(2, '0')
+  const top = [...groups.values()].sort((x, y) => y.n - x.n).slice(0, colors)
+  const kept = top.reduce((s, e) => s + e.n, 0)
+  const swatches = top.map((e) => ({ hex: `#${hex(e.r / e.n)}${hex(e.g / e.n)}${hex(e.b / e.n)}`, share: Number((e.n / kept).toFixed(4)) }))
+  return { palette: swatches.map((s) => s.hex), swatches, background: plain && bg ? `#${hex(bg[0])}${hex(bg[1])}${hex(bg[2])}` : null, pixels: total }
+}
+on('POST', '/api/palette-from-image', (_m, body) => mockPalette(String(body.image ?? ''), Number(body.colors ?? 8)))
+on('POST', '/api/projects/:id/style-from-image', (m, body) => {
+  findProject(m.groups!.id)
+  return mockPalette(String(body.image ?? ''), 8).then((pal) => {
+    const job: Job = {
+      id: uid('j'),
+      instance: 'b',
+      kind: 'concept.judge',
+      asset_id: null,
+      version_id: null,
+      status: 'queued',
+      progress: 0,
+      message: 'Waiting for the review engine',
+      created_at: nowIso(),
+      started_at: null,
+      finished_at: null,
+      error: null,
+      result: null,
+    }
+    store.jobs.push(job)
+    broadcast({ type: 'job', job: clone(job) })
+    window.setTimeout(() => {
+      job.status = 'running'
+      job.started_at = nowIso()
+      job.message = 'describing the style'
+      broadcast({ type: 'job', job: clone(job) })
+    }, 800 / simulationSpeed)
+    window.setTimeout(() => {
+      job.status = 'done'
+      job.progress = 1
+      job.message = 'described'
+      job.finished_at = nowIso()
+      job.result = {
+        description: 'Gouache on rough paper, soft two-tone shading with a warm rim light, thin dark brown outlines that fade on lit edges, chunky rounded shapes with large heads and small feet, a warm muted palette of ochre, brick red and slate blue.',
+        words: 38,
+        palette: pal.palette,
+        swatches: pal.swatches,
+        model: 'gemma-3-12b-it',
+        applied: false,
+      }
+      broadcast({ type: 'job', job: clone(job) })
+    }, 3500 / simulationSpeed)
+    return { ...pal, job: clone(job), needs_review_engine: false, message: 'The review engine is describing the style. It takes about a minute.' }
+  })
 })
 on('POST', '/api/versions/:vid/adjust', (m, body) => {
   const { asset, version } = findVersion(m.groups!.vid)
@@ -779,7 +933,8 @@ function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params
     runners.delete(asset.id)
     if (st.status !== 'running' || st.job_id !== job.id) return // stopped meanwhile
     if (job.status === 'cancelled') {
-      apStop(asset, 'paused', 'The run was cancelled.')
+      st.stopped_by_user = true
+      apStop(asset, 'paused', 'You stopped it. Everything made so far is kept. Press Resume to carry on from this step.')
       return
     }
     if (job.status === 'error') {
@@ -834,6 +989,25 @@ on('POST', '/api/assets/:id/autopilot', (m, body) => {
   st.stop_on = stopOn
   st.until_stage = until
   st.started_at = nowIso()
+  st.stopped_by_user = false
+  const from = body.from_stage
+  if (typeof from === 'string') {
+    if (!STAGES.includes(from as StageId)) throw new HttpError(400, 'unknown from_stage')
+    // Go back: that step and every later one are set aside and made again.
+    for (const s of STAGES.slice(STAGES.indexOf(from as StageId))) {
+      delete a.selected[s]
+      for (const v of a.stages[s] ?? []) {
+        if (!v.selected && v.status !== 'done' && !v.stopped) continue
+        v.selected = false
+        if (v.status === 'done') v.status = 'rejected'
+        if (v.stopped) {
+          v.stopped = false
+          v.error = 'stopped and set aside'
+        }
+        broadcast({ type: 'version', version: clone(v) })
+      }
+    }
+  }
   st.stages_done = STAGES.filter((s) => !!a.selected[s])
   const fix = body.fix as { stage?: string; params?: Record<string, unknown> } | undefined
   if (fix && STAGES.includes(fix.stage as StageId)) {
@@ -843,32 +1017,197 @@ on('POST', '/api/assets/:id/autopilot', (m, body) => {
   }
   return apState(a)
 })
-on('POST', '/api/assets/:id/autopilot/stop', (m) => {
-  const a = findAsset(m.groups!.id)
-  const st = apState(a)
-  if (st.status === 'running') {
-    if (st.job_id) {
-      const job = store.jobs.find((j) => j.id === st.job_id)
-      if (job && (job.status === 'queued' || job.status === 'running')) {
-        job.status = 'cancelled'
-        job.message = 'cancelled'
-        job.finished_at = nowIso()
-        if (job.version_id) {
-          try {
-            const { version } = findVersion(job.version_id)
-            version.status = 'error'
-            version.error = 'cancelled'
-            broadcast({ type: 'version', version: clone(version) })
-          } catch {
-            // no version
-          }
-        }
-        broadcast({ type: 'job', job: clone(job) })
+// Stop and Resume (the buttons on every step). A stopped version is "rejected" with error "cancelled" and
+// stopped: true; Resume starts it again with the same settings.
+function stopJob(job: Job): string | null {
+  if (job.status !== 'queued' && job.status !== 'running') return null
+  job.status = 'cancelled'
+  job.message = 'cancelled'
+  job.finished_at = nowIso()
+  let stoppedId: string | null = null
+  if (job.version_id) {
+    try {
+      const { version } = findVersion(job.version_id)
+      if (version.status === 'queued' || version.status === 'running') {
+        version.status = 'rejected'
+        version.error = 'cancelled'
+        version.stopped = true
+        stoppedId = version.id
+        broadcast({ type: 'version', version: clone(version) })
       }
+    } catch {
+      // no version
     }
-    apStop(a, 'paused', 'You stopped the autopilot.')
   }
-  return apState(a)
+  broadcast({ type: 'job', job: clone(job) })
+  return stoppedId
+}
+
+function trailingStopped(asset: Asset, stage: StageId): Version[] {
+  const list = asset.stages[stage] ?? []
+  const out: Version[] = []
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (!list[i].stopped) break
+    out.unshift(list[i])
+  }
+  return out
+}
+
+function stopAsset(a: Asset, stage: StageId | null): { stopped: string[]; autopilot: AutopilotState } {
+  const st = apState(a)
+  const apRunning = st.status === 'running'
+  const stopped: string[] = []
+  for (const job of store.jobs) {
+    if (job.asset_id !== a.id) continue
+    if (!apRunning && stage) {
+      const v = (a.stages[stage] ?? []).find((x) => x.id === job.version_id)
+      if (!v) continue
+    }
+    const vid = stopJob(job)
+    if (vid) stopped.push(vid)
+  }
+  if (apRunning) {
+    st.stopped_by_user = true
+    st.job_id = null
+    apStop(a, 'paused', 'You stopped it. Everything made so far is kept. Press Resume to carry on from this step.')
+  }
+  return { stopped, autopilot: apState(a) }
+}
+
+function resumeStopped(a: Asset, stage: StageId | null): Version[] {
+  const resumed: Version[] = []
+  for (const s of stage ? [stage] : STAGES) {
+    for (const v of trailingStopped(a, s)) {
+      const old = store.jobs.find((j) => j.id === v.job_id)
+      v.status = 'queued'
+      v.error = null
+      v.stopped = false
+      startJob(a, v, old?.kind ?? `${s}.generate`)
+      broadcast({ type: 'version', version: clone(v) })
+      resumed.push(v)
+    }
+  }
+  return resumed
+}
+
+on('POST', '/api/assets/:id/autopilot/stop', (m) => stopAsset(findAsset(m.groups!.id), null).autopilot)
+on('POST', '/api/assets/:id/stop', (m, body) => {
+  const stage = typeof body.stage === 'string' && STAGES.includes(body.stage as StageId) ? (body.stage as StageId) : null
+  return stopAsset(findAsset(m.groups!.id), stage)
+})
+on('POST', '/api/assets/:id/resume', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  const stage = typeof body.stage === 'string' && STAGES.includes(body.stage as StageId) ? (body.stage as StageId) : null
+  const st = apState(a)
+  if (st.stopped_by_user && st.status === 'paused') {
+    // The autopilot carries on from the stopped step: that step runs again, then the rest follow.
+    const target = apNextStage(a)
+    if (target) for (const v of trailingStopped(a, target)) v.stopped = false
+    st.stopped_by_user = false
+    st.status = 'idle'
+    st.started_at = nowIso()
+    apStep(a)
+    return { resumed: [], autopilot: apState(a) }
+  }
+  return { resumed: clone(resumeStopped(a, stage)), autopilot: st }
+})
+on('POST', '/api/assets/:id/stopped/dismiss', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  const vs = trailingStopped(a, String(body.stage) as StageId)
+  for (const v of vs) {
+    v.stopped = false
+    v.error = 'stopped and set aside'
+    broadcast({ type: 'version', version: clone(v) })
+  }
+  return { dismissed: vs.length }
+})
+
+// Your own add-ons (backend user_addons.py). The demo folder holds one file that is not set up yet.
+const MOCK_PAINTERS = [
+  { id: 'zturbo', label: 'Z-Image Turbo' },
+  { id: 'zbase', label: 'Z-Image Base' },
+  { id: 'klein', label: 'FLUX.2 Klein 4B' },
+  { id: 'anima', label: 'Anima Turbo' },
+  { id: 'pixel', label: 'Z-Image Pixel Art' },
+  { id: 'chroma', label: 'Chroma1-HD' },
+]
+const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
+const MOCK_ADDON_FOLDER = 'F:\\Projects\\ComfyUI\\models\\loras\\VGAC\\mine'
+const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill }[] = [
+  { file_name: 'ink_wash_style.safetensors', bytes: 170_000_000, prefill: { label: 'Ink wash style', base_models: ['zbase'], trigger: 'ink wash painting', family: 'Z-Image', painter_note: '' } },
+]
+const myAddons: AddonEntry[] = []
+
+function mockPrefill(name: string): AddonPrefill {
+  const lower = name.toLowerCase()
+  const label = name.replace(/\.safetensors$/i, '').replace(/[_-]+/g, ' ').trim()
+  const turbo = /z.?image|zit/.test(lower) && lower.includes('turbo')
+  return {
+    label: label.charAt(0).toUpperCase() + label.slice(1),
+    base_models: turbo ? ['zturbo'] : [],
+    trigger: '',
+    family: turbo ? 'Z-Image' : '',
+    painter_note: turbo ? '' : 'We could not tell which painter this was made for.',
+  }
+}
+
+on('GET', '/api/my-addons', () => ({ addons: myAddons, folder: MOCK_ADDON_FOLDER, folder_exists: true, strengths: MOCK_ADDON_STRENGTHS, painters: MOCK_PAINTERS }))
+on('GET', '/api/my-addons/unregistered', (): UnregisteredAddon[] =>
+  mockAddonFiles.filter((f) => !myAddons.some((a) => a.file_name === f.file_name)).map((f) => ({ ...f })),
+)
+on('POST', '/api/my-addons/open-folder', () => ({ opened: true, folder: MOCK_ADDON_FOLDER }))
+on('POST', '/api/my-addons/upload', (_m, _b, query) => {
+  const name = String(query.get('name') ?? '')
+  if (/[\\/:]|\.\./.test(name)) throw new HttpError(400, 'The file name must be a plain file name, without folders.')
+  if (!name.toLowerCase().endsWith('.safetensors')) throw new HttpError(400, 'Add-ons must be .safetensors files. Other kinds of model file are not accepted.')
+  const safe = name.replace(/[^A-Za-z0-9._ -]+/g, '_')
+  if (mockAddonFiles.some((f) => f.file_name === safe))
+    throw new HttpError(409, 'A file with this name is already in the add-on folder. Use "Look again" to set it up, or rename your file and choose it again.')
+  const file = { file_name: safe, bytes: Number(query.get('bytes') ?? 0), prefill: mockPrefill(safe) }
+  mockAddonFiles.push(file)
+  return file
+})
+on('POST', '/api/my-addons', (_m, body) => {
+  const fileName = String(body.file_name ?? '')
+  const file = mockAddonFiles.find((f) => f.file_name === fileName)
+  if (!file) throw new HttpError(404, 'That file is not in the add-on folder.')
+  if (myAddons.some((a) => a.file_name === fileName)) throw new HttpError(409, 'This file is already set up as one of your add-ons.')
+  const label = String(body.label ?? '').trim()
+  if (!label) throw new HttpError(400, 'Give the add-on a name.')
+  const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
+  if (!models.length) throw new HttpError(400, 'Choose at least one painter the add-on was made for.')
+  const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
+  let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
+  for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
+  const entry: AddonEntry = {
+    id,
+    label,
+    help: {
+      meaning: `Your own add-on, from the file ${fileName}.`,
+      why: 'You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.',
+      technical: `LoRA VGAC/mine/${fileName}, model only, for ${models.join(', ')}`,
+    },
+    stage: 'concept',
+    base_models: models,
+    strengths: { ...MOCK_ADDON_STRENGTHS },
+    default_strength: strength,
+    required: false,
+    required_for: [],
+    trigger: String(body.trigger ?? ''),
+    licence: 'Your own file: not checked by the app. You are responsible for being allowed to use it in your game.',
+    source: String(body.source ?? ''),
+    mine: true,
+    file_name: fileName,
+    added_at: nowIso(),
+  }
+  myAddons.push(entry)
+  return entry
+})
+on('DELETE', '/api/my-addons/:id', (m) => {
+  const i = myAddons.findIndex((a) => a.id === m.groups!.id)
+  if (i < 0) throw new HttpError(404, 'That add-on is not on your list.')
+  const [gone] = myAddons.splice(i, 1)
+  return { removed: gone.id, file_name: gone.file_name, file_kept: true }
 })
 
 on('GET', '/api/jobs', (_m, _b, query) => {
@@ -882,22 +1221,7 @@ on('GET', '/api/jobs', (_m, _b, query) => {
 on('GET', '/api/jobs/:id', (m) => findJob(m.groups!.id))
 on('POST', '/api/jobs/:id/cancel', (m) => {
   const job = findJob(m.groups!.id)
-  if (job.status === 'queued' || job.status === 'running') {
-    job.status = 'cancelled'
-    job.message = 'cancelled'
-    job.finished_at = nowIso()
-    if (job.version_id) {
-      try {
-        const { version } = findVersion(job.version_id)
-        version.status = 'error'
-        version.error = 'cancelled'
-        broadcast({ type: 'version', version: clone(version) })
-      } catch {
-        // no version
-      }
-    }
-    broadcast({ type: 'job', job: clone(job) })
-  }
+  stopJob(job)
   return job
 })
 
@@ -907,7 +1231,9 @@ function dispatch(method: string, pathname: string, body: Record<string, unknown
     const m = pathname.match(r.re)
     if (!m) continue
     try {
-      return { status: 200, body: clone(r.handler(m, body, query)) }
+      const out = r.handler(m, body, query)
+      // A handler that needs the browser to decode a picture (palette) answers with a promise.
+      return { status: 200, body: out instanceof Promise ? out : clone(out) }
     } catch (e) {
       if (e instanceof HttpError) return { status: e.status, body: { detail: e.message } }
       console.error('mock handler failed', e)
@@ -938,7 +1264,12 @@ export function installMock() {
       }
     }
     await new Promise((r) => window.setTimeout(r, 60 + Math.random() * 120))
-    const res = dispatch(method, u.pathname, body, u.searchParams)
+    let res = dispatch(method, u.pathname, body, u.searchParams)
+    if (res.body instanceof Promise)
+      res = await res.body.then(
+        (b: unknown) => ({ status: 200, body: clone(b) }),
+        (e: unknown) => (e instanceof HttpError ? { status: e.status, body: { detail: e.message } } : { status: 400, body: { detail: 'That picture could not be read. Try adding it again.' } }),
+      )
     return new Response(JSON.stringify(res.body), { status: res.status, headers: { 'content-type': 'application/json' } })
   }
 

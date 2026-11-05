@@ -334,9 +334,11 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Creature moves (3.7)
   motion: H('How it moves', 'Whether the creature walks, flies or slithers.', 'Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.', 'Procedural locomotion mode: legs, wings, wave'),
   moves: H('Moves', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
+  clips_source: H('Where the moves come from', 'Human-shaped characters can use a library of hand-made moves; every other skeleton gets moves built for it.', 'The hand-made moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
   move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
   move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
   // Hit boxes and the body shape for moving (4.2)
+  socket: H('Attachment point', 'A named spot on the skeleton where your game can attach a weapon, hat or backpack.', 'The item then follows the hand, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
   hitboxes: H('Hit boxes', 'Invisible shapes on each body part that tell the game where an attack landed.', 'Hits count where they look like they land, and you can tell a head hit from an arm hit.', 'Per-bone trigger capsules and boxes, fitted from skin weights'),
   hitbox_fit: H('How snug', 'How tightly the hit boxes wrap the body.', 'Snug is fairer for the player being hit; loose is kinder to the player aiming.', 'Radius factor 0.9, 1.0 or 1.15 on the 80th-percentile vertex distance'),
   hitbox_regions: H('Body parts with hit boxes', 'Which body parts get their own hit box.', 'Leave out parts your game never needs to tell apart.', 'Region ids from hitboxes.json regions_found'),
@@ -417,7 +419,15 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
   // Recipes: the look carried through every step
   recipe: H('Recipe', 'How your chosen look is carried through every step: detail level, texture size, shading and how the game engine shows the textures.', 'So a pixel-art or low-poly asset stays that way all the way into your game, not just in the first picture.', 'reference.recipe'),
-  addons: H('Add-ons', 'Small trained helpers the painter loads on top of its model to push it toward a look.', 'Your style already switches on the ones it needs. Turn one up, down or off; required ones stay on.', 'LoRA chain'),
+  addons: H(
+    'Add-ons',
+    'Small trained helpers the painter loads on top of its model to push the picture toward a look. Each one is made for one painter family, so the list changes when you change the painter.',
+    'You never type a file path or a name: switch one on from the list, or press Add your own add-on and choose the .safetensors file. The app keeps the file in its own folder and adds it to the picture recipe for you; there are no slots to fill.',
+    'LoRA: one LoraLoaderModelOnly per add-on after the model loader. Tested: data/addons.yaml, files in loras/VGAC/. Yours: library/my_addons.json, files in loras/VGAC/mine/',
+  ),
+  addon_mine: H('Your own add-on', 'An add-on file you brought in yourself, listed under Yours for the painters you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list and leaves the file in the add-on folder.', 'library/my_addons.json, loras/VGAC/mine/'),
+  addon_painter: H('Which painter it was made for', 'Every add-on is trained for one painter family and only works with that one.', 'Its download page says which model it was made for (for example Z-Image Turbo). The app reads the file when it can and leaves this empty when it cannot tell.', 'LoRA base model (modelspec.architecture, ss_base_model_version)'),
+  addon_trigger: H('Words to add to the description', 'Some add-ons only work when certain words are in the prompt.', 'Its download page lists them. The app adds them to your description for you whenever the add-on is on.', 'trigger words'),
   addon: H('Add-on', 'One small trained helper the painter loads on top of its model.', 'Switch it off to drop its effect, or pick how strongly it pushes the picture.', 'LoRA (data/addons.yaml)'),
   strength_subtle: H('Subtle', 'The add-on pushes the picture a little.', 'Keeps more of the painter\'s own look.', 'lower LoRA strength (strengths.subtle)'),
   strength_normal: H('Normal', 'The add-on at the strength it was made for.', 'The safe choice; start here.', 'LoRA strength (strengths.normal)'),
@@ -426,6 +436,27 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   texture_smooth: H('Smooth textures', 'Texture pixels blend into each other up close and at a distance.', 'The usual look for painted and realistic assets; it hides the pixel grid.', 'Bilinear filtering, mipmaps, compression'),
   shading: H('Shading', 'Whether the surface looks smooth and rounded or cut into flat faces.', 'Automatic follows your style: flat faces for low-poly, smooth for the rest.', 'smooth normals / flat per-face normals'),
   look_applied: H('Look applied', 'Whether the finished model matches your chosen look: its detail level, texture size, shading and surface bumps.', 'A pixel-art or low-poly asset should stay that way in your game, not come out as a detailed model.', 'look_applied check (prep), metrics.recipe'),
+  // Start from your own images
+  image_drop: H('Your picture', 'A picture from this computer: drag it in, paste it, or choose the file. PNG, JPEG or WebP, up to 25 MB.', 'It is turned the right way up, shrunk to at most 2048 pixels and stripped of hidden details such as where a photo was taken. It never leaves this computer.', 'base64 data URL in the JSON body (backend/vgac/uploads.py)'),
+  start_from: H('Start from', 'Whether the first picture is painted from your words or is a picture you already have.', 'With your own picture the app skips painting and goes straight to cutting it out and checking it is ready for 3D.', 'POST /api/projects/{id}/assets with image'),
+  what_is_it_note: H('What is it?', 'A few words about your picture, such as "a knight in red armour".', 'Optional. Later steps, such as changing something, read these words, so a short description helps them.', 'asset prompt (note)'),
+  own_picture: H('Use my own picture', 'Start this step from a picture you already have instead of painting one.', 'Your picture is cut out and checked like a painted one; then every later step builds on it.', 'POST /api/assets/{id}/stages/concept/upload'),
+  your_picture: H('Your picture', 'A version made from a picture you added, not painted by the app.', 'It goes through the same cutout and checks as a painted picture.', 'params.source = upload'),
+  ready_for_3d: H('Ready for 3D', 'Checks that the picture suits the 3D step: one subject, all of it in the picture, big enough, and for people arms away from the body.', 'They only warn; you can keep a picture that fails one. "Redraw it ready for 3D" asks the editor to redraw it in the standard pose.', 'readiness checks (one_subject, in_frame, big_enough, arms_away)'),
+  one_subject: H('One subject', 'Whether the picture shows one thing on its own.', 'Two characters or loose pieces in one picture become one strange 3D model.', 'connected areas of the cutout'),
+  in_frame: H('Whole subject in the picture', 'Whether there is space around the subject on every side.', 'A part cut off at the edge is missing from the 3D model.', 'cutout margin on every side, at least 1 percent'),
+  big_enough: H('Big enough', 'How many pixels tall (or across) the subject is.', 'The 3D step reads about 500 pixels; a small subject loses its detail.', 'subject height in pixels, at least 400'),
+  arms_away: H('Arms away from the body', 'Whether the arms stand clear of the sides, as in an A-pose or a T-pose.', 'Arms pressed to the body get joined to it in the 3D model, and the skeleton step cannot tell them apart.', 'silhouette gap between arm and torso, or arm span against waist width'),
+  redraw_ready: H('Redraw it ready for 3D', 'Asks the picture editor to redraw the same subject, same design and colours, in the standard pose on a plain light grey background.', 'It makes a new version; your picture stays as it was.', 'concept refine with the category pose block'),
+  even_lighting: H('Even light', 'Whether the photo is about as bright on one side as on the other.', 'A tiling texture repeats the photo side by side, so a bright side and a dark side show as stripes.', 'brightness plane fitted across the photo'),
+  straight_on: H('Taken straight on', 'Whether the photo looks at the surface square on, not at an angle.', 'A photo taken at an angle has finer detail at the far side, and the texture looks stretched.', 'local detail in opposite thirds of the photo'),
+  own_views: H('Your own side or back views', 'Pictures you already have of the other sides of the same subject.', 'The app uses yours as they are and draws only the sides you leave out. A picture that does not match the front gets a warning but is kept.', 'turnaround provided_views, POST /api/versions/{id}/views/{view}/upload'),
+  supplied_view: H('Your view', 'A side you supplied yourself, not drawn by the app.', 'It is cut out and checked against the front like a drawn one, but never redrawn on its own.', 'metrics.views.<view>.supplied'),
+  match_picture: H('Match a picture', 'Take the colours or the look of a picture you like and use them for this project.', 'Nothing changes until you press Apply, and you can edit the result first.', 'POST /api/palette-from-image, POST /api/projects/{id}/style-from-image'),
+  take_colours: H('Take the colours', 'Finds the main colours of the picture, most used first, and leaves out a plain background.', 'Remove any you do not want, then apply them as the project palette.', 'median cut colour quantisation (palette-from-image)'),
+  describe_style: H('Describe the style', 'The app looks at the picture and writes a short paragraph about how it is painted: the medium, shading, lines, shapes and colour mood.', 'The paragraph guides the look in words: the painter reads it before every description. Edit it freely before you apply it.', 'local vision model (Gemma) through the review engine'),
+  review_engine: H('Review engine', 'The part of the app that looks at pictures and writes about them, running on a graphics card here.', 'It is needed for "Describe the style"; the colours work without it.', 'judge_instance (graphs/judge.py)'),
+  reference_picture: H('Reference picture (experimental)', 'A second picture the editor may look at while making your change, such as a helmet you want copied.', 'Experimental: the editor is given the picture, but how closely it follows one has not been measured yet. Your words still matter most.', 'Qwen-Image-Edit image2 (TextEncodeQwenImageEditPlus)'),
   unity_handoff: H('Sent to your open Unity project', 'Unity cannot be handed files while your project is open, so the app leaves them in the project for Unity to pick up.', 'You do not have to close your project; it imports itself when you switch to Unity.', 'Assets/VGAC/<Name>/_incoming/vgac_import.json, VgacImportWatcher'),
 }
 
@@ -602,6 +633,19 @@ const CHECK_TEXT: Record<string, CheckText> = {
     const problem = str(vars.problem)
     return look && problem ? `The ${look} look is not fully applied: ${problem}.` : 'The look is not fully applied to the model yet.'
   },
+  // Start from your own images (the backend writes these sentences; these are the fallback).
+  one_subject: (v, _l, ok, _ctx, vars) =>
+    ok ? 'The picture shows one subject.' : vars.empty ? 'We could not find a subject in the picture; the background may be too busy to cut out.' : `The picture shows ${n0(v)} separate things; the 3D step works best with one subject on its own.`,
+  in_frame: (_v, _l, ok, _ctx, vars) =>
+    ok ? 'The whole subject is in the picture, with space around it.' : `The subject touches the ${str(vars.sides_text) || listText(vars.sides) || 'edge'} edge of the picture, so part of it may be cut off and the 3D model would miss it.`,
+  big_enough: (v, l, ok, _ctx, vars) =>
+    ok ? `The subject is ${n0(v)} pixels ${str(vars.measure) || 'tall'}, big enough for the 3D step.` : `The subject is only ${n0(v)} pixels ${str(vars.measure) || 'tall'}; at least ${n0(l)} keeps the detail in the 3D model.`,
+  arms_away: (_v, _l, ok) =>
+    ok ? 'The arms stand away from the body, so the skeleton step can tell them apart.' : 'The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.',
+  even_lighting: (v, _l, ok) =>
+    ok ? 'The light is even across the photo.' : `One side of the photo is much brighter than the other (${pct(v)} difference), so the repeating texture will show stripes of light and dark. Take it in even, cloudy-day light.`,
+  straight_on: (_v, _l, ok) =>
+    ok ? 'The photo looks taken straight on.' : 'The detail is much finer on one side of the photo than the other, which usually means it was taken at an angle; the texture would look stretched. Take it straight on.',
   // Mock-era names
   'single subject': (_v, _l, ok) => (ok ? 'The picture shows one subject.' : 'The picture shows more than one subject.'),
   'rig-ready pose': (_v, _l, ok) => (ok ? 'The pose is ready for a skeleton.' : 'The pose will not rig well.'),
@@ -654,6 +698,7 @@ const CHECK_HELP: Record<string, string> = {
   max_influences: 'max_influences',
   weights_normalised: 'weights_normalised',
   clips: 'moves',
+  library_clips: 'clips_source',
   legs_moved: 'moves',
   wings_found: 'motion',
   hitbox_cover: 'hitboxes',
@@ -683,6 +728,12 @@ const CHECK_HELP: Record<string, string> = {
   grid_fit: 'grid',
   tiles_cleanly: 'grid',
   look_applied: 'look_applied',
+  one_subject: 'one_subject',
+  in_frame: 'in_frame',
+  big_enough: 'big_enough',
+  arms_away: 'arms_away',
+  even_lighting: 'even_lighting',
+  straight_on: 'straight_on',
 }
 
 // The sentence for a check. The backend is the one source of check wording (2.1): it writes `help` from the
@@ -709,14 +760,17 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|baked_light|albedo_range|metal_mixed|look_applied)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|even_lighting|straight_on)$/.test(id)) return 'warn'
   return 'block'
 }
 
 // A Fix button's action. Without `ui` it re-runs `stage` with `params`. With `ui` it opens a tool instead (2.5):
 // the page goes to `stage`, opens "Change something" and focuses the tool or the Fine-tune `knob`, with `params`
 // filled in but nothing run until the person applies it.
-export type FixAction = { stage: StageId; params: Record<string, unknown>; label: string; ui?: string; knob?: string }
+// With op "refine" it runs the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
+export type FixAction = { stage: StageId; params: Record<string, unknown>; label: string; ui?: string; knob?: string; op?: 'refine'; instruction?: string }
+
+export const REDRAW_LABEL = 'Redraw it ready for 3D'
 
 // The step and the Fine-tune setting each tool lives in.
 export const FIX_TOOLS: Record<string, { stage: StageId; knob?: string; plain: string }> = {
@@ -778,6 +832,8 @@ export function checkFix(check: Check): FixAction | null {
     if (!stage) return null
     return { stage, params: f.params ?? {}, label, ui: f.ui, knob: f.knob ?? tool?.knob }
   }
+  if (f && f.op === 'refine' && f.instruction && f.stage && STAGES.includes(f.stage as StageId))
+    return { stage: f.stage as StageId, params: f.params ?? {}, label, op: 'refine', instruction: f.instruction }
   if (f && f.stage && STAGES.includes(f.stage as StageId)) return { stage: f.stage as StageId, params: f.params ?? {}, label }
   const limit = num(check.limit)
   if (id === 'triangle_budget' && limit) return { stage: 'mesh', params: { target_faces: limit }, label }
@@ -805,6 +861,7 @@ export function checkFix(check: Check): FixAction | null {
 export function fixTooltip(fix: FixAction, stages?: StageInfo[] | null): string {
   const name = stagePlain(fix.stage, stages?.find((s) => s.id === fix.stage) ?? null)
   if (fix.ui) return `Opens ${FIX_TOOLS[fix.ui]?.plain ?? 'the tool'} in "${name}". Nothing changes until you apply it.`
+  if (fix.op === 'refine') return 'Asks the picture editor to redraw the same subject in the standard pose on a plain background. It makes a new version; this one stays.'
   return `Makes a new version of "${name}" with this change.`
 }
 
@@ -881,7 +938,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
   prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight'],
-  rig: ['template', 'motion', 'moves', 'hitboxes', 'hitbox_fit'],
+  rig: ['template', 'motion', 'moves', 'clips_source', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
 }
 
@@ -905,7 +962,8 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   shading: { auto: 'Automatic (by look)', smooth: 'Smooth', flat: 'Flat faces' },
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
-  moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
+  clips_source: { auto: 'Automatic', library: 'Hand-made library', procedural: 'Built-in moves' },
+  moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', jump: 'Jump', crouch: 'Crouch', roll: 'Roll', interact: 'Use or pick up', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
   move_size: { small: 'Small', normal: 'Normal', big: 'Big' },
   move_speed: { slow: 'Slow', normal: 'Normal', fast: 'Fast' },
   hitboxes: { detailed: 'One per body part', simple: 'Just head and body', none: 'None' },
@@ -956,6 +1014,17 @@ const CLIP_PLAIN: Record<string, string> = {
   attack: 'attack',
   hit: 'get hit',
   death: 'die',
+  sprint: 'sprint',
+  punch: 'punch',
+  jump: 'jump',
+  jump_start: 'jump',
+  jump_loop: 'jump',
+  jump_land: 'jump',
+  crouch: 'crouch',
+  crouch_idle: 'crouch',
+  crouch_walk: 'crouch',
+  roll: 'roll',
+  interact: 'use or pick up',
   flap: 'fly',
   glide: 'glide',
   takeoff: 'take off',
@@ -966,6 +1035,8 @@ const CLIP_PLAIN: Record<string, string> = {
 // The moves a creature can make, by how it moves (the category yaml's clips, with turn as one move).
 export const MOVES_BY_MOTION: Record<string, string[]> = {
   legs: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death'],
+  // Human-shaped characters also get the hand-made library's extra moves.
+  human: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'jump', 'crouch', 'roll', 'interact'],
   wings: ['idle', 'walk', 'flap', 'glide', 'takeoff', 'land', 'attack', 'hit', 'death'],
   wave: ['idle', 'slither', 'turn', 'attack', 'hit', 'death'],
   none: [],
@@ -974,8 +1045,8 @@ export const MOVES_BY_MOTION: Record<string, string[]> = {
 export const MOTION_BY_CATEGORY: Record<string, string> = { humanoid: 'legs', quadruped: 'legs', multileg: 'legs', winged: 'wings', serpent: 'wave' }
 
 // Clips that loop when the sidecar does not say (gait.py LOOPING); every other procedural clip plays once.
-const LOOPING_CLIPS = /^(idle|walk|run|slither|flap|glide)$/i
-const ONE_SHOT_CLIPS = /^(turn_left|turn_right|attack|hit|death|takeoff|land)$/i
+const LOOPING_CLIPS = /^(idle|walk|run|sprint|jump_loop|crouch_idle|crouch_walk|slither|flap|glide)$/i
+const ONE_SHOT_CLIPS = /^(turn_left|turn_right|attack|punch|hit|death|jump_start|jump_land|roll|interact|takeoff|land)$/i
 export function clipLoopsByName(name: string): boolean {
   if (LOOPING_CLIPS.test(name)) return true
   return !ONE_SHOT_CLIPS.test(name)
@@ -1001,8 +1072,29 @@ export function movesLine(clips: unknown): string {
 }
 
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
-export function clipLabel(name: string): string {
+const CLIP_LABELS: Record<string, string> = {
+  idle: 'Standing still',
+  attack: 'Sword attack',
+  jump_start: 'Jump (take off)',
+  jump_loop: 'Jump (in the air)',
+  jump_land: 'Jump (land)',
+  crouch_idle: 'Crouch',
+  crouch_walk: 'Crouch walk',
+  interact: 'Use or pick up',
+}
+
+// "Moves: 15 hand-made (free library) and 2 built in." from the rig version's metrics; '' when it does not say.
+export function movesSourceLine(metrics: Record<string, unknown>): string {
+  const lib = Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0
+  const proc = Array.isArray(metrics.procedural_clips) ? metrics.procedural_clips.length : 0
+  if (metrics.clips_source === 'library' && lib) return `Where they come from: ${lib} hand-made (a free library, fine for commercial games)${proc ? ` and ${proc} built in` : ''}.`
+  if (metrics.clips_source === 'procedural') return 'Where they come from: built in, made for this skeleton.'
+  return ''
+}
+
+export function clipLabel(name: string, humanLibrary = false): string {
   const k = name.toLowerCase()
+  if (CLIP_LABELS[k] && (humanLibrary || k !== 'attack')) return CLIP_LABELS[k]
   const plain = k === 'turn_left' ? 'turn left' : k === 'turn_right' ? 'turn right' : (CLIP_PLAIN[k] ?? name.replace(/_/g, ' '))
   return plain.charAt(0).toUpperCase() + plain.slice(1)
 }

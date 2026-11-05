@@ -25,13 +25,18 @@ export function ConceptView({ version }: { version: Version }) {
         </button>
         <Info term="term.cutout" />
         <span className="viewer-status">
-          {version.params.model ? (
+          {version.params.source === 'upload' || version.params.source === 'upload_edit' ? (
+            <>
+              {version.params.source === 'upload' ? 'Your picture' : 'Your picture, changed'}
+              <Info term="term.your_picture" />
+            </>
+          ) : version.params.model ? (
             <>
               painted by {modelLabel(String(version.params.model))}
               <Info term={'model.' + String(version.params.model)} />
             </>
           ) : null}
-          {version.params.seed !== undefined && version.params.seed !== null ? (
+          {version.params.source !== 'upload' && version.params.seed !== undefined && version.params.seed !== null ? (
             <>
               , seed {String(version.params.seed)}
               <Info term="term.seed" />

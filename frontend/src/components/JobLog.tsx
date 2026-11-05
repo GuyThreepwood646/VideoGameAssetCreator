@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Job } from '../api'
 import { useEventMode } from '../events'
-import { duration, StatusBadge, timeAgo } from './ui'
+import { duration, StatusBadge, StopButton, timeAgo } from './ui'
 
 export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string) => void }) {
   const mode = useEventMode()
@@ -48,9 +48,7 @@ export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string)
                 {j.started_at ? ` / ${duration(j.started_at, j.finished_at)}` : ''}
               </span>
               {(j.status === 'queued' || j.status === 'running') && (
-                <button type="button" className="link" onClick={() => onCancel(j.id)}>
-                  cancel
-                </button>
+                <StopButton small onClick={() => onCancel(j.id)} stopping={j.message === 'cancelling'} title="Stops this job now. Resume on the step picks it up again." />
               )}
             </div>
           </li>

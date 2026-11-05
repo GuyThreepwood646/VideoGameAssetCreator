@@ -37,7 +37,7 @@ from sqlalchemy import func, select
 from . import prefs
 from .comfy import ComfyClient
 from .config import Settings, get_settings
-from .db import Job, Version, job_to_dict, session_factory, utcnow, version_to_dict
+from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .instances import NotOwned, StartAborted, StartFailed, Supervisor
 from .reference import STAGE_ORDER
@@ -678,7 +678,7 @@ class InstanceWorker:
                                 v.status = "done"
                             elif cancelled:
                                 v.status = "rejected"
-                                v.error = error
+                                v.error = STOPPED_ERROR
                             else:
                                 v.status = "error"
                                 v.error = error
@@ -874,11 +874,11 @@ class JobQueue:
                 job.error = "cancelled"
                 job.message = "cancelled"
                 job.finished_at = utcnow()
-                if job.version_id:
+                if job.version_id and parse_kind(job.kind)[1] != "judge":
                     v = db.get(Version, job.version_id)
-                    if v is not None and v.status != "rejected":
+                    if v is not None and v.status in ("queued", "running"):
                         v.status = "rejected"
-                        v.error = "cancelled"
+                        v.error = STOPPED_ERROR
                         db.commit()
                         _publish_version(v)
                 db.commit()
@@ -893,6 +893,82 @@ class JobQueue:
                 _publish_job(job)
                 return job
             return job
+
+    # ---- Stop and Resume (the buttons on every step) ----
+
+    def stop_asset(self, asset_id: str, stage: str | None = None) -> list[str]:
+        """Stop every queued or running job of the asset now (only one stage's when `stage` is given). Returns the
+        ids of the versions that were stopped; a running one becomes "stopped" a moment later, when its job unwinds."""
+        with session_factory()() as db:
+            jobs = db.scalars(select(Job).where(Job.asset_id == asset_id, Job.status.in_(("queued", "running")))).all()
+            picked: list[tuple[str, str | None]] = []
+            for j in jobs:
+                v = db.get(Version, j.version_id) if j.version_id else None
+                if stage and (v is None or v.stage != stage):
+                    continue
+                picked.append((j.id, v.id if v is not None and parse_kind(j.kind)[1] != "judge" else None))
+        for job_id, _ in picked:
+            self.cancel(job_id)
+        return [vid for _, vid in picked if vid]
+
+    @staticmethod
+    def stopped_versions(db: Any, asset_id: str, stage: str) -> list[Version]:
+        """The versions a Resume would bring back: the stopped ones at the end of the stage's list, so a stop that
+        was followed by a fresh run is history, not something to resume."""
+        vs = db.scalars(select(Version).where(Version.asset_id == asset_id, Version.stage == stage)
+                        .order_by(Version.created_at, Version.id)).all()
+        out: list[Version] = []
+        for v in reversed(vs):
+            if not is_stopped(v):
+                break
+            out.append(v)
+        return list(reversed(out))
+
+    def resume_asset(self, asset_id: str, stage: str | None = None) -> list[dict[str, Any]]:
+        """Put the stopped versions back in the queue: the same job, the same settings, from the start of the step.
+        Returns the versions as dicts. Routed like a new job, so a card turned off since then is respected."""
+        from .reference import STAGE_ORDER  # late: reference loads the data files
+
+        resumed: list[dict[str, Any]] = []
+        woken: set[str] = set()
+        with session_factory()() as db:
+            a = db.get(Asset, asset_id)
+            if a is None:
+                return []
+            for s in ([stage] if stage else list(STAGE_ORDER)):
+                for v in self.stopped_versions(db, asset_id, s):
+                    job = db.get(Job, v.job_id) if v.job_id else None
+                    if job is None or job.status != "cancelled" or parse_kind(job.kind)[1] == "judge":
+                        continue
+                    instance, message = self.place(v.stage, a.category)
+                    job.status = "queued"
+                    job.instance = instance
+                    job.error = None
+                    job.message = message or "back in the queue after a stop"
+                    job.progress = 0.0
+                    job.started_at = None
+                    job.finished_at = None
+                    v.status = "queued"
+                    v.error = None
+                    db.commit()
+                    _publish_job(job)
+                    _publish_version(v)
+                    resumed.append(version_to_dict(v))
+                    woken.add(instance)
+        for instance in woken:
+            self.wake(instance)
+        return resumed
+
+    def dismiss_stopped(self, asset_id: str, stage: str) -> int:
+        """Set the stopped versions of a stage aside: they stay in the history but are no longer offered for Resume."""
+        with session_factory()() as db:
+            vs = self.stopped_versions(db, asset_id, stage)
+            for v in vs:
+                v.error = SET_ASIDE_ERROR
+            db.commit()
+            for v in vs:
+                _publish_version(v)
+            return len(vs)
 
     def set_paused(self, instance: str, paused: bool) -> None:
         w = self.workers[instance]

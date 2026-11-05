@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, STAGES, stageState, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
+import { api, ApiError, STAGES, stageState, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
-import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest } from '../components/ui'
+import { Disclosure, ErrorText, Field, ResumeButton, StopButton, SubmitTextarea, type FixRequest } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
@@ -195,9 +195,16 @@ export default function AssetPage() {
   }
   const autopilotActions: AutopilotActions = {
     start: (body?: AutopilotBody) => void apCall(() => api.startAutopilot(aid, body ?? {})),
-    stop: () => void apCall(() => api.stopAutopilot(aid)),
+    // Stop acts now: the autopilot pauses and the step in progress stops. Resume carries on from that step.
+    stop: () => void apCall(async () => (await api.stopAsset(aid)).autopilot),
+    resume: () => void apCall(async () => (await api.resumeAsset(aid)).autopilot),
+    resumeFrom: (from: StageId) =>
+      void apCall(() => {
+        const keep = autopilot && autopilot.status !== 'idle' ? { stop_on: autopilot.stop_on as AutopilotBody['stop_on'], until_stage: autopilot.until_stage as StageId } : {}
+        return api.startAutopilot(aid, { ...keep, from_stage: from })
+      }),
     // Proposed contract: POST autopilot {fix: {stage, params}} re-runs that stage with the fix, then continues.
-    fixAndContinue: (fix: FixRequest) => void apCall(() => api.startAutopilot(aid, { fix: { stage: fix.stage, params: fix.params } })),
+    fixAndContinue: (fix: FixRequest) => void apCall(() => api.startAutopilot(aid, { fix: { stage: fix.stage, params: fix.params, ...(fix.op === 'refine' && fix.instruction ? { op: fix.op, instruction: fix.instruction } : {}) } })),
     continueAnyway: () =>
       void apCall(async () => {
         const vid = autopilot?.version_id
@@ -209,6 +216,21 @@ export default function AssetPage() {
   }
   // A dismissed paused or stopped card stays hidden until the state changes again.
   const apShown = autopilot && apDismissed !== null && apDismissed === (autopilot.updated_at ?? 'dismissed') && autopilot.status !== 'running' ? null : autopilot
+
+  // Stop and Resume for one step (the same calls stop or resume the autopilot when it is the one running).
+  const stepCall = async (fn: () => Promise<{ autopilot: AutopilotState } | unknown>) => {
+    try {
+      const out = await fn()
+      if (out && typeof out === 'object' && 'autopilot' in out) applyAutopilot(aid, (out as { autopilot: AutopilotState }).autopilot)
+      setError(null)
+      reloadSoon()
+    } catch (e) {
+      setError(e)
+    }
+  }
+  const stopStep = (s: StageId) => void stepCall(() => api.stopAsset(aid, s))
+  const resumeStep = (s: StageId) => void stepCall(() => api.resumeAsset(aid, s))
+  const dismissStopped = (s: StageId) => void stepCall(() => api.dismissStopped(aid, s))
 
   const cancelJob = async (id: string) => {
     try {
@@ -269,16 +291,29 @@ export default function AssetPage() {
             const kept = list.some((v) => v.selected || asset.selected[s] === v.id)
             const reached = list.length > 0
             const cls = ['rail-stage', s === stage ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
-            const meta = st === 'running' ? 'working' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
+            const stopping = st === 'running' && jobs.some((j) => j.message === 'cancelling' && list.some((v) => v.id === j.version_id))
+            // A step with a Stop or Resume button next to it needs no status word: the button says it.
+            const meta = st === 'running' || stopped ? '' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
-              <div key={s} className={cls}>
+              <div key={s} className={cls + (stopped ? ' stopped' : '')}>
                 <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={`${stagePlain(s, help)} (technical name: ${s})`} aria-current={s === stage ? 'step' : undefined}>
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
                   <span className="rail-label">{stagePlain(s, help)}</span>
                   <span className="rail-meta">{meta}</span>
                 </button>
+                {st === 'running' && (
+                  <span className="rail-step-action">
+                    <StopButton small onClick={() => stopStep(s)} stopping={stopping} title={`Stop "${stagePlain(s, help)}" now. Everything you kept stays.`} />
+                  </span>
+                )}
+                {stopped && (
+                  <span className="rail-step-action">
+                    <ResumeButton small onClick={() => (autopilot?.stopped_by_user && autopilot.status === 'paused' ? autopilotActions.resume() : resumeStep(s))} title={`Run "${stagePlain(s, help)}" again from its start, with the same settings.`} />
+                  </span>
+                )}
                 <Info term={'stage.' + s} />
               </div>
             )
@@ -305,9 +340,7 @@ export default function AssetPage() {
           </div>
           <div className="row-gap">
             {autopilot?.status === 'running' && (
-              <button type="button" className="small-btn" disabled={apBusy} onClick={autopilotActions.stop} title="Stop the autopilot after the current step">
-                Stop autopilot
-              </button>
+              <StopButton small label="Stop autopilot" disabled={apBusy} onClick={autopilotActions.stop} title="Stops the autopilot and the step in progress now. Everything made so far is kept, and Resume carries on from this step." />
             )}
             <button type="button" className="small-btn" aria-pressed={variantOpen} disabled={!asset.selected?.concept} onClick={() => setVariantOpen((v) => !v)} title={asset.selected?.concept ? 'Make a copy of this asset with one change' : 'Keep a concept picture first'}>
               Make a variant
@@ -333,7 +366,9 @@ export default function AssetPage() {
           onMakeVariant={() => setVariantOpen(true)}
           onChanged={reloadSoon}
           onError={setError}
-          onCancelJob={cancelJob}
+          onStop={() => stopStep(stage)}
+          onResume={() => resumeStep(stage)}
+          onDismissStopped={() => dismissStopped(stage)}
         />
       </section>
       {showLog && (

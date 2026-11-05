@@ -45,7 +45,8 @@ def test_round_trip_project_asset_version_job(settings):
         j = db.get(Job, ids[4])
         jd = job_to_dict(j)
         assert jd["status"] == "queued" and jd["progress"] == 0.0 and jd["version_id"] == ids[3]
-        assert set(jd) == {"id", "instance", "kind", "asset_id", "version_id", "status", "progress", "message", "created_at", "started_at", "finished_at", "error"}
+        assert set(jd) == {"id", "instance", "kind", "asset_id", "version_id", "status", "progress", "message", "created_at", "started_at", "finished_at", "error", "result"}
+        assert jd["result"] is None  # only a job that makes no version (style from a picture) has one
 
 
 def test_cascade_delete_and_library_paths(settings):

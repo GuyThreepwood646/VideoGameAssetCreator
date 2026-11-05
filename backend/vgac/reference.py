@@ -129,8 +129,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("bend_test", "boolean", True, description="Render bend tests at 35 and 90 degrees"),
         _param("motion", "select", None, options=["legs", "wings", "wave", "none"], categories=["quadruped", "multileg", "winged", "serpent"],
                description="From the category when empty"),
-        _param("moves", "multiselect", None, options=["idle", "walk", "run", "turn", "attack", "hit", "death", "flap", "glide", "takeoff", "land", "slither"],
+        _param("moves", "multiselect", None, options=["idle", "walk", "run", "turn", "attack", "hit", "death", "jump", "crouch", "roll", "interact",
+                                                      "flap", "glide", "takeoff", "land", "slither"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every move of the category when empty"),
+        _param("clips_source", "select", "auto", options=["auto", "library", "procedural"], categories=["humanoid"],
+               description="Automatic uses the hand-made library for human-shaped characters when it is installed"),
         _param("move_size", "select", "normal", options=["small", "normal", "big"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("move_speed", "select", "normal", options=["slow", "normal", "fast"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("hitboxes", "select", None, options=["detailed", "simple", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"],
@@ -404,18 +407,32 @@ def style_presets() -> list[dict[str, Any]]:
     return [dict(p) for p in _presets()]
 
 
-# --- Add-ons (data/addons.yaml) ------------------------------------------------------------------------------------
+# --- Add-ons (data/addons.yaml, plus the person's own in user_addons.py) --------------------------------------------
 #
-# The registry is the only list of add-ons: nothing in the app reads a models folder. An add-on applies only when the
-# chosen model is in its base_models.
+# The registry is the only list of add-ons: the tested ones in data/addons.yaml, then the person's own from
+# <library_path>/my_addons.json (user_addons.entries(), each `mine: true`). A user entry whose id is a built-in one is
+# dropped, so it never shadows a built-in add-on. Nothing in the app lists a models folder except user_addons.py,
+# which lists only its own VGAC/mine/ folder. An add-on applies only when the chosen model is in its base_models.
+
+
+def _user_addons() -> dict[str, dict[str, Any]]:
+    """The person's own add-ons by id, without any whose id is a built-in one (empty when no settings load)."""
+    from . import user_addons
+
+    try:
+        items = user_addons.entries()
+    except (OSError, ValueError, KeyError):
+        return {}
+    builtin = _data()["addons"]
+    return {a["id"]: a for a in items if a["id"] not in builtin}
 
 
 def addons() -> list[dict[str, Any]]:
-    return list(_data()["addons"].values())
+    return list(_data()["addons"].values()) + list(_user_addons().values())
 
 
 def addon(aid: str) -> dict[str, Any] | None:
-    return _data()["addons"].get(aid)
+    return _data()["addons"].get(aid) or _user_addons().get(aid)
 
 
 def addon_required(a: dict[str, Any], model: str | None = None) -> bool:
@@ -439,14 +456,18 @@ def addon_public(a: dict[str, Any], model: str | None = None) -> dict[str, Any]:
             "base_models": list(a.get("base_models") or []), "strengths": dict(a.get("strengths") or {}),
             "default_strength": a.get("default_strength") or "normal", "required": addon_required(a, model),
             "required_for": list(a.get("required_for") or []), "trigger": a.get("trigger") or "",
-            "licence": a.get("licence") or "unknown", "source": a.get("source") or ""}
+            "licence": a.get("licence") or "unknown", "source": a.get("source") or "", "mine": bool(a.get("mine"))}
 
 
 def addon_record(aid: str) -> dict[str, Any]:
-    """The add-on as the export manifest records it: id, name, file, licence, source."""
+    """The add-on as the export manifest records it: id, name, file, licence, source (and mine: true for the
+    person's own, whose source is the "Where it came from" they typed)."""
     a = addon(aid) or {}
-    return {"id": aid, "name": a.get("label") or aid, "file": a.get("file") or "", "licence": a.get("licence") or "unknown",
-            "source": a.get("source") or "", "kind": "addon"}
+    out = {"id": aid, "name": a.get("label") or aid, "file": a.get("file") or "", "licence": a.get("licence") or "unknown",
+           "source": a.get("source") or "", "kind": "addon"}
+    if a.get("mine"):
+        out["mine"] = True
+    return out
 
 
 def _parse_strength(value: Any) -> tuple[str, float | None] | None:

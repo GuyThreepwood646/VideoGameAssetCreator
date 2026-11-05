@@ -108,9 +108,14 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                "options": {"legs": "Walks on its legs", "wings": "Flies, and walks when it lands", "wave": "Slithers or swims", "none": "Does not move by itself"}},
     "moves": {"simple": True, "help": {"meaning": "The animations made for this character or creature.",
                                        "why": "Leave out moves your game will never use to keep the file smaller.",
-                                       "technical": "Procedural clip set (procanim.py)"},
+                                       "technical": "Library clips retargeted in Blender (retarget.py) for human shapes, else the procedural set (procanim.py)"},
               "options": {"idle": "Standing still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
+                          "jump": "Jump", "crouch": "Crouch", "roll": "Roll", "interact": "Use or pick up",
                           "flap": "Fly", "glide": "Glide", "takeoff": "Take off", "land": "Land", "slither": "Slither or swim"}},
+    "clips_source": {"simple": True, "help": {"meaning": "Where the character's moves come from.",
+                                              "why": "The hand-made library moves look natural; the built-in moves work for any skeleton and need nothing installed.",
+                                              "technical": "CC0 Quaternius Universal Animation Library retargeted in Blender (retarget.py), else procanim.py"},
+                     "options": {"auto": "Automatic", "library": "Hand-made library", "procedural": "Built-in moves"}},
     "move_size": {"simple": False, "help": {"meaning": "How big the moves are.", "why": "Small suits heavy or calm creatures, big suits lively ones.",
                                             "technical": "Amplitude 0.7, 1.0, 1.3"},
                   "options": {"small": "Small", "normal": "Normal", "big": "Big"}},
@@ -244,6 +249,17 @@ def _padding_fix(c: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+REDRAW_LABEL = "Redraw it ready for 3D"
+
+
+def _redraw_fix(c: dict[str, Any]) -> dict[str, Any] | None:
+    """Run the concept refine on this version with the fixed redraw instruction (vars.redraw)."""
+    instruction = _var(c, "redraw")
+    if not instruction:
+        return None
+    return {"stage": "concept", "op": "refine", "instruction": instruction, "params": {}}
+
+
 CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "triangle_budget": {
         "severity": "block",
@@ -368,6 +384,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": "Animations: {value:list}.",
         "fail": "Some animations are missing: {missing:list}.",
+        "fix": lambda c: {"stage": "rig", "params": {}},
+        "fix_label": "Make the moves again",
+    },
+    "library_clips": {
+        "severity": "warn",
+        "ok": "{count:n} moves come from the hand-made library.",
+        "fail": "The hand-made moves could not be put on this skeleton, so it uses the built-in moves. {reason}",
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
     },
@@ -527,6 +550,49 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                            else "The look is not fully applied to the model yet."),
         "fix": lambda c: {"stage": "prep", "params": {}},
         "fix_label": "Apply the look again",
+    },
+    # Start from your own images: readiness of any concept picture (readiness.concept_checks). The Fix runs the concept
+    # refine on the version with the fixed redraw instruction built from the category's pose block.
+    "one_subject": {
+        "severity": "warn",
+        "ok": "The picture shows one subject.",
+        "fail": lambda c: ("We could not find a subject in the picture; the background may be too busy to cut out."
+                           if _var(c, "empty") else
+                           "The picture shows {value:n} separate things; the 3D step works best with one subject on its own."),
+        "fix": _redraw_fix,
+        "fix_label": REDRAW_LABEL,
+    },
+    "in_frame": {
+        "severity": "warn",
+        "ok": "The whole subject is in the picture, with space around it.",
+        "fail": "The subject touches the {sides_text} edge of the picture, so part of it may be cut off and the 3D model would miss it.",
+        "fix": _redraw_fix,
+        "fix_label": REDRAW_LABEL,
+    },
+    "big_enough": {
+        "severity": "warn",
+        "ok": "The subject is {value:n} pixels {measure}, big enough for the 3D step.",
+        "fail": "The subject is only {value:n} pixels {measure}; at least {limit:n} keeps the detail in the 3D model.",
+        "fix": _redraw_fix,
+        "fix_label": REDRAW_LABEL,
+    },
+    "arms_away": {
+        "severity": "warn",
+        "ok": "The arms stand away from the body, so the skeleton step can tell them apart.",
+        "fail": "The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.",
+        "fix": _redraw_fix,
+        "fix_label": REDRAW_LABEL,
+    },
+    # Material from a photo (readiness.photo_checks). No automatic fix: a better photo is the fix.
+    "even_lighting": {
+        "severity": "warn",
+        "ok": "The light is even across the photo.",
+        "fail": "One side of the photo is much brighter than the other ({value:pct} difference), so the repeating texture will show stripes of light and dark. Take it in even, cloudy-day light.",
+    },
+    "straight_on": {
+        "severity": "warn",
+        "ok": "The photo looks taken straight on.",
+        "fail": "The detail is much finer on one side of the photo than the other, which usually means it was taken at an angle; the texture would look stretched. Take it straight on.",
     },
 }
 

@@ -2,9 +2,9 @@
 // guide while the autopilot owns the asset, and the finishing moment card.
 import { Fragment, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
+import { firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, PlainChecks, TrafficDot, type FixRequest } from '../components/ui'
+import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
 import { versionLook } from '../recipe'
@@ -15,6 +15,10 @@ import { Deliverables } from './views/ExportView'
 export type AutopilotActions = {
   start: (body?: AutopilotBody) => void
   stop: () => void
+  // After a Stop: carry on from the step that was stopped.
+  resume: () => void
+  // Go back: make this earlier step again and rebuild everything after it.
+  resumeFrom: (stage: StageId) => void
   fixAndContinue: (fix: FixRequest) => void
   continueAnyway: () => void
   dismiss: () => void
@@ -98,6 +102,36 @@ type CardProps = {
   onOpenTool?: (fix: FixRequest) => void
 }
 
+// "Go back to an earlier step": pick a step that already ran; it is made again and everything after it is
+// rebuilt. Shown on the stopped and paused autopilot cards.
+export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset: Asset; upTo: StageId | null; stages: StageInfo[] | null; busy: boolean; onResumeFrom: (s: StageId) => void }) {
+  const limit = upTo ? STAGES.indexOf(upTo) : STAGES.length
+  const options = STAGES.filter((s, i) => i < limit && versionsOf(asset, s).length > 0)
+  const stale = firstStaleStage(asset)
+  const [pick, setPick] = useState<StageId | ''>('')
+  if (!options.length) return null
+  const chosen = (pick && options.includes(pick) ? pick : stale && options.includes(stale) ? stale : options[options.length - 1]) as StageId
+  const name = (s: StageId) => stagePlain(s, stages?.find((x) => x.id === s) ?? null)
+  return (
+    <div className="resume-from">
+      <label className="small muted" htmlFor="resume-from-step">
+        Saw something off earlier? Go back to
+      </label>
+      <div className="row-gap">
+        <select id="resume-from-step" value={chosen} disabled={busy} onChange={(e) => setPick(e.target.value as StageId)}>
+          {options.map((s) => (
+            <option key={s} value={s}>
+              Step {STAGES.indexOf(s) + 1}: {name(s)}
+            </option>
+          ))}
+        </select>
+        <ResumeButton small label="Resume from there" disabled={busy} onClick={() => onResumeFrom(chosen)} title={`Makes "${name(chosen)}" again and rebuilds every step after it. The results you have now stay in the history.`} />
+      </div>
+      <div className="small muted">That step is made again and every step after it is rebuilt.</div>
+    </div>
+  )
+}
+
 // The card shown instead of "Your next step" while the autopilot runs, is paused or stopped.
 export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions, onOpenTool }: CardProps) {
   const apStage = autopilotStage(ap)
@@ -136,9 +170,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           </div>
         </div>
         <div className="guide-action">
-          <button type="button" disabled={busy} onClick={actions.stop} title="Stops after the current step; everything made so far is kept">
-            Stop
-          </button>
+          <StopButton onClick={actions.stop} disabled={busy} stopping={job?.message === 'cancelling'} title="Stops the autopilot and the step in progress now. Everything made so far is kept, and Resume carries on from this step." />
         </div>
       </section>
     )
@@ -154,6 +186,40 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   const versionFailed = version?.status === 'error'
   const paused = ap.status === 'paused'
   const idx = version && apStage ? versionsOf(asset, apStage).indexOf(version) + 1 : 0
+
+  // Stopped by the person: one clear way on.
+  if (paused && ap.stopped_by_user) {
+    const unwinding = jobs.some((j) => j.asset_id === asset.id && j.status === 'running')
+    const until = STAGES.includes(ap.until_stage as StageId) ? (ap.until_stage as StageId) : 'export'
+    const left = apStage ? autopilotSecondsLeft(apStage, 0, until, stages, estimates) : null
+    return (
+      <section className="guide guide-stopped" aria-live="polite">
+        <div className="guide-body">
+          <div className="guide-kicker">
+            Autopilot stopped by you
+            <Info term="term.autopilot" />
+            {apStage && (
+              <span className="muted">
+                {' '}
+                (step {STAGES.indexOf(apStage) + 1} of {STAGES.length}: {stagePlain(apStage, info(apStage))})
+              </span>
+            )}
+          </div>
+          <div className="guide-happened">{unwinding ? 'Stopping the step in progress...' : 'Stopped. Everything made so far is kept.'}</div>
+          <div className="guide-now">
+            Resume carries on from {apStage ? `"${stagePlain(apStage, info(apStage))}"` : 'where it stopped'}: that step runs again from its start with the same settings, then the rest follow. {elsewhere}
+          </div>
+        </div>
+        <div className="guide-action guide-action-col">
+          <ResumeButton onClick={actions.resume} disabled={busy || unwinding} est={left !== null ? fmtDuration(left) : undefined} />
+          <ResumeFrom asset={asset} upTo={apStage} stages={stages} busy={busy || unwinding} onResumeFrom={actions.resumeFrom} />
+          <button type="button" className="link small" disabled={busy} onClick={actions.dismiss} title="Hide this card and steer by hand">
+            Steer by hand instead
+          </button>
+        </div>
+      </section>
+    )
+  }
   return (
     <section className={'guide ' + (paused ? 'guide-paused' : 'guide-error')} aria-live="polite">
       <div className="guide-body">
@@ -216,6 +282,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
             Start again
           </button>
         )}
+        <ResumeFrom asset={asset} upTo={apStage} stages={stages} busy={busy} onResumeFrom={actions.resumeFrom} />
         <button type="button" className="link small" disabled={busy} onClick={actions.dismiss} title="Hide this card and steer by hand">
           Dismiss
         </button>

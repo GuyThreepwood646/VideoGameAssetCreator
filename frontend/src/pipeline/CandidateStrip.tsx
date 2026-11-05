@@ -1,6 +1,6 @@
 // The strip of candidate cards above the active version: one card per version of
 // this step, with its thumbnail (or progress while it runs), checks light and likes.
-import { libraryUrl, versionFeedback, type Job, type StageId, type Version } from '../api'
+import { isStopped, libraryUrl, versionFeedback, type Job, type StageId, type Version } from '../api'
 import { StatusBadge, TrafficDot } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
 import { firstFailing, looksGood } from '../help'
@@ -71,7 +71,7 @@ function CandidateCard({
   const glbUrl = is3d && !version.files.preview ? libraryUrl(version.files.glb) : undefined
   const { src: snap, error: snapError } = useGlbSnapshot(version.status === 'done' ? glbUrl : undefined)
   const img = is3d ? (libraryUrl(imgPath) ?? snap) : libraryUrl(imgPath)
-  const cls = ['candidate', isActive ? 'active' : '', isSelected ? 'selected' : '', version.status === 'rejected' ? 'rejected' : ''].join(' ')
+  const cls = ['candidate', isActive ? 'active' : '', isSelected ? 'selected' : '', version.status === 'rejected' ? 'rejected' : '', isStopped(version) ? 'stopped' : ''].join(' ')
   const good = version.status === 'done' ? looksGood(version.metrics) : null
   const reason = version.status === 'done' ? firstFailing(version.metrics) : null
   const thumbs = version.status === 'done' ? versionFeedback(version)?.thumbs : null
@@ -96,13 +96,18 @@ function CandidateCard({
           <strong>v{index}</strong>
           <span className="muted mono small">{shortId(version.id)}</span>
         </span>
+        {stage === 'concept' && version.params.source === 'upload' && (
+          <span className="chip chip-accent" title="Made from a picture you added, not painted by the app">
+            Your picture
+          </span>
+        )}
         {version.status === 'done' ? (
           <span className={'traffic-line ' + (good === false ? 'bad' : good ? 'ok' : 'none')} title={reason ?? (good ? 'Every check passed' : 'No checks for this version')}>
             <TrafficDot state={good === false ? 'bad' : good ? 'ok' : 'none'} />
             {good === false ? 'needs attention' : good ? 'looks good' : 'no checks'}
           </span>
         ) : (
-          <StatusBadge status={version.status} />
+          <StatusBadge status={version.status} stopped={isStopped(version)} />
         )}
         {(isSelected || thumbs) && (
           <span className="chips">

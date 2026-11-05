@@ -46,6 +46,7 @@ SAMPLES = {
     "legs_moved": ((8, 8), (4, 8)),
     "materials_connected": ((True, True), (False, True)),
     "clips_loop": ((True, True), ("walk", True)),
+    "library_clips": ((15, ">0"), (0, ">0")),
     "controller_ready": ((True, True), (False, True)),
     "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
@@ -61,6 +62,13 @@ SAMPLES = {
     "grid_fit": (([2.0, 0.3, 3.0], 1), ([2.4, 0.3, 3.0], 1)),
     "tiles_cleanly": ((0.0, 0.5), (45.0, 0.5)),
     "look_applied": (("about 1,250 triangles, flat faces, 512 px textures", "abc123"), ("about 1,250 triangles", "abc123")),
+    # Start from your own images: concept readiness and material photos.
+    "one_subject": ((1, 1), (3, 1)),
+    "in_frame": ((0.05, 0.01), (0.0, 0.01)),
+    "big_enough": ((900, 400), (220, 400)),
+    "arms_away": ((0.4, 0.2), (0.0, 0.2)),
+    "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
+    "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }
 
 

@@ -460,7 +460,7 @@ def test_suggest_and_pause_and_autopilot_stop(client):
     st = client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never"}).json()
     assert st["status"] == "running"
     st = client.post(f"/api/assets/{a['id']}/autopilot/stop").json()
-    assert st["status"] == "paused" and "Stopped" in st["reason"]
+    assert st["status"] == "paused" and "stopped" in st["reason"] and st["stopped_by_user"] is True
 
 
 

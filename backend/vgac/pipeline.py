@@ -120,8 +120,10 @@ def previous_stage(category: str, stage: str) -> str:
 
 
 def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[str, Any] | None = None,
-              parent_version_id: str | None = None) -> list[dict[str, Any]]:
-    """Start `count` versions of a stage (more than one only for concept). Returns [{job, version}] as dicts."""
+              parent_version_id: str | None = None, prepare: Any = None) -> list[dict[str, Any]]:
+    """Start `count` versions of a stage (more than one only for concept). Returns [{job, version}] as dicts.
+    `prepare(version)`, when given, runs after each version exists and before its job is queued (the API writes the
+    person's own view pictures into the version folder there)."""
     if stage not in STAGE_ORDER:
         raise BadRequest(f"unknown stage {stage!r}; stages: {list(STAGE_ORDER)}")
     count = count if stage == "concept" else 1
@@ -149,6 +151,8 @@ def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[st
         if count > 1 and p.get("seed") is not None:
             p["seed"] = int(p["seed"]) + i
         v = new_version(db, a, stage, parent, p)
+        if prepare is not None:
+            prepare(v)
         job = submit(db, a, v, "run", {"params": p})
         versions.append(v)
         jobs.append(job)

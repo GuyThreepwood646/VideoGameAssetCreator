@@ -82,6 +82,8 @@ export type AutopilotState = {
   started_at?: string | null
   updated_at?: string | null
   stages_done: string[]
+  // The person pressed Stop: the card shows Resume, which carries on from the same step.
+  stopped_by_user?: boolean
 }
 
 export type AutopilotBody = {
@@ -89,7 +91,10 @@ export type AutopilotBody = {
   stop_on?: StopOn
   // Proposed addition (see README): run this stage once more with these params
   // (an adjust of its kept version) before continuing. Used by "Fix and continue".
-  fix?: { stage: StageId; params: Record<string, unknown> }
+  fix?: { stage: StageId; params: Record<string, unknown>; op?: 'refine'; instruction?: string }
+  // Go back to this step: it is made again (built on what is kept before it) and every step after it is
+  // rebuilt. The old results stay in the history, set aside.
+  from_stage?: StageId
 }
 
 export type Project = {
@@ -108,7 +113,8 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // instead (2.5): the parts editor, or the front picker in prep. `label` is the button text (fix_label in the
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
 export type FixTool = 'parts_editor' | 'front_picker'
-export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string }
+// op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
+export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine'; instruction?: string }
 
 // A quality check. The backend sends {id, name, passed, ok, value, limit, message}
 // and may add help (plain sentence), fix (how the app can fix it) and severity.
@@ -146,6 +152,8 @@ export type Version = {
   error: string | null
   created_at: string
   selected: boolean
+  // Stopped by the person (the Stop button). Resume puts it back in the queue with the same settings.
+  stopped?: boolean
 }
 
 export type Asset = {
@@ -187,7 +195,15 @@ export type Job = {
   started_at: string | null
   finished_at: string | null
   error: string | null
+  // What a job that makes no version hands back (style from a picture); null otherwise.
+  result?: StyleResult | null
 }
+
+// Start from your own images (docs/API.md "your own pictures"). Pictures travel as data: URLs in JSON.
+export type Swatch = { hex: string; share: number }
+export type PaletteResult = { palette: string[]; swatches: Swatch[]; background: string | null; pixels: number }
+export type StyleResult = { description: string; words: number; palette: string[]; swatches: Swatch[]; model: string; applied: boolean }
+export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_engine: boolean; message?: string }
 
 export type Category = {
   id: string
@@ -296,7 +312,26 @@ export type AddonEntry = {
   // Only on GET /api/recipe addon_entries: whether the recipe switches it on, and at which step.
   on?: boolean
   strength?: StrengthName
+  // True for the person's own add-ons (GET /api/my-addons), which also carry their file name in VGAC/mine/.
+  mine?: boolean
+  file_name?: string
+  added_at?: string
 }
+
+// Your own add-ons (backend user_addons.py, docs/API.md "Your own add-ons").
+export type MyAddonsListing = {
+  addons: AddonEntry[]
+  // The one folder the app keeps add-on files in (VGAC/mine/ inside ComfyUI's loras folder).
+  folder: string
+  folder_exists: boolean
+  strengths: Record<StrengthName, number>
+  painters: { id: string; label: string }[]
+}
+// What the short form can start with, read from the file's header (never its data).
+export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string }
+export type UploadedAddon = { file_name: string; bytes: number; prefill: AddonPrefill }
+export type UnregisteredAddon = { file_name: string; bytes: number; prefill?: AddonPrefill; error?: string }
+export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string }
 export type Recipe = {
   id: string
   style: string
@@ -446,7 +481,8 @@ export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'of
 export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
-export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown> }
+// reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
+export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown>; reference_image?: string }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
 export type VariantResult = { asset: Asset; job: Job; version: Version }
@@ -548,8 +584,15 @@ export const api = {
   listAssets: (pid: string) => get<AssetSummary[]>(`/api/projects/${pid}/assets`),
   createAsset: (
     pid: string,
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string },
-  ) => post<Asset>(`/api/projects/${pid}/assets`, body),
+    // image: start from a picture (a data: URL); the prompt may then be empty.
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string },
+  ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
+
+  // Your own pictures
+  uploadConcept: (aid: string, body: { image: string; note?: string }) => post<RunResult>(`/api/assets/${aid}/stages/concept/upload`, body),
+  uploadView: (vid: string, view: string, image: string) => post<RunResult>(`/api/versions/${vid}/views/${view}/upload`, { image }),
+  paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
+  styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),
   createVariant: (aid: string, body: { change: string; name?: string }) => post<VariantResult>(`/api/assets/${aid}/variants`, body),
   updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target'>>) =>
@@ -560,6 +603,11 @@ export const api = {
   startAutopilot: (aid: string, body: AutopilotBody = {}) => post<AutopilotState>(`/api/assets/${aid}/autopilot`, body),
   getAutopilot: (aid: string) => get<AutopilotState>(`/api/assets/${aid}/autopilot`),
   stopAutopilot: (aid: string) => post<AutopilotState>(`/api/assets/${aid}/autopilot/stop`),
+  // Stop and Resume (the buttons on every step). Stop acts now: one step when `stage` is given and the autopilot
+  // is not running, else everything for the asset. Resume runs the stopped step again with the same settings.
+  stopAsset: (aid: string, stage?: StageId) => post<{ stopped: string[]; autopilot: AutopilotState }>(`/api/assets/${aid}/stop`, stage ? { stage } : {}),
+  resumeAsset: (aid: string, stage?: StageId) => post<{ resumed: Version[]; autopilot: AutopilotState }>(`/api/assets/${aid}/resume`, stage ? { stage } : {}),
+  dismissStopped: (aid: string, stage: StageId) => post<{ dismissed: number }>(`/api/assets/${aid}/stopped/dismiss`, { stage }),
 
   // Stages and versions
   runStage: (assetId: string, stage: StageId, body: RunStageBody = {}) =>
@@ -580,6 +628,44 @@ export const api = {
   listJobs: (params: { asset_id?: string; status?: string } = {}) => get<Job[]>('/api/jobs' + q(params)),
   getJob: (id: string) => get<Job>(`/api/jobs/${id}`),
   cancelJob: (id: string) => post<Job>(`/api/jobs/${id}/cancel`),
+
+  // Your own add-ons
+  myAddons: () => get<MyAddonsListing>('/api/my-addons'),
+  addMyAddon: (body: MyAddonIn) => post<AddonEntry>('/api/my-addons', body),
+  removeMyAddon: (id: string) => del<{ removed: string; file_name: string; file_kept: boolean }>(`/api/my-addons/${encodeURIComponent(id)}`),
+  unregisteredAddons: () => get<UnregisteredAddon[]>('/api/my-addons/unregistered'),
+  openAddonFolder: () => post<{ opened: boolean; folder: string }>('/api/my-addons/open-folder'),
+  uploadAddon: (file: File, onProgress?: (fraction: number) => void) => uploadAddonFile(file, onProgress),
+}
+
+// POST /api/my-addons/upload: the file itself is the body, streamed from disk by the browser (never read into the
+// page). XMLHttpRequest reports upload progress; the mock backend only intercepts fetch, so mock mode uses fetch.
+function uploadAddonFile(file: File, onProgress?: (fraction: number) => void): Promise<UploadedAddon> {
+  const path = '/api/my-addons/upload?name=' + encodeURIComponent(file.name)
+  if (isMock()) return request<UploadedAddon>('POST', path + '&bytes=' + file.size)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadedAddon)
+      else {
+        const d = (body as { detail?: unknown } | null)?.detail
+        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The upload failed (HTTP ${xhr.status}).`, body))
+      }
+    }
+    xhr.send(file)
+  })
 }
 
 export function eventsUrl(): string {
@@ -638,6 +724,46 @@ export function stageState(asset: AssetSummary, stage: StageId): StageState {
   if (list.some((v) => v.status === 'done')) return 'done'
   if (list.length && list[list.length - 1].status === 'error') return 'error'
   return 'none'
+}
+
+// The first step whose kept result was built from an older result of the step before it (an earlier step was
+// changed afterwards). null when every kept result lines up.
+export function firstStaleStage(asset: AssetSummary): StageId | null {
+  const byId = new Map<string, Version>()
+  for (const s of STAGES) for (const v of versionsOf(asset, s)) byId.set(v.id, v)
+  for (const s of STAGES) {
+    const kept = selectedVersion(asset, s)
+    if (!kept || kept.status !== 'done') continue
+    // Walk up through changes made inside the same step to the result it was first built from.
+    let v: Version = kept
+    for (let guard = 0; guard < 200 && v.parent_version_id; guard++) {
+      const parent = byId.get(v.parent_version_id)
+      if (!parent) break // built from another asset (a variant) or unknown
+      if (parent.stage !== s) {
+        const keptBefore = selectedVersion(asset, parent.stage)
+        if (keptBefore && keptBefore.id !== parent.id) return s
+        break
+      }
+      v = parent
+    }
+  }
+  return null
+}
+
+export function isStopped(v: Version): boolean {
+  return v.stopped === true || (v.status === 'rejected' && v.error === 'cancelled')
+}
+
+// The versions a Resume would bring back: the stopped ones at the end of the step's list. A stop that was
+// followed by a fresh run is history.
+export function stoppedVersions(asset: AssetSummary, stage: StageId): Version[] {
+  const list = versionsOf(asset, stage)
+  const out: Version[] = []
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (!isStopped(list[i])) break
+    out.unshift(list[i])
+  }
+  return out
 }
 
 export function isMock(): boolean {
