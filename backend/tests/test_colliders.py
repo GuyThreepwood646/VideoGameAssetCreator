@@ -239,7 +239,7 @@ def test_lighting_manifest_by_category():
 
 def test_importer_version_5_and_features():
     text = IMPORTER.read_text(encoding="utf-8")
-    assert export.importer_version(IMPORTER) == 5
+    assert export.importer_version(IMPORTER) >= 5  # 6 added the open-Editor hand-off (test_unity_handoff.py)
     for needle in ("generateSecondaryUV", "ModelImporterSecondaryUVMarginMethod.Calculate", "LODFadeMode.CrossFade",
                    "StaticEditorFlags.ContributeGI", '"Colliders"', "BoxCollider", "-vgacColliders", "-vgacCategory"):
         assert needle in text, needle

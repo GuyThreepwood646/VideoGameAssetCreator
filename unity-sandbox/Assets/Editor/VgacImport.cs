@@ -8,6 +8,13 @@
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
 // Writes <dir>/unity_report.json.
 //
+// Hand-off to an open Editor (Version 6): Unity will not open a project in batch mode while the Editor has it open, so
+// the backend then copies the same inputs into Assets/VGAC/<name>/_incoming/ with a request file vgac_import.json
+// (request_id, importer_version, args: the batch arguments). VgacImportWatcher below picks it up inside the open
+// Editor (after an asset import and once at load), runs the same Import routine, writes unity_report.json next to the
+// request with the request id and renames the request to vgac_import.done.json. Menu: Tools/VGAC/Import pending assets.
+// Batch check of the same sweep: -executeMethod VgacImport.ImportPending.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -23,7 +30,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "5";
+    public const string Version = "6";
 
     [Serializable]
     class ClipInfo
@@ -52,6 +59,7 @@ public static class VgacImport
         public bool ok;
         public string error = "";
         public string importer_version = Version;
+        public string request_id = "";         // set for an Editor hand-off request; "" for a batch import
         public string prefab = "";
         public int lodCount;
         public List<int> lodTriangles = new List<int>();
@@ -142,16 +150,68 @@ public static class VgacImport
 
     static bool Flag(string key) => Environment.GetCommandLineArgs().Contains(key);
 
+    // Everything VgacImport.Run reads from its command line. The batch entry point and the Editor hand-off both build
+    // one of these and call Import, so the two paths cannot drift apart.
+    public class ImportArgs
+    {
+        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders;
+        public bool humanoid, keepPose;
+        public float speedScale = 1f, scale = 1f;
+        public string requestId = "";
+
+        // argv: "-vgacName", "X", "-vgacHumanoid", ... (the batch call's own arguments). baseDir, when given, is where
+        // relative file arguments are resolved (the request's folder); the batch path passes null.
+        public static ImportArgs Parse(IList<string> argv, string baseDir)
+        {
+            string A(string key)
+            {
+                for (int i = 0; i < argv.Count - 1; i++) if (argv[i] == key) return argv[i + 1];
+                return null;
+            }
+            string F(string key)
+            {
+                var v = A(key);
+                if (v == null || baseDir == null || Path.IsPathRooted(v)) return v;
+                return Path.GetFullPath(Path.Combine(baseDir, v));
+            }
+            var a = new ImportArgs
+            {
+                input = baseDir != null ? Path.GetFullPath(baseDir) : A("-vgacInput"),
+                name = A("-vgacName"),
+                humanoid = argv.Contains("-vgacHumanoid"),
+                keepPose = argv.Contains("-vgacKeepPose"),
+                category = A("-vgacCategory") ?? "",
+                hitboxes = F("-vgacHitboxes"),
+                movementShape = A("-vgacMovementShape"),
+                clipInfo = F("-vgacClipInfo"),
+                clips = F("-vgacClips"),
+                colliders = F("-vgacColliders"),
+                scale = ParseFloat(A("-vgacScale"), 1f),
+                speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
+            };
+            if (a.speedScale <= 0.01f) a.speedScale = 1f;
+            return a;
+        }
+    }
+
     public static void Run()
     {
-        var input = Arg("-vgacInput");
-        var name = Arg("-vgacName");
-        var humanoid = Flag("-vgacHumanoid");
-        var category = Arg("-vgacCategory") ?? "";
-        float speedScale = 1f;
-        if (Arg("-vgacSpeedScale") != null) float.TryParse(Arg("-vgacSpeedScale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out speedScale);
-        if (speedScale <= 0.01f) speedScale = 1f;
-        var report = new Report();
+        var a = ImportArgs.Parse(Environment.GetCommandLineArgs(), null);
+        var report = Import(a);
+        if (!report.ok) EditorApplication.Exit(1);
+    }
+
+    // The import itself, shared by Run (batch) and the Editor hand-off. Never throws; writes <input>/unity_report.json
+    // and returns the report.
+    static Report Import(ImportArgs a)
+    {
+        var input = a.input;
+        var name = a.name;
+        var humanoid = a.humanoid;
+        var category = a.category ?? "";
+        float speedScale = a.speedScale;
+        var report = new Report { request_id = a.requestId ?? "" };
+        GameObject built = null;
         try
         {
             if (input == null || name == null) throw new Exception("missing -vgacInput or -vgacName");
@@ -205,7 +265,7 @@ public static class VgacImport
 
             if (humanoid)
             {
-                report.avatar_mapping = MakeHumanoid(importer, fbxPath, report, Flag("-vgacKeepPose"));
+                report.avatar_mapping = MakeHumanoid(importer, fbxPath, report, a.keepPose);
                 humanoid = report.avatar_mapping != "generic";
             }
             else report.avatar_mapping = "none";
@@ -217,6 +277,7 @@ public static class VgacImport
             AssetDatabase.CreateAsset(mat, assetDir + "/" + name + ".mat");
 
             var instance = (GameObject)PrefabUtility.InstantiatePrefab(model);
+            built = instance;  // removed below even when a later step throws (an open Editor keeps its scene)
             instance.name = name;
             var renderers = instance.GetComponentsInChildren<Renderer>(true);
             foreach (var r in renderers) r.sharedMaterial = mat;
@@ -233,9 +294,9 @@ public static class VgacImport
             // simple body shape on the root, which replaces the convex hull (a hull does not follow the animation).
             bool rigged = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(s => s.bones.Length > 0);
             bool bodyShape = false;
-            var hitPath = Arg("-vgacHitboxes");
+            var hitPath = a.hitboxes;
             if (hitPath != null && File.Exists(hitPath) && rigged)
-                bodyShape = AddHitboxes(instance, hitPath, Arg("-vgacMovementShape") ?? "auto", ParseFloat(Arg("-vgacScale"), 1f), report);
+                bodyShape = AddHitboxes(instance, hitPath, a.movementShape ?? "auto", a.scale, report);
 
             // Collision (G16): one component per collision mesh under a Colliders child of the root, of the kind
             // colliders.json names: box, sphere and capsule become primitive colliders fitted to the mesh's bounds; hull
@@ -244,7 +305,7 @@ public static class VgacImport
             var colMeshes = instance.GetComponentsInChildren<MeshFilter>(true).Where(m => IsColliderName(m.name)).OrderBy(m => m.name).ToList();
             if (colMeshes.Count > 0)
             {
-                if (!bodyShape) AddColliders(instance, colMeshes, ReadColliders(Arg("-vgacColliders"), report), report);
+                if (!bodyShape) AddColliders(instance, colMeshes, ReadColliders(a.colliders, report), report);
                 foreach (var mf in colMeshes) mf.gameObject.SetActive(false);
             }
             else if (!bodyShape) report.warnings.Add("no collider mesh");
@@ -316,7 +377,7 @@ public static class VgacImport
 
             // Clips: the shared library for a valid Humanoid, else the clips baked into the model FBX itself.
             List<AnimationClip> clipSet = null;
-            var clipsSrc = Arg("-vgacClips");
+            var clipsSrc = a.clips;
             if (clipsSrc != null && File.Exists(clipsSrc) && avatar != null && avatar.isHuman && avatar.isValid)
             {
                 var clipsPath = assetDir + "/clips.fbx";
@@ -335,7 +396,7 @@ public static class VgacImport
             else
             {
                 if (clipsSrc != null) report.warnings.Add("clips library skipped: avatar not humanoid or file missing");
-                SetClipLoops(importer, report, ReadClipInfo(Arg("-vgacClipInfo"), report));
+                SetClipLoops(importer, report, ReadClipInfo(a.clipInfo, report));
                 clipSet = LoadClips(fbxPath);
             }
             // Read Loop Time back from the imported clips: that is what the game gets.
@@ -355,6 +416,7 @@ public static class VgacImport
             var prefabPath = assetDir + "/" + name + ".prefab";
             PrefabUtility.SaveAsPrefabAsset(instance, prefabPath);
             UnityEngine.Object.DestroyImmediate(instance);
+            built = null;
             report.prefab = prefabPath;
             report.ok = true;
         }
@@ -363,10 +425,132 @@ public static class VgacImport
             report.ok = false;
             report.error = e.ToString();
         }
+        finally
+        {
+            if (built != null) UnityEngine.Object.DestroyImmediate(built);
+        }
         var json = JsonUtility.ToJson(report, true);
-        File.WriteAllText(Path.Combine(input ?? ".", "unity_report.json"), json);
+        try { File.WriteAllText(Path.Combine(input ?? ".", "unity_report.json"), json); }
+        catch (Exception e) { Debug.LogWarning("VGAC: could not write unity_report.json: " + e.Message); }
         Debug.Log("VGAC_REPORT " + json);
-        if (!report.ok) EditorApplication.Exit(1);
+        return report;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Editor hand-off (Version 6): requests the backend leaves in Assets/VGAC/<name>/_incoming/vgac_import.json.
+
+    public const string RequestFile = "vgac_import.json";
+    public const string DoneFile = "vgac_import.done.json";
+    const string RequestRoot = "Assets/VGAC";
+
+    [Serializable]
+    class Request
+    {
+        public string request_id = "";
+        public string importer_version = "";
+        public string name = "";
+        public List<string> args = new List<string>();
+    }
+
+    static bool sweeping;
+
+    // Pending request files under Assets/VGAC, as project-relative paths. Cheap: no Assets/VGAC folder, no work.
+    public static List<string> PendingRequests()
+    {
+        if (!Directory.Exists(RequestRoot)) return new List<string>();
+        return Directory.GetFiles(RequestRoot, RequestFile, SearchOption.AllDirectories)
+            .Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal).ToList();
+    }
+
+    // Run every pending request. Safe to call again: a finished request has been renamed, so it is not found twice.
+    // Never throws. -> the number of requests handled.
+    public static int Sweep()
+    {
+        if (sweeping) return 0;
+        int done = 0;
+        sweeping = true;
+        try
+        {
+            foreach (var path in PendingRequests())
+            {
+                try { if (HandleRequest(path)) done++; }
+                catch (Exception e) { Debug.LogError("VGAC: request " + path + " failed: " + e); }
+            }
+            if (done > 0) AssetDatabase.Refresh();
+        }
+        catch (Exception e) { Debug.LogError("VGAC: sweep failed: " + e); }
+        finally { sweeping = false; }
+        return done;
+    }
+
+    static bool HandleRequest(string path)
+    {
+        if (!File.Exists(path)) return false;  // handled already
+        var dir = Path.GetDirectoryName(path).Replace('\\', '/');
+        Request req;
+        Report report;
+        try { req = JsonUtility.FromJson<Request>(File.ReadAllText(path)); }
+        catch (Exception e) { req = null; Debug.LogError("VGAC: " + path + " is not readable: " + e.Message); }
+        if (req == null || req.args == null || req.args.Count == 0)
+        {
+            report = new Report { ok = false, error = "request file not readable: " + path, request_id = req?.request_id ?? "" };
+            File.WriteAllText(Path.Combine(dir, "unity_report.json"), JsonUtility.ToJson(report, true));
+        }
+        else
+        {
+            var a = ImportArgs.Parse(req.args, dir);
+            a.requestId = req.request_id ?? "";
+            if (string.IsNullOrEmpty(a.name)) a.name = req.name;
+            Debug.Log("VGAC: importing " + a.name + " (request " + a.requestId + ")");
+            report = Import(a);  // writes <dir>/unity_report.json with the request id
+            if (report.ok)
+            {
+                // The prefab has its own copies now; drop the incoming model and pictures so the project does not
+                // carry a second, unconfigured copy of the model. The small JSON files stay as the record.
+                foreach (var f in Directory.GetFiles(dir).Where(f => f.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)
+                                                                     || f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var ap = f.Replace('\\', '/');
+                    if (!AssetDatabase.DeleteAsset(ap)) { File.Delete(ap); if (File.Exists(ap + ".meta")) File.Delete(ap + ".meta"); }
+                }
+            }
+        }
+        MarkDone(path, dir + "/" + DoneFile);
+        Debug.Log("VGAC: request " + (req?.request_id ?? "?") + (report.ok ? " imported: " + report.prefab : " failed: " + report.error));
+        return true;
+    }
+
+    static void MarkDone(string from, string to)
+    {
+        if (File.Exists(to)) { if (!AssetDatabase.DeleteAsset(to)) { File.Delete(to); if (File.Exists(to + ".meta")) File.Delete(to + ".meta"); } }
+        var err = AssetDatabase.MoveAsset(from, to);
+        if (string.IsNullOrEmpty(err)) return;
+        File.Move(from, to);  // the request was never imported as an asset (no refresh yet)
+        if (File.Exists(from + ".meta")) File.Delete(from + ".meta");
+    }
+
+    // Batch check of the hand-off: the same sweep the Editor runs. Exit code 1 when any handled request failed.
+    // Unity.exe -batchmode -quit -projectPath <project> -executeMethod VgacImport.ImportPending
+    public static void ImportPending()
+    {
+        var pending = PendingRequests();
+        int n = Sweep();
+        bool failed = false;
+        foreach (var p in pending)
+        {
+            var rp = Path.Combine(Path.GetDirectoryName(p), "unity_report.json");
+            try { if (File.Exists(rp) && !JsonUtility.FromJson<Report>(File.ReadAllText(rp)).ok) failed = true; }
+            catch (Exception) { failed = true; }
+        }
+        Debug.Log("VGAC_PENDING handled " + n + " of " + pending.Count);
+        if (failed) EditorApplication.Exit(1);
+    }
+
+    [MenuItem("Tools/VGAC/Import pending assets")]
+    static void ImportPendingMenu()
+    {
+        int n = Sweep();
+        Debug.Log(n == 0 ? "VGAC: no pending assets." : "VGAC: imported " + n + " pending asset(s); see the Console for each result.");
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -1369,4 +1553,55 @@ public static class VgacImport
     }
 
     [Serializable] class SnapReport { public bool ok; public string error = ""; public List<string> files = new List<string>(); public List<string> loopProbes = new List<string>(); }
+}
+
+// Runs inside an open Editor: after any import that brings in a hand-off request, and once after each script load
+// (which also covers a newer VgacImport.cs dropped into the open project). The work is deferred to delayCall, outside
+// the import, because importing assets from inside OnPostprocessAllAssets is not allowed. Batch mode is left to
+// VgacImport.Run and VgacImport.ImportPending. Nothing here throws, and nothing runs in a project with no requests.
+class VgacImportWatcher : AssetPostprocessor
+{
+    static bool scheduled;
+
+    static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths)
+    {
+        try
+        {
+            if (Application.isBatchMode || importedAssets == null) return;
+            foreach (var p in importedAssets)
+                if (p != null && p.EndsWith("/" + VgacImport.RequestFile, StringComparison.Ordinal) && p.StartsWith("Assets/VGAC/", StringComparison.Ordinal))
+                {
+                    Schedule();
+                    return;
+                }
+        }
+        catch (Exception e) { Debug.LogError("VGAC: watcher failed: " + e); }
+    }
+
+    [InitializeOnLoadMethod]
+    static void AtLoad()
+    {
+        try
+        {
+            if (Application.isBatchMode) return;
+            if (VgacImport.PendingRequests().Count > 0) Schedule();
+        }
+        catch (Exception e) { Debug.LogError("VGAC: watcher failed at load: " + e); }
+    }
+
+    static void Schedule()
+    {
+        if (scheduled) return;
+        scheduled = true;
+        EditorApplication.delayCall += () =>
+        {
+            scheduled = false;
+            try
+            {
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode) { Schedule(); return; }
+                VgacImport.Sweep();
+            }
+            catch (Exception e) { Debug.LogError("VGAC: pending import failed: " + e); }
+        };
+    }
 }
