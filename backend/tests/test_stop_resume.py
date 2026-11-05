@@ -225,3 +225,34 @@ def test_autopilot_fix_can_be_a_redraw(client, gate):  # noqa: F811
     new = [v for v in full["stages"]["concept"] if v["parent_version_id"] == kept]
     assert len(new) == 1 and new[0]["status"] == "done" and new[0]["metrics"].get("instruction") == "Redraw it in an A-pose"
     assert full["selected"]["concept"] == new[0]["id"]
+
+
+def test_resume_keeps_the_seed_the_stopped_run_picked(client, monkeypatch):  # noqa: F811
+    from vgac.db import Job, Version, session_factory
+
+    state = {"hold": True}
+    inner = stages.execute
+
+    async def execute(ctx, kind, payload):
+        with session_factory()() as db:  # like a real stage: resolve the random seed and write it on the version
+            v = db.get(Version, payload["version_id"])
+            v.params = {**v.params, "seed": payload.get("params", {}).get("seed") or 4242}
+            db.commit()
+        while state["hold"]:
+            ctx.check_cancelled()
+            await asyncio.sleep(0.02)
+        await inner(ctx, kind, payload)
+
+    monkeypatch.setattr(stages, "execute", execute)
+    p, a = _project_asset(client)
+    aid = a["id"]
+    out = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    _until(lambda: client.get(f"/api/jobs/{out['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+    state["hold"] = False
+    client.post(f"/api/assets/{aid}/resume", json={"stage": "concept"})
+    assert wait_job(client, out["job"]["id"])["status"] == "done"
+    with session_factory()() as db:
+        assert db.get(Job, out["job"]["id"]).payload["params"]["seed"] == 4242
+    assert _versions(client, aid, "concept")[0]["params"]["seed"] == 4242
