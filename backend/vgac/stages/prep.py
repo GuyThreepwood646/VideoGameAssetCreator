@@ -55,6 +55,7 @@ from PIL import Image
 
 from .. import imaging, quality, reference
 from ..blender import gridfit
+from . import face_detail
 from .base import StageContext
 from .concept import stage_recipe
 
@@ -217,6 +218,16 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         for key, p in result["files"].items():
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
+        # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
+        # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
+        current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
+        sc.set_params(face_detail=params.get("face_detail") is not False, face_strength=face_detail.strength_of(params))
+        fd = await face_detail.run(sc, out, current, rec, params)
+        for key, p in fd["files"].items():
+            sc.register(key, p)
+        sc.set_metrics(**fd["metrics"])
+        if fd["relayout"]:
+            sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex))
     elif not keep_normal:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     await judge(sc)
@@ -390,6 +401,20 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     return {"metrics": metrics, "files": files}
 
 
+def layout_measures(final_glb: Path, tex: int) -> dict[str, Any]:
+    """The texture layout measures of texture_pass, again, after the face detail pass laid the texture out anew and
+    baked every map onto the final mesh (so the maps match it by construction)."""
+    uvf = imaging.load_uv_mesh(final_glb)
+    if uvf is None:
+        return {}
+    labels = imaging.rasterise_uv(uvf, tex)["labels"]
+    pad = imaging.unwrap_padding(tex)
+    h = imaging.uv_hash(uvf)
+    return {"atlas_used": round(imaging.atlas_used(labels), 4), "texture_padding_px": imaging.gutter_px(labels, pad // 2 + 2),
+            "texture_padding_target_px": pad, "bake_mesh_hash": h, "export_mesh_hash": h, "bake_match": 1.0, "rebaked": True,
+            "rebake_reason": "face detail"}
+
+
 def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path], files: dict[str, Path], new_base: Any, size: int,
                out_dir: Path) -> tuple[dict[str, Any], int | None]:
     """The recipe's texture treatment inside texture_pass (files is updated in place). -> (metrics, the size the
@@ -515,9 +540,10 @@ def look_checks(rec: dict[str, Any], report: dict[str, Any], metrics: dict[str, 
                           vars={"look": look, "summary": summary, "problem": "; ".join(problems)})]
 
 
-def link_textures(sc: StageContext, keep_normal: bool = True) -> None:
-    """Point the texture keys at the mesh stage's PNGs so viewers find them without copying (not the normal map when
-    the recipe's look has none)."""
+def link_textures(sc: StageContext, keep_normal: bool = True, stages: tuple[str, ...] = ("mesh",)) -> None:
+    """Point the texture keys at the PNGs of the nearest earlier version of `stages` (the mesh stage's for prep; the
+    rig stage passes prep, whose maps are the ones that ship) so viewers find them without copying (not the normal
+    map when the recipe's look has none)."""
     from .. import library
 
     for key in ("base_color", "normal", "metallic", "roughness", "ao"):
@@ -526,7 +552,7 @@ def link_textures(sc: StageContext, keep_normal: bool = True) -> None:
             files.pop("normal", None)
             sc.version.files = files
             continue
-        p = sc.lineage_file(key, ("mesh",))
+        p = sc.lineage_file(key, stages)
         if p is not None:
             files = sc.version.files
             files[key] = library.rel_path(p, sc.settings)
@@ -572,6 +598,7 @@ async def judge(sc: StageContext) -> None:
     checks = prep_checks(report, sc.version.params, m, sc.asset.category, limit, tri_vars)
     checks += surface_checks(m, sc.version.params)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
+    checks += face_detail.face_checks(m)
     sc.set_metrics(**quality.summarise(checks))
 
 
