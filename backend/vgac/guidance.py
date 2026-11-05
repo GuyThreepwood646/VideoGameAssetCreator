@@ -55,25 +55,25 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
 }
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
-    "model": {"simple": True, "help": {"meaning": "Which painting engine draws the concept.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
+    "model": {"simple": True, "help": {"meaning": "Which image model paints the first picture.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
     "seed": {"simple": False, "help": {"meaning": "A number that makes the same request give the same picture.", "why": "Change it to get a different take on the same description.", "technical": "Random seed"}},
     "width": {"simple": False, "help": {"meaning": "Picture width in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent width"}},
     "height": {"simple": False, "help": {"meaning": "Picture height in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent height"}},
-    "steps": {"simple": False, "help": {"meaning": "How many refinement passes the painter makes.", "why": "More can add detail but takes longer; the model default is tuned.", "technical": "Sampler steps"}},
-    "readiness_block": {"simple": True, "help": {"meaning": "Adds the standard pose and plain background your category needs.", "why": "Keeps the picture in a shape the 3D builder and the rigger can use.", "technical": "Pipeline-readiness prompt block"}},
+    "steps": {"simple": False, "help": {"meaning": "How many refinement passes the model makes.", "why": "More can add detail but takes longer; the model default is tuned.", "technical": "Sampler steps"}},
+    "readiness_block": {"simple": True, "help": {"meaning": "Adds the standard pose and plain background your category needs.", "why": "Keeps the picture in a shape the image-to-3D model and the rigging model (SkinToken) can use.", "technical": "Pipeline-readiness prompt block"}},
     "prompt_override": {"simple": False, "help": {"meaning": "Replace the description for this one attempt.", "why": "Try a different wording without changing the asset.", "technical": "Prompt override"}},
-    "views": {"simple": True, "help": {"meaning": "Which sides to look at.", "why": "Front, left, back and right are needed for the 3D builder's alternative engine; the rest are for you.", "technical": "Turnaround view set"},
+    "views": {"simple": True, "help": {"meaning": "Which sides to look at.", "why": "Front, left, back and right are needed for the alternative image-to-3D model (Hunyuan3D); the rest are for you.", "technical": "Turnaround view set"},
               "options": {"front": "Front", "left": "Left side", "back": "Back", "right": "Right side", "quarter": "Three-quarter", "top": "Top"}},
-    "lora_strength": {"simple": False, "help": {"meaning": "How strongly the camera-angle helper is applied.", "why": "Lower keeps more of the original look; higher turns more reliably.", "technical": "Multiple-angles LoRA strength"}},
+    "lora_strength": {"simple": False, "help": {"meaning": "How strongly the multiple-angles LoRA is applied.", "why": "Lower keeps more of the original look; higher turns more reliably.", "technical": "lora_strength (Qwen-Image-Edit-2511 multiple-angles LoRA)"}},
     "auto_reroll": {"simple": True, "help": {"meaning": "Retry a view automatically when it fails the consistency check.", "why": "Saves you clicking regenerate on bad views.", "technical": "Auto re-roll on failed checks"}},
-    "engine": {"simple": True, "help": {"meaning": "Which 3D builder to use.", "why": "TRELLIS.2 gives the most detail from one picture; Hunyuan3D uses all four side views, better for long animals.", "technical": "Image-to-3D engine: trellis or hy3d"},
+    "engine": {"simple": True, "help": {"meaning": "Which image-to-3D model (builder) to use.", "why": "TRELLIS.2 gives the most detail from one picture; Hunyuan3D uses all four side views, better for long animals.", "technical": "Image-to-3D engine: trellis or hy3d"},
                "options": {"trellis": "TRELLIS (most detail from one picture)", "hy3d": "Hunyuan (uses all four sides; good for long animals)"}},
     "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front.", "technical": "Conditioning image selection"},
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view"}},
-    "target_faces": {"simple": True, "help": {"meaning": "Detail level: how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
+    "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
     "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
                      "options": {"256": "256 px (smallest, retro and pixel looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
-    "upsample": {"simple": False, "help": {"meaning": "Internal detail level of the 3D builder.", "why": "1536 captures finer shapes but takes several times longer.", "technical": "TRELLIS.2 upsample resolution"},
+    "upsample": {"simple": False, "help": {"meaning": "Internal detail level of the image-to-3D model (TRELLIS.2).", "why": "1536 captures finer shapes but takes several times longer.", "technical": "TRELLIS.2 upsample resolution"},
                  "options": {"1024": "Normal", "1536": "Fine (several times slower)"}},
     "remesh": {"simple": False, "help": {"meaning": "Rebuild the surface as one solid shell before simplifying.", "why": "Removes double walls and closes holes; keep it on.", "technical": "RemeshMesh (solid sign mode)"}},
     "size_m": {"simple": True, "help": {"meaning": "How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.", "why": "Keeps everything in proportion, so a car is car-sized next to your character.", "technical": "Uniform scale so the extent on size_axis equals size_m"}},
@@ -97,7 +97,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                          "technical": "Modular grid, grid_m; dimensions rounded to grid steps"},
                "options": {"0.5": "0.5 m", "1": "1 m (standard)", "2": "2 m", "4": "4 m"}},
     "smooth_angle": {"simple": False, "help": {"meaning": "Edges sharper than this angle stay hard.", "why": "Lower keeps more crisp edges; higher looks softer.", "technical": "Auto-smooth crease angle (degrees)"}},
-    "template": {"simple": True, "help": {"meaning": "Which kind of skeleton to build.", "why": "Auto picks from the category: human-style bones map to standard animations, others get a generic skeleton.", "technical": "Skeleton naming template (Mixamo or model names)"},
+    "template": {"simple": True, "help": {"meaning": "Rig template: which kind of skeleton to build.", "why": "Auto picks from the category: human-style bones map to standard animations, others get a generic skeleton.", "technical": "Skeleton naming template (Mixamo or model names)"},
                  "options": {"auto": "Automatic (from the category)", "mixamo": "Standard human skeleton", "generic": "Fitted to the shape", "none": "No skeleton"}},
     "group_per_vertex": {"simple": False, "help": {"meaning": "How many bones may move one point of the surface.", "why": "4 is the engine standard; more is smoother but slower.", "technical": "Max bone influences per vertex"}},
     "bottom_center_origin": {"simple": False, "help": {"meaning": "Put the skeleton's root at the feet.", "why": "Game engines expect it there.", "technical": "Bottom-centre origin"}},
@@ -106,7 +106,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                         "why": "Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.",
                                         "technical": "Procedural locomotion mode: legs, wings, wave"},
                "options": {"legs": "Walks on its legs", "wings": "Flies, and walks when it lands", "wave": "Slithers or swims", "none": "Does not move by itself"}},
-    "moves": {"simple": True, "help": {"meaning": "The animations made for this character or creature.",
+    "moves": {"simple": True, "help": {"meaning": "Animation clips: the moves made for this character or creature.",
                                        "why": "Leave out moves your game will never use to keep the file smaller.",
                                        "technical": "Library clips retargeted in Blender (retarget.py) for human shapes, else the procedural set (procanim.py)"},
               "options": {"idle": "Standing still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
@@ -143,7 +143,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                                  "technical": "Root CapsuleCollider (direction Y or Z) or BoxCollider"},
                        "options": {"auto": "Automatic (by category)", "upright": "Standing capsule (works with Unity's Character Controller)",
                                    "along": "Lying capsule along the body", "box": "Box", "none": "None"}},
-    "lods": {"simple": True, "help": {"meaning": "Detail levels for far away: each fraction is a smaller copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
+    "lods": {"simple": True, "help": {"meaning": "LOD (detail levels): smaller copies for far away; each fraction is one copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
     "collider": {"simple": True, "help": {"meaning": "Invisible simple shapes the game uses to know where the asset is solid.",
                                           "why": "Without them things pass straight through it; the right shapes keep doorways open and seats usable.",
                                           "technical": "Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)"},
@@ -171,11 +171,17 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                          "why": "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.",
                                          "technical": "Baked lighting in albedo; AO and up-normal guided delight pass"},
                 "options": {"auto": "Automatic (by look)", "remove": "Remove them", "keep": "Keep them (part of the look)"}},
+    "face_detail": {"simple": True, "help": {"meaning": "Paint the face from the picture onto the model, so the eyes, brows and mouth are sharp and look like the picture.",
+                                             "why": "The 3D builder makes up the face from one picture and blurs it; this puts the painted face back.",
+                                             "technical": "Front render, painted head sharpened by Qwen-Image-Edit, fitted to the render, projected through the UVs; more texels for the face when it has too few"}},
+    "face_strength": {"simple": False, "help": {"meaning": "How much of the painted face goes onto the model.",
+                                                "why": "Lower it if the painted face looks pasted on; 1 uses all of it.",
+                                                "technical": "Projection weight multiplier, 0 to 1"}},
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
     # Recipes (reference.recipe, data/addons.yaml).
-    "addons": {"simple": False, "help": {"meaning": "Small trained helpers the painter loads on top of its model to push it toward a look.",
+    "addons": {"simple": False, "help": {"meaning": "LoRAs (style add-ons): small trained files that load on top of the image model and push it toward a look.",
                                          "why": "Your style already switches on the ones it needs. Turn one up, down or off here; required ones stay on.",
                                          "technical": "LoRA chain (LoraLoaderModelOnly after the model loader), strengths from data/addons.yaml"},
                "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
@@ -185,7 +191,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                 "options": {"auto": "Automatic (by look)", "smooth": "Smooth", "flat": "Flat faces"}},
 }
 
-# Plain names of the add-on strength steps (the Add-ons list in Advanced).
+# Plain names of the LoRA strength steps (the LoRAs list in Advanced).
 STRENGTH_LABELS = {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}
 
 # --- Check contract (docs/GREAT-ASSETS-PLAN.md 2.1) -------------------------------------------------------------
@@ -462,7 +468,24 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": lambda c: ("The {label} " + ("{stays}" if (c.get("vars") or {}).get("stays") else "stays")
                          + " clear of the body in every move we checked ({clips})."),
-        "fail": "The {label} passes {cm} cm into the body during {clip}; nudge it away from the body under Add an item.",
+        "fail": lambda c: (("{pct}% of the {label} is inside the body during {clip} (up to {cm} cm in). "
+                            if _var(c, "by") == "share" else "The {label} passes {cm} cm into the body during {clip}. ")
+                           + ("{tried} " if _var(c, "tried") else "")
+                           + "Move it under Add an item, or choose another place for it."),
+        # A placement the person set by hand was not fitted: fitting it is the useful fix. One we already fitted is not
+        # fitted again by a rebuild (it would find the same answer), so there is no button then.
+        "fix": lambda c: None if _var(c, "fitted") else {"stage": "export", "params": {"fit_items": True}},
+        "fix_label": "Fit it for me",
+    },
+    "item_above_ground": {
+        "severity": "warn",
+        "ok": "The {items} stay above the floor in every move we checked.",
+        "fail": "The {label} dips {cm} cm below the floor during {clip}, so it would cut into the ground in a game. Move it under Add an item.",
+    },
+    "items_apart": {
+        "severity": "warn",
+        "ok": "The {items} never pass through each other in the moves we checked.",
+        "fail": "The {a} passes {cm} cm into the {b} during {clip}. Move one of them under Add an item.",
     },
     "controller_ready": {
         "severity": "warn",
@@ -527,6 +550,21 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The model uses only {value:pct} of its texture, so it looks less sharp than it could.",
         "fix": _atlas_fix,
         "fix_label": "Repaint the surface",
+    },
+    # The face detail pass (stages/face_detail.py), checked in prep. It measures sharpness and how well the model's
+    # face carries the fitted picture's features; it does not claim the face is the same person.
+    "face_matches_picture": {
+        "severity": "warn",
+        "ok": "The face was painted from the picture: its detail went from {before:n} to {value:n} (sharp from {limit:n}).",
+        "fail": lambda c: {
+            "no_card": "The face was not painted from the picture: no graphics card that draws pictures was free.",
+            "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",
+            "error": "The face was not painted from the picture: something went wrong on the way.",
+            "blurry": "The face is still blurry after painting it from the picture (detail {value:n}, sharp from {limit:n}).",
+            "off_picture": "The face was painted, but it follows the picture poorly (match {match:n} of 1).",
+        }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
+        "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None}},
+        "fix_label": "Paint the face again",
     },
     # G15 (plan 3.8): scenery on the grid, checked in prep.
     "grid_fit": {
@@ -814,7 +852,7 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
     reasons = []
     if style == "painted" and platform in ("high",):
         model = "zbase"
-        reasons.append("a showcase target deserves the slower, higher-quality painter")
+        reasons.append("a showcase target deserves the slower, higher-quality model")
     elif style == "painted":
         reasons.append("the fastest painted look at this size")
     elif style == "cel":

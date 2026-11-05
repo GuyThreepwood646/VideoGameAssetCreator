@@ -57,7 +57,7 @@ BLENDER_VERSION_TIMEOUT = 15.0
 GRAPHS_DIR = PACKAGE_DIR / "graphs"
 
 GROUPS = ("tools", "engines", "models", "storage")
-GROUP_LABEL = {"tools": "Tools", "engines": "Graphics engines", "models": "Models", "storage": "Storage"}
+GROUP_LABEL = {"tools": "Tools", "engines": "ComfyUI instances (graphics engines)", "models": "Models", "storage": "Storage"}
 STAGE_PLAIN = {"concept": "making the picture", "turnaround": "drawing all sides", "mesh": "building the 3D model",
                "prep": "cleaning up", "rig": "rigging", "export": "handing off", "judge": "reviewing",
                "material": "making materials"}
@@ -443,7 +443,7 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
     models = load_models()
     model_checks = [(mid, spec) for mid, spec in MODEL_LOADERS.items() if spec[2] in stages_here and models.get(mid, {}).get("file")]
     out: list[dict[str, Any]] = []
-    eng_id, eng_label = f"engine.{name}", f"Graphics engine on the {gpu}"
+    eng_id, eng_label = f"engine.{name}", f"ComfyUI instance on the {gpu}"
     starts = can_start if can_start is not None else inst.start_script is not None
 
     def not_checked(reason: str) -> list[dict[str, Any]]:
@@ -564,14 +564,14 @@ async def run_checks(settings: Settings, clients: dict[str, Any], disabled: set[
         client = clients.get(name)
         can_start = supervisor.can_start(name) if supervisor is not None else None
         if client is None:
-            items.append(item(f"engine.{name}", "engines", f"Graphics engine on the {settings.instances[name].gpu}",
+            items.append(item(f"engine.{name}", "engines", f"ComfyUI instance on the {settings.instances[name].gpu}",
                               "unknown", "Not checked yet.", "", [], f"instance {name}"))
             continue
         try:
             items.extend(await check_instance(settings, name, client, disabled, supervisor, can_start, probe))
         except Exception as e:  # noqa: BLE001
             log.exception("setup check of instance %s failed", name)
-            items.append(item(f"engine.{name}", "engines", f"Graphics engine on the {settings.instances[name].gpu}",
+            items.append(item(f"engine.{name}", "engines", f"ComfyUI instance on the {settings.instances[name].gpu}",
                               "unknown", "Not checked: the check itself failed.", "", [], f"{type(e).__name__}: {e}"))
     items.extend(check_disks(settings))
     items.append(check_memory(settings))

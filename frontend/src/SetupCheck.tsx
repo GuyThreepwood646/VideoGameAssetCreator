@@ -7,7 +7,7 @@ import { Info, Term } from './components/Info'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
 
 const GROUP_ORDER: SetupGroup[] = ['tools', 'engines', 'models', 'storage']
-const GROUP_LABEL: Record<SetupGroup, string> = { tools: 'Tools', engines: 'Graphics engines', models: 'Models', storage: 'Storage' }
+const GROUP_LABEL: Record<SetupGroup, string> = { tools: 'Tools', engines: 'ComfyUI instances (graphics engines)', models: 'Models', storage: 'Storage' }
 const STATE_WORD: Record<SetupState, string> = { ok: 'Ready', warn: 'Worth a look', fail: 'Needs fixing', unknown: 'Not checked' }
 const STATE_DOT: Record<SetupState, string> = { ok: 'ok', warn: 'warn', fail: 'bad', unknown: 'off' }
 

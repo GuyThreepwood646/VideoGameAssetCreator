@@ -261,7 +261,7 @@ export const stages: StageInfo[] = [
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 5 },
       { name: 'remesh', label: 'Remesh to watertight', type: 'boolean', default: true },
       // 3.9: seam space around texture pieces; Advanced (not in SIMPLE_PARAMS), empty means automatic.
-      { name: 'padding', label: 'Space around texture pieces (pixels)', type: 'integer', min: 1, max: 16, step: 1, default: null },
+      { name: 'padding', label: 'UV padding (seam space, in pixels)', type: 'integer', min: 1, max: 16, step: 1, default: null },
     ],
   },
   {
@@ -296,13 +296,13 @@ export const stages: StageInfo[] = [
         hint: 'Pick the picture where the front faces you. The game treats that side as forward.',
         categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'],
       },
-      { name: 'symmetric', label: 'Mirror the halves', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'symmetric', label: 'Symmetrize (mirror the halves)', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // 3.9: painted-on shadows, colour range and repainting. No option_labels, so help.ts OPTION_LABELS shows.
-      { name: 'delight', label: 'Painted-on shadows', type: 'select', options: ['auto', 'remove', 'keep'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
-      { name: 'pbr_fix', label: 'Keep colours in a realistic range', type: 'boolean', default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'delight', label: 'Delight (remove painted-on shadows)', type: 'select', options: ['auto', 'remove', 'keep'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'pbr_fix', label: 'PBR range check (realistic colour range)', type: 'boolean', default: null, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // Recipes: auto follows the look (flat faces for low-poly). No option_labels, so help.ts OPTION_LABELS shows.
       { name: 'shading', label: 'Shading', type: 'select', options: ['auto', 'smooth', 'flat'], default: 'auto', categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
-      { name: 'rebake', label: 'Paint the surface again', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
+      { name: 'rebake', label: 'Rebake (paint the surface again)', type: 'boolean', default: false, categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'environment', 'foliage'] },
       // This one carries the backend's option_labels (2.2); the others fall back to help.ts OPTION_LABELS.
       // Scenery always gets the corner anchor, so the pivot knob is not offered for it.
       {
@@ -356,7 +356,7 @@ export const stages: StageInfo[] = [
       { name: 'bend_test', label: 'Run bend test', type: 'boolean', default: true },
       // Creature moves (3.7) and hit boxes (4.2). No option_labels here, so help.ts OPTION_LABELS shows.
       { name: 'motion', label: 'Motion', type: 'select', options: ['legs', 'wings', 'wave', 'none'], default: null, categories: ['quadruped', 'multileg', 'winged', 'serpent'] },
-      { name: 'moves', label: 'Moves', type: 'multiselect', options: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'flap', 'glide', 'takeoff', 'land', 'slither'], default: null, categories: [...RIGGED_IDS] },
+      { name: 'moves', label: 'Animation clips (moves)', type: 'multiselect', options: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'flap', 'glide', 'takeoff', 'land', 'slither'], default: null, categories: [...RIGGED_IDS] },
       { name: 'move_size', label: 'Move size', type: 'select', options: ['small', 'normal', 'big'], default: 'normal', categories: [...RIGGED_IDS] },
       { name: 'move_speed', label: 'Move speed', type: 'select', options: ['slow', 'normal', 'fast'], default: 'normal', categories: [...RIGGED_IDS] },
       { name: 'hitboxes', label: 'Hit boxes', type: 'select', options: ['detailed', 'simple', 'none'], default: null, categories: [...RIGGED_IDS] },
@@ -379,14 +379,14 @@ export const stages: StageInfo[] = [
       // 3.4: collision by category, with the backend's option_labels.
       {
         name: 'collider',
-        label: 'Collision shape',
+        label: 'Collider (collision shape)',
         type: 'select',
         options: ['auto', 'hull', 'decompose', 'mesh', 'none'],
         default: 'auto',
         option_labels: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
         categories: ['prop_rigid', 'prop_articulated', 'vehicle', 'environment', 'foliage'],
       },
-      { name: 'collider_max_parts', label: 'Most shapes', type: 'integer', min: 1, max: 32, step: 1, default: null, categories: ['prop_rigid', 'prop_articulated', 'vehicle', 'environment'] },
+      { name: 'collider_max_parts', label: 'Max collider parts (most shapes)', type: 'integer', min: 1, max: 32, step: 1, default: null, categories: ['prop_rigid', 'prop_articulated', 'vehicle', 'environment'] },
       { name: 'movement_shape', label: 'Movement shape', type: 'select', options: ['auto', 'upright', 'along', 'box', 'none'], default: 'auto', categories: [...RIGGED_IDS] },
       { name: 'formats', label: 'Formats', type: 'multiselect', options: ['fbx', 'glb'], default: ['fbx', 'glb'] },
       { name: 'unity', label: 'Build Unity prefab', type: 'boolean', default: true },
@@ -1372,9 +1372,9 @@ export function setupReport(): SetupReport {
     it('unity_project', 'tools', 'Unity test project', 'ok', 'The Unity test project is there.', '', ['export'], 'unity_project in backend/config.yaml'),
     it('clips.ual1', 'tools', 'Shared animation library', 'ok', 'The shared animations (walk, run, idle and more) are there.', '', ['export'], 'clips_libraries.ual1 in backend/config.yaml'),
     it('skintoken_blender', 'tools', 'Blender for rigging', 'ok', 'The rigging engine knows where Blender is.', '', ['rig'], 'SKINTOKEN_BLENDER_BIN in runtime/start-comfy-b.ps1'),
-    it('engine.a', 'engines', 'Graphics engine on the RTX 3060', 'ok', 'Running.', '', ['mesh'], 'instance a at http://127.0.0.1:8188; device cuda:1 NVIDIA GeForce RTX 3060'),
+    it('engine.a', 'engines', 'ComfyUI instance on the RTX 3060', 'ok', 'Running.', '', ['mesh'], 'instance a at http://127.0.0.1:8188; device cuda:1 NVIDIA GeForce RTX 3060'),
     it('nodes.a.mesh.0', 'engines', 'Parts for building and baking the 3D model (TRELLIS.2)', 'ok', 'All parts are installed.', '', ['mesh'], 'instance a: node classes Trellis2ShapeStage, BakeTextureFromVoxel, ...'),
-    it('engine.b', 'engines', 'Graphics engine on the RTX 3080', 'unknown', 'Not running now; it starts when needed.', '', ['concept', 'turnaround', 'rig', 'material', 'judge'], 'instance b at http://127.0.0.1:8189'),
+    it('engine.b', 'engines', 'ComfyUI instance on the RTX 3080', 'unknown', 'Not running now; it starts when needed.', '', ['concept', 'turnaround', 'rig', 'material', 'judge'], 'instance b at http://127.0.0.1:8189'),
     it('nodes.b.rig.0', 'engines', 'Parts for rigging (SkinToken)', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['rig'], 'instance b: SkinTokenRigTrimesh, VGACLoadTrimesh, PreviewAny'),
     it('model.a.trellis2', 'models', 'TRELLIS.2', 'ok', 'Installed.', '', ['mesh'], 'instance a: trellis_2_int8_convrot.safetensors (UNETLoader.unet_name; models.yaml trellis2)'),
     it('model.b.zturbo', 'models', 'Z-Image Turbo', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['concept'], 'instance b: z-image-turbo-fp8-aio.safetensors (CheckpointLoaderSimple.ckpt_name; models.yaml zturbo)'),
@@ -1389,7 +1389,7 @@ export function setupReport(): SetupReport {
     items,
     groups: [
       { id: 'tools', label: 'Tools' },
-      { id: 'engines', label: 'Graphics engines' },
+      { id: 'engines', label: 'ComfyUI instances (graphics engines)' },
       { id: 'models', label: 'Models' },
       { id: 'storage', label: 'Storage' },
     ],

@@ -321,7 +321,7 @@ export type AddonEntry = {
   added_at?: string
 }
 
-// Your own add-ons (backend user_addons.py, docs/API.md "Your own add-ons").
+// Your own add-ons (backend user_addons.py, docs/API.md "your own LoRAs").
 export type MyAddonsListing = {
   addons: AddonEntry[]
   // The one folder the app keeps add-on files in (VGAC/mine/ inside ComfyUI's loras folder).
@@ -882,6 +882,28 @@ export type Attachment = {
   rotation: [number, number, number, number]
   rotation_deg: [number, number, number]
   scale: number
+  // Set by hand (nudges, numbers, size): "Fit it for me" then runs only when asked.
+  touched?: boolean
+  fit_request?: boolean
+  // What the last fit to the moves changed (backend vgac/items.py equip), in plain words in `sentence`.
+  fit?: AttachmentFit | null
+  // The shield was moved to the forearm for the person (a one-time note), or a better place is offered.
+  notice?: string
+  offer?: { socket: string; place: string; why: string }
+  offer_declined?: boolean
+}
+export type AttachmentFit = {
+  outward_cm: number
+  turn_deg: number
+  tilt_deg: number[]
+  before_m: number
+  before_clip: string
+  after_m: number
+  after_clip: string
+  cleared: boolean
+  changed: boolean
+  auto: boolean
+  sentence: string
 }
 export type SetAsideItem = { type: string; label: string; phrase: string; item_asset_id: string }
 export type Equipment = {
@@ -891,7 +913,7 @@ export type Equipment = {
   attachments: Attachment[]
   build?: ItemsBuild | null
 }
-export type ItemsBuild = { status: 'items' | 'equipping' | 'done' | 'error' | 'stopped'; item?: string; reason?: string; version_id?: string }
+export type ItemsBuild = { status: 'items' | 'equipping' | 'done' | 'error' | 'stopped'; item?: string; reason?: string; version_id?: string; fitting?: string }
 export type GripInfo = { found: boolean; confidence?: number; sure?: boolean; method?: string; reasons?: string[]; label?: string; error?: string }
 export type ItemStatus = {
   id: string
@@ -925,6 +947,7 @@ export type ItemsPanel = {
   limit: string
   step_cm: number
   step_deg: number
+  fit?: { clear_limit_cm: number; push_max_cm: number; tilt_max_deg: number; help: string }
 }
 export type NudgeBody = { move?: [number, number, number]; turn?: [number, number, number]; slide?: number; scale_steps?: number; big?: boolean; reset?: boolean }
 
@@ -933,10 +956,11 @@ export const itemsApi = {
   panel: (aid: string) => get<ItemsPanel>(`/api/assets/${aid}/items`),
   add: (aid: string, body: { type?: string; description?: string; item_asset_id?: string; socket?: string; build?: boolean }) =>
     post<{ attachment: Attachment; item: Asset; panel: ItemsPanel }>(`/api/assets/${aid}/items`, body),
-  update: (aid: string, attId: string, body: { socket?: string; stow_socket?: string; position?: number[]; rotation_deg?: number[]; scale?: number }) =>
+  update: (aid: string, attId: string, body: { socket?: string; stow_socket?: string; position?: number[]; rotation_deg?: number[]; scale?: number; keep_place?: boolean; dismiss_notice?: boolean }) =>
     put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`, body),
   nudge: (aid: string, attId: string, body: NudgeBody) => post<{ attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/nudge`, body),
   remove: (aid: string, attId: string) => del<{ removed: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`),
   apply: (aid: string) => post<RunResult>(`/api/assets/${aid}/items/apply`),
+  fit: (aid: string, attId: string) => post<RunResult & { attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/fit`),
   build: (aid: string) => post<ItemsPanel>(`/api/assets/${aid}/items/build`),
 }
