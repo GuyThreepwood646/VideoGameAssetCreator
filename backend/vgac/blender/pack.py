@@ -3,6 +3,7 @@
 Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|parts|mesh|none]
      [--collider-obj collider_parts.obj] [--formats fbx,glb]
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
+     [--shading smooth|flat] [--texture-filter smooth|crisp]
 
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
@@ -24,6 +25,11 @@ UVs: the rig stage's GLB (SkinToken output) carries no texture coordinates, and 
 With --uv-source (the prep GLB, same faces), a mesh without UVs gets them back: both meshes are normalised to their
 bounding boxes, each face takes the source face with the nearest centre, and each corner the UV of that face's nearest
 corner. Without this every texture samples one texel on a rigged character.
+
+Recipes (reference.recipe): --shading flat (low-poly) makes every face flat after the weld, so every LOD and both
+formats keep the facets whatever the input's normals were; --texture-filter crisp (pixel art) samples the GLB's
+textures nearest-neighbour (Image Texture interpolation Closest, which the glTF exporter writes as a NEAREST sampler).
+A look without surface bumps simply gets no --normal, so its GLB has no normal texture.
 """
 import json
 import math
@@ -49,6 +55,8 @@ tex_base = _common.opt("--base-color", "")
 tex_normal = _common.opt("--normal", "")
 tex_orm = _common.opt("--orm", "")
 uv_source = _common.opt("--uv-source", "")
+shading = _common.opt("--shading", "smooth")
+texture_filter = _common.opt("--texture-filter", "smooth")
 os.makedirs(out_dir, exist_ok=True)
 
 _common.open_glb(src)
@@ -127,6 +135,10 @@ bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.mesh.remove_doubles(threshold=0.00001)
 bpy.ops.object.mode_set(mode="OBJECT")
+if shading == "flat":
+    if mesh.data.has_custom_normals:
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    bpy.ops.object.shade_flat()
 
 
 def tri_count(o):
@@ -135,7 +147,8 @@ def tri_count(o):
 
 
 report = {"asset": name, "lods": {}, "lod_ratios": lods, "bones": len(arm.data.bones) if arm else 0, "clips": [],
-          "uvs": bool(mesh.data.uv_layers), "uv_transfer": uv_report}
+          "uvs": bool(mesh.data.uv_layers), "uv_transfer": uv_report, "shading": shading, "texture_filter": texture_filter,
+          "normal_map": bool(tex_normal and os.path.isfile(tex_normal))}
 report["lods"]["LOD0"] = tri_count(mesh)
 
 # LODs by decimation (keeps UVs and vertex groups).
@@ -373,6 +386,14 @@ def _image(path, colorspace):
     return img
 
 
+def _tex_node(nt, path, colorspace):
+    t = nt.nodes.new("ShaderNodeTexImage")
+    t.image = _image(path, colorspace)
+    if texture_filter == "crisp":
+        t.interpolation = "Closest"
+    return t
+
+
 def build_material():
     """Principled BSDF the glTF exporter reads: base colour, normal map, and one ORM image whose G drives roughness,
     B metallic and R occlusion (through the 'glTF Material Output' group), so the GLB references the ORM texture as
@@ -385,18 +406,15 @@ def build_material():
     nt = mat.node_tree
     bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
     if tex_base and os.path.isfile(tex_base):
-        t = nt.nodes.new("ShaderNodeTexImage")
-        t.image = _image(tex_base, "sRGB")
+        t = _tex_node(nt, tex_base, "sRGB")
         nt.links.new(t.outputs["Color"], bsdf.inputs["Base Color"])
     if tex_normal and os.path.isfile(tex_normal):
-        t = nt.nodes.new("ShaderNodeTexImage")
-        t.image = _image(tex_normal, "Non-Color")
+        t = _tex_node(nt, tex_normal, "Non-Color")
         nm = nt.nodes.new("ShaderNodeNormalMap")
         nt.links.new(t.outputs["Color"], nm.inputs["Color"])
         nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
     if tex_orm and os.path.isfile(tex_orm):
-        t = nt.nodes.new("ShaderNodeTexImage")
-        t.image = _image(tex_orm, "Non-Color")
+        t = _tex_node(nt, tex_orm, "Non-Color")
         sep = nt.nodes.new("ShaderNodeSeparateColor")
         nt.links.new(t.outputs["Color"], sep.inputs["Color"])
         nt.links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])

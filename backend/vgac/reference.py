@@ -45,6 +45,10 @@ GRID_HEIGHT_OPTIONS: list[Any] = ["auto", 0.5, 1, 3, 4]
 FACE_YAW_OPTIONS: list[Any] = ["auto", 0, 90, 180, 270]
 # Painted-on shadows (G07): auto follows the style.
 DELIGHT_OPTIONS = ("auto", "remove", "keep")
+# Recipes: an add-on's three strength steps, plus "off"; the prep shading choice (auto follows the recipe).
+STRENGTH_NAMES = ("subtle", "normal", "strong")
+ADDON_CHOICES = ("off",) + STRENGTH_NAMES
+SHADING_OPTIONS = ("auto", "smooth", "flat")
 
 
 def _param(name: str, type_: str, default: Any, label: str | None = None, description: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -68,6 +72,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("steps", "integer", None, min=1, max=60, description="Model default when empty"),
         _param("readiness_block", "boolean", True, description="Append the category pose block to the prompt"),
         _param("prompt_override", "string", "", description="Replaces the asset prompt for this version"),
+        # {add-on id: off | subtle | normal | strong}; ids missing here keep the recipe and style lock choice. The
+        # schema read (_schema) adds `catalog`: the concept add-ons with label, help, strengths and base models.
+        _param("addons", "addons", None, label="Add-ons", options=list(ADDON_CHOICES),
+               description="The recipe and the style lock decide when empty"),
     ],
     "turnaround": [
         _param("views", "multiselect", ["front", "left", "back", "right", "quarter"], options=list(TURNAROUND_VIEWS)),
@@ -78,8 +86,8 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     "mesh": [
         _param("engine", "select", "trellis", options=["trellis", "hy3d"]),
         _param("input_view", "select", "concept", options=["concept", "front", "quarter"]),
-        _param("target_faces", "integer", None, min=500, max=500000, description="Category and platform budget when empty"),
-        _param("texture_size", "select", None, options=[512, 1024, 2048, 4096], description="Platform budget when empty"),
+        _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
+        _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
         _param("upsample", "select", 1024, options=[1024, 1536]),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
@@ -104,6 +112,8 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Off unless turned on; mirroring makes prep paint the textures again (G05)"),
         _param("pivot", "select", "base", options=["base", "center"], categories=PIVOT_CATEGORIES),
         _param("smooth_angle", "number", 60.0, min=0.0, max=180.0),
+        _param("shading", "select", "auto", label="Shading", options=list(SHADING_OPTIONS), categories=SURFACE_CATEGORIES,
+               description="Automatic follows the recipe: flat for low-poly, smooth for the rest"),
         # G07, G08: the style decides when empty (data/styles.yaml delight_default and pbr_fix_default).
         _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Painted-on shadows"),
         _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="Keep colours in a realistic range",
@@ -210,6 +220,20 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 raise ValueError(f"{key} must be text")
             if len(value) > MAX_STRING_PARAM:
                 raise ValueError(f"{key} is too long (max {MAX_STRING_PARAM} characters)")
+        elif t == "addons":
+            # {add-on id: off | subtle | normal | strong}. Ids the registry does not know are kept here and reported
+            # (not applied) by resolve_addons, so an add-on removed from addons.yaml never breaks an older version.
+            opts = p.get("options") or list(ADDON_CHOICES)
+            if not isinstance(value, dict):
+                raise ValueError(f"{key} must map each add-on to one of {opts}")
+            clean: dict[str, str] = {}
+            for aid, choice in value.items():
+                if not isinstance(aid, str) or not aid or len(aid) > 100:
+                    raise ValueError(f"{key} has an add-on id that is not text")
+                if not isinstance(choice, str) or choice.lower() not in opts:
+                    raise ValueError(f"{key}: {aid} must be one of {opts}")
+                clean[aid] = choice.lower()
+            out[key] = clean
     return out
 
 
@@ -230,7 +254,10 @@ def _data() -> dict[str, Any]:
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}
     platforms = {p["id"]: p for p in _load_yaml(DATA_DIR / "platforms.yaml").get("platforms", [])}
     models = _load_yaml(DATA_DIR / "models.yaml").get("models", {})
-    return {"categories": categories, "styles": styles, "platforms": platforms, "models": models}
+    addon_path = DATA_DIR / "addons.yaml"
+    addon_list = (_load_yaml(addon_path).get("addons") or []) if addon_path.is_file() else []
+    addons_ = {a["id"]: a for a in addon_list if isinstance(a, dict) and a.get("id")}
+    return {"categories": categories, "styles": styles, "platforms": platforms, "models": models, "addons": addons_}
 
 
 def reload() -> None:
@@ -325,6 +352,8 @@ def _schema(stage: str) -> list[dict[str, Any]]:
     for entry in STAGE_SCHEMAS[stage]:
         if stage == "concept" and entry["name"] == "model":
             entry = {**entry, "options": list(concept_models())}
+        if stage == "concept" and entry["name"] == "addons":
+            entry = {**entry, "catalog": [addon_public(a) for a in addons() if a.get("stage") == "concept"]}
         if stage == "prep" and entry["name"] == "size_m":
             entry = {**entry, "by_category": {cid: size_spec(cid) for cid in entry.get("categories") or []}}
         out.append(entry)
@@ -373,6 +402,303 @@ def _presets() -> tuple[dict[str, Any], ...]:
 def style_presets() -> list[dict[str, Any]]:
     """Ready-made looks that fill a project's style lock (docs/UX-REVIEW.md item H)."""
     return [dict(p) for p in _presets()]
+
+
+# --- Add-ons (data/addons.yaml) ------------------------------------------------------------------------------------
+#
+# The registry is the only list of add-ons: nothing in the app reads a models folder. An add-on applies only when the
+# chosen model is in its base_models.
+
+
+def addons() -> list[dict[str, Any]]:
+    return list(_data()["addons"].values())
+
+
+def addon(aid: str) -> dict[str, Any] | None:
+    return _data()["addons"].get(aid)
+
+
+def addon_required(a: dict[str, Any], model: str | None = None) -> bool:
+    """True when the step cannot run without it: `required`, or the model is in its `required_for`."""
+    return bool(a.get("required")) or (model is not None and model in (a.get("required_for") or []))
+
+
+def addon_strength(a: dict[str, Any], name: str) -> float:
+    """The strength a step name loads the add-on at (an unknown name reads as the add-on's default step)."""
+    s = a.get("strengths") or {}
+    if name not in s:
+        name = a.get("default_strength") or "normal"
+    return float(s.get(name, 1.0))
+
+
+def addon_public(a: dict[str, Any], model: str | None = None) -> dict[str, Any]:
+    """What the app shows about an add-on: id, label, help, stage, base_models, strengths, default_strength,
+    required (for `model` when given, else always-required only), required_for, trigger, licence, source. The file
+    name is not shown."""
+    return {"id": a["id"], "label": a.get("label") or a["id"], "help": a.get("help") or {}, "stage": a.get("stage", "concept"),
+            "base_models": list(a.get("base_models") or []), "strengths": dict(a.get("strengths") or {}),
+            "default_strength": a.get("default_strength") or "normal", "required": addon_required(a, model),
+            "required_for": list(a.get("required_for") or []), "trigger": a.get("trigger") or "",
+            "licence": a.get("licence") or "unknown", "source": a.get("source") or ""}
+
+
+def addon_record(aid: str) -> dict[str, Any]:
+    """The add-on as the export manifest records it: id, name, file, licence, source."""
+    a = addon(aid) or {}
+    return {"id": aid, "name": a.get("label") or aid, "file": a.get("file") or "", "licence": a.get("licence") or "unknown",
+            "source": a.get("source") or "", "kind": "addon"}
+
+
+def _parse_strength(value: Any) -> tuple[str, float | None] | None:
+    """A strength as the style lock or a recipe writes it: a step name, or a number from 0 to 2."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and value.lower() in ADDON_CHOICES:
+        return value.lower(), None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return ("custom", f) if 0.0 <= f <= 2.0 else None
+
+
+def parse_lock_addons(items: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """The project style lock's `loras`: each an id, "id:strength" (a step name or a number), or {id, strength}.
+    -> ([{id, strength, value}], unknown) where unknown lists entries that are not in the registry (or unreadable)."""
+    out: list[dict[str, Any]] = []
+    unknown: list[str] = []
+    for item in items or []:
+        aid, strength = None, None
+        if isinstance(item, dict):
+            aid, strength = item.get("id"), item.get("strength")
+        elif isinstance(item, str):
+            aid, _, strength = item.strip().partition(":")
+            strength = strength.strip() or None
+        if not isinstance(aid, str) or not aid.strip() or addon(aid.strip()) is None:
+            unknown.append(str(aid if aid else item)[:100])
+            continue
+        parsed = _parse_strength(strength) if strength is not None else None
+        name, value = parsed if parsed else (None, None)
+        out.append({"id": aid.strip(), "strength": name, "value": value})
+    return out, unknown
+
+
+def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None = None, lock: Any = None,
+                   choices: dict[str, str] | None = None) -> dict[str, Any]:
+    """The add-ons a step loads, in order: the recipe defaults, then the style lock's `loras`, then the version's
+    `addons` choices ({id: off | subtle | normal | strong}). Later sources change the strength of an earlier entry or
+    add one; "off" removes it unless it is required. Only add-ons for this stage whose base_models hold `model` apply.
+    Required add-ons for this model are always there. ->
+    {applied: [{id, label, strength (step name or "custom"), value, file, trigger, built_in, required}],
+     ignored: [{id, reason}], unknown: [ids from the lock or the choices that the registry does not know]}"""
+    order: list[str] = []
+    picked: dict[str, dict[str, Any]] = {}
+    ignored: list[dict[str, Any]] = []
+    lock_items, unknown = parse_lock_addons(lock)
+
+    def put(aid: str, name: str | None, value: float | None, source: str) -> None:
+        a = addon(aid)
+        if a is None:
+            if aid not in unknown:
+                unknown.append(aid)
+            return
+        if a.get("stage", "concept") != stage:
+            return
+        if model not in (a.get("base_models") or []):
+            ignored.append({"id": aid, "reason": f"does not work with {model_label(model) or model}", "source": source})
+            picked.pop(aid, None)
+            return
+        if name == "off":
+            if addon_required(a, model):
+                ignored.append({"id": aid, "reason": "required, cannot be switched off", "source": source})
+                return
+            picked.pop(aid, None)
+            return
+        if aid not in order:
+            order.append(aid)
+        name = name or (picked.get(aid) or {}).get("strength") or a.get("default_strength") or "normal"
+        picked[aid] = {"strength": name, "value": value if value is not None else addon_strength(a, name), "source": source}
+
+    for a in addons():
+        if a.get("stage", "concept") == stage and model in (a.get("base_models") or []) and addon_required(a, model):
+            put(a["id"], None, None, "required")
+    for d in defaults or []:
+        parsed = _parse_strength(d.get("strength"))
+        put(d["id"], *(parsed or (None, None)), "recipe")
+    for item in lock_items:
+        put(item["id"], item["strength"], item["value"], "style lock")
+    for aid, choice in (choices or {}).items():
+        parsed = _parse_strength(choice)
+        if parsed is None:
+            continue
+        put(aid, parsed[0], parsed[1], "version")
+    applied = []
+    for aid in order:
+        if aid not in picked:
+            continue
+        a = addon(aid) or {}
+        p = picked[aid]
+        applied.append({"id": aid, "label": a.get("label") or aid, "strength": p["strength"], "value": round(float(p["value"]), 4),
+                        "file": a.get("file") or "", "trigger": a.get("trigger") or "", "built_in": model in (a.get("built_in") or []),
+                        "required": addon_required(a, model), "source": p["source"]})
+    return {"applied": applied, "ignored": ignored, "unknown": unknown}
+
+
+# --- Recipes: the chosen look carried through every step ------------------------------------------------------------
+#
+# reference.recipe(style, category, platform) resolves a style's `recipe` (styles.yaml), merged with its by_category
+# override, over RECIPE_DEFAULTS (today's behaviour), and turns the shares into numbers for the platform budget.
+
+RECIPE_DEFAULTS: dict[str, Any] = {
+    "concept": {"steps": None, "negative": ""},
+    "addons": [],
+    "turnaround": {"lora_strength": None, "prompt_suffix": ""},
+    "mesh": {"triangle_scale": 1.0, "triangle_floor": 0, "texture_cap": None, "normal_map": True},
+    "surface": {"shading": "smooth", "texture_filter": "smooth", "palette_colors": None, "pixel_snap": False},
+    "engine": {},  # filled from surface.texture_filter (crisp: point, no mipmaps, no compression) unless the style sets it
+}
+SHADINGS = ("smooth", "flat")
+TEXTURE_FILTERS = ("smooth", "crisp")
+FILTER_MODES = ("bilinear", "point")
+# The noun of the recipe's plain sentence, per category.
+CATEGORY_NOUNS = {"humanoid": "character", "quadruped": "creature", "winged": "flying creature", "multileg": "creature",
+                  "serpent": "creature", "vehicle": "vehicle", "prop_rigid": "prop", "prop_articulated": "prop",
+                  "environment": "scenery piece", "foliage": "plant", "material": "material"}
+
+
+def _deep_merge(base: dict[str, Any], over: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in (over or {}).items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def _as_choice(value: Any, options: tuple[str, ...], default: str) -> str:
+    return value if value in options else default
+
+
+def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = True) -> dict[str, Any]:
+    """The fully resolved recipe for a style, category and platform:
+    {id (short digest), style, category, platform, plain, concept {model, steps, prompt_block, negative},
+     addons [{id, strength}], turnaround {lora_strength, prompt_suffix}, mesh {triangle_scale, triangle_floor,
+     triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map}, surface {shading, texture_filter,
+     palette_colors, pixel_snap, delight, pbr_fix}, engine {filter_mode, mipmaps, compress}}.
+    With strict=False an unknown style reads as today's defaults with the Z-Image Turbo painter (a custom style id on
+    an older asset); unknown categories and platforms always raise KeyError."""
+    try:
+        s = style(style_id)
+    except KeyError:
+        if strict:
+            raise
+        s = {"id": style_id, "label": style_id, "model": "zturbo", "prompt_block": ""}
+    cat = category(category_id)
+    budget_ = budget(category_id, platform_id)
+    over = (s.get("by_category") or {}).get(category_id) or {}
+    raw = _deep_merge(_deep_merge(RECIPE_DEFAULTS, s.get("recipe") or {}), over.get("recipe") or {})
+
+    concept = {"model": s.get("model") or "zturbo", "steps": raw["concept"].get("steps"),
+               "prompt_block": s.get("prompt_block") or "", "negative": " ".join(str(raw["concept"].get("negative") or "").split())}
+    mesh_raw = raw["mesh"]
+    scale = float(mesh_raw.get("triangle_scale") or 1.0)
+    floor = int(mesh_raw.get("triangle_floor") or 0)
+    tris_budget = int(budget_.get("triangles") or 0)
+    tris = min(tris_budget, max(floor, int(round(tris_budget * scale)))) if tris_budget else None
+    tex_budget = int(budget_.get("texture") or 2048)
+    cap = mesh_raw.get("texture_cap")
+    tex = min(int(cap), tex_budget) if cap else tex_budget
+    mesh = {"triangle_scale": scale, "triangle_floor": floor, "triangles": tris, "budget_triangles": tris_budget or None,
+            "texture_cap": int(cap) if cap else None, "texture": tex, "budget_texture": tex_budget,
+            "normal_map": bool(mesh_raw.get("normal_map", True))}
+    sr = raw["surface"]
+    crisp = sr.get("texture_filter") == "crisp"
+    palette = sr.get("palette_colors")
+    surface = {"shading": _as_choice(sr.get("shading"), SHADINGS, "smooth"),
+               "texture_filter": "crisp" if crisp else "smooth",
+               "palette_colors": int(palette) if palette else None,
+               "pixel_snap": bool(sr.get("pixel_snap", crisp)),
+               "delight": "remove" if s.get("delight_default") == "remove" else "keep",
+               "pbr_fix": bool(s.get("pbr_fix_default", False))}
+    er = raw["engine"] or {}
+    engine = {"filter_mode": _as_choice(er.get("filter_mode"), FILTER_MODES, "point" if crisp else "bilinear"),
+              "mipmaps": bool(er.get("mipmaps", not crisp)), "compress": bool(er.get("compress", not crisp))}
+
+    defaults: list[dict[str, Any]] = []
+    for d in raw.get("addons") or []:
+        if isinstance(d, dict) and d.get("id") and addon(d["id"]) is not None:
+            defaults.append({"id": d["id"], "strength": d.get("strength") or addon(d["id"]).get("default_strength") or "normal"})
+    for a in addons():
+        if addon_required(a, concept["model"]) and a.get("stage") == "concept" and concept["model"] in (a.get("base_models") or []) \
+                or (a.get("required") and a.get("stage") == "turnaround"):
+            if not any(d["id"] == a["id"] for d in defaults):
+                defaults.append({"id": a["id"], "strength": a.get("default_strength") or "normal"})
+    turn_raw = raw["turnaround"]
+    lora = turn_raw.get("lora_strength")
+    if lora is None:
+        angles = addon("qwen_angles")
+        pick = next((d["strength"] for d in defaults if d["id"] == "qwen_angles"), None)
+        lora = addon_strength(angles, pick or "normal") if angles else 0.9
+    turnaround = {"lora_strength": float(lora), "prompt_suffix": " ".join(str(turn_raw.get("prompt_suffix") or "").split())}
+
+    look = s.get("look") or s.get("label") or style_id
+    text = (over.get("plain") or s.get("plain") or "the full pipeline for your platform.").strip()
+    noun = CATEGORY_NOUNS.get(category_id) or str(cat.get("label") or category_id).lower()
+    plain = f"{look} {noun}: {text}"
+    if not plain.endswith("."):
+        plain += "."
+    out = {"style": s["id"], "category": category_id, "platform": platform_id, "plain": plain, "concept": concept,
+           "addons": defaults, "turnaround": turnaround, "mesh": mesh, "surface": surface, "engine": engine}
+    out["id"] = recipe_digest(out)
+    return out
+
+
+def default_recipe(style_id: str = "") -> dict[str, Any]:
+    """Today's behaviour as a recipe, without a category or platform to size it (triangles and texture empty)."""
+    d = RECIPE_DEFAULTS
+    out = {"style": style_id or "", "category": None, "platform": None, "plain": "", "concept": {"model": "zturbo", "prompt_block": "", **d["concept"]},
+           "addons": [{"id": a["id"], "strength": a.get("default_strength") or "normal"} for a in addons()
+                      if a.get("required") and a.get("stage") == "turnaround"],
+           "turnaround": {"lora_strength": addon_strength(addon("qwen_angles"), "normal") if addon("qwen_angles") else 0.9, "prompt_suffix": ""},
+           "mesh": {**d["mesh"], "triangles": None, "budget_triangles": None, "texture": None, "budget_texture": None},
+           "surface": {**d["surface"], "delight": "keep", "pbr_fix": False},
+           "engine": {"filter_mode": "bilinear", "mipmaps": True, "compress": True}}
+    out["id"] = recipe_digest(out)
+    return out
+
+
+def recipe_digest(r: dict[str, Any]) -> str:
+    """A short hash of a resolved recipe (everything but its own id), so a version records exactly which one ran."""
+    import hashlib
+    import json
+
+    body = {k: v for k, v in r.items() if k != "id"}
+    return hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+def recipe_record(r: dict[str, Any], *sections: str) -> dict[str, Any]:
+    """What a version's metrics.recipe holds: id, style, category, platform, plain, and the named sections."""
+    out = {k: r[k] for k in ("id", "style", "category", "platform", "plain")}
+    for s in sections:
+        out[s] = r[s]
+    return out
+
+
+def recipe_public(style_id: str, category_id: str, platform_id: str) -> dict[str, Any]:
+    """GET /api/recipe: the recipe plus `addon_entries`, every add-on that works with the recipe's painter or the
+    turnaround (addon_public, with `on` and `strength` from the recipe defaults)."""
+    r = recipe(style_id, category_id, platform_id)
+    model = r["concept"]["model"]
+    chosen = {d["id"]: d["strength"] for d in r["addons"]}
+    entries = []
+    for a in addons():
+        stage = a.get("stage", "concept")
+        works = model in (a.get("base_models") or []) if stage == "concept" else True
+        if not works:
+            continue
+        e = addon_public(a, model if stage == "concept" else None)
+        e["on"] = a["id"] in chosen
+        e["strength"] = chosen.get(a["id"], e["default_strength"])
+        entries.append(e)
+    return {**r, "addon_entries": entries}
 
 
 # --- Size along the category's axis (G12) and from the description (light G13) --------------------------------

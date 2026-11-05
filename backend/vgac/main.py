@@ -338,6 +338,16 @@ def style_presets_() -> list[dict[str, Any]]:
     return reference.style_presets()
 
 
+@app.get("/api/recipe")
+def recipe_(style: str = "painted", category: str = "humanoid", platform: str = "pc_mid") -> dict[str, Any]:
+    """The resolved recipe for a style, category and platform, plus addon_entries: every add-on that works with the
+    recipe's painter or the turnaround, with label, help, strengths, required, on and strength."""
+    try:
+        return reference.recipe_public(style, category, platform)
+    except KeyError as e:
+        raise HTTPException(400, str(e.args[0]))
+
+
 @app.get("/api/suggest")
 def suggest_(category: str = "humanoid", style: str = "painted", platform: str = "pc_mid") -> dict[str, Any]:
     from . import guidance

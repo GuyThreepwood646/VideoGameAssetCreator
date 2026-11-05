@@ -12,11 +12,12 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from .. import library
+from .. import library, reference
 from ..db import Version
 from ..graphs.qwen_edit import angle_graph, view_prompt
 from ..imaging import alpha_bbox, colour_histogram, histogram_distance, mirror_iou
 from .base import StageContext, random_seed
+from .concept import stage_recipe
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
 MAX_REROLLS = 2
@@ -81,7 +82,13 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     """Generate and check `views` from the concept image of `source`."""
     src = _source_image(sc, source)
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
-    lora_strength = float(params.get("lora_strength", 0.9))
+    rec = stage_recipe(sc)
+    # The camera-angle helper's strength: the version's, else the recipe's (the add-on's normal step, 0.9, unless the
+    # look sets its own). The recipe's prompt words go after the view words, before any refine instruction.
+    chosen = params.get("lora_strength")
+    lora_strength = float(chosen) if chosen is not None else float(rec["turnaround"]["lora_strength"])
+    suffix = rec["turnaround"].get("prompt_suffix") or ""
+    extra = " ".join(p for p in (suffix, extra) if p and p.strip())
     auto_reroll = bool(params.get("auto_reroll", True))
     base_seed = params.get("seed")
     sc.use_model("qwen_edit")
@@ -126,7 +133,11 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             attempts += 1
             seed = random_seed()
         _publish_views(sc, results)
-    sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed)
+    sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed,
+                  lora_strength_source="chosen" if chosen is not None else "recipe")
+    sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"),
+                   addons=[{"id": "qwen_lightning", "value": 1.0, "required": True},
+                           {"id": "qwen_angles", "value": lora_strength, "required": True}])
     _publish_views(sc, results)
 
 
@@ -158,7 +169,7 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
             if p is not None:
                 sc.register(key, sc.copy_in(p, p.name))
         keep[v] = info
-    merged = {**parent.params, **params, "seed": params.get("seed"), "instruction": instruction, "refine_of": parent.id, "refined_view": view}
+    merged = {**inherit(parent.params, params), "seed": params.get("seed"), "instruction": instruction, "refine_of": parent.id, "refined_view": view}
     sc.set_params(**merged)
     sc.set_metrics(views=keep)
     # The concept source is the turnaround parent's parent.
@@ -168,9 +179,17 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     await _run_views(sc, [view], merged, grand, keep=keep, extra=instruction)
 
 
+def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Parent params under the new ones, without a camera-angle strength the parent took from the recipe."""
+    base = dict(parent_params or {})
+    if base.pop("lora_strength_source", None) == "recipe" and "lora_strength" not in params:
+        base.pop("lora_strength", None)
+    return {**base, **params}
+
+
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
-    merged = {**(parent.params if parent else {}), **params}
+    merged = inherit(parent.params if parent else {}, params)
     views = list(merged.get("views") or DEFAULT_VIEWS)
     if parent is not None and parent.stage == "turnaround":
         # The concept source is the turnaround parent's parent; this version's own parent stays the turnaround.

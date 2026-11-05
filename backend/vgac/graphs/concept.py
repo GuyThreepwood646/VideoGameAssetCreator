@@ -5,6 +5,10 @@ C:/Users/evanr/.claude/skills/comfyui-game-art/scripts/stylemodels.py.
 
 Which model uses which builder, its default steps, its SaveImage node and whether it takes a negative prompt are
 read from data/models.yaml (docs/CODE-AUDIT.md D1); this module only holds the graph functions.
+
+Add-ons (data/addons.yaml): concept_graph(..., addons=resolve_addons(...)["applied"]) chains a LoraLoaderModelOnly per
+add-on right after any builder's model loader and appends the triggers to the prompt (chain_addons); the pixel
+builder's own LoRA is "built in", so its strength is passed to the builder instead.
 """
 
 from __future__ import annotations
@@ -141,14 +145,67 @@ def default_steps(model: str) -> int:
     return int(_spec(model)["default_steps"])
 
 
+# --- Add-on chain (data/addons.yaml, reference.resolve_addons) ------------------------------------------------------
+
+# Node types whose output 0 is the diffusion MODEL; the add-on chain goes right after it.
+MODEL_LOADERS = ("CheckpointLoaderSimple", "UNETLoader")
+
+
+def lora_name(path: str) -> str:
+    """An addons.yaml file path (forward slashes) in the form ComfyUI lists LoRAs on this machine."""
+    return str(path).replace("/", BS)
+
+
+def prompt_with_triggers(prompt: str, addons: list[dict[str, Any]] | None) -> str:
+    """The prompt with each chained add-on's trigger words appended (built-in add-ons carry their own)."""
+    extra = [a["trigger"].strip() for a in addons or [] if a.get("trigger") and not a.get("built_in")]
+    extra = [t for t in extra if t and t not in prompt]
+    return " ".join([prompt.strip()] + extra) if extra else prompt
+
+
+def chain_addons(graph: dict[str, Any], addons: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Insert a LoraLoaderModelOnly per add-on (in order, each at its `value`) right after the graph's model loader,
+    and point everything that read the loader's MODEL output at the end of the chain. Built-in add-ons are skipped
+    (their builder already loads them). The graph is changed in place and returned."""
+    chained = [a for a in addons or [] if not a.get("built_in") and a.get("file")]
+    if not chained:
+        return graph
+    loader = next((nid for nid, n in graph.items() if n.get("class_type") in MODEL_LOADERS), None)
+    if loader is None:
+        raise ValueError("this graph has no model loader to chain add-ons after")
+    prev: list[Any] = [loader, 0]
+    ids = []
+    for i, a in enumerate(chained, start=1):
+        nid = f"addon{i}"
+        graph[nid] = {"class_type": "LoraLoaderModelOnly",
+                      "inputs": {"model": prev, "lora_name": lora_name(a["file"]), "strength_model": float(a.get("value", 1.0))}}
+        prev = [nid, 0]
+        ids.append(nid)
+    for nid, node in graph.items():
+        if nid in ids:
+            continue
+        for key, value in node.get("inputs", {}).items():
+            if isinstance(value, list) and len(value) == 2 and value[0] == loader and value[1] == 0:
+                node["inputs"][key] = list(prev)
+    return graph
+
+
 def concept_graph(model: str, prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
-                  steps: int | None = None, negative: str | None = None) -> dict[str, Any]:
-    """Dispatch to the builder for `model`. `negative` applies to models that use a real negative prompt."""
+                  steps: int | None = None, negative: str | None = None, addons: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Dispatch to the builder for `model`. `negative` applies to models that use a real negative prompt. `addons` is
+    reference.resolve_addons(...)["applied"]: each chained after the model loader at its strength, its trigger
+    appended to the prompt; a built-in one (the pixel painter's own LoRA) sets the builder's strength instead."""
+    import inspect
+
     fn = builder(model)
     kwargs: dict[str, Any] = {"width": width, "height": height, "steps": steps or default_steps(model)}
     if negative and _spec(model).get("negative"):
         kwargs["neg"] = negative
-    return fn(prompt, seed, prefix, **kwargs)
+    accepts = inspect.signature(fn).parameters
+    for a in addons or []:
+        if a.get("built_in") and "strength" in accepts:
+            kwargs["strength"] = float(a.get("value", 1.0))
+    return chain_addons(fn(prompt_with_triggers(prompt, addons), seed, prefix, **kwargs), addons)
 
 
 def save_node(model: str) -> str:

@@ -71,8 +71,8 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front.", "technical": "Conditioning image selection"},
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view"}},
     "target_faces": {"simple": True, "help": {"meaning": "Detail level: how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
-    "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; the platform sets a default.", "technical": "Texture atlas resolution"},
-                     "options": {"512": "512 px (smallest)", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
+    "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
+                     "options": {"256": "256 px (smallest, retro and pixel looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
     "upsample": {"simple": False, "help": {"meaning": "Internal detail level of the 3D builder.", "why": "1536 captures finer shapes but takes several times longer.", "technical": "TRELLIS.2 upsample resolution"},
                  "options": {"1024": "Normal", "1536": "Fine (several times slower)"}},
     "remesh": {"simple": False, "help": {"meaning": "Rebuild the surface as one solid shell before simplifying.", "why": "Removes double walls and closes holes; keep it on.", "technical": "RemeshMesh (solid sign mode)"}},
@@ -169,7 +169,19 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
+    # Recipes (reference.recipe, data/addons.yaml).
+    "addons": {"simple": False, "help": {"meaning": "Small trained helpers the painter loads on top of its model to push it toward a look.",
+                                         "why": "Your style already switches on the ones it needs. Turn one up, down or off here; required ones stay on.",
+                                         "technical": "LoRA chain (LoraLoaderModelOnly after the model loader), strengths from data/addons.yaml"},
+               "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
+    "shading": {"simple": False, "help": {"meaning": "Whether the surface looks smooth and rounded or cut into flat faces.",
+                                          "why": "Automatic follows your style: flat faces for low-poly, smooth for the rest.",
+                                          "technical": "Smooth: auto-smooth at the crease angle; flat: per-face normals (split vertices)"},
+                "options": {"auto": "Automatic (by look)", "smooth": "Smooth", "flat": "Flat faces"}},
 }
+
+# Plain names of the add-on strength steps (the Add-ons list in Advanced).
+STRENGTH_LABELS = {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}
 
 # --- Check contract (docs/GREAT-ASSETS-PLAN.md 2.1) -------------------------------------------------------------
 #
@@ -235,8 +247,12 @@ def _padding_fix(c: dict[str, Any]) -> dict[str, Any] | None:
 CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "triangle_budget": {
         "severity": "block",
-        "ok": "The model's {value:n} triangles fit your platform's budget of {limit:n}.",
-        "fail": "The model has {over:n} more triangles than your platform allows ({value:n} of {limit:n}); it would run slower than it should.",
+        # With the recipe's own target (vars recipe, look): a low-poly model is measured against its look, not the platform.
+        "ok": lambda c: ("The model's {value:n} triangles fit the {look} look's target of {limit:n}; your platform would allow up to {platform_triangles:n}."
+                         if _var(c, "recipe") else "The model's {value:n} triangles fit your platform's budget of {limit:n}."),
+        "fail": lambda c: ("The model has {over:n} more triangles than the {look} look calls for ({value:n} of {limit:n}), so it looks less chunky than it should."
+                           if _var(c, "recipe") else
+                           "The model has {over:n} more triangles than your platform allows ({value:n} of {limit:n}); it would run slower than it should."),
         "vars": _over,
         "fix": lambda c: {"stage": "prep", "params": {}},
         "fix_label": "Shrink to the budget",
@@ -386,7 +402,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "materials_connected": {
         "severity": "warn",
-        "ok": "Unity uses all the surface textures: colour, bumps, shadows, metal and shine.",
+        "ok": lambda c: ("Unity uses all the surface textures: colour, shadows, metal and shine (this look has no surface bumps)."
+                         if _var(c, "no_bumps") else "Unity uses all the surface textures: colour, bumps, shadows, metal and shine."),
         "fail": "Unity is missing the {missing} texture, so the surface will look {effect}.",
         "fix": lambda c: {"stage": "export", "params": {}},
         "fix_label": "Rebuild for Unity",
@@ -501,6 +518,16 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
         "fix_label": "Make metal clearly metal",
     },
+    # Recipes: the look a style asks for after the concept (fewer triangles, flat faces, small or crisp textures, no
+    # surface bumps), checked in prep. Only for looks that change something.
+    "look_applied": {
+        "severity": "warn",
+        "ok": lambda c: "{look} look applied: {value}." if _var(c, "look") else "Look applied: {value}.",
+        "fail": lambda c: ("The {look} look is not fully applied: {problem}." if _var(c, "look") and _var(c, "problem")
+                           else "The look is not fully applied to the model yet."),
+        "fix": lambda c: {"stage": "prep", "params": {}},
+        "fix_label": "Apply the look again",
+    },
 }
 
 
@@ -523,8 +550,14 @@ def _pattern_guide(name: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
         if name.endswith("_square"):
             return ({"severity": "warn", "ok": "The {map} is square.", "fail": "The {map} is {value:dims} px; it must be square."}, tmap)
         if name.endswith("_budget"):
-            return ({"severity": "warn", "ok": "The {map} is {value:n} px, within the {limit:n} px budget.",
-                     "fail": "The {map} is {value:n} px; the platform allows {limit:n} px."}, tmap)
+            # With the recipe's own size (vars recipe, look): small textures are the look, not a shortfall.
+            return ({"severity": "warn",
+                     "ok": lambda c: ("The {map} is {value:n} px, the {look} look's size (your platform would allow {platform_texture:n} px)."
+                                      if _var(c, "recipe") and _as_float(c.get("value")) == _as_float(c.get("limit"))
+                                      else "The {map} is {value:n} px, within the {look} look's {limit:n} px." if _var(c, "recipe")
+                                      else "The {map} is {value:n} px, within the {limit:n} px budget."),
+                     "fail": lambda c: ("The {map} is {value:n} px; the {look} look uses {limit:n} px." if _var(c, "recipe")
+                                        else "The {map} is {value:n} px; the platform allows {limit:n} px.")}, tmap)
     return None
 
 
@@ -711,7 +744,11 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
     if cat.get("rig_engine", "none") == "none":
         est["rig"] = 5
     total_min = max(1, round(sum(est.values()) / 60))
-    return {"model": model, "model_label": model_label_long(model), "reason": "; ".join(reasons),
+    try:
+        recipe_plain = reference.recipe(style, category, platform)["plain"]
+    except KeyError:
+        recipe_plain = ""
+    return {"model": model, "model_label": model_label_long(model), "reason": "; ".join(reasons), "recipe_plain": recipe_plain,
             "budgets": budgets, "estimates": est, "total_minutes": total_min,
             "platform_label": plat.get("plain_name") or plat.get("label") or platform,
             "category_label": cat.get("label") or category}
