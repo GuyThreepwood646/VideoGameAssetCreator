@@ -525,6 +525,9 @@ def main():
     reference = _common.opt("--reference", "")
     report_path = _common.opt("--report", "")
     skeleton = _common.opt("--skeleton", "other")
+    # --weights-only: clean the weights of a rig this script already repaired (an older version of the clean-up),
+    # leaving its names, size and texture coordinates as they are.
+    weights_only = "--weights-only" in argv
     _common.open_glb(src)
     fixed = total = 0
     # Drop helper meshes the rigger's exporter leaves behind (no vertex groups, not skinned): they would count as
@@ -590,13 +593,13 @@ def main():
 
     ref_report = None
     skinned = [o for o in bpy.context.scene.objects if o.type == "MESH" and o.vertex_groups]
-    if reference and os.path.isfile(reference) and skinned:
+    if reference and os.path.isfile(reference) and skinned and not weights_only:
         try:
             ref_report = restore_from_reference(skinned, reference)
         except Exception as e:  # keep the repaired rig even when the restore fails
             ref_report = {"ok": False, "reason": str(e)[:300]}
     try:
-        names_report = rename_bones(skeleton)
+        names_report = {"renamed": 0, "by": "geometry", "left_is": None, "roles": {}, "skipped_reason": "weights only"} if weights_only else rename_bones(skeleton)
     except Exception as e:  # keep the repaired rig with its old names
         names_report = {"renamed": 0, "by": "geometry", "left_is": None, "roles": {}, "skipped_reason": f"error: {str(e)[:300]}"}
     if report_path:
