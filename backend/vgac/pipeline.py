@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from . import reference
 from .db import Asset, Job, Version, job_to_dict, version_to_dict
-from .jobs import JobQueue, active_queue, instance_for, job_kind
+from .jobs import JobQueue, active_queue, job_kind
 from .reference import STAGE_ORDER
 
 
@@ -96,12 +96,14 @@ def new_version(db: Session, asset: Asset, stage: str, parent: Version | None, p
 
 
 def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, Any]) -> Job:
-    """Queue the job for `v` on the instance that runs its stage."""
+    """Queue the job for `v` on the instance that runs its stage, or on the card that takes over while that one is
+    turned off (jobs.route). When no card that is on can run it, the job waits on the preferred card with a
+    "Waiting for ... to be turned back on" message and the version stays queued."""
     q = queue()
     kind = job_kind(v.stage, op, asset.category)
-    instance = instance_for(v.stage, asset.category, q.settings)
+    instance, message = q.place(v.stage, asset.category)
     body = {"version_id": v.id, "op": op, **payload}
-    job = q.submit(instance, kind, asset.id, v.id, body)
+    job = q.submit(instance, kind, asset.id, v.id, body, message=message)
     db.refresh(v)
     return job
 

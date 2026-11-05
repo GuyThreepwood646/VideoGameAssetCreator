@@ -1,12 +1,13 @@
 // Autopilot: the "Make it" action, the running/paused card that replaces the
 // guide while the autopilot owns the asset, and the finishing moment card.
-import { useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, PlainChecks, type FixRequest } from '../components/ui'
-import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
+import { Disclosure, PlainChecks, TrafficDot, type FixRequest } from '../components/ui'
+import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
+import { finishLineFix, finishLines, unityHowto } from './finish'
 import { Deliverables } from './views/ExportView'
 
 export type AutopilotActions = {
@@ -91,10 +92,12 @@ type CardProps = {
   estimates: Record<string, number> | null
   busy: boolean
   actions: AutopilotActions
+  // A Fix that opens a tool (2.5) goes here instead of "Fix and continue".
+  onOpenTool?: (fix: FixRequest) => void
 }
 
 // The card shown instead of "Your next step" while the autopilot runs, is paused or stopped.
-export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions }: CardProps) {
+export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions, onOpenTool }: CardProps) {
   const apStage = autopilotStage(ap)
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const elsewhere = apStage && apStage !== stage ? (
@@ -143,7 +146,9 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   const version = autopilotVersion(asset, ap)
   const checks = version && Array.isArray(version.metrics.checks) ? (version.metrics.checks as Check[]) : []
   const failing = checks.filter((c) => !checkPassed(c))
-  const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null) ?? null
+  // "Fix and continue" only takes a re-run fix; a fix that opens a tool waits for the person.
+  const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui) ?? null
+  const onFix = (f: FixRequest) => (f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
   const versionFailed = version?.status === 'error'
   const paused = ap.status === 'paused'
   const idx = version && apStage ? versionsOf(asset, apStage).indexOf(version) + 1 : 0
@@ -172,7 +177,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
         )}
         {failing.length > 0 && (
           <div className="guide-now">
-            <PlainChecks checks={checks} ctx={{ platform: asset.platform_target }} onFix={(f) => actions.fixAndContinue(f)} busy={busy} compact />
+            <PlainChecks checks={checks} ctx={{ platform: asset.platform_target, category: asset.category }} onFix={onFix} busy={busy} compact />
           </div>
         )}
         <div className="guide-now muted small">
@@ -190,7 +195,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
       </div>
       <div className="guide-action guide-action-col">
         {paused && !versionFailed && firstFix && (
-          <button type="button" className="primary" disabled={busy} onClick={() => actions.fixAndContinue(firstFix)} title={`Re-runs ${firstFix.stage} with ${JSON.stringify(firstFix.params)}, then continues`}>
+          <button type="button" className="primary" disabled={busy} onClick={() => actions.fixAndContinue(firstFix)} title={`${firstFix.label}: ${fixTooltip(firstFix, stages)} Then the autopilot carries on.`}>
             Fix and continue
           </button>
         )}
@@ -217,9 +222,16 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   )
 }
 
-// The finishing moment: turntable with the walk clip, downloads, what next.
-export function FinishCard({ asset, byAutopilot, onMakeVariant }: { asset: Asset; byAutopilot: boolean; onMakeVariant: () => void }) {
+// Text with `code` spans (the "Using it in Unity" lines).
+function withCode(text: string): ReactNode {
+  return text.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : <Fragment key={i}>{part}</Fragment>))
+}
+
+// The finishing moment: turntable with the walk clip, what you get, downloads, using it in Unity, what next.
+export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = false }: { asset: Asset; byAutopilot: boolean; onMakeVariant: () => void; onFix?: (fix: FixRequest) => void; busy?: boolean }) {
   const exp = selectedVersion(asset, 'export')
+  const lines = finishLines(asset)
+  const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
@@ -232,8 +244,48 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant }: { asset: Asset
         <div className="guide-now">
           {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
+        {lines.length > 0 && (
+          <div className="finish-lines">
+            <div className="field-label">
+              What you get
+              <Info term="term.what_you_get" />
+            </div>
+            <ul>
+              {lines.map((l) => {
+                const fix = onFix ? finishLineFix(asset, l) : null
+                return (
+                  <li key={l.id} className={'finish-line ' + l.state}>
+                    <TrafficDot state={l.state} title={l.state === 'ok' ? 'checked' : 'needs a look'} />
+                    <span className="finish-line-text">
+                      {l.text}
+                      {l.term && <Info term={'term.' + l.term} />}
+                    </span>
+                    {fix && (
+                      <button type="button" className="small-btn" disabled={busy} onClick={() => onFix!(fix)} title={fixTooltip(fix)}>
+                        {fix.label}
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
         {glb ? <Viewer url={glb} height={360} turntableDefault defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
         {exp && <Deliverables version={exp} />}
+        {howto && (
+          <Disclosure label="Using it in Unity" className="unity-howto">
+            <div className="muted small">
+              Three steps to put it in your game.
+              <Info term="term.unity_howto" />
+            </div>
+            <ol>
+              {howto.map((l, i) => (
+                <li key={i}>{withCode(l)}</li>
+              ))}
+            </ol>
+          </Disclosure>
+        )}
         <div className="row-gap finish-actions">
           <Link className="btn primary" to={`/projects/${asset.project_id}`}>
             Make another

@@ -80,7 +80,7 @@ class EventHub {
     ws.onmessage = (m: MessageEvent) => {
       try {
         const ev = JSON.parse(String(m.data)) as ServerEvent
-        if (ev && (ev.type === 'job' || ev.type === 'version' || ev.type === 'autopilot')) {
+        if (ev && (ev.type === 'job' || ev.type === 'version' || ev.type === 'autopilot' || ev.type === 'gpus')) {
           if (ev.type === 'job') this.remember(ev.job)
           this.emit(ev)
         }

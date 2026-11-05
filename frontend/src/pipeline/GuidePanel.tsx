@@ -5,7 +5,7 @@
 import { Link } from 'react-router'
 import { libraryUrl, previousStage, STAGES, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure } from '../components/ui'
+import { Disclosure, type FixRequest } from '../components/ui'
 import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -30,6 +30,9 @@ type Props = {
   onRunNext: (next: StageId) => void
   onRetry: (failed: Version) => void
   onCancel: (jobId: string) => void
+  // A check's Fix: re-run (onFix) or open a tool (onOpenTool, 2.5). Used by the finish card and the autopilot card.
+  onFix?: (fix: FixRequest) => void
+  onOpenTool?: (fix: FixRequest) => void
 }
 
 // Whether the finishing card (turntable, downloads, what next) shows for this stage.
@@ -64,7 +67,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel, onFix, onOpenTool }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -75,11 +78,11 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
 
   // The autopilot owns the card while it runs, is paused or stopped.
   if (autopilot && isAutopilotActive(autopilot)) {
-    return <AutopilotCard asset={asset} stage={stage} autopilot={autopilot} jobs={jobs} stages={stages} estimates={estimates} busy={busy} actions={autopilotActions} />
+    return <AutopilotCard asset={asset} stage={stage} autopilot={autopilot} jobs={jobs} stages={stages} estimates={estimates} busy={busy} actions={autopilotActions} onOpenTool={onOpenTool} />
   }
   // The finishing moment, once every step is kept.
   if (finishShown(asset, stage, autopilot, jobs)) {
-    return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} />
+    return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} />
   }
 
   // "Make it" shows whenever nothing is running and the asset is not finished.

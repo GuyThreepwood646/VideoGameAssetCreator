@@ -4,6 +4,12 @@ rig_engine: none
 silhouette_min: 0.45
 symmetric: false
 size_m: 2.5
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: height
+size_word: tall
+size_label: "How tall is it?"
+size_hint: "In metres, from the ground to the top. A bush is about 1 m; an oak about 15 m."
 parts_default: []
 topology: triangle
 input_view_default: front

@@ -1,5 +1,6 @@
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
+import { aboutSize, measuredSize } from '../../help'
 import Viewer from '../../Viewer'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -15,8 +16,10 @@ const TEXTURE_NAMES: Record<string, string> = {
   emissive: 'glow',
 }
 
-export function MeshView({ version }: { version: Version }) {
+export function MeshView({ version, category }: { version: Version; category?: string }) {
   const glb = libraryUrl(version.files.glb)
+  // Prep sets the size (3.2): "About 1.8 m tall", measured on the category's axis.
+  const size = version.stage === 'prep' && category ? measuredSize(version.metrics, category) : null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -34,6 +37,15 @@ export function MeshView({ version }: { version: Version }) {
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
           </div>
         </div>
+        {size && (
+          <div>
+            <div className="field-label">
+              Size in the game
+              <Info term="term.size_m" />
+            </div>
+            <div className="small">{aboutSize(size.value, size.word)}</div>
+          </div>
+        )}
         {iou !== null && typeof iou === 'object' && (
           <div>
             <div className="field-label">

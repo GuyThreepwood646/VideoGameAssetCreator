@@ -267,3 +267,20 @@ class ComfyClient:
             await self._client().post("/interrupt", timeout=5.0)
         except Exception as e:  # noqa: BLE001
             log.warning("instance %s: interrupt failed: %s", self.name, e)
+
+    async def free(self) -> bool:
+        """POST /free {"unload_models": true, "free_memory": true}: ComfyUI drops its loaded models and releases the
+        card's memory (after the prompt it is running, if any). Used when a card is turned off in the app. Never
+        raises (the instance may be down); returns whether ComfyUI accepted it."""
+        try:
+            r = await self._client().post("/free", json={"unload_models": True, "free_memory": True}, timeout=10.0)
+            r.raise_for_status()
+            self._vram_cache = None  # the next health read shows the freed memory
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.info("instance %s: /free failed (it may be down): %s", self.name, e)
+            return False
+
+    def last_vram_summary(self) -> dict[str, Any] | None:
+        """The last cached vram_summary(), however old, without a request (None before the first)."""
+        return self._vram_cache[1] if self._vram_cache is not None else None

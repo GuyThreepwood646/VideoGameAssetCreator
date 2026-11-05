@@ -15,7 +15,7 @@ const list = document.getElementById('services');
       name.textContent = s.name;
       const url = document.createElement('span'); url.className = 'url'; url.textContent = s.url;
       name.appendChild(url);
-      const msg = document.createElement('div'); msg.className = 'msg' + (s.state === 'error' ? ' error' : '');
+      const msg = document.createElement('div'); msg.className = 'msg' + (s.state === 'error' ? ' error' : s.state === 'off' || / Off in the app/.test(s.message) ? ' off' : '');
       msg.textContent = s.message + (s.owned && s.pid ? ` (PID ${s.pid})` : '');
       body.append(name, msg);
       const actions = document.createElement('div'); actions.className = 'actions';
@@ -26,8 +26,11 @@ const list = document.getElementById('services');
       li.append(dot, body, actions);
       return li;
     }));
-    const up = snap.services.filter((s) => s.state === 'up').length;
-    summary.textContent = snap.allUp ? 'All services up' : `${up} of ${snap.services.length} services up`;
+    // A service whose graphics card is turned off in the app counts as fine; the app carries on with the other card.
+    const up = snap.services.filter((s) => s.state === 'up' || s.state === 'off').length;
+    const off = snap.services.filter((s) => s.state === 'off' || / Off in the app/.test(s.message)).length;
+    const offText = off ? ` (${off} graphics card${off === 1 ? '' : 's'} off in the app)` : '';
+    summary.textContent = (snap.allUp ? 'All services up' : `${up} of ${snap.services.length} services up`) + offText;
     build.classList.toggle('show', snap.build.active || (snap.build.lines.length > 0 && !snap.allUp));
     const text = snap.build.lines.join('\n');
     if (buildlog.textContent !== text) { buildlog.textContent = text; buildlog.scrollTop = buildlog.scrollHeight; }

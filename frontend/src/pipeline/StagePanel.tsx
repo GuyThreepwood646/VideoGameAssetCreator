@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router'
 import {
   api,
   ApiError,
@@ -23,12 +23,13 @@ import {
 import { Info } from '../components/Info'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
-import { humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
+import { readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
 import { MeshView } from './views/MeshView'
@@ -98,8 +99,39 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
       return api.runStage(asset.id, stage, { params, ...(failed.parent_version_id ? { parent_version_id: failed.parent_version_id } : {}) })
     })
 
-  const fix = (f: FixRequest) =>
-    act(async () => {
+  // A Fix that opens a tool (2.5): go to the fix's stage, open "Change something" on the kept version and focus
+  // the tool there. Nothing runs until the person applies it.
+  const location = useLocation()
+  const [toolFocus, setToolFocus] = useState<ToolFocus | null>(null)
+  const openTool = (f: FixRequest) => {
+    const { to, state: navState } = toolPath(asset.id, f)
+    if (f.stage !== stage) {
+      navigate(to, { state: navState })
+      return
+    }
+    if (selected) setActiveId(selected.id)
+    setChangeOpen(true)
+    setToolFocus(navState.openTool)
+  }
+  const handledTool = useRef<number | null>(null)
+  useEffect(() => {
+    const t = readToolState(location.state, stage)
+    if (!t || handledTool.current === t.nonce) return
+    handledTool.current = t.nonce
+    if (selected) setActiveId(selected.id)
+    setChangeOpen(true)
+    setToolFocus(t)
+    // Drop the request from history so going back and forth does not open the tool again.
+    navigate(location.pathname, { replace: true, state: null })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, stage])
+
+  const fix = (f: FixRequest) => {
+    if (f.ui) {
+      openTool(f)
+      return
+    }
+    return act(async () => {
       if (f.stage === stage && active) {
         await api.adjust(active.id, f.params)
       } else {
@@ -107,9 +139,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         navigate(`/assets/${asset.id}/${f.stage}`)
       }
     })
+  }
 
   const checks = active && isCheckList(active.metrics.checks) ? (active.metrics.checks as Check[]) : null
-  const ctx = { platform: asset.platform_target }
+  const ctx = { platform: asset.platform_target, category: asset.category }
   // The finishing card above already shows the export's title, model and downloads.
   const hideReady = stage === 'export' && !!active && active.id === selected?.id && finishShown(asset, stage, autopilot, jobs)
 
@@ -133,6 +166,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onRunNext={runNext}
         onRetry={retry}
         onCancel={onCancelJob}
+        onFix={fix}
+        onOpenTool={openTool}
       />
 
       <section className="section">
@@ -177,7 +212,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
+            <StageViewer stage={stage} version={active} category={asset.category} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -213,6 +248,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 refData={ref}
                 suggestion={suggestion}
                 disabled={busy}
+                focus={toolFocus}
                 onRefine={(instruction, view) => act(() => api.refine(active.id, { instruction, view }))}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
@@ -247,7 +283,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
-function StageViewer({ stage, version, hideReady, onRefineView }: { stage: StageId; version: Version; hideReady?: boolean; onRefineView: (view: string) => void }) {
+function StageViewer({ stage, version, category, hideReady, onRefineView }: { stage: StageId; version: Version; category: string; hideReady?: boolean; onRefineView: (view: string) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (version.status === 'rejected' && Object.keys(version.files).length === 0) {
     return <div className="placeholder-box">This version was stopped before it made a result.</div>
@@ -262,7 +298,7 @@ function StageViewer({ stage, version, hideReady, onRefineView }: { stage: Stage
       return <TurnaroundView version={version} onRegenerateView={onRefineView} />
     case 'mesh':
     case 'prep':
-      return <MeshView version={version} />
+      return <MeshView version={version} category={category} />
     case 'rig':
       return <RigView version={version} />
     case 'export':
@@ -498,6 +534,7 @@ function ChangePanel({
   refData,
   suggestion,
   disabled,
+  focus,
   onRefine,
   onAdjust,
 }: {
@@ -508,11 +545,24 @@ function ChangePanel({
   refData: RefData | null
   suggestion: Suggestion | null
   disabled: boolean
+  focus: ToolFocus | null
   onRefine: (instruction: string, view?: string) => void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
   const [text, setText] = useState('')
   const [view, setView] = useState('')
+  const panelRef = useRef<HTMLDivElement>(null)
+  const describeRef = useRef<HTMLTextAreaElement>(null)
+  // A tool with no Fine-tune setting of its own (the parts editor until it is built) lands on "Describe the change".
+  const knobShown = !!focus?.knob && schema.some((p) => p.name === focus.knob)
+  const missingTool = focus?.ui && !knobShown ? focus.ui : null
+  useEffect(() => {
+    if (!focus || knobShown) return
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    panelRef.current?.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
+    describeRef.current?.focus({ preventScroll: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.nonce])
   const ok = text.trim().length > 0
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -522,14 +572,19 @@ function ChangePanel({
   }
   const availableViews = TURNAROUND_VIEWS.filter((v) => v in target.files)
   return (
-    <div className="change-panel">
+    <div className="change-panel" ref={panelRef}>
+      {missingTool && (
+        <div className="tool-note small">
+          {FIX_TOOLS[missingTool]?.plain ? FIX_TOOLS[missingTool].plain.charAt(0).toUpperCase() + FIX_TOOLS[missingTool].plain.slice(1) : 'That tool'} is not in this version of the app yet. Describe the change below instead; nothing runs until you send it.
+        </div>
+      )}
       <form className="change-describe" onSubmit={submit}>
         <div className="field-label">
           Describe the change
           <Info term="term.instruction" />
         </div>
         <div className="refine-row">
-          <SubmitTextarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage)} aria-label="Describe the change" />
+          <SubmitTextarea ref={describeRef} rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage)} aria-label="Describe the change" />
           {stage === 'turnaround' && (
             <select value={view} onChange={(e) => setView(e.target.value)} aria-label="Which view to change">
               <option value="">all views</option>
@@ -546,7 +601,7 @@ function ChangePanel({
         </div>
         <div className="muted small">Enter sends it. The result is a new version; this one stays.</div>
       </form>
-      <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} />
+      <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} focus={focus} />
     </div>
   )
 }
