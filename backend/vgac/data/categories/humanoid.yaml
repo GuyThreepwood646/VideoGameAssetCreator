@@ -12,6 +12,8 @@ size_hint: "In metres, from the ground to the top of the head. A person is about
 parts_default: []
 topology: quad
 input_view_default: quarter
+# Hair-friendly pictures (vgac/hairpic.py): head means the concept prompt gets the look's hair sentence.
+hair: head
 motion: legs
 clips: [idle, walk, run, turn_left, turn_right, attack, hit, death]
 # Hand-made clips moved onto the character from the CC0 clip library (rig stage, clips_source auto or library).

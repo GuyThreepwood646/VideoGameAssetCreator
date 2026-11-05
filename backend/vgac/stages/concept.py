@@ -46,6 +46,32 @@ def palette_sentence(palette: Any) -> str:
     return f"Colour palette: mostly {listed}."
 
 
+def hair_sentence(sc: StageContext, params: dict[str, Any], description: str) -> str:
+    """The look's hair or fur sentence for this description (vgac/hairpic.py); "" for assets without hair, for a
+    bald, helmeted or hooded character, or with params.hair_block false."""
+    from .. import hairpic
+
+    if not params.get("hair_block", True):
+        return ""
+    return hairpic.hair_sentence(description, getattr(sc, "style", None), getattr(sc, "category", None))
+
+
+def hair_negative(sc: StageContext, params: dict[str, Any]) -> str:
+    """The hair negative terms for the description the prompt was built from."""
+    from .. import hairpic
+
+    if not params.get("hair_block", True):
+        return ""
+    return hairpic.hair_negative(_description(sc, params), getattr(sc, "style", None), getattr(sc, "category", None))
+
+
+def _description(sc: StageContext, params: dict[str, Any]) -> str:
+    from .. import items
+
+    held = items.concept_prompt_parts(sc.asset)
+    return (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
+
+
 def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     lock = sc.project.style_lock or {}
     # Items (vgac/items.py): a character with its items set aside is painted empty-handed; a held item gets its own
@@ -58,6 +84,9 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     style_block = (lock.get("prompt_block") or "").strip() or (sc.style.get("prompt_block") or "").strip()
     if style_block:
         parts.append(style_block)
+    hair = hair_sentence(sc, params, base)
+    if hair:
+        parts.append(hair)
     pal = palette_sentence(lock.get("palette"))
     if pal:
         parts.append(pal)
@@ -100,6 +129,10 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     if aside.get("negative") and (reference.models().get(model) or {}).get("negative"):
         # Painters that take a negative prompt are also told not to paint the items set aside.
         negative = ", ".join(x for x in (negative, aside["negative"]) if x)
+    hair_neg = hair_negative(sc, params) if (reference.models().get(model) or {}).get("negative") else ""
+    if hair_neg:
+        # Painters that take a negative prompt are told what hair converts badly (vgac/hairpic.py).
+        negative = ", ".join(x for x in (negative, hair_neg) if x)
     if aside.get("set_aside"):
         sc.set_metrics(items_set_aside=aside["set_aside"])
     sc.set_params(model=model, seed=seed, width=width, height=height, steps=steps, prompt=prompt, negative=negative or "",
@@ -142,7 +175,23 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     except (OSError, ValueError) as e:  # an unreadable cutout: no readiness checks, never a failed picture
         sc.set_metrics(readiness_error=str(e)[:200])
         return
+    hair = await asyncio.to_thread(_hair_check, sc, cutout)
+    if hair is not None:
+        checks.append(hair)
     sc.set_metrics(**quality.summarise(checks))
+
+
+def _hair_check(sc: StageContext, cutout: Path) -> dict[str, Any] | None:
+    """Hair over the eyes (vgac/hairpic.py), for characters with head hair whose description does not ask for it.
+    Never fails the picture: anything unexpected means no check."""
+    from .. import hairpic
+
+    try:
+        params = getattr(getattr(sc, "version", None), "params", None) or {}
+        text = (params.get("prompt_override") or "").strip() or (getattr(sc.asset, "prompt", "") or "")
+        return hairpic.eyes_check(cutout, text, getattr(sc, "category", None), getattr(sc, "style", None))
+    except Exception:  # noqa: BLE001  a readiness extra must never break the concept step
+        return None
 
 
 async def judge(sc: StageContext) -> None:

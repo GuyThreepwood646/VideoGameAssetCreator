@@ -31,6 +31,31 @@ styles:
       A full-body painted concept art reference for a video game, a real digital painting with
       smooth painterly shading, clean readable shapes, slightly exaggerated proportions, muted
       colours with one bright accent.
+    # Hair-friendly pictures (vgac/hairpic.py, docs/HAIR-RESEARCH.md 3.2 h): the clauses are joined into one sentence
+    # after the style block, `head` for characters and `fur` for creatures (the category's `hair` key). A clause is
+    # left out when the description asks for one of its `drop` wishes, and reworded by the first `swap` wish it asks
+    # for (long_loose, short, fringe, over_eye, locs, wild, curly, styled, long_fur), so the description always wins.
+    # `negative` is added for painters that take a negative prompt.
+    # Tested 2026-11-05 (runtime/tmp/hairpics, round 2): "a few large, clearly separated clumps" made saw-tooth lock
+    # ends in the 3D model and changed a cel character; a smooth simple shape kept the painted knight the same with a
+    # tidier bob. Any hair words blew long loose hair out to the side, so long loose hair gets no sentence.
+    hair:
+      head:
+        - text: hair as one smooth, simple shape with a clean outline and no loose strands
+          drop: [long_loose, locs, curly, wild]
+        - {text: both eyes clearly visible, drop: [long_loose, over_eye]}
+      fur:
+        - text: short dense fur lying flat in clear clumps
+          swap: {long_fur: "long fur in a few thick, clearly separated clumps"}
+        - the mane and tail as a few thick locks
+      negative:
+        head:
+          - {text: "wispy hair, flyaway strands", drop: [wild, long_loose]}
+          - {text: hair over the eyes, drop: [over_eye, long_loose]}
+          - {text: transparent hair, drop: [long_loose]}
+        fur: &fur_negative
+          - "wispy fur, transparent fur"
+          - {text: loose tufts, drop: [long_fur]}
   - id: cel
     delight_default: keep
     pbr_fix_default: false
@@ -41,6 +66,17 @@ styles:
     prompt_block: >-
       Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and
       simple readable shapes, suitable for a stylized video game character.
+    # No hair sentence for characters: every wording tried changed the character on one of four pictures (a bob became
+    # short spiky hair) or blew long hair out to the side (runtime/tmp/hairpics, round 2). Fur for creatures stays.
+    hair: &hair_fur_only
+      head: []
+      fur:
+        - text: short dense fur lying flat in clear clumps
+          swap: {long_fur: "long fur in a few thick, clearly separated clumps"}
+        - the mane and tail as a few thick locks
+      negative:
+        head: []
+        fur: *fur_negative
   - id: pixel
     delight_default: keep
     pbr_fix_default: false
@@ -50,6 +86,13 @@ styles:
     plain: small crisp textures with a limited palette, chunky shapes, no smoothing.
     prompt_block: >-
       16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.
+    # Plain looks want a plain shape (docs/HAIR-RESEARCH.md 5.2).
+    hair: &hair_simple
+      head: [hair as one simple solid shape]
+      fur: [fur as one simple solid shape]
+      negative:
+        head: [{text: "wispy hair, flyaway strands", drop: [wild]}]
+        fur: ["wispy fur"]
     recipe:
       mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false}
       surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true}
@@ -69,6 +112,7 @@ styles:
       blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light
       with one warm key light from the upper left, a soft round blob shadow underneath, the whole image
       slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels.
+    hair: *hair_simple
     recipe:
       mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false}
   - id: lowpoly_flat
@@ -85,6 +129,7 @@ styles:
       angular edges everywhere including the face, hair, cloth and wood, no textures and no smooth or
       rounded surfaces. Clean readable silhouette, soft pastel palette, simple soft ambient light.
       No pixel art, no voxels, no fine surface detail.
+    hair: *hair_simple
     recipe:
       mesh: {triangle_scale: 0.25, triangle_floor: 300, texture_cap: 512, normal_map: false}
       surface: {shading: flat}
@@ -107,6 +152,34 @@ styles:
       Flat, even, shadowless lighting from a large soft light tent, with no cast shadows, no strong
       highlights and no coloured light. Everything in sharp focus from front to back. Neutral,
       unsaturated true-to-life colours.
+    hair:
+      head:
+        - text: hair neatly tied back, braided or cut short and combed in clear locks
+          swap:
+            locs: hair in thick, clearly separated locks
+            wild: hair in a few clear locks
+            long_loose: hair combed in clear locks
+            styled: hair combed in clear locks
+            curly: hair neatly tied back or cut short, in clear, defined curls
+            short: hair cut short and combed in clear locks
+        - {text: no flyaway hairs, drop: [wild]}
+        - text: nothing over the face
+          drop: [over_eye]
+          swap: {fringe: nothing over the eyes}
+      fur:
+        - text: short dense fur lying flat in clear clumps
+          swap: {long_fur: "long fur in a few thick, clearly separated clumps"}
+        - the mane and tail as a few thick locks
+      negative:
+        head:
+          - {text: "wispy hair, flyaway strands", drop: [wild]}
+          - {text: hair over the eyes, drop: [over_eye]}
+          - {text: messy loose hair, drop: [long_loose, wild]}
+          - transparent hair
+          - {text: hair covering the collar, drop: [long_loose]}
+        fur:
+          - "wispy fur, transparent fur"
+          - {text: loose tufts, drop: [long_fur]}
     recipe:
       concept:
         negative: >-
@@ -174,3 +247,5 @@ styles:
     prompt_block: >-
       Clay animation, Clay. Stop-motion clay style, soft matte sculpted surfaces with fingerprint
       texture, rounded simplified shapes, warm muted colours, as if photographed on a tabletop set.
+    # No hair sentence for characters: both wordings tried changed the knight's armour (round 2).
+    hair: *hair_fur_only

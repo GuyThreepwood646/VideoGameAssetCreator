@@ -62,6 +62,16 @@ const GROUPS: Group[] = [
       { id: 'beauty-render', term: 'term.beauty_render', title: 'Beauty render (beauty picture)' },
     ],
   },
+  {
+    title: 'Hair and fur',
+    intro: 'How games make hair, and what this app makes today: one solid shape with the hair painted on.',
+    items: [
+      { id: 'hair-pictures', term: 'term.hair_pictures' },
+      { id: 'hair-cards', term: 'term.hair_cards' },
+      { id: 'spring-bones', term: 'term.spring_bones' },
+      { id: 'anisotropic-highlight', term: 'term.anisotropic_highlight' },
+    ],
+  },
 ]
 
 type Row = Item & { entry: HelpEntry; heading: string }

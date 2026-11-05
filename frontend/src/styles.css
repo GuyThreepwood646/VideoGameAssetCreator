@@ -2283,6 +2283,9 @@ input[type='checkbox'] {
 .described-size {
   margin: calc(-1 * var(--s1)) 0 var(--s2);
 }
+.hair-note {
+  margin: calc(-1 * var(--s1)) 0 var(--s2);
+}
 
 /* "Which way is the front?" (plan 3.2) */
 .front-picker {
