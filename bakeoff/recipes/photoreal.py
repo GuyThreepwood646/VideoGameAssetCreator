@@ -39,11 +39,20 @@ PHOTO_NEG = ("depth of field, bokeh, blurry background, tilt shift, dramatic lig
              "cast shadow, rim light, spotlight, vignette, painting, illustration, drawing, 3d render, cgi, cartoon, "
              "plastic, low quality, blurry, jpeg artifacts, text, watermark, logo, frame, border, extra limbs, "
              "deformed hands, extra fingers, duplicate")
+V2 = ("A real high-resolution photograph of the subject alone on a seamless plain light grey backdrop, made as a "
+      "photogrammetry reference: soft, even, diffuse light from every direction like a bright overcast sky, so there "
+      "are no shadows and no highlights from any single side, the whole subject in crisp focus from front to back, "
+      "true-to-life materials and colours, fine crisp surface detail. No visible lights, lamps or studio equipment, no "
+      "depth of field blur, no bokeh, no directional lighting, no cast shadows, no vignette.")
+PHOTO_NEG2 = PHOTO_NEG + ", softbox, light stand, umbrella light, studio equipment, lamp, tripod, backdrop stand, floor shadow"
 VARIANTS = {
     "zbase_now": ("zbase", None, None),
     "zbase_new": ("zbase", NEW, PHOTO_NEG),
     "zturbo_new": ("zturbo", NEW, None),
     "klein_new": ("klein", NEW, None),
+    "zbase_v2": ("zbase", V2, PHOTO_NEG2),
+    "zbase_app": ("zbase", None, "APP"),  # styles.yaml realistic_pbr block + its recipe negative, as the app runs it
+    "klein_v2": ("klein", V2, None),
 }
 DECODE = {"zturbo": "7", "zbase": "8", "klein": "11"}
 D = os.path.join(rlib.OUT, "photoreal")
@@ -97,12 +106,20 @@ def concepts():
     os.makedirs(D, exist_ok=True)
     for subject, (category, asset) in SUBJ.items():
         for v, (model, block, neg) in VARIANTS.items():
+            if os.environ.get("PR_VARIANTS") and v not in os.environ["PR_VARIANTS"].split(","):
+                continue
             base = os.path.join(D, f"{subject}_{v}")
             if os.path.exists(base + "_cut.png"):
                 continue
             prompt = rlib.build_prompt(asset, "realistic_pbr" if block is None else None, category, style_block=block)
             if block is not None:  # medium first for the new block (skill rule); the app's order is asset first
-                prompt = " ".join([block, asset, reference.category(category)["pose_block"]])
+                pose = reference.category(category)["pose_block"]
+                if v.endswith("_v2") and category == "humanoid":
+                    from posefix import NEW as POSE_NEW  # proposed humanoid pose block (section 6.2)
+                    pose = POSE_NEW
+                prompt = " ".join([block, asset, pose])
+            if neg == "APP":
+                neg = " ".join(reference.style("realistic_pbr")["recipe"]["concept"]["negative"].split())
             g = cg.concept_graph(model, prompt, SEED, f"vgac_recipes/photoreal/{subject}_{v}", negative=neg)
             rlib.add_cutout(g, [DECODE[model], 0], f"vgac_recipes/photoreal/{subject}_{v}")
             got, secs = rlib.run_and_fetch(g, {"img": cg.save_node(model), "cut": "cs"}, base)

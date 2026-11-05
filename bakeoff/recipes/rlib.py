@@ -57,6 +57,9 @@ def instance() -> str:
             rows = {}
             print("gpus api error", e, flush=True)
         b, a = rows.get("b", {}), rows.get("a", {})
+        pin = os.environ.get("RECIPE_INSTANCE")  # "a": the owner asked for the 3060 only
+        if pin == "a":
+            b = {}
         if b.get("enabled") and b.get("reachable"):
             return INSTANCES["b"]
         if a.get("enabled") and a.get("reachable") and "pictures" in a.get("allowed_kinds", []):
