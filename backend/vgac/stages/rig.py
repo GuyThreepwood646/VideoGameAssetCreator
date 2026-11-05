@@ -179,13 +179,19 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     try:
         # Repair weights: unweighted vertices inherit the nearest weighted vertex, 4 influences max, normalised.
         # It also restores what the rigger drops: texture coordinates, the material and the size cleanup set.
+        # The Mixamo template's names are wrong on real rigs; rig_fix renames humanoid bones by geometry.
         fix_report = sc.dir / "rig_fix.json"
-        await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report], log_name="rig_fix.log",
-                         timeout=sc.settings.blender_timeout_seconds)
+        skeleton = "humanoid" if template == TEMPLATES["mixamo"] else "other"
+        await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report, "--skeleton", skeleton],
+                         log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
         if fix_report.is_file():
-            ref = (json.loads(fix_report.read_text(encoding="utf-8")) or {}).get("reference") or {}
+            rep = json.loads(fix_report.read_text(encoding="utf-8")) or {}
+            ref, names = rep.get("reference") or {}, rep.get("bone_names") or {}
             sc.set_metrics(rig_restore={"ok": bool(ref.get("ok")), "uvs": ref.get("uvs"), "scale_factor": ref.get("scale_factor"),
-                                        "size_m": ref.get("size_after_m"), "reason": ref.get("reason")})
+                                        "size_m": ref.get("size_after_m"), "reason": ref.get("reason"),
+                                        "bone_names": {"count": int(names.get("renamed") or 0),
+                                                       "corrected": bool(names) and not names.get("skipped_reason"),
+                                                       "left_is": names.get("left_is"), "reason": names.get("skipped_reason")}})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(rig_fix_error=str(e)[:500])
     if not rig_glb.is_file():
