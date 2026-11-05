@@ -555,7 +555,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # face carries the fitted picture's features; it does not claim the face is the same person.
     "face_matches_picture": {
         "severity": "warn",
-        "ok": "The face was painted from the picture: its detail went from {before:n} to {value:n} (sharp from {limit:n}).",
+        "ok": lambda c: ("The face was painted from the picture: its detail went from {before:n} to {value:n} (sharp from {limit:n})."
+                         + (" The cheeks were also painted from {sides}." if _var(c, "sides") else "")),
         "fail": lambda c: {
             "no_card": "The face was not painted from the picture: no graphics card that draws pictures was free.",
             "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",

@@ -325,3 +325,79 @@ def test_eye_colour_check_fails_softly_when_the_eyes_drift():
     good = fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.4, "feature_match_after": 0.85, "eye_colour_shift": 5.3}})[0]
     assert good["ok"]
     assert fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.4, "feature_match_after": 0.85, "eye_colour_shift": None}})[0]["ok"]
+
+
+# --- fourth round: painting the cheeks from the side pictures ----------------------------------------------
+
+
+def quarter_cylinder(n: int = 32, r: float = 0.4) -> dict[str, np.ndarray]:
+    """A quarter of a cylinder (axis Y) from facing +Z (u = 0) round to facing +X (u = 1), its UVs along the arc."""
+    verts, uv, faces = [], [], []
+    for i in range(n + 1):
+        a = (np.pi / 2) * i / n
+        for y in (-0.4, 0.4):
+            verts.append([r * np.sin(a), y, r * np.cos(a)])
+            uv.append([i / n, 0.0 if y < 0 else 1.0])
+    for i in range(n):
+        a0, a1, b0, b1 = 2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3
+        faces += [[a0, b0, b1], [a0, b1, a1]]
+    v = np.array(verts, dtype=np.float64)
+    f = np.array(faces)
+    return {"verts": v, "faces": f, "uv": np.array(uv), "vnormals": face.smooth_normals(v, f)}
+
+
+def test_the_side_camera_paints_what_the_front_sees_edge_on_and_the_overlap_has_no_step():
+    m = quarter_cylinder()
+    T = 128
+    tex = np.zeros((T, T, 3))
+    front = face.Camera(target=np.zeros(3), yaw_deg=0.0, scale=1.2, size=128)
+    side = face.Camera(target=np.zeros(3), yaw_deg=90.0, scale=1.2, size=128)
+    a = face.project_back(m, tex, front, np.full((128, 128, 3), 0.3), np.ones((128, 128)), facing=(0.25, 0.7))
+    b = face.project_back(m, a["texture"], side, np.full((128, 128, 3), 0.7), np.ones((128, 128)), facing=(0.25, 0.7),
+                          cover=a["texel_weight"])
+    row = b["texture"][64, 2:-2, 0]
+    cover = np.clip(a["texel_weight"] + b["texel_weight"], 0, 1)[64, 2:-2]
+    assert abs(row[0] - 0.3) < 0.02  # facing the front camera: the front painting, untouched by the side
+    assert abs(row[-1] - 0.7) < 0.02  # facing the side camera, edge-on to the front: the side painting
+    assert np.abs(np.diff(row)).max() < 0.05  # the hand-over is gradual, no step
+    assert cover.min() > 0.95  # every texel is fully painted by one camera or the two together
+
+
+def test_cover_limits_a_later_camera_to_what_is_left():
+    m = combine(plane(0.0, 0.0, 1.0))
+    tex = np.zeros((64, 64, 3))
+    cover = np.zeros((64, 64))
+    cover[:, :32] = 1.0
+    res = face.project_back(m, tex, cam(), np.ones((64, 64, 3)), np.ones((64, 64)), facing=(0.0, 0.1), cover=cover)
+    assert res["texture"][32, 10, 0] < 0.01 and res["texture"][32, 50, 0] > 0.99
+
+
+def test_a_side_picture_whose_outline_does_not_match_is_not_used():
+    S = 256
+    Y, X = np.mgrid[0:S, 0:S]
+    head = ((X - 128) ** 2 / 60 ** 2 + (Y - 120) ** 2 / 80 ** 2) <= 1  # the model's head from the side
+    same = ((X - 136) ** 2 / 62 ** 2 + (Y - 116) ** 2 / 82 ** 2) <= 1  # the picture's: the same shape, a little off
+    other = (np.abs(X - 128) < 20) & (np.abs(Y - 120) < 110)  # a thin post: not a head
+    good = face.silhouette_fit(same.astype(np.float64), head, (30, 210))
+    bad = face.silhouette_fit(other.astype(np.float64), head, (30, 210))
+    assert good["iou"] >= fd.SIDE_IOU_MIN > bad["iou"]
+
+
+def test_no_side_pictures_changes_nothing():
+    m = combine(plane(0.0, 0.0, 1.0))
+    tex = np.full((64, 64, 3), 0.4)
+    head = face.Head(centre=np.zeros(3), width=0.2, top=0.5, height=1.0)
+    out, record = fd.paint_sides(m, tex, tex, np.zeros((64, 64)), head, {"skin": [60, 15, 15]}, [30, 40, 35], {},
+                                 np.ones((64, 64), dtype=bool))
+    assert record == {} and np.array_equal(out, tex)
+    out, record = fd.paint_sides(m, tex, tex, np.zeros((64, 64)), head, {"skin": [60, 15, 15]}, [30, 40, 35],
+                                 {"left": Path("does/not/exist.png")}, np.ones((64, 64), dtype=bool))
+    assert record == {} and np.array_equal(out, tex)
+
+
+def test_the_check_names_the_sides_used():
+    c = fd.face_checks({"face_detail": {"ran": True, "sharpness_before": 0.8, "sharpness_after": 1.3, "feature_match_after": 0.8,
+                                        "eye_colour_shift": 5.0, "sides_used": ["quarter", "right"]}})[0]
+    assert c["ok"] and "the three-quarter view and the right side" in c["help"]
+    c = fd.face_checks({"face_detail": {"ran": True, "sharpness_before": 0.8, "sharpness_after": 1.3, "feature_match_after": 0.8}})[0]
+    assert "side" not in c["help"]
