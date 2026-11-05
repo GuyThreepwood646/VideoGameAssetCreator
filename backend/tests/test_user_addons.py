@@ -160,6 +160,18 @@ def test_resolve_applies_user_addon_only_for_its_painters(mine):
     assert lock["applied"][0]["value"] == 1.0
 
 
+def test_user_addon_with_missing_file_is_never_sent(mine):
+    """A missing file would make ComfyUI answer "not in list" with every LoRA file name; it is skipped instead."""
+    from vgac import reference, user_addons
+
+    p = put_file(mine, "vanish.safetensors")
+    e = user_addons.register("vanish.safetensors", "Vanish", ["zturbo"])
+    p.unlink()
+    r = reference.resolve_addons("zturbo", "concept", [], None, {e["id"]: "normal"})
+    assert r["applied"] == []
+    assert r["ignored"] == [{"id": e["id"], "reason": "its file is no longer in the add-on folder", "source": "version"}]
+
+
 def test_concept_graph_gets_loader_with_user_file(mine):
     from vgac import reference, user_addons
     from vgac.graphs.concept import concept_graph
