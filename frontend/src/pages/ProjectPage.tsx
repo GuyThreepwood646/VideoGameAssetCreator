@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
@@ -152,6 +152,9 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [autopilot, setAutopilot] = useState(autopilotDefault())
   const [startFrom, setStartFrom] = useState<'words' | 'picture'>('words')
   const [picture, setPicture] = useState<PickedImage | null>(null)
+  // Carried items in the description (a sword, a quiver): made separately unless the person keeps them on the body.
+  const [found, setFound] = useState<ItemDetect | null>(null)
+  const [itemChoice, setItemChoice] = useState<'separate' | 'keep'>('separate')
   const { presets } = usePresets()
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -179,6 +182,25 @@ function CreateAssetForm({ project }: { project: Project }) {
       alive = false
     }
   }, [category, style, platform, ref])
+
+  // As the person types, look for carried-item words (the list lives in the backend's data/items.yaml).
+  useEffect(() => {
+    if (!prompt.trim() || !category) {
+      setFound(null)
+      return
+    }
+    let alive = true
+    const t = window.setTimeout(() => {
+      itemsApi.detect(prompt, category).then(
+        (d) => alive && setFound(d.items.length ? d : null),
+        () => alive && setFound(null),
+      )
+    }, 350)
+    return () => {
+      alive = false
+      window.clearTimeout(t)
+    }
+  }, [prompt, category])
 
   const changeCategory = (id: string) => {
     setCategory(id)
@@ -219,6 +241,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         parts,
         ...(chosenModel && !fromPicture ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
+        ...(found?.items.length ? { items: itemChoice } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       rememberAutopilotDefault(autopilot)
@@ -280,6 +303,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
         </div>
       )}
+      {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
       {!fromPicture && (
         <div className="examples">
           <span className="muted small">Examples:</span>
@@ -407,5 +431,33 @@ function CreateAssetForm({ project }: { project: Project }) {
         <ErrorText error={error} />
       </div>
     </form>
+  )
+}
+
+// The quiet line under the description when it names carried items (docs/CHARACTER-PARTS-RESEARCH.md 6.2).
+function ItemsLine({ found, choice, onChoice }: { found: ItemDetect; choice: 'separate' | 'keep'; onChoice: (c: 'separate' | 'keep') => void }) {
+  const names = found.items.map((i) => i.label)
+  return (
+    <div className="items-line" role="group" aria-label="Carried items">
+      <p className="small">
+        {found.sentence ?? `Weapons work best as their own asset: ${names.join(', ')}.`}
+        <Info term="term.items" />
+      </p>
+      <div className="segmented" role="radiogroup" aria-label="What to do with the items">
+        <label className="check-item">
+          <input type="radio" name="items-choice" checked={choice === 'separate'} onChange={() => onChoice('separate')} />
+          <span>Make them separately (recommended)</span>
+        </label>
+        <label className="check-item">
+          <input type="radio" name="items-choice" checked={choice === 'keep'} onChange={() => onChoice('keep')} />
+          <span>Keep them part of the body</span>
+        </label>
+      </div>
+      <p className="muted small">
+        {choice === 'separate'
+          ? `Found: ${found.items.map((i) => `${i.phrase} (${i.place.toLowerCase()})`).join('; ')}. Clothes that bend with the body stay part of it.`
+          : 'They will be painted and built as part of the body, so they bend with it and cannot be held.'}
+      </p>
+    </div>
   )
 }

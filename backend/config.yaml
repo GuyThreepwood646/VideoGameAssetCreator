@@ -47,6 +47,8 @@ loras_dir: F:/Projects/ComfyUI/models/loras
 # CC0 humanoid clip libraries, by id used in export params clips_library.
 clips_libraries:
   ual1: "F:/Projects/VideoGameAssetCreator/data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"
+  # Pack 2 (CC0, License.txt checked): Unreal mannequin bone names, mapped by blender/gait.py; "Add a move" offers it.
+  ual2: "F:/Projects/VideoGameAssetCreator/data/animations/ual2/Universal Animation Library 2 [Standard]/Unity/UAL2_Standard.fbx"
 
 # A job is not dispatched to any instance while free system RAM is below this.
 min_free_ram_gb: 24

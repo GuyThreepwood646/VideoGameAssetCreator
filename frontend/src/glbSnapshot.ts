@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
 const W = 320
 const H = 240
@@ -14,8 +15,23 @@ function getRenderer() {
     renderer.setPixelRatio(1)
     renderer.setSize(W, H, false)
     renderer.outputColorSpace = THREE.SRGBColorSpace
+    // Studio preview light (previewLight.ts), built once for every thumbnail: metal reads as metal.
+    renderer.toneMapping = THREE.NeutralToneMapping
+    renderer.toneMappingExposure = 0.85
   }
   return renderer
+}
+
+let studioEnv: THREE.Texture | null = null
+function studio(r: THREE.WebGLRenderer): THREE.Texture {
+  if (!studioEnv) {
+    const pmrem = new THREE.PMREMGenerator(r)
+    const room = new RoomEnvironment()
+    studioEnv = pmrem.fromScene(room, 0.04).texture
+    room.dispose()
+    pmrem.dispose()
+  }
+  return studioEnv
 }
 
 // yawDeg turns the model about its vertical axis before the picture (positive turns its front toward its own
@@ -26,10 +42,7 @@ function render(model: THREE.Object3D, opts: SnapshotOptions): string {
   const r = getRenderer()
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x2a2d33)
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 1.3))
-  const key = new THREE.DirectionalLight(0xffffff, 1.5)
-  key.position.set(4, 8, 5)
-  scene.add(key)
+  scene.environment = studio(r)
   const pivot = new THREE.Group()
   pivot.add(model)
   pivot.rotation.y = ((opts.yawDeg ?? 0) * Math.PI) / 180

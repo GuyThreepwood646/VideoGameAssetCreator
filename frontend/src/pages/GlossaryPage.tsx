@@ -55,6 +55,10 @@ const GROUPS: Group[] = [
       { id: 'lod', term: 'term.lod', title: 'LOD (detail levels)' },
       { id: 'collider', term: 'term.collider', title: 'Collider (collision shape)' },
       { id: 'attachment-point', term: 'term.socket', title: 'Attachment point (socket)' },
+      { id: 'items', term: 'term.items', title: 'Items (held and carried things)' },
+      { id: 'moves-from', term: 'term.moves_from', title: 'Where moves come from (animation library)' },
+      { id: 'preview-light', term: 'term.preview_light', title: 'Preview light (environment light)' },
+      { id: 'beauty-render', term: 'term.beauty_render', title: 'Beauty picture (beauty render)' },
     ],
   },
 ]

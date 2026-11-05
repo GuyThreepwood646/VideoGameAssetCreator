@@ -23,6 +23,7 @@ the sanity checks fail (upright, two legs, two arms, one head chain); the report
 The role-finding maths below the docstring is plain numpy so the backend tests can run it without Blender; only
 main() touches bpy.
 """
+import math
 import json
 import os
 import sys
@@ -346,6 +347,33 @@ def name_report(bones, skeleton):
 # --- Blender side ---------------------------------------------------------------------------------------------
 
 
+# Stray weights: the rigger sometimes ties a few vertices to a bone on the other end of the body (fingertips to a toe
+# bone on one live character), which pulls them into long spikes as soon as the limb moves. An influence is stray when
+# its bone is far from the vertex (more than STRAY_FAR of the height) and much farther (STRAY_RATIO times) than the
+# nearest bone that also holds the vertex.
+STRAY_FAR = 0.2
+STRAY_RATIO = 4.0
+STRAY_NEAR_FLOOR = 0.02
+
+
+def _segment_distance(p, a, b):
+    ab = [b[i] - a[i] for i in range(3)]
+    ap = [p[i] - a[i] for i in range(3)]
+    den = sum(x * x for x in ab)
+    t = 0.0 if den <= 1e-12 else max(0.0, min(1.0, sum(ap[i] * ab[i] for i in range(3)) / den))
+    return math.sqrt(sum((ap[i] - t * ab[i]) ** 2 for i in range(3)))
+
+
+def stray_influences(p, weights, segments, height):
+    """Names of the bones in `weights` ({bone: weight}) that hold the point `p` from too far away. `segments` is
+    {bone: (head, tail)} in the same space as `p`; bones without a segment are never dropped."""
+    dist = {b: _segment_distance(p, *segments[b]) for b, w in weights.items() if w > 0 and b in segments}
+    if len(dist) < 2:
+        return []
+    near = max(min(dist.values()), STRAY_NEAR_FLOOR * height)
+    return [b for b, d in dist.items() if d > STRAY_FAR * height and d > STRAY_RATIO * near]
+
+
 def _world_box(objs):
     from mathutils import Vector
 
@@ -512,6 +540,7 @@ def main():
         if data.users == 0:
             bpy.data.meshes.remove(data)
     unnormalised = 0
+    stray = {"verts": 0, "by_bone": {}}
     for obj in [o for o in bpy.context.scene.objects if o.type == "MESH" and o.vertex_groups]:
         verts = obj.data.vertices
         total += len(verts)
@@ -528,6 +557,22 @@ def main():
                 for g in weighted[idx].groups:
                     groups[g.group].add([v.index], g.weight, "REPLACE")
                 fixed += 1
+        # Drop stray influences (a bone far across the body); the normalise pass below fills the gap.
+        arm = obj.find_armature() or next((o for o in bpy.context.scene.objects if o.type == "ARMATURE"), None)
+        if arm is not None:
+            segs = {b.name: (tuple(arm.matrix_world @ b.head_local), tuple(arm.matrix_world @ b.tail_local)) for b in arm.data.bones}
+            zs = [(obj.matrix_world @ v.co).z for v in verts]
+            height = (max(zs) - min(zs)) if zs else 0.0
+            names = {g.index: g.name for g in groups}
+            if height > 1e-6:
+                for v in verts:
+                    w = {names[g.group]: g.weight for g in v.groups if g.weight > 0 and g.group in names}
+                    drop = stray_influences(tuple(obj.matrix_world @ v.co), w, segs, height)
+                    if drop:
+                        stray["verts"] += 1
+                        for b in drop:
+                            stray["by_bone"][b] = stray["by_bone"].get(b, 0) + 1
+                            groups[b].remove([v.index])
         # Limit to 4 influences and normalise, in plain Python so it works headless and deterministically.
         for v in verts:
             entries = sorted(((g.group, g.weight) for g in v.groups if g.weight > 0), key=lambda t: -t[1])
@@ -557,7 +602,7 @@ def main():
     if report_path:
         with open(report_path, "w", encoding="utf-8") as fh:
             json.dump({"fixed_unweighted": fixed, "verts": total, "normalised": unnormalised, "removed": removed,
-                       "reference": ref_report, "bone_names": names_report}, fh, indent=1)
+                       "stray_weights": stray, "reference": ref_report, "bone_names": names_report}, fh, indent=1)
 
     # Export only the armature(s) and skinned meshes, so nothing stray can come along.
     bpy.ops.object.select_all(action="DESELECT")

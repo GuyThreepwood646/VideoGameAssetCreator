@@ -5,6 +5,8 @@
 import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
+import { mockAddItem, mockApplied, mockDetect, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
+import { addedOf, changeMoves, characterMoves, moveLibrary, mockReadMoveFile, myMoveFiles, removedOf } from './moves'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
 type Route = { method: string; re: RegExp; handler: Handler }
@@ -504,6 +506,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
   }
   if (typeof body.image === 'string') checkPicture(body.image) // a bad picture makes no asset, like the backend
   store.assets.push(a)
+  mockItemsOnCreate(a, body.items) // carried items set aside (items.ts)
   if (typeof body.image === 'string') return { ...a, upload: uploadConcept(a, body.image, null) }
   return a
 })
@@ -1209,6 +1212,116 @@ on('DELETE', '/api/my-addons/:id', (m) => {
   const [gone] = myAddons.splice(i, 1)
   return { removed: gone.id, file_name: gone.file_name, file_kept: true }
 })
+
+// Add a move (mock/moves.ts): the library, a character's moves, and your own animation files.
+function keptRig(a: Asset): Version | null {
+  const id = a.selected.rig
+  const v = id ? a.stages.rig?.find((x) => x.id === id) : undefined
+  return v && v.status === 'done' ? v : null
+}
+function rigBusy(a: Asset): boolean {
+  return store.jobs.some((j) => j.asset_id === a.id && j.kind.startsWith('rig.') && (j.status === 'queued' || j.status === 'running'))
+}
+function movesOthers(a: Asset): { asset_id: string; name: string; added: number; removed: number }[] {
+  return store.assets
+    .filter((o) => o.id !== a.id && o.project_id === a.project_id && o.category === 'humanoid')
+    .map((o) => ({ o, v: keptRig(o) }))
+    .filter(({ v }) => v && (addedOf(v.params).length || removedOf(v.params).length))
+    .map(({ o, v }) => ({ asset_id: o.id, name: o.name, added: addedOf(v!.params).length, removed: removedOf(v!.params).length }))
+}
+on('GET', '/api/moves/library', () => moveLibrary())
+on('GET', '/api/assets/:id/moves', (m) => {
+  const a = findAsset(m.groups!.id)
+  const v = keptRig(a)
+  return characterMoves(a.category, v ? { id: v.id, params: v.params } : null, rigBusy(a), a.category === 'humanoid' ? movesOthers(a) : [])
+})
+on('POST', '/api/assets/:id/moves', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  if (a.category !== 'humanoid') throw new HttpError(400, 'The hand-made moves only fit human-shaped characters, so they cannot be added to this creature.')
+  const v = keptRig(a)
+  if (!v) throw new HttpError(409, 'Make the skeleton first: the moves are added to the kept version of the Make it move step.')
+  if (rigBusy(a)) throw new HttpError(409, 'The moves are already being made again. Wait for that to finish.')
+  let next: { added_moves: unknown[]; removed_moves: string[] }
+  try {
+    if (typeof body.copy_from === 'string' && body.copy_from) {
+      const src = keptRig(findAsset(body.copy_from))
+      if (!src) throw new Error('That character has no finished moves to copy.')
+      next = { added_moves: addedOf(src.params), removed_moves: removedOf(src.params) }
+    } else {
+      const add = Array.isArray(body.add) ? body.add.map(String) : []
+      const remove = Array.isArray(body.remove) ? body.remove.map(String) : []
+      if (!add.length && !remove.length) throw new Error('Choose at least one move to add or take off.')
+      next = changeMoves(v.params, add, remove)
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e
+    throw new HttpError(400, e instanceof Error ? e.message : String(e))
+  }
+  const nv = newVersion(a, 'rig', v.id, { ...v.params, ...next })
+  const job = startJob(a, nv, 'rig.adjust')
+  return { job: clone(job), version: clone(nv) }
+})
+on('GET', '/api/my-moves', () => ({ files: myMoveFiles, responsibility: 'You are responsible for being allowed to use these files in your game.', max_mb: 200, kinds: ['.fbx', '.glb', '.bvh'] }))
+on('POST', '/api/my-moves/upload', (_m, _b, query) => {
+  const name = String(query.get('name') ?? '')
+  if (/[\\/:]|\.\./.test(name)) throw new HttpError(400, 'The file name must be a plain file name, without folders.')
+  if (Number(query.get('bytes') ?? 0) > 200 * 1024 * 1024) throw new HttpError(413, 'This file is larger than 200 MB. Animation files are usually much smaller.')
+  try {
+    return mockReadMoveFile(name)
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : String(e))
+  }
+})
+on('PUT', '/api/my-moves/:id', (m, body) => {
+  const f = myMoveFiles.find((x) => x.id === m.groups!.id)
+  if (!f) throw new HttpError(404, 'That file is not on your list.')
+  if (typeof body.label === 'string' && body.label.trim()) f.label = body.label.trim().slice(0, 80)
+  if (typeof body.source === 'string') f.source = body.source.trim().slice(0, 500)
+  if (Array.isArray(body.clips)) {
+    for (const c of body.clips as { action?: unknown; label?: unknown; loop?: unknown }[]) {
+      const clip = f.clips.find((x) => x.action === c.action)
+      if (!clip) throw new HttpError(400, `This file has no move called ${String(c.action)}.`)
+      const label = String(c.label ?? '').trim()
+      if (!label) throw new HttpError(400, 'Give every move a name.')
+      clip.label = label.slice(0, 60)
+      clip.loop = c.loop === true
+    }
+  }
+  return f
+})
+on('DELETE', '/api/my-moves/:id', (m) => {
+  const i = myMoveFiles.findIndex((x) => x.id === m.groups!.id)
+  if (i < 0) throw new HttpError(404, 'That file is not on your list.')
+  const [gone] = myMoveFiles.splice(i, 1)
+  return { removed: gone.id }
+})
+
+// Items (mock/items.ts; backend vgac/items.py)
+const itemsErr = (f: () => unknown) => {
+  try {
+    return f()
+  } catch (e) {
+    if (e instanceof HttpError) throw e
+    throw new HttpError(e instanceof Error && e.message === 'attachment not found' ? 404 : 400, e instanceof Error ? e.message : String(e))
+  }
+}
+on('GET', '/api/item-words', () => ({ version: 1, places: PLACES, help: 'Clothes that bend with the body (a cloak, armour, boots, a belt) stay part of the body.' }))
+on('POST', '/api/items/detect', (_m, body) => mockDetect(String(body.prompt ?? ''), String(body.category ?? 'humanoid')))
+on('GET', '/api/assets/:id/items', (m) => mockPanel(findAsset(m.groups!.id)))
+on('POST', '/api/assets/:id/items', (m, body) => itemsErr(() => mockAddItem(findAsset(m.groups!.id), body)))
+on('PUT', '/api/assets/:id/attachments/:att', (m, body) => itemsErr(() => mockUpdate(findAsset(m.groups!.id), m.groups!.att, body)))
+on('POST', '/api/assets/:id/attachments/:att/nudge', (m, body) => itemsErr(() => mockNudge(findAsset(m.groups!.id), m.groups!.att, body)))
+on('DELETE', '/api/assets/:id/attachments/:att', (m) => itemsErr(() => mockRemove(findAsset(m.groups!.id), m.groups!.att)))
+on('POST', '/api/assets/:id/items/apply', (m) => {
+  const a = findAsset(m.groups!.id)
+  const ex = a.stages.export?.find((v) => v.id === a.selected.export && v.status === 'done')
+  if (!ex) throw new HttpError(409, 'finish the character first')
+  const nv = newVersion(a, 'export', ex.id, { ...ex.params })
+  const job = startJob(a, nv, 'export.adjust')
+  mockApplied(a)
+  return { job: clone(job), version: clone(nv) }
+})
+on('POST', '/api/assets/:id/items/build', (m) => mockPanel(findAsset(m.groups!.id)))
 
 on('GET', '/api/jobs', (_m, _b, query) => {
   let list = store.jobs

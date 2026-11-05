@@ -394,6 +394,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
     },
+    # "Add a move" (moves.py): the moves the person added from the library or their own file.
+    "added_moves": {
+        "severity": "warn",
+        "ok": "The {value:n} moves you added are on the character.",
+        "fail": "Some moves you added could not be made: {missing:list}. {reason}",
+        "fix": lambda c: {"stage": "rig", "params": {}},
+        "fix_label": "Make the moves again",
+    },
     "legs_moved": {
         "severity": "warn",
         "ok": "All {value:n} legs move in the walk.",
@@ -444,6 +452,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "Hit boxes or attachment points landed {cm} cm away from where they were fitted, so hits and held items would look off.",
         "fix": lambda c: {"stage": "export", "params": {}},
         "fix_label": "Rebuild for Unity",
+    },
+    "grip_found": {
+        "severity": "warn",
+        "ok": lambda c: "The hand holds the {label} by its handle" + (" ({method})." if (c.get("vars") or {}).get("method") else "."),
+        "fail": "We guessed where the hand holds the {label}; check it in the preview under Add an item and move it if it looks wrong.",
+    },
+    "item_clear_of_body": {
+        "severity": "warn",
+        "ok": lambda c: ("The {label} " + ("{stays}" if (c.get("vars") or {}).get("stays") else "stays")
+                         + " clear of the body in every move we checked ({clips})."),
+        "fail": "The {label} passes {cm} cm into the body during {clip}; nudge it away from the body under Add an item.",
     },
     "controller_ready": {
         "severity": "warn",

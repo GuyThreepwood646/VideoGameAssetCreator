@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import user_addons
+from . import items, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -57,6 +57,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 app.include_router(own_images.router)  # start from your own images (own_images.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
+app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
+app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
 
 LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
 
@@ -123,6 +125,9 @@ class AssetIn(BaseModel):
     concept_model: str | None = None
     # Start from a picture: the person's own concept picture (base64 or a data: URL); the description may stay empty.
     image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
+    # Carried items found in the description (items.detect): "separate" (the default) makes the character
+    # empty-handed and each item its own linked asset; "keep" leaves them part of the body.
+    items: Literal["separate", "keep"] | None = None
 
 
 class AssetPatch(BaseModel):
@@ -446,6 +451,8 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
     db.add(a)
     db.commit()
+    db.refresh(a)
+    items.on_create(db, a, body.items)
     db.refresh(a)
     if picture is None:
         return asset_to_dict(a)

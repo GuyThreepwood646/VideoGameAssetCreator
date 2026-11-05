@@ -7,7 +7,9 @@ renders at 35 and 90 degrees, skeleton overlay), hit boxes and the body shape fo
 section 4.2), then procedural idle and walk clips (procanim) and a rendered strip of them.
 
 An Adjust that changes only the hit-box knobs (hitboxes, hitbox_fit, hitbox_regions) re-fits the hit boxes on the
-parent's rigged files instead of running SkinToken again (about 10 seconds).
+parent's rigged files instead of running SkinToken again (about 10 seconds). An Adjust that changes only the moves
+(added_moves, removed_moves from "Add a move", and the moves knobs) makes only the moves again on the parent's
+skeleton the same way (moves.py); both together do both.
 """
 
 from __future__ import annotations
@@ -279,12 +281,32 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
     return bool(changed) and changed <= set(HITBOX_PARAMS)
 
 
-def _reuse_parent(sc: StageContext, parent: Any) -> Path | None:
-    """Copy the parent rig version's files (all but its hit boxes) into this version at the same relative paths and
-    carry its metrics over, so deleting the parent later cannot break this version. -> the copied rig GLB."""
+# The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
+# made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
+MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion")
+ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip")
+_ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "retarget_error",
+                 "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
+                 "moves", "clips_library", "added_moves_missing", "added_moves_reasons")
+KEEP_MARKER = "_keep_when_done"
+
+
+def reuse_change(parent_params: dict[str, Any], params: dict[str, Any]) -> set[str] | None:
+    """{"hitboxes", "moves"} parts an Adjust changes when it changes only hit-box and moves knobs, else None (rig
+    again). An empty change still rigs again."""
+    changed = {k for k, v in params.items() if k != KEEP_MARKER and parent_params.get(k) != v}
+    if not changed or not changed <= set(HITBOX_PARAMS) | set(MOVES_PARAMS):
+        return None
+    return ({"hitboxes"} if changed & set(HITBOX_PARAMS) else set()) | ({"moves"} if changed & set(MOVES_PARAMS) else set())
+
+
+def _reuse_parent(sc: StageContext, parent: Any, skip: tuple[str, ...] = HITBOX_FILES, skip_metrics: tuple[str, ...] = ()) -> Path | None:
+    """Copy the parent rig version's files (all but `skip`, by default its hit boxes) into this version at the same
+    relative paths and carry its metrics over, so deleting the parent later cannot break this version. -> the copied
+    rig GLB."""
     parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False).resolve()
     for key in list(parent.files):
-        if key in HITBOX_FILES:
+        if key in skip:
             continue
         src = library.version_file(parent, key, sc.settings)
         if src is None:
@@ -299,10 +321,43 @@ def _reuse_parent(sc: StageContext, parent: Any) -> Path | None:
         if src != dest.resolve():
             shutil.copy2(src, dest)
         sc.register(key, dest)
-    carried = {k: v for k, v in (parent.metrics or {}).items() if k not in _RUN_METRICS}
+    carried = {k: v for k, v in (parent.metrics or {}).items() if k not in _RUN_METRICS and k not in skip_metrics}
     sc.set_metrics(**carried, refit_of=parent.id)
     glb = sc.file("glb")
     return Path(glb) if glb is not None else None
+
+
+async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: set[str]) -> bool:
+    """Re-fit the hit boxes and/or make the moves again on the parent's skeleton (no SkinToken). False when the
+    parent has no rig to reuse; the caller then rigs again. With the keep marker (POST /api/assets/{aid}/moves) the
+    new version is kept when its moves were made, as the person expects after "Add them"."""
+    if parent is None or parent.stage != "rig" or (parent.metrics or {}).get("rigid"):
+        return False
+    if "hitboxes" in parts and sc.asset.category not in HITBOX_CATEGORIES:
+        parts = parts - {"hitboxes"}
+        if not parts:
+            return False
+    if library.version_file(parent, "glb", sc.settings) is None:
+        return False
+    sc.progress(0.05, "making the moves again" if "moves" in parts else "fitting the hit boxes")
+    skip = (HITBOX_FILES if "hitboxes" in parts else ()) + (ANIM_FILES if "moves" in parts else ())
+    rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
+    if rig_glb is None:
+        return False
+    if "hitboxes" in parts:
+        hp = hitbox_params(sc.platform, params)
+        sc.set_params(**hp)
+        await fit_hitboxes(sc, rig_glb, hp)
+    if "moves" in parts:
+        sc.set_metrics(remade_moves_of=parent.id)
+        await _animate(sc, rig_glb, params)
+    await judge(sc)
+    m = sc.version.metrics
+    if params.get(KEEP_MARKER) and parent.selected and not m.get("anim_error") and not m.get("retarget_error") and m.get("clips"):
+        from .. import pipeline
+
+        pipeline.select(sc.db, sc.version)
+    return True
 
 
 async def refit(sc: StageContext, parent: Any, params: dict[str, Any]) -> bool:
@@ -347,7 +402,8 @@ def library_file(path: Path | str | None) -> Path | None:
             root = anc
             break
     if root.is_dir():
-        glbs = sorted(root.rglob("*.glb"), key=lambda q: (0 if "godot" in str(q).lower() else 1, len(str(q))))
+        # The pack's own file, not a spare mannequin (pack 2 also has a Female Mannequin GLB with no moves).
+        glbs = sorted(root.rglob("*.glb"), key=lambda q: (0 if "godot" in str(q).lower() else 1, "mannequin" in str(q).lower(), len(str(q))))
         if glbs:
             return glbs[0]
     return p if p.is_file() else None
@@ -378,6 +434,19 @@ def use_library(sc: StageContext, params: dict[str, Any]) -> tuple[bool, str | N
     return True, None
 
 
+def chosen_moves_of(category: dict[str, Any], params: dict[str, Any]) -> Any:
+    """The moves knob as the person chose it, or None. A stored value equal to the category's own clip list is the
+    default the stage wrote back into the params, not a choice: it must not narrow the library moves (an Adjust
+    inherits the parent's params, and reading it as a choice dropped jump, crouch, roll and interact)."""
+    v = params.get("moves")
+    if v is None:
+        return None
+    default = category.get("clips")
+    if isinstance(v, (list, tuple)) and isinstance(default, (list, tuple)) and list(v) == list(default):
+        return None
+    return v
+
+
 async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | None = None) -> None:
     """The moves: procedural clips per category (motion and moves: G30, G31), then for humanoids the hand-made CC0
     library clips retargeted onto the skeleton (retarget.py; clips_source auto or library), which replace the
@@ -387,7 +456,7 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
     params = params or {}
     anim_glb = sc.dir / "anim.glb"
     motion = params.get("motion") or sc.category.get("motion")
-    chosen_moves = params.get("moves")
+    chosen_moves = chosen_moves_of(sc.category, params)
     moves = chosen_moves if chosen_moves is not None else sc.category.get("clips")
     args: list[Any] = [rig_glb, anim_glb, 24]
     if motion:
@@ -439,19 +508,27 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     if not ok:
         sc.set_metrics(library_skipped=reason)
         return
-    rows = library_rows(sc.category, chosen_moves)
+    from .. import moves as moves_mod
+
+    removed = moves_mod.removed_list(params)
+    rows = moves_mod.move_rows(sc.category, params, chosen_moves)
     if not rows:
         sc.set_metrics(library_skipped="no library clips match the chosen moves")
         return
-    from ..blender import gait
-
-    lib_id = params.get("clips_library") or "ual1"
-    lib = library_file(sc.settings.clips_libraries.get(lib_id))
-    spec = gait.clip_spec_text([(str(r["name"]), [str(c) for c in (r.get("from") or [r["name"]])]) for r in rows])
+    libs, lib_missing = moves_mod.libraries_for(rows, sc.settings)
+    if not libs:
+        sc.set_metrics(library_skipped=next(iter(lib_missing.values()), "no clip library found on disk"))
+        return
+    spec_path = sc.dir / "anim_retarget_spec.json"
+    spec_path.write_text(json.dumps(moves_mod.spec_rows(rows), indent=1), encoding="utf-8")
     loops = ",".join(str(r["name"]) for r in rows if r.get("loop"))
     report = sc.dir / "anim_retarget.json"
-    args: list[Any] = [anim_glb, anim_glb, "--library", lib, "--clips", spec, "--loops", loops or "none", "--fps", 24,
-                       "--report", report]
+    args: list[Any] = [anim_glb, anim_glb, "--library", ";".join(f"{lid}={p}" for lid, p in libs), "--spec", spec_path,
+                       "--loops", loops or "none", "--fps", 24, "--report", report]
+    proc = list(sc.version.metrics.get("procedural_clips") or [])
+    if removed:
+        # Built-in moves the person took off (and built-in copies of removed library moves) are not kept.
+        args += ["--keep", ",".join(c for c in proc if c not in removed) or "none"]
     t0 = time.monotonic()
     sc.set_metrics(library_skipped=None)
     try:
@@ -465,12 +542,30 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     sc.register("anim_retarget", report)
     wanted = [str(r["name"]) for r in rows]
     made = list(rep.get("clips") or [])
+    side = sc.dir / "anim_clips.json"
+    side_doc = json.loads(side.read_text(encoding="utf-8")) if side.is_file() else None
+    added_missing = [r["name"] for r in rows if r.get("added") and r["name"] not in made]
+    reasons = {k: moves_mod.plain_reason(v) for k, v in (rep.get("clip_reasons") or {}).items()}
+    for r in rows:
+        lid = r["from"][0]["library"] if r.get("from") else None
+        if r["name"] not in made and lid in lib_missing:
+            reasons[r["name"]] = lib_missing[lid]
     sc.set_metrics(clips=made, clips_source="library" if rep.get("library_clips") else "procedural",
                    library_clips=rep.get("library_clips") or [], procedural_clips=rep.get("procedural_clips") or [],
                    missing_clips=[c for c in wanted if c not in made], retarget_error=None,
-                   retarget_seconds=round(time.monotonic() - t0, 2), clips_library=lib_id,
+                   retarget_seconds=round(time.monotonic() - t0, 2), clips_library=",".join(lid for lid, _ in libs),
+                   moves=moves_mod.moves_metrics(side_doc, rows, removed), added_moves_missing=added_missing,
+                   added_moves_reasons={n: reasons.get(n, "") for n in added_missing},
                    retarget={"leg_ratio": rep.get("leg_ratio"), "missing_bones": rep.get("missing_bones") or [],
-                             "seconds_in_blender": rep.get("seconds"), "faithful_max_deg": _faithful_max(rep)})
+                             "seconds_in_blender": rep.get("seconds"), "faithful_max_deg": _faithful_max(rep),
+                             "libraries": {k: {"leg_ratio": v.get("leg_ratio"), "fps": v.get("fps"), "error": v.get("error")}
+                                           for k, v in (rep.get("libraries") or {}).items()}})
+    # Where the moves came from, next to the models the export manifest lists (licence, and "Where it came from").
+    # The list replaces the one carried over from the parent (a move taken off takes its source with it).
+    recs = moves_mod.source_records([r for r in rows if r["name"] in made], sc.settings)
+    ids = {r["id"] for r in recs}
+    kept_models = [x for x in (sc.version.metrics.get("models") or []) if isinstance(x, dict) and x.get("role") != "moves" and x.get("id") not in ids]
+    sc.set_metrics(models=kept_models + recs)
 
 
 def _faithful_max(rep: dict[str, Any]) -> float | None:
@@ -507,6 +602,14 @@ async def judge(sc: StageContext) -> None:
             lib = m.get("library_clips") or []
             checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",
                                         vars={"count": len(lib), "reason": m.get("retarget_error") or ""}))
+        # Moves the person added ("Add a move"): every one made, or which were not and why.
+        added = [x for x in (m.get("moves") or []) if isinstance(x, dict) and x.get("added")]
+        if added:
+            missing_added = [x.get("label") or x.get("name") for x in added if not x.get("made", True)]
+            made_n = len(added) - len(missing_added)
+            why = "; ".join(sorted({str(v) for v in (m.get("added_moves_reasons") or {}).values() if v}))
+            checks.append(quality.check("added_moves", not missing_added, made_n, len(added),
+                                        vars={"missing": missing_added, "reason": (why[:1].upper() + why[1:] + ".") if why else ""}))
         if sc.asset.category in ("quadruped", "multileg") and m.get("legs_total"):
             checks.append(quality.check("legs_moved", (m.get("legs_moved") or 0) >= m["legs_total"], m.get("legs_moved"), m["legs_total"]))
         if sc.asset.category == "winged":
@@ -534,4 +637,8 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     merged = {**parent_params, **params}
     if parent is not None and only_hitbox_change(parent_params, params) and await refit(sc, parent, merged):
         return
+    parts = reuse_change(parent_params, params) if parent is not None else None
+    if parts and await reuse(sc, parent, merged, parts):
+        return
+    merged.pop(KEEP_MARKER, None)
     await _rig(sc, merged)

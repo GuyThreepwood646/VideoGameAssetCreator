@@ -48,7 +48,12 @@ def palette_sentence(palette: Any) -> str:
 
 def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     lock = sc.project.style_lock or {}
-    base = (params.get("prompt_override") or "").strip() or sc.asset.prompt.strip()
+    # Items (vgac/items.py): a character with its items set aside is painted empty-handed; a held item gets its own
+    # pose block instead of the rigid prop's.
+    from .. import items
+
+    held = items.concept_prompt_parts(sc.asset)
+    base = (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
     parts = [base]
     style_block = (lock.get("prompt_block") or "").strip() or (sc.style.get("prompt_block") or "").strip()
     if style_block:
@@ -56,8 +61,12 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     pal = palette_sentence(lock.get("palette"))
     if pal:
         parts.append(pal)
-    if params.get("readiness_block", True) and sc.category.get("pose_block"):
+    if params.get("readiness_block", True) and (held or {}).get("pose_block"):
+        parts.append(held["pose_block"])
+    elif params.get("readiness_block", True) and sc.category.get("pose_block"):
         parts.append(sc.category["pose_block"])
+    if (held or {}).get("sentence"):
+        parts.append(held["sentence"])
     if sc.asset.parts:
         parts.append("The following parts are clearly separate pieces: " + ", ".join(sc.asset.parts) + ".")
     return " ".join(p for p in parts if p)
@@ -85,6 +94,14 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     applied = adds["applied"]
     prompt = build_prompt(sc, params)
     negative = (sc.project.style_lock or {}).get("negative") or rec["concept"].get("negative") or None
+    from .. import items
+
+    aside = items.concept_prompt_parts(sc.asset) or {}
+    if aside.get("negative") and (reference.models().get(model) or {}).get("negative"):
+        # Painters that take a negative prompt are also told not to paint the items set aside.
+        negative = ", ".join(x for x in (negative, aside["negative"]) if x)
+    if aside.get("set_aside"):
+        sc.set_metrics(items_set_aside=aside["set_aside"])
     sc.set_params(model=model, seed=seed, width=width, height=height, steps=steps, prompt=prompt, negative=negative or "",
                   addons_applied={a["id"]: a["strength"] if a["strength"] != "custom" else a["value"] for a in applied})
     sc.set_metrics(recipe=reference.recipe_record(rec, "concept", "addons"), addons=applied, addons_ignored=adds["ignored"],

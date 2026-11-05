@@ -30,7 +30,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, library, quality, reference, sockets
+from .. import colliders, guidance, items, library, quality, reference, sockets
+from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
 from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
@@ -298,7 +299,7 @@ def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args:
     for k, v in args.items():
         if k == "-vgacInput":
             value = rel_folder  # the Editor reads its inputs from the request's own folder
-        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips", "-vgacSockets")):
+        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips", "-vgacSockets", "-vgacAttachments")):
             p = Path(v)
             # Inputs from this export's folder travel with the request; anything else (the shared clip library)
             # is read where it is.
@@ -344,6 +345,9 @@ def collect_unity_import(version: Any) -> dict[str, Any] | None:
 
 
 def _input_glb(sc: StageContext) -> tuple[Path, str]:
+    # A held item exports the copy with its pivot at the grip (items.pivot_item).
+    if getattr(sc, "item_input", None) is not None and Path(sc.item_input).is_file():
+        return Path(sc.item_input), "prep.glb"
     for key, stages in (("anim_glb", ("rig",)), ("glb", ("rig",)), ("glb", ("prep",)), ("glb", ("mesh",))):
         p = sc.lineage_file(key, stages)
         if p is not None:
@@ -599,6 +603,9 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     sj = Path(sc.dir) / "sockets.json"
     if sj.is_file():
         args["-vgacSockets"] = sj
+    aj = Path(sc.dir) / "attachments.json"
+    if aj.is_file() and sc.version.files.get("attachments"):
+        args["-vgacAttachments"] = aj  # items: the second prefab "<Name> (equipped)"
     clips_lib = params.get("clips_library", "ual1")
     if humanoid and clips_lib and clips_lib != "none":
         lib = sc.settings.clips_libraries.get(clips_lib)
@@ -606,6 +613,9 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
             args["-vgacClips"] = lib
         else:
             warnings.append(f"clips library {clips_lib!r} not found")
+    sky = showcase_sky()
+    if sky is not None:
+        args["-vgacHdri"] = sky  # the showcase scene's sky and light, sun clipped (beauty.py)
     return args, flags, warnings
 
 
@@ -629,7 +639,9 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "textureMipmaps": report.get("textureMipmaps"), "textureCompression": report.get("textureCompression"),
             "normalMap": report.get("normalMap"), "textureSettings": report.get("textureSettings"),
             "sockets": report.get("sockets"), "socketBones": report.get("socketBones"),
-            "socketMaxError": report.get("socketMaxError"), "socketMaxAngle": report.get("socketMaxAngle")}
+            "socketMaxError": report.get("socketMaxError"), "socketMaxAngle": report.get("socketMaxAngle"),
+            "equippedPrefab": report.get("equippedPrefab"), "equippedItems": report.get("equippedItems"),
+            "showcase": report.get("showcase")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -667,7 +679,8 @@ async def _unity_snapshot(sc: StageContext, params: dict[str, Any], name: str) -
     snap_dir = sc.dir / "unity_snapshots"
     try:
         sc.progress(0.7, "Unity clip snapshots")
-        await sc.unity("VgacImport.Snapshot", {"-vgacName": name, "-vgacOut": snap_dir, "-vgacClipFilter": "walk,idle", "-vgacFrames": 4, "-vgacSize": 384},
+        await sc.unity("VgacImport.Snapshot", {"-vgacName": name, "-vgacOut": snap_dir, "-vgacClipFilter": "walk,idle", "-vgacFrames": 4, "-vgacSize": 384,
+                                                    **({"-vgacHdri": sky} if (sky := showcase_sky()) else {})},
                        [], "unity_snapshot.log", timeout=1800)
     except Exception as e:
         sc.set_metrics(unity_snapshot_error=str(e)[-600:])
@@ -808,6 +821,9 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "glb_files": _glb_files(sc),
         "hitboxes": _hitbox_manifest(sc, unity_report),
         "sockets": sockets.manifest_block(_read_json(sc.file("sockets")), unity_report),
+        "attachments": _read_json(sc.file("attachments")) or None,
+        "held_item": getattr(sc.asset, "held_item", None),
+        "grip": _read_json(sc.file("grip")) or None,
         "bones": (pack_report or {}).get("bones"),
         "bone_names": (rig_v.metrics.get("bone_names") if rig_v else None),
         "rigid": bool(rig_v.metrics.get("rigid")) if rig_v else True,
@@ -891,7 +907,9 @@ def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
     Only the one-off moves the controller has are named."""
     if not controller or "Locomotion" not in (controller.get("states") or []):
         return []
-    triggers = [str(p).split(":")[0] for p in controller.get("parameters") or [] if str(p).endswith(":Trigger")]
+    added = [str(p) for p in controller.get("added") or []]  # moves the person added ("Add a move", moves.py)
+    added_names = {p.split(":")[0] for p in added}
+    triggers = [str(p).split(":")[0] for p in controller.get("parameters") or [] if str(p).endswith(":Trigger") and str(p).split(":")[0] not in added_names]
     lines = [f"Drag the prefab from {prefab} into your scene."]
     params = [str(p).split(":")[0] for p in controller.get("parameters") or []]
     if "Speed" in params:
@@ -902,6 +920,13 @@ def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
         lines.append(f'For one-off moves, call animator.SetTrigger("{first}");{extra}.')
     if "Flying" in params:
         lines.append('For flight, set animator.SetBool("Flying", true); set it back to false to land.')
+    if added:
+        one = [p.split(":")[0] for p in added if p.endswith(":Trigger")]
+        held = [p.split(":")[0] for p in added if p.endswith(":Bool")]
+        parts = ([f'animator.SetTrigger("{one[0]}") plays a move you added once'] if one else []) + \
+                ([f'animator.SetBool("{held[0]}", true) plays a looping one until you set it to false'] if held else [])
+        more = len(added) - len(parts)
+        lines.append("For the moves you added, " + " and ".join(parts) + (f"; the other {more} work the same way, named after the move." if more > 0 else "."))
     return lines
 
 
@@ -986,6 +1011,7 @@ async def judge(sc: StageContext) -> None:
                 worst = max(off)
                 checks.append(quality.check("placement_exact", worst <= PLACEMENT_MAX_M, round(worst, 4), PLACEMENT_MAX_M,
                                             vars={"cm": round(worst * 100, 1)}))
+    checks += items.export_checks(sc)  # grip_found, item_clear_of_body
     sc.set_metrics(**quality.summarise(checks))
     # A hand-off to an open Unity Editor finishes later; POST /api/versions/{id}/judge (mode metrics) picks it up.
     picked = collect_unity_import(sc.version)
@@ -1005,13 +1031,19 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     sc.set_params(export_name=name, unity=bool(params.get("unity", True)), clips_library=params.get("clips_library", "ual1"),
                   sprites=bool(params.get("sprites", False)), sprite_directions=int(params.get("sprite_directions") or 8),
                   sprite_size=int(params.get("sprite_size") or 128))
+    if items.is_held_item(sc):
+        await items.pivot_item(sc)  # the item's own files get their pivot at the grip
     pack_report = await _pack(sc, params, name)
+    if not items.is_held_item(sc):
+        await items.equip(sc, name)  # attachments.json, the item files and <name>_equipped.glb
     unity_report = await _unity(sc, params, name)
     if unity_report and unity_report.get("ok"):
         howto = unity_howto(unity_report.get("prefab", ""), unity_report.get("controller"))
         line = socket_howto(unity_report.get("sockets") or [], unity_report.get("humanoidValid") is True)
-        sc.set_metrics(unity_howto=howto + ([line] if line else []))
+        equipped = items.unity_line(unity_report, name)
+        sc.set_metrics(unity_howto=howto + ([line] if line else []) + ([equipped] if equipped else []))
     await _sprites(sc, params)
+    await render_beauty(sc)  # the finish card's picture in realistic light (beauty.py)
     await judge(sc)
     finish = getattr(guidance, "finish_lines", None)  # plan 2.4, guidance lane
     if callable(finish):
@@ -1023,6 +1055,7 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
     await _deliver(sc, name, params)
+    items.keep_if_equipping(sc)  # a rebuild with the items on is kept
     sc.progress(1.0, "export done")
 
 
@@ -1033,7 +1066,7 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
     return dest
 
 
-DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
 
@@ -1061,6 +1094,12 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
                 (dest / "lods").mkdir(exist_ok=True)
                 shutil.copy2(src, dest / "lods" / Path(src).name)
                 copied.append(f"lods/{Path(src).name}")
+    # Items attached to a character: items/<item>/ with each item's own files (pivot at the grip).
+    items_src = Path(sc.dir) / "items"
+    if items_src.is_dir() and sc.version.files.get("attachments"):
+        shutil.rmtree(dest / "items", ignore_errors=True)
+        shutil.copytree(items_src, dest / "items")
+        copied += [f"items/{p.relative_to(items_src).as_posix()}" for p in sorted(items_src.rglob("*")) if p.is_file()]
     sc.set_metrics(delivered_to=str(dest), delivered_files=copied)
     sc.progress(0.95, f"delivered to {dest}")
     proj_path = getattr(sc.project, "unity_project_path", None)

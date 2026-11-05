@@ -47,8 +47,12 @@ SAMPLES = {
     "materials_connected": ((True, True), (False, True)),
     "clips_loop": ((True, True), ("walk", True)),
     "library_clips": ((15, ">0"), (0, ">0")),
+    "added_moves": ((5, 5), (3, 5)),
     "controller_ready": ((True, True), (False, True)),
     "placement_exact": ((0.0001, 0.02), (0.3, 0.02)),
+    # Items: the grip guess and the item staying clear of the body.
+    "grip_found": ((0.9, 0.6), (0.3, 0.6)),
+    "item_clear_of_body": ((0.0, 0.03), (0.08, 0.03)),
     "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
     "collider_triangles": ((236, 255), (300, 255)),

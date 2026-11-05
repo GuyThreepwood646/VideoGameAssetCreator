@@ -1,0 +1,25 @@
+Light pictures (HDRIs) used by the "Light" choices in the 3D viewer, the beauty render and the Unity showcase.
+
+All three come from Poly Haven and are CC0 (public domain): free to use, change and ship in commercial work,
+no credit required. Licence: https://polyhaven.com/license
+Downloaded at 1k (1024 x 512) from https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/ on 2026-11-05.
+
+kloofendal_48d_partly_cloudy_1k.hdr
+  Light choice: Outdoors
+  Source: https://polyhaven.com/a/kloofendal_48d_partly_cloudy
+  Author: Greg Zaal
+  Licence: CC0
+
+overcast_soil_1k.hdr
+  Light choice: Overcast
+  Source: https://polyhaven.com/a/overcast_soil
+  Author: Sergej Majboroda
+  Licence: CC0
+
+dikhololo_night_1k.hdr
+  Light choice: Night
+  Source: https://polyhaven.com/a/dikhololo_night
+  Author: Greg Zaal
+  Licence: CC0
+
+Studio uses three.js RoomEnvironment, which is generated in the browser (MIT, part of three.js); no file.

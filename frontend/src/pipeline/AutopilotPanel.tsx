@@ -3,6 +3,7 @@
 import { Fragment, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
+import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
@@ -353,6 +354,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           </div>
         )}
         {glb ? <Viewer url={glb} height={360} turntableDefault defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
+        {exp && <BeautyPicture version={exp} name={asset.name} />}
         {exp && <Deliverables version={exp} />}
         {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
         {howto && (
