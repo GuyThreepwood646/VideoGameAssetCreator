@@ -1,11 +1,13 @@
 // Fine-tune (the Adjust form) with a simple layer and an Advanced disclosure.
 // Applying it posts /api/versions/{vid}/adjust: a new version with these settings.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { libraryUrl, selectedVersion, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
+import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
 import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
+import { useRecipe } from '../recipe'
+import { addonRows, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
 
@@ -57,6 +59,8 @@ export function FineTune({
       if (cur === null || cur === undefined || (Array.isArray(cur) && cur.length === 0 && target.params?.[name] == null)) out[name] = shownOptions(p, out.motion).map(String)
       else if (Array.isArray(cur)) out[name] = [...new Set(cur.map((c) => (c === 'turn_left' || c === 'turn_right' ? 'turn' : String(c))))]
     }
+    // Add-ons: only the choices this version made ({id: off | subtle | normal | strong}); the rest follow the recipe.
+    for (const p of visible) if (p.type === 'addons') out[p.name] = addonChoices(target.params?.[p.name])
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey])
@@ -66,9 +70,29 @@ export function FineTune({
   const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }))
   const changed = visible.filter((p) => JSON.stringify(values[p.name] ?? null) !== JSON.stringify(initial[p.name] ?? null))
 
+  // Add-ons (concept) follow the recipe for this asset's look; the turnaround lists its own helpers read-only.
+  const recipe = useRecipe(asset.style_preset, asset.category, asset.platform_target, stage === 'concept' || stage === 'turnaround')
+  const addonsParam = visible.find((p) => p.type === 'addons')
+  const painter = String(values.model ?? target.params?.model ?? suggestion?.model ?? recipe?.concept.model ?? '')
+  const rowsFor = (chosen: Record<string, AddonChoice>) => (addonsParam ? addonRows(addonsParam.catalog ?? [], recipe, painter, chosen) : [])
+  const rows = rowsFor(addonChoices(values[addonsParam?.name ?? 'addons']))
+  const setAddon = (id: string, choice: AddonChoice) => {
+    if (!addonsParam) return
+    const cur = addonChoices(values[addonsParam.name])
+    const next = { ...cur }
+    const plain = rowsFor({}).find((r) => r.entry.id === id)
+    const recipeChoice: AddonChoice | null = plain ? (plain.on ? plain.strength : 'off') : null
+    // Back to what the recipe gives and not chosen before: drop it, so only rows the person changed are sent.
+    if (choice === recipeChoice && addonChoices(initial[addonsParam.name])[id] === undefined) delete next[id]
+    else next[id] = choice
+    set(addonsParam.name, next)
+  }
+  const turnaroundAddons = stage === 'turnaround' ? (recipe?.addon_entries ?? []).filter((e) => e.stage === 'turnaround') : []
+
   const schemaHasFlag = visible.some((p) => p.simple !== undefined)
-  const simple = visible.filter((p) => isSimpleParam(stage, p, schemaHasFlag))
-  const advanced = visible.filter((p) => !simple.includes(p))
+  const shown = visible.filter((p) => p.type !== 'addons' || rows.length > 0)
+  const simple = shown.filter((p) => p.type !== 'addons' && isSimpleParam(stage, p, schemaHasFlag))
+  const advanced = shown.filter((p) => !simple.includes(p))
 
   // Tool focus: fill in the fix's params, open Advanced if the setting lives there, scroll to it and focus it.
   const formRef = useRef<HTMLFormElement>(null)
@@ -105,6 +129,11 @@ export function FineTune({
     if (!changed.length) return
     const params: Record<string, unknown> = {}
     for (const p of changed) params[p.name] = values[p.name]
+    // Add-ons: only the rows shown for this painter.
+    if (addonsParam && addonsParam.name in params) {
+      const ids = new Set(rows.map((r) => r.entry.id))
+      params[addonsParam.name] = Object.fromEntries(Object.entries(addonChoices(params[addonsParam.name])).filter(([k]) => ids.has(k)))
+    }
     onSubmit(params)
   }
 
@@ -113,12 +142,13 @@ export function FineTune({
   const budget = cat?.budgets?.[asset.platform_target]?.triangles ?? suggestion?.budgets.triangles ?? plat?.triangles_character ?? 20000
 
   const renderField = (p: AdjustParam, adv: boolean) => (
-    <div key={p.name} data-knob={p.name} className={'knob' + (flash === p.name ? ' knob-flash' : '') + (p.name === 'face_yaw' ? ' knob-wide' : '')}>
+    <div key={p.name} data-knob={p.name} className={'knob' + (flash === p.name ? ' knob-flash' : '') + (p.name === 'face_yaw' || p.type === 'addons' ? ' knob-wide' : '')}>
       {renderControl(p, adv)}
     </div>
   )
 
   const renderControl = (p: AdjustParam, adv: boolean) => {
+    if (p.type === 'addons') return <AddonsList rows={rows} disabled={disabled} onChange={setAddon} notUsed={addonsNotUsed(target, p.catalog)} />
     if (hasSize && p.name === 'width') {
       const w = Number(values.width ?? 1024)
       const opts = SIZE_OPTIONS.filter((o) => (p.min === undefined || o >= p.min) && (p.max === undefined || o <= p.max))
@@ -277,9 +307,10 @@ export function FineTune({
       </div>
       {visible.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
       {simpleShown.length > 0 && <div className="adjust-grid">{simpleShown.map((p) => renderField(p, false))}</div>}
-      {advanced.length > 0 && (
-        <Disclosure label={`Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})`} open={advOpen} onToggle={setAdvOpen}>
-          <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>
+      {(advanced.length > 0 || turnaroundAddons.length > 0) && (
+        <Disclosure label={advanced.length ? `Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})` : 'Advanced'} open={advOpen} onToggle={setAdvOpen}>
+          {advanced.length > 0 && <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>}
+          <TurnaroundAddons entries={turnaroundAddons} />
         </Disclosure>
       )}
       <div className="row-gap">
@@ -293,6 +324,14 @@ export function FineTune({
       </div>
     </form>
   )
+}
+
+// A stored add-ons value as {id: choice}, keeping only the four known choices.
+function addonChoices(raw: unknown): Record<string, AddonChoice> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, AddonChoice> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (v === 'off' || v === 'subtle' || v === 'normal' || v === 'strong') out[k] = v
+  return out
 }
 
 function stagePlainPlatform(id: string): string {
@@ -314,6 +353,8 @@ function defaultFor(p: AdjustParam): unknown {
       return false
     case 'multiselect':
       return []
+    case 'addons':
+      return {}
     case 'select':
       return p.options?.[0] ?? ''
     default:
