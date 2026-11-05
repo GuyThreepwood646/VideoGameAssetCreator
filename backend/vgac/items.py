@@ -15,6 +15,16 @@ rotation (quaternion x, y, z, w), scale} in the attachment point's own frame (gl
 toward the thumb). The item's own file has its pivot at the grip and its axes in the grip frame (vgac/blender/grip.py),
 so a zero offset is the usual hold. Nudges move in the character's own axes (1 cm or 5 degrees a press). The export
 stage writes attachments.json, the item files, an equipped GLB and, in Unity, a second prefab "<Name> (equipped)".
+
+Fit to the motion ("Fit it for me"). The export's equip step (blender/equip.py with blender/itemfit.py) measures each
+item against the moving body and, for an attachment flagged for fitting, tries small changes (a push out from the
+body and tilts for strapped or worn items; a turn about the grip and small tilts for held ones) and keeps the least
+change that clears the body. An attachment is fitted automatically while the person has not adjusted it (`touched`
+false); one they adjusted is fitted only when they ask (POST .../attachments/{id}/fit sets `fit_request`, or the
+check's fix runs the export with params.fit_items). The result is written back into the attachment's position and
+rotation with a `fit` record {outward_cm, turn_deg, tilt_deg, before_m, before_clip, after_m, after_clip, cleared,
+base, result, sentence}; `base` is the placement it started from, so an automatic fit always starts again from the
+default and never piles up, and the digest counts a fit's own result as its base.
 """
 from __future__ import annotations
 
@@ -36,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import library, reference, sockets
+from .blender import itemfit
 from .config import get_settings
 from .db import Asset, Version, asset_to_dict, get_session, session_factory
 
@@ -45,14 +56,34 @@ STEP_M, BIG_STEP_M = 0.01, 0.05
 STEP_DEG, BIG_STEP_DEG = 5.0, 15.0
 SCALE_STEP = 1.05
 SCALE_MIN, SCALE_MAX = 0.2, 5.0
-CLEAR_LIMIT_M = 0.03  # item_clear_of_body: deepest a non-held part may sink into the body
+CLEAR_LIMIT_M = 0.03  # item_clear_of_body: deepest a non-held part may sink into the body (blender/itemfit.py measure)
+CLEAR_SHARE_LIMIT = 0.05  # item_clear_of_body: the most of an item (its counted points) that may be inside the body
 
 PLACES = {  # attachment point -> the plain words on the buttons
-    "Socket_Hand_R": "In the right hand", "Socket_Hand_L": "In the left hand", "Socket_Back": "On the back",
+    "Socket_Hand_R": "In the right hand", "Socket_Hand_L": "In the left hand",
+    "Socket_Forearm_R": "On the right forearm", "Socket_Forearm_L": "On the left forearm", "Socket_Back": "On the back",
     "Socket_Hip_L": "At the left hip", "Socket_Hip_R": "At the right hip", "Socket_Head": "On the head",
     "Socket_Chest": "On the chest", "Socket_Mouth": "In the mouth",
 }
-MIRROR = {"Socket_Hand_R": "Socket_Hand_L", "Socket_Hand_L": "Socket_Hand_R", "Socket_Hip_L": "Socket_Hip_R", "Socket_Hip_R": "Socket_Hip_L"}
+MIRROR = {"Socket_Hand_R": "Socket_Hand_L", "Socket_Hand_L": "Socket_Hand_R", "Socket_Hip_L": "Socket_Hip_R", "Socket_Hip_R": "Socket_Hip_L",
+          "Socket_Forearm_R": "Socket_Forearm_L", "Socket_Forearm_L": "Socket_Forearm_R"}
+HELD = ("Socket_Hand_R", "Socket_Hand_L", "Socket_Mouth")  # held in a hand or the jaws: the grip must stay put
+# The outward axis of each attachment point in its own glTF frame (+X the character's left, +Y up, +Z forward): the
+# direction "Fit it for me" pushes a strapped or worn item away from the body.
+OUTWARD = {"Socket_Forearm_R": [0.0, 0.0, 1.0], "Socket_Forearm_L": [0.0, 0.0, 1.0], "Socket_Back": [0.0, 0.0, 1.0],
+           "Socket_Chest": [0.0, 0.0, 1.0], "Socket_Hip_L": [1.0, 0.0, 0.0], "Socket_Hip_R": [-1.0, 0.0, 0.0],
+           "Socket_Head": [0.0, 1.0, 0.0]}
+CREATURE_OUTWARD = {"Socket_Back": [0.0, 1.0, 0.0], "Socket_Head": [0.0, 1.0, 0.0]}
+GROUND_LIMIT_M = 0.02   # item_above_ground: deepest an item may dip below the floor in a move
+APART_LIMIT_M = 0.02    # items_apart: deepest one item may pass into another
+FIT_CLIPS = "idle,attack,walk,run"
+# Older characters had the shield in the hand; the forearm is the better place now (upgrade_places).
+BETTER_PLACE = {("shield", "Socket_Hand_L"): "Socket_Forearm_L", ("shield", "Socket_Hand_R"): "Socket_Forearm_R"}
+FIT_HELP = ("Fit it for me plays the moves with the item on and tries small changes until it stays clear of the body: "
+            "a push of up to 5 cm out from the body and small tilts for something strapped or worn, a turn about the "
+            "handle and small tilts for something held (the handle stays in the hand). It keeps the smallest change "
+            "that works and says what it changed. Items you have not moved are fitted every time the character is "
+            "rebuilt; once you move one yourself, it is only fitted when you ask.")
 HAND_LIMIT = "The hand does not close around the handle: the characters have no finger bones, so the hand stays a mitten."
 UNREAL_NOTE = ("Unreal (not verified): import the character FBX, then add one skeletal-mesh socket per entry in "
                "attachments.json on the bone it names, with the offset given, and attach the item's static mesh to it by "
@@ -341,16 +372,163 @@ def new_attachment(item: Asset, category: str, socket: str | None = None) -> dic
     stow = t.get("stow") if category == "humanoid" else None
     att = {"id": uuid.uuid4().hex[:12], "item_asset_id": item.id, "item_name": item.name, "type": tid,
            "label": held.get("label") or t.get("label") or tid, "socket": sock, "stow_socket": stow if stow != sock else None,
-           "position": [0.0, 0.0, 0.0], "rotation": euler_to_quat(default_rotation(tid, sock)), "scale": 1.0}
+           "position": [0.0, 0.0, 0.0], "rotation": euler_to_quat(default_rotation(tid, sock)), "scale": 1.0,
+           "touched": False}
     att["rotation_deg"] = quat_to_euler(att["rotation"])
     return att
 
 
 def reset(att: dict[str, Any]) -> dict[str, Any]:
+    """Back to the usual hold for its place: not adjusted, no fit (the next build fits it again)."""
     att = dict(att)
-    att.update(position=[0.0, 0.0, 0.0], rotation=euler_to_quat(default_rotation(att.get("type") or "", att["socket"])), scale=1.0)
+    att.update(position=[0.0, 0.0, 0.0], rotation=euler_to_quat(default_rotation(att.get("type") or "", att["socket"])), scale=1.0,
+               touched=False)
+    for k in ("fit", "fit_request"):
+        att.pop(k, None)
     att["rotation_deg"] = quat_to_euler(att["rotation"])
     return att
+
+
+def _close(a, b, tol=1e-4) -> bool:
+    a, b = list(a or []), list(b or [])
+    return len(a) == len(b) and all(abs(float(x) - float(y)) <= tol for x, y in zip(a, b))
+
+
+def _same_turn(q1, q2, tol=1e-4) -> bool:
+    return _close(q1, q2, tol) or _close(q1, [-float(v) for v in (q2 or [])], tol)
+
+
+def is_default(at: dict[str, Any]) -> bool:
+    """The placement is the usual hold for its place (no offset, the type's turn, size 1)."""
+    return (_close(at.get("position") or [0, 0, 0], [0, 0, 0]) and abs(float(at.get("scale") or 1.0) - 1.0) < 1e-6
+            and _same_turn(at.get("rotation") or [0, 0, 0, 1], euler_to_quat(default_rotation(at.get("type") or "", at.get("socket") or ""))))
+
+
+def is_touched(at: dict[str, Any]) -> bool:
+    """The person has adjusted this placement by hand (nudges, exact numbers, a size). Attachments saved before the
+    flag existed count as touched only when they differ from the usual hold."""
+    if "touched" in at:
+        return bool(at["touched"])
+    return not is_default(at)
+
+
+def _fit_holds(at: dict[str, Any]) -> bool:
+    """The placement is still exactly what the last fit wrote (not moved since)."""
+    f = at.get("fit") or {}
+    res = f.get("result") or {}
+    return bool(f.get("base")) and _close(at.get("position"), res.get("position")) and _same_turn(at.get("rotation"), res.get("rotation"))
+
+
+def fit_base(at: dict[str, Any]) -> dict[str, Any]:
+    """Where a fit starts from: the usual hold when not adjusted; else the person's placement (the one before the last
+    fit, when they have not moved it since)."""
+    if not is_touched(at):
+        d = reset(at)
+        return {"position": d["position"], "rotation": d["rotation"], "scale": d["scale"]}
+    if _fit_holds(at):
+        b = at["fit"]["base"]
+        return {"position": list(b["position"]), "rotation": list(b["rotation"]), "scale": float(at.get("scale") or 1.0)}
+    return {"position": list(at.get("position") or [0, 0, 0]), "rotation": list(at.get("rotation") or [0, 0, 0, 1]),
+            "scale": float(at.get("scale") or 1.0)}
+
+
+def wants_fit(at: dict[str, Any], fit_all: bool = False) -> bool:
+    """Fit this attachment in the next build: always while not adjusted by hand; when adjusted, only when asked."""
+    return fit_all or bool(at.get("fit_request")) or not is_touched(at)
+
+
+def outward(socket: str, category: str | None) -> list[float]:
+    if category and category != "humanoid":
+        return list(CREATURE_OUTWARD.get(socket, [0.0, 1.0, 0.0]))
+    return list(OUTWARD.get(socket, [0.0, 0.0, 1.0]))
+
+
+def _clip_word(clip: str | None) -> str:
+    return (clip or "a move").replace("_", " ")
+
+
+def _changes_words(f: dict[str, Any]) -> str:
+    """'moved it 2 cm out from the body and tilted it 5 degrees' ('' when nothing changed)."""
+    parts = _changes(f)
+    return ", ".join(parts[:-1]) + " and " + parts[-1] if len(parts) > 1 else (parts[0] if parts else "")
+
+
+def _changes(f: dict[str, Any]) -> list[str]:
+    parts = []
+    if f.get("outward_cm"):
+        parts.append(f"moved it {float(f['outward_cm']):g} cm out from the body")
+    if f.get("turn_deg"):
+        parts.append(f"turned it {abs(float(f['turn_deg'])):g} degrees in the hand")
+    tilt = [abs(float(t)) for t in f.get("tilt_deg") or [] if t]
+    if tilt:
+        parts.append(f"tilted it {' and '.join(f'{t:g}' for t in tilt)} degrees")
+    return parts
+
+
+def _inside_words(depth_m: float, share: float | None) -> str:
+    """'2.6 cm in, with 9% of it inside' (the share only when it is over its limit)."""
+    out = f"{depth_m * 100:.1f} cm in"
+    if share is not None and float(share) > CLEAR_SHARE_LIMIT:
+        out += f", with {round(float(share) * 100)}% of it inside"
+    return out
+
+
+def fit_sentence(f: dict[str, Any], label: str, held: bool) -> str:
+    """The plain line under the item: what "Fit it for me" changed and where it stands."""
+    parts = _changes(f)
+    before, after = float(f.get("before_m") or 0), float(f.get("after_m") or 0)
+    b_words, a_words = _inside_words(before, f.get("before_share")), _inside_words(after, f.get("after_share"))
+    a_clip, b_clip = _clip_word(f.get("after_clip")), _clip_word(f.get("before_clip"))
+    if not f.get("changed") or not parts:
+        if f.get("cleared"):
+            if after > 0:
+                return (f"Checked against the moves: the {label} touches the body only within what the check allows "
+                        f"(at most {after * 100:.1f} cm, during {a_clip}), so nothing was changed.")
+            return f"Checked against the moves: the {label} already stays clear of the body, so nothing was changed."
+        return (f"Checked against the moves: no small change helped, so the {label} stays where it was; it still goes "
+                f"{a_words} during {a_clip}.")
+    did = "We " + _changes_words(f)
+    if f.get("cleared"):
+        if after > 0:
+            return (f"{did}. It now touches the body only within what the check allows (at most {after * 100:.1f} cm, "
+                    f"during {a_clip}); before, it went {b_words} during {b_clip}.")
+        return f"{did}, so it stays clear of the body in every move we checked (before, it went {b_words} during {b_clip})."
+    return (f"{did}. That is the best small change{' that keeps the handle in the hand' if held else ''}: it still goes "
+            f"{a_words} during {a_clip} (before, {b_words}).")
+
+
+def _side_words(socket: str) -> str:
+    return PLACES.get(socket, socket).lower().replace("in the ", "").replace("on the ", "").replace("at the ", "")
+
+
+def upgrade_places(eq: dict[str, Any] | None, category: str | None) -> bool:
+    """Shields saved in a hand before there was a forearm point: a placement never adjusted moves to the forearm on
+    the same side (with a notice saying so); an adjusted one keeps its place and gets an offer. Changes eq in place.
+    -> changed."""
+    if not eq or category != "humanoid":
+        return False
+    changed = False
+    atts = []
+    for at in eq.get("attachments") or []:
+        better = BETTER_PLACE.get((at.get("type"), at.get("socket")))
+        if better and not at.get("offer_declined"):
+            old = at.get("socket")
+            if not is_touched(at):
+                at = reset({**at, "socket": better})
+                at.pop("offer", None)
+                at["notice"] = (f"We moved the {at.get('label') or 'item'} from the {_side_words(old)} to the "
+                                f"{_side_words(better)}: strapped there it faces outward and moves with the arm instead "
+                                f"of swinging from the hand. Save to rebuild the character with it there.")
+                changed = True
+            elif not at.get("offer"):
+                at = {**at, "offer": {"socket": better, "place": PLACES[better],
+                                      "why": "Strapped to the forearm, a shield faces outward and moves with the arm "
+                                             "instead of swinging from the hand. Your own adjustments would be reset."}}
+                changed = True
+        atts.append(at)
+    if changed:
+        eq["attachments"] = atts
+    return changed
 
 
 def socket_frame(doc: dict[str, Any] | None, name: str) -> np.ndarray:
@@ -486,14 +664,36 @@ def character_sockets(db: Session, a: Asset) -> tuple[dict[str, Any] | None, Ver
         return None, ex
 
 
+_NOT_PLACEMENT = ("rotation_deg", "fit", "fit_request", "notice", "offer", "offer_declined", "touched")
+
+
+def _digest_view(at: dict[str, Any]) -> dict[str, Any]:
+    """An attachment as the digest sees it: a fit's own result counts as the placement it started from, so writing
+    the fit back after a build does not make that build look out of date; an asked-for fit needs a build."""
+    v = {k: x for k, x in at.items() if k not in _NOT_PLACEMENT}
+    if _fit_holds(at):
+        v.update(position=at["fit"]["base"].get("position"), rotation=at["fit"]["base"].get("rotation"))
+    for k in ("position", "rotation"):
+        if isinstance(v.get(k), list):
+            v[k] = [round(float(x), 5) + 0.0 for x in v[k]]
+    if at.get("fit_request"):
+        v["fit_request"] = True
+    return v
+
+
 def digest(eq: dict[str, Any] | None, item_exports: dict[str, str | None]) -> str:
     """What the character's equipped files were built from: the attachments and each item's export version."""
-    atts = [{k: v for k, v in at.items() if k != "rotation_deg"} for at in (eq or {}).get("attachments") or []]
+    atts = [_digest_view(at) for at in (eq or {}).get("attachments") or []]
     blob = json.dumps({"a": atts, "x": item_exports}, sort_keys=True)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def panel(db: Session, a: Asset) -> dict[str, Any]:
+    if a.equipment:
+        eq2 = json.loads(json.dumps(a.equipment))
+        if upgrade_places(eq2, a.category):
+            a.equipment = eq2
+            db.commit()
     eq = a.equipment or {"choice": None, "set_aside": [], "attachments": []}
     doc, ex = character_sockets(db, a)
     can = bool(doc and doc.get("sockets"))
@@ -527,7 +727,9 @@ def panel(db: Session, a: Asset) -> dict[str, Any]:
             "sockets": doc, "saved": bool(attached) and applied == current, "needs_update": bool(attached) and applied != current,
             "build": build, "others": [item_status(db, it) for it in mine],
             "types": [{"id": k, "label": t.get("label") or k, "place": PLACES.get(default_socket(k, a.category), "")} for k, t in types().items()],
-            "limit": HAND_LIMIT, "step_cm": STEP_M * 100, "step_deg": STEP_DEG}
+            "limit": HAND_LIMIT, "step_cm": STEP_M * 100, "step_deg": STEP_DEG,
+            "fit": {"clear_limit_cm": CLEAR_LIMIT_M * 100, "push_max_cm": itemfit.PUSH_MAX_CM,
+                    "tilt_max_deg": itemfit.TILT_MAX_DEG, "help": FIT_HELP}}
 
 
 # --- autopilot: items after the character --------------------------------------------------------------------------
@@ -667,12 +869,58 @@ def export_checks(sc: Any) -> list[dict[str, Any]]:
     clear = eq.get("clearance")
     if clear and clear.get("measured"):
         depth = float(clear.get("worst_depth_m") or 0.0)
-        ok = depth <= CLEAR_LIMIT_M
+        share = float(clear.get("worst_share") or 0.0)
+        ok = depth <= CLEAR_LIMIT_M and share <= CLEAR_SHARE_LIMIT
+        worst_label, worst_clip = clear.get("worst_label") or "item", clear.get("worst_clip")
+        by = "depth"
+        per = clear.get("per_item") or {}
+        if not ok and per:
+            bad = {k: v for k, v in per.items() if float(v.get("worst_depth_m") or 0) > CLEAR_LIMIT_M
+                   or float(v.get("worst_share") or 0) > CLEAR_SHARE_LIMIT}
+            if bad:
+                worst_label = max(bad, key=lambda k: float(bad[k].get("score_m") or bad[k].get("worst_depth_m") or 0))
+                worst_clip = bad[worst_label].get("clip") or worst_clip
+                depth = float(bad[worst_label].get("worst_depth_m") or 0.0)
+                share = float(bad[worst_label].get("worst_share") or 0.0)
+        if not ok and depth <= CLEAR_LIMIT_M:
+            by = "share"
+        fitted = {f.get("label"): f for f in eq.get("fit") or []}
+        f = fitted.get(worst_label)
+        if f is None and "fit" not in eq:
+            tried = ""  # measured before fitting existed
+        elif f is None:
+            tried = "It was not fitted to the moves because you placed it yourself; Fit it for me tries small changes for you."
+        elif f.get("changed"):
+            tried = f"We already tried small changes automatically and kept the best one: we {_changes_words(f)}."
+        else:
+            tried = (f"We already tried pushing it up to {itemfit.PUSH_MAX_CM:g} cm out and tilting it up to "
+                     f"{itemfit.TILT_MAX_DEG:g} degrees (or turning it in the hand), and nothing small cleared the body.")
         c = {"name": "item_clear_of_body", "id": "item_clear_of_body", "passed": ok, "ok": ok, "value": round(depth, 3),
              "limit": CLEAR_LIMIT_M, "message": f"{round(depth, 3)} (limit {CLEAR_LIMIT_M})",
-             "vars": {"label": (clear.get("worst_label") or "item") if not ok else _listed([g[1] for g in grips] or ["item"]),
-                      "stays": "stays" if not ok or len(grips) <= 1 else "stay", "clip": clear.get("worst_clip") or "a move",
-                      "cm": round(depth * 100, 1), "clips": ", ".join(clear.get("clips") or [])}}
+             "vars": {"label": worst_label if not ok else _listed([g[1] for g in grips] or ["item"]),
+                      "stays": "stays" if not ok or len(grips) <= 1 else "stay", "clip": _clip_word(worst_clip),
+                      "cm": round(depth * 100, 1), "clips": ", ".join(clear.get("clips") or []), "tried": tried,
+                      "fitted": f is not None, "by": by, "share": round(share, 3), "pct": round(share * 100),
+                      "share_limit": CLEAR_SHARE_LIMIT}}
+        out.append(guidance.describe_check(c))
+    g = eq.get("ground")
+    if g and g.get("measured"):
+        below = float(g.get("worst_below_m") or 0.0)
+        ok = below <= GROUND_LIMIT_M
+        c = {"name": "item_above_ground", "id": "item_above_ground", "passed": ok, "ok": ok, "value": round(below, 3),
+             "limit": GROUND_LIMIT_M, "message": f"{round(below, 3)} (limit {GROUND_LIMIT_M})",
+             "vars": {"label": g.get("worst_label") or "item", "clip": _clip_word(g.get("worst_clip")), "cm": round(below * 100, 1),
+                      "items": _listed([x[1] for x in grips] or ["item"])}}
+        out.append(guidance.describe_check(c))
+    b = eq.get("between")
+    if b and b.get("measured"):
+        d = float(b.get("worst_depth_m") or 0.0)
+        ok = d <= APART_LIMIT_M
+        pair = b.get("pair") or ["item", "the other item"]
+        c = {"name": "items_apart", "id": "items_apart", "passed": ok, "ok": ok, "value": round(d, 3), "limit": APART_LIMIT_M,
+             "message": f"{round(d, 3)} (limit {APART_LIMIT_M})",
+             "vars": {"a": pair[0], "b": pair[1] if len(pair) > 1 else "the other item", "clip": _clip_word(b.get("worst_clip")),
+                      "cm": round(d * 100, 1), "items": _listed([x[1] for x in grips] or ["item"])}}
         out.append(guidance.describe_check(c))
     return out
 
@@ -693,17 +941,58 @@ def _item_files(ex: Version) -> dict[str, Path]:
     return out
 
 
+def _placement_of(at: dict[str, Any]) -> tuple[list[float], list[float], float]:
+    return ([float(v) for v in at.get("position") or [0, 0, 0]], [float(v) for v in at.get("rotation") or [0, 0, 0, 1]],
+            float(at.get("scale") or 1.0))
+
+
+def _store_fits(sc: Any, before: dict[str, tuple], fits: dict[str, dict[str, Any]], asked: set[str]) -> dict[str, Any]:
+    """Write each fit back into the character's attachment (position, rotation and the fit record) and clear the
+    request. An attachment the person changed while the build ran keeps their change. -> the stored equipment."""
+    try:
+        sc.db.refresh(sc.asset)
+    except Exception:  # noqa: BLE001  (a test double without a session)
+        pass
+    eq = json.loads(json.dumps(sc.asset.equipment or {}))
+    upgrade_places(eq, sc.asset.category)
+    atts = []
+    for at in eq.get("attachments") or []:
+        aid = at.get("id")
+        if aid in before and _placement_of(at) != before[aid]:
+            atts.append(at)  # moved by the person during the build: theirs wins
+            continue
+        if aid in fits:
+            f = fits[aid]
+            at["position"], at["rotation"] = list(f["result"]["position"]), list(f["result"]["rotation"])
+            at["rotation_deg"] = quat_to_euler(at["rotation"])
+            at["fit"] = f
+        if aid in asked:
+            at.pop("fit_request", None)
+        atts.append(at)
+    eq["attachments"] = atts
+    sc.asset.equipment = eq
+    try:
+        sc.db.commit()
+    except Exception:  # noqa: BLE001
+        pass
+    return eq
+
+
 async def equip(sc: Any, name: str) -> dict[str, Any] | None:
     """Character export, after packing: when items are attached and made, copy each item's files into items/<name>/,
-    write attachments.json, build <name>_equipped.glb in Blender (blender/equip.py) and measure how close each item
-    comes to the body in the attack, walk and run clips. -> the metrics.equipped block, or None."""
+    fit the placements still at their defaults (and any the person asked to fit) to the moves, build
+    <name>_equipped.glb in Blender (blender/equip.py), write attachments.json and measure how close each item comes to
+    the body, the floor and the other items in the idle, attack, walk and run clips. -> the metrics.equipped block, or
+    None."""
     from . import pipeline
     import shutil
 
-    eq = sc.asset.equipment or {}
+    eq = json.loads(json.dumps(sc.asset.equipment or {}))
+    upgrade_places(eq, sc.asset.category)
     atts = eq.get("attachments") or []
     if not atts:
         return None
+    fit_all = bool((getattr(sc.version, "params", None) or {}).get("fit_items"))
     sdoc_p = Path(sc.dir) / "sockets.json"
     sdoc = json.loads(sdoc_p.read_text(encoding="utf-8")) if sdoc_p.is_file() else {}
     have = {s.get("name"): s for s in sdoc.get("sockets") or []}
@@ -711,6 +1000,8 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
     items_dir = Path(sc.dir) / "items"
     if items_dir.is_dir():
         shutil.rmtree(items_dir, ignore_errors=True)
+    before = {at.get("id"): _placement_of(at) for at in (sc.asset.equipment or {}).get("attachments") or []}
+    asked = {at.get("id") for at in atts if at.get("fit_request") or fit_all}
     for at in atts:
         it = sc.db.get(Asset, at.get("item_asset_id"))
         ex = pipeline.selected(sc.db, it.id, "export") if it is not None else None
@@ -735,16 +1026,18 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
         s = have[at["socket"]]
         grip = ex.metrics.get("grip") or {}
         t = item_type(at.get("type"))
+        fit = wants_fit(at, fit_all)
+        place = fit_base(at) if fit else {"position": _placement_of(at)[0], "rotation": _placement_of(at)[1],
+                                          "scale": _placement_of(at)[2]}
         entries.append({"id": at["id"], "item": it.name, "asset_id": it.id, "export_name": export_name, "type": at.get("type"),
                         "label": at.get("label"), "socket": at["socket"], "place": PLACES.get(at["socket"], at["socket"]),
                         "bone": s.get("bone") or "", "stow_socket": at.get("stow_socket") or "",
                         "stow_place": PLACES.get(at.get("stow_socket") or "", ""),
-                        "position": [float(v) for v in at.get("position") or [0, 0, 0]],
-                        "rotation": [float(v) for v in at.get("rotation") or [0, 0, 0, 1]],
-                        "rotation_deg": quat_to_euler(at.get("rotation") or [0, 0, 0, 1]), "scale": float(at.get("scale") or 1.0),
+                        "position": [float(v) for v in place["position"]], "rotation": [float(v) for v in place["rotation"]],
+                        "rotation_deg": quat_to_euler(place["rotation"]), "scale": float(place["scale"]),
                         "files": rel, "unity_prefab": f"Assets/VGAC/{export_name}/{export_name}.prefab",
                         "grip": {k: grip.get(k) for k in ("found", "confidence", "sure", "method", "reasons")},
-                        "clip_set": t.get("clip_set") or "none"})
+                        "clip_set": t.get("clip_set") or "none", "_fit": fit, "_held": at["socket"] in HELD})
     doc = {"version": 1, "space": "gltf", "units": "m", "character": sc.asset.name, "export_name": name,
            "frame": "each offset is in its attachment point's own frame: +Z forward along the grip, +Y up toward the thumb; "
                     "rotation is a quaternion x, y, z, w; the item's own file has its pivot at the grip",
@@ -754,9 +1047,10 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
                        "unreal": {"verified": False, "note": UNREAL_NOTE}, "godot": {"verified": False, "note": GODOT_NOTE}},
            "known_limits": [HAND_LIMIT]}
     ap = Path(sc.dir) / "attachments.json"
-    result: dict[str, Any] = {"count": len(entries), "skipped": skipped, "digest": digest(eq, exports),
+    result: dict[str, Any] = {"count": len(entries), "skipped": skipped,
                               "items": [{"item": e["item"], "label": e["label"], "socket": e["socket"], "place": e["place"],
                                          "grip": e["grip"]} for e in entries]}
+    fits: dict[str, dict[str, Any]] = {}
     if entries:
         glb = Path(sc.dir) / f"{name}.glb"
         out = Path(sc.dir) / f"{name}_equipped.glb"
@@ -765,14 +1059,16 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
             if p.is_file():
                 p.unlink()
         spec = Path(sc.dir) / "equip_input.json"
-        spec.write_text(json.dumps({"items": [{"label": e["label"], "item": e["item"], "socket": e["socket"],
+        spec.write_text(json.dumps({"items": [{"id": e["id"], "label": e["label"], "item": e["item"], "socket": e["socket"],
                                                  "glb": str(Path(sc.dir) / e["files"]["glb"]), "position": e["position"],
-                                                 "rotation": e["rotation"], "scale": e["scale"],
-                                                 "held": e["socket"] in ("Socket_Hand_R", "Socket_Hand_L", "Socket_Mouth")}
+                                                 "rotation": e["rotation"], "scale": e["scale"], "held": e["_held"],
+                                                 "fit": e["_fit"], "outward": outward(e["socket"], sc.asset.category)}
                                                 for e in entries]}, indent=1), encoding="utf-8")
-        sc.progress(0.3, "putting the items on")
+        sc.progress(0.3, "putting the items on and fitting them to the moves")
         try:
-            await sc.blender("equip.py", [glb, spec, out, rp, "--clips", "attack,walk,run"], log_name="equip.log")
+            await sc.blender("equip.py", [glb, spec, out, rp, "--clips", FIT_CLIPS, "--limit", str(CLEAR_LIMIT_M),
+                                          "--share-limit", str(CLEAR_SHARE_LIMIT)],
+                             log_name="equip.log")
         except Exception as e:  # noqa: BLE001
             result["error"] = str(e)[-400:]
         if out.is_file():
@@ -780,8 +1076,34 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
             doc["equipped_glb"] = out.name
         if rp.is_file():
             rep = json.loads(rp.read_text(encoding="utf-8"))
-            result["clearance"] = rep.get("clearance")
-            doc["clearance"] = rep.get("clearance")
+            for k in ("clearance", "ground", "between"):
+                result[k] = rep.get(k)
+                doc[k] = rep.get(k)
+            by_item = {e["item"]: e for e in entries}
+            for r in rep.get("fit") or []:
+                e = by_item.get(r.get("item"))
+                if e is None:
+                    continue
+                rec = {k: r.get(k) for k in ("outward_cm", "turn_deg", "tilt_deg", "before_m", "before_share", "before_clip",
+                                              "before_frame", "after_m", "after_share", "after_clip", "after_frame", "cleared",
+                                              "changed", "tried")}
+                rec.update(auto=e["id"] not in asked, base={"position": e["position"], "rotation": e["rotation"]},
+                           result={"position": r.get("position") or e["position"], "rotation": r.get("rotation") or e["rotation"]})
+                rec["sentence"] = fit_sentence(rec, e["label"] or "item", e["_held"])
+                fits[e["id"]] = rec
+                e["position"], e["rotation"] = list(rec["result"]["position"]), list(rec["result"]["rotation"])
+                e["rotation_deg"] = quat_to_euler(e["rotation"])
+                e["fit"] = {k: rec[k] for k in ("outward_cm", "turn_deg", "tilt_deg", "before_m", "after_m", "after_clip", "cleared")}
+    for e in entries:
+        e.pop("_fit", None)
+        e.pop("_held", None)
+    if fits or asked or eq != (sc.asset.equipment or {}):
+        eq = _store_fits(sc, before, fits, asked)
+    result["fit"] = [{"item": e["item"], "label": e["label"], **{k: v for k, v in fits[e["id"]].items() if k not in ("base", "result")}}
+                     for e in entries if e["id"] in fits]
+    result["digest"] = digest(eq, exports)
+    if fit_all:
+        sc.set_params(fit_items=False)  # asked once: later rebuilds copy these settings and must not fit again
     ap.write_text(json.dumps(doc, indent=1), encoding="utf-8")
     sc.register("attachments", ap)
     sc.set_metrics(equipped=result, attachments_digest=result["digest"])
@@ -834,6 +1156,8 @@ class AttachmentPut(BaseModel):
     position: list[float] | None = None
     rotation_deg: list[float] | None = None
     scale: float | None = Field(default=None, gt=0)
+    keep_place: bool | None = None       # "Keep it where it is": no more offers of a better place
+    dismiss_notice: bool | None = None   # the note that we moved it has been read
 
 
 class NudgeIn(BaseModel):
@@ -952,6 +1276,14 @@ def put_attachment(aid: str, att_id: str, body: AttachmentPut, db: Session = Dep
     if body.socket and body.socket != at.get("socket"):
         at["socket"] = body.socket
         at = reset(at)
+        at.pop("offer", None)
+    if body.keep_place:
+        at.pop("offer", None)
+        at["offer_declined"] = True
+    if body.dismiss_notice:
+        at.pop("notice", None)
+    if body.position is not None or body.rotation_deg is not None or body.scale is not None:
+        at["touched"] = True  # set by hand: fitted again only when asked
     if body.stow_socket is not None:
         at["stow_socket"] = body.stow_socket or None
     if body.position is not None:
@@ -983,8 +1315,29 @@ def nudge_attachment(aid: str, att_id: str, body: NudgeIn, db: Session = Depends
     else:
         doc, _ = character_sockets(db, a)
         at = nudge(at, socket_frame(doc, at["socket"]), body.move, body.turn, body.slide, body.scale_steps, body.big)
+        at["touched"] = True  # moved by hand: fitted again only when asked
     _save_att(db, a, i, at)
     return {"attachment": at}
+
+
+@router.post("/api/assets/{aid}/attachments/{att_id}/fit")
+def fit_attachment(aid: str, att_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Fit it for me: rebuild the character's files with this item fitted to the moves (even when it was placed by
+    hand), starting from where it is now. -> {job, version, attachment}."""
+    from . import pipeline
+    from .db import job_to_dict, version_to_dict
+
+    a = _asset_or_404(db, aid)
+    at, i = _find_att(a, att_id)
+    ex = pipeline.selected(db, a.id, "export")
+    if ex is None or ex.status != "done":
+        raise HTTPException(409, "finish the character first")
+    at["fit_request"] = True
+    _save_att(db, a, i, at)
+    v = pipeline.new_version(db, a, "export", ex, {k: x for k, x in dict(ex.params).items() if k != "fit_items"})
+    job = pipeline.submit(db, a, v, "adjust", {"params": {}})
+    _set_build(a.id, {"status": "equipping", "version_id": v.id, "job_id": job.id, "fitting": at["id"]})
+    return {"job": job_to_dict(job), "version": version_to_dict(v), "attachment": at}
 
 
 @router.delete("/api/assets/{aid}/attachments/{att_id}")
