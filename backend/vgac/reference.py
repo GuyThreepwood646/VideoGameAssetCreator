@@ -74,7 +74,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("prompt_override", "string", "", description="Replaces the asset prompt for this version"),
         # {add-on id: off | subtle | normal | strong}; ids missing here keep the recipe and style lock choice. The
         # schema read (_schema) adds `catalog`: the concept add-ons with label, help, strengths and base models.
-        _param("addons", "addons", None, label="Add-ons", options=list(ADDON_CHOICES),
+        _param("addons", "addons", None, label="LoRAs (style add-ons)", options=list(ADDON_CHOICES),
                description="The recipe and the style lock decide when empty"),
     ],
     "turnaround": [
@@ -228,11 +228,11 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
             # (not applied) by resolve_addons, so an add-on removed from addons.yaml never breaks an older version.
             opts = p.get("options") or list(ADDON_CHOICES)
             if not isinstance(value, dict):
-                raise ValueError(f"{key} must map each add-on to one of {opts}")
+                raise ValueError(f"{key} must map each LoRA to one of {opts}")
             clean: dict[str, str] = {}
             for aid, choice in value.items():
                 if not isinstance(aid, str) or not aid or len(aid) > 100:
-                    raise ValueError(f"{key} has an add-on id that is not text")
+                    raise ValueError(f"{key} has a LoRA id that is not text")
                 if not isinstance(choice, str) or choice.lower() not in opts:
                     raise ValueError(f"{key}: {aid} must be one of {opts}")
                 clean[aid] = choice.lower()
@@ -541,7 +541,7 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
             return
         if a.get("mine") and name != "off" and not _mine_file_present(a):
             # Never send ComfyUI a file it does not have: its "not in list" error would name every LoRA file.
-            ignored.append({"id": aid, "reason": "its file is no longer in the add-on folder", "source": source})
+            ignored.append({"id": aid, "reason": "its file is no longer in the LoRA folder", "source": source})
             picked.pop(aid, None)
             return
         if name == "off":

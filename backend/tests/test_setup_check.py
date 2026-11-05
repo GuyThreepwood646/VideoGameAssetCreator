@@ -73,7 +73,7 @@ def test_graph_nodes_cover_every_stage_and_the_custom_nodes():
     assert "Hunyuan3Dv2ConditioningMultiView" in hy3d["classes"]
     pixel = next(u for u in uses if "pixel" in u["what"])
     assert "PixelArtDetectorToImage" in pixel["classes"] and not pixel["required"]
-    zturbo = next(u for u in uses if u["what"] == "the Z-Image Turbo painter")
+    zturbo = next(u for u in uses if u["what"] == "the Z-Image Turbo image model")
     assert "PixelArtDetectorToImage" not in zturbo["classes"] and zturbo["required"]
 
 
@@ -113,7 +113,7 @@ def test_missing_nodes_and_models_fail_or_warn(settings):
     assert rig["state"] == "fail" and rig["needed_for"] == ["rig"]
     assert "missing 1 part needed for rigging (SkinToken), so rigging cannot run" in rig["detail"]
     assert rig["technical"].endswith("missing: SkinTokenRigTrimesh")
-    pixel = next(i for i in items if "pixel art painter" in i["label"])
+    pixel = next(i for i in items if "pixel art image model" in i["label"])
     assert pixel["state"] == "warn" and "still works with the other choices" in pixel["detail"]
     assert ids["model.b.qwen_angles_lora"]["state"] == "fail"
     assert "Download qwen-image-edit-2511-multiple-angles-lora.safetensors" in ids["model.b.qwen_angles_lora"]["fix"]

@@ -63,18 +63,18 @@ STAGE_PLAIN = {"concept": "making the picture", "turnaround": "drawing all sides
                "material": "making materials"}
 HOST_BLENDER_STAGES = ["mesh", "prep", "rig", "export"]
 
-# Which graph builder serves which stage. required False: an optional route (one of several concept painters, the
+# Which graph builder serves which stage. required False: an optional route (one of several concept models, the
 # Hunyuan mesh engine, the review), so something missing there is a warning, not a failure.
 # file stem -> function -> (stage, required, plain name of what it makes)
 GRAPH_USES: dict[str, dict[str, tuple[str, bool, str]]] = {
     "birefnet": {"cutout_graph": ("concept", True, "cutting the picture out")},
     "concept": {
-        "zimage_graph": ("concept", True, "the Z-Image Turbo painter"),
-        "zbase_graph": ("concept", False, "the Z-Image Base painter"),
-        "klein_graph": ("concept", False, "the FLUX.2 Klein painter"),
-        "anima_graph": ("concept", False, "the Anima painter"),
-        "pixel_graph": ("concept", False, "the pixel art painter"),
-        "chroma_graph": ("concept", False, "the Chroma painter"),
+        "zimage_graph": ("concept", True, "the Z-Image Turbo image model"),
+        "zbase_graph": ("concept", False, "the Z-Image Base image model"),
+        "klein_graph": ("concept", False, "the FLUX.2 Klein image model"),
+        "anima_graph": ("concept", False, "the Anima image model"),
+        "pixel_graph": ("concept", False, "the pixel art image model"),
+        "chroma_graph": ("concept", False, "the Chroma image model"),
     },
     "qwen_edit": {"angle_graph": ("turnaround", True, "drawing all sides"),
                   "edit_graph": ("concept", True, "changing a picture with words")},

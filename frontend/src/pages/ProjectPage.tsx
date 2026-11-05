@@ -348,7 +348,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         <div className="suggest-line">
           {overridden ? (
             <>
-              Painter: <strong>{modelLabel(model)}</strong>
+              Model: <strong>{modelLabel(model)}</strong>
               <Info term={'model.' + model} /> (your choice; suggested: {suggestion.model_label})
             </>
           ) : (
@@ -357,7 +357,7 @@ function CreateAssetForm({ project }: { project: Project }) {
               <Info term={'model.' + suggestion.model} /> because {suggestion.reason}
             </>
           )}
-          ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the painter under Advanced.</span>
+          ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the model under Advanced.</span>
         </div>
       )}
       {suggestion?.recipe_plain && (
@@ -375,7 +375,7 @@ function CreateAssetForm({ project }: { project: Project }) {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
           </Field>
           <Field
-            label="Painter"
+            label="Model (the painter)"
             term="term.concept_model"
             hint={
               suggestion ? (
@@ -391,12 +391,12 @@ function CreateAssetForm({ project }: { project: Project }) {
                   )}
                 </>
               ) : (
-                'Which AI model paints the first picture. You can change it later under Fine-tune.'
+                'Which AI image model paints the first picture. You can change it later under Fine-tune.'
               )
             }
           >
             <span className="row-gap">
-              <select value={chosenModel} onChange={(e) => setModel(e.target.value === suggestion?.model ? '' : e.target.value)} aria-label="Painter">
+              <select value={chosenModel} onChange={(e) => setModel(e.target.value === suggestion?.model ? '' : e.target.value)} aria-label="Model">
                 {!chosenModel && <option value="">choosing...</option>}
                 {modelOptions.map((m) => (
                   <option key={m} value={m}>

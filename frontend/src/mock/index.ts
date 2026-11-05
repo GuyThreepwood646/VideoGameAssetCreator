@@ -1150,7 +1150,7 @@ function mockPrefill(name: string): AddonPrefill {
     base_models: turbo ? ['zturbo'] : [],
     trigger: '',
     family: turbo ? 'Z-Image' : '',
-    painter_note: turbo ? '' : 'We could not tell which painter this was made for.',
+    painter_note: turbo ? '' : 'We could not tell which model this was made for.',
   }
 }
 
@@ -1162,10 +1162,10 @@ on('POST', '/api/my-addons/open-folder', () => ({ opened: true, folder: MOCK_ADD
 on('POST', '/api/my-addons/upload', (_m, _b, query) => {
   const name = String(query.get('name') ?? '')
   if (/[\\/:]|\.\./.test(name)) throw new HttpError(400, 'The file name must be a plain file name, without folders.')
-  if (!name.toLowerCase().endsWith('.safetensors')) throw new HttpError(400, 'Add-ons must be .safetensors files. Other kinds of model file are not accepted.')
+  if (!name.toLowerCase().endsWith('.safetensors')) throw new HttpError(400, 'LoRAs must be .safetensors files. Other kinds of model file are not accepted.')
   const safe = name.replace(/[^A-Za-z0-9._ -]+/g, '_')
   if (mockAddonFiles.some((f) => f.file_name === safe))
-    throw new HttpError(409, 'A file with this name is already in the add-on folder. Use "Look again" to set it up, or rename your file and choose it again.')
+    throw new HttpError(409, 'A file with this name is already in the LoRA folder. Use "Look again" to set it up, or rename your file and choose it again.')
   const file = { file_name: safe, bytes: Number(query.get('bytes') ?? 0), prefill: mockPrefill(safe) }
   mockAddonFiles.push(file)
   return file
@@ -1173,12 +1173,12 @@ on('POST', '/api/my-addons/upload', (_m, _b, query) => {
 on('POST', '/api/my-addons', (_m, body) => {
   const fileName = String(body.file_name ?? '')
   const file = mockAddonFiles.find((f) => f.file_name === fileName)
-  if (!file) throw new HttpError(404, 'That file is not in the add-on folder.')
-  if (myAddons.some((a) => a.file_name === fileName)) throw new HttpError(409, 'This file is already set up as one of your add-ons.')
+  if (!file) throw new HttpError(404, 'That file is not in the LoRA folder.')
+  if (myAddons.some((a) => a.file_name === fileName)) throw new HttpError(409, 'This file is already set up as one of your LoRAs.')
   const label = String(body.label ?? '').trim()
-  if (!label) throw new HttpError(400, 'Give the add-on a name.')
+  if (!label) throw new HttpError(400, 'Give the LoRA a name.')
   const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
-  if (!models.length) throw new HttpError(400, 'Choose at least one painter the add-on was made for.')
+  if (!models.length) throw new HttpError(400, 'Choose at least one model the LoRA was made for.')
   const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
   let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
   for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
@@ -1186,7 +1186,7 @@ on('POST', '/api/my-addons', (_m, body) => {
     id,
     label,
     help: {
-      meaning: `Your own add-on, from the file ${fileName}.`,
+      meaning: `Your own LoRA, from the file ${fileName}.`,
       why: 'You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.',
       technical: `LoRA VGAC/mine/${fileName}, model only, for ${models.join(', ')}`,
     },
@@ -1208,7 +1208,7 @@ on('POST', '/api/my-addons', (_m, body) => {
 })
 on('DELETE', '/api/my-addons/:id', (m) => {
   const i = myAddons.findIndex((a) => a.id === m.groups!.id)
-  if (i < 0) throw new HttpError(404, 'That add-on is not on your list.')
+  if (i < 0) throw new HttpError(404, 'That LoRA is not on your list.')
   const [gone] = myAddons.splice(i, 1)
   return { removed: gone.id, file_name: gone.file_name, file_kept: true }
 })

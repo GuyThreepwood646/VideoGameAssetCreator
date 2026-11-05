@@ -152,7 +152,7 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
             </span>
             <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} />
           </label>
-          <div className="muted small">This guides the look in words: it becomes the project's style words, which the painter reads before every description. Edit it freely.</div>
+          <div className="muted small">This guides the look in words: it becomes the project's style words, which the image model reads before every description. Edit it freely.</div>
           <div className="row-gap">
             <button type="button" className="primary" disabled={busy || !text.trim()} onClick={() => { onApply({ prompt_block: text.trim() }); setText(null) }}>
               Apply
