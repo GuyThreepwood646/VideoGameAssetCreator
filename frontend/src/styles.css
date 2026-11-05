@@ -2261,3 +2261,15 @@ input[type='checkbox'] {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Hit boxes and moves in the rig view (plan 4.2, 3.7) */
+.viewer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.rig-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}

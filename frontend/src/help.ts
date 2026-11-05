@@ -316,6 +316,16 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   clip: H('Clip', 'One animation, such as walk or idle.', 'Clips are what the game plays.', 'clip'),
   clips: H('Animations', 'The animations attached: walk, idle, run and so on.', 'They come from a shared library and are fitted to the skeleton.', 'clips'),
   clips_library: H('Animation library', 'Which shared set of animations to attach.', 'None skips animations.', 'clips_library'),
+  // Creature moves (3.7)
+  motion: H('How it moves', 'Whether the creature walks, flies or slithers.', 'Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.', 'Procedural locomotion mode: legs, wings, wave'),
+  moves: H('Moves', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
+  move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
+  move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
+  // Hit boxes and the body shape for moving (4.2)
+  hitboxes: H('Hit boxes', 'Invisible shapes on each body part that tell the game where an attack landed.', 'Hits count where they look like they land, and you can tell a head hit from an arm hit.', 'Per-bone trigger capsules and boxes, fitted from skin weights'),
+  hitbox_fit: H('How snug', 'How tightly the hit boxes wrap the body.', 'Snug is fairer for the player being hit; loose is kinder to the player aiming.', 'Radius factor 0.9, 1.0 or 1.15 on the 80th-percentile vertex distance'),
+  hitbox_regions: H('Body parts with hit boxes', 'Which body parts get their own hit box.', 'Leave out parts your game never needs to tell apart.', 'Region ids from hitboxes.json regions_found'),
+  movement_shape: H('Body shape for moving', 'One simple shape around the whole body that the game uses for walking into walls and standing on floors.', 'It stays still while the hit boxes move, so movement is smooth and predictable.', 'Root CapsuleCollider (direction Y or Z) or BoxCollider'),
   // Export
   lod: H('Detail levels', 'Lighter copies of the model used when it is far away.', 'Keeps the game fast with many assets on screen.', 'LOD (level of detail)'),
   lods: H('Detail levels', 'Lighter copies of the model used when it is far away, as fractions of the full model.', 'Keeps the game fast with many assets on screen.', 'lods (LOD ratios)'),
@@ -464,7 +474,20 @@ const CHECK_TEXT: Record<string, CheckText> = {
   weight_coverage: (v, l, ok) => (ok ? `${pct(v)} of the surface follows the bones.` : `Only ${pct(v)} of the surface follows the bones; it needs ${pct(l)}.`),
   max_influences: (v, l, ok) => (ok ? `Each surface point follows at most ${n0(v)} bones.` : `Some surface points follow ${n0(v)} bones; the limit is ${n0(l)}.`),
   weights_normalised: (v, _l, ok) => (ok ? 'All skin weights add up correctly.' : `${n0(v)} surface points have weights that do not add up.`),
-  clips: (v, l, ok) => (ok ? `Animations attached: ${Array.isArray(v) ? v.join(', ') : String(v)}.` : `Some animations are missing (expected ${Array.isArray(l) ? l.join(', ') : String(l)}).`),
+  clips: (v, l, ok, _ctx, vars) => {
+    if (ok) return movesLine(v) || `Animations attached: ${listText(v)}.`
+    const missing = movesPlain(vars.missing)
+    return missing.length ? `Some moves could not be made: ${joinAnd(missing)}.` : `Some animations are missing (expected ${listText(l)}).`
+  },
+  legs_moved: (v, l, ok) => (ok ? `All ${n0(v)} legs move in the walk.` : `Only ${n0(v)} of ${n0(l)} legs move in the walk.`),
+  wings_found: (_v, _l, ok) => (ok ? 'Both wings were found, so it can fly and glide.' : 'We could not find the wings in the skeleton, so it walks but cannot fly.'),
+  hitbox_cover: (v, _l, ok, _ctx, vars) => {
+    const cover = str(vars.cover) || pct(v)
+    return ok ? `${str(vars.n) || 'The'} hit boxes cover ${cover} of the body and follow the skeleton.` : `The hit boxes cover only ${cover} of the body, so some hits would pass through.`
+  },
+  hitbox_overreach: (v, _l, ok, _ctx, vars) => (ok ? 'The hit boxes stay close to the body.' : `The hit boxes stick out well past the body (${str(vars.times) || num(v)?.toFixed(1) || v} times its size), so hits would land in thin air.`),
+  rig_restore: (_v, _l, ok) => (ok ? 'The rigged model kept its textures and its size.' : 'The rigged model lost its textures or its size while the skeleton was fitted.'),
+  hitbox_fit: (_v, _l, ok) => (ok ? 'Hit boxes were fitted to the skeleton.' : 'We could not fit hit boxes on this skeleton; it still has its body shape for moving.'),
   lod_count: (v, l, ok) => (ok ? `${n0(v)} detail levels were made.` : `${n0(v)} detail levels were made; ${n0(l)} expected.`),
   collider_present: (_v, _l, ok) => (ok ? 'A collision shape is present.' : 'No collision shape was made.'),
   collider_vertices: (v, l, ok) => (ok ? `The collision shape has ${n0(v)} points (limit ${n0(l)}).` : `The collision shape has ${n0(v)} points; engines allow ${n0(l)}.`),
@@ -525,7 +548,14 @@ const CHECK_HELP: Record<string, string> = {
   weight_coverage: 'weight_coverage',
   max_influences: 'max_influences',
   weights_normalised: 'weights_normalised',
-  clips: 'clips',
+  clips: 'moves',
+  legs_moved: 'moves',
+  wings_found: 'motion',
+  hitbox_cover: 'hitboxes',
+  hitbox_overreach: 'hitbox_fit',
+  hitbox_fit: 'hitboxes',
+  movement_shape: 'movement_shape',
+  rig_restore: 'rig',
   lod_count: 'lod_count',
   collider_present: 'collider_present',
   collider_vertices: 'collider_vertices',
@@ -562,7 +592,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -593,6 +623,12 @@ const FIX_LABELS: Record<string, string> = {
   clips_loop: 'Rebuild for Unity',
   controller_ready: 'Rebuild for Unity',
   unity_humanoid_avatar: 'Fit the standard skeleton again',
+  clips: 'Make the moves again',
+  legs_moved: 'Make the moves again',
+  hitbox_cover: 'Fit them looser',
+  hitbox_overreach: 'Fit them snugger',
+  hitbox_fit: 'Try again',
+  movement_shape: 'Add a body shape',
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
@@ -621,6 +657,10 @@ export function checkFix(check: Check): FixAction | null {
   if ((id === 'size_m' || id === 'height_m') && limit) return { stage: 'prep', params: { size_m: limit }, label }
   const turn = quarterTurn(num(check.value))
   if (id === 'facing' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
+  if (id === 'hitbox_cover') return { stage: 'rig', params: { hitbox_fit: 'loose' }, label }
+  if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
+  if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }
+  if (id === 'movement_shape') return { stage: 'export', params: { movement_shape: 'auto' }, label }
   return null
 }
 
@@ -690,7 +730,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   turnaround: ['views'],
   mesh: ['engine', 'target_faces'],
   prep: ['size_m', 'height_m', 'face_yaw', 'symmetric'],
-  rig: ['template'],
+  rig: ['template', 'motion', 'moves', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
 }
 
@@ -711,6 +751,104 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
+  motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
+  moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
+  move_size: { small: 'Small', normal: 'Normal', big: 'Big' },
+  move_speed: { slow: 'Slow', normal: 'Normal', fast: 'Fast' },
+  hitboxes: { detailed: 'One per body part', simple: 'Just head and body', none: 'None' },
+  hitbox_fit: { snug: 'Snug', normal: 'Normal', loose: 'Loose' },
+  hitbox_regions: {
+    head: 'Head',
+    neck: 'Neck',
+    chest: 'Chest',
+    hips: 'Hips',
+    body: 'Body',
+    tail: 'Tail',
+    upper_arm_l: 'Left upper arm',
+    forearm_l: 'Left forearm',
+    upper_arm_r: 'Right upper arm',
+    forearm_r: 'Right forearm',
+    thigh_l: 'Left thigh',
+    shin_l: 'Left shin',
+    thigh_r: 'Right thigh',
+    shin_r: 'Right shin',
+    leg_fl: 'Left front leg',
+    leg_fr: 'Right front leg',
+    leg_bl: 'Left back leg',
+    leg_br: 'Right back leg',
+    leg_l: 'Left leg',
+    leg_r: 'Right leg',
+    wing_l: 'Left wing',
+    wing_r: 'Right wing',
+    wings: 'Wings',
+  },
+  movement_shape: { auto: 'Automatic (by category)', upright: "Standing capsule (works with Unity's Character Controller)", along: 'Lying capsule along the body', box: 'Box', none: 'None' },
+}
+
+// ---------------------------------------------------------------------------
+// Creature moves (3.7): plain names for clips, the moves each way of moving can make, and the moves line.
+// ---------------------------------------------------------------------------
+
+// A clip name in a sentence ("Moves: idle, walk, turn and get hit"). turn_left and turn_right are one move, "turn".
+const CLIP_PLAIN: Record<string, string> = {
+  idle: 'idle',
+  walk: 'walk',
+  run: 'run',
+  turn: 'turn',
+  turn_left: 'turn',
+  turn_right: 'turn',
+  attack: 'attack',
+  hit: 'get hit',
+  death: 'die',
+  flap: 'fly',
+  glide: 'glide',
+  takeoff: 'take off',
+  land: 'land',
+  slither: 'slither',
+}
+
+// The moves a creature can make, by how it moves (the category yaml's clips, with turn as one move).
+export const MOVES_BY_MOTION: Record<string, string[]> = {
+  legs: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death'],
+  wings: ['idle', 'walk', 'flap', 'glide', 'takeoff', 'land', 'attack', 'hit', 'death'],
+  wave: ['idle', 'slither', 'turn', 'attack', 'hit', 'death'],
+  none: [],
+}
+// How each category moves when the motion knob is left empty (the category yaml's motion).
+export const MOTION_BY_CATEGORY: Record<string, string> = { humanoid: 'legs', quadruped: 'legs', multileg: 'legs', winged: 'wings', serpent: 'wave' }
+
+// Clips that loop when the sidecar does not say (gait.py LOOPING); every other procedural clip plays once.
+const LOOPING_CLIPS = /^(idle|walk|run|slither|flap|glide)$/i
+const ONE_SHOT_CLIPS = /^(turn_left|turn_right|attack|hit|death|takeoff|land)$/i
+export function clipLoopsByName(name: string): boolean {
+  if (LOOPING_CLIPS.test(name)) return true
+  return !ONE_SHOT_CLIPS.test(name)
+}
+
+// The plain move names for a clip list, in order, each once: ["idle", "walk", "turn", "get hit"].
+export function movesPlain(clips: unknown): string[] {
+  if (!Array.isArray(clips)) return []
+  const out: string[] = []
+  for (const c of clips) {
+    const name = typeof c === 'string' ? c : (c as { name?: unknown })?.name
+    if (typeof name !== 'string' || !name) continue
+    const plain = CLIP_PLAIN[name.toLowerCase()] ?? name.replace(/_/g, ' ').toLowerCase()
+    if (!out.includes(plain)) out.push(plain)
+  }
+  return out
+}
+
+// "Moves: idle, walk, run, turn, attack, get hit and die." Empty when there are no clips.
+export function movesLine(clips: unknown): string {
+  const list = movesPlain(clips)
+  return list.length ? `Moves: ${joinAnd(list)}.` : ''
+}
+
+// A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
+export function clipLabel(name: string): string {
+  const k = name.toLowerCase()
+  const plain = k === 'turn_left' ? 'turn left' : k === 'turn_right' ? 'turn right' : (CLIP_PLAIN[k] ?? name.replace(/_/g, ' '))
+  return plain.charAt(0).toUpperCase() + plain.slice(1)
 }
 
 export function optionLabel(p: { name: string; option_labels?: Record<string, string> }, value: unknown): string {
