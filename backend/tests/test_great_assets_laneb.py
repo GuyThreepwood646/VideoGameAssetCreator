@@ -40,6 +40,11 @@ SAMPLES = {
     "unity_import": ((True, True), (False, True)),
     "unity_humanoid_avatar": ((True, True), (False, True)),
     "seam_error": ((0.01, 0.05), (0.2, 0.05)),
+    "hitbox_cover": ((0.9, 0.85), (0.6, 0.85)),
+    "hitbox_overreach": ((1.5, 2.75), (3.4, 2.75)),
+    "hitbox_fit": ((True, True), (False, True)),
+    "legs_moved": ((8, 8), (4, 8)),
+    "wings_found": ((True, True), (False, True)),
 }
 
 

@@ -1,7 +1,7 @@
 """Blender headless: render frames of every NLA clip on an animated GLB (bakeoff/render_anim.py).
 
 Run: blender -b --python render_anim.py -- <anim.glb> <out_dir> [frames=6] [size=384]
-         [--view three_quarter|front|side|back|<degrees>] [--clips walk,run] [--margin 1.3]
+         [--view three_quarter|front|side|back|top|<degrees>] [--clips walk,run] [--margin 1.3]
 
 Writes <out_dir>/<clip>_<i>.png and <out_dir>/frames.json ({clips: {name: [files]}, frames, size, view, order,
 loop}). The camera is fixed for every clip, framed on the rest pose, so turns, lunges and falls show as movement.
@@ -31,7 +31,7 @@ view = _common.opt("--view", "three_quarter")
 only = [c.strip() for c in _common.opt("--clips", "").split(",") if c.strip()]
 margin = float(_common.opt("--margin", "1.3"))
 VIEWS = {"front": 0.0, "three_quarter": 35.0, "side": 90.0, "back": 180.0}
-azimuth = VIEWS[view] if view in VIEWS else float(view)
+azimuth = VIEWS[view] if view in VIEWS else (0.0 if view == "top" else float(view))
 
 os.makedirs(out_dir, exist_ok=True)
 sidecar_path = os.path.splitext(src)[0] + "_clips.json"
@@ -65,6 +65,9 @@ scene.camera = cam
 a = math.radians(azimuth)
 cam.location = centre + Vector((math.sin(a) * 4, -math.cos(a) * 4, 0.6)) * extent
 cam.rotation_euler = (math.radians(82), 0, a)
+if view == "top":  # straight down, front (-Y) at the bottom of the image: shows slither waves and turns
+    cam.location = centre + Vector((0, 0, 4 * extent))
+    cam.rotation_euler = (0, 0, 0)
 # A ground line helps judge drops and lifts: a thin dark plane at the rest pose's lowest point.
 bpy.ops.mesh.primitive_plane_add(size=extent * 6, location=(centre.x, centre.y, lo.z - 0.002 * extent))
 ground = bpy.context.active_object

@@ -13,6 +13,8 @@ size_hint: "In metres, head to tail as it lies. A python is about 4 m."
 parts_default: []
 topology: quad
 input_view_default: quarter
+motion: wave
+clips: [idle, slither, turn_left, turn_right, attack, hit, death]
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
