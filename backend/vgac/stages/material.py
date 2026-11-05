@@ -63,6 +63,12 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     sc.register("base_color", base)
     for key, p in maps.items():
         sc.register(key, p)
+    from .export import pack_texture_maps  # late import: export imports this module's helpers
+
+    packed = await asyncio.to_thread(pack_texture_maps, {"base_color": base, **{k: maps.get(k) for k in ("metallic", "roughness", "ao")}},
+                                     sc.dir, slug(getattr(getattr(sc, "asset", None), "name", None) or "material"))
+    for key, p in packed.items():
+        sc.register(key, p)
     err = await asyncio.to_thread(seam_error, base)
     sc.set_metrics(seam_error=round(err, 5), size=list(image_size(base)), textured=True)
     await judge(sc)
