@@ -622,7 +622,16 @@ const CHECK_TEXT: Record<string, CheckText> = {
   bake_matches: (_v, _l, ok) => (ok ? 'The surface detail was painted onto the final model.' : 'The surface detail was painted for an earlier copy of the model, so shading may look wavy.'),
   texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
   atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
-  face_matches_picture: (_v, _l, ok) => (ok ? 'The face was painted from the picture and is sharp.' : 'The face does not match the picture yet.'),
+  face_matches_picture: (_v, _l, ok, _ctx, vars) => {
+    if (ok) return 'The face was painted from the picture and is sharp.'
+    const eye = str(vars.eye_words)
+    const verb = str(vars.eye_verb) || 'was'
+    if (vars.reason === 'eye_missing' && eye) return `The face was painted, but ${eye} ${verb} not: the picture shows the eye, the model still has the blurred smudge from the 3D step.`
+    if (vars.reason === 'eye_under_hair' && eye)
+      return `The face was painted, but ${eye} ${verb} not: the model's hair covers that eye, although the picture shows it. Painting the face again cannot change that; building the 3D model again can give hair that leaves the eye free.`
+    if (vars.reason === 'eye_blurry' && eye) return `The face was painted, but ${eye} came out blurry, much softer than the picture's.`
+    return 'The face does not match the picture yet.'
+  },
   hair_matches_picture: (_v, _l, ok) => (ok ? 'Strands and shading were painted on the hair, or the pass stood back where hair could not be told apart.' : 'The hair detail did not come out as it should.'),
   baked_light: (_v, _l, ok, _ctx, vars) => {
     if (!ok) return "The colours still carry shadows from the picture, so they will fight your game's lights."
@@ -899,6 +908,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }
+  if (id === 'face_matches_picture' && vars.reason === 'eye_under_hair') return { stage: 'mesh', params: {}, label: check.fix?.label || 'Build the 3D model again' }
   if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null }, label }
   if (id === 'hair_matches_picture') return { stage: 'prep', params: { hair_detail: true }, label }
   return null
