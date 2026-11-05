@@ -24,6 +24,8 @@ export function MeshView({ version, category }: { version: Version; category?: s
   // Scenery on a grid: "On the grid: 3 x 1 squares, 3 m tall".
   const onGrid = version.stage === 'prep' && category && sizeAxisOf(category) === 'grid' ? gridReadout(version.metrics) : null
   const tiling = version.stage === 'prep' ? libraryUrl(version.files.tiling) : null
+  // The face detail pass's before and after picture (clean-up step, characters with a face).
+  const faceSheet = version.stage === 'prep' ? libraryUrl(version.files.face_before_after) : null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -83,6 +85,18 @@ export function MeshView({ version, category }: { version: Version; category?: s
               <img src={tiling} alt="Three copies of the piece side by side" />
             </a>
             <div className="small muted">Three copies side by side, to show the edges meet.</div>
+          </div>
+        )}
+        {faceSheet && (
+          <div>
+            <div className="field-label">
+              Face: before and after
+              <Info term="term.face_detail" />
+            </div>
+            <a href={faceSheet} target="_blank" rel="noreferrer" className="tiling-thumb" title="Open the full picture">
+              <img src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
+            </a>
+            <div className="small muted">The picture, the 3D face before, and after it was painted from the picture.</div>
           </div>
         )}
         {iou !== null && typeof iou === 'object' && (

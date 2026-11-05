@@ -428,6 +428,16 @@ def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, he
             "box": (int(x0), int(y0), int(x1), int(y1)), "width_px": float(x1 - x0), "area_px": int(region.sum())}
 
 
+def features_box(info: dict[str, Any]) -> np.ndarray:
+    """Where the eyes, brows, nose and mouth can be, wider than inner_face (42 percent of the face's width to each
+    side of the nose, from 36 percent above it to 30 percent below): nothing there is ever replaced by a fill."""
+    region = info["region"]
+    nx, ny = info["nose"]
+    w = float(info["width_px"])
+    Y, X = np.mgrid[0:region.shape[0], 0:region.shape[1]]
+    return (np.abs(X - nx) <= 0.42 * w) & (Y >= ny - 0.36 * w) & (Y <= ny + 0.3 * w)
+
+
 def inner_face(info: dict[str, Any]) -> np.ndarray:
     """The part of the face region that holds the eyes, nose and mouth (around the nose tip: 30 percent of the face's
     width to each side, from 32 percent above it to 25 percent below). The fit is judged there only, so the jaw line
@@ -604,6 +614,78 @@ def tone_match(new: np.ndarray, old: np.ndarray, region: np.ndarray, sigma_frac:
     return np.clip(new + masked_blur(old, region, s) - masked_blur(new, region, s), 0.0, 1.0)
 
 
+def tone_match_local(new: np.ndarray, old: np.ndarray, region: np.ndarray, weight: np.ndarray,
+                     broad: float = 0.1, near: float = 0.025) -> np.ndarray:
+    """tone_match, with the tone taken at a much finer scale toward the edge of the painted area (where weight falls
+    below 1): inside, the old texture only lends its broad tone (its blurred eyes must not come back); along the edge
+    the painted face takes the old texture's local tone, so there is no step where the paint stops."""
+    far = tone_match(new, old, region, broad)
+    close = tone_match(new, old, region, near)
+    edge = np.clip(1.0 - weight, 0.0, 1.0)
+    edge = blur(edge, near * new.shape[0])  # a smooth hand-over between the two
+    edge = np.clip(edge * 1.5, 0.0, 1.0)[..., None]
+    return far * (1 - edge) + close * edge
+
+
+def hair_and_skin(old: np.ndarray, picture: np.ndarray, info: dict[str, Any], mask: np.ndarray,
+                  margin: float = 6.0) -> dict[str, Any]:
+    """Which pixels are hair and which are skin, on the model's render (old) and on the fitted picture, by colour
+    distance (Lab, lightness counted half) to a skin tone and a hair colour sampled on each. The model's skin tone is
+    find_face's (around the nose); its hair colour the middle colour of the head above the face. The picture's are
+    sampled where the model has skin near the nose and where the model has hair. A pixel is hair when it is nearer the
+    hair colour than the skin tone by `margin`. Eyes, brows and lips are nearer the skin tone than a hair colour that
+    differs from the skin (checked on red hair and brown brows). Returns {old_hair, pic_hair, pic_background (S,S) bool,
+    hair_lab, found}; found is False (nothing marked) when no hair colour that differs from the skin is found."""
+    S = old.shape[0]
+    region = info["region"]
+    w = float(info["width_px"])
+    x0, y0, x1, y1 = info["box"]
+    lab_o = to_lab(old)
+    lab_p = to_lab(picture)
+    k = np.array([0.5, 1.0, 1.0])
+    skin_o = np.array(info["skin"])
+    Y, X = np.mgrid[0:S, 0:S]
+    above = mask & ~dilate_mask(region, max(2, int(w / 40))) & (Y < y0 + 0.25 * (y1 - y0)) & (np.abs(X - info["nose"][0]) < 0.8 * w)
+    empty = np.zeros((S, S), dtype=bool)
+    if above.sum() < 200:
+        return {"old_hair": empty, "pic_hair": empty, "pic_background": empty, "found": False}
+    hair_o = np.median(lab_o[above], axis=0)
+    if np.linalg.norm((hair_o - skin_o) * k) < 2 * margin:
+        return {"old_hair": empty, "pic_hair": empty, "pic_background": empty, "found": False}
+    d = lambda lab, ref: np.linalg.norm((lab - ref) * k, axis=-1)  # noqa: E731
+    # Hair is only hair when it joins the hair around the face: a red mouth or a dark eye smudge on its own is not.
+    old_hair = grow(above, mask & (d(lab_o, hair_o) < d(lab_o, skin_o) - margin))
+    nx, ny = info["nose"]
+    r = max(4, S // 64)
+    win = np.zeros((S, S), dtype=bool)
+    win[max(0, ny - 3 * r): ny + r, max(0, nx - 2 * r): nx + 2 * r] = True
+    skin_p = np.median(lab_p[win & region & ~old_hair], axis=0) if (win & region & ~old_hair).sum() > 20 else skin_o
+    hair_src = old_hair & mask
+    hair_p = np.median(lab_p[hair_src], axis=0) if hair_src.sum() > 200 else hair_o
+    pic_hair_any = d(lab_p, hair_p) < d(lab_p, skin_p) - margin
+    pic_hair = grow(pic_hair_any & ~dilate_mask(region, max(2, int(w / 40))), pic_hair_any)
+    # the grey background around the painted head (where the painted face is narrower than the model's)
+    bg = to_lab(np.full((1, 1, 3), 0.25))[0, 0]
+    pic_background = (d(lab_p, bg) < 6.0)
+    return {"old_hair": old_hair, "pic_hair": pic_hair, "pic_background": pic_background, "found": True,
+            "hair_lab": [round(float(v), 1) for v in hair_o]}
+
+
+def inpaint(img: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """img with every pixel outside valid filled smoothly from the valid pixels around it (push-pull)."""
+    from . import imaging
+
+    if valid.all() or not valid.any():
+        return img.copy()
+    out = imaging.fill_empty(img.astype(np.float32), valid).astype(np.float64)
+    # smooth the fill (the push-pull pyramid leaves blocks) while the valid pixels stay as they are
+    sigma = max(2.0, img.shape[0] / 120)
+    for _ in range(8):
+        out = blur(out, sigma)
+        out[valid] = img[valid]
+    return out
+
+
 def screen_weight(region: np.ndarray, feather_frac: float = 0.008) -> np.ndarray:
     """0..1 weight of the face region in the picture, shrunk and feathered so it has faded out by the region's edge
     (hairline, jaw, ears): nothing is painted outside the face."""
@@ -613,7 +695,7 @@ def screen_weight(region: np.ndarray, feather_frac: float = 0.008) -> np.ndarray
 
 
 def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, picture: np.ndarray, weight: np.ndarray,
-                 facing: tuple[float, float] = (0.3, 0.7), strength: float = 1.0) -> dict[str, Any]:
+                 facing: tuple[float, float] = (0.3, 0.7), strength: float = 1.0, soften_m: float = 0.0) -> dict[str, Any]:
     """Paint `picture` (seen through cam) onto the texture through the model's UVs. Each texel the camera sees
     takes weight(screen) * smoothstep(facing) * strength of the picture's colour, where facing is the cosine between
     the surface and the view (surfaces seen edge-on keep their old colour). Texels the camera does not see (behind
@@ -652,6 +734,21 @@ def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, 
     visible = sd <= z[yi, xi] + tol
     w = smoothstep(facing[0], facing[1], cosv) * sample(weight[..., None], sp[:, 0], sp[:, 1])[:, 0] * visible * float(strength)
     w = np.clip(w, 0.0, 1.0)
+    if soften_m > 0 and len(w):
+        # Fade the paint out on the surface itself wherever it stops short (behind a hair flap, at a sharp turn): the
+        # mean weight within about soften_m in 3D; a texel keeps its weight only where most of its surroundings are
+        # painted too, so no hard line shows from another side.
+        cell = soften_m / 2
+        lo = pos.min(axis=0)
+        idx = np.floor((pos - lo) / cell).astype(int)
+        dims = tuple(idx.max(axis=0) + 1)
+        sw, sn = np.zeros(dims), np.zeros(dims)
+        np.add.at(sw, tuple(idx.T), w)
+        np.add.at(sn, tuple(idx.T), 1.0)
+        for _ in range(2):
+            sw, sn = _box3(sw, 1), _box3(sn, 1)
+        wa = _trilinear(sw / np.maximum(sn, 1e-9), (pos - lo) / cell - 0.5)
+        w = w * smoothstep(0.3, 0.85, wa)
     col = sample(picture, sp[:, 0], sp[:, 1])
     out = texture.copy()
     tw = np.zeros((T, T))
@@ -677,6 +774,85 @@ def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, 
     ys, xs = np.where(touched)
     bbox = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1) if len(xs) else None
     return {"texture": out, "texel_weight": tw, "changed": int((tw > 0.5).sum()), "touched": int(touched.sum()), "bbox": bbox}
+
+
+def _trilinear(grid: np.ndarray, f: np.ndarray) -> np.ndarray:
+    """grid (X, Y, Z[, c]) read at fractional cell coordinates f (n, 3), cell centres at whole numbers (clamped)."""
+    dims = np.array(grid.shape[:3])
+    f = np.clip(f, 0, dims - 1)
+    i0 = np.floor(f).astype(int)
+    i1 = np.minimum(i0 + 1, dims - 1)
+    t = f - i0
+    out = 0.0
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                ix = i1[:, 0] if dx else i0[:, 0]
+                iy = i1[:, 1] if dy else i0[:, 1]
+                iz = i1[:, 2] if dz else i0[:, 2]
+                wgt = (t[:, 0] if dx else 1 - t[:, 0]) * (t[:, 1] if dy else 1 - t[:, 1]) * (t[:, 2] if dz else 1 - t[:, 2])
+                v = grid[ix, iy, iz]
+                out = out + (v * (wgt[:, None] if v.ndim > 1 else wgt))
+    return out
+
+
+def _box3(a: np.ndarray, r: int) -> np.ndarray:
+    """Box blur of radius r along the first three axes (edges clamped)."""
+    out = a.astype(np.float64)
+    for axis in range(3):
+        pad = [(0, 0)] * out.ndim
+        pad[axis] = (r + 1, r)
+        p = np.pad(out, pad, mode="edge")
+        c = np.cumsum(p, axis=axis)
+        n = out.shape[axis]
+        out = (np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=axis) - np.take(c, np.arange(0, n), axis=axis)) / (2 * r + 1)
+    return out
+
+
+def spread_tone(mesh: dict[str, np.ndarray], old: np.ndarray, new: np.ndarray, tw: np.ndarray, skin_lab: Any,
+                radius_m: float = 0.03, cell_m: float = 0.005, skin_tolerance: float = 20.0) -> tuple[np.ndarray, int]:
+    """Carry the painted face's broad tone a few centimetres onto the skin around it, on the surface in 3D (across
+    texture seams), so the old texture beyond the paint (the cheek behind a hair flap, the side of the face the front
+    camera saw edge-on) meets it without a step. The difference new - old on painted texels is averaged in a coarse 3D
+    grid and blurred; a skin texel the paint did not (fully) reach is moved by that difference, as much as painted
+    surface lies around it and as much as it was not painted. Texels whose old colour is not skin stay. Returns (the
+    texture, how many texels were moved)."""
+    T = old.shape[0]
+    verts, faces = mesh["verts"], mesh["faces"]
+    painted_any = tw > 0.5
+    if painted_any.sum() < 50:
+        return new, 0
+    ras = rasterise(uv_pixels(mesh["uv"], T), np.zeros(len(verts)), faces, T)
+    cov = ras["tri"] >= 0
+    pos = interpolate(verts, faces, ras)
+    painted = painted_any & cov
+    pp = pos[painted]
+    lo = pp.min(axis=0) - radius_m
+    hi = pp.max(axis=0) + radius_m
+    dims = np.maximum(1, np.ceil((hi - lo) / cell_m).astype(int) + 1)
+    inbox = cov & np.all((pos >= lo) & (pos <= hi), axis=-1)
+    idx_all = np.floor((pos[inbox] - lo) / cell_m).astype(int)
+    idx_p = np.floor((pp - lo) / cell_m).astype(int)
+    diff = new[painted] - old[painted]
+    s = np.zeros(tuple(dims) + (3,))
+    n = np.zeros(tuple(dims))
+    m = np.zeros(tuple(dims))
+    np.add.at(s, tuple(idx_p.T), diff)
+    np.add.at(n, tuple(idx_p.T), 1.0)
+    np.add.at(m, tuple(idx_all.T), 1.0)
+    r = max(1, int(round(radius_m / cell_m / 2)))
+    for _ in range(2):
+        s, n, m = _box3(s, r), _box3(n, r), _box3(m, r)
+    D = s / np.maximum(n, 1e-9)[..., None]
+    frac = np.clip(n / np.maximum(m, 1e-9), 0.0, 1.0)
+    lab = to_lab(np.clip(old[inbox], 0, 1))
+    skin = np.linalg.norm((lab - np.asarray(skin_lab)) * np.array([0.5, 1.0, 1.0]), axis=-1) < skin_tolerance
+    f = (pos[inbox] - lo) / cell_m - 0.5
+    amount = (1.0 - np.clip(tw[inbox], 0, 1)) * _trilinear(frac, f) * skin
+    out = new.copy()
+    vals = out[inbox] + _trilinear(D, f) * amount[:, None]
+    out[inbox] = np.clip(vals, 0.0, 1.0)
+    return out, int((amount > 0.05).sum())
 
 
 def grow_into_gutter(texture: np.ndarray, coverage: np.ndarray, bbox: tuple[int, int, int, int] | None, px: int) -> np.ndarray:

@@ -227,3 +227,77 @@ def test_face_check():
     off = fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.5, "feature_match_after": 0.3}})[0]
     assert not off["ok"] and "follows the picture poorly" in off["help"]
     assert "face_matches_picture" in guidance.CHECK_GUIDE
+
+
+# --- hair and skin, fills, tone at the edges (second round on the knight) ----------------------------------
+
+
+def _face_info(S: int, region: np.ndarray, skin_rgb) -> dict:
+    ys, xs = np.where(region)
+    return {"region": region, "nose": (S // 2, int(ys.mean())), "width_px": float(xs.max() - xs.min()),
+            "box": (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())),
+            "skin": face.to_lab(np.array([[skin_rgb]], dtype=np.float64))[0, 0].tolist()}
+
+
+def test_hair_is_hair_only_when_it_joins_the_hair_around_the_face():
+    S = 128
+    skin, hair = (0.9, 0.7, 0.6), (0.7, 0.15, 0.05)
+    old = np.empty((S, S, 3))
+    old[:] = skin
+    old[:40] = hair  # hair on top of the head
+    old[90:96, 50:78] = (0.75, 0.2, 0.15)  # a red mouth on its own
+    region = np.zeros((S, S), dtype=bool)
+    region[40:120, 24:104] = True
+    mask = np.zeros((S, S), dtype=bool)
+    mask[:, 16:112] = True
+    pic = old.copy()
+    pic[40:70, 60:66] = hair  # a painted strand hanging from the hair onto the skin
+    info = _face_info(S, region, skin)
+    seg = face.hair_and_skin(old, pic, info, mask)
+    assert seg["found"]
+    assert seg["old_hair"][10, 64] and not seg["old_hair"][92, 64]  # the mouth is not hair
+    assert seg["pic_hair"][55, 63] and not seg["pic_hair"][92, 64]  # the strand is, the mouth is not
+    assert not seg["old_hair"][60, 40]
+
+
+def test_inpaint_fills_smoothly_and_keeps_the_rest():
+    img = gradient(64)
+    hole = np.zeros((64, 64), dtype=bool)
+    hole[24:40, 24:40] = True
+    broken = img.copy()
+    broken[hole] = 1.0
+    out = face.inpaint(broken, ~hole)
+    assert np.array_equal(out[~hole], img[~hole])
+    assert np.abs(out[hole] - img[hole]).max() < 0.2
+
+
+def test_paint_fades_out_where_it_stops_short():
+    # The front square is painted; the right half is hidden behind a strip nearer the camera. With softening the
+    # paint fades out before the hidden part instead of stopping in a hard line.
+    m = combine(plane(0.0, 0.0, 0.5), plane(0.2, 0.5, 1.0))
+    m["verts"][4:, 0] = m["verts"][4:, 0] * 0.5 + 0.25  # the strip covers x 0..0.5 of the square
+    tex = np.zeros((64, 64, 3))
+    hard = face.project_back(m, tex, cam(), np.ones((64, 64, 3)), np.ones((64, 64)), facing=(0.0, 0.1))
+    soft = face.project_back(m, tex, cam(), np.ones((64, 64, 3)), np.ones((64, 64)), facing=(0.0, 0.1), soften_m=0.3)
+    row_h, row_s = hard["texel_weight"][32, :32], soft["texel_weight"][32, :32]
+    assert row_h[12] > 0.95 and row_h[20] < 0.05  # hard: painted up to the strip
+    assert row_s[4] > row_s[12] > row_s[15]  # soft: fading toward it
+
+
+def test_spread_tone_carries_the_painted_tone_onto_nearby_skin_only():
+    m = combine(plane(0.0, 0.0, 1.0))
+    T = 64
+    skin = (0.8, 0.6, 0.5)
+    old = np.empty((T, T, 3))
+    old[:] = skin
+    old[:, 56:] = (0.1, 0.1, 0.6)  # not skin
+    new = old.copy()
+    tw = np.zeros((T, T))
+    tw[:, :24] = 1.0
+    new[:, :24] = np.clip(old[:, :24] + 0.1, 0, 1)
+    out, n = face.spread_tone(m, old, new, tw, face.to_lab(np.array([[skin]]))[0, 0].tolist(), radius_m=0.3, cell_m=0.05)
+    assert n > 0
+    assert out[32, 28, 0] - old[32, 28, 0] > out[32, 44, 0] - old[32, 44, 0] >= 0  # fades with distance
+    assert out[32, 28, 0] - old[32, 28, 0] > 0.02
+    assert np.allclose(out[:, 58:], old[:, 58:])  # not skin: untouched
+    assert np.allclose(out[:, :24], new[:, :24])  # painted: as painted
