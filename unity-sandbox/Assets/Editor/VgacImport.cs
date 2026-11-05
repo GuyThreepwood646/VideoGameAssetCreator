@@ -35,6 +35,8 @@
 // the arm, up toward the elbow), placed from sockets.json like the others; a shield's attachments.json entry names
 // Socket_Forearm_L, so the equipped prefab hangs it under that point. Item offsets in attachments.json already
 // include the backend's fit to the motion ("Fit it for me"), so nothing here changes them.
+// Version 12: every texture imports at its own size (Unity's default import limit is 2048, so a 4096 base colour used
+// to arrive at 2048); the report lists textureSizes ("base_color.png:4096:4096": the file's size, the import's limit).
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -51,7 +53,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "11";
+    public const string Version = "12";
 
     [Serializable]
     class ClipInfo
@@ -97,6 +99,7 @@ public static class VgacImport
         public string shader = "";
         public List<string> texturesAssigned = new List<string>();
         public List<string> textureSettings = new List<string>();
+        public List<string> textureSizes = new List<string>();     // "base_color.png:4096:4096" file size, then the import's max size
         public List<string> warnings = new List<string>();
         public int clipCount;
         public List<ClipInfo> clips = new List<ClipInfo>();
@@ -1003,7 +1006,14 @@ public static class VgacImport
             ti.mipmapEnabled = mips;
             ti.textureCompression = compress ? TextureImporterCompression.Compressed : TextureImporterCompression.Uncompressed;
             if (point) ti.npotScale = TextureImporterNPOTScale.None;
+            // Unity imports at most 2048 by default: a 4096 base colour (High face detail on a 4096 platform) would
+            // silently arrive at half its size. The import keeps the file's own size, never more.
+            int sw, sh;
+            ti.GetSourceTextureWidthAndHeight(out sw, out sh);
+            var need = Mathf.Min(16384, Mathf.NextPowerOfTwo(Mathf.Max(sw, sh)));
+            if (need > ti.maxTextureSize) ti.maxTextureSize = need;
             ti.SaveAndReimport();
+            report.textureSizes.Add(t + ":" + Mathf.Max(sw, sh) + ":" + ti.maxTextureSize);
             report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName ? ", alpha " + ti.alphaSource : "")
                 + ", " + ti.filterMode + (ti.mipmapEnabled ? ", mipmaps" : ", no mipmaps") + ", " + ti.textureCompression);
         }

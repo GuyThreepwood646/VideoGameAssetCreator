@@ -122,8 +122,9 @@ def _channel(path: Path | str | None, size: tuple[int, int]) -> np.ndarray | Non
 
 def pack_texture_maps(textures: dict[str, Path | str | None], out_dir: Path | str, name: str) -> dict[str, Path]:
     """Write T_<name>_MetallicSmoothness.png (RGB metallic, A 1 - roughness; Unity) and T_<name>_ORM.png (R occlusion,
-    G roughness, B metallic; glTF, Godot, Unreal) into `out_dir` at the size of the base colour (else of the largest
-    input map). A missing input takes the defaults above. The metal-and-shine pack needs a metallic or roughness map;
+    G roughness, B metallic; glTF, Godot, Unreal) into `out_dir` at the size of the largest of the maps they are made
+    of (not the base colour's: "High" face detail ships the base colour alone at 4096, and enlarging the data maps to
+    match would only cost memory). A missing input takes the defaults above. The metal-and-shine pack needs a metallic or roughness map;
     the ORM pack any of ao, roughness and metallic. -> {"metallic_smoothness": path, "orm": path} for what was written.
 
     The tileable material category writes both packs too: stages/material.py calls this with its own maps."""
@@ -131,15 +132,11 @@ def pack_texture_maps(textures: dict[str, Path | str | None], out_dir: Path | st
     if not any(k in present for k in ("metallic", "roughness", "ao")):
         return {}
     size: tuple[int, int] | None = None
-    if "base_color" in present:
-        with Image.open(present["base_color"]) as im:
-            size = im.size
-    else:
-        for k in ("metallic", "roughness", "ao"):
-            if k in present:
-                with Image.open(present[k]) as im:
-                    if size is None or im.size[0] * im.size[1] > size[0] * size[1]:
-                        size = im.size
+    for k in ("metallic", "roughness", "ao"):
+        if k in present:
+            with Image.open(present[k]) as im:
+                if size is None or im.size[0] * im.size[1] > size[0] * size[1]:
+                    size = im.size
     assert size is not None
     w, h = size
     ch: dict[str, np.ndarray] = {}
@@ -638,6 +635,7 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "lodFadeWidth": report.get("lodFadeWidth"), "textureFilter": report.get("textureFilter"),
             "textureMipmaps": report.get("textureMipmaps"), "textureCompression": report.get("textureCompression"),
             "normalMap": report.get("normalMap"), "textureSettings": report.get("textureSettings"),
+            "textureSizes": report.get("textureSizes"),
             "sockets": report.get("sockets"), "socketBones": report.get("socketBones"),
             "socketMaxError": report.get("socketMaxError"), "socketMaxAngle": report.get("socketMaxAngle"),
             "equippedPrefab": report.get("equippedPrefab"), "equippedItems": report.get("equippedItems"),
@@ -881,6 +879,13 @@ def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool, expect_normal:
     checks.append(_check("materials_connected", missing is None, len(assigned & {k for k, _, _ in wanted}), len(wanted),
                          {"missing": missing[0] if missing else "", "effect": missing[1] if missing else "",
                           **({} if expect_normal else {"no_bumps": True})}))
+    sizes = texture_import_sizes(u)
+    if sizes:
+        short = [(name, f, m) for name, f, m in sizes if m < f]
+        top = max(sizes, key=lambda x: x[1])
+        checks.append(_check("textures_full_size", not short, (short[0] if short else top)[2], (short[0] if short else top)[1],
+                             {"texture": (short[0] if short else top)[0].replace(".png", "").replace("_", " "),
+                              "file_px": str((short[0] if short else top)[1]), "import_px": str((short[0] if short else top)[2])}))
     clips = [c for c in (u.get("clips") or []) if isinstance(c, dict)]
     if rigged and clips:
         loops = {c.get("name"): bool(c.get("loop")) for c in clips}
@@ -900,6 +905,17 @@ def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool, expect_normal:
         checks.append(_check("unity_humanoid_avatar", valid, u.get("clipCount") if valid else 0, True,
                              {"mapping": u.get("avatar_mapping") or ""}))
     return checks
+
+
+def texture_import_sizes(u: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """The importer's textureSizes ("base_color.png:4096:4096": the file's size, then the largest size Unity imports it
+    at), parsed; [] from importers before Version 12."""
+    out = []
+    for e in u.get("textureSizes") or []:
+        parts = str(e).rsplit(":", 2)
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+            out.append((parts[0], int(parts[1]), int(parts[2])))
+    return out
 
 
 def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
