@@ -48,6 +48,7 @@ ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the
 RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the inner face, as a share of the picture
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
+EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
 LANDMARK_RESIDUAL_MAX = 0.12  # the eye-and-mouth fit's eye error, as a share of the face's width
 REDRAW_KEEP_MIN = 0.5  # the sharpened picture against the crop: under it the redraw moved things
 COVERED_WIDTH_MIN = 0.35
@@ -107,9 +108,12 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
         return [quality.check("face_matches_picture", False, reason, SHARP_MIN, vars={"reason": reason})]
     sharp = float(fd.get("sharpness_after") or 0.0)
     match = float(fd.get("feature_match_after") or 0.0)
-    ok = sharp >= SHARP_MIN and match >= MATCH_MIN
+    shift = fd.get("eye_colour_shift")
+    colour_ok = shift is None or float(shift) <= EYE_COLOUR_MAX
+    ok = sharp >= SHARP_MIN and match >= MATCH_MIN and colour_ok
+    reason = None if ok else ("blurry" if sharp < SHARP_MIN else "off_picture" if match < MATCH_MIN else "eye_colour")
     return [quality.check("face_matches_picture", ok, round(sharp, 3), SHARP_MIN,
-                          vars={"reason": None if ok else ("blurry" if sharp < SHARP_MIN else "off_picture"),
+                          vars={"reason": reason, "eye_shift": shift,
                                 "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after")})]
 
 
@@ -165,7 +169,9 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     if not info.get("found"):
         return {"ok": False, "reason": "no_face"}
     region = info["region"]
-    src = face.read_rgb(picture, 1024)
+    painted = face.read_rgb(crop, 1024)
+    # The painting is the authority on colour and broad look; the sharpened picture only adds fine detail.
+    src = painted if Path(picture) == Path(crop) else face.merge_detail(painted, face.read_rgb(picture, 1024))
     inner = face.inner_face(info)
     # The eye-and-mouth fit is used when it explains the picture: its eyes land within LANDMARK_RESIDUAL_MAX of the face's
     # width of the model's and the broad features agree; it keeps the eye line and the mouth where the model has them.
@@ -191,6 +197,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # Hair stays hair and skin stays skin: never paint onto the model's hair (a flap over an eye, the fringe), and
     # where the picture has hair or background over the model's skin (its fringe and jaw are not where the model's
     # are), fill that spot from the painted skin around it instead.
+    painted_fitted = face.apply_alignment(painted, a)
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
     paint = region & ~face.dilate_mask(seg["old_hair"], 2)
     core = seg["pic_hair"] | (seg["pic_background"] & ~inner)
@@ -205,7 +212,9 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # where the paint will fade (the region's edge, and surface turning away from the camera) the tone is matched
     # locally, so the cheeks do not show a step where the painted face hands over to the old texture
     fade = weight * face.smoothstep(FACING[0], FACING[1] + 0.25, view["facing"])
-    toned = face.tone_match_local(fitted, view["image"], paint, fade)
+    lm_fit = face.landmarks(fitted, info)
+    keep = face.eye_boxes(region.shape, lm_fit["eyes"], float(info["width_px"])) if lm_fit else None
+    toned = face.tone_match_local(fitted, view["image"], paint, fade, keep=keep)
     res = face.project_back(mesh, tex, cam, toned, weight, facing=FACING, strength=strength, soften_m=SOFTEN_M)
     spread, spread_n = face.spread_tone(mesh, tex, res["texture"], res["texel_weight"], info["skin"])
     uvm = imaging.load_uv_mesh(glb)
@@ -226,9 +235,29 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "tone_spread_texels": spread_n,
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
+        **eye_colour_measure(painted_fitted, after["image"], fitted, info, paint),
     }
     sheet = before_after_sheet(crop, (old_mesh, old_tex, old_head), (mesh, new_tex, head), out_dir / "face_before_after.png")
     return {"ok": True, "base_color": out, "sheet": sheet, "metrics": metrics}
+
+
+def eye_colour_measure(painted: np.ndarray, after: np.ndarray, fitted: np.ndarray, info: dict[str, Any],
+                       paint: np.ndarray) -> dict[str, Any]:
+    """The eyes' colour in the painting (fitted to the model) against the painted model's front render, at the
+    picture's own eye points: {eye_colour_painting, eye_colour_model, eye_colour_shift (the larger of the two eyes,
+    Lab a-b distance), eyes_measured}. An eye whose box is mostly not painted (covered by hair on the model) is left
+    out; with no eye measured the shift is None."""
+    lm = face.landmarks(fitted, info)
+    if not lm:
+        return {"eye_colour_shift": None, "eyes_measured": 0}
+    w = float(info["width_px"])
+    hx, hy = max(2, int(0.05 * w)), max(2, int(0.025 * w))
+    eyes = [(x, y) for x, y in lm["eyes"] if paint[max(0, int(y) - hy): int(y) + hy + 1, max(0, int(x) - hx): int(x) + hx + 1].mean() >= 0.6]
+    if not eyes:
+        return {"eye_colour_shift": None, "eyes_measured": 0}
+    a = face.eye_colour(painted, eyes, w)
+    b = face.eye_colour(after, eyes, w)
+    return {"eye_colour_painting": a, "eye_colour_model": b, "eye_colour_shift": face.colour_shift(a, b), "eyes_measured": len(eyes)}
 
 
 def eyes_moved(before: np.ndarray, after: np.ndarray, info: dict[str, Any]) -> float | None:
