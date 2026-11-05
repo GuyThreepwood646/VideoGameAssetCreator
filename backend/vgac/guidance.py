@@ -730,7 +730,7 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
     elif style == "pixel":
         reasons.append("pixel art needs the pixel-grid model")
     elif style == "realistic_pbr":
-        reasons.append("realistic surfaces need the base model's detail")
+        reasons.append("photoreal surfaces need the base model's detail")
     elif style == "clay":
         reasons.append("soft clay shapes come out well from the quick drafting model")
     else:
@@ -743,12 +743,16 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
         est["mesh"] = 600
     if cat.get("rig_engine", "none") == "none":
         est["rig"] = 5
-    total_min = max(1, round(sum(est.values()) / 60))
     try:
-        recipe_plain = reference.recipe(style, category, platform)["plain"]
+        rec = reference.recipe(style, category, platform)
+        recipe_plain, recipe_notes = rec["plain"], list(rec.get("notes") or [])
+        if rec["mesh"].get("upsample") == 1536 and category != "material":
+            est["mesh"] = max(est["mesh"], 600)  # the finer 3D build is several times slower
     except KeyError:
-        recipe_plain = ""
+        recipe_plain, recipe_notes = "", []
+    total_min = max(1, round(sum(est.values()) / 60))
     return {"model": model, "model_label": model_label_long(model), "reason": "; ".join(reasons), "recipe_plain": recipe_plain,
+            "recipe_notes": recipe_notes,
             "budgets": budgets, "estimates": est, "total_minutes": total_min,
             "platform_label": plat.get("plain_name") or plat.get("label") or platform,
             "category_label": cat.get("label") or category}

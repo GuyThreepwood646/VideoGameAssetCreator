@@ -130,7 +130,7 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     target_faces, tex = targets["target_faces"], targets["texture_size"]
     keep_normal = bool(rec["mesh"]["normal_map"])
     crisp = rec["surface"]["texture_filter"] == "crisp"
-    upsample = int(params.get("upsample") or 1024)
+    upsample = int(params.get("upsample") or rec["mesh"].get("upsample") or 1024)
     seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)

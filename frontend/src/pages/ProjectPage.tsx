@@ -302,6 +302,9 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.recipe" />
         </div>
       )}
+      {(suggestion?.recipe_notes ?? []).map((note) => (
+        <div className="suggest-line muted" key={note}>Good to know: {note}</div>
+      ))}
       <Disclosure label="Advanced">
         <div className="col">
           <Field label="Name" hint={`Optional. We will call it "${autoName(prompt) || 'Untitled'}" if you leave this empty.`}>

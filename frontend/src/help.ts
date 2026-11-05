@@ -208,7 +208,7 @@ export const STYLE_HELP: Record<string, HelpEntry> = {
   pixel: H('Pixel art', 'Crisp pixels and a limited palette.', 'For retro 2D games; sprites come from the finished model.', 'pixel'),
   retro64: H('Retro 64', 'Late 1990s console look: chunky shapes, small blurry textures.', 'Low detail on purpose; fast on every platform.', 'retro64'),
   lowpoly_flat: H('Low-poly flat', 'Faceted shapes with one colour per face.', 'Very light models; no texture detail.', 'lowpoly_flat'),
-  realistic_pbr: H('Realistic', 'Photoreal materials and proportions.', 'Slower to make; pairs with the Z-Image base model.', 'realistic_pbr'),
+  realistic_pbr: H('Photoreal', 'Looks like a photograph of a real thing: true materials, fine detail, real proportions.', 'Slower to make; pairs with the Z-Image base model.', 'realistic_pbr'),
   realistic: H('Realistic', 'Photoreal materials and proportions.', 'Slower to make; pairs with the Z-Image base model.', 'realistic'),
   clay: H('Clay', 'Stop-motion clay look with soft sculpted surfaces.', 'Pairs with the Klein model.', 'clay'),
 }

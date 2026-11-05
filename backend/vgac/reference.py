@@ -553,7 +553,7 @@ RECIPE_DEFAULTS: dict[str, Any] = {
     "concept": {"steps": None, "negative": ""},
     "addons": [],
     "turnaround": {"lora_strength": None, "prompt_suffix": ""},
-    "mesh": {"triangle_scale": 1.0, "triangle_floor": 0, "texture_cap": None, "normal_map": True},
+    "mesh": {"triangle_scale": 1.0, "triangle_floor": 0, "texture_cap": None, "normal_map": True, "upsample": 1024},
     "surface": {"shading": "smooth", "texture_filter": "smooth", "palette_colors": None, "pixel_snap": False},
     "engine": {},  # filled from surface.texture_filter (crisp: point, no mipmaps, no compression) unless the style sets it
 }
@@ -608,7 +608,9 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     tex = min(int(cap), tex_budget) if cap else tex_budget
     mesh = {"triangle_scale": scale, "triangle_floor": floor, "triangles": tris, "budget_triangles": tris_budget or None,
             "texture_cap": int(cap) if cap else None, "texture": tex, "budget_texture": tex_budget,
-            "normal_map": bool(mesh_raw.get("normal_map", True))}
+            "normal_map": bool(mesh_raw.get("normal_map", True)),
+            # Detail level of the 3D builder: 1536 is several times slower and only worth it for the Photoreal look.
+            "upsample": 1536 if int(mesh_raw.get("upsample") or 1024) >= 1536 else 1024}
     sr = raw["surface"]
     crisp = sr.get("texture_filter") == "crisp"
     palette = sr.get("palette_colors")
@@ -645,7 +647,15 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     plain = f"{look} {noun}: {text}"
     if not plain.endswith("."):
         plain += "."
-    out = {"style": s["id"], "category": category_id, "platform": platform_id, "plain": plain, "concept": concept,
+    # Plain notes shown with the recipe: where the look falls short for this category, and the platform it needs.
+    notes: list[str] = []
+    caveat = " ".join(str(over.get("caveat") or "").split())
+    if caveat:
+        notes.append(caveat)
+    wanted = s.get("recommend_platforms") or []
+    if wanted and platform_id not in wanted and s.get("platform_note"):
+        notes.append(" ".join(str(s["platform_note"]).split()))
+    out = {"style": s["id"], "category": category_id, "platform": platform_id, "plain": plain, "notes": notes, "concept": concept,
            "addons": defaults, "turnaround": turnaround, "mesh": mesh, "surface": surface, "engine": engine}
     out["id"] = recipe_digest(out)
     return out
