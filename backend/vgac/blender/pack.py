@@ -3,7 +3,7 @@
 Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|parts|mesh|none]
      [--collider-obj collider_parts.obj] [--formats fbx,glb]
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
-     [--shading smooth|flat] [--texture-filter smooth|crisp]
+     [--shading smooth|flat] [--texture-filter smooth|crisp] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
 
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
@@ -30,6 +30,11 @@ Recipes (reference.recipe): --shading flat (low-poly) makes every face flat afte
 formats keep the facets whatever the input's normals were; --texture-filter crisp (pixel art) samples the GLB's
 textures nearest-neighbour (Image Texture interpolation Closest, which the glTF exporter writes as a NEAREST sampler).
 A look without surface bumps simply gets no --normal, so its GLB has no normal texture.
+
+Sockets (--sockets <category>, rigged assets only): vgac/sockets.py places the attachment points (Socket_Hand_R,
+Socket_Back and so on) from the rest pose; each becomes an empty (no geometry) parented to its bone in the FBX and in
+every GLB (the clean, Godot and LOD files), so every engine sees a named transform that follows the animation.
+sockets.json (glTF model space) is written to <out_dir>; report.json lists the names in `sockets`.
 """
 import json
 import math
@@ -57,6 +62,9 @@ tex_orm = _common.opt("--orm", "")
 uv_source = _common.opt("--uv-source", "")
 shading = _common.opt("--shading", "smooth")
 texture_filter = _common.opt("--texture-filter", "smooth")
+socket_category = _common.opt("--sockets", "none")
+# vgac/sockets.py (pure maths, shared with the backend) sits one folder up.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.makedirs(out_dir, exist_ok=True)
 
 _common.open_glb(src)
@@ -329,6 +337,72 @@ if pts:
     report["dims_m"] = [max(p.x for p in pts) - min(p.x for p in pts), max(p.y for p in pts) - min(p.y for p in pts),
                         max(p.z for p in pts) - min(p.z for p in pts)]
 
+# --- Attachment sockets (vgac/sockets.py) --------------------------------------------------------------------------------
+# One empty per socket (no geometry), parented to its bone, placed from the rest pose: the FBX and every GLB carry a
+# named transform that follows the animation. sockets.json (glTF model space) is written next to report.json.
+socket_objs = []
+report["sockets"] = []
+if arm is not None and socket_category not in ("", "none"):
+    import numpy as np
+    import sockets as sockets_mod
+
+    try:
+        pose_was = arm.data.pose_position
+        arm.data.pose_position = "REST"
+        bpy.context.view_layer.update()
+        W = arm.matrix_world
+        bone_list = [{"name": b.name, "parent": b.parent.name if b.parent else None,
+                      "head": list(W @ b.head_local), "tail": list(W @ b.tail_local)} for b in arm.data.bones]
+        index = {b["name"]: i for i, b in enumerate(bone_list)}
+        me = mesh.data
+        n = len(me.vertices)
+        co = np.empty(n * 3, dtype=np.float64)
+        me.vertices.foreach_get("co", co)
+        M = np.array(mesh.matrix_world)
+        V = co.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3]
+        gname = {g.index: g.name for g in mesh.vertex_groups}
+        owner = np.full(n, -1, dtype=np.int64)
+        for v in me.vertices:
+            best, bw = -1, 0.0
+            for g in v.groups:
+                if g.weight > bw and gname.get(g.group) in index:
+                    best, bw = index[gname[g.group]], g.weight
+            owner[v.index] = best
+        me.calc_loop_triangles()
+        tri = np.empty(len(me.loop_triangles) * 3, dtype=np.int64)
+        me.loop_triangles.foreach_get("vertices", tri)
+        result = sockets_mod.compute(bone_list, V, owner, tri.reshape(-1, 3), socket_category)
+        from mathutils import Matrix, Vector
+        for s in result["sockets"]:
+            e = bpy.data.objects.new(s["name"], None)
+            e.empty_display_type = "ARROWS"
+            e.empty_display_size = 0.05
+            bpy.context.scene.collection.objects.link(e)
+            e.parent = arm
+            if s["bone"] in arm.data.bones:
+                e.parent_type = "BONE"
+                e.parent_bone = s["bone"]
+            bpy.context.view_layer.update()
+            # Blender axes for the glTF frame (sockets.py): local -Y is forward (glTF +Z), local +Z is up (glTF +Y).
+            r, u, f = (Vector([float(x) for x in s[k]]) for k in ("right", "up", "forward"))
+            mw = Matrix((r, -f, u)).transposed().to_4x4()
+            mw.translation = Vector([float(x) for x in s["position"]])
+            e.matrix_world = mw
+            socket_objs.append(e)
+        bpy.context.view_layer.update()
+        arm.data.pose_position = pose_was
+        bpy.context.view_layer.update()
+        doc = sockets_mod.to_json(result, bone_list)
+        with open(os.path.join(out_dir, "sockets.json"), "w") as f:
+            json.dump(doc, f, indent=1)
+        report["sockets"] = doc["names"]
+        report["sockets_skipped"] = doc["skipped"]
+        report["sockets_file"] = os.path.join(out_dir, "sockets.json")
+    except Exception as e:  # noqa: BLE001  (sockets never stop a pack)
+        import traceback
+        traceback.print_exc()
+        report["sockets_error"] = str(e)[-400:]
+
 # Animations: push every action into its own NLA strip so the FBX exporter emits one clip per action.
 if arm is not None and bpy.data.actions:
     arm.animation_data_create()
@@ -444,7 +518,7 @@ if "glb" in formats:
         for o in lod_objs:
             o.data.materials.clear()
             o.data.materials.append(mat)
-    rig = [arm] if arm is not None else []
+    rig = ([arm] if arm is not None else []) + socket_objs  # the sockets ride on the skeleton in every GLB
     # The clean GLB: LOD0 only, named after the asset, no collider and no lower detail levels.
     lod0_name = mesh.name
     mesh.name = name

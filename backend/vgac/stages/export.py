@@ -10,6 +10,12 @@ GLB material, and the importer leaves the slot empty); pack.py gets the prep sta
 the texture filter (crisp: nearest-neighbour samplers in the GLB); the Unity importer gets the engine settings
 (-vgacFilter point|bilinear, -vgacMipmaps, -vgacCompress, -vgacNormalMap). The manifest and metrics.recipe record the
 recipe that ran.
+
+Sockets (vgac/sockets.py): a rigged character gets attachment points (Socket_Hand_R, Socket_Back and so on). pack.py
+places them as empties parented to the bones in the FBX and every GLB and writes sockets.json; this stage fills each
+socket's joint-local transform from the clean GLB (and checks the GLB node sits where the file says), registers
+sockets.json, sets metrics.sockets = {count, names}, passes -vgacSockets to the Unity importer and writes a `sockets`
+block with one plain sentence per socket into the manifest.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, library, quality, reference
+from .. import colliders, guidance, library, quality, reference, sockets
 from ..db import _iso, utcnow
 from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
@@ -292,7 +298,7 @@ def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args:
     for k, v in args.items():
         if k == "-vgacInput":
             value = rel_folder  # the Editor reads its inputs from the request's own folder
-        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips")):
+        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips", "-vgacSockets")):
             p = Path(v)
             # Inputs from this export's folder travel with the request; anything else (the shared clip library)
             # is read where it is.
@@ -419,6 +425,57 @@ def engine_args(sc: Any) -> dict[str, str]:
             "-vgacCompress": "on" if e["compress"] else "off", "-vgacNormalMap": "on" if rec["mesh"]["normal_map"] else "off"}
 
 
+def socket_category(sc: Any) -> str | None:
+    """The category pack.py places sockets for: a rigged character (the rig stage made bones and did not keep it
+    rigid) in one of sockets.SOCKET_CATEGORIES; None otherwise."""
+    category = getattr(getattr(sc, "asset", None), "category", None)
+    if category not in sockets.SOCKET_CATEGORIES:
+        return None
+    rig_v = sc.stage_version("rig") if hasattr(sc, "stage_version") else None
+    m = getattr(rig_v, "metrics", None) or {}
+    if not (m.get("bones") or 0) or m.get("rigid"):
+        return None
+    return category
+
+
+def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: str, formats: list[str], look: dict[str, str],
+              collider_obj: Any = None, base_color: Any = None, normal: Any = None, orm: Any = None, uv_source: Any = None,
+              socket_cat: str | None = None) -> list[Any]:
+    """pack.py's command line. "none" for --lods asks for LOD0 only (leaving it out would fall back to pack.py's own
+    default chain); --sockets only for a rigged character."""
+    args: list[Any] = [src, out_dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode,
+                       "--formats", ",".join(formats), "--shading", look["shading"], "--texture-filter", look["texture_filter"]]
+    if pack_mode == "parts" and collider_obj:
+        args += ["--collider-obj", collider_obj]
+    for flag, p in (("--base-color", base_color), ("--normal", normal), ("--orm", orm), ("--uv-source", uv_source)):
+        if p is not None:
+            args += [flag, p]
+    if socket_cat:
+        args += ["--sockets", socket_cat]
+    return args
+
+
+def _write_sockets(sc: StageContext, name: str, report: dict[str, Any]) -> dict[str, Any] | None:
+    """sockets.json from pack.py, with each socket's joint-local transform read back from the clean GLB; registered
+    with metrics.sockets = {count, names}. -> the document, or None when pack.py wrote none."""
+    p = Path(sc.dir) / "sockets.json"
+    if not p.is_file():
+        if report.get("sockets_error"):
+            sc.set_metrics(sockets={"count": 0, "names": [], "error": report["sockets_error"]})
+        return None
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    glb = Path(sc.dir) / f"{name}.glb"
+    if glb.is_file():
+        try:
+            sockets.attach_glb(doc, glb)
+        except Exception as e:  # noqa: BLE001  (the model-space data still stands)
+            doc["glb_error"] = str(e)[-300:]
+    p.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    sc.register("sockets", p)
+    sc.set_metrics(sockets=sockets.metrics(doc))
+    return doc
+
+
 async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any]:
     src, src_key = _input_glb(sc)
     lods = parse_lods(params.get("lods"))
@@ -458,17 +515,14 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     for key, p in packs.items():
         sc.register(key, p)
     sc.progress(0.05, "Blender pack")
-    # "none" asks pack.py for LOD0 only; leaving --lods out would fall back to pack.py's own default chain.
-    args: list[Any] = [src, sc.dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode, "--formats", ",".join(formats),
-                       "--shading", look["shading"], "--texture-filter", look["texture_filter"]]
-    if pack_mode == "parts":
-        args += ["--collider-obj", col_plan["obj"]]
     # The rig stage's GLB has no UVs; pack.py copies them from the prep GLB (same faces) when the input lacks them.
     uv_src = sc.lineage_file("glb", ("prep",)) if src_key.startswith("rig.") else None
-    for flag, p in (("--base-color", textures.get("base_color")), ("--normal", textures.get("normal")), ("--orm", packs.get("orm")),
-                    ("--uv-source", uv_src)):
-        if p is not None:
-            args += [flag, p]
+    sock_cat = socket_category(sc)
+    stale = sc.dir / "sockets.json"
+    if stale.is_file():
+        stale.unlink()
+    args = pack_args(src, sc.dir, name, lods, pack_mode, formats, look, col_plan.get("obj") if pack_mode == "parts" else None,
+                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat)
     await sc.blender("pack.py", args, log_name="pack.log")
     report = json.loads((sc.dir / "report.json").read_text())
     sc.register("pack_report", sc.dir / "report.json")
@@ -484,6 +538,7 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         if Path(p).is_file():
             sc.register(f"glb_{level.lower()}", p)
     _write_colliders(sc, col_plan, report)
+    _write_sockets(sc, name, report)
     sc.set_metrics(lods=lod_list(report.get("lods") or {}), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"),
                    collider_count=report.get("collider_count", 0), collider_shape=col_plan.get("chosen"),
@@ -541,6 +596,9 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     ci = Path(sc.dir) / "anim_clips.json"
     if ci.is_file():
         args["-vgacClipInfo"] = ci
+    sj = Path(sc.dir) / "sockets.json"
+    if sj.is_file():
+        args["-vgacSockets"] = sj
     clips_lib = params.get("clips_library", "ual1")
     if humanoid and clips_lib and clips_lib != "none":
         lib = sc.settings.clips_libraries.get(clips_lib)
@@ -569,7 +627,9 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "staticFlags": report.get("staticFlags"), "lodFadeMode": report.get("lodFadeMode"),
             "lodFadeWidth": report.get("lodFadeWidth"), "textureFilter": report.get("textureFilter"),
             "textureMipmaps": report.get("textureMipmaps"), "textureCompression": report.get("textureCompression"),
-            "normalMap": report.get("normalMap"), "textureSettings": report.get("textureSettings")}
+            "normalMap": report.get("normalMap"), "textureSettings": report.get("textureSettings"),
+            "sockets": report.get("sockets"), "socketBones": report.get("socketBones"),
+            "socketMaxError": report.get("socketMaxError"), "socketMaxAngle": report.get("socketMaxAngle")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -747,6 +807,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "textures": textures,
         "glb_files": _glb_files(sc),
         "hitboxes": _hitbox_manifest(sc, unity_report),
+        "sockets": sockets.manifest_block(_read_json(sc.file("sockets")), unity_report),
         "bones": (pack_report or {}).get("bones"),
         "bone_names": (rig_v.metrics.get("bone_names") if rig_v else None),
         "rigid": bool(rig_v.metrics.get("rigid")) if rig_v else True,
@@ -840,6 +901,19 @@ def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def socket_howto(names: list[str], humanoid: bool) -> str | None:
+    """The "Using it in Unity" line for attachment points: one line of code that parents an item to a socket (the
+    right hand when there is one). None without sockets."""
+    if not names:
+        return None
+    if humanoid and "Socket_Hand_R" in names:
+        return ('To hold an item, parent it to an attachment point: '
+                'sword.transform.SetParent(animator.GetBoneTransform(HumanBodyBones.RightHand).Find("Socket_Hand_R"), false);')
+    first = "Socket_Back" if "Socket_Back" in names else names[0]
+    return ('To attach an item, parent it to an attachment point (needs using System.Linq): '
+            f'item.transform.SetParent(GetComponentsInChildren<Transform>().First(t => t.name == "{first}"), false);')
+
+
 def collider_checks(report: dict[str, Any], plan: dict[str, Any], category: str | None, mode: Any = None) -> list[dict[str, Any]]:
     """Collision checks (plan 3.4 B; replaces quality.collider_checks for the export stage):
     collider_present (block) unless the shape is none; collider_triangles, the most triangles in one convex part
@@ -923,7 +997,9 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     pack_report = await _pack(sc, params, name)
     unity_report = await _unity(sc, params, name)
     if unity_report and unity_report.get("ok"):
-        sc.set_metrics(unity_howto=unity_howto(unity_report.get("prefab", ""), unity_report.get("controller")))
+        howto = unity_howto(unity_report.get("prefab", ""), unity_report.get("controller"))
+        line = socket_howto(unity_report.get("sockets") or [], unity_report.get("humanoidValid") is True)
+        sc.set_metrics(unity_howto=howto + ([line] if line else []))
     await _sprites(sc, params)
     await judge(sc)
     finish = getattr(guidance, "finish_lines", None)  # plan 2.4, guidance lane
@@ -946,7 +1022,7 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
     return dest
 
 
-DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
 
