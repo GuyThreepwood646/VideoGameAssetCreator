@@ -48,6 +48,7 @@ SAMPLES = {
     "clips_loop": ((True, True), ("walk", True)),
     "library_clips": ((15, ">0"), (0, ">0")),
     "controller_ready": ((True, True), (False, True)),
+    "placement_exact": ((0.0001, 0.02), (0.3, 0.02)),
     "rig_restore": ((True, True), (False, True)),
     "wings_found": ((True, True), (False, True)),
     "collider_triangles": ((236, 255), (300, 255)),

@@ -78,6 +78,132 @@
    "t": 433,
    "step": "resume from the side views",
    "autopilot": "running"
+  },
+  {
+   "t": 767,
+   "step": "finished",
+   "autopilot": "done",
+   "reason": null,
+   "seconds": 767,
+   "concept_kept": true,
+   "turnaround_remade": true,
+   "mesh_remade": true,
+   "old_turnaround": "rejected",
+   "old_mesh": "rejected",
+   "counts": {
+    "concept": [
+     "done",
+     "done"
+    ],
+    "turnaround": [
+     "rejected",
+     "done"
+    ],
+    "mesh": [
+     "rejected",
+     "done"
+    ],
+    "prep": [
+     "rejected",
+     "done"
+    ],
+    "rig": [
+     "done"
+    ],
+    "export": [
+     "done"
+    ]
+   }
+  },
+  {
+   "t": 767,
+   "step": "rig",
+   "clips": [
+    "idle",
+    "walk",
+    "run",
+    "turn_left",
+    "turn_right",
+    "sprint",
+    "attack",
+    "punch",
+    "hit",
+    "death",
+    "jump_start",
+    "jump_loop",
+    "jump_land",
+    "crouch_idle",
+    "crouch_walk",
+    "roll",
+    "interact"
+   ],
+   "clips_source": "library",
+   "library": 15,
+   "procedural": [
+    "turn_left",
+    "turn_right"
+   ],
+   "retarget_seconds": 4.0,
+   "retarget_error": null,
+   "failed": []
+  },
+  {
+   "t": 767,
+   "step": "export",
+   "checks": "35/35",
+   "sockets": {
+    "count": 7,
+    "names": [
+     "Socket_Hand_R",
+     "Socket_Hand_L",
+     "Socket_Back",
+     "Socket_Hip_L",
+     "Socket_Hip_R",
+     "Socket_Head",
+     "Socket_Chest"
+    ]
+   },
+   "files": [
+    "anim_clips",
+    "ao",
+    "base_color",
+    "colliders",
+    "fbx",
+    "glb",
+    "glb_godot",
+    "glb_lod1",
+    "glb_lod2",
+    "glb_lod3",
+    "hitboxes",
+    "manifest",
+    "metallic",
+    "metallic_smoothness",
+    "normal",
+    "orm",
+    "pack_report",
+    "roughness",
+    "sockets",
+    "unity_report",
+    "unity_strip"
+   ],
+   "unity": {
+    "ok": true,
+    "humanoidValid": true,
+    "clipCount": 46,
+    "importer_version": "8",
+    "sockets": [
+     "Socket_Back",
+     "Socket_Chest",
+     "Socket_Hand_L",
+     "Socket_Hand_R",
+     "Socket_Head",
+     "Socket_Hip_L",
+     "Socket_Hip_R"
+    ],
+    "socketMaxError": 0.3280751407146454,
+    "hitboxCount": 11
+   },
+   "failed": []
   }
  ],
  "asset": "276aacf6-be93-418a-863c-7bef8ef03110"
