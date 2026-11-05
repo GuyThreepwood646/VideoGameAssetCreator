@@ -163,6 +163,18 @@ def test_humanoid_sockets_sit_where_they_should():
     hl, hr = by["Socket_Hip_L"]["position"], by["Socket_Hip_R"]["position"]
     assert hl[0] == pytest.approx(0.18 + sockets.SURFACE_OFFSET, abs=0.005) and hr[0] == pytest.approx(-hl[0], abs=0.005)
     assert hl[2] == pytest.approx(0.95)
+    # Forearms: on the outside of the forearm (radius 0.04 here), halfway from the elbow to the wrist, 2 cm out; facing
+    # away from the body, up along the arm toward the elbow.
+    for name, x, bone in (("Socket_Forearm_R", -1, "mixamorig:RightForeArm"), ("Socket_Forearm_L", 1, "mixamorig:LeftForeArm")):
+        s = by[name]
+        elbow, wrist = np.array([0.42 * x, 0, 1.25]), np.array([0.62 * x, 0, 1.08])
+        mid = 0.5 * (elbow + wrist)
+        assert s["bone"] == bone
+        assert np.linalg.norm(s["position"] - mid) == pytest.approx(0.04 + sockets.SURFACE_OFFSET, abs=0.005)
+        assert x * s["forward"][0] > 0.6 and abs(float(s["forward"] @ (elbow - wrist))) < 1e-6  # out, square to the arm
+        along = (elbow - wrist) / np.linalg.norm(elbow - wrist)
+        assert float(s["up"] @ along) > 0.999  # toward the elbow
+        assert x * s["position"][0] > x * mid[0]  # on the outer side
     # Head: on top of the head (the head-end tube reaches 1.8), on the centre line.
     top = by["Socket_Head"]["position"]
     assert 1.78 < top[2] < 1.81 and abs(top[0]) < 0.01
@@ -207,7 +219,7 @@ def test_json_contract_is_gltf_space_with_every_key():
     V, T, owner = _mesh(bones, HUMAN_RADII)
     doc = sockets.to_json(sockets.compute(bones, V, owner, T, "humanoid"), bones)
     assert doc["version"] == 1 and doc["space"] == "gltf" and doc["units"] == "m"
-    assert doc["count"] == 7 and doc["names"][0] == "Socket_Hand_R" and doc["glb_checked"] is False
+    assert doc["count"] == 9 and doc["names"][0] == "Socket_Hand_R" and doc["glb_checked"] is False
     keys = {"name", "label", "purpose", "where", "bone", "position", "rotation", "forward", "up", "right", "bone_head",
             "offset", "local_position", "local_rotation", "local_space", "method", "sentence"}
     for s in doc["sockets"]:
@@ -301,6 +313,7 @@ def test_socket_howto_line():
 
 def test_importer_handles_sockets():
     src = IMPORTER.read_text(encoding="utf-8")
-    assert export.importer_version(IMPORTER) >= 8
+    assert export.importer_version(IMPORTER) >= 11  # 11: the forearm attachment points
+    assert "Socket_Forearm_L" in src
     assert '"-vgacSockets"' in src and "PlaceSockets" in src
     assert "bones.RemoveWhere(t => IsSocketName(t.name))" in src  # a socket is never mapped as a human bone

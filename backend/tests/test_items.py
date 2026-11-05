@@ -198,7 +198,9 @@ def test_grip_and_clearance_checks_speak_plainly():
     checks = {c["name"]: c for c in items.export_checks(sc)}
     assert checks["grip_found"]["passed"]
     c = checks["item_clear_of_body"]
-    assert not c["passed"] and c["help"] == "The sword passes 8 cm into the body during attack; nudge it away from the body under Add an item."
+    assert not c["passed"] and c["help"] == ("The sword passes 8 cm into the body during attack. Move it under Add an item, "
+                                             "or choose another place for it.")
+    assert c["fix_label"] == "Fit it for me" and c["fix"]["params"] == {"fit_items": True}
     sc.version.metrics["equipped"]["clearance"] = {"measured": False}
     assert "item_clear_of_body" not in {c["name"] for c in items.export_checks(sc)}
     assert {"grip_found", "item_clear_of_body"} <= set(guidance.CHECK_GUIDE)
@@ -242,7 +244,7 @@ def test_add_item_place_nudge_and_take_off(client):
     r = client.post(f"/api/assets/{a['id']}/items", json={"description": "a round wooden shield", "build": False})
     assert r.status_code == 201
     att = r.json()["attachment"]
-    assert att["type"] == "shield" and att["socket"] == "Socket_Hand_L"
+    assert att["type"] == "shield" and att["socket"] == "Socket_Forearm_L" and att["touched"] is False
     assert client.post(f"/api/assets/{a['id']}/items", json={"description": "something nice", "build": False}).status_code == 400
     aid, tid = a["id"], att["id"]
     r = client.post(f"/api/assets/{aid}/attachments/{tid}/nudge", json={"move": [0, 1, 0]}).json()["attachment"]

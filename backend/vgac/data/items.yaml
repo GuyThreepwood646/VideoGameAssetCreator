@@ -16,7 +16,8 @@
 #                 head    worn on the head; pivot at the middle of the inner rim
 #                 hang    hangs from the hand by a handle at the top (lantern)
 #   size_m      the usual length along its longest side, written into the item's description ("about 0.9 m")
-#   socket      where it goes by default (humanoid attachment points)
+#   socket      where it goes by default (humanoid attachment points; a shield is strapped to the forearm,
+#               Socket_Forearm_L, not held in the palm)
 #   creature    where it goes on a creature (Socket_Head, Socket_Back, Socket_Mouth), or null when it does not suit one
 #   stow        where it goes when put away (optional)
 #   rotation    the default turn from the attachment point, in degrees about the point's own right, up and forward
@@ -108,7 +109,7 @@ types:
     label: shield
     kind: shield
     size_m: 0.6
-    socket: Socket_Hand_L
+    socket: Socket_Forearm_L   # strapped to the outside of the off-hand forearm, face out, plane along the arm
     creature: null
     stow: Socket_Back
     rotation: [0, 0, 0]

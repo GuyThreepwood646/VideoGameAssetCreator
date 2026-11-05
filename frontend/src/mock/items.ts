@@ -12,7 +12,7 @@ const TYPES: TypeRow[] = [
   { id: 'mace', label: 'mace', words: ['mace', 'hammer', 'club'], socket: 'Socket_Hand_R', creature: 'Socket_Back', kind: 'haft', size: 0.7 },
   { id: 'bow', label: 'bow', words: ['longbow', 'bow'], socket: 'Socket_Hand_L', creature: 'Socket_Back', kind: 'bow', size: 1.2 },
   { id: 'quiver', label: 'quiver', words: ['quiver of arrows', 'quiver', 'arrows'], socket: 'Socket_Back', creature: 'Socket_Back', kind: 'worn', size: 0.65 },
-  { id: 'shield', label: 'shield', words: ['shield', 'buckler'], socket: 'Socket_Hand_L', creature: 'Socket_Back', kind: 'shield', size: 0.6 },
+  { id: 'shield', label: 'shield', words: ['shield', 'buckler'], socket: 'Socket_Forearm_L', creature: 'Socket_Back', kind: 'shield', size: 0.6 },
   { id: 'staff', label: 'staff', words: ['staff'], socket: 'Socket_Hand_R', creature: 'Socket_Back', kind: 'pole', size: 1.7 },
   { id: 'spear', label: 'spear', words: ['spear', 'lance'], socket: 'Socket_Hand_R', creature: 'Socket_Back', kind: 'pole', size: 2.0 },
   { id: 'backpack', label: 'backpack', words: ['backpack', 'rucksack'], socket: 'Socket_Back', creature: 'Socket_Back', kind: 'worn', size: 0.5 },
@@ -23,11 +23,14 @@ const TYPES: TypeRow[] = [
 ]
 const CHAR_CATS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent']
 export const PLACES: Record<string, string> = {
-  Socket_Hand_R: 'In the right hand', Socket_Hand_L: 'In the left hand', Socket_Back: 'On the back', Socket_Hip_L: 'At the left hip',
+  Socket_Hand_R: 'In the right hand', Socket_Hand_L: 'In the left hand', Socket_Forearm_R: 'On the right forearm',
+  Socket_Forearm_L: 'On the left forearm', Socket_Back: 'On the back', Socket_Hip_L: 'At the left hip',
   Socket_Hip_R: 'At the right hip', Socket_Head: 'On the head', Socket_Chest: 'On the chest', Socket_Mouth: 'In the mouth',
 }
-const HUMANOID_SOCKETS = ['Socket_Hand_R', 'Socket_Hand_L', 'Socket_Back', 'Socket_Hip_L', 'Socket_Hip_R', 'Socket_Head', 'Socket_Chest']
+const HUMANOID_SOCKETS = ['Socket_Hand_R', 'Socket_Hand_L', 'Socket_Forearm_R', 'Socket_Forearm_L', 'Socket_Back', 'Socket_Hip_L', 'Socket_Hip_R', 'Socket_Head', 'Socket_Chest']
 const CREATURE_SOCKETS = ['Socket_Head', 'Socket_Back', 'Socket_Mouth']
+const FIT_HELP =
+  'Fit it for me plays the moves with the item on and tries small changes until it stays clear of the body: a push of up to 5 cm out from the body and small tilts for something strapped or worn, a turn about the handle and small tilts for something held (the handle stays in the hand). It keeps the smallest change that works and says what it changed. Items you have not moved are fitted every time the character is rebuilt; once you move one yourself, it is only fitted when you ask.'
 const LIMIT = 'The hand does not close around the handle: the characters have no finger bones, so the hand stays a mitten.'
 
 export function mockDetect(prompt: string, category: string): ItemDetect {
@@ -73,6 +76,7 @@ function newAttachment(item: Asset, category: string, socket?: string): Attachme
     rotation: [0, 0, 0, 1],
     rotation_deg: [0, 0, 0],
     scale: 1,
+    touched: false,
   }
 }
 
@@ -175,6 +179,7 @@ export function mockPanel(a: Asset): ItemsPanel {
     limit: LIMIT,
     step_cm: 1,
     step_deg: 5,
+    fit: { clear_limit_cm: 3, push_max_cm: 5, tilt_max_deg: 15, help: FIT_HELP },
   }
 }
 
@@ -210,7 +215,16 @@ export function mockUpdate(a: Asset, id: string, body: Record<string, unknown>) 
     at.rotation = [0, 0, 0, 1]
     at.rotation_deg = [0, 0, 0]
     at.scale = 1
+    at.touched = false
+    at.fit = null
+    delete at.offer
   }
+  if (body.keep_place) {
+    delete at.offer
+    at.offer_declined = true
+  }
+  if (body.dismiss_notice) delete at.notice
+  if (Array.isArray(body.position) || Array.isArray(body.rotation_deg) || typeof body.scale === 'number') at.touched = true
   if (typeof body.stow_socket === 'string') at.stow_socket = body.stow_socket || null
   if (Array.isArray(body.position)) at.position = body.position.map(Number) as Attachment['position']
   if (Array.isArray(body.rotation_deg)) at.rotation_deg = body.rotation_deg.map(Number) as Attachment['rotation_deg']
@@ -228,7 +242,9 @@ export function mockNudge(a: Asset, id: string, body: NudgeBody) {
     at.rotation = [0, 0, 0, 1]
     at.rotation_deg = [0, 0, 0]
     at.scale = 1
-  }
+    at.touched = false
+    at.fit = null
+  } else at.touched = true
   if (body.move) at.position = at.position.map((v, i) => Math.round((v + body.move![i] * step) * 1e5) / 1e5) as Attachment['position']
   if (body.turn) at.rotation_deg = at.rotation_deg.map((v, i) => v + body.turn![i] * deg) as Attachment['rotation_deg']
   if (body.slide) at.position = [at.position[0], at.position[1], Math.round((at.position[2] - body.slide * step) * 1e5) / 1e5]
@@ -240,6 +256,23 @@ export function mockRemove(a: Asset, id: string) {
   const at = find(a, id)
   a.equipment!.attachments = a.equipment!.attachments.filter((x) => x.id !== id)
   return { removed: at, panel: mockPanel(a) }
+}
+
+// Fit it for me in the demo: a 2 cm push for something strapped or worn, a 15 degree turn for something held.
+export function mockFit(a: Asset, id: string) {
+  const at = find(a, id)
+  const held = at.socket.startsWith('Socket_Hand') || at.socket === 'Socket_Mouth'
+  const push = held ? 0 : 2
+  const turn = held ? 15 : 0
+  at.position = held ? at.position : ([at.position[0], at.position[1], Math.round((at.position[2] + push / 100) * 1e5) / 1e5] as Attachment['position'])
+  at.rotation_deg = held ? ([at.rotation_deg[0], at.rotation_deg[1], at.rotation_deg[2] + turn] as Attachment['rotation_deg']) : at.rotation_deg
+  at.fit = {
+    outward_cm: push, turn_deg: turn, tilt_deg: [0, 0], before_m: 0.045, before_clip: 'run', after_m: 0, after_clip: '', cleared: true, changed: true, auto: false,
+    sentence: held
+      ? 'We turned it 15 degrees in the hand, so it stays clear of the body in every move we checked (before, it went 4.5 cm in during run).'
+      : 'We moved it 2 cm out from the body, so it stays clear of the body in every move we checked (before, it went 4.5 cm in during run).',
+  }
+  return at
 }
 
 export function mockApplied(a: Asset) {

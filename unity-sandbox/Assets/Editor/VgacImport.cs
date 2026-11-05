@@ -31,6 +31,10 @@
 // exactly: forward +Z and up +Y as the file gives them. A socket the FBX lacks is added from the file. The Humanoid
 // mapping never treats a socket as a bone. The report lists the sockets found in the saved prefab (sockets) and
 // their bones (socketBones, "Socket_Hand_R>mixamorig:RightHand").
+// Version 11: humanoids also carry Socket_Forearm_L and Socket_Forearm_R (the outside of each forearm, forward out of
+// the arm, up toward the elbow), placed from sockets.json like the others; a shield's attachments.json entry names
+// Socket_Forearm_L, so the equipped prefab hangs it under that point. Item offsets in attachments.json already
+// include the backend's fit to the motion ("Fit it for me"), so nothing here changes them.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -47,7 +51,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "10";
+    public const string Version = "11";
 
     [Serializable]
     class ClipInfo
