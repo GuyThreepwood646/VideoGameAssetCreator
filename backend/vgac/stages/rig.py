@@ -577,9 +577,11 @@ def _faithful_max(rep: dict[str, Any]) -> float | None:
 
 
 def link_textures(sc: StageContext) -> None:
+    """The rig version shows the maps that ship: the clean-up step's (which may have painted the face or corrected the
+    colours), else the mesh stage's."""
     from .prep import link_textures as _lt
 
-    _lt(sc)
+    _lt(sc, stages=("prep",) if sc.stage_version("prep") is not None else ("mesh",))
 
 
 async def judge(sc: StageContext) -> None:
