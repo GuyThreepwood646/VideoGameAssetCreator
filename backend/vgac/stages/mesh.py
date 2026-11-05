@@ -3,6 +3,9 @@
 trellis (default): TRELLIS.2 shape + texture + native post chain from one RGBA cutout, output model.glb with
 base_color, metallic, roughness, normal and ao PNGs, decimated to the category/platform triangle budget.
 hy3d: Hunyuan3D-2mv from the four turnaround views over white (shape only, Tencent licence recorded).
+The default triangle target sits 2 percent under the budget so prep need not decimate again (G05 a). UnwrapMesh
+padding is max(4, texture / 256) texels and every map is grown max(8, texture / 128) texels into the empty space
+after the bake (G03); metrics record the atlas share used, the measured gutter and the UV hash of the baked mesh.
 After the job: silhouette audit at 15-degree steps against the turnaround cutouts (Blender on the host).
 refine has no instruction engine for meshes: it re-runs with a new seed and records the instruction. adjust
 re-runs with merged params.
@@ -18,11 +21,14 @@ from typing import Any
 from .. import library, quality
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
-from ..graphs.trellis import IMAGE_NODES, convert_graph
-from ..imaging import VIEW_YAW, best_alignment, contact_sheet, silhouette
+from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
+from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dilate_png, dilation_px, gutter_px, image_size,
+                       load_uv_mesh, rasterise_uv, silhouette, unwrap_padding, uv_hash)
 from .base import StageContext, random_seed
 
 TEXTURE_KEYS = ("base_color", "metallic", "roughness", "normal", "ao")
+# G05 (a): the mesh stage aims this far under the platform budget so prep does not have to decimate again.
+BUDGET_HEADROOM = 0.98
 
 
 def _silhouette_match(views_dir: Path, yaws, refs: dict[str, Path]) -> dict[str, Any]:
@@ -44,27 +50,76 @@ def _input_image(sc: StageContext, input_view: str) -> Path:
     return p
 
 
+def default_target_faces(budget_triangles: int | None) -> int:
+    """The triangle target when the version does not set one: the platform budget less a little headroom, so the weld
+    and hole filling in prep do not push the model over the budget and force a second decimation (and a re-bake)."""
+    if not budget_triangles:
+        return 20000
+    return max(500, int(int(budget_triangles) * BUDGET_HEADROOM))
+
+
+def resolve_padding(params: dict[str, Any], tex: int) -> int:
+    """UnwrapMesh padding in texels: the version's padding, else max(4, texture / 256), within the node's 1 to 16."""
+    p = params.get("padding")
+    value = int(p) if p not in (None, "") else unwrap_padding(tex)
+    return max(1, min(UNWRAP_PADDING_MAX, value))
+
+
+def finish_maps(glb: Path, maps: dict[str, Path], tex: int) -> dict[str, Any]:
+    """G03 after the bake: grow every map max(8, size / 128) texels into the empty texture space (nearest colour), and
+    measure the layout: share of the atlas used, gutter between pieces, and the UV hash of the mesh the maps were
+    baked on. Pure CPU work, run in a thread."""
+    uvm = load_uv_mesh(glb)
+    if uvm is None:
+        return {}
+    masks: dict[int, Any] = {}
+    grown = {}
+    for key, path in maps.items():
+        size = image_size(path)[0]
+        if size not in masks:
+            masks[size] = rasterise_uv(uvm, size)["labels"]
+        px = dilation_px(size)
+        dilate_png(path, masks[size] > 0, px)
+        grown[key] = px
+    labels = masks.get(tex) if tex in masks else rasterise_uv(uvm, tex)["labels"]
+    pad = unwrap_padding(tex)
+    return {"atlas_used": round(atlas_used(labels), 4), "texture_padding_px": gutter_px(labels, pad // 2 + 2),
+            "dilated_px": grown, "bake_mesh_hash": uv_hash(uvm)}
+
+
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     input_view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
-    target_faces = int(params.get("target_faces") or sc.budget["triangles"] or 20000)
+    target_faces = int(params.get("target_faces") or default_target_faces(sc.budget["triangles"]))
     tex = int(params.get("texture_size") or sc.budget["texture"] or 2048)
     upsample = int(params.get("upsample") or 1024)
     seed = int(params.get("seed") or random_seed())
-    remesh = bool(params.get("remesh", True))
+    remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
+    padding = resolve_padding(params, tex)
     src = _input_image(sc, input_view)
-    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=seed, remesh=remesh)
+    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=seed, remesh=remesh,
+                  padding=padding)
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
     sc.register("input", sc.copy_in(src, "input_image.png"))
-    entry = await sc.comfy(convert_graph(name, sc.prefix(), target_faces, tex, upsample, seed, remesh), poll=5.0, message="TRELLIS.2 convert", base=0.05, span=0.7)
+    entry = await sc.comfy(convert_graph(name, sc.prefix(), target_faces, tex, upsample, seed, remesh, padding=padding),
+                           poll=5.0, message="TRELLIS.2 convert", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     sc.register("glb", glb)
+    maps: dict[str, Path] = {}
     for node, key in IMAGE_NODES.items():
         imgs = ComfyClient.images_of(entry, node)
         if imgs:
             p = await sc.client().download_output(imgs[0], sc.dir / f"{key}.png")
             sc.register(key, p)
-    sc.set_metrics(engine="trellis", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), target_faces=target_faces, texture_size=tex)
+            if key in TEXTURE_KEYS:
+                maps[key] = Path(p)
+    sc.set_metrics(engine="trellis", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), target_faces=target_faces, texture_size=tex,
+                   unwrap_padding_px=padding)
+    try:
+        sc.progress(0.76, "Growing the textures into the seams")
+        sc.set_metrics(**await asyncio.to_thread(finish_maps, Path(glb), maps, tex))
+    except Exception as e:  # the maps stay as baked; the prep checks still measure the layout
+        sc.set_metrics(dilate_error=str(e)[:300])
 
 
 async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:

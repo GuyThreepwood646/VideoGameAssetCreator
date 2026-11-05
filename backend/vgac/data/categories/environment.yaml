@@ -22,6 +22,8 @@ pose_block: >-
   are visible, whole piece visible with margin around it, centred in frame. Soft even studio
   lighting with no hard shadows. No text, no logos, no people, no surrounding scenery, no motion
   blur, no cropping.
+# Plan 3.4: no watertight remesh for scenery, so doorways and arches stay open.
+remesh_default: false
 budgets:
   mobile_low: {triangles: 3000, texture: 1024}
   pc_mid: {triangles: 15000, texture: 2048}

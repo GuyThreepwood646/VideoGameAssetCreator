@@ -36,9 +36,9 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
     },
     "prep": {
         "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 20,
-        "help": {"meaning": "Turns the model to face forward, sets its real-world size, puts the pivot at the base, mirrors the two halves when the asset is symmetric and removes stray geometry.",
-                 "why": "Game engines expect models at the right scale, facing the right way, with a clean surface.",
-                 "technical": "Yaw to face +Z, uniform scale on the category size axis, pivot, weld, symmetrize, manifold cleanup"},
+        "help": {"meaning": "Turns the model to face forward, sets its real-world size, puts the pivot at the base, removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
+                 "why": "Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.",
+                 "technical": "Yaw to face +Z, uniform scale on the category size axis, pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
     },
     "rig": {
         "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 90,
@@ -79,7 +79,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "size_m": {"simple": True, "help": {"meaning": "How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.", "why": "Keeps everything in proportion, so a car is car-sized next to your character.", "technical": "Uniform scale so the extent on size_axis equals size_m"}},
     "face_yaw": {"simple": True, "help": {"meaning": "Which side of the model the game treats as its front.", "why": "Characters walk and cars drive toward their front; if it is wrong, they move sideways.", "technical": "Yaw about Y so the concept front faces +Z"},
                  "options": {"auto": "Automatic", "0": "As built", "90": "Turned a quarter to the left", "180": "Turned around", "270": "Turned a quarter to the right"}},
-    "symmetric": {"simple": True, "help": {"meaning": "Mirror the better half onto the other.", "why": "Characters and most props look right symmetric; turn it off for deliberately lopsided things.", "technical": "Symmetrize across X"}},
+    "symmetric": {"simple": True, "help": {"meaning": "Mirror one half of the model onto the other.", "why": "Fixes mismatched arms or legs, but the two halves then share one painted side, so it is off unless you turn it on.", "technical": "Symmetrize across X, then re-bake the maps onto the mirrored mesh"}},
     "pivot": {"simple": False, "help": {"meaning": "Where the model's origin sits.", "why": "Feet for characters and props, centre for things that float or spin.", "technical": "Origin placement"},
               "options": {"base": "At the bottom (stands on the ground)", "center": "In the middle (floats or spins)"}},
     "smooth_angle": {"simple": False, "help": {"meaning": "Edges sharper than this angle stay hard.", "why": "Lower keeps more crisp edges; higher looks softer.", "technical": "Auto-smooth crease angle (degrees)"}},
@@ -125,8 +125,14 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                        "options": {"auto": "Automatic (by category)", "upright": "Standing capsule (works with Unity's Character Controller)",
                                    "along": "Lying capsule along the body", "box": "Box", "none": "None"}},
     "lods": {"simple": True, "help": {"meaning": "Detail levels for far away: each fraction is a smaller copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
-    "collider": {"simple": True, "help": {"meaning": "An invisible simple shape for collisions.", "why": "Lets the game know where the asset is solid.", "technical": "Convex hull collider"},
-                 "options": {"hull": "One wrapped shape", "none": "None"}},
+    "collider": {"simple": True, "help": {"meaning": "Invisible simple shapes the game uses to know where the asset is solid.",
+                                          "why": "Without them things pass straight through it; the right shapes keep doorways open and seats usable.",
+                                          "technical": "Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)"},
+                 "options": {"auto": "Best fit (recommended)", "hull": "One wrapped shape", "decompose": "Several shapes, for hollow things",
+                             "mesh": "Exact shape (only for scenery that never moves)", "none": "None"}},
+    "collider_max_parts": {"simple": False, "help": {"meaning": "The most separate collision shapes the asset may get.",
+                                                     "why": "More shapes fit hollow things better; fewer keep physics cheap, which matters most on phones.",
+                                                     "technical": "CoACD max_convex_hull; automatic is 8 for props, 16 for scenery, 6 for vehicles, half on Phone"}},
     "formats": {"simple": True, "help": {"meaning": "Which file types to write.", "why": "FBX for Unity and Unreal, GLB for Godot and the web.", "technical": "Export formats"},
                 "options": {"fbx": "FBX (Unity, Unreal, Godot)", "glb": "GLB (web, Godot, Blender)"}},
     "unity": {"simple": True, "help": {"meaning": "Also build and check a Unity prefab.", "why": "Confirms the asset works in an engine and gives you a ready prefab.", "technical": "Unity batch import"}},
@@ -135,6 +141,20 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "sprites": {"simple": True, "help": {"meaning": "Also render 2D sprite sheets.", "why": "For 2D or top-down games that draw pictures instead of 3D models.", "technical": "8-direction sprite sheets with atlas"}},
     "sprite_directions": {"simple": False, "help": {"meaning": "How many directions to render.", "why": "8 covers top-down games; 4 is enough for side-scrollers.", "technical": "Sprite yaw count"}},
     "sprite_size": {"simple": False, "help": {"meaning": "Pixel size of one sprite frame.", "why": "Match your game's sprite scale.", "technical": "Sprite frame size"}},
+    # Phase 4 (G03, G05) and Phase 5 (G07, G08), docs/GREAT-ASSETS-PLAN.md 3.5 and 3.9.
+    "padding": {"simple": False, "help": {"meaning": "Extra painted space around each piece of the texture.",
+                                          "why": "Stops thin dark lines appearing at seams when the model is far away.",
+                                          "technical": "UV island padding and edge dilation, in texels"}},
+    "rebake": {"simple": False, "help": {"meaning": "Paint the colours and surface detail onto the cleaned-up model again, even when its shape did not change.",
+                                         "why": "If it is painted onto a different shape, the shading looks wavy or faceted.",
+                                         "technical": "Cycles selected-to-active bake (normal, AO, colour, metal, roughness) from the mesh stage model"}},
+    "delight": {"simple": True, "help": {"meaning": "Shadows and highlights from the original picture that ended up in the model's colours.",
+                                         "why": "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.",
+                                         "technical": "Baked lighting in albedo; AO and up-normal guided delight pass"},
+                "options": {"auto": "Automatic (by look)", "remove": "Remove them", "keep": "Keep them (part of the look)"}},
+    "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
+                                          "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
+                                          "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
 }
 
 # --- Check contract (docs/GREAT-ASSETS-PLAN.md 2.1) -------------------------------------------------------------
@@ -177,6 +197,25 @@ def _facing_fix(c: dict[str, Any]) -> dict[str, Any] | None:
     if yaw is None:
         return None
     return {"stage": "prep", "params": {"face_yaw": int(yaw)}}
+
+
+def _var(c: dict[str, Any], name: str) -> Any:
+    return (c.get("vars") or {}).get(name)
+
+
+def _atlas_fix(c: dict[str, Any]) -> dict[str, Any]:
+    """Mirroring stacks the halves on one painted side: stop mirroring. Otherwise the layout came from the 3D builder:
+    build it again."""
+    if _var(c, "symmetric"):
+        return {"stage": "prep", "params": {"symmetric": False}}
+    return {"stage": "mesh", "params": {}}
+
+
+def _padding_fix(c: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        return {"stage": "mesh", "params": {"padding": max(1, min(16, int(c.get("limit"))))}}
+    except (TypeError, ValueError):
+        return None
 
 
 CHECK_GUIDE: dict[str, dict[str, Any]] = {
@@ -363,6 +402,75 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": "The texture repeats without a visible seam.",
         "fail": "The texture shows a seam where it repeats (edge difference {value:x}, limit {limit:x}).",
+    },
+    # Collision (G16, G35), emitted by the export stage with vars.
+    "collider_triangles": {
+        "severity": "warn",
+        "ok": "Each collision shape has at most {value:n} triangles, inside Unity's limit of {limit:n}.",
+        "fail": "The collision shape has {value:n} triangles; Unity would simplify it on its own and it may stop fitting.",
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Simplify the collision shape",
+    },
+    "collider_count": {
+        "severity": "warn",
+        "ok": "{value:n} collision shape(s), inside the {limit:n} your platform allows.",
+        "fail": "The collision is {value:n} shapes, more than the {limit:n} we aim for on your platform; physics costs a little more each frame.",
+        "fix": lambda c: {"stage": "export", "params": {"collider_max_parts": c.get("limit")}},
+        "fix_label": "Use fewer shapes",
+    },
+    "openings_clear": {
+        "severity": "warn",
+        "ok": "Openings stay open: things can pass through doorways and gaps.",
+        "fail": "The collision shape fills {value:n} opening(s), so players cannot pass through.",
+        "fix": lambda c: {"stage": "export", "params": {"collider": "mesh" if (c.get("vars") or {}).get("category") == "environment" else "decompose"}},
+        "fix_label": "Use several shapes",
+    },
+    # Phase 4 (G05, G03): checked in prep, where the final mesh and its maps are known. The plan lists bake_matches
+    # under export; prep is where the re-bake happens, so the check lives there.
+    "bake_matches": {
+        "severity": "warn",
+        "ok": "The surface detail was painted onto the final model.",
+        "fail": "The surface detail was painted for an earlier copy of the model, so shading may look wavy.",
+        "fix": lambda c: {"stage": "prep", "params": {"rebake": True}},
+        "fix_label": "Repaint the surface",
+    },
+    "texture_padding": {
+        "severity": "warn",
+        "ok": "Texture pieces have {value:n} px of space around them, enough for distant views.",
+        "fail": "Texture pieces have only {value:n} px of space, so thin dark seams may show at a distance.",
+        "fix": _padding_fix,
+        "fix_label": "Add more space",
+    },
+    "atlas_used": {
+        "severity": "warn",
+        "ok": "The model uses {value:pct} of its texture.",
+        "fail": "The model uses only {value:pct} of its texture, so it looks less sharp than it could.",
+        "fix": _atlas_fix,
+        "fix_label": "Repaint the surface",
+    },
+    # Phase 5 (G07, G08).
+    "baked_light": {
+        "severity": "warn",
+        "ok": lambda c: ("Painted shading is kept on purpose for this look." if _var(c, "kept")
+                         else "Painted-on shadows removed, so it reacts to your game's lights." if _var(c, "removed")
+                         else "No painted-on shadows found in the colours."),
+        "fail": "The colours still carry shadows from the picture, so they will fight your game's lights.",
+        "fix": lambda c: None if _var(c, "removed") else {"stage": "prep", "params": {"delight": "remove"}},
+        "fix_label": "Remove painted-on shadows",
+    },
+    "albedo_range": {
+        "severity": "warn",
+        "ok": "Colours stay inside the range real materials have.",
+        "fail": "{value:pct} of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.",
+        "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
+        "fix_label": "Bring colours into range",
+    },
+    "metal_mixed": {
+        "severity": "warn",
+        "ok": "Metal parts are clearly metal and the rest clearly not.",
+        "fail": "{value:pct} of the surface is half metal, which looks dull and grey in game engines.",
+        "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
+        "fix_label": "Make metal clearly metal",
     },
 }
 

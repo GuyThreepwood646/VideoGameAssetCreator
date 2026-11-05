@@ -38,6 +38,8 @@ FACING_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "
                      "environment", "foliage"]
 # The prep turn choices, in degrees counter-clockwise seen from above ("auto" lets prep decide from the mesh audit).
 FACE_YAW_OPTIONS: list[Any] = ["auto", 0, 90, 180, 270]
+# Painted-on shadows (G07): auto follows the style.
+DELIGHT_OPTIONS = ("auto", "remove", "keep")
 
 
 def _param(name: str, type_: str, default: Any, label: str | None = None, description: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -75,7 +77,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("texture_size", "select", None, options=[512, 1024, 2048, 4096], description="Platform budget when empty"),
         _param("upsample", "select", 1024, options=[1024, 1536]),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
-        _param("remesh", "boolean", True, description="Watertight remesh before decimation"),
+        _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
+        # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.
+        _param("padding", "integer", None, min=1, max=16, label="Space around texture pieces (pixels)",
+               description="Automatic when empty: 4 px at 1024, 8 at 2048, 16 at 4096"),
     ],
     "prep": [
         # height_m (the old name) is still read from older versions as an alias meaning the height.
@@ -83,9 +88,16 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="In metres along the category's size axis; the category size, or a size in the description, when empty"),
         _param("face_yaw", "select", "auto", options=FACE_YAW_OPTIONS, categories=FACING_CATEGORIES,
                description="Pick the picture where the front faces you. The game treats that side as forward."),
-        _param("symmetric", "boolean", None, description="Category default when empty"),
+        _param("symmetric", "boolean", False, categories=SIZE_CATEGORIES,
+               description="Off unless turned on; mirroring makes prep paint the textures again (G05)"),
         _param("pivot", "select", "base", options=["base", "center"]),
         _param("smooth_angle", "number", 60.0, min=0.0, max=180.0),
+        # G07, G08: the style decides when empty (data/styles.yaml delight_default and pbr_fix_default).
+        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SIZE_CATEGORIES, label="Painted-on shadows"),
+        _param("pbr_fix", "boolean", None, categories=SIZE_CATEGORIES, label="Keep colours in a realistic range",
+               description="On for realistic styles, off for others, when empty"),
+        _param("rebake", "boolean", False, categories=SIZE_CATEGORIES, label="Paint the surface again",
+               description="Prep repaints by itself when mirroring or shrinking changes the shape"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),
@@ -109,7 +121,12 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
-        _param("collider", "select", "hull", options=["hull", "none"]),
+        _param("collider", "select", "auto", label="Collision shape", options=["auto", "hull", "decompose", "mesh", "none"],
+               categories=["prop_rigid", "prop_articulated", "vehicle", "environment", "foliage"],
+               description="The invisible shapes the game uses to know where this is solid."),
+        _param("collider_max_parts", "integer", None, label="Most shapes", min=1, max=32,
+               categories=["prop_rigid", "prop_articulated", "vehicle", "environment"],
+               description="Automatic when empty: 8 for props, 16 for scenery, 6 for vehicles, half on Phone"),
         _param("movement_shape", "select", "auto", options=["auto", "upright", "along", "box", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("formats", "multiselect", ["fbx", "glb"], options=["fbx", "glb"]),
         _param("unity", "boolean", True, description="Import into the Unity sandbox and build the prefab"),
