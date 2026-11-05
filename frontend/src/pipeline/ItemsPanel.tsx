@@ -138,6 +138,36 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
       setError(e)
     }
   }
+  // Fit it for me: the character's files are rebuilt with this item fitted to the moves, even when placed by hand.
+  const fitIt = async () => {
+    if (!att) return
+    setSaving(`Fitting the ${att.label} to the moves and rebuilding the files. This takes a minute or two.`)
+    try {
+      await itemsApi.fit(asset.id, att.id)
+      load()
+    } catch (e) {
+      setSaving(null)
+      setError(e)
+    }
+  }
+  const keepPlace = async () => {
+    if (!att) return
+    try {
+      const r = await itemsApi.update(asset.id, att.id, { keep_place: true })
+      setData(r.panel)
+    } catch (e) {
+      setError(e)
+    }
+  }
+  const dismissNotice = async () => {
+    if (!att) return
+    try {
+      const r = await itemsApi.update(asset.id, att.id, { dismiss_notice: true })
+      setData(r.panel)
+    } catch (e) {
+      setError(e)
+    }
+  }
   const takeOff = async () => {
     if (!att || !window.confirm(`Take the ${att.label} off ${asset.name}? The item itself stays in the project.`)) return
     try {
@@ -215,6 +245,29 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                   </p>
                 )}
                 {noGrip && <p className="warn-text small">We could not work out where the hand holds this, so its own centre is used. Move it until the hand is on the handle.</p>}
+                {att.notice && (
+                  <p className="small">
+                    {att.notice}{' '}
+                    <button type="button" className="small-btn" onClick={dismissNotice}>
+                      OK
+                    </button>
+                  </p>
+                )}
+                {att.offer && (
+                  <div className="small">
+                    <p>
+                      A better place for the {att.label}: {att.offer.place.toLowerCase()}. {att.offer.why}
+                    </p>
+                    <div className="row-gap">
+                      <button type="button" className="small-btn" onClick={() => place(att.offer!.socket)}>
+                        Move it there
+                      </button>
+                      <button type="button" className="small-btn" onClick={keepPlace}>
+                        Keep it where it is
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="field">
                   <span className="field-label">Where does it go?</span>
                   <div className="items-places">
@@ -274,6 +327,25 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                     <button type="button" onClick={() => press({ reset: true })}>
                       Start again
                     </button>
+                  </div>
+                </div>
+                <div className="field">
+                  <span className="field-label" title={data.fit?.help}>
+                    Fit it to the moves
+                  </span>
+                  {att.fit?.sentence ? <p className={att.fit.cleared ? 'small' : 'warn-text small'}>{att.fit.sentence}</p> : null}
+                  <p className="muted small">
+                    {att.touched
+                      ? 'You placed this yourself, so we only fit it when you ask.'
+                      : 'While you have not moved it yourself, we fit it to the moves each time the files are rebuilt.'}
+                  </p>
+                  <div className="row-gap">
+                    <button type="button" className="small-btn" disabled={!!saving || data.build?.status === 'equipping'} onClick={fitIt} title={data.fit?.help}>
+                      Fit it for me
+                    </button>
+                    <span className="muted small">
+                      Tries a push of up to {data.fit?.push_max_cm ?? 5} cm out from the body and small tilts, or a turn about the handle for something held, and keeps the smallest change that clears the body.
+                    </span>
                   </div>
                 </div>
                 <Disclosure label="Advanced">

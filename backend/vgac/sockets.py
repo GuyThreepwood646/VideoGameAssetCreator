@@ -6,7 +6,8 @@ FBX and every GLB; the export stage writes sockets.json from the same result.
 
 Sets:
 
-    humanoid    Socket_Hand_R, Socket_Hand_L, Socket_Back, Socket_Hip_L, Socket_Hip_R, Socket_Head, Socket_Chest
+    humanoid    Socket_Hand_R, Socket_Hand_L, Socket_Forearm_R, Socket_Forearm_L, Socket_Back, Socket_Hip_L, Socket_Hip_R,
+                Socket_Head, Socket_Chest
     creatures   Socket_Head, Socket_Back (saddle point over the spine), Socket_Mouth (when a head is found)
 
 Body parts come from vgac/blender/hitboxes.py: Mixamo names when they describe a person, else the bone chains found
@@ -22,6 +23,8 @@ base at the origin lands correctly with no extra rotation.
 
     hands   forward along the grip, out of the index-finger side of the fist (where a blade or torch head points);
             up toward the thumb
+    forearms  forward straight out of the outside of the forearm (away from the body when the arm hangs); up along
+            the forearm toward the elbow: a shield strapped there has its face outward and its plane alongside the arm
     back    forward straight out of the back (away from the body); up along the upper spine, so it leans with the
             posture: a stowed weapon or a backpack hangs flat against the back
     chest   forward straight out of the chest; up along the upper spine
@@ -57,13 +60,16 @@ SADDLE_OFFSET = 0.01      # metres above the creature's back
 SADDLE_FRACTION = 0.45    # saddle point: this far from the front legs' tops to the back legs' tops
 MOUTH_BACK = 0.12         # mouth: this far behind the snout's tip, as a share of the head's length
 HAND_SPLIT = 0.55         # palm centre: this far from the wrist to the knuckles
+FOREARM_SPLIT = 0.5       # forearm point: this far from the elbow to the wrist
 BACK_HEIGHT = 0.5         # between the chest bone's head (0) and the neck's head (1): shoulder blades
 CHEST_HEIGHT = 0.35       # the same scale: the sternum, where a badge goes
 
 # name: (label, purpose) in the order they are written.
 HUMANOID = {
     "Socket_Hand_R": ("Right hand", "a weapon or tool held in the right hand"),
-    "Socket_Hand_L": ("Left hand", "a shield, torch or off-hand item"),
+    "Socket_Hand_L": ("Left hand", "a torch, lantern or off-hand item"),
+    "Socket_Forearm_R": ("Right forearm", "a shield strapped to the outside of the right forearm"),
+    "Socket_Forearm_L": ("Left forearm", "a shield strapped to the outside of the left forearm"),
     "Socket_Back": ("Back", "a stowed weapon, quiver or backpack between the shoulder blades"),
     "Socket_Hip_L": ("Left hip", "a sheathed sword, pouch or holster on the left of the belt"),
     "Socket_Hip_R": ("Right hip", "a sheathed sword, pouch or holster on the right of the belt"),
@@ -78,6 +84,8 @@ CREATURE = {
 WHERE = {
     "Socket_Hand_R": "in the palm of the right hand",
     "Socket_Hand_L": "in the palm of the left hand",
+    "Socket_Forearm_R": "on the outside of the right forearm, halfway from the elbow to the wrist",
+    "Socket_Forearm_L": "on the outside of the left forearm, halfway from the elbow to the wrist",
     "Socket_Back": "between the shoulder blades, just outside the clothing",
     "Socket_Hip_L": "at the belt on the left side",
     "Socket_Hip_R": "at the belt on the right side",
@@ -277,6 +285,38 @@ def hand_socket(sk, hand, V, vowner, character_forward):
     return p, fwd, up, method
 
 
+def forearm_socket(sk, chain, hand, V, vreg, tris, region, outward):
+    """The outside of a forearm, halfway from the elbow to the wrist (Blender space): from the bone out through the
+    forearm's own surface along `outward` (the character's side, made square to the forearm) to SURFACE_OFFSET past
+    it. Forward is that outward direction, up runs along the forearm toward the elbow. -> (bone, position, forward,
+    up, method) or None when the arm chain has no bone before the hand."""
+    if not chain or hand not in chain or chain.index(hand) == 0:
+        return None
+    fore = chain[:chain.index(hand)]
+    elbow, wrist = sk.head(fore[0]), sk.head(hand)
+    along = _unit(elbow - wrist)
+    if along is None:
+        return None
+    mid = elbow + FOREARM_SPLIT * (wrist - elbow)
+    out = np.asarray(outward, float) - along * float(np.dot(outward, along))
+    out = _unit(out)
+    if out is None:
+        return None
+    # The bone at the midpoint (one forearm bone, or a split twist chain).
+    bone = fore[0]
+    for b in fore:
+        seg = sk.end(b) - sk.head(b)
+        L = float(seg @ seg)
+        if L > 1e-12 and 0.0 <= float((mid - sk.head(b)) @ seg) / L <= 1.0:
+            bone = b
+            break
+    mask = (vreg == region) if region else None
+    if mask is not None and not np.asarray(mask, bool).any():
+        mask = None
+    p, _dist, how = surface_point(mid, out, V, tris, mask)
+    return bone, p, out, along, how
+
+
 def _region_mask(vreg, regions):
     return np.isin(vreg, list(regions)) if regions else np.zeros(len(vreg), bool)
 
@@ -421,6 +461,12 @@ def _humanoid(sk, V, vowner, vreg, tris, regions, table, out):
             continue
         p, f, u, how = hand_socket(sk, hand, V, vowner, fwd)
         socks.append(_sock(name, table, hand, p, f, u, how))
+        fa = forearm_socket(sk, chain, hand, V, vreg, tris, key if key in regions else None, (1.0 if side == "L" else -1.0) * lateral)
+        if fa is None:
+            out["skipped"].append({"name": f"Socket_Forearm_{side}", "reason": "no forearm bone found"})
+        else:
+            bone, p, f, u, how = fa
+            socks.append(_sock(f"Socket_Forearm_{side}", table, bone, p, f, u, how, keep_up=True))
     # Back and chest: from the spine at shoulder-blade (sternum) height, out through the torso's outermost surface.
     spine_up = _unit(sk.head(neck) - hips_head)
     if spine_up is None:
