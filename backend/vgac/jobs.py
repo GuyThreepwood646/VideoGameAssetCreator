@@ -11,6 +11,13 @@ prefs.py). route() picks the card for a job: the preferred one from the stage ta
 that kind of work, else the first card that is on, allowed, and capable (Settings.instance_capabilities), else
 nothing, in which case the job waits on the preferred card with a "Waiting for ..." message. JobQueue.configure
 moves queued jobs (and, when a card is turned off, its running job) to where route() sends them.
+
+On-demand start (instances.py): before a job runs on a card whose instance has a start script, the worker calls
+Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
+<gpu> (about a minute)"; if the start fails the card counts as unavailable (like a card that is off) until Try again
+or the card is turned off and on, so the job moves to another card that can run it or waits with the reason. A card
+that is off is never started, and host jobs never start anything. An instance the backend started is stopped when its
+card is turned off, and after stop_when_idle_minutes without work (prefs.json; 0 = never).
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import psutil
 from sqlalchemy import func, select
@@ -32,10 +39,14 @@ from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import Job, Version, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
+from .instances import NotOwned, StartAborted, StartFailed, Supervisor
 from .reference import STAGE_ORDER
 
 log = logging.getLogger("vgac.jobs")
 MESSAGE_THROTTLE_SECONDS = 5.0
+IDLE_CHECK_SECONDS = 15.0  # how often the queue checks for idle engines to stop and engines that went away
+STARTING_PREFIX = "Starting the graphics engine on "
+START_FAILED_PREFIX = "Could not start the graphics engine on "
 
 GB = 1024**3
 MB = 1024**2
@@ -185,6 +196,27 @@ def moved_message(source: str, target: str, settings: Settings | None = None) ->
     return f"Moved to {gpu_name(target, settings)} while {gpu_name(source, settings)} is off"
 
 
+def starting_message(instance: str, settings: Settings | None = None) -> str:
+    return f"{STARTING_PREFIX}{gpu_name(instance, settings)} (about a minute)"
+
+
+def start_failed_message(instance: str, reason: str, settings: Settings | None = None) -> str:
+    return (f"{START_FAILED_PREFIX}{gpu_name(instance, settings)}: {reason}. It will try again when you press Try again "
+            f"or turn the card off and on.")
+
+
+def start_moved_message(source: str, target: str, settings: Settings | None = None) -> str:
+    return f"Moved to {gpu_name(target, settings)}: could not start the graphics engine on {gpu_name(source, settings)}"
+
+
+def owner_note(instance: str, settings: Settings | None = None) -> str:
+    """The sentence for an engine the backend did not start: it is never stopped by the app."""
+    settings = settings or get_settings()
+    inst = settings.instances.get(instance)
+    who = inst.external_owner if inst is not None and inst.external_owner else ""
+    return f"Started by {who}; the app leaves it running." if who else "Started outside the app; the app leaves it running."
+
+
 def kind_notes(instance: str, settings: Settings | None = None) -> dict[str, str]:
     """For each kind this card's config cannot do, a plain sentence naming where it runs, such as
     {"rigging": "Rigging only runs on the RTX 3080's instance."}"""
@@ -316,6 +348,11 @@ class InstanceWorker:
     allows: Callable[[str], bool] | None = None
     # Advanced, "Free memory after each step": ComfyClient.free() after every finished job.
     free_after_job: bool = False
+    # On-demand start: awaited with the job id before a job runs; False means "not now" (the instance is not up, the
+    # job was parked or moved). None: nothing to prepare (the host).
+    prepare: Callable[[str], Awaitable[bool]] | None = None
+    # True while this card's engine could not be started: the worker picks nothing until Try again.
+    blocked: Callable[[], bool] | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task | None = None
     _job_task: asyncio.Task | None = None
@@ -352,7 +389,7 @@ class InstanceWorker:
         log.info("worker %s started", self.name)
         while True:
             try:
-                if self.paused or self.disabled:
+                if self.paused or self.disabled or (self.blocked is not None and self.blocked()):
                     await self._sleep(2.0)
                     continue
                 job_id = self._next_queued()
@@ -363,6 +400,9 @@ class InstanceWorker:
                 if free < self.settings.min_free_ram_gb:
                     log.info("worker %s holding job %s: free RAM %.1f GB < %.1f GB", self.name, job_id, free, self.settings.min_free_ram_gb)
                     await self._sleep(5.0)
+                    continue
+                if self.prepare is not None and not await self.prepare(job_id):
+                    await self._sleep(1.0)
                     continue
                 self._job_task = asyncio.create_task(self._execute(job_id), name=f"vgac-job-{job_id[:8]}")
                 try:
@@ -624,6 +664,10 @@ class JobQueue:
         self.allowed_kinds: dict[str, set[str]] = {n: set(KIND_GROUPS) for n in self.settings.instances}
         # Per card, free its memory after every finished job (prefs.json free_after_job; off by default).
         self.free_after_job: dict[str, bool] = {n: False for n in self.settings.instances}
+        # Per card, minutes without work before an engine the app started is shut down (prefs.json; 0 = never).
+        self.stop_when_idle_minutes: dict[str, int] = {n: 0 for n in self.settings.instances}
+        self.supervisor: Supervisor | None = None
+        self._idle_task: asyncio.Task | None = None
 
     def _requeue_orphans(self) -> None:
         """Jobs left 'running' by a crashed server go back to queued."""
@@ -646,6 +690,7 @@ class JobQueue:
         self._requeue_orphans()
         for name, inst in self.settings.instances.items():
             self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=inst.output_dir)
+        self.supervisor = Supervisor(self.settings, self.clients, on_change=lambda _n: self.publish_gpus())
         # Cards turned off (and kinds of work forbidden) before the restart stay so, applied before any worker can
         # pick a job; queued jobs parked on them move now where another card can take them.
         self._load_prefs()
@@ -654,19 +699,31 @@ class JobQueue:
             self.workers[name] = InstanceWorker(
                 name=name, settings=self.settings, clients=self.clients, disabled=name in self.disabled,
                 on_rerouted=self._after_reroute, allows=(lambda kind, n=name: self.kind_allowed_here(n, kind)) if gpu else None,
-                free_after_job=self.free_after_job.get(name, False))
+                free_after_job=self.free_after_job.get(name, False),
+                prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
+                blocked=(lambda n=name: self._start_failed(n)) if gpu else None)
         if self.disabled or any(k != set(KIND_GROUPS) for k in self.allowed_kinds.values()):
             log.info("graphics cards turned off in the app: %s; allowed kinds: %s", sorted(self.disabled),
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
         self._rebalance()
         for w in self.workers.values():
             w.start()
+        self._idle_task = asyncio.create_task(self._idle_loop(), name="vgac-engine-idle")
         _active = self
 
     async def stop(self) -> None:
         global _active
+        if self._idle_task is not None:
+            self._idle_task.cancel()
+            try:
+                await self._idle_task
+            except asyncio.CancelledError:
+                pass
+            self._idle_task = None
         for w in self.workers.values():
             await w.stop()
+        if self.supervisor is not None:
+            await self.supervisor.close()
         self.workers.clear()
         for c in self.clients.values():
             await c.aclose()
@@ -679,7 +736,7 @@ class JobQueue:
     def place(self, stage: str, category: str) -> tuple[str, str | None]:
         """Where a new job for `stage` (or "judge") goes now: (instance, None) from route(), or, when no card that is
         on can run it, (the preferred instance, the waiting message): the job waits there until that card is back."""
-        target = route(stage, category, self.settings, self.disabled, self.allowed_kinds)
+        target = route(stage, category, self.settings, self.unavailable(), self.allowed_kinds)
         if target is not None:
             return target, None
         preferred = preferred_instance(stage, category, self.settings)
@@ -688,7 +745,16 @@ class JobQueue:
     def _park_message(self, instance: str, capability: str) -> str:
         if instance in self.disabled:
             return waiting_message(instance, self.settings)
+        if self._start_failed(instance):
+            return start_failed_message(instance, self.supervisor.last_error(instance), self.settings)  # type: ignore[union-attr]
         return not_allowed_message(capability)
+
+    def _start_failed(self, instance: str) -> bool:
+        return self.supervisor is not None and self.supervisor.state(instance) == "failed"
+
+    def unavailable(self) -> set[str]:
+        """Cards no job may be routed to now: turned off, or their engine could not be started."""
+        return set(self.disabled) | (self.supervisor.failed() if self.supervisor is not None else set())
 
     def submit(self, instance: str, kind: str, asset_id: str | None, version_id: str | None, payload: dict[str, Any],
                message: str | None = None) -> Job:
@@ -762,7 +828,7 @@ class JobQueue:
     def _runnable_here(self, instance: str, kind: str) -> bool:
         if instance == HOST or instance not in self.settings.instances:
             return True
-        return instance not in self.disabled and self.kind_allowed_here(instance, kind)
+        return instance not in self.disabled and not self._start_failed(instance) and self.kind_allowed_here(instance, kind)
 
     def set_enabled(self, instance: str, enabled: bool) -> None:
         """Turn a graphics card on or off in the app. Call it on the queue's event loop (the API endpoint is async).
@@ -776,7 +842,7 @@ class JobQueue:
         self.configure(instance, enabled=enabled)
 
     def configure(self, instance: str, enabled: bool | None = None, allowed_kinds: list[str] | set[str] | None = None,
-                  free_after_job: bool | None = None) -> None:
+                  free_after_job: bool | None = None, stop_when_idle_minutes: int | None = None) -> None:
         """Change a card's settings (PUT /api/gpus/{instance}); fields left None stay. Unticking a kind moves the
         queued jobs of that kind as turning the card off does (a running job of that kind finishes first). Call it
         on the queue's loop. Raises KeyError for an unknown card, ValueError for an unknown kind."""
@@ -786,6 +852,8 @@ class JobQueue:
             unknown = set(allowed_kinds) - set(KIND_GROUPS)
             if unknown:
                 raise ValueError(f"unknown kind(s) {sorted(unknown)}; kinds: {list(KIND_GROUPS)}")
+        if stop_when_idle_minutes is not None and not 0 <= int(stop_when_idle_minutes) <= 24 * 60:
+            raise ValueError("stop_when_idle_minutes must be between 0 (never) and 1440 (a day)")
         w = self.workers.get(instance)
         turned_off = enabled is False and instance not in self.disabled
         if enabled is not None:
@@ -795,6 +863,15 @@ class JobQueue:
                 self.disabled.add(instance)
             if w is not None:
                 w.disabled = not enabled
+            if self.supervisor is not None:
+                # Turning the card off and on is one of the two ways to try a failed start again.
+                self.supervisor.clear_failed(instance)
+                if not enabled:
+                    self.supervisor.abort_start(instance)
+        if stop_when_idle_minutes is not None:
+            self.stop_when_idle_minutes[instance] = int(stop_when_idle_minutes)
+            if self.supervisor is not None:
+                self.supervisor.touch(instance)  # the countdown starts now
         if allowed_kinds is not None:
             self.allowed_kinds[instance] = set(allowed_kinds)
         if free_after_job is not None:
@@ -809,7 +886,7 @@ class JobQueue:
                 job = db.get(Job, running)
                 kind = job.kind if job is not None else None
             try:
-                target = route_kind(kind, self.settings, self.disabled, self.allowed_kinds) if kind else None
+                target = route_kind(kind, self.settings, self.unavailable(), self.allowed_kinds) if kind else None
             except (KeyError, ValueError):
                 target = None
             message = moved_message(instance, target, self.settings) if target else waiting_message(instance, self.settings)
@@ -819,9 +896,10 @@ class JobQueue:
         self.wake(instance)
         if enabled is not None:
             log.info("graphics card %s (%s) turned %s", instance, gpu_name(instance, self.settings), "on" if enabled else "off")
-        if allowed_kinds is not None or free_after_job is not None:
-            log.info("graphics card %s: allowed kinds %s, free after each job %s", instance,
-                     sorted(self.allowed_kinds[instance]), self.free_after_job[instance])
+        if allowed_kinds is not None or free_after_job is not None or stop_when_idle_minutes is not None:
+            log.info("graphics card %s: allowed kinds %s, free after each job %s, stop when idle after %s min", instance,
+                     sorted(self.allowed_kinds[instance]), self.free_after_job[instance],
+                     self.stop_when_idle_minutes[instance])
         self.publish_gpus()
 
     def _load_prefs(self) -> None:
@@ -833,12 +911,16 @@ class JobQueue:
         for n, flag in p["free_after_job"].items():
             if n in self.settings.instances:
                 self.free_after_job[n] = bool(flag)
+        for n, minutes in p["stop_when_idle_minutes"].items():
+            if n in self.settings.instances:
+                self.stop_when_idle_minutes[n] = int(minutes)
 
     def _save_prefs(self) -> None:
         try:
             prefs.update(self.settings, disabled_instances=sorted(self.disabled),
                          allowed_kinds={n: [k for k in KIND_GROUPS if k in ks] for n, ks in self.allowed_kinds.items()},
-                         free_after_job=dict(self.free_after_job))
+                         free_after_job=dict(self.free_after_job),
+                         stop_when_idle_minutes=dict(self.stop_when_idle_minutes))
         except OSError as e:
             log.error("could not save the graphics card settings to %s: %s", prefs.prefs_path(self.settings), e)
 
@@ -849,6 +931,7 @@ class JobQueue:
         changed: list[Job] = []
         wake: set[str] = set()
         gpus = sorted(self.settings.instances)
+        unavailable = self.unavailable()
         with session_factory()() as db:
             rows = db.scalars(select(Job).where(Job.status == "queued", Job.instance.in_(gpus))
                               .order_by(Job.created_at, Job.id)).all()
@@ -856,17 +939,19 @@ class JobQueue:
                 try:
                     runnable = self._runnable_here(j.instance, j.kind)
                     _, cap = kind_capability(j.kind)
-                    target = None if runnable else route_kind(j.kind, self.settings, self.disabled, self.allowed_kinds)
+                    target = None if runnable else route_kind(j.kind, self.settings, unavailable, self.allowed_kinds)
                 except (KeyError, ValueError):
                     continue  # a bad kind fails in the worker with its own error
                 if runnable:
-                    if (j.message or "").startswith("Waiting for "):
+                    if (j.message or "").startswith(("Waiting for ", START_FAILED_PREFIX)):
                         j.message = "queued"
                         changed.append(j)
                         wake.add(j.instance)
                 elif target is not None and target != j.instance:
                     if j.instance in self.disabled:
                         message = moved_message(j.instance, target, self.settings)
+                    elif self._start_failed(j.instance):
+                        message = start_moved_message(j.instance, target, self.settings)
                     else:
                         message = (f"Moved to {gpu_name(target, self.settings)}: {gpu_name(j.instance, self.settings)} "
                                    f"may not do {KIND_PLAIN.get(kind_group(cap) or '', cap)}")
@@ -890,16 +975,193 @@ class JobQueue:
         self.wake(target)
         self.publish_gpus()
 
+    # --- starting and stopping the graphics engines (instances.py) ------------------------------------------------
+
+    def _set_job_message(self, job_id: str, instance: str, message: str) -> None:
+        with session_factory()() as db:
+            job = db.get(Job, job_id)
+            if job is None or job.status != "queued" or job.instance != instance or job.message == message:
+                return
+            job.message = message
+            db.commit()
+            db.refresh(job)
+            _publish_job(job)
+
+    async def _prepare(self, instance: str, job_id: str) -> bool:
+        """Before a job runs on `instance`: make sure its ComfyUI answers, starting it when it has a start script.
+        True: run the job now. False: not now (the start failed and the job was moved or parked, or the card was
+        turned off while it started)."""
+        sup = self.supervisor
+        if sup is None or instance == HOST or not sup.can_start(instance):
+            return True
+        if instance in self.disabled:
+            return False  # a card that is off is never started
+        sup.touch(instance)
+        if not sup.starting(instance) and await sup.answers(instance):
+            if sup.state(instance) != "running":
+                sup.mark_running(instance)
+            return True
+        self._set_job_message(job_id, instance, starting_message(instance, self.settings))
+        try:
+            await sup.ensure_running(instance)
+        except StartAborted:
+            return False
+        except StartFailed as e:
+            log.warning("graphics card %s: could not start its engine: %s", instance, e)
+            self._rebalance()  # moves its queued jobs to another card that can run them, or parks them with the reason
+            self.publish_gpus()
+            return False
+        if instance in self.disabled:
+            return False
+        sup.touch(instance)
+        return True
+
+    def start_engine(self, instance: str) -> None:
+        """The card's Start / Try again button: forget a failed start and start the engine now, in the background.
+        Raises KeyError for an unknown card, ValueError (with a plain message) when it cannot be started."""
+        if instance not in self.settings.instances:
+            raise KeyError(instance)
+        sup = self.supervisor
+        gpu = gpu_name(instance, self.settings)
+        if sup is None:
+            raise ValueError("The app is not ready yet; try again in a moment.")
+        if instance in self.disabled:
+            raise ValueError(f"{gpu} is turned off. Turn it on first; the app never starts a card that is off.")
+        if not sup.can_start(instance):
+            raise ValueError(f"The app has no start script for the graphics engine on {gpu}, so it cannot start it.")
+        sup.clear_failed(instance)
+        sup.touch(instance)
+        self._rebalance()  # jobs parked by the failed start may run here again
+        self.wake(instance)
+
+        async def _go() -> None:
+            try:
+                await sup.ensure_running(instance)
+            except StartAborted:
+                pass
+            except StartFailed as e:
+                log.warning("graphics card %s: could not start its engine: %s", instance, e)
+                self._rebalance()
+            self.publish_gpus()
+
+        asyncio.ensure_future(_go())
+        self.publish_gpus()
+
+    def stop_engine(self, instance: str) -> None:
+        """The card's Stop button: stop the engine the backend started. Raises KeyError for an unknown card,
+        ValueError (plain message) for an engine the backend did not start or one busy with a step."""
+        if instance not in self.settings.instances:
+            raise KeyError(instance)
+        sup = self.supervisor
+        gpu = gpu_name(instance, self.settings)
+        if sup is None or not sup.owned(instance):
+            raise ValueError(f"The graphics engine on {gpu} was not started by the app, so the app will not stop it. "
+                             f"{owner_note(instance, self.settings)}")
+        w = self.workers.get(instance)
+        if w is not None and w.current_job_id is not None:
+            raise ValueError(f"{gpu} is busy with a step. Wait for it to finish, or turn the card off to hand the step "
+                             f"to another card.")
+        try:
+            sup.stop(instance)
+        except NotOwned:
+            raise ValueError(f"The graphics engine on {gpu} was not started by the app, so the app will not stop it.")
+        self.publish_gpus()
+
+    def idle_check(self) -> list[str]:
+        """Stop every engine the backend started whose card has had no running or queued job for its
+        stop_when_idle_minutes (0 = never). Returns the cards stopped."""
+        sup = self.supervisor
+        if sup is None:
+            return []
+        st = self.status()
+        stopped = []
+        for name in self.settings.instances:
+            s = st.get(name, {})
+            if s.get("current_job_id") or int(s.get("queued", 0)) > 0 or sup.starting(name):
+                sup.touch(name)
+                continue
+            minutes = self.stop_when_idle_minutes.get(name, 0)
+            if minutes <= 0 or not sup.owned(name):
+                continue
+            if sup.idle_seconds(name) >= minutes * 60:
+                log.info("graphics card %s: no work for %s minutes; stopping the engine the app started", name, minutes)
+                try:
+                    sup.stop(name)
+                    stopped.append(name)
+                except Exception:  # noqa: BLE001
+                    log.exception("graphics card %s: could not stop its idle engine", name)
+        return stopped
+
+    async def refresh_engines(self) -> None:
+        """Notice an engine that came up or went away on its own (one cached /system_stats per card), so the card's
+        state, and the "gpus" event, follow it. An engine that comes up after a failed start clears the failure."""
+        sup = self.supervisor
+        if sup is None:
+            return
+        for name, client in self.clients.items():
+            if sup.starting(name) or name in self.disabled:
+                continue
+            try:
+                summary = await client.cached_vram_summary(5.0)
+            except Exception:  # noqa: BLE001
+                continue
+            up = bool(summary and summary.get("reachable"))
+            was = sup.state(name)
+            if up and was != "running":
+                sup.mark_running(name)
+                if was == "failed":
+                    self._rebalance()
+                    self.wake(name)
+            elif not up and was == "running":
+                sup.mark_stopped(name)
+
+    async def _idle_loop(self) -> None:
+        while True:
+            await asyncio.sleep(IDLE_CHECK_SECONDS)
+            try:
+                await self.refresh_engines()
+                self.idle_check()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("engine idle check failed")
+
+    def engine_state(self, instance: str, reachable: bool) -> str:
+        """running | starting | stopped | failed | off, for GET /api/gpus."""
+        if instance in self.disabled:
+            return "off"
+        sup = self.supervisor
+        if sup is None:
+            return "running" if reachable else "stopped"
+        if sup.starting(instance) or sup.state(instance) == "starting":
+            return "starting"
+        if reachable:
+            return "running"
+        if sup.state(instance) == "failed":
+            return "failed"
+        return "stopped"
+
     def _release(self, instance: str) -> None:
-        """Ask the card's ComfyUI to unload its models and free its memory, on the queue's loop. Errors are ignored."""
+        """Ask the card's ComfyUI to unload its models and free its memory, then stop its engine if the backend
+        started it (never one it did not start), on the queue's loop. Errors are ignored."""
         client = self.clients.get(instance)
         w = self.workers.get(instance)
         loop = w._loop if w is not None else None
         if client is None or loop is None or loop.is_closed():
             return
 
+        async def _free_and_stop() -> None:
+            await client.free()
+            sup = self.supervisor
+            if sup is not None and instance in self.disabled and sup.owned(instance):
+                log.info("graphics card %s turned off: stopping the engine the app started", instance)
+                try:
+                    sup.stop(instance)
+                except Exception:  # noqa: BLE001
+                    log.exception("graphics card %s: could not stop its engine", instance)
+
         def _do() -> None:
-            asyncio.ensure_future(client.free())
+            asyncio.ensure_future(_free_and_stop())
 
         try:
             running = asyncio.get_running_loop()
@@ -947,6 +1209,17 @@ class JobQueue:
                 "kind_notes": kind_notes(name, self.settings),
                 "free_after_job": self.free_after_job.get(name, False),
             }
+            sup = self.supervisor
+            state = self.engine_state(name, reachable)
+            owned = bool(sup is not None and sup.owned(name))
+            can_start = bool(sup is not None and sup.can_start(name))
+            entry.update({
+                "state": state, "owned": owned, "can_start": can_start,
+                "stop_when_idle_minutes": self.stop_when_idle_minutes.get(name, 0),
+                "last_error": (sup.last_error(name) if sup is not None and state == "failed" else "") or "",
+            })
+            if reachable and not owned and can_start:
+                entry["note"] = f"{entry['note']} {owner_note(name, self.settings)}"
             if reachable:
                 dev = (summary.get("devices") or [{}])[0] or {}
                 total, free = dev.get("vram_total"), dev.get("vram_free")

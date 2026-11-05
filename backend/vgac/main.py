@@ -730,6 +730,8 @@ class GpuIn(BaseModel):
     # Kinds of work this card may do: pictures, model, rigging, review (jobs.KIND_GROUPS).
     allowed_kinds: list[str] | None = None
     free_after_job: bool | None = None
+    # Shut down an engine the app started after this many minutes without work; 0 = never.
+    stop_when_idle_minutes: int | None = Field(default=None, ge=0, le=1440)
 
 
 async def _gpu_list(q: JobQueue) -> list[dict[str, Any]]:
@@ -754,9 +756,39 @@ async def set_gpu(instance: str, body: GpuIn) -> list[dict[str, Any]]:
     if instance not in q.settings.instances:
         raise HTTPException(404, f"unknown graphics card {instance!r}; known: {list(q.settings.instances)}")
     try:
-        q.configure(instance, enabled=body.enabled, allowed_kinds=body.allowed_kinds, free_after_job=body.free_after_job)
+        q.configure(instance, enabled=body.enabled, allowed_kinds=body.allowed_kinds, free_after_job=body.free_after_job,
+                    stop_when_idle_minutes=body.stop_when_idle_minutes)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    return await _gpu_list(q)
+
+
+@app.post("/api/gpus/{instance}/start")
+async def start_gpu_engine(instance: str) -> list[dict[str, Any]]:
+    """Start the card's ComfyUI now (the Start and Try again buttons). Returns at once with the card "starting"; the
+    "gpus" event follows the start. 409 with a plain message when the card is off or has no start script."""
+    q = _queue()
+    if instance not in q.settings.instances:
+        raise HTTPException(404, f"unknown graphics card {instance!r}; known: {list(q.settings.instances)}")
+    try:
+        q.start_engine(instance)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    await asyncio.sleep(0)  # let the start begin, so the answer already says "starting"
+    return await _gpu_list(q)
+
+
+@app.post("/api/gpus/{instance}/stop")
+async def stop_gpu_engine(instance: str) -> list[dict[str, Any]]:
+    """Stop the card's ComfyUI, only if the app started it. 409 with a plain message for an engine started by
+    someone else (ComfyUI Desktop, the launcher) or one busy with a step."""
+    q = _queue()
+    if instance not in q.settings.instances:
+        raise HTTPException(404, f"unknown graphics card {instance!r}; known: {list(q.settings.instances)}")
+    try:
+        q.stop_engine(instance)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return await _gpu_list(q)
 
 
