@@ -418,7 +418,22 @@ if arm is not None and bpy.data.actions:
             strip.action_slot = a.slots[0]
     for t in arm.animation_data.nla_tracks:
         t.mute = False
+        # A strip must not hold its first frame before it starts: see the rest-pose note below.
+        for st in t.strips:
+            st.extrapolation = "NOTHING"
     report["clips"] = [a.name for a in bpy.data.actions]
+    # The file's default pose has to be the rest pose. Unity builds the prefab from it, and the hit boxes and
+    # attachment points are placed against the rest pose; with every strip live, the default pose was the first
+    # frame of whichever clip sat on top (arms down for the library clips), which put them up to 30 cm off.
+    # No strip plays before frame 1, so stand at frame 0 with a clean pose.
+    for pb in arm.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.scene.frame_set(0)
+    bpy.context.view_layer.update()
+    report["default_pose"] = "rest"
 
 bpy.ops.object.select_all(action="SELECT")
 if "fbx" in formats:

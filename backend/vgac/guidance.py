@@ -438,6 +438,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "export", "params": {}},
         "fix_label": "Rebuild for Unity",
     },
+    "placement_exact": {
+        "severity": "warn",
+        "ok": "Hit boxes and attachment points sit exactly where they were fitted.",
+        "fail": "Hit boxes or attachment points landed {cm} cm away from where they were fitted, so hits and held items would look off.",
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Rebuild for Unity",
+    },
     "controller_ready": {
         "severity": "warn",
         "ok": "An animation controller switches between idle, walk and run by speed.",
