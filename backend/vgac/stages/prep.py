@@ -53,7 +53,7 @@ TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 # Thresholds (docs/GREAT-ASSETS-PLAN.md 3.5 and 3.9). The light score limit is ours: on the library's painted assets
 # the score is 0 (wolf), 0.12 to 0.18 (knights, chest) and 0.25 (goblin, visibly lit from above in its concept).
 LIGHT_SCORE_LIMIT = 0.2
-ATLAS_USED_MIN = 0.5
+ATLAS_USED_MIN = 0.35  # the unwrap normally lands between 0.45 and 0.6; a mirrored, un-rebaked model sat at 0.28
 BAKE_MATCH_MIN = 0.99
 ALBEDO_OUT_MAX = 0.01
 METAL_MIXED_MAX = 0.05
@@ -286,8 +286,12 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     if pbr_fix:
         new_base = imaging.clamp_albedo(new_base, new_met)
         new_base[~mask] = base[~mask]
-        if new_met is not None:
-            new_met = imaging.sharpen_metallic(new_met)
+    # Half-metal surfaces look dull and grey in every style (the mesh engine writes 0.2 to 0.5 on skin and leather),
+    # so metal is made clearly metal or clearly not whenever a real share of the surface sits in between.
+    metal_sharpened = False
+    if new_met is not None and (pbr_fix or float(stats.get("metal_mixed") or 0.0) > METAL_MIXED_MAX):
+        new_met = imaging.sharpen_metallic(new_met)
+        metal_sharpened = True
     if new_rough is not None and stats.get("roughness_low"):
         new_rough = imaging.clamp_roughness(new_rough)
 
@@ -305,7 +309,7 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
                                    roughness=files.get("roughness"))
     after = imaging.light_score(new_base, mask, ao, ras["up"]) if new_base is not base else light
     metrics.update(light_score=after["score"], delight_applied=strength > 0, delight_strength=round(strength, 3),
-                   pbr_fix_applied=bool(pbr_fix), roughness_clamped=new_rough is not rough,
+                   pbr_fix_applied=bool(pbr_fix), metal_sharpened=metal_sharpened, roughness_clamped=new_rough is not rough,
                    pbr=imaging.pbr_stats(new_base, new_met, new_rough, mask) if files else stats,
                    texture_pass_seconds=round(time.time() - t0, 2))
     return {"metrics": metrics, "files": files}
@@ -337,12 +341,16 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
                                  vars={"kept": kept, "removed": bool(m.get("delight_applied"))}))
     pbr = m.get("pbr") or {}
     fix_on = bool(m.get("pbr_fix_applied"))
+    # A look that keeps its painted shading also keeps its painted darks and lights: not a fault there.
+    kept_look = m.get("delight_mode") == "keep" and not fix_on
     if pbr.get("albedo_out") is not None:
-        out.append(quality.check("albedo_range", float(pbr["albedo_out"]) <= ALBEDO_OUT_MAX, float(pbr["albedo_out"]), ALBEDO_OUT_MAX,
-                                 vars={"pbr_fix_on": fix_on, "black": pbr.get("albedo_black"), "white": pbr.get("albedo_white")}))
+        in_range = float(pbr["albedo_out"]) <= ALBEDO_OUT_MAX
+        out.append(quality.check("albedo_range", in_range or kept_look, float(pbr["albedo_out"]), ALBEDO_OUT_MAX,
+                                 vars={"pbr_fix_on": fix_on, "kept": kept_look and not in_range, "black": pbr.get("albedo_black"),
+                                       "white": pbr.get("albedo_white")}))
     if pbr.get("metal_mixed") is not None:
         out.append(quality.check("metal_mixed", float(pbr["metal_mixed"]) <= METAL_MIXED_MAX, float(pbr["metal_mixed"]), METAL_MIXED_MAX,
-                                 vars={"pbr_fix_on": fix_on}))
+                                 vars={"pbr_fix_on": fix_on or bool(m.get("metal_sharpened"))}))
     return out
 
 
