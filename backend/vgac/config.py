@@ -29,6 +29,16 @@ class InstanceConfig(BaseModel):
     # Local output directory of that ComfyUI instance, for nodes that save files without
     # reporting them through /history (SkinToken). Optional.
     output_dir: Path | None = None
+    # On-demand start (instances.py): a PowerShell script that starts this instance, relative to the project root
+    # (or absolute). Without one the backend never starts the instance and a job on it runs (and fails) as before.
+    start_script: Path | None = None
+    # Seconds to wait for a started instance to answer /system_stats before the start counts as failed.
+    start_timeout_seconds: float = Field(default=180, gt=0)
+    # A piece of the command line that identifies an already running copy (for example one started by the desktop
+    # launcher or ComfyUI Desktop), so the backend waits for it instead of starting a second one.
+    process_match: str | None = None
+    # Who usually runs this instance when the backend did not start it, for the card's note ("ComfyUI Desktop").
+    external_owner: str = ""
 
 
 class Settings(BaseModel):

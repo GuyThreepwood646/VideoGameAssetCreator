@@ -12,6 +12,7 @@ frontend/dist/
 library/
 runtime/*
 !runtime/start-comfy-b.ps1
+!runtime/start-comfy-a.ps1
 
 # Unity sandbox generated folders
 unity-sandbox/Library/

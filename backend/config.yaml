@@ -6,6 +6,13 @@ instances:
     url: http://127.0.0.1:8188
     gpu: RTX 3060
     role: 3d
+    # Normally run by ComfyUI Desktop (GameDevComfy). When nothing answers on 8188 and no copy is running, the
+    # backend starts its own with this script; it only ever stops a copy it started itself.
+    start_script: runtime/start-comfy-a.ps1
+    start_timeout_seconds: 180
+    # ComfyUI Desktop starts it without --port, so the CUDA device is what identifies it.
+    process_match: "--cuda-device 1"
+    external_owner: ComfyUI Desktop
   b:
     url: http://127.0.0.1:8189
     gpu: RTX 3080
@@ -13,6 +20,10 @@ instances:
     # Instance B's --output-directory (runtime/start-comfy-b.ps1). SkinToken writes its rigged
     # GLB there and reports the path as text, so the backend copies it from this folder.
     output_dir: F:/Projects/VideoGameAssetCreator/runtime/comfy-b-output
+    # Started on demand by the backend when a step needs it (the desktop launcher uses the same script and match).
+    start_script: runtime/start-comfy-b.ps1
+    start_timeout_seconds: 180
+    process_match: ComfyUI\main.py --port 8189
 
 library_path: F:\Projects\VideoGameAssetCreator\library
 

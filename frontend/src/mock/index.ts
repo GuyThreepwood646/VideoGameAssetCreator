@@ -109,14 +109,37 @@ const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T
 let simulationSpeed = 1
 
 // Graphics cards: on or off, what each may do, free after each step. Routing as the backend's jobs.route.
-type MockGpu = { enabled: boolean; allowed: GpuKind[]; free_after_job: boolean }
+type MockEngine = 'running' | 'starting' | 'stopped' | 'failed'
+type MockGpu = { enabled: boolean; allowed: GpuKind[]; free_after_job: boolean; engine: MockEngine; owned: boolean; idle: number; last_error: string }
 const GPU_INFO: Record<'a' | 'b', { gpu: string; url: string; possible: GpuKind[]; vram_total_mb: number; note: string }> = {
   a: { gpu: 'RTX 3060', url: 'http://127.0.0.1:8188', possible: ['pictures', 'model', 'review'], vram_total_mb: 12288, note: 'The other card can take over everything this card does.' },
   b: { gpu: 'RTX 3080', url: 'http://127.0.0.1:8189', possible: [...GPU_KINDS], vram_total_mb: 10240, note: 'Rigging only runs on this card.' },
 }
 const gpuState: Record<'a' | 'b', MockGpu> = {
-  a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false },
-  b: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false },
+  // a is run by ComfyUI Desktop (running, not the app's); b is started by the app when a step needs it.
+  a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'running', owned: false, idle: 0, last_error: '' },
+  b: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'stopped', owned: false, idle: 0, last_error: '' },
+}
+
+// On-demand start, as the backend's instances.py: "starting" for a few seconds, then running and owned by the app.
+// A prompt containing "nostart" makes the start fail, to show the Try again path.
+function startEngine(name: 'a' | 'b', fail = false) {
+  const st = gpuState[name]
+  if (!st.enabled || st.engine === 'starting' || st.engine === 'running') return
+  st.engine = 'starting'
+  st.owned = true
+  st.last_error = ''
+  broadcast({ type: 'gpus', gpus: gpuList() })
+  window.setTimeout(() => {
+    if (st.engine !== 'starting') return
+    if (fail) {
+      st.engine = 'failed'
+      st.last_error = 'it did not answer within 180 seconds (see comfy-' + name + '.err.log in runtime/logs)'
+    } else {
+      st.engine = 'running'
+    }
+    broadcast({ type: 'gpus', gpus: gpuList() })
+  }, 3000 / simulationSpeed)
 }
 
 function kindOfStage(stage: StageId, category: string): GpuKind | null {
@@ -157,26 +180,33 @@ function gpuList(): Gpu[] {
     const asset = running ? store.assets.find((a) => a.id === running.asset_id) : undefined
     const [stage, op] = running ? running.kind.split('.').slice(-2) : ['', '']
     const used = !st.enabled ? 600 : running ? Math.round(info.vram_total_mb * 0.8) : 1400
+    const reachable = st.engine === 'running'
+    const state = !st.enabled ? 'off' : st.engine
     return {
       instance: name,
       gpu: info.gpu,
       url: info.url,
       enabled: st.enabled,
-      reachable: true,
-      vram_total_mb: info.vram_total_mb,
-      vram_free_mb: info.vram_total_mb - used,
+      reachable,
+      vram_total_mb: reachable ? info.vram_total_mb : null,
+      vram_free_mb: reachable ? info.vram_total_mb - used : null,
       current_job_id: running?.id ?? null,
       current_job: running
         ? { id: running.id, kind: running.kind, stage, op, material: running.kind.startsWith('material.'), asset_id: running.asset_id, asset_name: asset?.name ?? null, progress: running.progress, message: running.message }
         : null,
       queued: store.jobs.filter((j) => j.instance === name && j.status === 'queued').length,
       can_run: [],
-      note: info.note,
+      note: reachable && !st.owned ? `${info.note} ${name === 'a' ? 'Started by ComfyUI Desktop' : 'Started outside the app'}; the app leaves it running.` : info.note,
       allowed_kinds: GPU_KINDS.filter((k) => st.allowed.includes(k)),
       possible_kinds: info.possible,
       effective_kinds: info.possible.filter((k) => st.allowed.includes(k)),
       kind_notes: name === 'a' ? { rigging: "Rigging only runs on the RTX 3080's instance." } : {},
       free_after_job: st.free_after_job,
+      state,
+      owned: st.owned && st.engine !== 'stopped',
+      can_start: true,
+      stop_when_idle_minutes: st.idle,
+      last_error: state === 'failed' ? st.last_error : '',
     }
   })
 }
@@ -238,6 +268,25 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
       window.setTimeout(begin, 1000)
       return
     }
+    // The card's engine is not running: start it and wait, the job stays queued with the starting message.
+    if (job.instance !== 'host' && gpuState[job.instance].engine !== 'running') {
+      const inst = job.instance
+      const st = gpuState[inst]
+      if (st.engine === 'stopped') {
+        const fail = typeof version.params.prompt_override === 'string' && version.params.prompt_override.includes('nostart')
+        startEngine(inst, fail)
+      }
+      const msg =
+        st.engine === 'failed'
+          ? `Could not start the graphics engine on ${GPU_INFO[inst].gpu}: ${st.last_error}. It will try again when you press Try again or turn the card off and on.`
+          : `Starting the graphics engine on ${GPU_INFO[inst].gpu} (about a minute)`
+      if (job.message !== msg) {
+        job.message = msg
+        broadcast({ type: 'job', job: clone(job) })
+      }
+      window.setTimeout(begin, 1000)
+      return
+    }
     job.status = 'running'
     job.started_at = nowIso()
     job.message = steps[0]
@@ -294,8 +343,8 @@ on('GET', '/api/health', () => ({
   ok: true,
   version: '0.2.0-mock',
   instances: {
-    a: { url: 'http://127.0.0.1:8188', gpu: 'RTX 3060', role: '3D', reachable: true, enabled: gpuState.a.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3060', type: 'cuda', vram_total: 12_884_901_888, vram_free: 9_126_805_504 }] },
-    b: { url: 'http://127.0.0.1:8189', gpu: 'RTX 3080', role: 'images, rigging', reachable: true, enabled: gpuState.b.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3080', type: 'cuda', vram_total: 10_737_418_240, vram_free: 4_294_967_296 }] },
+    a: { url: 'http://127.0.0.1:8188', gpu: 'RTX 3060', role: '3D', reachable: gpuState.a.engine === 'running', enabled: gpuState.a.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3060', type: 'cuda', vram_total: 12_884_901_888, vram_free: 9_126_805_504 }] },
+    b: { url: 'http://127.0.0.1:8189', gpu: 'RTX 3080', role: 'images, rigging', reachable: gpuState.b.engine === 'running', enabled: gpuState.b.enabled, comfyui_version: '0.3.60', devices: [{ name: 'NVIDIA GeForce RTX 3080', type: 'cuda', vram_total: 10_737_418_240, vram_free: 4_294_967_296 }] },
   },
   host: { ram_total_bytes: 68_719_476_736, ram_free_bytes: 30_064_771_072, ram_free_gb: 28.0, min_free_ram_gb: 8, cpu_percent: 17 },
   queue: {
@@ -315,7 +364,42 @@ on('PUT', '/api/gpus/:instance', (m, body) => {
     st.allowed = body.allowed_kinds as GpuKind[]
   }
   if (typeof body.free_after_job === 'boolean') st.free_after_job = body.free_after_job
+  if (typeof body.stop_when_idle_minutes === 'number') {
+    if (body.stop_when_idle_minutes < 0 || body.stop_when_idle_minutes > 1440) throw new HttpError(422, 'stop_when_idle_minutes must be between 0 and 1440')
+    st.idle = body.stop_when_idle_minutes
+  }
+  if (typeof body.enabled === 'boolean') {
+    // Off and on again forgets a failed start; off also shuts down an engine the app started.
+    if (st.engine === 'failed') st.engine = 'stopped'
+    if (!body.enabled && st.owned) {
+      st.engine = 'stopped'
+      st.owned = false
+    }
+  }
   rebalanceGpus()
+  const list = gpuList()
+  broadcast({ type: 'gpus', gpus: list })
+  return list
+})
+on('POST', '/api/gpus/:instance/start', (m) => {
+  const name = m.groups!.instance
+  if (name !== 'a' && name !== 'b') throw new HttpError(404, `unknown graphics card '${name}'`)
+  const st = gpuState[name]
+  if (!st.enabled) throw new HttpError(409, `${GPU_INFO[name].gpu} is turned off. Turn it on first; the app never starts a card that is off.`)
+  if (st.engine === 'failed') st.engine = 'stopped'
+  startEngine(name)
+  return gpuList()
+})
+on('POST', '/api/gpus/:instance/stop', (m) => {
+  const name = m.groups!.instance
+  if (name !== 'a' && name !== 'b') throw new HttpError(404, `unknown graphics card '${name}'`)
+  const st = gpuState[name]
+  if (!st.owned || st.engine === 'stopped')
+    throw new HttpError(409, `The graphics engine on ${GPU_INFO[name].gpu} was not started by the app, so the app will not stop it.`)
+  if (store.jobs.some((j) => j.instance === name && j.status === 'running'))
+    throw new HttpError(409, `${GPU_INFO[name].gpu} is busy with a step. Wait for it to finish, or turn the card off to hand the step to another card.`)
+  st.engine = 'stopped'
+  st.owned = false
   const list = gpuList()
   broadcast({ type: 'gpus', gpus: list })
   return list

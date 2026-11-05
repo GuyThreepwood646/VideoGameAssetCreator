@@ -5,6 +5,11 @@
 // answers): while card "b" is off the launcher does not start ComfyUI B, stops the ComfyUI B it started (once), and
 // shows "Off (turned off in the app)" with a "Start anyway" action that turns the card back on through
 // PUT /api/gpus/b. ComfyUI A belongs to Comfy Desktop and is never stopped; when "a" is off it is only marked.
+//
+// The backend also starts ComfyUI A and B on demand (backend/vgac/instances.py) and reports it in GET /api/gpus
+// (state running | starting | stopped | failed | off, owned). The launcher does not fight it: a ComfyUI B the
+// launcher did not start is foreign and left alone (never stopped on quit or when card b is off), and the
+// launcher's own one-time auto-start of B is skipped while the backend reports b as "starting".
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -43,7 +48,8 @@ class Supervisor extends EventEmitter {
     this.timer = null;
     this.allUp = false;
     this.lastUp = {};
-    // Graphics cards from the backend: { a: { enabled }, b: { enabled } }, or null before the first answer.
+    // Graphics cards from the backend: { a: { enabled, state, owned, canStart }, b: ... }, or null before the first
+    // answer (state, owned and canStart are only known from the backend, not from prefs.json).
     this.gpus = null;
     this.gpuSource = null; // 'backend' | 'prefs'
     this.stoppedForOff = false; // ComfyUI B was stopped once because card b was turned off
@@ -137,7 +143,9 @@ class Supervisor extends EventEmitter {
   _applyComfyA(r) {
     // Never stopped by the launcher, even when card a is off in the app: Comfy Desktop owns it.
     const off = this.gpuOff('a') ? '. Off in the app' : '';
-    if (r.ok) return this._set('comfyA', 'up', 'Running (started by ComfyUI Desktop)' + off);
+    const eng = this.backendEngine('a');
+    if (r.ok) return this._set('comfyA', 'up', (eng.owned ? 'Running (started by the app when a step needed it)' : 'Running (started by ComfyUI Desktop)') + off);
+    if (eng.state === 'starting') return this._set('comfyA', 'starting', 'The app is starting it (about a minute)');
     const exe = this.cfg.comfyA.desktopExe;
     const actions = exe && fs.existsSync(exe) ? [{ id: 'openComfyDesktop', label: 'Open ComfyUI Desktop' }] : [];
     this._set('comfyA', 'down', (this.gpuOff('a') ? 'Not running' : 'Open ComfyUI Desktop and start the GameDevComfy instance') + off, this.gpuOff('a') ? [] : actions);
@@ -150,6 +158,13 @@ class Supervisor extends EventEmitter {
     return !!(this.gpus && this.gpus[instance] && this.gpus[instance].enabled === false);
   }
 
+  // What the backend says about the ComfyUI of a card: 'starting' while it is starting it, owned when it started it.
+  backendEngine(instance) {
+    const g = this.gpus && this.gpus[instance];
+    if (!g || this.gpuSource !== 'backend' || !this.backendUp) return { state: null, owned: false, canStart: false };
+    return { state: g.state || null, owned: !!g.owned, canStart: !!g.canStart };
+  }
+
   _prefsPath() {
     return this.resolve(this.cfg.prefsFile || 'library/prefs.json');
   }
@@ -160,6 +175,7 @@ class Supervisor extends EventEmitter {
     const wasOffB = this.gpuOff('b');
     let backendOk = false;
     try { backendOk = health.ok && JSON.parse(health.text).ok === true; } catch (_) { backendOk = false; }
+    this.backendUp = backendOk;
     if (backendOk) {
       for (const inst of Array.from(this.pendingEnable)) {
         if (await this.setGpuEnabled(inst, true)) this.pendingEnable.delete(inst);
@@ -169,7 +185,9 @@ class Supervisor extends EventEmitter {
         try {
           const rows = JSON.parse(r.text);
           const next = {};
-          for (const g of rows) next[g.instance] = { enabled: g.enabled !== false };
+          for (const g of rows) {
+            next[g.instance] = { enabled: g.enabled !== false, state: g.state || null, owned: !!g.owned, canStart: !!g.can_start };
+          }
           this.gpus = next;
           this.gpuSource = 'backend';
         } catch (e) {
@@ -237,9 +255,11 @@ class Supervisor extends EventEmitter {
     const s = this.services[key];
     const cfg = this.cfg[key];
     const ok = okFn ? okFn(r) : r.ok;
+    const eng = key === 'comfyB' ? this.backendEngine('b') : { state: null, owned: false, canStart: false };
     if (ok) {
       const owned = this.isOwned(key);
-      this._set(key, 'up', owned ? 'Running (started by this launcher)' : 'Running (started outside this launcher, left alone on quit)',
+      const outside = eng.owned ? 'Running (started by the app when a step needed it)' : 'Running (started outside this launcher, left alone on quit)';
+      this._set(key, 'up', owned ? 'Running (started by this launcher)' : outside,
         [{ id: key === 'backend' ? 'restartBackend' : 'restartComfyB', label: 'Restart' }]);
       return;
     }
@@ -252,6 +272,11 @@ class Supervisor extends EventEmitter {
       } else {
         this._set(key, 'starting', `Starting (${Math.round(elapsed)} s)`);
       }
+      return;
+    }
+    if (eng.state === 'starting' && !this.isOwned(key)) {
+      // The backend is starting it for a step: do not start a second copy.
+      this._set(key, 'starting', 'The app is starting it (about a minute)');
       return;
     }
     if (s.state === 'error' && s.message.startsWith('Exited')) return; // wait for the user
@@ -277,7 +302,8 @@ class Supervisor extends EventEmitter {
       return;
     }
     if (s.state !== 'error') {
-      this._set(key, 'down', 'Not running', [{ id: key === 'backend' ? 'startBackend' : 'startComfyB', label: 'Start' }]);
+      const why = eng.canStart ? 'Not running. The app starts it by itself when a step needs it' : 'Not running';
+      this._set(key, 'down', why, [{ id: key === 'backend' ? 'startBackend' : 'startComfyB', label: 'Start' }]);
     }
   }
 
