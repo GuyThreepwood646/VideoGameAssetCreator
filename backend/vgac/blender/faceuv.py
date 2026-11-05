@@ -8,10 +8,10 @@ face in a 2048 atlas), too few to hold eyes and lips. The texture pieces (UV isl
 `gain` times bigger, then:
 1. fit: put into the free space with every other piece left exactly where it is (blender/uvfit.py); nothing else
    loses a texel. The unwrapper packs tightly, so this only works for small gains.
-2. repack: otherwise every piece is packed again with Blender's packer, which is less tight than the unwrapper's:
-   on the knight the rest of the body kept 0.88 of its texels across for a face gain of 1.9 (the report's
-   rest_scale), and the share of the atlas used fell. The loss is capped by --max-loss; the island scale is corrected
-   from the measured gain (at most four packs).
+2. repack: otherwise every piece is packed again with Blender's packer (concave shapes, any rotation): on the knight
+   the face gained 2.0 times its texels across and the rest of the body kept all of its (rest_scale 1.03; the share
+   of the atlas used went from 0.37 to 0.41). The loss is capped by --max-loss; the island scale is corrected from the
+   measured gain (at most four packs).
 Then every map is baked again from a copy of the mesh with the old layout (blender/rebake.py). One material, one
 atlas, same size.
 
@@ -133,7 +133,10 @@ share = isl_area / max(all_area, 1e-12)
 original_uv = {(f.index, i): l[uv].uv.copy() for f in bm.faces for i, l in enumerate(f.loops)}
 bm.to_mesh(mesh.data)
 bm.free()
-margin = max(1, padding_px) / float(max(1, tex_size))
+# Blender's packer keeps the margin on every side of every island, so two islands end up twice the margin apart:
+# half the padding gives the padding asked for between islands (with the full padding the knight's layout lost 12
+# percent of its texels across and its used share fell from 0.37 to 0.31; with half it kept them all, 0.41 used).
+margin = max(1.0, padding_px / 2.0) / float(max(1, tex_size))
 
 
 def set_layout(k, pin_rest):
