@@ -1,10 +1,14 @@
 """Blender headless: pack a prepped (optionally rigged and animated) GLB for the engine (second half of bakeoff/finish.py).
 
-Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|none] [--formats fbx,glb]
+Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|parts|mesh|none]
+     [--collider-obj collider_parts.obj] [--formats fbx,glb]
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
 
-Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; a convex
-hull collider mesh named <asset>_collider under 255 vertices; pushes every action into its own NLA strip so the FBX
+Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
+collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
+primitive), or an exact-shape copy of LOD1, named <asset>_collider_00.._nn or <asset>_collider_mesh, each convex part
+at most 250 triangles; for unrigged assets with convex parts also <asset>_unreal.fbx (LOD0 plus UCX_<asset>_NN);
+pushes every action into its own NLA strip so the FBX
 exporter emits one clip per action (Blender 5: strip.action_slot = action.slots[0]); exports FBX (armature and skin
 kept, Y-up, forward -Z, baked NLA strips, every LOD and the collider, no material: Unity builds its own) and the GLB
 files; writes report.json with triangle counts per LOD, collider vertex count, bone count, clip names, a manifold check
@@ -12,7 +16,8 @@ and the GLB files written.
 
 GLB files (G10, docs/GREAT-ASSETS-PLAN.md 3.11): <asset>.glb holds LOD0 only, with the material (base colour, normal,
 and the ORM pack as both metallicRoughness and occlusion), and no collider, so web viewers, Blender and Godot see one
-model. <asset>_godot.glb adds the collider as <asset>-colonly, which Godot turns into a collision shape on import.
+model. <asset>_godot.glb adds the collision shapes as <part>-convcolonly (convex) or <part>-colonly (the exact shape),
+which Godot turns into collision shapes on import.
 lods/<asset>_LOD<n>.glb holds each lower detail level on its own.
 
 UVs: the rig stage's GLB (SkinToken output) carries no texture coordinates, and its mesh is normalised to a 2 m box.
@@ -38,6 +43,7 @@ src, out_dir, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
 _lods_raw = _common.opt("--lods", "0.5,0.25,0.1")
 lods = [] if _lods_raw.strip().lower() in ("", "none") else [float(x) for x in _lods_raw.split(",") if x.strip()]
 collider_mode = _common.opt("--collider", "hull")
+collider_obj = _common.opt("--collider-obj", "")
 formats = [f.strip() for f in _common.opt("--formats", "fbx,glb").split(",") if f.strip()]
 tex_base = _common.opt("--base-color", "")
 tex_normal = _common.opt("--normal", "")
@@ -149,38 +155,155 @@ for i, ratio in enumerate(lods, start=1):
     report["lods"][f"LOD{i}"] = tri_count(lod)
     lod_objs.append(lod)
 
-# Convex hull collider from the lowest LOD.
-report["collider_verts"] = 0
-if collider_mode == "hull":
-    bpy.ops.object.select_all(action="DESELECT")
-    lod_objs[-1].select_set(True)
-    bpy.context.view_layer.objects.active = lod_objs[-1]
-    bpy.ops.object.duplicate()
-    col = bpy.context.active_object
-    col.name = f"{name}_collider"
-    col.data.name = col.name
-    for m in list(col.modifiers):
-        col.modifiers.remove(m)
-    col.vertex_groups.clear()
+# --- Collision shapes (G16, G35; docs/GREAT-ASSETS-PLAN.md 3.4) ---------------------------------------------------------
+# hull: one convex hull of LOD0; parts: the shapes the backend made (vgac/colliders.py) in --collider-obj;
+# mesh: a copy of LOD1 (LOD0 under 4,000 triangles) for a static, non-convex mesh collider; none. Every convex part is kept at or under
+# MAX_HULL_TRIS triangles (Unity's convex cap is 255): a bigger hull is rebuilt from its support points along fewer and
+# fewer directions. Names: <asset>_collider_00.._nn (convex) and <asset>_collider_mesh.
+MAX_HULL_TRIS = 250
+collider_objs = []  # (object, kind)
+
+
+def _fib_dirs(n):
+    out = []
+    for i in range(n):
+        z = 1 - 2 * (i + 0.5) / n
+        r = math.sqrt(max(0.0, 1 - z * z))
+        t = math.pi * (1 + 5 ** 0.5) * (i + 0.5)
+        out.append((math.cos(t) * r, math.sin(t) * r, z))
+    return out
+
+
+def _hull_bm(points):
     bm = bmesh.new()
-    bm.from_mesh(col.data)
-    res = bmesh.ops.convex_hull(bm, input=bm.verts)
+    for p in points:
+        bm.verts.new(p)
+    res = bmesh.ops.convex_hull(bm, input=bm.verts[:])
     kill = {g for g in list(res["geom_interior"]) + list(res["geom_unused"]) if isinstance(g, bmesh.types.BMVert) and g.is_valid}
-    bmesh.ops.delete(bm, geom=list(kill), context="VERTS")
-    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(5), verts=bm.verts[:], edges=bm.edges[:])
-    bm.to_mesh(col.data)
+    if kill:
+        bmesh.ops.delete(bm, geom=list(kill), context="VERTS")
+    loose = [v for v in bm.verts if not v.link_faces]
+    if loose:
+        bmesh.ops.delete(bm, geom=loose, context="VERTS")
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    return bm
+
+
+def limited_hull(points, max_tris=MAX_HULL_TRIS):
+    """bmesh of the convex hull of `points` with at most `max_tris` triangles."""
+    bm = _hull_bm(points)
+    if len(bm.faces) <= max_tris:
+        return bm
+    pts = [v.co.copy() for v in bm.verts]
     bm.free()
-    col.data.materials.clear()
-    col.display_type = "WIRE"
-    # Keep the collider under 255 vertices for Unity convex MeshCollider.
-    if len(col.data.vertices) > 255:
-        mod = col.modifiers.new("dec", "DECIMATE")
-        mod.ratio = 250 / len(col.data.vertices)
-        bpy.ops.object.select_all(action="DESELECT")
-        col.select_set(True)
-        bpy.context.view_layer.objects.active = col
-        bpy.ops.object.modifier_apply(modifier="dec")
-    report["collider_verts"] = len(col.data.vertices)
+    k = (max_tris + 4) // 2
+    while True:
+        sel = {max(range(len(pts)), key=lambda i, d=d: pts[i].x * d[0] + pts[i].y * d[1] + pts[i].z * d[2]) for d in _fib_dirs(k)}
+        bm = _hull_bm([pts[i] for i in sorted(sel)])
+        if len(bm.faces) <= max_tris or k <= 8:
+            return bm
+        bm.free()
+        k -= 6
+
+
+def _new_collider(obj_name, bm, kind):
+    me = bpy.data.meshes.new(obj_name)
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(obj_name, me)
+    bpy.context.scene.collection.objects.link(o)
+    o.display_type = "WIRE"
+    collider_objs.append((o, kind))
+    return o
+
+
+def _world_points(o):
+    return [o.matrix_world @ v.co for v in o.data.vertices]
+
+
+def read_collider_obj(path):
+    """[(name, kind, verts, faces)] and the source bounding box (lo, hi) from colliders.write_obj."""
+    parts, bbox, cur = [], None, None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            t = line.split()
+            if not t:
+                continue
+            if t[0] == "#" and len(t) >= 8 and t[1] == "vgac_bbox":
+                vals = [float(x) for x in t[2:8]]
+                bbox = (vals[:3], vals[3:])
+            elif t[0] == "#" and len(t) >= 3 and t[1] == "vgac_kind" and cur is not None:
+                cur[1] = t[2]
+            elif t[0] == "o":
+                cur = [t[1], "hull", [], []]
+                parts.append(cur)
+            elif t[0] == "v" and cur is not None:
+                cur[2].append(tuple(float(x) for x in t[1:4]))
+            elif t[0] == "f" and cur is not None:
+                cur[3].append([int(x.split("/")[0]) for x in t[1:4]])
+    out, base = [], 1
+    for nm, kind, vs, fs in parts:
+        out.append((nm, kind, vs, [[i - base for i in f] for f in fs]))
+        base += len(vs)
+    return out, bbox
+
+
+report["collider_verts"] = 0
+report["collider_mode"] = collider_mode
+if collider_mode == "hull":
+    # The hull of LOD0 (a decimated level can lose its corners), then cut down to the triangle cap.
+    bm = limited_hull(_world_points(mesh))
+    _new_collider(f"{name}_collider_00", bm, "hull")
+elif collider_mode == "mesh":
+    # LOD1 when LOD0 is big, so a static mesh collider stays cheap; small pieces keep their exact LOD0.
+    src_lod = lod_objs[1] if len(lod_objs) > 1 and report["lods"]["LOD0"] > 4000 else lod_objs[0]
+    bm = bmesh.new()
+    bm.from_mesh(src_lod.data)
+    bm.transform(src_lod.matrix_world)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    _new_collider(f"{name}_collider_mesh", bm, "mesh")
+elif collider_mode == "parts" and collider_obj and os.path.isfile(collider_obj):
+    from mathutils import Vector
+    parts, src_box = read_collider_obj(collider_obj)
+    pts0 = _world_points(mesh)
+    t_lo = [min(p[i] for p in pts0) for i in range(3)]
+    t_hi = [max(p[i] for p in pts0) for i in range(3)]
+    scale, shift = [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]
+    if src_box is not None:
+        for i in range(3):
+            span = src_box[1][i] - src_box[0][i]
+            scale[i] = (t_hi[i] - t_lo[i]) / span if span > 1e-9 else 1.0
+            shift[i] = t_lo[i] - src_box[0][i] * scale[i]
+    report["collider_fit_scale"] = [round(s, 5) for s in scale]
+    for nm, kind, vs, fs in parts:
+        pts = [Vector((vs[j][0] * scale[0] + shift[0], vs[j][1] * scale[1] + shift[1], vs[j][2] * scale[2] + shift[2])) for j in range(len(vs))]
+        if kind in ("box", "sphere", "capsule"):
+            bm = bmesh.new()
+            bverts = [bm.verts.new(p) for p in pts]
+            for f in fs:
+                try:
+                    bm.faces.new([bverts[i] for i in f])
+                except ValueError:
+                    pass
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+            if len(bm.faces) > MAX_HULL_TRIS:
+                bm.free()
+                bm = limited_hull(pts)
+        else:
+            bm = limited_hull(pts)
+        _new_collider(nm, bm, kind)
+
+parts_report = []
+for o, kind in collider_objs:
+    o.data.materials.clear()
+    parts_report.append({"name": o.name, "kind": kind, "triangles": tri_count(o), "vertices": len(o.data.vertices)})
+report["collider_parts"] = parts_report
+report["collider_count"] = len(parts_report)
+report["collider_verts"] = sum(p["vertices"] for p in parts_report)
+convex = [p for p in parts_report if p["kind"] != "mesh"]
+report["collider_triangles_max"] = max((p["triangles"] for p in convex), default=0)
+report["collider_triangles_total"] = sum(p["triangles"] for p in parts_report)
 
 # Manifold check on LOD0.
 bm = bmesh.new()
@@ -219,6 +342,29 @@ if "fbx" in formats:
                              add_leaf_bones=False, bake_anim=True, bake_anim_use_nla_strips=True, bake_anim_use_all_actions=False,
                              bake_anim_simplify_factor=0.0, path_mode="COPY", embed_textures=True)
     report["fbx"] = fbx
+    # Unreal (UCX_ convention): a separate FBX with LOD0 named after the asset and each convex part as
+    # UCX_<asset>_NN, which Unreal's FBX import turns into the static mesh's simple collision. Unrigged assets only;
+    # not verified in Unreal (no Unreal in the stack).
+    ucx = [o for o, kind in collider_objs if kind != "mesh"]
+    if arm is None and ucx:
+        lod0_name = mesh.name
+        old = [(o, o.name) for o in ucx]
+        mesh.name = name
+        for i, o in enumerate(ucx):
+            o.name = f"UCX_{name}_{i:02d}"
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in [mesh] + ucx:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = mesh
+        unreal = os.path.join(out_dir, name + "_unreal.fbx")
+        bpy.ops.export_scene.fbx(filepath=unreal, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
+                                 axis_forward="-Z", axis_up="Y", object_types={"MESH"}, use_mesh_modifiers=True,
+                                 mesh_smooth_type="FACE", use_tspace=True, bake_anim=False, path_mode="COPY")
+        report["fbx_unreal"] = unreal
+        report["unreal_collision"] = [o.name for o in ucx]
+        for o, nm in old:
+            o.name = nm
+        mesh.name = lod0_name
 
 
 def _image(path, colorspace):
@@ -287,14 +433,17 @@ if "glb" in formats:
     glb = os.path.join(out_dir, name + ".glb")
     export_glb(glb, [mesh] + rig)
     report["glb"] = glb
-    col_obj = bpy.data.objects.get(f"{name}_collider")
-    if col_obj is not None:
-        # Godot: a mesh whose name ends in -colonly becomes a collision shape on import and is not drawn.
-        col_obj.name = f"{name}-colonly"
+    if collider_objs:
+        # Godot: a mesh whose name ends in -convcolonly becomes a convex collision shape on import and is not drawn;
+        # -colonly makes a concave (trimesh) one, for the exact-shape collider of static scenery.
+        names = [(o, o.name) for o, _ in collider_objs]
+        for o, kind in collider_objs:
+            o.name = o.name + ("-colonly" if kind == "mesh" else "-convcolonly")
         godot = os.path.join(out_dir, name + "_godot.glb")
-        export_glb(godot, [mesh, col_obj] + rig)
+        export_glb(godot, [mesh] + [o for o, _ in collider_objs] + rig)
         report["glb_godot"] = godot
-        col_obj.name = f"{name}_collider"
+        for o, nm in names:
+            o.name = nm
     mesh.name = lod0_name
     report["glb_lods"] = {}
     if len(lod_objs) > 1:
