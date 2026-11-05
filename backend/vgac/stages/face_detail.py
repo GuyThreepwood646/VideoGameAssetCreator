@@ -68,6 +68,46 @@ REDRAW_PROMPT = ("Redraw this picture at high quality with crisp, sharp detail: 
 
 METHOD = "painted picture, sharpened by Qwen-Image-Edit, fitted to the 3D face and painted on through the texture layout"
 METHOD_UNSHARPENED = "painted picture fitted to the 3D face and painted on through the texture layout (not sharpened)"
+METHOD_CLOSEUP = ("painted picture's colour and light with the fine detail of a close-up drawn by Qwen-Image-Edit and checked "
+                  "against the painting, fitted to the 3D face and painted on through the texture layout")
+
+# --- A close-up source picture when the painted face is small ---------------------------------------------------
+# The painted head in a full-body concept is small (the knight's face is about 68 of the concept's pixels across),
+# while the texture gives the face 256 or more texels: the crop is enlarged about seven times and carries no detail at
+# that size. When the painting has fewer pixels across the face than the texture will hold, the image edit model draws
+# the same head as a close-up at 1024 (the crop's framing: Qwen keeps the framing of its input, which here is what is
+# wanted). The face is then painted from the painting's colour and light at the painting's own resolution plus all the
+# close-up's finer detail (closeup_source); the separate sharpening redraw is not run. Only when it is still the same face: compared with the
+# painting at the painting's own resolution (likeness), the eyes', skin's and hair's colours, and where the eyes and
+# mouth fall, before and after fitting to the model. Otherwise today's path (the crop, sharpened) is used and the reason
+# recorded.
+CLOSEUP_PROMPT = ("A head-and-shoulders close-up portrait of this same character, drawn again at high resolution with crisp, "
+                  "fine detail: the same face and features, the same eye colour, the same hair and hairstyle, the same "
+                  "expression, the same clothing at the shoulders, lit from the same direction. Facing straight toward the "
+                  "viewer, the head centred and the same size and position in the picture, plain flat grey background. The "
+                  "same painting style and the same colours.")
+CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
+LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.980, different faces 0.19 to 0.87
+CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
+CLOSEUP_HAIR_MAX = 10.0  # hair colour, the same; good close-ups 1.6 to 3.5, a different hair colour 40 and more
+CLOSEUP_MOVE_MAX = 0.04  # how far the eyes and mouth may sit from the painting's, as a share of the face's width
+CLOSEUP_REASONS = {
+    "likeness": "it did not look enough like the painted face",
+    "eye_colour": "its eyes were a different colour from the painting's",
+    "skin_colour": "its skin was a different colour from the painting's",
+    "hair_colour": "its hair was a different colour from the painting's",
+    "moved": "its eyes or mouth were not where the painting has them",
+    "off_model": "its eyes and mouth did not land on the model's",
+    "no_features": "its eyes and mouth could not be found",
+    "error": "drawing it failed",
+}
+
+# --- Face texel density (face sharpness): how many texels the face gets -----------------------------------------
+DENSITY_CHOICES = ("auto", "standard", "high")
+HIGH_TEXELS = 512  # "High": about this many texels across the face, or what the source can fill, whichever is smaller
+HIGH_GAIN_MOST = 4.0  # how many times its texels across the face may grow in one relayout for "High"
+MAX_LOSS = 0.12  # what the rest of the body may lose, at most, in texels across (faceuv.py --max-loss)
+SHIP_4096 = 4096
 
 
 def skip_reason(category_id: str, rec: dict[str, Any] | None, params: dict[str, Any], has_picture: bool) -> str | None:
@@ -95,6 +135,76 @@ def strength_of(params: dict[str, Any]) -> float:
 
 def target_texels(tex: int) -> int:
     return max(64, int(round(TARGET_FRACTION * tex)))
+
+
+def density_choice(params: dict[str, Any]) -> str:
+    c = params.get("face_density")
+    return c if c in DENSITY_CHOICES else "auto"
+
+
+def closeup_on(params: dict[str, Any]) -> bool:
+    v = params.get("face_closeup")
+    return CLOSEUP_DEFAULT if v is None else bool(v)
+
+
+def closeup_wanted(params: dict[str, Any], painting_face_px: float, texels_wanted: int) -> bool:
+    """A close-up is drawn when the option is on and the painting has fewer of its own pixels across the face than
+    the texture will give the face in texels (the knight: 68 against 256, or 459 for High). An uploaded portrait whose
+    face is large already is its own source."""
+    return closeup_on(params) and float(painting_face_px) < float(texels_wanted)
+
+
+def source_face_px(face_width_px: float, painted_head_px: float, size: int = 1024) -> float:
+    """How many of the painting's own pixels lie across the face: the face's width on the 1024 framing times the
+    painted head box's size in the concept over 1024."""
+    return round(float(face_width_px) * float(painted_head_px) / float(size), 1)
+
+
+def plan_density(choice: str, budget_tex: int | None, atlas_tex: int, source_px: float | None) -> dict[str, Any]:
+    """What the face gets: {choice, level (standard | high), target (texels across the face, at the shipped base
+    colour's size), ship (the base colour's size), why}.
+
+    Standard is today's: an eighth of the atlas's side. High is HIGH_TEXELS or as many as the source picture has pixels
+    across the face, whichever is smaller (never under Standard). Where the platform's budget is 4096 and the atlas
+    is smaller, High ships the base colour at 4096 (only the base colour: the other maps hold no face detail, so
+    enlarging them would only cost memory). Automatic is High when the platform's budget is 2048 or more and the source
+    has more pixels across the face than Standard gives texels, else Standard: on a 1024 budget the face's share is
+    already an eighth of the texture and High would take a large part of what the body has."""
+    budget = int(budget_tex or atlas_tex)
+    std = target_texels(atlas_tex)
+    src = float(source_px) if source_px is not None else float("inf")
+    if choice == "high":
+        level = "high"
+        why = "chosen"
+    elif choice == "standard":
+        level, why = "standard", "chosen"
+    elif budget < 2048:
+        level, why = "standard", "small_budget"
+    elif src <= std:
+        level, why = "standard", "small_source"
+    else:
+        level, why = "high", "auto"
+    ship = atlas_tex
+    if level == "high" and budget >= SHIP_4096 and atlas_tex < SHIP_4096:
+        ship = SHIP_4096
+    if level == "standard":
+        target = int(round(std * ship / atlas_tex))
+    else:
+        target = int(max(std * ship / atlas_tex, min(HIGH_TEXELS, src)))
+    return {"choice": choice, "level": level, "target": target, "ship": int(ship), "why": why, "budget": budget,
+            "standard": std}
+
+
+def density_note(plan: dict[str, Any], achieved: int | None, rest_scale: float | None) -> str | None:
+    """The plain sentence when High was asked for and not met: how many texels the face got, and why not more."""
+    if plan.get("level") != "high" or achieved is None:
+        return None
+    if achieved >= 0.92 * float(plan["target"]):
+        return None
+    loss = "" if rest_scale is None else f" (the rest of the body now has {round(100 * float(rest_scale))} percent of its texels across)"
+    return (f"High face detail asked for about {plan['target']} texels across the face; the {plan['budget']} px texture "
+            f"budget allowed {achieved} without the rest of the body losing more than {round(100 * MAX_LOSS)} percent of "
+            f"its sharpness{loss}.")
 
 
 SIDE_WORDS = {"quarter": "the three-quarter view", "left": "the left side", "right": "the right side"}
@@ -128,9 +238,21 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     colour_ok = shift is None or float(shift) <= EYE_COLOUR_MAX
     ok = sharp >= SHARP_MIN and match >= MATCH_MIN and colour_ok
     reason = None if ok else ("blurry" if sharp < SHARP_MIN else "off_picture" if match < MATCH_MIN else "eye_colour")
+    cu = fd.get("closeup") or {}
+    dens = fd.get("density") or {}
     return [quality.check("face_matches_picture", ok, round(sharp, 3), SHARP_MIN,
                           vars={"reason": reason, "eye_shift": shift, "sides": side_words(fd.get("sides_used") or []),
-                                "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after")})]
+                                "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after"),
+                                "source": source_words(fd), "closeup_not_used": CLOSEUP_REASONS.get(cu.get("reason") or "", "")
+                                if cu.get("wanted") and not cu.get("used") else "",
+                                "density_note": dens.get("note") or "", "level": dens.get("level") or "standard"})]
+
+
+def source_words(fd: dict[str, Any]) -> str:
+    """Which picture the face was painted from, in plain words."""
+    if fd.get("source") == "closeup":
+        return "a close-up of the painted face, drawn larger and checked against the painting"
+    return "the painted picture"
 
 
 # --- CPU parts (run in a worker thread) ---------------------------------------------------------------------
@@ -164,6 +286,76 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
             "painted_head_px": crop["head_px"], "face_triangles": face.triangle_centres(mesh, tris).round(6).tolist(), **dens}
 
 
+def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painted_head_px: float) -> dict[str, Any]:
+    """Is the close-up still the painted face? Measured against the painted crop (the same framing) at the painting's
+    own resolution, and against the model's front render. Returns {ok, reason (a CLOSEUP_REASONS key or None),
+    likeness, eye_colour_shift, skin_shift, hair_shift, feature_move, fit_residual, source_face_px}."""
+    mesh = face.load_mesh(glb)
+    tex = face.read_rgb(base_color)
+    head = face.find_head(mesh["verts"])
+    cam = face.head_camera(head, 0, 1024)
+    view = face.render_view(mesh, tex, cam)
+    info = face.find_face(view, mesh, cam, head)
+    if not info.get("found"):
+        return {"ok": False, "reason": "no_features"}
+    a = face.read_rgb(crop, 1024)
+    b = face.read_rgb(closeup, 1024)
+    w = float(info["width_px"])
+    inner = face.inner_face(info)
+    out: dict[str, Any] = {"likeness": face.likeness(a, b, inner, painted_head_px), "source_face_px": round(w, 1)}
+    seg = face.hair_and_skin(view["image"], a, info, view["mask"])
+    skin = inner & ~seg["pic_hair"]
+    out["skin_shift"] = face.colour_distance(a, b, skin)
+    out["hair_shift"] = face.colour_distance(a, b, seg["pic_hair"]) if seg.get("found") else None
+    la, lb, lm = face.landmarks(a, info), face.landmarks(b, info), face.landmarks(view["image"], info)
+    reason = None
+    if not la or not lb:
+        reason = "no_features"
+    else:
+        pa = la["eyes"] + [la["mouth"]]
+        pb = lb["eyes"] + [lb["mouth"]]
+        out["feature_move"] = round(max(float(np.hypot(p[0] - q[0], p[1] - q[1])) for p, q in zip(pa, pb)) / w, 4)
+        out["eye_colour_shift"] = face.colour_shift(face.eye_colour(a, la["eyes"], w), face.eye_colour(b, la["eyes"], w))
+        fit = face.fit_landmarks(lb, lm, info["nose"]) if lm else None
+        out["fit_residual"] = None if fit is None else round(fit["residual_px"] / w, 4)
+    if reason is None:
+        reason = closeup_verdict(out)
+    return {"ok": reason is None, "reason": reason, **out}
+
+
+def closeup_verdict(m: dict[str, Any]) -> str | None:
+    """Why a close-up is not used (a CLOSEUP_REASONS key), from closeup_guard's measures, or None when it is the same
+    face. Not measurable colours do not count against it; an unmeasurable fit to the model is left to the paint step's
+    whole-face fit and its ALIGN_MIN, as for the painting."""
+    if m.get("feature_move") is None:
+        return "no_features"
+    if float(m.get("likeness") or 0.0) < LIKENESS_MIN:
+        return "likeness"
+    if float(m["feature_move"]) > CLOSEUP_MOVE_MAX:
+        return "moved"
+    if float(m.get("eye_colour_shift") or 0.0) > EYE_COLOUR_MAX:
+        return "eye_colour"
+    if m.get("skin_shift") is not None and float(m["skin_shift"]) > CLOSEUP_SKIN_MAX:
+        return "skin_colour"
+    if m.get("hair_shift") is not None and float(m["hair_shift"]) > CLOSEUP_HAIR_MAX:
+        return "hair_colour"
+    if m.get("fit_residual") is not None and float(m["fit_residual"]) > LANDMARK_RESIDUAL_MAX:
+        return "off_model"
+    return None
+
+
+def closeup_source(crop: Path, closeup: Path, painted_head_px: float, dest: Path) -> Path:
+    """The picture painted from a checked close-up: the painting's colour and light at every scale the painting
+    really has (blurred at one of its own pixels on the 1024 framing), and the close-up's finer detail, colour
+    included, on top. So the eyes keep the painting's grey-green and the cheek keeps its painted shadow, while the
+    lashes, iris, brows and lips come out as sharp as the close-up draws them (judged on the knight: the close-up alone
+    lit her face more evenly and turned her eyes a little hazel)."""
+    a = face.read_rgb(crop, 1024)
+    b = face.read_rgb(closeup, 1024)
+    sigma = 1024.0 / max(float(painted_head_px), 1.0)
+    return face.save_rgb(face.merge_detail(a, b, sigma, rgb=True), dest)
+
+
 def redraw_kept(sharp: Path, crop: Path) -> float:
     """How well the redrawn picture keeps the crop's features in place (whole picture)."""
     a = face.read_rgb(sharp, 1024)
@@ -172,9 +364,15 @@ def redraw_kept(sharp: Path, crop: Path) -> float:
 
 
 def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, before_tex: Path, crop: Path, out_dir: Path,
-                  strength: float, sides: dict[str, Path] | None = None) -> dict[str, Any]:
+                  strength: float, sides: dict[str, Path] | None = None, colour_source: Path | None = None,
+                  require_landmarks: bool = False) -> dict[str, Any]:
     """Steps 3 and 5 on the final layout: fit the picture to the render, paint it back, measure, and draw the before
-    and after sheet. Writes base_color_face.png and face_before_after.png into out_dir."""
+    and after sheet. Writes base_color_face.png and face_before_after.png into out_dir.
+
+    colour_source: the picture whose colours and broad tone are painted (the painted crop by default; the checked
+    close-up when one is used). The eye colour is always measured against the painted crop. require_landmarks: the
+    eye-and-mouth fit must work (a close-up whose features do not land on the model's is not used: reason
+    "closeup_off_model")."""
     mesh = face.load_mesh(glb)
     tex = face.read_rgb(base_color)
     T = tex.shape[0]
@@ -185,9 +383,11 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     if not info.get("found"):
         return {"ok": False, "reason": "no_face"}
     region = info["region"]
-    painted = face.read_rgb(crop, 1024)
-    # The painting is the authority on colour and broad look; the sharpened picture only adds fine detail.
-    src = painted if Path(picture) == Path(crop) else face.merge_detail(painted, face.read_rgb(picture, 1024))
+    crop_img = face.read_rgb(crop, 1024)
+    colour = Path(colour_source) if colour_source is not None else Path(crop)
+    painted = crop_img if colour == Path(crop) else face.read_rgb(colour, 1024)
+    # The colour source is the authority on colour and broad look; a sharpened picture only adds fine detail.
+    src = painted if Path(picture) == colour else face.merge_detail(painted, face.read_rgb(picture, 1024))
     inner = face.inner_face(info)
     # The eye-and-mouth fit is used when it explains the picture: its eyes land within LANDMARK_RESIDUAL_MAX of the face's
     # width of the model's and the broad features agree; it keeps the eye line and the mouth where the model has them.
@@ -200,6 +400,8 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         a["score"] = face.feature_match(face.apply_alignment(src, a), view["image"], inner, 6.0, 24.0)
         if a["residual_px"] > LANDMARK_RESIDUAL_MAX * float(info["width_px"]) or a["score"] < ALIGN_MIN:
             a = None
+    if a is None and require_landmarks:
+        return {"ok": False, "reason": "closeup_off_model"}
     if a is None:
         a = face.align(src, view["image"], inner)
         a["how"] = "whole face"
@@ -213,7 +415,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # Hair stays hair and skin stays skin: never paint onto the model's hair (a flap over an eye, the fringe), and
     # where the picture has hair or background over the model's skin (its fringe and jaw are not where the model's
     # are), fill that spot from the painted skin around it instead.
-    painted_fitted = face.apply_alignment(painted, a)
+    painted_fitted = face.apply_alignment(crop_img, a)  # the eye colour is measured against the painting itself
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
     paint = region & ~face.dilate_mask(seg["old_hair"], 2)
     core = seg["pic_hair"] | (seg["pic_background"] & ~inner)
@@ -448,16 +650,18 @@ def image_instance(sc: StageContext) -> str | None:
     return inst
 
 
-async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: Path) -> Path:
-    """Qwen-Image-Edit redraw of the crop. Stop works: a cancelled job takes its own prompt off the card (removes it
-    from the queue, or interrupts it when it is the one running), never someone else's."""
+async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: Path, prompt: str = REDRAW_PROMPT,
+                 key: str = "face_redraw", message: str = "Sharpening the painted face") -> Path:
+    """Qwen-Image-Edit redraw of the crop (the sharpening redraw, or the close-up with CLOSEUP_PROMPT). Stop works: a
+    cancelled job takes its own prompt off the card (removes it from the queue, or interrupts it when it is the one
+    running), never someone else's."""
     client: ComfyClient = sc.client(instance)
-    name = await client.stage_input(crop, f"vgac_{sc.version.id[:8]}_face_head.png")
-    graph = edit_graph(name, REDRAW_PROMPT, seed, sc.prefix("face_redraw"), 1024, 1024)
+    name = await client.stage_input(crop, f"vgac_{sc.version.id[:8]}_{key}_head.png")
+    graph = edit_graph(name, prompt, seed, sc.prefix(key), 1024, 1024)
     prompt_id = await client.queue_prompt(graph)
 
     def on_poll(elapsed: float) -> None:
-        sc.ctx.progress(None, f"Sharpening the painted face on {instance}: {int(elapsed)} s")
+        sc.ctx.progress(None, f"{message} on {instance}: {int(elapsed)} s")
         sc.ctx.check_cancelled()
 
     try:
@@ -469,6 +673,17 @@ async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: P
     if not imgs:
         raise ComfyError("the redraw produced no picture")
     return await client.download_output(imgs[0], dest)
+
+
+def picked_seed(sc: StageContext, params: dict[str, Any], key: str) -> int:
+    """The version's seed for one of the pass's picture jobs (face_seed, face_closeup_seed): the one given (a Resume
+    carries the stopped run's, jobs.RESUME_SEEDS), else a new one, written on the version at once so a Stop and Resume
+    redraws the same picture."""
+    seed = params.get(key)
+    if seed is None:
+        seed = random_seed()
+        sc.set_params(**{key: seed})
+    return int(seed)
 
 
 async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
@@ -485,8 +700,8 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """The pass on the prepared model `glb` (changed in place) with the current maps. Returns {files: {key: path},
-    metrics: {"face_detail": {...}}, relayout: bool}. Never raises for a reason that should not fail the clean-up
-    step (those are recorded as skipped); Stop still stops it."""
+    metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int}. Never raises for a reason that should not
+    fail the clean-up step (those are recorded as skipped); Stop still stops it."""
     t0 = time.time()
     out_dir = sc.dir / "face"
     cutout = sc.lineage_file("cutout", ("concept",))
@@ -503,50 +718,85 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     if not found.get("found"):
         return _skipped(found.get("reason") or "no_face", t0, {k: v for k, v in found.items() if k not in ("found", "reason")})
     crop = out_dir / "painted_head.png"
-    record: dict[str, Any] = {"ran": False, "face_texels_before": found["face_width_texels"], "texture_size": found["texture_size"],
-                              "painted_head_px": found["painted_head_px"], "strength": strength}
+    atlas = int(found["texture_size"])
+    budget_tex = int((sc.budget or {}).get("texture") or atlas)
+    choice = density_choice(params)
+    crop_px = source_face_px(found["face_width_px"], found["painted_head_px"])
+    record: dict[str, Any] = {"ran": False, "face_texels_before": found["face_width_texels"], "texture_size": atlas,
+                              "painted_head_px": found["painted_head_px"], "painting_face_px": crop_px, "strength": strength}
 
-    # 2. Sharpen the painted head (on the picture card). Without a card it is used as it is.
-    picture, method, redraw_seconds = crop, METHOD_UNSHARPENED, 0.0
     instance = image_instance(sc)
     reachable = False
     if instance is not None:
         reachable = bool((await sc.client(instance).vram_summary()).get("reachable"))
     if not reachable:
         return _skipped("no_card", t0, record)
-    seed = params.get("face_seed")
-    if seed is None:
-        seed = random_seed()
-        sc.set_params(face_seed=seed)
-    sc.progress(0.78, "Sharpening the painted face")
-    t1 = time.time()
-    try:
-        sharp = await redraw(sc, instance, crop, int(seed), out_dir / "painted_head_sharp.png")
-        kept = await asyncio.to_thread(redraw_kept, sharp, crop)
-        record["redraw_kept"] = kept
-        if kept >= REDRAW_KEEP_MIN:
-            picture, method = sharp, METHOD
-        sc.use_model("qwen_edit")
-        sc.use_model("qwen_lightning_lora")
-    except (JobCancelled, asyncio.CancelledError):
-        raise
-    except Exception as e:  # noqa: BLE001  (a failed redraw: the crop still carries the painted face)
-        record["redraw_error"] = str(e)[:300]
-    redraw_seconds = round(time.time() - t1, 1)
 
-    # 4. More texels for the face when it has too few.
-    target = target_texels(found["texture_size"])
-    gain = face.gain_needed(found["face_width_texels"], target)
+    # A. The close-up: when the painting has fewer pixels across the face than the texture will hold.
+    wanted = plan_density(choice, budget_tex, atlas, None)["target"]
+    picture, colour_source, method, source = crop, None, METHOD_UNSHARPENED, "painting"
+    closeup: dict[str, Any] = {"wanted": closeup_wanted(params, crop_px, wanted), "needed_texels": wanted}
+    if closeup["wanted"]:
+        seed_c = picked_seed(sc, params, "face_closeup_seed")
+        sc.progress(0.77, "Drawing a close-up of the painted face")
+        t1 = time.time()
+        try:
+            cu = await redraw(sc, instance, crop, seed_c, out_dir / "painted_head_closeup.png", CLOSEUP_PROMPT,
+                              "face_closeup", "Drawing a close-up of the painted face")
+            guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"])
+            closeup.update({k: v for k, v in guard.items() if k != "ok"})
+            closeup["used"] = bool(guard["ok"])
+            if guard["ok"]:
+                merged = await asyncio.to_thread(closeup_source, crop, cu, found["painted_head_px"], out_dir / "painted_head_closeup_merged.png")
+                picture, colour_source, method, source = merged, merged, METHOD_CLOSEUP, "closeup"
+            sc.use_model("qwen_edit")
+            sc.use_model("qwen_lightning_lora")
+        except (JobCancelled, asyncio.CancelledError):
+            raise
+        except Exception as e:  # noqa: BLE001  (a failed close-up: today's path)
+            closeup.update(used=False, reason="error", error=str(e)[:300])
+        closeup["seconds"] = round(time.time() - t1, 1)
+    elif closeup_on(params):
+        closeup["reason_skipped"] = "the painting is large enough" if crop_px >= wanted else None
+
+    async def sharpen() -> tuple[Path, str, float]:
+        """Today's path: the crop sharpened (colour stays the painting's)."""
+        seed = picked_seed(sc, params, "face_seed")
+        sc.progress(0.78, "Sharpening the painted face")
+        t1 = time.time()
+        pic, meth = crop, METHOD_UNSHARPENED
+        try:
+            sharp = await redraw(sc, instance, crop, seed, out_dir / "painted_head_sharp.png")
+            kept = await asyncio.to_thread(redraw_kept, sharp, crop)
+            record["redraw_kept"] = kept
+            if kept >= REDRAW_KEEP_MIN:
+                pic, meth = sharp, METHOD
+            sc.use_model("qwen_edit")
+            sc.use_model("qwen_lightning_lora")
+        except (JobCancelled, asyncio.CancelledError):
+            raise
+        except Exception as e:  # noqa: BLE001  (a failed redraw: the crop still carries the painted face)
+            record["redraw_error"] = str(e)[:300]
+        return pic, meth, round(time.time() - t1, 1)
+
+    redraw_seconds = 0.0
+    if source == "painting":
+        picture, method, redraw_seconds = await sharpen()
+
+    # B. How many texels the face gets, and the layout to give them.
+    src_px = closeup.get("source_face_px") if source == "closeup" else crop_px
+    plan = plan_density(choice, budget_tex, atlas, src_px)
+    scale = plan["ship"] / atlas  # the face's texels across at the shipped size, per texel at the atlas size
+    gain = face.gain_needed(found["face_width_texels"] * scale, plan["target"], HIGH_GAIN_MOST if plan["level"] == "high" else 3.0)
     work_glb, work_maps, relayout = Path(glb), dict(maps), None
     if gain >= GAIN_MIN:
         sc.progress(0.82, "Giving the face more of the texture")
         (out_dir / "face_points.json").write_text(json.dumps(found["face_triangles"]), encoding="utf-8")
         (out_dir / "face_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
-        tex = found["texture_size"]
         new_glb = out_dir / "face.glb"
         await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
-                                       "--gain", round(gain, 3), "--tex", tex, "--padding", imaging.unwrap_padding(tex),
-                                       "--margin", imaging.dilation_px(tex)], log_name="faceuv.log")
+                                       "--gain", round(gain, 3), "--tex", atlas, "--padding", imaging.unwrap_padding(atlas),
+                                       "--margin", imaging.dilation_px(atlas), "--max-loss", MAX_LOSS], log_name="faceuv.log")
         rep_path = out_dir / "face_report.json"
         relayout = json.loads(rep_path.read_text()) if rep_path.is_file() else None
         if relayout and relayout.get("layout_mode") != "unchanged" and new_glb.is_file():
@@ -554,14 +804,25 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
             work_maps = {k: Path(p) for k, p in (relayout.get("rebake_maps") or {}).items() if Path(p).is_file()}
         else:
             relayout = None
+    if plan["ship"] > atlas:
+        # 4096 base colour where the platform allows it: the atlas's base colour enlarged, then the face painted at 4096
+        up = out_dir / "base_color_atlas_up.png"
+        await asyncio.to_thread(enlarge, work_maps["base_color"], plan["ship"], up)
+        work_maps["base_color"] = up
 
     # 3 and 5. Fit and paint.
     sc.progress(0.88, "Painting the face")
     sides = side_pictures(sc)
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
-                                   crop, out_dir, strength, sides)
+                                   crop, out_dir, strength, sides, colour_source, source == "closeup")
+    if not done.get("ok") and done.get("reason") == "closeup_off_model":
+        closeup.update(used=False, reason="off_model")
+        source, colour_source = "painting", None
+        picture, method, redraw_seconds = await sharpen()
+        done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
+                                       crop, out_dir, strength, sides)
     if not done.get("ok"):
-        return _skipped(done.get("reason") or "error", t0, {**record, "alignment": done.get("alignment")})
+        return _skipped(done.get("reason") or "error", t0, {**record, "closeup": closeup, "alignment": done.get("alignment")})
     files: dict[str, Path] = {k: p for k, p in work_maps.items() if k != "base_color"} if relayout else {}
     # The painted base colour becomes base_color.png in the face folder; the GLB carries it.
     final_base = out_dir / "base_color.png"
@@ -570,13 +831,25 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     shutil.copy2(done["base_color"], final_base)
     files["base_color"] = final_base
     files["face_before_after"] = done["sheet"]
+    if source == "closeup":
+        files["face_closeup"] = out_dir / "painted_head_closeup.png"
     if relayout:
         shutil.copy2(work_glb, glb)
     await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=final_base)
-    record.update(ran=True, method=method, redraw_seconds=redraw_seconds, **done["metrics"],
+    achieved = int(done["metrics"].get("face_texels_after") or 0)
+    rest = (relayout or {}).get("rest_scale")
+    density = {**plan, "achieved": achieved, "rest_scale": rest, "note": density_note(plan, achieved, rest)}
+    record.update(ran=True, method=method, source=source, closeup=closeup, density=density, redraw_seconds=redraw_seconds,
+                  **done["metrics"],
                   layout=None if not relayout else {k: relayout.get(k) for k in ("layout_mode", "gain", "rest_scale", "island_scale", "islands", "rebake_seconds")},
                   seconds=round(time.time() - t0, 1))
-    return {"files": files, "metrics": {"face_detail": record}, "relayout": bool(relayout)}
+    return {"files": files, "metrics": {"face_detail": record}, "relayout": bool(relayout), "base_color_size": int(plan["ship"])}
+
+
+def enlarge(src: Path, size: int, dest: Path) -> Path:
+    """The base colour at size (Lanczos): the atlas's own colours, more texels for the face to be painted into."""
+    Image.open(src).convert("RGB").resize((size, size), Image.LANCZOS).save(dest)
+    return dest
 
 
 def side_pictures(sc: StageContext) -> dict[str, Path]:

@@ -125,6 +125,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
         _param("face_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Face strength",
                description="How much of the painted face goes onto the model: 1 is all of it"),
+        _param("face_density", "select", "auto", options=["auto", "standard", "high"], categories=["humanoid"],
+               label="Face texel density (face sharpness)",
+               description="Automatic picks High where the platform's texture allows it and the picture has the detail, else Standard"),
+        _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
+               description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),

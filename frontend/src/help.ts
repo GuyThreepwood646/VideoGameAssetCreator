@@ -289,6 +289,9 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   baked_light: H('Baked lighting (painted-on shadows)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
   face_detail: H('Match the face to the picture', 'Paint the face from the picture onto the model, so the eyes, brows and mouth are sharp and look like the picture.', 'The 3D builder makes up the face from one picture and blurs it; this puts the painted face back.', 'Front render, painted head sharpened by Qwen-Image-Edit, fitted to the render, projected through the UVs'),
   face_strength: H('Face strength', 'How much of the painted face goes onto the model.', 'Lower it if the painted face looks pasted on; 1 uses all of it.', 'Projection weight multiplier, 0 to 1'),
+  face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
+  face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024, checked by likeness at the painting\'s resolution, eye, skin and hair colour, and feature positions'),
+  textures_full_size: H('Textures at full size', 'Whether Unity imports each texture at the size of its file.', 'Unity shrinks textures over 2048 px unless told otherwise, which softens a 4096 texture.', 'TextureImporter.maxTextureSize against the source size'),
   face_matches_picture: H('Face matches the picture', 'Whether the face was painted from the picture and came out sharp.', 'A blurred face is the first thing people notice on a character.', 'Sharpness of the front render and feature match to the fitted picture'),
   pbr_fix: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pbr_range: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
@@ -617,6 +620,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
     const effect = str(vars.effect) || MAP_EFFECT[missing] || 'flat'
     return `Unity is missing the ${missing} texture, so the surface will look ${effect}.`
   },
+  textures_full_size: (v, l, ok, _ctx, vars) => (ok ? `Unity imports every texture at its full size (the largest is ${String(vars.file_px ?? l)} px).` : `Unity imports the ${String(vars.texture || 'colour')} texture at ${String(vars.import_px ?? v)} px, smaller than the file's ${String(vars.file_px ?? l)} px, so it looks softer in the game.`),
   clips_loop: (v, _l, ok, _ctx, vars) => (ok ? 'Idle and walk loop smoothly.' : `The ${listText(vars.clip) || listText(v) || 'walk'} animation does not loop, so it would stop after one cycle.`),
   controller_ready: (_v, _l, ok) => (ok ? 'An animation controller switches between idle, walk and run by speed.' : 'No animation controller was built, so you would have to set one up in Unity.'),
   silhouette_iou: (v, l, ok) => (ok ? `The model outline matches the drawing (${pct(v)}).` : `The model outline only matches the drawing ${pct(v)}; it needs ${pct(l)}.`),
@@ -803,6 +807,7 @@ const FIX_LABELS: Record<string, string> = {
   manifold: 'Close the holes',
   watertight: 'Close the holes',
   materials_connected: 'Rebuild for Unity',
+  textures_full_size: 'Rebuild for Unity',
   clips_loop: 'Rebuild for Unity',
   controller_ready: 'Rebuild for Unity',
   unity_humanoid_avatar: 'Fit the standard skeleton again',
@@ -867,7 +872,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }
-  if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null }, label }
+  if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null }, label }
   return null
 }
 
@@ -973,6 +978,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
   delight: { auto: 'Automatic (by look)', remove: 'Remove them', keep: 'Keep them (part of the look)' },
+  face_density: { auto: 'Automatic (by platform and picture)', standard: 'Standard', high: 'High' },
   shading: { auto: 'Automatic (by look)', smooth: 'Smooth', flat: 'Flat faces' },
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },

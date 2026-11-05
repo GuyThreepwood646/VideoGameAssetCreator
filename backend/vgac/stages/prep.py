@@ -221,13 +221,17 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
         # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
-        sc.set_params(face_detail=params.get("face_detail") is not False, face_strength=face_detail.strength_of(params))
+        sc.set_params(face_detail=params.get("face_detail") is not False, face_strength=face_detail.strength_of(params),
+                      face_density=face_detail.density_choice(params), face_closeup=face_detail.closeup_on(params))
         fd = await face_detail.run(sc, out, current, rec, params)
         for key, p in fd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**fd["metrics"])
         if fd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex))
+        if int(fd.get("base_color_size") or 0) > tex:
+            # "High" face detail on a 4096 platform: the base colour ships at 4096, the other maps stay at the atlas size
+            sc.set_metrics(base_color_size=int(fd["base_color_size"]), texture_size_shipped=int(fd["base_color_size"]))
     elif not keep_normal:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     await judge(sc)

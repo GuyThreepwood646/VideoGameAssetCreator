@@ -177,6 +177,13 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_strength": {"simple": False, "help": {"meaning": "How much of the painted face goes onto the model.",
                                                 "why": "Lower it if the painted face looks pasted on; 1 uses all of it.",
                                                 "technical": "Projection weight multiplier, 0 to 1"}},
+    "face_density": {"simple": False, "help": {"meaning": "Face texel density (face sharpness): how many texture pixels the face gets. Standard is an eighth of the texture's width; High is about 512 across the face, or as many as the picture has detail for.",
+                                               "why": "More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.",
+                                               "technical": "Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets"},
+                     "options": {"auto": "Automatic (by platform and picture)", "standard": "Standard", "high": "High"}},
+    "face_closeup": {"simple": False, "help": {"meaning": "Close-up source (a larger picture of the face): when the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.",
+                                               "why": "A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.",
+                                               "technical": "Qwen-Image-Edit close-up at 1024, checked by likeness at the painting's resolution, eye, skin and hair colour, and feature positions"}},
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
@@ -445,6 +452,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "export", "params": {}},
         "fix_label": "Rebuild for Unity",
     },
+    "textures_full_size": {
+        "severity": "warn",
+        "ok": "Unity imports every texture at its full size (the largest is {file_px} px).",
+        "fail": "Unity imports the {texture} texture at {import_px} px, smaller than the file's {file_px} px, so it looks softer in the game.",
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Rebuild for Unity",
+    },
     "clips_loop": {
         "severity": "block",
         "ok": "Idle and walk loop smoothly.",
@@ -555,8 +569,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # face carries the fitted picture's features; it does not claim the face is the same person.
     "face_matches_picture": {
         "severity": "warn",
-        "ok": lambda c: ("The face was painted from the picture: its detail went from {before:n} to {value:n} (sharp from {limit:n})."
-                         + (" The cheeks were also painted from {sides}." if _var(c, "sides") else "")),
+        "ok": lambda c: ("The face was painted from " + (_var(c, "source") or "the picture")
+                         + ": its detail went from {before:n} to {value:n} (sharp from {limit:n})."
+                         + (" The cheeks were also painted from {sides}." if _var(c, "sides") else "")
+                         + (" A close-up was drawn but not used: {closeup_not_used}." if _var(c, "closeup_not_used") else "")
+                         + (" {texels:n} texels (texture pixels) across the face." if _var(c, "texels") else "")
+                         + (" {density_note}" if _var(c, "density_note") else "")),
         "fail": lambda c: {
             "no_card": "The face was not painted from the picture: no graphics card that draws pictures was free.",
             "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",
@@ -565,7 +583,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
             "off_picture": "The face was painted, but it follows the picture poorly (match {match:n} of 1).",
             "eye_colour": "The face was painted, but the eyes' colour differs from the picture's (by {eye_shift:n}, fine up to 8).",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
-        "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None}},
+        "fix": lambda c: {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None}},
         "fix_label": "Paint the face again",
     },
     # G15 (plan 3.8): scenery on the grid, checked in prep.

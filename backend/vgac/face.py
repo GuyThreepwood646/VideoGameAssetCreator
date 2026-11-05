@@ -735,15 +735,44 @@ def hair_and_skin(old: np.ndarray, picture: np.ndarray, info: dict[str, Any], ma
             "hair_lab": [round(float(v), 1) for v in hair_o]}
 
 
-def merge_detail(painted: np.ndarray, sharp: np.ndarray, sigma: float = 3.0) -> np.ndarray:
+def merge_detail(painted: np.ndarray, sharp: np.ndarray, sigma: float = 3.0, rgb: bool = False) -> np.ndarray:
     """The painting decides colour and broad tone, the sharpened picture only adds fine detail: the painted crop's
     colours below sigma pixels (at 1024) plus the sharpened picture's luminance above it. So the eyes, skin and lips
     keep the painting's hue everywhere, and the broad look stays the painting's (the redraw cannot make a stylised
     painting look photographed at any scale bigger than sigma)."""
     s = sigma * painted.shape[0] / 1024.0
+    if rgb:  # the sharp picture's own colour detail too (a checked close-up: its iris and lip colour are drawn finer)
+        return np.clip(blur(painted, s) + sharp - blur(sharp, s), 0.0, 1.0)
     lum = luminance(sharp)
     detail = lum - blur(lum, s)
     return np.clip(blur(painted, s) + detail[..., None], 0.0, 1.0)
+
+
+def likeness(original: np.ndarray, candidate: np.ndarray, region: np.ndarray, source_px: float) -> float:
+    """Whether a redrawn picture is still the same face as the original painted crop (both framed alike), judged at
+    the original's own resolution: both are shrunk to the size the painting really has across the crop (source_px,
+    its head box in the concept's pixels), and the correlation of their band-passed lightness (about one to four
+    source pixels: eyes, brows, nostrils, lips, the shadow shapes) inside region is returned (1 the same). Detail the
+    redraw adds beyond the painting's resolution does not count, and a different face with the same hair and framing
+    scores low (validated on the knight: four good redraws 0.976 to 0.980; four different faces 0.19 to 0.87, the
+    highest two keeping her hair, framing and armour and changing only the face)."""
+    n = int(max(32, min(original.shape[0], round(float(source_px)))))
+    a = resize(original, n)
+    b = resize(candidate, n)
+    r = np.asarray(Image.fromarray(region.astype(np.uint8) * 255).resize((n, n), Image.BOX)) > 127
+    # feature_match takes its band in pixels at 1024 and scales it to the picture's size; here the band is 0.9 to 3.6
+    # pixels of the shrunk picture, that is of the painting's own pixels
+    return feature_match(a, b, r, 0.9 * 1024 / n, 3.6 * 1024 / n)
+
+
+def colour_distance(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float | None:
+    """The middle colour of two pictures inside mask, compared (Lab, lightness counted half). None with too few
+    pixels."""
+    if mask.sum() < 50:
+        return None
+    la = np.median(to_lab(np.clip(a, 0, 1))[mask], axis=0)
+    lb = np.median(to_lab(np.clip(b, 0, 1))[mask], axis=0)
+    return round(float(np.linalg.norm((la - lb) * np.array([0.5, 1.0, 1.0]))), 2)
 
 
 def eye_boxes(shape: tuple[int, int], eyes: list[tuple[float, float]], width_px: float, grow: float = 1.6) -> np.ndarray:

@@ -45,6 +45,7 @@ SAMPLES = {
     "hitbox_fit": ((True, True), (False, True)),
     "legs_moved": ((8, 8), (4, 8)),
     "materials_connected": ((True, True), (False, True)),
+    "textures_full_size": ((4096, 4096), (2048, 4096)),
     "clips_loop": ((True, True), ("walk", True)),
     "library_clips": ((15, ">0"), (0, ">0")),
     "added_moves": ((5, 5), (3, 5)),

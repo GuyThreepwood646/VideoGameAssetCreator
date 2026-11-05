@@ -26,6 +26,9 @@ export function MeshView({ version, category }: { version: Version; category?: s
   const tiling = version.stage === 'prep' ? libraryUrl(version.files.tiling) : null
   // The face detail pass's before and after picture (clean-up step, characters with a face).
   const faceSheet = version.stage === 'prep' ? libraryUrl(version.files.face_before_after) : null
+  // The close-up of the painted face the pass drew and checked, when it was used; and the face's texels across.
+  const faceCloseup = version.stage === 'prep' ? libraryUrl(version.files.face_closeup) : null
+  const faceMetrics = (version.metrics?.face_detail ?? null) as { face_texels_after?: number; density?: { level?: string; note?: string | null } } | null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -97,6 +100,19 @@ export function MeshView({ version, category }: { version: Version; category?: s
               <img src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
             </a>
             <div className="small muted">The picture, the 3D face before, and after it was painted from the picture.</div>
+            {faceMetrics?.face_texels_after ? (
+              <div className="small muted">
+                {faceMetrics.face_texels_after} texels (texture pixels) across the face ({faceMetrics.density?.level === 'high' ? 'High' : 'Standard'} face sharpness).
+                {faceMetrics.density?.note ? ' ' + faceMetrics.density.note : ''}
+              </div>
+            ) : null}
+            {faceCloseup && (
+              <div className="small">
+                <a href={faceCloseup} target="_blank" rel="noreferrer">
+                  The close-up of the face it was painted from
+                </a>
+              </div>
+            )}
           </div>
         )}
         {iou !== null && typeof iou === 'object' && (
