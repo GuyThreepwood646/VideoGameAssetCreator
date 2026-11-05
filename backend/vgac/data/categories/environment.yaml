@@ -4,11 +4,16 @@ rig_engine: none
 symmetric: false
 size_m: 3.0
 # Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
-# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+# largest of all three. For scenery this is only the starting size (the category size, or a size written in the
+# description); the grid then rounds each side (G15), so environment has no size knob of its own.
 size_axis: longest
 size_word: across
-size_label: "How big is it?"
-size_hint: "In metres, along its longest side. A wall section is about 3 m wide; a floor tile about 2 m. Pieces are not rounded to a grid yet."
+size_label: "Size on the grid"
+size_hint: "Rounded to whole grid squares; pick a footprint and a height below."
+# G15 (docs/GREAT-ASSETS-PLAN.md 3.8): the grid step in metres (the prep knob grid_m overrides it per asset) and the
+# pivot on the minimum corner (glTF and Unity: lowest X, lowest Z, on the ground).
+grid_m: 1
+pivot: corner
 parts_default: []
 topology: triangle
 input_view_default: quarter

@@ -36,9 +36,9 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
     },
     "prep": {
         "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 20,
-        "help": {"meaning": "Turns the model to face forward, sets its real-world size, puts the pivot at the base, removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
+        "help": {"meaning": "Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
                  "why": "Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.",
-                 "technical": "Yaw to face +Z, uniform scale on the category size axis, pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
+                 "technical": "Yaw to face +Z, uniform scale on the category size axis (grid snap and corner pivot for environment), pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
     },
     "rig": {
         "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 90,
@@ -82,6 +82,20 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "symmetric": {"simple": True, "help": {"meaning": "Mirror one half of the model onto the other.", "why": "Fixes mismatched arms or legs, but the two halves then share one painted side, so it is off unless you turn it on.", "technical": "Symmetrize across X, then re-bake the maps onto the mirrored mesh"}},
     "pivot": {"simple": False, "help": {"meaning": "Where the model's origin sits.", "why": "Feet for characters and props, centre for things that float or spin.", "technical": "Origin placement"},
               "options": {"base": "At the bottom (stands on the ground)", "center": "In the middle (floats or spins)"}},
+    # G15 (plan 3.8): scenery on the grid.
+    "grid_footprint": {"simple": True, "help": {"meaning": "How many grid squares the piece covers on the ground, wide by deep.",
+                                                "why": "Pieces made to whole squares fit together with no gaps or overlaps.",
+                                                "technical": "Footprint in grid cells; automatic rounds width and depth to the nearest whole step (at most 15 percent per side)"},
+                       "options": {"auto": "Automatic (nearest fit)", "1x1": "1 x 1 squares", "2x1": "2 x 1 squares", "2x2": "2 x 2 squares",
+                                   "4x1": "4 x 1 squares", "4x4": "4 x 4 squares"}},
+    "grid_height": {"simple": True, "help": {"meaning": "How tall the piece is, rounded to the grid.",
+                                             "why": "Walls of the same height line up at the top, and floors sit flush.",
+                                             "technical": "Height snapped to half grid steps, or set to the chosen value"},
+                    "options": {"auto": "Automatic", "0.5": "Floor (0.5 m)", "1": "Low (1 m)", "3": "Wall (3 m)", "4": "Tall (4 m)"}},
+    "grid_m": {"simple": False, "help": {"meaning": "An invisible floor of squares that scenery pieces line up on.",
+                                         "why": "Pieces made to the grid fit together with no gaps or overlaps.",
+                                         "technical": "Modular grid, grid_m; dimensions rounded to grid steps"},
+               "options": {"0.5": "0.5 m", "1": "1 m (standard)", "2": "2 m", "4": "4 m"}},
     "smooth_angle": {"simple": False, "help": {"meaning": "Edges sharper than this angle stay hard.", "why": "Lower keeps more crisp edges; higher looks softer.", "technical": "Auto-smooth crease angle (degrees)"}},
     "template": {"simple": True, "help": {"meaning": "Which kind of skeleton to build.", "why": "Auto picks from the category: human-style bones map to standard animations, others get a generic skeleton.", "technical": "Skeleton naming template (Mixamo or model names)"},
                  "options": {"auto": "Automatic (from the category)", "mixamo": "Standard human skeleton", "generic": "Fitted to the shape", "none": "No skeleton"}},
@@ -448,6 +462,20 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _atlas_fix,
         "fix_label": "Repaint the surface",
     },
+    # G15 (plan 3.8): scenery on the grid, checked in prep.
+    "grid_fit": {
+        "severity": "warn",
+        "ok": lambda c: ("The piece is {w:m} x {d:m} x {h:m} m, smaller than one {grid:m} m square, so it sits inside one square."
+                         if _var(c, "small") else "The piece is {w:m} x {d:m} x {h:m} m and lines up with the {grid:m} m grid."),
+        "fail": "The piece is {side:m} m {side_word}, between grid steps, so it leaves a gap next to other pieces.",
+        "fix": lambda c: {"stage": "prep", "params": _var(c, "fix_params")} if _var(c, "fix_params") else None,
+        "fix_label": "Snap to the grid",
+    },
+    "tiles_cleanly": {
+        "severity": "warn",
+        "ok": "Copies placed side by side meet without gaps.",
+        "fail": "Copies placed side by side leave a gap or overlap of {value} cm.",
+    },
     # Phase 5 (G07, G08).
     "baked_light": {
         "severity": "warn",
@@ -625,6 +653,19 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
             out["fix"] = {**fix, "label": label}
             out["fix_label"] = label
     return out
+
+
+def grid_finish_line(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """The finish card's grid line for scenery (plan 2.4, 3.8 B), for finish_lines to place in the category slot:
+    {id, text, state, term}, or None when the prep metrics have no grid."""
+    m = metrics or {}
+    if m.get("grid_m") is None:
+        return None
+    grid = format_check_text("{g:m}", {"g": m["grid_m"]})
+    if m.get("grid_fit", True):
+        return {"id": "grid", "text": f"Snaps to a {grid} m grid, pivot on the corner, ready for baked lighting.", "state": "ok", "term": "grid"}
+    return {"id": "grid", "text": f"Pivot on the corner and ready for baked lighting, but it does not fit the {grid} m grid yet.",
+            "state": "warn", "term": "grid"}
 
 
 # The tileable material category makes images only: these replace the stage estimates for it.

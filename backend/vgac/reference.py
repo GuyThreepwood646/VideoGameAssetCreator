@@ -28,14 +28,19 @@ STAGE_LABELS = {
 }
 TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "top")
 
-# Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). The plan leaves
-# environment out of the size knob because G15's grid will size scenery; until G15 lands, environment keeps the knob
-# (sized on its longest side) so a floor tile or wall can still be set by hand. Remove it here when G15 lands.
-# Material has no mesh to size or turn.
-SIZE_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "vehicle", "prop_rigid", "prop_articulated",
-                   "environment", "foliage"]
-FACING_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "vehicle", "prop_rigid", "prop_articulated",
-                     "environment", "foliage"]
+# Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). Material has no mesh
+# to size, turn or clean. Environment pieces are sized by the grid (G15, plan 3.8): they get the grid knobs instead
+# of the size knob, and their pivot is always the minimum corner, so the pivot knob leaves them out too.
+SURFACE_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "vehicle", "prop_rigid", "prop_articulated",
+                      "environment", "foliage"]
+SIZE_CATEGORIES = [c for c in SURFACE_CATEGORIES if c != "environment"]
+FACING_CATEGORIES = list(SURFACE_CATEGORIES)
+GRID_CATEGORIES = ["environment"]
+PIVOT_CATEGORIES = SIZE_CATEGORIES + ["material"]
+# Grid choices (G15, plan 3.8 B). Whole numbers stay ints so the option labels' keys read "1", not "1.0".
+GRID_M_OPTIONS: list[Any] = [0.5, 1, 2, 4]
+GRID_FOOTPRINT_OPTIONS: list[Any] = ["auto", "1x1", "2x1", "2x2", "4x1", "4x4"]
+GRID_HEIGHT_OPTIONS: list[Any] = ["auto", 0.5, 1, 3, 4]
 # The prep turn choices, in degrees counter-clockwise seen from above ("auto" lets prep decide from the mesh audit).
 FACE_YAW_OPTIONS: list[Any] = ["auto", 0, 90, 180, 270]
 # Painted-on shadows (G07): auto follows the style.
@@ -88,15 +93,22 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="In metres along the category's size axis; the category size, or a size in the description, when empty"),
         _param("face_yaw", "select", "auto", options=FACE_YAW_OPTIONS, categories=FACING_CATEGORIES,
                description="Pick the picture where the front faces you. The game treats that side as forward."),
-        _param("symmetric", "boolean", False, categories=SIZE_CATEGORIES,
+        # G15: scenery is rounded to the grid; footprint and height are in the simple layer, the grid size in Advanced.
+        _param("grid_footprint", "select", "auto", label="Size on the grid", options=GRID_FOOTPRINT_OPTIONS, categories=GRID_CATEGORIES,
+               description="Automatic rounds each side to the nearest whole square; a choice sets the size in squares."),
+        _param("grid_height", "select", "auto", label="How tall is it?", options=GRID_HEIGHT_OPTIONS, categories=GRID_CATEGORIES,
+               description="Automatic rounds the height to the nearest half square."),
+        _param("grid_m", "select", 1, label="Grid size", options=GRID_M_OPTIONS, categories=GRID_CATEGORIES,
+               description="The side of one grid square in metres; use the same grid for every piece in a set."),
+        _param("symmetric", "boolean", False, categories=SURFACE_CATEGORIES,
                description="Off unless turned on; mirroring makes prep paint the textures again (G05)"),
-        _param("pivot", "select", "base", options=["base", "center"]),
+        _param("pivot", "select", "base", options=["base", "center"], categories=PIVOT_CATEGORIES),
         _param("smooth_angle", "number", 60.0, min=0.0, max=180.0),
         # G07, G08: the style decides when empty (data/styles.yaml delight_default and pbr_fix_default).
-        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SIZE_CATEGORIES, label="Painted-on shadows"),
-        _param("pbr_fix", "boolean", None, categories=SIZE_CATEGORIES, label="Keep colours in a realistic range",
+        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Painted-on shadows"),
+        _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="Keep colours in a realistic range",
                description="On for realistic styles, off for others, when empty"),
-        _param("rebake", "boolean", False, categories=SIZE_CATEGORIES, label="Paint the surface again",
+        _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Paint the surface again",
                description="Prep repaints by itself when mirroring or shrinking changes the shape"),
     ],
     "rig": [
