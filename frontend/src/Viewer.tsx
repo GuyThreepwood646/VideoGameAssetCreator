@@ -49,6 +49,24 @@ type SceneHandles = {
 
 const normalMaterial = new THREE.MeshNormalMaterial()
 
+// Reduce Motion (plan 2.7): the system setting "reduce motion" (prefers-reduced-motion: reduce), followed live.
+const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.(REDUCE_QUERY).matches
+}
+function useReducedMotion(): boolean {
+  const [reduce, setReduce] = useState(prefersReducedMotion)
+  useEffect(() => {
+    const mq = window.matchMedia?.(REDUCE_QUERY)
+    if (!mq) return
+    const on = () => setReduce(mq.matches)
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return reduce
+}
+
 function setShading(root: THREE.Object3D, shading: Shading, originals: Map<THREE.Mesh, THREE.Material | THREE.Material[]>) {
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh
@@ -266,7 +284,11 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const overlayRef = useRef<THREE.Group | null>(null)
   const clipsRef = useRef<THREE.AnimationClip[]>([])
   const actionRef = useRef<THREE.AnimationAction | null>(null)
-  const turntableRef = useRef(turntableDefault)
+  // With Reduce Motion nothing moves until the person asks: no turntable, clips paused on their first frame.
+  const reduceMotion = useReducedMotion()
+  const reduceRef = useRef(reduceMotion)
+  reduceRef.current = reduceMotion
+  const turntableRef = useRef(turntableDefault && !reduceMotion)
   const restRef = useRef<RestData | null>(null)
   // The SkeletonHelper lives in this group (a child of the scene, not of the model frame,
   // because the helper already draws in world space) with its alignment correction.
@@ -276,7 +298,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const bonesRef = useRef<{ bones: BoneSegment[] | null | undefined; space: BonesSpace; show: boolean }>({ bones, space: bonesSpace, show: showBonesDefault })
 
   const [shading, setShadingState] = useState<Shading>('textured')
-  const [turntable, setTurntable] = useState(turntableDefault)
+  const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
   const [grid, setGrid] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
   const [showBones, setShowBones] = useState(showBonesDefault)
@@ -437,9 +459,13 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           const first = (wanted && clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted))) || clipsRef.current[0]
           const action = hh.mixer.clipAction(first)
           action.play()
+          // Reduce Motion: load paused on frame 0; the Play button starts it.
+          const still = reduceRef.current
+          action.paused = still
+          if (still) hh.mixer.update(0)
           actionRef.current = action
           setClip(first.name || 'clip')
-          setPlaying(true)
+          setPlaying(!still)
         } else {
           setClip('')
         }
@@ -509,6 +535,16 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     turntableRef.current = turntable
   }, [turntable])
 
+  // Turning Reduce Motion on while the viewer is open stops the turntable and pauses the clip.
+  useEffect(() => {
+    if (!reduceMotion) return
+    setTurntable(false)
+    if (actionRef.current && !actionRef.current.paused) {
+      actionRef.current.paused = true
+      setPlaying(false)
+    }
+  }, [reduceMotion])
+
   const changeShading = (s: Shading) => {
     setShadingState(s)
     if (modelRef.current) setShading(modelRef.current, s, originalsRef.current)
@@ -551,7 +587,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             </button>
           ))}
         </div>
-        <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)}>
+        <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)} title={reduceMotion && !turntable ? 'Off because your system asks for less motion; press to spin the model' : undefined}>
           Turntable
         </button>
         <button type="button" aria-pressed={grid} onClick={() => setGrid((g) => !g)}>
@@ -576,7 +612,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
                 </option>
               ))}
             </select>
-            <button type="button" onClick={togglePlay}>
+            <button type="button" onClick={togglePlay} aria-pressed={playing} className={!playing && reduceMotion ? 'viewer-play' : undefined} title={!playing && reduceMotion ? 'Paused because your system asks for less motion; press to play' : undefined}>
               {playing ? 'Pause' : 'Play'}
             </button>
           </>

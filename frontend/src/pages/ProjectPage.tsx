@@ -5,7 +5,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { examplePrompts, fmtDuration, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
@@ -186,6 +186,9 @@ function CreateAssetForm({ project }: { project: Project }) {
   const cat = ref?.categories.find((c) => c.id === category)
   const budget = cat?.budgets?.[platform] ?? suggestion?.budgets
   const examples = examplePrompts(category)
+  // Light G13: a size written in the description becomes the prep default (the backend reads the same words).
+  const described = category && category !== 'material' ? sizeFromDescription(prompt) : null
+  const describedWord = described ? (described.word ?? axisWord(sizeAxisOf(cat ?? category), category)) : ''
   const chosenModel = model || suggestion?.model || ''
   const overridden = !!model && !!suggestion && model !== suggestion.model
   // The six painters, plus the suggested one if the backend names a model this list does not know.
@@ -234,6 +237,11 @@ function CreateAssetForm({ project }: { project: Project }) {
       <Field label="Describe it" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
         <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
       </Field>
+      {described && (
+        <div className="muted small described-size">
+          Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
+        </div>
+      )}
       <div className="examples">
         <span className="muted small">Examples:</span>
         {examples.map((ex) => (

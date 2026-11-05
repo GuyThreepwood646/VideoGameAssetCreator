@@ -19,17 +19,77 @@ Check = dict[str, Any]
 TRIANGLE_BUDGET_TOLERANCE = 0.05
 # Bone influences per vertex when the rig version does not say (the rig stage's group_per_vertex default).
 DEFAULT_MAX_INFLUENCES = 4
+# The size check measures the category's axis with this tolerance (docs/GREAT-ASSETS-PLAN.md 3.2 A3).
+SIZE_TOLERANCE = 0.03
+# Facing (G14): prep turns automatically only when the audit's best turn is this close to a quarter turn; the facing
+# check fails only when a different quarter turn is closer to the best turn than the one applied (more than 45
+# degrees off). The plan's first draft failed at 20 degrees, but the wolf, which faces forward as built, has a best
+# audit offset 30 degrees off, so 20 would warn on a correct model.
+AUTO_TURN_WINDOW_DEG = 20
+FACING_TOLERANCE_DEG = 45
 
 
-def check(id_: str, ok: bool, value: Any, limit: Any) -> Check:
-    """{name, passed, message} as the frontend renders them, plus {id, ok, value, limit} as ARCHITECTURE.md names them."""
+def check(id_: str, ok: bool, value: Any, limit: Any, vars: dict[str, Any] | None = None) -> Check:
+    """{name, passed, message} as the frontend renders them, plus {id, ok, value, limit} as ARCHITECTURE.md names them.
+    vars are extra values for the check sentence (guidance.CHECK_GUIDE), kept on the check."""
     from . import guidance
-    return guidance.describe_check({"name": id_, "passed": bool(ok), "message": f"{value} (limit {limit})", "id": id_, "ok": bool(ok), "value": value, "limit": limit})
+    c = {"name": id_, "passed": bool(ok), "message": f"{value} (limit {limit})", "id": id_, "ok": bool(ok), "value": value, "limit": limit}
+    if vars:
+        c["vars"] = dict(vars)
+    return guidance.describe_check(c)
 
 
-def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, height_m: float | None = None,
-                    height_tolerance: float = 0.1) -> list[Check]:
-    """From a Blender prep or pack report: manifold, degenerate faces, triangle budget, height."""
+def axis_extent(dims_m: list[float] | tuple[float, ...], axis: str = "height") -> float:
+    """The extent the size is measured on, from Blender dimensions [x, y, z] (z up): height is z; horizontal the larger
+    of x and y (the ground plane; X and Z in a Y-up engine); longest the largest of all three."""
+    x, y, z = (float(d) for d in dims_m[:3])
+    if axis == "horizontal":
+        return max(x, y)
+    if axis == "longest":
+        return max(x, y, z)
+    return z
+
+
+def angle_diff(a: float, b: float) -> float:
+    d = abs(float(a) - float(b)) % 360
+    return min(d, 360 - d)
+
+
+def nearest_quarter(turn: float) -> int:
+    return int(round(float(turn) / 90.0) * 90) % 360
+
+
+def best_turn(offset: float, sign: int = 1) -> int:
+    """The turn (degrees counter-clockwise seen from above) that brings the concept's front to face forward, from the
+    mesh audit's best alignment (imaging.best_alignment). offset is the render yaw that matched the front picture;
+    camera yaw 0 looks at the Blender front (-Y, which is +Z in Unity and glTF). A sign of -1 is the mirrored twin of
+    the same fit (front and back silhouettes are mirror images), so it is read as the sign +1 fit at offset + 180."""
+    off = float(offset) + (180.0 if int(sign) < 0 else 0.0)
+    return int(round(-off)) % 360
+
+
+def auto_turn(best: float | None) -> int:
+    """The turn prep applies on Automatic: the nearest quarter turn when the best turn is within the window, else none."""
+    if best is None:
+        return 0
+    q = nearest_quarter(best)
+    return q if angle_diff(best, q) <= AUTO_TURN_WINDOW_DEG else 0
+
+
+def facing_check(best: float, applied: float) -> Check:
+    """facing: passes when the applied turn is the quarter turn nearest the audit's best turn. The fix turns to the
+    nearest quarter turn, and is left out when that is the turn already applied."""
+    q = nearest_quarter(best)
+    ok = angle_diff(best, applied) <= FACING_TOLERANCE_DEG
+    fix_yaw = q if angle_diff(q, applied) > 0 else None
+    return check("facing", ok, int(round(best)) % 360, int(round(applied)) % 360, vars={"fix_yaw": fix_yaw})
+
+
+def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, size_m: float | None = None,
+                    size_tolerance: float = SIZE_TOLERANCE, size_axis: str = "height", axis_word: str | None = None,
+                    *, height_m: float | None = None, height_tolerance: float | None = None) -> list[Check]:
+    """From a Blender prep or pack report: manifold, degenerate faces, triangle budget, and size along the category's
+    axis (size_m; height_m and height_tolerance are the old names and mean the height axis)."""
     out: list[Check] = []
     tris = report.get("triangles")
     if tris is None and isinstance(report.get("lods"), dict):
@@ -46,11 +106,17 @@ def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, 
         out.append(check("watertight", report["boundary_edges"] <= tol, report["boundary_edges"], tol))
     if "degenerate_faces" in report:
         out.append(check("degenerate_faces", report["degenerate_faces"] == 0, report["degenerate_faces"], 0))
+    if size_m is None and height_m:
+        size_m, size_axis = height_m, "height"
+    if height_tolerance is not None:
+        size_tolerance = height_tolerance
     dims = report.get("dims_m")
-    if dims and height_m:
-        h = float(dims[2])
-        ok = abs(h - height_m) <= height_tolerance * height_m
-        out.append(check("height_m", ok, round(h, 4), height_m))
+    if dims and size_m:
+        from .reference import AXIS_WORD_DEFAULT
+        extent = axis_extent(dims, size_axis)
+        ok = abs(extent - size_m) <= size_tolerance * size_m
+        word = axis_word or AXIS_WORD_DEFAULT.get(size_axis, "tall")
+        out.append(check("size_m", ok, round(extent, 4), size_m, vars={"axis_word": word, "size_axis": size_axis}))
     if "uv_layers" in report:
         out.append(check("uv_set", report["uv_layers"] >= 1, report["uv_layers"], 1))
     return out

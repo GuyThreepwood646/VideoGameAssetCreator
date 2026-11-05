@@ -3,6 +3,12 @@ label: Humanoid
 rig_engine: skintoken_mixamo
 symmetric: true
 size_m: 1.8
+# Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
+# largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
+size_axis: height
+size_word: tall
+size_label: "How tall is it?"
+size_hint: "In metres, from the ground to the top of the head. A person is about 1.8 m."
 parts_default: []
 topology: quad
 input_view_default: quarter

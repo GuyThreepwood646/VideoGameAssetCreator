@@ -29,7 +29,7 @@ from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
                  job_to_dict, project_to_dict, version_to_dict, _iso)
 from .events import bus
-from .jobs import HOST, JobQueue, active_queue, free_ram_gb, job_kind
+from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -241,7 +241,8 @@ async def health() -> dict[str, Any]:
     summaries = await asyncio.gather(*(c.cached_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values()))
     instances = {}
     for (name, inst), summary in zip(settings.instances.items(), summaries):
-        instances[name] = {"url": inst.url, "gpu": inst.gpu, "role": inst.role, **summary}
+        instances[name] = {"url": inst.url, "gpu": inst.gpu, "role": inst.role, **summary,
+                           "enabled": queue.is_enabled(name) if queue else True}
     instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe), "unity": str(settings.unity_exe)}
     vm = psutil.virtual_memory()
     return {
@@ -620,7 +621,9 @@ async def judge_version(vid: str, body: JudgeIn, db: Session = Depends(get_sessi
         if v.status != "done":
             raise HTTPException(409, f"version is {v.status}, not done")
         q = _queue()
-        job = q.submit(q.settings.judge_instance, job_kind(v.stage, "judge", a.category), a.id, v.id, {"version_id": v.id, "op": "judge", "mode": "local"})
+        instance, message = q.place(JUDGE, a.category)  # judge_instance, or the card that takes over while it is off
+        job = q.submit(instance, job_kind(v.stage, "judge", a.category), a.id, v.id, {"version_id": v.id, "op": "judge", "mode": "local"},
+                       message=message)
         db.expire_all()
         out = version_to_dict(_version(db, vid))
         out["judge_job"] = job_to_dict(job)
@@ -719,6 +722,41 @@ def pause_queue(instance: str, paused: bool = True) -> dict[str, Any]:
         raise HTTPException(404, "unknown instance")
     q.set_paused(instance, paused)
     return q.status()
+
+
+class GpuIn(BaseModel):
+    enabled: bool | None = None
+    # Kinds of work this card may do: pictures, model, rigging, review (jobs.KIND_GROUPS).
+    allowed_kinds: list[str] | None = None
+    free_after_job: bool | None = None
+
+
+async def _gpu_list(q: JobQueue) -> list[dict[str, Any]]:
+    names = list(q.settings.instances)
+    summaries = await asyncio.gather(*((q.clients.get(n) or _health_client(n, q.settings.instances[n].url)).cached_vram_summary(HEALTH_STATS_MAX_AGE)
+                                       for n in names))
+    return q.gpus(dict(zip(names, summaries)))
+
+
+@app.get("/api/gpus")
+async def list_gpus() -> list[dict[str, Any]]:
+    """The graphics cards: on or off in the app, reachable, memory, what each is doing and what it can run."""
+    return await _gpu_list(_queue())
+
+
+@app.put("/api/gpus/{instance}")
+async def set_gpu(instance: str, body: GpuIn) -> list[dict[str, Any]]:
+    """Turn a card on or off, set what it may do and whether it frees its memory after each job (saved in
+    prefs.json; fields left out stay). Async on purpose: the change runs on the workers' loop, so a worker never
+    starts a job in the middle of it moving."""
+    q = _queue()
+    if instance not in q.settings.instances:
+        raise HTTPException(404, f"unknown graphics card {instance!r}; known: {list(q.settings.instances)}")
+    try:
+        q.configure(instance, enabled=body.enabled, allowed_kinds=body.allowed_kinds, free_after_job=body.free_after_job)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await _gpu_list(q)
 
 
 @app.websocket("/api/ws/events")

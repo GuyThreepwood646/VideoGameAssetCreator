@@ -1,5 +1,10 @@
 // Service supervisor: probes the four services, starts the ones the launcher may own (ComfyUI B, backend),
 // builds the frontend when frontend/dist is missing, and stops only what it started.
+//
+// Graphics cards turned off in the app (GET /api/gpus, or <projectRoot>/library/prefs.json before the backend
+// answers): while card "b" is off the launcher does not start ComfyUI B, stops the ComfyUI B it started (once), and
+// shows "Off (turned off in the app)" with a "Start anyway" action that turns the card back on through
+// PUT /api/gpus/b. ComfyUI A belongs to Comfy Desktop and is never stopped; when "a" is off it is only marked.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +43,11 @@ class Supervisor extends EventEmitter {
     this.timer = null;
     this.allUp = false;
     this.lastUp = {};
+    // Graphics cards from the backend: { a: { enabled }, b: { enabled } }, or null before the first answer.
+    this.gpus = null;
+    this.gpuSource = null; // 'backend' | 'prefs'
+    this.stoppedForOff = false; // ComfyUI B was stopped once because card b was turned off
+    this.pendingEnable = new Set(); // cards to turn back on once the backend answers ("Start anyway" while it was down)
     this.services = {
       comfyA: this._svc('comfyA', cfg.comfyA.name, cfg.comfyA.url),
       comfyB: this._svc('comfyB', cfg.comfyB.name, cfg.comfyB.url),
@@ -87,13 +97,16 @@ class Supervisor extends EventEmitter {
         probe(cfg.backend.url + '/'),
       ]);
       this.distExists = fs.existsSync(path.join(this.resolve(cfg.frontend.dist), 'index.html'));
+      await this._readGpus(h);
       this._applyComfyA(a);
-      await this._applyStartable('comfyB', b, () => this.startComfyB());
+      if (this.gpuOff('b')) await this._applyComfyBOff(b);
+      else await this._applyStartable('comfyB', b, () => this.startComfyB());
       await this._applyStartable('backend', h, () => this.startBackend(), (r) => {
         try { return r.ok && JSON.parse(r.text).ok === true; } catch (_) { return false; }
       });
       await this._applyUi(h, u);
-      const allUp = ['comfyA', 'comfyB', 'backend', 'ui'].every((k) => this.services[k].state === 'up');
+      // A card turned off in the app counts as fine: the app carries on with the other one.
+      const allUp = ['comfyA', 'comfyB', 'backend', 'ui'].every((k) => this.services[k].state === 'up' || this.services[k].state === 'off');
       const wasAllUp = this.allUp;
       this.allUp = allUp;
       for (const k of ['comfyA', 'comfyB', 'backend', 'ui']) {
@@ -122,10 +135,102 @@ class Supervisor extends EventEmitter {
   }
 
   _applyComfyA(r) {
-    if (r.ok) return this._set('comfyA', 'up', 'Running (started by ComfyUI Desktop)');
+    // Never stopped by the launcher, even when card a is off in the app: Comfy Desktop owns it.
+    const off = this.gpuOff('a') ? '. Off in the app' : '';
+    if (r.ok) return this._set('comfyA', 'up', 'Running (started by ComfyUI Desktop)' + off);
     const exe = this.cfg.comfyA.desktopExe;
     const actions = exe && fs.existsSync(exe) ? [{ id: 'openComfyDesktop', label: 'Open ComfyUI Desktop' }] : [];
-    this._set('comfyA', 'down', 'Open ComfyUI Desktop and start the GameDevComfy instance', actions);
+    this._set('comfyA', 'down', (this.gpuOff('a') ? 'Not running' : 'Open ComfyUI Desktop and start the GameDevComfy instance') + off, this.gpuOff('a') ? [] : actions);
+  }
+
+  // ---- graphics cards turned off in the app ------------------------------------------------------------------
+
+  gpuOff(instance) {
+    if (this.pendingEnable.has(instance)) return false;
+    return !!(this.gpus && this.gpus[instance] && this.gpus[instance].enabled === false);
+  }
+
+  _prefsPath() {
+    return this.resolve(this.cfg.prefsFile || 'library/prefs.json');
+  }
+
+  // Card state from GET /api/gpus when the backend answers; before that, from prefs.json (so a card that is off is
+  // not started at launch only to be stopped a moment later).
+  async _readGpus(health) {
+    const wasOffB = this.gpuOff('b');
+    let backendOk = false;
+    try { backendOk = health.ok && JSON.parse(health.text).ok === true; } catch (_) { backendOk = false; }
+    if (backendOk) {
+      for (const inst of Array.from(this.pendingEnable)) {
+        if (await this.setGpuEnabled(inst, true)) this.pendingEnable.delete(inst);
+      }
+      const r = await probe(this.cfg.backend.url + '/api/gpus');
+      if (r.ok) {
+        try {
+          const rows = JSON.parse(r.text);
+          const next = {};
+          for (const g of rows) next[g.instance] = { enabled: g.enabled !== false };
+          this.gpus = next;
+          this.gpuSource = 'backend';
+        } catch (e) {
+          this.log('could not read /api/gpus: ' + e.message);
+        }
+      }
+    } else if (this.gpuSource !== 'backend') {
+      try {
+        const prefs = JSON.parse(fs.readFileSync(this._prefsPath(), 'utf8'));
+        const off = Array.isArray(prefs.disabled_instances) ? prefs.disabled_instances : [];
+        this.gpus = { a: { enabled: !off.includes('a') }, b: { enabled: !off.includes('b') } };
+        this.gpuSource = 'prefs';
+      } catch (_) {
+        if (this.gpuSource === null) this.gpus = null; // no file yet: every card on
+      }
+    }
+    const offB = this.gpuOff('b');
+    if (wasOffB && !offB) {
+      // Card b is back on: resume the normal auto-start.
+      this.log('card b turned back on in the app; ComfyUI B may start again');
+      this.autoStarted.comfyB = false;
+      this.stoppedForOff = false;
+      if (this.services.comfyB.state === 'off') this.services.comfyB.state = 'down';
+    }
+  }
+
+  async _applyComfyBOff(r) {
+    const actions = [{ id: 'startComfyB', label: 'Start anyway' }];
+    if (this.isOwned('comfyB') && !this.stoppedForOff) {
+      const child = this.children.comfyB;
+      this.stoppedForOff = true;
+      this.children.comfyB = null; // so the exit handler does not flag an error
+      this.log(`comfyB: card b turned off in the app; stopping ComfyUI B (PID ${child.pid}) to free the card`);
+      procs.killTree(child.pid);
+      return this._set('comfyB', 'off', 'Off (turned off in the app)', actions);
+    }
+    if (this.isOwned('comfyB')) return this._set('comfyB', 'off', 'Off (turned off in the app), stopping', actions);
+    if (r.ok) {
+      // Started outside this launcher: left alone. The app sends it no work while the card is off.
+      return this._set('comfyB', 'off', 'Off in the app (still running, started outside this launcher, left alone)',
+        [{ id: 'startComfyB', label: 'Turn on in the app' }]);
+    }
+    this._set('comfyB', 'off', 'Off (turned off in the app)', actions);
+  }
+
+  // PUT /api/gpus/{instance} {enabled}. Returns whether the backend took it.
+  async setGpuEnabled(instance, enabled) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${this.cfg.backend.url}/api/gpus/${encodeURIComponent(instance)}`, {
+        method: 'PUT', signal: ctl.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }),
+      });
+      this.log(`card ${instance}: set ${enabled ? 'on' : 'off'} in the app -> HTTP ${res.status}`);
+      return res.ok;
+    } catch (e) {
+      this.log(`card ${instance}: could not reach the backend to turn it ${enabled ? 'on' : 'off'}: ${e.message}`);
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   async _applyStartable(key, r, startFn, okFn) {
@@ -216,6 +321,18 @@ class Supervisor extends EventEmitter {
   }
 
   startComfyB() {
+    if (this.gpuOff('b')) {
+      // "Start anyway" (or a restart) while card b is off in the app: turn it back on there first. If the backend
+      // is down this is sent as soon as it answers; until then the card counts as on here.
+      this.pendingEnable.add('b');
+      this.stoppedForOff = false;
+      if (this.gpus && this.gpus.b) this.gpus.b.enabled = true;
+      this.setGpuEnabled('b', true).then((ok) => { if (ok) this.pendingEnable.delete('b'); });
+      if (this.services.comfyB.state === 'off' && /still running/.test(this.services.comfyB.message)) {
+        this.services.comfyB.state = 'down';
+        return; // already running outside the launcher: turning the card on is all it needs
+      }
+    }
     const cfg = this.cfg.comfyB;
     const script = this.resolve(cfg.startScript);
     if (!fs.existsSync(script)) return this._set('comfyB', 'error', `Start script not found: ${script}`);

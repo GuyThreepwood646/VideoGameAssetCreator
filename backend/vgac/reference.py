@@ -9,6 +9,7 @@ autopilot import it), and the concept models are the `concept: true` entries of 
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -26,6 +27,17 @@ STAGE_LABELS = {
     "export": "Export",
 }
 TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "top")
+
+# Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). The plan leaves
+# environment out of the size knob because G15's grid will size scenery; until G15 lands, environment keeps the knob
+# (sized on its longest side) so a floor tile or wall can still be set by hand. Remove it here when G15 lands.
+# Material has no mesh to size or turn.
+SIZE_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "vehicle", "prop_rigid", "prop_articulated",
+                   "environment", "foliage"]
+FACING_CATEGORIES = ["humanoid", "quadruped", "winged", "multileg", "serpent", "vehicle", "prop_rigid", "prop_articulated",
+                     "environment", "foliage"]
+# The prep turn choices, in degrees counter-clockwise seen from above ("auto" lets prep decide from the mesh audit).
+FACE_YAW_OPTIONS: list[Any] = ["auto", 0, 90, 180, 270]
 
 
 def _param(name: str, type_: str, default: Any, label: str | None = None, description: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -66,7 +78,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("remesh", "boolean", True, description="Watertight remesh before decimation"),
     ],
     "prep": [
-        _param("height_m", "number", None, min=0.01, max=100.0, description="Category size when empty"),
+        # height_m (the old name) is still read from older versions as an alias meaning the height.
+        _param("size_m", "number", None, min=0.01, max=100.0, step=0.01, categories=SIZE_CATEGORIES,
+               description="In metres along the category's size axis; the category size, or a size in the description, when empty"),
+        _param("face_yaw", "select", "auto", options=FACE_YAW_OPTIONS, categories=FACING_CATEGORIES,
+               description="Pick the picture where the front faces you. The game treats that side as forward."),
         _param("symmetric", "boolean", None, description="Category default when empty"),
         _param("pivot", "select", "base", options=["base", "center"]),
         _param("smooth_angle", "number", 60.0, min=0.0, max=180.0),
@@ -83,7 +99,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("collider", "select", "hull", options=["hull", "none"]),
         _param("formats", "multiselect", ["fbx", "glb"], options=["fbx", "glb"]),
         _param("unity", "boolean", True, description="Import into the Unity sandbox and build the prefab"),
-        _param("clips_library", "select", "ual1", options=["ual1", "ual2", "none"]),
+        _param("clips_library", "select", "ual1", options=["ual1", "ual2", "none"], categories=["humanoid"]),  # a Humanoid retarget
         _param("sprites", "boolean", False),
         _param("sprite_directions", "integer", 8, min=1, max=16),
         _param("sprite_frames", "integer", 8, min=1, max=64, description="Frames per clip in the sprite sheet"),
@@ -94,10 +110,21 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
 MAX_STRING_PARAM = 4000
 
 
-def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]:
+def _match_option(value: Any, opts: list[Any]) -> Any:
+    """The option equal to value, or the one whose text equals it ("90" for 90, as a form may send it); else value."""
+    if not isinstance(value, bool) and value in opts:
+        return value
+    for o in opts:
+        if str(o) == str(value):
+            return o
+    return value
+
+
+def validate_params(stage: str, params: dict[str, Any] | None, category: str | None = None) -> dict[str, Any]:
     """Check the Adjust knobs of a stage against STAGE_SCHEMAS: type, range and options. Raises ValueError with a
     plain message. Keys the schema does not know (internal markers such as instruction or refine_of) pass through,
-    and None means "use the default"."""
+    and None means "use the default". With `category`, a knob whose `categories` list leaves it out is accepted and
+    dropped (it does not apply to that kind of asset)."""
     out = dict(params or {})
     if stage not in STAGE_SCHEMAS:
         return out
@@ -105,6 +132,9 @@ def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]
     for key, value in list(out.items()):
         p = spec.get(key)
         if p is None or value is None:
+            continue
+        if category and p.get("categories") is not None and category not in p["categories"]:
+            del out[key]
             continue
         t = p["type"]
         if t in ("integer", "number"):
@@ -119,12 +149,19 @@ def validate_params(stage: str, params: dict[str, Any] | None) -> dict[str, Any]
                 raise ValueError(f"{key} must be true or false")
         elif t == "select":
             opts = p.get("options")
-            if opts and value not in opts:
-                raise ValueError(f"{key} must be one of {opts}")
+            if opts:
+                value = _match_option(value, opts)
+                if isinstance(value, bool) or value not in opts:
+                    raise ValueError(f"{key} must be one of {opts}")
+                out[key] = value
         elif t == "multiselect":
             opts = p.get("options") or []
-            if not isinstance(value, list) or any(v not in opts for v in value):
+            if not isinstance(value, list):
                 raise ValueError(f"{key} must be a list drawn from {opts}")
+            value = [_match_option(v, opts) for v in value]
+            if any(v not in opts for v in value):
+                raise ValueError(f"{key} must be a list drawn from {opts}")
+            out[key] = value
         elif t == "string":
             if not isinstance(value, str):
                 raise ValueError(f"{key} must be text")
@@ -239,11 +276,14 @@ def models_public() -> list[dict[str, Any]]:
 
 
 def _schema(stage: str) -> list[dict[str, Any]]:
-    """STAGE_SCHEMAS[stage] with live option lists (the concept model knob reads models.yaml)."""
+    """STAGE_SCHEMAS[stage] with live option lists (the concept model knob reads models.yaml) and, on size_m, the
+    per-category label, hint, default, axis and axis word from the category files (`by_category`)."""
     out = []
     for entry in STAGE_SCHEMAS[stage]:
         if stage == "concept" and entry["name"] == "model":
             entry = {**entry, "options": list(concept_models())}
+        if stage == "prep" and entry["name"] == "size_m":
+            entry = {**entry, "by_category": {cid: size_spec(cid) for cid in entry.get("categories") or []}}
         out.append(entry)
     return out
 
@@ -256,7 +296,11 @@ def stages() -> list[dict[str, Any]]:
         schema = []
         for entry in _schema(s):
             ph = guidance.param_help(entry["name"])
-            schema.append({**entry, "help": ph["help"], "simple": ph["simple"]})
+            item = {**entry, "help": ph["help"], "simple": ph["simple"]}
+            labels = ph.get("options")
+            if labels and entry["type"] in ("select", "multiselect"):
+                item["option_labels"] = {str(k): v for k, v in labels.items()}
+            schema.append(item)
         out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]),
                     "plain_verb": g.get("plain_verb", "Run"), "help": g.get("help", {}),
                     "estimate_seconds": g.get("estimate_seconds", 60), "adjust_schema": schema})
@@ -286,3 +330,53 @@ def _presets() -> tuple[dict[str, Any], ...]:
 def style_presets() -> list[dict[str, Any]]:
     """Ready-made looks that fill a project's style lock (docs/UX-REVIEW.md item H)."""
     return [dict(p) for p in _presets()]
+
+
+# --- Size along the category's axis (G12) and from the description (light G13) --------------------------------
+
+SIZE_AXES = ("height", "horizontal", "longest")
+AXIS_WORD_DEFAULT = {"height": "tall", "horizontal": "long", "longest": "long"}
+
+
+def size_spec(category_id: str) -> dict[str, Any]:
+    """How a category is sized: axis (height: the up extent; horizontal: the larger ground-plane extent; longest: the
+    largest of all three), the default size in metres, the axis word for sentences, and the knob label and hint."""
+    c = category(category_id)
+    axis = c.get("size_axis") if c.get("size_axis") in SIZE_AXES else "height"
+    return {"axis": axis, "default": float(c.get("size_m") or 1.0), "word": c.get("size_word") or AXIS_WORD_DEFAULT[axis],
+            "label": c.get("size_label") or "How big is it?", "hint": c.get("size_hint") or "In metres."}
+
+
+_NUMBER_WORDS = {w: i for i, w in enumerate(("one two three four five six seven eight nine ten eleven twelve thirteen "
+                                             "fourteen fifteen sixteen seventeen eighteen nineteen twenty").split(), start=1)}
+_UNITS = {"m": 1.0, "metre": 1.0, "metres": 1.0, "meter": 1.0, "meters": 1.0, "cm": 0.01, "ft": 0.3048, "foot": 0.3048, "feet": 0.3048}
+_AXIS_WORDS = {"tall": ("height", "tall"), "high": ("height", "tall"), "long": ("horizontal", "long"),
+               "wide": ("horizontal", "across"), "across": ("horizontal", "across")}
+# Longer number words first so "seventeen" is not read as "seven".
+_SIZE_RE = re.compile(
+    r"(?<![\w.])(?P<num>\d+(?:\.\d+)?|" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True)) + r")\s*-?\s*"
+    r"(?P<unit>metres|metre|meters|meter|feet|foot|cm|ft|m)\b(?:\s*-?\s*(?P<axis>tall|high|long|wide|across)\b)?",
+    re.IGNORECASE)
+
+
+def parse_size(text: str | None, default_m: float | None = None) -> dict[str, Any] | None:
+    """A size written in a description ("two metres wide", "6 ft tall", "4.5 m long"): {size_m, axis, word, text}, or
+    None. Digits or the words one to twenty; units m, metre(s), meter(s), cm, ft, foot, feet; axis words tall or high
+    (height), long, wide or across (horizontal), and nothing else. A size with an axis word wins over one without;
+    axis and word are None when no axis word follows. Sizes outside 0.01 to 100 m are ignored. With default_m (the
+    category size), a size without an axis word is ignored unless it is within a factor of four of it, so a detail
+    such as "2 cm iron bands" does not size the whole chest."""
+    found = []
+    for m in _SIZE_RE.finditer(text or ""):
+        raw = m.group("num").lower()
+        n = float(_NUMBER_WORDS[raw]) if raw in _NUMBER_WORDS else float(raw)
+        metres = round(n * _UNITS[m.group("unit").lower()], 3)
+        if not 0.01 <= metres <= 100:
+            continue
+        axis, word = _AXIS_WORDS.get((m.group("axis") or "").lower(), (None, None))
+        if axis is None and default_m and not default_m / 4 <= metres <= default_m * 4:
+            continue
+        found.append({"size_m": metres, "axis": axis, "word": word, "text": m.group(0)})
+    if not found:
+        return None
+    return next((f for f in found if f["axis"]), found[0])

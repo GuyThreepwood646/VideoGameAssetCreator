@@ -63,4 +63,8 @@ def _never_touch_live_comfy(monkeypatch: pytest.MonkeyPatch):
     async def _noop(self):
         return None
 
+    async def _free(self):
+        return False
+
     monkeypatch.setattr(comfy.ComfyClient, "interrupt", _noop)
+    monkeypatch.setattr(comfy.ComfyClient, "free", _free)
