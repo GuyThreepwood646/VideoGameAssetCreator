@@ -190,6 +190,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         if fix_report.is_file():
             rep = json.loads(fix_report.read_text(encoding="utf-8")) or {}
             ref, names = rep.get("reference") or {}, rep.get("bone_names") or {}
+            if "stray_weights" in rep:
+                sc.set_metrics(weights_fix=WEIGHTS_FIX, stray_weights=int((rep.get("stray_weights") or {}).get("verts") or 0))
             sc.set_metrics(rig_restore={"ok": bool(ref.get("ok")), "uvs": ref.get("uvs"), "scale_factor": ref.get("scale_factor"),
                                         "size_m": ref.get("size_after_m"), "reason": ref.get("reason"),
                                         "bone_names": {"count": int(names.get("renamed") or 0),
@@ -300,6 +302,31 @@ def reuse_change(parent_params: dict[str, Any], params: dict[str, Any]) -> set[s
     return ({"hitboxes"} if changed & set(HITBOX_PARAMS) else set()) | ({"moves"} if changed & set(MOVES_PARAMS) else set())
 
 
+# The version of the weight clean-up (blender/rig_fix.py). 2 releases influences from a bone far across the body (a
+# fingertip tied to a toe bone), which pulled hands into spikes in motion. A rig cleaned by an older version is
+# cleaned again the next time it is reused, so characters made before the fix get it without being rigged again.
+WEIGHTS_FIX = 2
+
+
+def needs_weights_fix(metrics: dict[str, Any] | None) -> bool:
+    m = metrics or {}
+    return not m.get("rigid") and int(m.get("weights_fix") or 0) < WEIGHTS_FIX
+
+
+async def _fix_weights_again(sc: StageContext, rig_glb: Path) -> None:
+    """Run the current weight clean-up on a reused rig, in place. A failure keeps the rig as it was."""
+    out, report = sc.dir / "rig_refixed.glb", sc.dir / "rig_fix_again.json"
+    try:
+        await sc.blender("rig_fix.py", [rig_glb, out, "--report", report, "--weights-only"], log_name="rig_fix_again.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if out.is_file() and out.stat().st_size > 0:
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(weights_fix=WEIGHTS_FIX, stray_weights=int((rep.get("stray_weights") or {}).get("verts") or 0), weights_fixed_again=True)
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(weights_fix_error=str(e)[:300])
+
+
 def _reuse_parent(sc: StageContext, parent: Any, skip: tuple[str, ...] = HITBOX_FILES, skip_metrics: tuple[str, ...] = ()) -> Path | None:
     """Copy the parent rig version's files (all but `skip`, by default its hit boxes) into this version at the same
     relative paths and carry its metrics over, so deleting the parent later cannot break this version. -> the copied
@@ -339,11 +366,19 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
             return False
     if library.version_file(parent, "glb", sc.settings) is None:
         return False
+    # A rig cleaned by an older version of the weight clean-up is cleaned again, and its moves are then made again
+    # too (the animated file carries the weights).
+    refix = needs_weights_fix(parent.metrics)
+    if refix:
+        parts = parts | {"moves"}
     sc.progress(0.05, "making the moves again" if "moves" in parts else "fitting the hit boxes")
     skip = (HITBOX_FILES if "hitboxes" in parts else ()) + (ANIM_FILES if "moves" in parts else ())
     rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
     if rig_glb is None:
         return False
+    if refix:
+        sc.progress(0.08, "cleaning up the skin weights")
+        await _fix_weights_again(sc, rig_glb)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
         sc.set_params(**hp)
