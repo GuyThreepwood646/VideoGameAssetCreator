@@ -1,10 +1,45 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import Viewer, { type BoneSegment, type BonesSpace } from '../../Viewer'
+import { joinAnd, movesLine, movesPlain } from '../../help'
+import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
+// metrics.hitboxes on the rig version (4.2).
+type HitboxSummary = { count?: number; mode?: string; fit?: string; fallback?: boolean; failed?: boolean; regions_found?: ({ id?: string; label?: string } | string)[] }
+
+// A JSON file of this version, fetched once per url; null until it arrives or when it is missing.
+function useJsonFile<T>(url: string | undefined): { data: T | null; error: string | null } {
+  const [state, setState] = useState<{ data: T | null; error: string | null }>({ data: null, error: null })
+  useEffect(() => {
+    let alive = true
+    setState({ data: null, error: null })
+    if (!url) return
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<T>
+      })
+      .then((d) => alive && setState({ data: d, error: null }))
+      .catch((e) => alive && setState({ data: null, error: e instanceof Error ? e.message : String(e) }))
+    return () => {
+      alive = false
+    }
+  }, [url])
+  return state
+}
+
+// The hit box line under the intro (4.2 states): null when there is nothing to say (no skeleton, older versions).
+function hitboxLine(summary: HitboxSummary | null, doc: HitboxDoc | null): { text: string; warn: boolean } | null {
+  const mode = summary?.mode ?? doc?.mode
+  const count = typeof summary?.count === 'number' ? summary.count : (doc?.count ?? (doc ? hitShapesOf(doc).length : undefined))
+  if (summary?.failed) return { text: 'We could not fit hit boxes on this skeleton; it still has its body shape for moving.', warn: true }
+  if (mode === 'none') return { text: 'No hit boxes. The body shape still keeps it out of walls.', warn: false }
+  if (count === undefined || count === 0) return null
+  if (summary?.fallback ?? doc?.fallback) return { text: 'Hit boxes: one for the body and one for the head. We could not tell the limbs apart on this skeleton.', warn: false }
+  return { text: `Hit boxes: ${count}, fitted to the body. They move with the skeleton so hits land where they look.`, warn: false }
+}
 
 export function RigView({ version }: { version: Version }) {
   const animGlb = libraryUrl(version.files.anim_glb)
@@ -15,6 +50,8 @@ export function RigView({ version }: { version: Version }) {
   const [bones, setBones] = useState<BoneSegment[] | null>(null)
   const [bonesSpace, setBonesSpace] = useState<BonesSpace>('gltf')
   const [rigError, setRigError] = useState<string | null>(null)
+  const hitFile = useJsonFile<HitboxDoc>(libraryUrl(version.files.hitboxes))
+  const clipFile = useJsonFile<{ clips?: ClipInfo[] }>(animGlb ? libraryUrl(version.files.anim_clips) : undefined)
 
   useEffect(() => {
     let alive = true
@@ -40,16 +77,50 @@ export function RigView({ version }: { version: Version }) {
     }
   }, [rigInfoUrl])
 
-  const boneCount = typeof version.metrics.bones === 'number' ? version.metrics.bones : bones?.length
-  const template = version.params.template_label ?? version.metrics.template ?? version.params.template
+  const m = version.metrics
+  const boneCount = typeof m.bones === 'number' ? m.bones : bones?.length
+  const template = version.params.template_label ?? m.template ?? version.params.template
+  const summary = m.hitboxes && typeof m.hitboxes === 'object' ? (m.hitboxes as HitboxSummary) : null
+  const hitDoc = hitFile.data && hitFile.data.mode !== 'none' ? hitFile.data : null
+  const hbLine = hitboxLine(summary, hitFile.data)
+  const hitNames = hitShapesOf(hitDoc).map((h) => h.label || h.region || h.name || '?')
+  const moves = movesLine(m.clips)
+  const missing = movesPlain(m.missing_clips)
+  const clipData = clipFile.data
+  const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
+
   return (
     <div className="rig-view">
       <div className="view-intro muted small">
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {(hbLine || moves || missing.length > 0) && (
+        <div className="rig-lines small">
+          {hbLine && (
+            <div>
+              {hbLine.warn && <span className="warn-mark">CHECK</span>}
+              {hbLine.text}
+              <Info term="term.hitboxes" />
+            </div>
+          )}
+          {moves && (
+            <div>
+              {moves}
+              <Info term="term.moves" />
+            </div>
+          )}
+          {missing.length > 0 && (
+            <div>
+              <span className="warn-mark">CHECK</span>
+              Some moves could not be made: {joinAnd(missing)}.
+            </div>
+          )}
+        </div>
+      )}
+      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} /> : <div className="placeholder-box">No 3D model in this version.</div>}
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
+      {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
       <div className="rig-side">
         <div>
           <div className="field-label">
@@ -63,6 +134,15 @@ export function RigView({ version }: { version: Version }) {
           {bones && bones.length > 0 && (
             <Disclosure label="Bone names">
               <div className="bone-list small mono">{bones.map((b) => b.name ?? '?').join(', ')}</div>
+            </Disclosure>
+          )}
+          {hitNames.length > 0 && (
+            <Disclosure label="Hit box list">
+              <ul className="small">
+                {hitNames.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
             </Disclosure>
           )}
         </div>

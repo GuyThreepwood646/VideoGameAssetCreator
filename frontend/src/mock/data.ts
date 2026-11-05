@@ -3,6 +3,7 @@
 import type { Asset, Category, Job, LookPreset, Platform, Project, StageId, StageInfo, StylePreset, Version } from '../api'
 import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, type Figure, type ViewName } from './images'
 
+const RIGGED_IDS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'] as const
 export const files = new Map<string, string>() // library-relative path -> data URL
 
 let counter = 1000
@@ -301,6 +302,21 @@ export const stages: StageInfo[] = [
       { name: 'group_per_vertex', label: 'Influences per vertex', type: 'integer', min: 1, max: 8, step: 1, default: 4 },
       { name: 'bottom_center_origin', label: 'Bottom-centre origin', type: 'boolean', default: true },
       { name: 'bend_test', label: 'Run bend test', type: 'boolean', default: true },
+      // Creature moves (3.7) and hit boxes (4.2). No option_labels here, so help.ts OPTION_LABELS shows.
+      { name: 'motion', label: 'Motion', type: 'select', options: ['legs', 'wings', 'wave', 'none'], default: null, categories: ['quadruped', 'multileg', 'winged', 'serpent'] },
+      { name: 'moves', label: 'Moves', type: 'multiselect', options: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'flap', 'glide', 'takeoff', 'land', 'slither'], default: null, categories: [...RIGGED_IDS] },
+      { name: 'move_size', label: 'Move size', type: 'select', options: ['small', 'normal', 'big'], default: 'normal', categories: [...RIGGED_IDS] },
+      { name: 'move_speed', label: 'Move speed', type: 'select', options: ['slow', 'normal', 'fast'], default: 'normal', categories: [...RIGGED_IDS] },
+      { name: 'hitboxes', label: 'Hit boxes', type: 'select', options: ['detailed', 'simple', 'none'], default: null, categories: [...RIGGED_IDS] },
+      { name: 'hitbox_fit', label: 'Hit box fit', type: 'select', options: ['snug', 'normal', 'loose'], default: 'normal', categories: [...RIGGED_IDS] },
+      {
+        name: 'hitbox_regions',
+        label: 'Hit box regions',
+        type: 'multiselect',
+        options: ['head', 'neck', 'chest', 'hips', 'body', 'tail', 'upper_arm_l', 'forearm_l', 'upper_arm_r', 'forearm_r', 'thigh_l', 'shin_l', 'thigh_r', 'shin_r', 'leg_fl', 'leg_fr', 'leg_bl', 'leg_br', 'leg_l', 'leg_r', 'wing_l', 'wing_r', 'wings'],
+        default: null,
+        categories: [...RIGGED_IDS],
+      },
     ],
   },
   {
@@ -309,6 +325,7 @@ export const stages: StageInfo[] = [
     adjust_schema: [
       { name: 'lods', label: 'LOD ratios', type: 'string', default: '1.0, 0.5, 0.25, 0.1' },
       { name: 'collider', label: 'Collider', type: 'select', options: ['hull', 'none'], default: 'hull' },
+      { name: 'movement_shape', label: 'Movement shape', type: 'select', options: ['auto', 'upright', 'along', 'box', 'none'], default: 'auto', categories: [...RIGGED_IDS] },
       { name: 'formats', label: 'Formats', type: 'multiselect', options: ['fbx', 'glb'], default: ['fbx', 'glb'] },
       { name: 'unity', label: 'Build Unity prefab', type: 'boolean', default: true },
       // Humanoids only (2.3): the shared human animation libraries.
@@ -429,6 +446,7 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
         chk('weight_coverage', !fail, fail ? 0.9889 : 0.998, 0.99, fail ? { severity: 'warn', fix: { stage: 'rig', params: { group_per_vertex: 6 } } } : {}),
         chk('max_influences', true, 4, 4),
         chk('weights_normalised', true, 0, 0),
+        ...rigMoveChecks(category, fail),
       ]
     case 'export':
       return [
@@ -465,7 +483,7 @@ export function addBackendFinish(asset: Asset, version: Version) {
     { id: 'size', text: 'Real size: 1.8 m tall, but the front may face the wrong way.', state: 'warn', term: 'face_yaw', check: 'facing' },
     { id: 'surface', text: 'Looks right in Unity: colour, bumps, shadows, metal and shine are connected.', state: 'ok', term: 'metal_shine' },
     { id: 'movement', text: 'Ready to move: set Speed and it idles, walks and runs; Attack, Hit and Die are one line each.', state: 'ok', term: 'animator_controller' },
-    { id: 'collision', text: 'Bumps into things: 1 collision shape.', state: 'ok', term: 'collider' },
+    { id: 'collision', text: 'Bumps into things: a standing capsule for moving and 11 hit boxes that follow the animation.', state: 'ok', term: 'hitboxes' },
     { id: 'shared_animations', text: 'Shared animations: 46 human moves work on this character.', state: 'ok', term: 'avatar' },
     { id: 'files', text: 'Files: FBX (Unity, Unreal, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },
   ]
@@ -473,6 +491,7 @@ export function addBackendFinish(asset: Asset, version: Version) {
     `Drag the prefab from \`${prefab}\` into your scene.`,
     'In your movement script, set the speed every frame: `animator.SetFloat("Speed", speed);`',
     'For one-off moves, call `animator.SetTrigger("Attack");` (or `"Hit"`, `"Die"`).',
+    'Hit boxes are trigger colliders named Hit_Head, Hit_Chest and so on under the bones; check the name in OnTriggerEnter to know where a hit landed.',
   ]
 }
 
@@ -556,15 +575,29 @@ export function fabricate(asset: Asset, version: Version) {
       break
     }
     case 'rig': {
-      f.glb = 'samples/sample.glb'
-      const bones = bipedBones()
-      f.rig_info = putText(`${base}/rig_info.json`, JSON.stringify({ template: 'mixamo', bone_segments: bones }, null, 2))
       f.bend_strip = putDataFile(`${base}/bend_strip.png`, makeBendStrip(hue, ['LeftArm', 'LeftForeArm', 'LeftUpLeg', 'LeftLeg']))
-      m.bones = bones.length
-      m.template = version.params.template === 'auto' || !version.params.template ? 'mixamo' : version.params.template
+      const sample = RIG_SAMPLES[asset.category]
+      if (sample) {
+        // Real rigged files from the library's samples folder (a knight and a wolf), with their fitted hit boxes
+        // and clips, so the overlay can be checked against a real skeleton.
+        const dir = `samples/${sample.dir}`
+        f.glb = `${dir}/rig.glb`
+        f.anim_glb = `${dir}/anim.glb`
+        f.anim_clips = `${dir}/anim_clips.json`
+        f.rig_info = `${dir}/rig_info.json`
+        if (version.params.hitboxes !== 'none') f.hitboxes = `${dir}/hitboxes.json`
+        m.bones = sample.bones
+        Object.assign(m, rigMoveMetrics(asset.category, version.params, seed % 3 === 0))
+      } else {
+        f.glb = 'samples/sample.glb'
+        const bones = bipedBones()
+        f.rig_info = putText(`${base}/rig_info.json`, JSON.stringify({ template: 'mixamo', bone_segments: bones }, null, 2))
+        m.bones = bones.length
+      }
+      m.template = version.params.template === 'auto' || !version.params.template ? (asset.category === 'humanoid' ? 'mixamo' : 'generic') : version.params.template
       m.max_influences = version.params.group_per_vertex ?? 4
       m.unweighted_vertices = 0
-      m.checks = checksFor('rig', seed, 20000, asset.category)
+      m.checks = checksFor('rig', seed, 20000, asset.category).filter((c) => sample || !/^(hitbox_|clips|legs_moved|wings_found)/.test(c.id))
       m.gate_ok = (m.checks as MockCheck[]).every((c) => c.ok)
       m.elapsed_seconds = 95
       break
@@ -636,6 +669,87 @@ export function fabricate(asset: Asset, version: Version) {
   }
   version.files = f
   version.metrics = m
+}
+
+// Real rig samples in library/samples (copied from library rig versions, with procanim clips and fitted hit boxes).
+type RigSample = { dir: string; bones: number; hitboxes: number; regions: [string, string][]; cover: number; overreach: number; movement: string }
+const RIG_SAMPLES: Record<string, RigSample> = {
+  humanoid: {
+    dir: 'knight',
+    bones: 34,
+    hitboxes: 11,
+    regions: [
+      ['head', 'Head'],
+      ['hips', 'Hips'],
+      ['chest', 'Chest'],
+      ['upper_arm_l', 'Left upper arm'],
+      ['forearm_l', 'Left forearm'],
+      ['upper_arm_r', 'Right upper arm'],
+      ['forearm_r', 'Right forearm'],
+      ['thigh_l', 'Left thigh'],
+      ['shin_l', 'Left shin'],
+      ['thigh_r', 'Right thigh'],
+      ['shin_r', 'Right shin'],
+    ],
+    cover: 0.8653,
+    overreach: 1.79,
+    movement: 'upright',
+  },
+  quadruped: {
+    dir: 'wolf',
+    bones: 30,
+    hitboxes: 8,
+    regions: [
+      ['head', 'Head'],
+      ['neck', 'Neck'],
+      ['body', 'Body'],
+      ['tail', 'Tail'],
+      ['leg_fr', 'Right front leg'],
+      ['leg_fl', 'Left front leg'],
+      ['leg_br', 'Right back leg'],
+      ['leg_bl', 'Left back leg'],
+    ],
+    cover: 0.8853,
+    overreach: 1.27,
+    movement: 'along',
+  },
+}
+const SAMPLE_CLIPS = ['idle', 'walk', 'run', 'turn_left', 'turn_right', 'attack', 'hit', 'death']
+
+// Rig metrics for moves (3.7) and hit boxes (4.2), as the rig stage writes them.
+function rigMoveMetrics(category: string, params: Record<string, unknown>, fail: boolean): Record<string, unknown> {
+  const s = RIG_SAMPLES[category]
+  if (!s) return {}
+  const mode = typeof params.hitboxes === 'string' ? params.hitboxes : 'detailed'
+  const fit = params.hitbox_fit ?? 'normal'
+  const hitboxes =
+    mode === 'none'
+      ? { count: 0, mode: 'none', fit, fallback: false, regions_found: [], cover: null, overreach: null, movement_default: s.movement }
+      : { count: s.hitboxes, mode, fit, fallback: false, regions_found: s.regions.map(([id, label]) => ({ id, label })), cover: fail ? 0.78 : s.cover, overreach: s.overreach, movement_default: s.movement }
+  const out: Record<string, unknown> = { motion: 'legs', anim_kind: category === 'humanoid' ? 'biped' : 'quadruped', clips: SAMPLE_CLIPS, missing_clips: [], hitboxes }
+  if (category === 'quadruped') Object.assign(out, { legs_moved: 4, legs_total: 4 })
+  return out
+}
+
+// The rig checks for moves and hit boxes (sentences as the backend writes them).
+function rigMoveChecks(category: string, fail: boolean): MockCheck[] {
+  const s = RIG_SAMPLES[category]
+  if (!s) return []
+  const cover = fail ? 0.78 : s.cover
+  const coverPct = `${Math.round(cover * 100)}%`
+  const out: MockCheck[] = [
+    chk('clips', true, SAMPLE_CLIPS, SAMPLE_CLIPS, { severity: 'warn', vars: { missing: [] }, help: `Animations: ${SAMPLE_CLIPS.join(', ')}.` }),
+    chk('hitbox_cover', !fail, cover, 0.85, {
+      severity: 'warn',
+      vars: { n: s.hitboxes, cover: coverPct },
+      ...(fail
+        ? { help: `The hit boxes cover only ${coverPct} of the body, so some hits would pass through.`, fix: { stage: 'rig', params: { hitbox_fit: 'loose' }, label: 'Fit them looser' } }
+        : { help: `${s.hitboxes} hit boxes cover ${coverPct} of the body and follow the skeleton.` }),
+    }),
+    chk('hitbox_overreach', true, s.overreach, 2.75, { severity: 'warn', vars: { n: s.hitboxes, times: s.overreach.toFixed(1) }, help: 'The hit boxes stay close to the body.' }),
+  ]
+  if (category === 'quadruped') out.push(chk('legs_moved', true, 4, 4, { severity: 'warn', help: 'All 4 legs move in the walk.' }))
+  return out
 }
 
 function bipedBones() {
@@ -778,7 +892,7 @@ export function seedStore() {
   const pr1 = seedVersion(knight, 'prep', m2, { size_m: 1.8, size_axis: 'height', size_word: 'tall', face_yaw: 'auto', symmetric: true, pivot: 'base', smooth_angle: 60, seed: 3 }, 120, 'host')
   setSelected(knight, pr1)
 
-  const r1 = seedVersion(knight, 'rig', pr1, { template: 'auto', target_faces: 20_000, group_per_vertex: 4, bottom_center_origin: true, bend_test: true }, 80, 'b')
+  const r1 = seedVersion(knight, 'rig', pr1, { template: 'auto', target_faces: 20_000, group_per_vertex: 4, bottom_center_origin: true, bend_test: true, motion: 'legs', moves: SAMPLE_CLIPS, hitboxes: 'detailed', hitbox_fit: 'normal' }, 80, 'b')
   setSelected(knight, r1)
 
   const e1 = seedVersion(knight, 'export', r1, { lods: '1.0, 0.5, 0.25, 0.1', collider: 'hull', formats: ['fbx', 'glb'], unity: true, clips_library: 'ual1', sprites: true, sprite_directions: 8, sprite_size: 64 }, 30, 'host')
@@ -825,6 +939,19 @@ export function seedStore() {
     stages: {},
   }
   store.assets.push(wolf)
+  // The wolf runs through to export without backend finish lines, so the finish card builds its own (hit boxes, moves).
+  const wc = seedVersion(wolf, 'concept', null, { model: 'zturbo', seed: 5, width: 1024, height: 1024, steps: 8, readiness_block: true }, 9, 'b')
+  setSelected(wolf, wc)
+  const wt = seedVersion(wolf, 'turnaround', wc, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true }, 8, 'b')
+  setSelected(wolf, wt)
+  const wm = seedVersion(wolf, 'mesh', wt, { engine: 'hy3d', input_view: 'concept', seed: 2, remesh: true }, 7, 'a')
+  setSelected(wolf, wm)
+  const wp = seedVersion(wolf, 'prep', wm, { size_m: 1.8, face_yaw: 'auto', symmetric: true, pivot: 'base', smooth_angle: 60, seed: 1 }, 6, 'host')
+  setSelected(wolf, wp)
+  const wr = seedVersion(wolf, 'rig', wp, { template: 'auto', group_per_vertex: 4, bottom_center_origin: true, bend_test: true, motion: 'legs', moves: SAMPLE_CLIPS, hitboxes: 'detailed', hitbox_fit: 'normal' }, 5, 'b')
+  setSelected(wolf, wr)
+  const we = seedVersion(wolf, 'export', wr, { lods: '1.0, 0.5, 0.25', collider: 'hull', movement_shape: 'auto', formats: ['fbx', 'glb'], unity: true }, 3, 'host')
+  setSelected(wolf, we)
 
   // A variant of the knight: same identity, winter outfit.
   const winter: Asset = {

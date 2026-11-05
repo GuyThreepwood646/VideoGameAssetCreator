@@ -11,12 +11,43 @@
 // (skinning applied), try a few candidate corrections built from the GLB's own node
 // matrices, and keep the one that puts the bones inside the surface. The same is done
 // for the SkeletonHelper, which draws the GLB's live bones.
+//
+// Hit boxes (plan 4.2): hitboxes.json gives each shape in the same glTF model space as the bone segments. Each
+// shape is parented to its bone, placed from the bone's rest pose captured at load (before any clip moves it) and
+// the bones overlay's alignment correction, so it follows the playing clip. The body shape for moving stays on
+// the model. Clips (3.7): the sidecar (anim_clips.json) gives the order and which clips loop; one-shot clips play
+// once and stop on their last frame.
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Info } from './components/Info'
+import { clipLabel, clipLoopsByName } from './help'
 
 export type BoneSegment = { name?: string; head: number[]; tail: number[] }
+export type HitShape = {
+  name?: string
+  region?: string
+  label?: string
+  bone?: string
+  kind: 'capsule' | 'sphere' | 'box' | string
+  center: number[]
+  axis?: number[]
+  forward?: number[]
+  radius?: number
+  height?: number
+  size?: number[]
+}
+export type HitboxDoc = {
+  space?: string
+  mode?: 'detailed' | 'simple' | 'none' | string
+  fallback?: boolean
+  count?: number
+  hitboxes?: HitShape[]
+  movement?: ({ default?: string } & Record<string, HitShape | string | undefined>) | null
+}
+// One row of the clip sidecar (anim_clips.json).
+export type ClipInfo = { name: string; loop?: boolean; seconds?: number; hold_last?: boolean }
 export type Shading = 'textured' | 'wireframe' | 'normals'
 // 'gltf': segments already in glTF axes (rig_info bone_segments_gltf).
 // 'unknown': older rig_info without them; may be Blender Z-up, so that is tried too.
@@ -33,6 +64,10 @@ type Props = {
   turntableDefault?: boolean
   // Prefer the clip whose name contains this text (case-insensitive), e.g. "walk".
   defaultClip?: string
+  // Hit boxes and the body shape for moving (rig view); the toggles show only when there are some.
+  hitboxes?: HitboxDoc | null
+  // The clip sidecar: order, plain names and which clips loop.
+  clipInfo?: ClipInfo[] | null
 }
 
 type SceneHandles = {
@@ -111,6 +146,7 @@ type RestData = {
   verts: Float32Array // rest-pose surface sample, model-local, as three.js draws it
   candidates: Candidate[] // corrections to try, model-local; the first is identity
   skeletonPoints: THREE.Vector3[] | null // the GLB's own bones at rest, model-local
+  boneRest: Map<THREE.Object3D, THREE.Matrix4> // every bone's rest matrix, model-local, before any clip moves it
 }
 
 // Blender (x, y, z) -> glTF (x, z, -y)
@@ -189,7 +225,11 @@ function captureRest(model: THREE.Object3D): RestData {
   } else if (meshes[0] && meshes[0] !== model) {
     add('mesh', rel(meshes[0]))
   }
-  return { verts: new Float32Array(out), candidates, skeletonPoints }
+  const boneRest = new Map<THREE.Object3D, THREE.Matrix4>()
+  model.traverse((o) => {
+    if ((o as THREE.Bone).isBone) boneRest.set(o, rel(o))
+  })
+  return { verts: new Float32Array(out), candidates, skeletonPoints, boneRest }
 }
 
 function segmentPoints(bones: BoneSegment[]): THREE.Vector3[] {
@@ -275,7 +315,149 @@ function buildBoneOverlay(bones: BoneSegment[]): THREE.Group {
   return g
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip }: Props) {
+// ---------------------------------------------------------------------------
+// Hit boxes and the body shape for moving
+// ---------------------------------------------------------------------------
+
+// A colour token from the stylesheet (--warn, --accent), with a fallback for when it cannot be read.
+function tokenColor(name: string, fallback: string): THREE.Color {
+  let v = ''
+  try {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  } catch {
+    v = ''
+  }
+  const c = new THREE.Color()
+  try {
+    c.setStyle(v || fallback)
+  } catch {
+    c.setStyle(fallback)
+  }
+  return c
+}
+
+const vec3 = (a: number[] | undefined, d: [number, number, number]): THREE.Vector3 => (Array.isArray(a) && a.length >= 3 && a.every((x) => Number.isFinite(x)) ? new THREE.Vector3(a[0], a[1], a[2]) : new THREE.Vector3(...d))
+
+// The shape's frame in glTF model space: origin at the centre, local +Y along `axis`, local +Z toward `forward`.
+function shapeMatrix(s: HitShape): THREE.Matrix4 {
+  const y = vec3(s.axis, [0, 1, 0]).normalize()
+  let z = vec3(s.forward, [0, 0, 1])
+  z.sub(y.clone().multiplyScalar(z.dot(y))) // make forward square to the axis
+  if (z.lengthSq() < 1e-8) z = Math.abs(y.z) < 0.9 ? new THREE.Vector3(0, 0, 1).sub(y.clone().multiplyScalar(y.z)) : new THREE.Vector3(1, 0, 0).sub(y.clone().multiplyScalar(y.x))
+  z.normalize()
+  const x = new THREE.Vector3().crossVectors(y, z).normalize()
+  const m = new THREE.Matrix4().makeBasis(x, y, z)
+  m.setPosition(vec3(s.center, [0, 0, 0]))
+  return m
+}
+
+// A circle of `r` around local Y at height y, as line-segment pairs.
+function ringPoints(out: number[], r: number, y: number, plane: 'xz' | 'xy' | 'zy', n = 32) {
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2
+    const a1 = ((i + 1) / n) * Math.PI * 2
+    const p = (a: number): [number, number, number] => (plane === 'xz' ? [Math.cos(a) * r, y, Math.sin(a) * r] : plane === 'xy' ? [Math.cos(a) * r, Math.sin(a) * r + y, 0] : [0, Math.sin(a) * r + y, Math.cos(a) * r])
+    out.push(...p(a0), ...p(a1))
+  }
+}
+
+// A thin outline that reads at any angle: the capsule's two side profiles and its end rings, a sphere's three
+// great circles, a box's edges.
+function outlineGeometry(kind: string, r: number, half: number, size: THREE.Vector3): THREE.BufferGeometry {
+  if (kind === 'box') return new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x, size.y, size.z))
+  const pts: number[] = []
+  if (kind === 'sphere') {
+    ringPoints(pts, r, 0, 'xz')
+    ringPoints(pts, r, 0, 'xy')
+    ringPoints(pts, r, 0, 'zy')
+  } else {
+    ringPoints(pts, r, half, 'xz')
+    ringPoints(pts, r, -half, 'xz')
+    for (const plane of ['xy', 'zy'] as const) {
+      // Two half circles for the caps and two straight sides.
+      const n = 16
+      for (const [cy, from] of [
+        [half, 0],
+        [-half, Math.PI],
+      ] as const) {
+        for (let i = 0; i < n; i++) {
+          const a0 = from + (i / n) * Math.PI
+          const a1 = from + ((i + 1) / n) * Math.PI
+          const p = (a: number): [number, number, number] => (plane === 'xy' ? [Math.cos(a) * r, Math.sin(a) * r + cy, 0] : [0, Math.sin(a) * r + cy, Math.cos(a) * r])
+          pts.push(...p(a0), ...p(a1))
+        }
+      }
+      if (plane === 'xy') pts.push(r, -half, 0, r, half, 0, -r, -half, 0, -r, half, 0)
+      else pts.push(0, -half, r, 0, half, r, 0, -half, -r, 0, half, -r)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
+  return g
+}
+
+const FILL_OPACITY = 0.3
+const FILL_HOVER_OPACITY = 0.55
+
+// One shape (fill plus outline) in its own local frame: Y is the axis, sizes in metres.
+function buildShape(s: HitShape, color: THREE.Color, label: string): THREE.Group {
+  const kind = s.kind === 'box' || s.kind === 'sphere' ? s.kind : 'capsule'
+  const sz = vec3(s.size, [0, 0, 0])
+  const r = Math.max(1e-4, Number.isFinite(s.radius) ? Number(s.radius) : Math.max(sz.x, sz.z) / 2 || 0.05)
+  const height = Number.isFinite(s.height) ? Number(s.height) : sz.y || r * 2
+  const half = Math.max(0, height / 2 - r)
+  if (kind === 'box' && sz.lengthSq() === 0) sz.set(r * 2, height, r * 2)
+  const geo = kind === 'box' ? new THREE.BoxGeometry(sz.x, sz.y, sz.z) : kind === 'sphere' ? new THREE.SphereGeometry(r, 24, 16) : new THREE.CapsuleGeometry(r, half * 2, 8, 20)
+  const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: FILL_OPACITY, depthTest: false, depthWrite: false, side: THREE.DoubleSide }))
+  fill.renderOrder = 997
+  fill.userData.hitLabel = label
+  const line = new THREE.LineSegments(outlineGeometry(kind, r, half, sz), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false }))
+  line.renderOrder = 998
+  line.raycast = () => {} // hover picks the fill only
+  const g = new THREE.Group()
+  g.add(fill, line)
+  return g
+}
+
+function disposeGroup(g: THREE.Object3D) {
+  g.traverse((o) => {
+    const m = o as THREE.Mesh
+    m.geometry?.dispose?.()
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+    else mat?.dispose?.()
+  })
+}
+
+// The bone a hit box hangs on. three.js strips characters it cannot bind from node names ("mixamorig:Hips"
+// becomes "mixamorigHips"), so the sanitised name is tried first.
+function findBone(model: THREE.Object3D, name: string | undefined): THREE.Object3D | null {
+  if (!name) return null
+  return model.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(name)) ?? model.getObjectByName(name) ?? null
+}
+
+// The movement shape the file chose (movement.default), if it has one.
+function movementShapeOf(doc: HitboxDoc | null | undefined): HitShape | null {
+  const mv = doc?.movement
+  if (!mv || typeof mv !== 'object') return null
+  const key = typeof mv.default === 'string' ? mv.default : 'upright'
+  const s = mv[key]
+  return s && typeof s === 'object' && Array.isArray((s as HitShape).center) ? (s as HitShape) : null
+}
+
+// The GLB's clips in the sidecar's order, then any the sidecar does not list.
+function orderClips(names: string[], info: ClipInfo[] | null | undefined): string[] {
+  if (!info?.length) return names
+  const listed = info.map((c) => c.name).filter((n) => names.includes(n))
+  return [...listed, ...names.filter((n) => !listed.includes(n))]
+}
+
+export function hitShapesOf(doc: HitboxDoc | null | undefined): HitShape[] {
+  if (!doc || doc.mode === 'none' || !Array.isArray(doc.hitboxes)) return []
+  return doc.hitboxes.filter((h) => h && Array.isArray(h.center) && h.center.length >= 3)
+}
+
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const handlesRef = useRef<SceneHandles | null>(null)
   const modelRef = useRef<THREE.Object3D | null>(null)
@@ -296,6 +478,14 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const skelCorrRef = useRef<THREE.Matrix4 | null>(null)
   // Latest props for the async load callback.
   const bonesRef = useRef<{ bones: BoneSegment[] | null | undefined; space: BonesSpace; show: boolean }>({ bones, space: bonesSpace, show: showBonesDefault })
+  // The bones overlay's alignment correction, reused for the hit boxes (same space).
+  const bonesCorrRef = useRef<THREE.Matrix4 | null>(null)
+  // Hit boxes hang on bones; the body shape for moving sits on the model.
+  const hitDocRef = useRef<HitboxDoc | null | undefined>(hitboxes)
+  const hitGroupsRef = useRef<THREE.Group[]>([])
+  const moveGroupRef = useRef<THREE.Group | null>(null)
+  const clipInfoRef = useRef<ClipInfo[] | null | undefined>(clipInfo)
+  clipInfoRef.current = clipInfo
 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
@@ -307,6 +497,12 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const [clip, setClip] = useState<string>('')
   const [playing, setPlaying] = useState(true)
   const [status, setStatus] = useState('')
+  // Off by default: bones are on, and both together are cluttered (4.2).
+  const [showHits, setShowHits] = useState(false)
+  const [showMove, setShowMove] = useState(false)
+  const showHitsRef = useRef(showHits)
+  const showMoveRef = useRef(showMove)
+  const [hoverLabel, setHoverLabel] = useState<string | null>(null)
 
   // Scene setup once.
   useEffect(() => {
@@ -375,8 +571,35 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     }
     raf = requestAnimationFrame(tick)
 
+    // Hovering a hit box names it in the status line and brightens it.
+    const ray = new THREE.Raycaster()
+    const ndc = new THREE.Vector2()
+    let hovered: THREE.Mesh | null = null
+    const setHovered = (m: THREE.Mesh | null) => {
+      if (m === hovered) return
+      if (hovered) (hovered.material as THREE.MeshBasicMaterial).opacity = FILL_OPACITY
+      hovered = m
+      if (m) (m.material as THREE.MeshBasicMaterial).opacity = FILL_HOVER_OPACITY
+      setHoverLabel(m ? String(m.userData.hitLabel ?? '') : null)
+    }
+    const onMove = (e: PointerEvent) => {
+      const groups = [...hitGroupsRef.current, ...(moveGroupRef.current ? [moveGroupRef.current] : [])].filter((g) => g.visible && g.parent)
+      if (!groups.length) return setHovered(null)
+      const rect = renderer.domElement.getBoundingClientRect()
+      ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
+      ray.setFromCamera(ndc, camera)
+      const fills = groups.map((g) => g.children[0]).filter((o): o is THREE.Mesh => !!o && (o as THREE.Mesh).isMesh)
+      const hit = ray.intersectObjects(fills, false)[0]
+      setHovered((hit?.object as THREE.Mesh | undefined) ?? null)
+    }
+    const onLeave = () => setHovered(null)
+    renderer.domElement.addEventListener('pointermove', onMove)
+    renderer.domElement.addEventListener('pointerleave', onLeave)
+
     return () => {
       cancelAnimationFrame(raf)
+      renderer.domElement.removeEventListener('pointermove', onMove)
+      renderer.domElement.removeEventListener('pointerleave', onLeave)
       ro.disconnect()
       controls.dispose()
       renderer.dispose()
@@ -390,6 +613,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     const h = handlesRef.current
     if (!h) return
     if (!url) {
+      clearHitboxes()
       h.frame.clear()
       removeSkeletonGroup(h)
       modelRef.current = null
@@ -405,6 +629,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       (gltf) => {
         if (cancelled || !handlesRef.current) return
         const hh = handlesRef.current
+        clearHitboxes()
         hh.frame.clear()
         removeSkeletonGroup(hh)
         hh.modelRoot.rotation.set(0, 0, 0)
@@ -455,9 +680,13 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         setClips(names)
         if (clipsRef.current.length) {
           hh.mixer = new THREE.AnimationMixer(model)
+          // A one-shot clip that reached its last frame stops there; the Play button starts it again.
+          hh.mixer.addEventListener('finished', () => setPlaying(false))
           const wanted = defaultClip ? defaultClip.toLowerCase() : ''
-          const first = (wanted && clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted))) || clipsRef.current[0]
+          const ordered = orderClips(names, clipInfoRef.current)
+          const first = (wanted && clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted))) || clipsRef.current.find((c) => (c.name || 'clip') === ordered[0]) || clipsRef.current[0]
           const action = hh.mixer.clipAction(first)
+          applyLoop(action, first.name || 'clip')
           action.play()
           // Reduce Motion: load paused on frame 0; the Play button starts it.
           const still = reduceRef.current
@@ -495,11 +724,18 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       h.frame.remove(overlayRef.current)
       overlayRef.current = null
     }
+    bonesCorrRef.current = null
     const { bones: segs, space, show } = bonesRef.current
     const model = modelRef.current
-    if (!segs || !segs.length || !model) return
+    if (!segs || !segs.length || !model) {
+      attachHitboxes()
+      return
+    }
     const overlay = buildBoneOverlay(segs)
     const corr = pickAlignment(segmentPoints(segs), restRef.current, space !== 'gltf', 'bones overlay')
+    // Hit boxes are always in glTF space, so they share the correction only when the segments are too.
+    if (space === 'gltf') bonesCorrRef.current = corr
+    attachHitboxes()
     // The overlay sits next to the model in the frame group; the model's own local transform plus the correction.
     overlay.matrixAutoUpdate = false
     overlay.matrix.copy(model.matrix).multiply(corr)
@@ -508,6 +744,103 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     h.frame.add(overlay)
     overlayRef.current = overlay
   }
+
+  function clearHitboxes() {
+    for (const g of hitGroupsRef.current) {
+      g.parent?.remove(g)
+      disposeGroup(g)
+    }
+    hitGroupsRef.current = []
+    if (moveGroupRef.current) {
+      moveGroupRef.current.parent?.remove(moveGroupRef.current)
+      disposeGroup(moveGroupRef.current)
+      moveGroupRef.current = null
+    }
+    setHoverLabel(null)
+  }
+
+  // (Re)build the hit boxes on their bones, from the rest pose captured at load, and the body shape for moving.
+  function attachHitboxes() {
+    clearHitboxes()
+    const model = modelRef.current
+    const rest = restRef.current
+    const doc = hitDocRef.current
+    if (!model || !rest || !doc) return
+    const shapes = hitShapesOf(doc)
+    const move = movementShapeOf(doc)
+    if (!shapes.length && !move) return
+    const corr =
+      bonesCorrRef.current ??
+      pickAlignment(
+        shapes.map((s) => vec3(s.center, [0, 0, 0])),
+        rest,
+        false,
+        'hit boxes',
+      )
+    const warn = tokenColor('--warn', '#d8a84a')
+    let unbound = 0
+    for (const s of shapes) {
+      const inModel = corr.clone().multiply(shapeMatrix(s))
+      const bone = findBone(model, s.bone)
+      if (!bone) unbound++
+      const parentRest = bone ? (rest.boneRest.get(bone) ?? model.matrixWorld.clone().invert().multiply(bone.matrixWorld)) : new THREE.Matrix4()
+      const local = parentRest.clone().invert().multiply(inModel)
+      const g = buildShape(s, warn, s.label || s.region || s.name || 'Hit box')
+      g.name = s.name ?? 'hitbox'
+      local.decompose(g.position, g.quaternion, g.scale)
+      g.visible = showHitsRef.current
+      ;(bone ?? model).add(g)
+      hitGroupsRef.current.push(g)
+    }
+    if (unbound && import.meta.env.DEV) console.debug(`[viewer] ${unbound} hit boxes name a bone this file does not have; they stay still`)
+    if (move) {
+      const g = buildShape(move, tokenColor('--accent', '#6ea4e8'), 'Body shape for moving')
+      g.name = 'movement-shape'
+      corr.clone().multiply(shapeMatrix(move)).decompose(g.position, g.quaternion, g.scale)
+      g.visible = showMoveRef.current
+      model.add(g)
+      moveGroupRef.current = g
+    }
+  }
+
+  // Hit boxes arrive separately (hitboxes.json is fetched by the rig view).
+  useEffect(() => {
+    hitDocRef.current = hitboxes
+    attachHitboxes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hitboxes])
+
+  useEffect(() => {
+    showHitsRef.current = showHits
+    for (const g of hitGroupsRef.current) g.visible = showHits
+  }, [showHits])
+
+  useEffect(() => {
+    showMoveRef.current = showMove
+    if (moveGroupRef.current) moveGroupRef.current.visible = showMove
+  }, [showMove])
+
+  // Whether a clip loops: the sidecar says, else its name does.
+  function loops(name: string): boolean {
+    const info = clipInfoRef.current?.find((c) => c.name === name)
+    return typeof info?.loop === 'boolean' ? info.loop : clipLoopsByName(name)
+  }
+
+  function applyLoop(action: THREE.AnimationAction, name: string) {
+    if (loops(name)) {
+      action.setLoop(THREE.LoopRepeat, Infinity)
+      action.clampWhenFinished = false
+    } else {
+      action.setLoop(THREE.LoopOnce, 1)
+      action.clampWhenFinished = true
+    }
+  }
+
+  // The sidecar may arrive after the model: apply its loop flags to the playing clip.
+  useEffect(() => {
+    if (actionRef.current && clip) applyLoop(actionRef.current, clip)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipInfo])
 
   // Bones overlay may arrive after the model (rig_info is fetched separately).
   useEffect(() => {
@@ -557,17 +890,30 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     if (!c) return
     actionRef.current?.stop()
     const action = h.mixer.clipAction(c)
+    applyLoop(action, name)
     action.reset().play()
-    action.paused = !playing
+    // Picking a clip plays it, unless Reduce Motion keeps it still until Play is pressed.
+    const still = reduceMotion && !playing
+    action.paused = still
+    if (still) h.mixer.update(0)
     actionRef.current = action
     setClip(name)
+    setPlaying(!still)
   }
 
   const togglePlay = () => {
     const next = !playing
     setPlaying(next)
-    if (actionRef.current) actionRef.current.paused = !next
+    const a = actionRef.current
+    if (!a) return
+    // A one-shot clip that ended on its last frame starts again from the beginning.
+    if (next && a.loop === THREE.LoopOnce && a.time >= a.getClip().duration - 1e-3) a.reset().play()
+    a.paused = !next
   }
+
+  const orderedClips = orderClips(clips, clipInfo)
+  const hitCount = hitShapesOf(hitboxes).length
+  const hasMoveShape = !!movementShapeOf(hitboxes)
 
   const resetView = () => {
     const h = handlesRef.current
@@ -603,12 +949,28 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             Bones ({bones.length})
           </button>
         )}
+        {hitCount > 0 && (
+          <span className="viewer-toggle">
+            <button type="button" aria-pressed={showHits} onClick={() => setShowHits((s) => !s)}>
+              Hit boxes ({hitCount})
+            </button>
+            <Info term="term.hitboxes" />
+          </span>
+        )}
+        {hasMoveShape && (
+          <span className="viewer-toggle">
+            <button type="button" aria-pressed={showMove} onClick={() => setShowMove((s) => !s)}>
+              Body shape
+            </button>
+            <Info term="term.movement_shape" />
+          </span>
+        )}
         {clips.length > 0 && (
           <>
             <select value={clip} onChange={(e) => changeClip(e.target.value)} aria-label="Animation clip">
-              {clips.map((c) => (
+              {orderedClips.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
                 </option>
               ))}
             </select>
@@ -620,7 +982,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         <button type="button" onClick={resetView}>
           Reset view
         </button>
-        <span className="viewer-status">{status}</span>
+        <span className="viewer-status" aria-live="polite">
+          {hoverLabel ?? status}
+        </span>
       </div>
       <div className="canvas-host" ref={hostRef} />
     </section>

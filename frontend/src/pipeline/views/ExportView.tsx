@@ -9,7 +9,11 @@ type Lod = { level?: number; triangles?: number; screen_height?: number; ratio?:
 
 const FILE_NAMES: Record<string, string> = {
   fbx: 'FBX (most engines)',
-  glb: 'GLB (web and Godot)',
+  glb: 'GLB (web, Blender)',
+  glb_godot: 'GLB for Godot (with collision)',
+  glb_lod1: 'detail level 1 (GLB)',
+  glb_lod2: 'detail level 2 (GLB)',
+  glb_lod3: 'detail level 3 (GLB)',
   prefab: 'Unity prefab',
   unitypackage: 'Unity package',
   base_color: 'colour texture',
@@ -24,7 +28,7 @@ const FILE_NAMES: Record<string, string> = {
   manifest: 'manifest',
 }
 
-const DELIVERABLE_KEYS = ['fbx', 'glb', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+const DELIVERABLE_KEYS = ['fbx', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
 // Once the packed maps exist (3.1) the separate metal and roughness maps leave the download row; they stay in
 // Details, Files.
 const PACKED_REPLACES = new Set(['metallic', 'roughness'])
@@ -59,7 +63,7 @@ export function ExportView({ version, hideReady = false }: { version: Version; h
       {!hideReady && (
         <div className="ready-box">
           <div className="ready-title">Your asset is ready</div>
-          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot. The GLB holds every detail level and the collision shape, so on the web or in Godot show only the first model.</div>
+          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot; GLB works on the web and in Godot.</div>
           <Deliverables version={version} />
         </div>
       )}
@@ -180,6 +184,9 @@ function unityLines(rep: UnityReport): UnityLine[] {
   }
   if (rep.controller === null) {
     out.push({ id: 'controller', state: 'warn', text: 'No animation controller was built, so you would set one up in Unity.', term: 'animator_controller' })
+  } else if (typeof rep.controller === 'string') {
+    // An older importer reported only where it saved the controller.
+    out.push({ id: 'controller', state: 'ok', text: 'Animation controller: built and attached to the prefab.', term: 'animator_controller', title: `Technical: ${rep.controller}` })
   } else if (rep.controller) {
     const params = controllerParams(rep)
     const triggers = params.filter((p) => p !== 'Speed')
@@ -192,7 +199,7 @@ function unityLines(rep: UnityReport): UnityLine[] {
   if (rep.avatar) {
     const human = /human/i.test(rep.avatar)
     // avatar_mapping is recorded for humanoids; generic there means the person mapping failed and it fell back.
-    const fellBack = rep.avatar_mapping === 'generic'
+    const fellBack = rep.avatar_mapping === 'generic' || rep.avatar_mapping === 'none'
     out.push({
       id: 'avatar',
       state: !human && fellBack ? 'warn' : 'ok',

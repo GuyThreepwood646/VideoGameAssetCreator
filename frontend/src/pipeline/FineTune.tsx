@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { libraryUrl, selectedVersion, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { aboutSize, fmtDuration, isSimpleParam, knobApplies, measuredSize, modelLabel, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
@@ -47,6 +47,15 @@ export function FineTune({
       // A per-category default (by_category, 3.2) wins over the knob's single default.
       const catDefault = p.by_category?.[asset.category]?.default
       out[p.name] = current !== undefined ? current : catDefault !== undefined ? catDefault : p.default !== undefined ? p.default : defaultFor(p)
+    }
+    // Moves and body parts left empty mean "all of them" (3.7, 4.2): show every one ticked. The backend records
+    // turn_left and turn_right; the knob offers them as one move, "turn".
+    for (const name of ['moves', 'hitbox_regions']) {
+      const p = visible.find((x) => x.name === name)
+      if (!p) continue
+      const cur = out[name]
+      if (cur === null || cur === undefined || (Array.isArray(cur) && cur.length === 0 && target.params?.[name] == null)) out[name] = shownOptions(p, out.motion).map(String)
+      else if (Array.isArray(cur)) out[name] = [...new Set(cur.map((c) => (c === 'turn_left' || c === 'turn_right' ? 'turn' : String(c))))]
     }
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -214,7 +223,25 @@ export function FineTune({
         />
       )
     }
-    return <AdjustField param={p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
+    return <AdjustField param={p.name === 'moves' || p.name === 'hitbox_regions' ? { ...p, options: shownOptions(p, values.motion, values[p.name]) } : p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
+  }
+
+  // The choices worth offering: the moves this way of moving can make, and the body parts this skeleton has.
+  // Anything already chosen stays listed.
+  function shownOptions(p: AdjustParam, motion: unknown, chosen?: unknown): NonNullable<AdjustParam['options']> {
+    const all = p.options ?? []
+    let keep: string[] | null = null
+    if (p.name === 'moves') {
+      const mo = typeof motion === 'string' && motion ? motion : (MOTION_BY_CATEGORY[asset.category] ?? '')
+      keep = MOVES_BY_MOTION[mo] ?? null
+    } else if (p.name === 'hitbox_regions') {
+      const hb = target.metrics?.hitboxes as { regions_found?: ({ id?: string } | string)[] } | undefined
+      const found = Array.isArray(hb?.regions_found) ? hb.regions_found.map((r) => (typeof r === 'string' ? r : r?.id)).filter((r): r is string => typeof r === 'string') : []
+      keep = found.length ? found : null
+    }
+    if (!keep) return all
+    const picked = Array.isArray(chosen) ? chosen.map(String) : []
+    return all.filter((o) => keep!.includes(String(o)) || picked.includes(String(o)))
   }
 
   return (
