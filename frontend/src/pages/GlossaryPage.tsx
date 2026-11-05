@@ -25,9 +25,10 @@ const GROUPS: Group[] = [
   },
   {
     title: 'Painting the picture',
-    intro: 'The first step paints a picture with one of the painters; add-ons push it toward a look.',
+    intro: 'The first step paints a picture with an image model; LoRAs push it toward a look.',
     items: [
-      { id: 'addons', term: 'term.addons', title: 'Add-ons (LoRAs)' },
+      { id: 'model', term: 'term.model' },
+      { id: 'addons', term: 'term.addons' },
       { id: 'addon-mine', term: 'term.addon_mine' },
       { id: 'addon-painter', term: 'term.addon_painter' },
       { id: 'addon-trigger', term: 'term.addon_trigger' },

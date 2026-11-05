@@ -76,13 +76,13 @@ export function AddMyAddon({ painter, onAdded, onClose }: { painter: string; onA
   return (
     <div className="addon-add">
       <div className="row-between">
-        <strong>Add your own add-on</strong>
+        <strong>Add your own LoRA</strong>
         <button type="button" className="link" onClick={onClose}>
           Cancel
         </button>
       </div>
       <p className="muted small">
-        An add-on is a .safetensors file you downloaded, for example from a model sharing site. You do not type a path: choose the file, and the app keeps a copy in its own add-on folder and adds
+        A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You do not type a path: choose the file, and the app keeps a copy in its own LoRA folder and adds
         it to the picture for you.
       </p>
       <div className="addon-add-ways">
@@ -107,11 +107,11 @@ function ChooseFile({ onPicked }: { onPicked: (p: Picked) => void }) {
     if (!file) return
     setError(null)
     if (!file.name.toLowerCase().endsWith('.safetensors')) {
-      setError(new Error('Add-ons must be .safetensors files. Other kinds of model file are not accepted.'))
+      setError(new Error('LoRAs must be .safetensors files. Other kinds of model file are not accepted.'))
       return
     }
     if (file.size > MAX_ADDON_BYTES) {
-      setError(new Error(`That file is ${fmtBytes(file.size)}, larger than 4 GB. Add-ons are much smaller; this may not be an add-on.`))
+      setError(new Error(`That file is ${fmtBytes(file.size)}, larger than 4 GB. LoRAs are much smaller; this may not be a LoRA.`))
       return
     }
     setProgress(0)
@@ -127,10 +127,10 @@ function ChooseFile({ onPicked }: { onPicked: (p: Picked) => void }) {
   }
   return (
     <div className="addon-add-step">
-      <input ref={input} type="file" accept=".safetensors" disabled={progress !== null} aria-label="Choose an add-on file" onChange={(e) => choose(e.target.files?.[0])} />
+      <input ref={input} type="file" accept=".safetensors" disabled={progress !== null} aria-label="Choose a LoRA file" onChange={(e) => choose(e.target.files?.[0])} />
       {progress !== null ? (
         <div className="muted small" role="status">
-          Copying the file into the app's add-on folder... {Math.round(progress * 100)}%
+          Copying the file into the app's LoRA folder... {Math.round(progress * 100)}%
         </div>
       ) : (
         <div className="muted small">The file is copied on this computer only. Nothing is sent to the internet.</div>
@@ -168,18 +168,18 @@ function FromFolder({ folder, onPicked }: { folder: string; onPicked: (p: Picked
   return (
     <div className="addon-add-step">
       <p className="muted small">
-        Put the .safetensors file in the app's add-on folder, then press Look again. The app only ever looks in this one folder.
+        Put the .safetensors file in the app's LoRA folder, then press Look again. The app only ever looks in this one folder.
       </p>
       {shownFolder && <div className="mono small addon-folder">{shownFolder}</div>}
       <div className="row-gap">
         <button type="button" onClick={open}>
-          Open the add-on folder
+          Open the LoRA folder
         </button>
         <button type="button" onClick={look} disabled={busy}>
           {busy ? 'Looking...' : 'Look again'}
         </button>
       </div>
-      {files && files.length === 0 && <div className="muted small">No new files in the add-on folder yet.</div>}
+      {files && files.length === 0 && <div className="muted small">No new files in the LoRA folder yet.</div>}
       {files && files.length > 0 && (
         <ul className="addon-files">
           {files.map((f) => (
@@ -225,7 +225,7 @@ function AddonForm({
   const [source, setSource] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [saving, setSaving] = useState(false)
-  const missing = !label.trim() ? 'Give the add-on a name.' : models.length === 0 ? 'Choose at least one painter.' : null
+  const missing = !label.trim() ? 'Give the LoRA a name.' : models.length === 0 ? 'Choose at least one model.' : null
   const save = async () => {
     if (missing) {
       setError(new Error(missing))
@@ -247,7 +247,7 @@ function AddonForm({
   return (
     <div className="addon-add addon-form">
       <div className="row-between">
-        <strong>Set up your add-on</strong>
+        <strong>Set up your LoRA</strong>
         <span className="muted small">
           {picked.fileName} ({fmtBytes(picked.bytes)})
         </span>
@@ -260,10 +260,10 @@ function AddonForm({
 
       <fieldset className="field addon-painters">
         <legend className="field-label">
-          Which painter was it made for?
+          Which model was it made for? (its base model)
           <Info term="term.addon_painter" />
         </legend>
-        <span className="field-hint">An add-on only works with the painter family it was trained on. Its download page says which one.</span>
+        <span className="field-hint">A LoRA only works with the model family it was trained on. Its download page says which one.</span>
         {pre?.painter_note && <div className="addon-note small">{pre.painter_note}</div>}
         <div className="check-row">
           {painters.map((p) => (
@@ -278,11 +278,11 @@ function AddonForm({
 
       <label className="field">
         <span className="field-label">
-          Words to add to the description (optional)
+          Trigger words (words the LoRA needs in the description)
           <Info term="term.addon_trigger" />
         </span>
         <input value={trigger} maxLength={300} placeholder="for example: ink wash style" onChange={(e) => setTrigger(e.target.value)} onKeyDown={noEnter} />
-        <span className="field-hint">Some add-ons only work when certain words are in the prompt. Its download page lists them.</span>
+        <span className="field-hint">Optional. Some LoRAs only work when certain words are in the description. Its download page lists them.</span>
       </label>
 
       <div className="field">
@@ -300,7 +300,7 @@ function AddonForm({
       <label className="field">
         <span className="field-label">Where it came from (optional)</span>
         <input value={source} maxLength={500} placeholder="a link or a short note" onChange={(e) => setSource(e.target.value)} onKeyDown={noEnter} />
-        <span className="field-hint">Kept with every asset that uses it, next to the licence of the tested add-ons.</span>
+        <span className="field-hint">Kept with every asset that uses it, next to the licence of the tested LoRAs.</span>
       </label>
 
       <p className="muted small">You are responsible for being allowed to use this file in your game. Check its licence on the page you downloaded it from.</p>
@@ -312,7 +312,7 @@ function AddonForm({
         <button type="button" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        {!saving && <span className="muted small">If you cancel, the file stays in the add-on folder; Look again finds it.</span>}
+        {!saving && <span className="muted small">If you cancel, the file stays in the LoRA folder; Look again finds it.</span>}
       </div>
     </div>
   )

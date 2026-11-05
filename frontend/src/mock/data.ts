@@ -234,7 +234,7 @@ export const stages: StageInfo[] = [
       { name: 'readiness_block', label: 'Pipeline-readiness prompt block', type: 'boolean', default: true },
       { name: 'prompt_override', label: 'Prompt override', type: 'string', default: '' },
       // As the backend serves it: the concept add-ons in `catalog`; the value is {id: off | subtle | normal | strong}.
-      { name: 'addons', label: 'Add-ons', type: 'addons', default: null, options: ['off', 'subtle', 'normal', 'strong'], description: 'The recipe and the style lock decide when empty', catalog: CONCEPT_CATALOG },
+      { name: 'addons', label: 'LoRAs (style add-ons)', type: 'addons', default: null, options: ['off', 'subtle', 'normal', 'strong'], description: 'The recipe and the style lock decide when empty', catalog: CONCEPT_CATALOG },
     ],
   },
   {

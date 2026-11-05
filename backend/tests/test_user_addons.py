@@ -123,9 +123,9 @@ def test_register_checks_the_form(mine):
     from vgac.user_addons import AddonFileError, register
 
     put_file(mine, "a.safetensors")
-    with pytest.raises(AddonFileError, match="painter"):
+    with pytest.raises(AddonFileError, match="at least one model"):
         register("a.safetensors", "A", [])
-    with pytest.raises(AddonFileError, match="Unknown painter"):
+    with pytest.raises(AddonFileError, match="Unknown model"):
         register("a.safetensors", "A", ["sdxl"])
     with pytest.raises(AddonFileError, match="name"):
         register("a.safetensors", "  ", ["zturbo"])
@@ -169,7 +169,7 @@ def test_user_addon_with_missing_file_is_never_sent(mine):
     p.unlink()
     r = reference.resolve_addons("zturbo", "concept", [], None, {e["id"]: "normal"})
     assert r["applied"] == []
-    assert r["ignored"] == [{"id": e["id"], "reason": "its file is no longer in the add-on folder", "source": "version"}]
+    assert r["ignored"] == [{"id": e["id"], "reason": "its file is no longer in the LoRA folder", "source": "version"}]
 
 
 def test_concept_graph_gets_loader_with_user_file(mine):
@@ -220,7 +220,7 @@ def test_parse_header_refuses_non_lora_and_damage():
         parse_header(b"not json at all")
     with pytest.raises(AddonFileError, match="damaged"):
         parse_header(json.dumps({"w": {"dtype": "F16", "shape": [1], "data_offsets": [8, 2]}}).encode())
-    with pytest.raises(AddonFileError, match="whole painter model"):
+    with pytest.raises(AddonFileError, match="whole image model"):
         parse_header(json.dumps({"model.diffusion_model.x.weight": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]}}).encode())
     meta, tensors, end = parse_header(json.dumps({LORA_KEY: {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]},
                                                   "__metadata__": {"a": "b"}}).encode())

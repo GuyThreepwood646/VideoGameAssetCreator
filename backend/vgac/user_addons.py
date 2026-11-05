@@ -104,7 +104,7 @@ def safe_name(raw: str | None) -> str:
     if any(c in name for c in "/\\:") or ".." in name or "\x00" in name:
         raise AddonFileError("The file name must be a plain file name, without folders.")
     if not name.lower().endswith(EXT):
-        raise AddonFileError("Add-ons must be .safetensors files. Other kinds of model file are not accepted.")
+        raise AddonFileError("LoRAs must be .safetensors files. Other kinds of model file are not accepted.")
     stem = name[: -len(EXT)]
     stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", stem).strip(" .")
     stem = re.sub(r"_+", "_", stem)
@@ -122,10 +122,10 @@ def _existing_file(name: str) -> Path:
     if not name or name != Path(name).name or any(c in name for c in "/\\:") or ".." in name:
         raise AddonFileError("The file name must be a plain file name, without folders.")
     if not name.lower().endswith(EXT):
-        raise AddonFileError("Add-ons must be .safetensors files.")
+        raise AddonFileError("LoRAs must be .safetensors files.")
     p = mine_dir() / name
     if not p.is_file():
-        raise AddonFileError("That file is not in the add-on folder.", status=404)
+        raise AddonFileError("That file is not in the LoRA folder.", status=404)
     return p
 
 
@@ -166,7 +166,7 @@ def parse_header(raw: bytes) -> tuple[dict[str, str], dict[str, dict[str, Any]],
     if not header:
         raise AddonFileError("This safetensors file holds no data.")
     if not any(LORA_KEY.search(k) for k in header):
-        raise AddonFileError("This file does not look like an add-on (LoRA). It may be a whole painter model, which "
+        raise AddonFileError("This file does not look like a LoRA (style add-on). It may be a whole image model, which "
                              "belongs in a different folder and cannot be added here.")
     return meta, header, end
 
@@ -192,7 +192,7 @@ ARCH_FIELDS = ("modelspec.architecture", "ss_base_model_version", "modelspec.bas
 NAME_FIELDS = ("modelspec.title", "name", "ss_output_name")
 TRIGGER_FIELDS = ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "trigger_word", "ss_trigger",
                   "activation_text", "instance_prompt")
-UNSURE = "We could not tell which painter this was made for."
+UNSURE = "We could not tell which model this was made for."
 # Families this app has no painter for, by the words their metadata uses.
 OTHER_FAMILIES = (
     (re.compile(r"sdxl|stable-diffusion-xl|sd_xl|\bxl\b|pony|illustrious|noob"), "Stable Diffusion XL"),
@@ -210,7 +210,7 @@ def _label_from_name(name: str) -> str:
     stem = name[: -len(EXT)] if name.lower().endswith(EXT) else name
     stem = re.sub(r"[_-]+", " ", stem)
     stem = " ".join(stem.split())
-    return (stem[:1].upper() + stem[1:])[:MAX_LABEL_CHARS] if stem else "My add-on"
+    return (stem[:1].upper() + stem[1:])[:MAX_LABEL_CHARS] if stem else "My LoRA"
 
 
 def _clean_line(value: Any, limit: int) -> str:
@@ -292,15 +292,15 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
         elif re.search(r"z[-_. ]?image[-_. ]?base|\bbase\b", arch):
             picks = ["zbase"]
         else:
-            note = UNSURE + " It looks like a Z-Image add-on: choose Z-Image Turbo or Z-Image Base."
+            note = UNSURE + " It looks like a Z-Image LoRA: choose Z-Image Turbo or Z-Image Base."
     elif "klein" in both and "flux" in both:
         family = "FLUX.2 Klein"
         if re.search(r"9\s?b", both):
-            note = "It looks like it was made for FLUX.2 Klein 9B. This app has the 4B painter, so it will probably not work."
+            note = "It looks like it was made for FLUX.2 Klein 9B. This app has the 4B model, so it will probably not work."
         elif re.search(r"4\s?b", both):
             picks = ["klein"]
         else:
-            note = UNSURE + " It looks like a FLUX.2 Klein add-on; this app has the 4B painter."
+            note = UNSURE + " It looks like a FLUX.2 Klein LoRA; this app has the 4B model."
     elif "chroma" in arch:
         family, picks = "Chroma", ["chroma"]
     elif re.search(r"\banima\b", arch):
@@ -309,14 +309,14 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
         for pattern, fam in OTHER_FAMILIES:
             if pattern.search(arch):
                 family = fam
-                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these painters."
+                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models."
                 break
     if not family:
         family = _family_from_keys(tensors)
         if family == "Stable Diffusion":
-            note = "It looks like it was made for Stable Diffusion, which this app does not use. It will probably not work with any of these painters."
+            note = "It looks like it was made for Stable Diffusion, which this app does not use. It will probably not work with any of these models."
         elif family:
-            note = UNSURE + f" It looks like a {family} add-on."
+            note = UNSURE + f" It looks like a {family} LoRA."
     picks = [p for p in picks if p in painters]
     if not picks and not note:
         note = UNSURE
@@ -357,9 +357,9 @@ def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
         "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
         "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
         "mine": True, "added_at": a.get("added_at") or "",
-        "help": {"meaning": f"Your own add-on, from the file {name}.",
+        "help": {"meaning": f"Your own LoRA, from the file {name}.",
                  "why": "You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.",
-                 "technical": f"LoRA {f}, model only, for {labels or 'no painter'}"},
+                 "technical": f"LoRA {f}, model only, for {labels or 'no model'}"},
     }
 
 
@@ -424,14 +424,14 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
     read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
     label = _clean_line(label, MAX_LABEL_CHARS)
     if not label:
-        raise AddonFileError("Give the add-on a name.")
+        raise AddonFileError("Give the LoRA a name.")
     painters = list(reference.concept_models())
     models = [m for m in dict.fromkeys(base_models or [])]
     if not models:
-        raise AddonFileError("Choose at least one painter the add-on was made for.")
+        raise AddonFileError("Choose at least one model the LoRA was made for.")
     bad = [m for m in models if m not in painters]
     if bad:
-        raise AddonFileError(f"Unknown painter: {', '.join(bad)}.")
+        raise AddonFileError(f"Unknown model: {', '.join(bad)}.")
     if default_strength not in STRENGTHS:
         raise AddonFileError("The starting strength must be Subtle, Normal or Strong.")
     if len(trigger or "") > MAX_TRIGGER_CHARS * 2 or len(source or "") > MAX_SOURCE_CHARS * 2:
@@ -440,7 +440,7 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
         items = _read_raw()
         fv = file_value(path.name)
         if any(a.get("file") == fv for a in items):
-            raise AddonFileError("This file is already set up as one of your add-ons.", status=409)
+            raise AddonFileError("This file is already set up as one of your LoRAs.", status=409)
         taken = {str(a.get("id")) for a in items} | _builtin_ids()
         entry = {"id": _new_id(label, taken), "label": label, "file": fv, "base_models": models,
                  "trigger": _clean_line(trigger, MAX_TRIGGER_CHARS), "default_strength": default_strength,
@@ -454,12 +454,12 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
 def remove(aid: str) -> dict[str, Any]:
     """Take one of the person's add-ons off the list. The file stays in VGAC/mine/."""
     if aid in _builtin_ids():
-        raise AddonFileError("Tested add-ons come with the app and cannot be removed.")
+        raise AddonFileError("Tested LoRAs come with the app and cannot be removed.")
     with _lock:
         items = _read_raw()
         keep = [a for a in items if a.get("id") != aid]
         if len(keep) == len(items):
-            raise AddonFileError("That add-on is not on your list.", status=404)
+            raise AddonFileError("That LoRA is not on your list.", status=404)
         gone = next(a for a in items if a.get("id") == aid)
         _write_raw(keep)
     name = str(gone.get("file") or "")[len(MINE_PREFIX):]
@@ -560,7 +560,7 @@ class _Checker:
 
 
 def too_large_message(cap: int) -> str:
-    return f"This file is larger than {cap / 1024 ** 3:.0f} GB. Add-ons are much smaller; this may not be an add-on."
+    return f"This file is larger than {cap / 1024 ** 3:.0f} GB. LoRAs are much smaller; this may not be a LoRA."
 
 
 async def save_upload(request: Request, raw_name: str) -> dict[str, Any]:
@@ -576,7 +576,7 @@ async def save_upload(request: Request, raw_name: str) -> dict[str, Any]:
     d = mine_dir(create=True)
     final = d / name
     if final.exists():
-        raise AddonFileError("A file with this name is already in the add-on folder. Use \"Look again\" to set it up, "
+        raise AddonFileError("A file with this name is already in the LoRA folder. Use \"Look again\" to set it up, "
                              "or rename your file and choose it again.", status=409)
     part = d / f".upload-{uuid.uuid4().hex}.part"
     check = _Checker(cap)
@@ -595,10 +595,10 @@ async def save_upload(request: Request, raw_name: str) -> dict[str, Any]:
             if buf:
                 await asyncio.to_thread(f.write, bytes(buf))
         if final.exists():
-            raise AddonFileError("A file with this name arrived in the add-on folder meanwhile. Choose it again with another name.", status=409)
+            raise AddonFileError("A file with this name arrived in the LoRA folder meanwhile. Choose it again with another name.", status=409)
         os.rename(part, final)  # never replaces: refuses when the name is taken
     except FileExistsError:
-        raise AddonFileError("A file with this name is already in the add-on folder.", status=409)
+        raise AddonFileError("A file with this name is already in the LoRA folder.", status=409)
     finally:
         if part.exists():
             try:

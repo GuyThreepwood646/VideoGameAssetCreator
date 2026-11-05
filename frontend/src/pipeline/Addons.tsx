@@ -69,12 +69,12 @@ export function AddonsList({
     if (painter && a.base_models.includes(painter)) {
       onChange(a.id, a.default_strength)
       setAdded({ id: a.id, text: `${a.label} is added and switched on. Press Apply and re-run to paint with it.`, listed: true })
-    } else setAdded({ id: a.id, text: `${a.label} is added. It shows up when you choose a painter it was made for.`, listed: false })
+    } else setAdded({ id: a.id, text: `${a.label} is added. It shows up when you choose a model it was made for.`, listed: false })
   }
   return (
     <div className="addons">
       <div className="field-label">
-        Add-ons{painterName ? ` for ${painterName}` : ''}
+        LoRAs (style add-ons){painterName ? ` for ${painterName}` : ''}
         <Info term="term.addons" />
       </div>
       {tested.length > 0 ? (
@@ -84,7 +84,7 @@ export function AddonsList({
           ))}
         </ul>
       ) : (
-        painter && <div className="muted small">No tested add-ons for this painter yet. You can add your own.</div>
+        painter && <div className="muted small">No tested LoRAs for this model yet. You can add your own.</div>
       )}
       {yours.length > 0 && (
         <>
@@ -109,7 +109,7 @@ export function AddonsList({
                 setAdding(true)
               }}
             >
-              Add your own add-on
+              Add your own LoRA
             </button>
             {added && (!added.listed || yours.some((r) => r.entry.id === added.id)) && (
               <span className="muted small" role="status">
@@ -129,15 +129,15 @@ export function AddonsHint({ rows, painter, onShow }: { rows: AddonRow[]; painte
   const name = modelLabel(painter)
   const text =
     rows.length === 0
-      ? `Add-ons: none tested for ${name} yet; you can add your own.`
+      ? `LoRAs (style add-ons): none tested for ${name} yet; you can add your own.`
       : on > 0
-        ? `Add-ons: ${on} on, ${rows.length - on} more you can switch on for ${name}.`
-        : `Add-ons: ${rows.length} you can switch on for ${name}.`
+        ? `LoRAs (style add-ons): ${on} on, ${rows.length - on} more you can switch on for ${name}.`
+        : `LoRAs (style add-ons): ${rows.length} you can switch on for ${name}.`
   return (
     <div className="muted small addon-hint">
       {text}{' '}
       <button type="button" className="link" onClick={onShow}>
-        Show add-ons
+        Show LoRAs
       </button>
     </div>
   )
@@ -158,7 +158,7 @@ function AddonRowView({
 }) {
   const { entry: a, locked, on, strength } = row
   const fixedStrength = strengthsEqual(a)
-  const reason = a.stage === 'turnaround' ? 'Part of the turnaround, cannot be switched off' : 'Part of this painter, cannot be switched off'
+  const reason = a.stage === 'turnaround' ? 'Part of the turnaround, cannot be switched off' : 'Part of this model, cannot be switched off'
   const label = a.label || a.id
   return (
     <li className={'addon-row' + (on ? '' : ' addon-off')}>
@@ -176,7 +176,7 @@ function AddonRowView({
             aria-label={`${label}: ${on ? 'on' : 'off'}`}
             className={'switch' + (on ? ' switch-on' : '')}
             disabled={disabled || locked}
-            title={locked ? reason : on ? 'Switch this add-on off' : 'Switch this add-on on'}
+            title={locked ? reason : on ? 'Switch this LoRA off' : 'Switch this LoRA on'}
             onClick={() => onChange?.(on ? 'off' : strength)}
           >
             <span className="switch-knob" />
@@ -197,7 +197,7 @@ function AddonRowView({
                 aria-checked={on && strength === s}
                 className={'seg' + (on && strength === s ? ' seg-on' : '')}
                 disabled={disabled || !on}
-                title={on ? undefined : 'Switch the add-on on to choose a strength'}
+                title={on ? undefined : 'Switch the LoRA on to choose a strength'}
                 onClick={() => onChange?.(s)}
               >
                 {STRENGTH_LABELS[s]}
@@ -235,7 +235,7 @@ function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean 
     <div className="addon-mine-actions small">
       {asking ? (
         <>
-          <span>Take it off your list? The file stays in the add-on folder, so you can set it up again later.</span>
+          <span>Take it off your list? The file stays in the LoRA folder, so you can set it up again later.</span>
           <button type="button" onClick={remove}>
             Remove
           </button>
@@ -260,7 +260,7 @@ export function TurnaroundAddons({ entries }: { entries: AddonEntry[] }) {
   return (
     <div className="addons">
       <div className="field-label">
-        Add-ons
+        LoRAs (style add-ons)
         <Info term="term.addons" />
       </div>
       <ul className="addon-list">
