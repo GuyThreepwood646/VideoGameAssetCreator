@@ -1,0 +1,65 @@
+# Add-ons: small trained helpers (LoRAs) a painter or the turnaround can load on top of its model.
+#
+# This file is the one list of add-ons the app knows. The app never lists a models folder: an add-on exists for the
+# app only when it is named here. Add one by adding an entry; nothing else lists them.
+#
+# Fields:
+#   id               short id used in recipes, the project style lock (`loras`) and the concept `addons` knob
+#   label            plain name shown in the app
+#   help             {meaning, why, technical}, the same three lines every other term has
+#   file             path under ComfyUI's loras folder, forward slashes (the graph turns them into the Windows form)
+#   base_models      model ids (data/models.yaml) the add-on works with; it is applied only when the chosen model is one
+#   stage            concept or turnaround
+#   trigger          words appended to the prompt when the add-on is applied (optional)
+#   strengths        {subtle, normal, strong}: the strength each step loads the add-on at
+#   default_strength one of subtle, normal, strong
+#   required         true when the step cannot run without it (shown locked, cannot be switched off)
+#   built_in         model ids whose graph already loads this add-on (data/models.yaml builder); for those the
+#                    strength is passed to the graph instead of adding a second loader, and no trigger is appended
+#   required_for     model ids for which the add-on is part of the painter itself (shown locked for those)
+#   licence, source  recorded in the export manifest
+addons:
+  - id: pixel_art
+    label: Pixel-art painter add-on
+    help:
+      meaning: Pushes the painter toward crisp 16-bit pixel art with a small palette.
+      why: Gives the blocky, hand-placed pixel look; the Pixel Art painter is built on it.
+      technical: Z-Image Turbo pixel art style LoRA, model only, trigger "Pixel art style."
+    file: ZImage/pixel_art_style_z_image_turbo.safetensors
+    base_models: [zturbo, pixel]
+    stage: concept
+    trigger: Pixel art style.
+    strengths: {subtle: 0.6, normal: 1.0, strong: 1.2}
+    default_strength: normal
+    built_in: [pixel]
+    required_for: [pixel]
+    licence: Apache-2.0
+    source: models.yaml entry "pixel" (Z-Image Turbo + pixel art LoRA)
+  - id: qwen_lightning
+    label: Fast turnaround helper
+    help:
+      meaning: Lets the picture editor finish each side view in 4 quick passes instead of 40.
+      why: The turnaround takes seconds per view instead of minutes. It is part of the turnaround and cannot be switched off.
+      technical: Qwen-Image-Edit-2511 Lightning 4-step LoRA at strength 1.0
+    file: Qwen/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+    base_models: [qwen_edit]
+    stage: turnaround
+    strengths: {subtle: 1.0, normal: 1.0, strong: 1.0}
+    default_strength: normal
+    required: true
+    licence: Apache-2.0
+    source: models.yaml entry "qwen_lightning_lora"
+  - id: qwen_angles
+    label: Camera-angle helper
+    help:
+      meaning: Teaches the picture editor to turn the camera around your asset for the side and back views.
+      why: Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. It is part of the turnaround and cannot be switched off.
+      technical: Qwen-Image-Edit-2511 multiple-angles LoRA (lora_strength)
+    file: Qwen/qwen-image-edit-2511-multiple-angles-lora.safetensors
+    base_models: [qwen_edit]
+    stage: turnaround
+    strengths: {subtle: 0.75, normal: 0.9, strong: 1.05}
+    default_strength: normal
+    required: true
+    licence: Apache-2.0
+    source: models.yaml entry "qwen_angles_lora"

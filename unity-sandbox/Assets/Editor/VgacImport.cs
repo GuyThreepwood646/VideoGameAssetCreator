@@ -3,6 +3,7 @@
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]
 //      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
+//      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -14,6 +15,12 @@
 // Editor (after an asset import and once at load), runs the same Import routine, writes unity_report.json next to the
 // request with the request id and renames the request to vgac_import.done.json. Menu: Tools/VGAC/Import pending assets.
 // Batch check of the same sweep: -executeMethod VgacImport.ImportPending.
+//
+// Recipes (Version 7): the style's engine settings. -vgacFilter point (crisp pixel looks) sets every texture to Point
+// filtering, -vgacMipmaps off and -vgacCompress off keep the small textures exact; -vgacNormalMap off (looks without
+// surface bumps) leaves the material's normal slot empty and removes a normal.png an earlier import of the same name
+// left in Assets/VGAC/<name>. The report records textureFilter, textureMipmaps, textureCompression and normalMap.
+// Without these arguments the importer keeps Unity's defaults (bilinear, mipmaps, compression) as before.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -30,7 +37,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "6";
+    public const string Version = "7";
 
     [Serializable]
     class ClipInfo
@@ -92,6 +99,10 @@ public static class VgacImport
         public List<string> staticFlags = new List<string>();
         public string lodFadeMode = "";        // G20: CrossFade for foliage
         public float lodFadeWidth;
+        public string textureFilter = "";      // recipes: Bilinear or Point, as set on the textures
+        public bool textureMipmaps = true;
+        public string textureCompression = "";
+        public bool normalMap = true;          // false when the look has no surface bumps
     }
 
     // colliders.json (backend/vgac/stages/export.py _write_colliders): the kind of each collision part.
@@ -156,6 +167,8 @@ public static class VgacImport
     {
         public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders;
         public bool humanoid, keepPose;
+        public string filter = "bilinear";     // recipes: bilinear | point
+        public bool mipmaps = true, compress = true, normalMap = true;
         public float speedScale = 1f, scale = 1f;
         public string requestId = "";
 
@@ -188,6 +201,10 @@ public static class VgacImport
                 colliders = F("-vgacColliders"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
+                filter = (A("-vgacFilter") ?? "bilinear").ToLowerInvariant() == "point" ? "point" : "bilinear",
+                mipmaps = (A("-vgacMipmaps") ?? "on").ToLowerInvariant() != "off",
+                compress = (A("-vgacCompress") ?? "on").ToLowerInvariant() != "off",
+                normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
             };
             if (a.speedScale <= 0.01f) a.speedScale = 1f;
             return a;
@@ -223,6 +240,13 @@ public static class VgacImport
             var msName = "T_" + name + "_MetallicSmoothness.png";
             foreach (var f in new[] { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png" })
             {
+                if (f == "normal.png" && !a.normalMap)
+                {
+                    // A look without surface bumps: no normal map, and none left over from an earlier import.
+                    var stale = assetDir + "/" + f;
+                    if (File.Exists(stale)) AssetDatabase.DeleteAsset(stale);
+                    continue;
+                }
                 var src = Path.Combine(input, f);
                 if (File.Exists(src)) File.Copy(src, Path.Combine(assetDir, f), true);
             }
@@ -231,7 +255,7 @@ public static class VgacImport
             if (File.Exists(msSrc)) File.Copy(msSrc, Path.Combine(assetDir, msName), true);
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
 
-            ConfigureTextures(assetDir, msName, report);
+            ConfigureTextures(assetDir, msName, report, a);
 
             // First import as Generic: the rest transforms it gives are what the explicit human mapping is built from.
             var fbxPath = assetDir + "/" + name + ".fbx";
@@ -703,8 +727,15 @@ public static class VgacImport
     // ---------------------------------------------------------------------------------------------------------------
     // Textures and material (G01, G02)
 
-    static void ConfigureTextures(string assetDir, string msName, Report report)
+    static void ConfigureTextures(string assetDir, string msName, Report report, ImportArgs a)
     {
+        var point = a != null && a.filter == "point";
+        var mips = a == null || a.mipmaps;
+        var compress = a == null || a.compress;
+        report.normalMap = a == null || a.normalMap;
+        report.textureFilter = point ? "Point" : "Bilinear";
+        report.textureMipmaps = mips;
+        report.textureCompression = compress ? "Compressed" : "Uncompressed";
         foreach (var t in new[] { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", msName })
         {
             var ti = AssetImporter.GetAtPath(assetDir + "/" + t) as TextureImporter;
@@ -727,8 +758,15 @@ public static class VgacImport
                 ti.alphaSource = TextureImporterAlphaSource.FromInput;
                 ti.alphaIsTransparency = false;
             }
+            // Recipes: crisp looks sample whole texels (Point) with no mipmaps or compression, so a 256 px pixel-art
+            // texture stays exact; other looks keep Unity's defaults (Bilinear, mipmaps, compressed).
+            ti.filterMode = point ? FilterMode.Point : FilterMode.Bilinear;
+            ti.mipmapEnabled = mips;
+            ti.textureCompression = compress ? TextureImporterCompression.Compressed : TextureImporterCompression.Uncompressed;
+            if (point) ti.npotScale = TextureImporterNPOTScale.None;
             ti.SaveAndReimport();
-            report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName ? ", alpha " + ti.alphaSource : ""));
+            report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName ? ", alpha " + ti.alphaSource : "")
+                + ", " + ti.filterMode + (ti.mipmapEnabled ? ", mipmaps" : ", no mipmaps") + ", " + ti.textureCompression);
         }
     }
 
@@ -753,7 +791,7 @@ public static class VgacImport
         report.shader = shader.name;
         bool urp = shader.name.StartsWith("Universal Render Pipeline");
         var baseTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/base_color.png");
-        var normalTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/normal.png");
+        var normalTex = report.normalMap ? AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/normal.png") : null;
         var aoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/ao.png");
         var msTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + msName);
         if (baseTex)

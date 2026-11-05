@@ -1,7 +1,7 @@
 """Blender headless: game-ready prep of a textured low-poly GLB (the first half of bakeoff/finish.py).
 
 Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8] [--size-axis height|horizontal|longest]
-     [--yaw 0] [--symmetric] [--pivot base|center|corner] [--smooth-angle 60] [--budget N]
+     [--yaw 0] [--symmetric] [--pivot base|center|corner] [--smooth-angle 60] [--shading smooth|flat] [--budget N]
      [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never]
      [--grid 1] [--grid-footprint auto|1x1|2x1|2x2|4x1|4x4] [--grid-height auto|0.5|1|3|4] [--tiling out.png]
      (--height H is the old form of --size H --size-axis height)
@@ -24,7 +24,8 @@ Does, in order: import; join meshes; apply transforms; turn about the up axis by
 from above, so the concept's front ends up facing Blender -Y, which is +Z in glTF and Unity); scale uniformly so the
 bounding-box extent on the size axis equals --size (height: Z; horizontal: the larger of X and Y; longest: the largest
 of all three); move the pivot (base centre or bounding-box centre) to the origin; weld vertices split along UV chart
-borders; optional symmetrize across X; smooth shading with auto-smooth at the crease angle; export GLB; write
+borders; optional symmetrize across X; smooth shading with auto-smooth at the crease angle, or with --shading flat (the low-poly recipe)
+flat shading, every face its own normal, which the glTF export writes as split vertices; export GLB; write
 <out>_report.json with triangle count, dimensions, the measured size, bone count and a manifold check.
 """
 import json
@@ -53,6 +54,9 @@ yaw = float(_common.opt("--yaw", 0.0)) % 360
 symmetric = _common.flag("--symmetric")
 pivot = _common.opt("--pivot", "base")
 smooth_angle = float(_common.opt("--smooth-angle", 60.0))
+shading = _common.opt("--shading", "smooth")
+if shading not in ("smooth", "flat"):
+    shading = "smooth"
 maps_json = _common.opt("--maps", None)
 tex_size = int(_common.opt("--tex", 2048))
 padding_px = int(_common.opt("--padding", max(4, tex_size // 256)))
@@ -213,15 +217,22 @@ reasons = [r for r, on in (("symmetrize", symmetric), ("decimate", decimated), (
 if bake_source is not None and reasons:
     rebake.triangulate(mesh)  # before the auto-smooth modifier, so the bake and the export see the same triangles
 
-# Smooth shading, split only at hard edges above the crease angle.
+# Smooth shading, split only at hard edges above the crease angle; or flat (every face its own normal).
 bpy.ops.object.select_all(action="DESELECT")
 mesh.select_set(True)
 bpy.context.view_layer.objects.active = mesh
-bpy.ops.object.shade_smooth()
-try:
-    bpy.ops.object.shade_auto_smooth(angle=math.radians(smooth_angle))
-except Exception:
-    pass
+if shading == "flat":
+    for mod in [m for m in mesh.modifiers if m.type == "NODES" and "Smooth" in m.name]:
+        mesh.modifiers.remove(mod)
+    if mesh.data.has_custom_normals:
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    bpy.ops.object.shade_flat()
+else:
+    bpy.ops.object.shade_smooth()
+    try:
+        bpy.ops.object.shade_auto_smooth(angle=math.radians(smooth_angle))
+    except Exception:
+        pass
 
 # Re-bake (G05) when the surface the maps were baked on changed, or when asked.
 bake_report = {"rebaked": False, "rebake_reason": None, "rebake_seconds": 0.0}
@@ -284,6 +295,7 @@ report = {
     "symmetric": symmetric,
     "pivot": pivot,
     "smooth_angle": smooth_angle,
+    "shading": shading,
     "triangles": len(mesh.data.loop_triangles),
     "vertices": len(mesh.data.vertices),
     "uv_layers": len(mesh.data.uv_layers),
