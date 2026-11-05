@@ -1,0 +1,171 @@
+{
+ "steps": [
+  {
+   "t": 0,
+   "step": "words found",
+   "items": [
+    [
+     "sword",
+     "In the right hand"
+    ],
+    [
+     "shield",
+     "In the left hand"
+    ]
+   ],
+   "worn": [
+    "armour"
+   ],
+   "sentence": "These work best as their own asset. We will make the character empty-handed, then make the sword and shield as separate items and put them on. That way they can really hold the sword when they fight."
+  },
+  {
+   "t": 0,
+   "step": "character created",
+   "set_aside": [
+    [
+     "sword",
+     "5b5f3950-8290-4dda-87c0-ca2fddb91d5c"
+    ],
+    [
+     "shield",
+     "d7bb6d68-759e-424f-9c88-8217420bcf86"
+    ]
+   ],
+   "choice": "separate"
+  },
+  {
+   "t": 385,
+   "step": "character finished",
+   "autopilot": "done",
+   "reason": null,
+   "build": {
+    "item": "5b5f3950-8290-4dda-87c0-ca2fddb91d5c",
+    "status": "items"
+   },
+   "counts": {
+    "concept": [
+     "done",
+     "done"
+    ],
+    "turnaround": [
+     "done"
+    ],
+    "mesh": [
+     "done"
+    ],
+    "prep": [
+     "done"
+    ],
+    "rig": [
+     "done"
+    ],
+    "export": [
+     "done"
+    ]
+   }
+  },
+  {
+   "t": 385,
+   "step": "concept",
+   "items_set_aside": [
+    "sword",
+    "shield"
+   ],
+   "prompt": "A stylized fantasy knight for a video game, a sturdy young woman with short red hair, steel plate armour over a blue tabard, about 1.7 m tall. A full-body painted concept art reference for a video game, a real digital painting with smooth painterly shading, clean readable shapes, slightly exaggerated proportions, muted colours with one bright accent. The character stands in a relaxed A-pose, both ",
+   "failed": []
+  },
+  {
+   "t": 385,
+   "step": "rig",
+   "version": "a2b1e42c-9762-4bf1-af34-16028f6b7cbc",
+   "clips": 17,
+   "clips_source": "library",
+   "rig_restore": true,
+   "failed": [
+    [
+     "hitbox_cover",
+     "The hit boxes cover only 84% of the body, so some hits would pass through."
+    ]
+   ]
+  },
+  {
+   "t": 385,
+   "step": "export",
+   "version": "d5854c10-d633-4384-826f-74f39ab4e9a9",
+   "checks": "36/36",
+   "sockets": 7,
+   "equipped": {
+    "count": 0,
+    "digest": "05174d16547e1807",
+    "items": [],
+    "skipped": [
+     {
+      "item": "Knight - sword",
+      "reason": "not made yet"
+     },
+     {
+      "item": "Knight - shield",
+      "reason": "not made yet"
+     }
+    ]
+   },
+   "beauty": true,
+   "files": [
+    "anim_clips",
+    "ao",
+    "attachments",
+    "base_color",
+    "beauty",
+    "colliders",
+    "fbx",
+    "glb",
+    "glb_godot",
+    "glb_lod1",
+    "glb_lod2",
+    "glb_lod3",
+    "hitboxes",
+    "manifest",
+    "metallic",
+    "metallic_smoothness",
+    "normal",
+    "orm",
+    "pack_report",
+    "roughness",
+    "sockets",
+    "unity_report",
+    "unity_strip"
+   ],
+   "unity": {
+    "ok": true,
+    "humanoidValid": true,
+    "clipCount": 46,
+    "importer_version": "10",
+    "equippedPrefab": "",
+    "equippedItems": [],
+    "showcase": "Assets/VGAC/_Showcase/VGAC Showcase.unity",
+    "hitboxMaxBoneError": 6.967480203456944e-06,
+    "socketMaxError": 6.425831998058129e-06
+   },
+   "failed": []
+  },
+  {
+   "t": 385,
+   "step": "items",
+   "items": {
+    "d7bb6d68-759e-424f-9c88-8217420bcf86": {
+     "name": "Knight - shield",
+     "status": "not_started",
+     "grip": null
+    },
+    "5b5f3950-8290-4dda-87c0-ca2fddb91d5c": {
+     "name": "Knight - sword",
+     "status": "making",
+     "grip": null
+    }
+   },
+   "needs_update": false,
+   "saved": false
+  }
+ ],
+ "asset": "c52ecc91-f2dc-4c75-bc31-72bb99d9be20"
+}
