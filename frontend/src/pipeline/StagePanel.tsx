@@ -168,6 +168,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onCancel={onCancelJob}
         onFix={fix}
         onOpenTool={openTool}
+        onChanged={onChanged}
       />
 
       <section className="section">
@@ -212,7 +213,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} category={asset.category} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
+            <StageViewer stage={stage} version={active} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -283,7 +284,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
-function StageViewer({ stage, version, category, hideReady, onRefineView }: { stage: StageId; version: Version; category: string; hideReady?: boolean; onRefineView: (view: string) => void }) {
+function StageViewer({ stage, version, category, assetName, onChanged, hideReady, onRefineView }: { stage: StageId; version: Version; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; onRefineView: (view: string) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (version.status === 'rejected' && Object.keys(version.files).length === 0) {
     return <div className="placeholder-box">This version was stopped before it made a result.</div>
@@ -302,7 +303,7 @@ function StageViewer({ stage, version, category, hideReady, onRefineView }: { st
     case 'rig':
       return <RigView version={version} />
     case 'export':
-      return <ExportView version={version} hideReady={hideReady} />
+      return <ExportView version={version} hideReady={hideReady} assetName={assetName} onChanged={onChanged} />
   }
 }
 

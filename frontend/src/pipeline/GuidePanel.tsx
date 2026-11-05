@@ -33,6 +33,8 @@ type Props = {
   // A check's Fix: re-run (onFix) or open a tool (onOpenTool, 2.5). Used by the finish card and the autopilot card.
   onFix?: (fix: FixRequest) => void
   onOpenTool?: (fix: FixRequest) => void
+  // Reload the asset (the finish card's Unity hand-off after "Check again").
+  onChanged?: () => void
 }
 
 // Whether the finishing card (turntable, downloads, what next) shows for this stage.
@@ -67,7 +69,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel, onFix, onOpenTool }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onCancel, onFix, onOpenTool, onChanged }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -82,7 +84,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   }
   // The finishing moment, once every step is kept.
   if (finishShown(asset, stage, autopilot, jobs)) {
-    return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} />
+    return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} onChanged={onChanged} />
   }
 
   // "Make it" shows whenever nothing is running and the asset is not finished.

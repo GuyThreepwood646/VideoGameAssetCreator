@@ -1,6 +1,7 @@
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
+import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -26,6 +27,8 @@ export function MeshView({ version, category }: { version: Version; category?: s
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
+  // Where the chosen look changed the result (fewer triangles, small or crisp textures, flat faces, no bumps).
+  const look = versionLook(version)
   return (
     <div className="mesh-view">
       {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
@@ -40,6 +43,18 @@ export function MeshView({ version, category }: { version: Version; category?: s
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
           </div>
         </div>
+        {look && (
+          <div>
+            <div className="field-label">
+              Look
+              <Info term="term.recipe" />
+            </div>
+            <div className={'small' + (look.ok ? '' : ' warn-text')}>
+              {look.sentence}
+              {look.crisp && <Info term="term.texture_crisp" />}
+            </div>
+          </div>
+        )}
         {size && (
           <div>
             <div className="field-label">
