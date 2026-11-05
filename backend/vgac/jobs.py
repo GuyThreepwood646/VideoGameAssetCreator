@@ -323,6 +323,11 @@ def free_ram_gb() -> float:
     return psutil.virtual_memory().available / GB
 
 
+# The random seeds a Resume carries from the stopped run: the step's own, and the face detail pass's sharpening redraw
+# and close-up (stages/face_detail.py picked_seed), so a resumed clean-up draws the same pictures.
+RESUME_SEEDS = ("seed", "face_seed", "face_closeup_seed")
+
+
 class JobCancelled(Exception):
     pass
 
@@ -942,9 +947,9 @@ class JobQueue:
                         continue
                     instance, message = self.place(v.stage, a.category)
                     # The same settings includes the random seeds the stopped run had already picked (the step's own,
-                    # and the face detail pass's in the clean-up step).
+                    # and the face detail pass's two picture jobs in the clean-up step).
                     payload = dict(job.payload or {})
-                    for key in ("seed", "face_seed"):
+                    for key in RESUME_SEEDS:
                         seed = (v.params or {}).get(key)
                         if seed is not None and isinstance(payload.get("params"), dict) and payload["params"].get(key) is None:
                             payload["params"] = {**payload["params"], key: seed}
