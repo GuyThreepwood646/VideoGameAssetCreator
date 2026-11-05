@@ -305,7 +305,8 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const rig = selectedVersion(asset, 'rig')
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
-  const walk = clips.find((c) => /walk/i.test(c)) ?? clips[0] ?? 'walk'
+  // The plain walk by its exact name: a looser match used to pick "crouch_walk" once more moves were offered.
+  const walk = clips.find((c) => c.toLowerCase() === 'walk') ?? clips.find((c) => c.toLowerCase() === 'idle') ?? clips[0] ?? 'walk'
   // "Look:" where the chosen look changed the result (from prep, else the mesh step).
   const look = lines.some((l) => l.id === 'look') ? null : (versionLook(selectedVersion(asset, 'prep')) ?? versionLook(selectedVersion(asset, 'mesh')))
   return (
@@ -353,7 +354,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
             </ul>
           </div>
         )}
-        {glb ? <Viewer url={glb} height={360} turntableDefault defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
+        {glb ? <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
         {exp && <BeautyPicture version={exp} name={asset.name} />}
         {exp && <Deliverables version={exp} />}
         {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}

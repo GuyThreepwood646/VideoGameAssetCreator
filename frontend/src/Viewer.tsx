@@ -137,8 +137,11 @@ function frameModel(h: SceneHandles, model: THREE.Object3D) {
   // Sit the model on the grid, centred on the origin, by offsetting the frame group.
   h.frame.position.set(-center.x, -box.min.y, -center.z)
   const radius = Math.max(size.x, size.y, size.z) * 0.5 || 1
-  const dist = (radius / Math.sin((h.camera.fov * Math.PI) / 360)) * 1.3
-  h.camera.position.set(dist * 0.8, dist * 0.6, dist * 0.8)
+  // Far enough for the whole model with a little room, seen from the front quarter and slightly above. (The
+  // direction is a unit vector: an unnormalised one used to stand the camera two thirds further back than meant.)
+  const dist = (radius / Math.sin((h.camera.fov * Math.PI) / 360)) * 1.25
+  const from = new THREE.Vector3(0.8, 0.4, 0.8).normalize().multiplyScalar(dist)
+  h.camera.position.set(from.x, size.y / 2 + from.y, from.z)
   h.camera.near = Math.max(0.01, dist / 1000)
   h.camera.far = dist * 100
   h.camera.updateProjectionMatrix()
@@ -573,7 +576,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
   const [grid, setGrid] = useState(true)
-  const [showSkeleton, setShowSkeleton] = useState(true)
+  // The skeleton lines start on where the skeleton is the subject (the rig step), off where the finished model is.
+  const [showSkeleton, setShowSkeleton] = useState(showBonesDefault)
   const [showBones, setShowBones] = useState(showBonesDefault)
   const [hasSkeleton, setHasSkeleton] = useState(false)
   const [clips, setClips] = useState<string[]>([])
@@ -583,6 +587,20 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   // Off by default: bones are on, and both together are cluttered (4.2).
   const [showHits, setShowHits] = useState(false)
   const [showMove, setShowMove] = useState(false)
+  // What a plain drag does: turn the model (the default) or move the view sideways and up and down.
+  const [dragMode, setDragMode] = useState<'turn' | 'move'>('turn')
+  const controlsRef = useRef<OrbitControls | null>(null)
+  // A taller preview on request, for looking at small parts.
+  const [large, setLarge] = useState(false)
+  useEffect(() => {
+    const c = controlsRef.current
+    if (!c) return
+    const move = dragMode === 'move'
+    c.mouseButtons.LEFT = move ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+    c.mouseButtons.RIGHT = move ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN
+    c.touches.ONE = move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
+    if (c.domElement) c.domElement.style.cursor = move ? 'move' : 'grab'
+  }, [dragMode])
   const showHitsRef = useRef(showHits)
   // Attachment points (Socket_* nodes in the file); off until asked for.
   const [showSockets, setShowSockets] = useState(false)
@@ -608,6 +626,14 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.target.set(0, 0.5, 0)
+    // Scrolling zooms toward the pointer, so any part can be reached; arrow keys move the view once the picture has focus.
+    controls.zoomToCursor = true
+    controls.keyPanSpeed = 24
+    renderer.domElement.tabIndex = 0
+    renderer.domElement.setAttribute('aria-label', '3D preview. Drag to turn, right-drag or arrow keys to move, scroll to zoom, double-click a spot to look at it closely.')
+    controls.listenToKeyEvents(renderer.domElement)
+    controlsRef.current = controls
+    renderer.domElement.style.cursor = 'grab'
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x50545c, 1.2)
     scene.add(hemi)
@@ -659,10 +685,47 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         sg.matrix.copy(model.matrixWorld).multiply(corr).multiply(_inv.copy(model.matrixWorld).invert())
         sg.matrixWorldNeedsUpdate = true
       }
+      if (focus) {
+        const k = Math.min(1, (performance.now() - focus.t0) / focus.ms)
+        const e = k * k * (3 - 2 * k)
+        controls.target.lerpVectors(focus.fromT, focus.toT, e)
+        camera.position.lerpVectors(focus.fromP, focus.toP, e)
+        if (k >= 1) focus = null
+      }
       controls.update()
       renderer.render(scene, camera)
     }
     raf = requestAnimationFrame(tick)
+
+    // Double-click a spot on the model: the view centres on it and moves closer.
+    type Focus = { fromT: THREE.Vector3; toT: THREE.Vector3; fromP: THREE.Vector3; toP: THREE.Vector3; t0: number; ms: number }
+    let focus: Focus | null = null
+    const shown = (o: THREE.Object3D | null): boolean => {
+      for (let n = o; n; n = n.parent) if (!n.visible) return false
+      return true
+    }
+    const onDouble = (e: MouseEvent) => {
+      const model = modelRef.current
+      if (!model) return
+      const rect = renderer.domElement.getBoundingClientRect()
+      const at = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
+      const caster = new THREE.Raycaster()
+      caster.setFromCamera(at, camera)
+      const hit = caster.intersectObject(model, true).find((i) => (i.object as THREE.Mesh).isMesh && i.object.userData.hitLabel === undefined && shown(i.object))
+      if (!hit) return
+      const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3())
+      const closest = Math.max(size.x, size.y, size.z) * 0.22
+      const now = camera.position.distanceTo(controls.target)
+      const dist = now <= closest ? now : Math.max(now * 0.4, closest)
+      const dir = camera.position.clone().sub(controls.target).normalize()
+      focus = { fromT: controls.target.clone(), toT: hit.point.clone(), fromP: camera.position.clone(), toP: hit.point.clone().addScaledVector(dir, dist), t0: performance.now(), ms: reduceRef.current ? 1 : 260 }
+    }
+    const stopFocus = () => {
+      focus = null
+    }
+    renderer.domElement.addEventListener('dblclick', onDouble)
+    renderer.domElement.addEventListener('pointerdown', stopFocus)
+    renderer.domElement.addEventListener('wheel', stopFocus, { passive: true })
 
     // Hovering a hit box names it in the status line and brightens it.
     const ray = new THREE.Raycaster()
@@ -693,6 +756,10 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       cancelAnimationFrame(raf)
       renderer.domElement.removeEventListener('pointermove', onMove)
       renderer.domElement.removeEventListener('pointerleave', onLeave)
+      renderer.domElement.removeEventListener('dblclick', onDouble)
+      renderer.domElement.removeEventListener('pointerdown', stopFocus)
+      renderer.domElement.removeEventListener('wheel', stopFocus)
+      controlsRef.current = null
       ro.disconnect()
       controls.dispose()
       lightRig.dispose()
@@ -822,11 +889,12 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           hh.mixer = new THREE.AnimationMixer(model)
           // A one-shot clip that reached its last frame stops there; the Play button starts it again.
           hh.mixer.addEventListener('finished', () => setPlaying(false))
-          const wanted = defaultClip ? defaultClip.toLowerCase() : ''
+          // Nothing asked for: stand in the idle, not whichever clip sorts first (that was a crouch).
+          const wanted = defaultClip ? defaultClip.toLowerCase() : 'idle'
           const ordered = orderClips(names, clipInfoRef.current)
           // The clip asked for by its exact name first ("walk" must not pick "crouch_walk"), then by a name containing it.
           const first =
-            (wanted && (clipsRef.current.find((c) => (c.name || '').toLowerCase() === wanted) || clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted)))) ||
+            (wanted && (clipsRef.current.find((c) => (c.name || '').toLowerCase() === wanted) || (defaultClip ? clipsRef.current.find((c) => (c.name || '').toLowerCase().includes(wanted)) : undefined))) ||
             clipsRef.current.find((c) => (c.name || 'clip') === ordered[0]) ||
             clipsRef.current[0]
           const action = hh.mixer.clipAction(first)
@@ -1131,7 +1199,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   }
 
   return (
-    <section className={'viewer ' + className} style={{ height }}>
+    <section className={'viewer ' + className} style={{ height: large ? 'min(86vh, 960px)' : height }}>
       <div className="viewer-toolbar">
         <div className="seg">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
@@ -1195,8 +1263,19 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             </button>
           </>
         )}
-        <button type="button" onClick={resetView}>
+        <div className="seg" role="group" aria-label="What dragging does">
+          <button type="button" aria-pressed={dragMode === 'turn'} onClick={() => setDragMode('turn')} title="Dragging turns the model">
+            Turn
+          </button>
+          <button type="button" aria-pressed={dragMode === 'move'} onClick={() => setDragMode('move')} title="Dragging moves the view sideways, up and down, so you can reach any part">
+            Move
+          </button>
+        </div>
+        <button type="button" onClick={resetView} title="Shows the whole model again">
           Reset view
+        </button>
+        <button type="button" aria-pressed={large} onClick={() => setLarge((l) => !l)} title={large ? 'Back to the normal size' : 'Makes the preview taller, for looking at small parts'}>
+          Larger view
         </button>
         <span className="viewer-status" aria-live="polite">
           {hoverLabel ?? status}
@@ -1204,6 +1283,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       </div>
       <div className="canvas-host" ref={hostRef}>
         <LightPicker value={light} onChange={chooseLight} note={lightNote} />
+        <div className="viewer-hint">
+          {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Scroll to zoom. Double-click a spot to look at it closely.
+        </div>
       </div>
     </section>
   )
