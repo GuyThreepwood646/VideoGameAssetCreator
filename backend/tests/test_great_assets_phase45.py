@@ -41,7 +41,9 @@ def _blender() -> str | None:
 def test_padding_and_dilation_scale_with_texture_size():
     assert [imaging.unwrap_padding(s) for s in (512, 1024, 2048, 4096)] == [4, 4, 8, 16]
     assert [imaging.dilation_px(s) for s in (512, 1024, 2048, 4096)] == [8, 8, 16, 32]
-    assert mesh_stage.resolve_padding({}, 2048) == 8 and mesh_stage.resolve_padding({"padding": 40}, 2048) == 16
+    # The node is asked for double the target (it leaves about half as real space), within its limit of 16.
+    assert mesh_stage.resolve_padding({}, 1024) == 8 and mesh_stage.resolve_padding({}, 2048) == 16 and mesh_stage.resolve_padding({}, 4096) == 16
+    assert mesh_stage.resolve_padding({"padding": 40}, 2048) == 16
     assert mesh_stage.resolve_padding({"padding": 3}, 4096) == 3
     g = convert_graph("in.png", "x", padding=40)
     assert g["unwrap"]["inputs"]["padding"] == 16
