@@ -19,16 +19,23 @@ More triangles on the head (vgac/headtris.py): for humanoids in a look that keep
 the TRELLIS target is headtris.HEAD_ROOM times the usual one (params head_room). The model is over the budget on
 purpose; its triangle_budget check measures it against its own target and says why. The clean-up step decimates it back
 to the budget with the head kept, and the rig step refuses a model that is still over (headtris.handoff_problem).
+
+Colour against the picture (vgac/texcolour.py): TRELLIS sometimes predicts a near-black base colour from a bright
+picture. Each build's base colour is measured against the picture; while it is under texcolour.RATIO_MIN the model is
+built again with the next seed (texcolour.MAX_TRIES builds in all), the closest is kept, and its seed becomes the
+version's seed (first_seed keeps the one it started from). Check texture_matches_picture (block) when even the closest
+is too dark.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
-from .. import guidance, headtris, imaging, library, normalfix, quality, reference
+from .. import guidance, headtris, imaging, library, normalfix, quality, reference, texcolour
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
@@ -145,45 +152,117 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     keep_normal = bool(rec["mesh"]["normal_map"])
     crisp = rec["surface"]["texture_filter"] == "crisp"
     upsample = int(params.get("upsample") or rec["mesh"].get("upsample") or 1024)
-    seed = int(params.get("seed") or random_seed())
+    # The first build's seed: the one given (the person's, or a Resume's), else a new one. Builds again after a too-dark
+    # base colour take the seeds that follow from it (texcolour.try_seed); the kept build's seed replaces it at the end.
+    first_seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)
     src = _input_image(sc, input_view)
-    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=seed, remesh=remesh,
+    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
-                  head_room=targets.get("head_room"))
+                  head_room=targets.get("head_room"), first_seed=None)
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
     sc.register("input", sc.copy_in(src, "input_image.png"))
-    entry = await sc.comfy(convert_graph(name, sc.prefix(), target_faces, tex, upsample, seed, remesh, padding=padding),
-                           poll=5.0, message="TRELLIS.2 convert", base=0.05, span=0.7)
+    picture = None
+    if sc.asset.category != "material":
+        try:
+            picture = await asyncio.to_thread(texcolour.picture_stats, src)
+        except Exception as e:  # noqa: BLE001  (no comparison: the model is built once, as before)
+            sc.set_metrics(texture_match_error=str(e)[:300])
+    tries_dir = sc.dir / TRIES_DIR
+    shutil.rmtree(tries_dir, ignore_errors=True)  # a Resume starts the tries again from the first
+
+    async def build_once(seed: int, n: int) -> dict[str, Any]:
+        return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, crisp, picture)
+
+    def on_retry(n: int, last: dict[str, Any]) -> None:
+        sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
+                          f"(build {n + 1} of {texcolour.MAX_TRIES})")
+
+    best, tries = await texcolour.build_with_rerolls(first_seed, picture is not None, build_once,
+                                                     lambda n: _keep_aside(sc.dir, tries_dir / f"try{n + 1}"),
+                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry)
+    shutil.rmtree(tries_dir, ignore_errors=True)
+    kept = tries[best]
+    for key in ("glb", *kept["maps"].keys(), *kept["other"]):
+        p = sc.dir / ("model.glb" if key == "glb" else f"{key}.png")
+        if p.is_file():
+            sc.register(key, p)
+    # The seed that made the kept build, so a re-run or a Fine-tune from it makes the same model; first_seed when it
+    # took more than one build.
+    sc.set_params(seed=kept["seed"], first_seed=first_seed if kept["seed"] != first_seed else None)
+    sc.set_metrics(**kept["metrics"])
+    sc.set_metrics(engine="trellis", seed=kept["seed"], elapsed_seconds=kept["elapsed"], target_faces=target_faces, texture_size=tex,
+                   unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
+                   normal_map=keep_normal, recipe=reference.recipe_record(rec, "mesh", "surface"),
+                   elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
+    if picture is not None:
+        sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
+
+
+# Where the 3D step keeps an earlier build while it builds again (texcolour.build_with_rerolls); removed afterwards.
+TRIES_DIR = "tries"
+# The files one build writes in the version folder, besides the maps.
+BUILD_FILES = ("model.glb", *(f"{k}.png" for k in IMAGE_NODES.values()))
+
+
+def _keep_aside(src_dir: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in BUILD_FILES:
+        p = src_dir / name
+        if p.is_file():
+            shutil.move(str(p), str(dest / name))
+
+
+def _bring_back(src: Path, dest_dir: Path) -> None:
+    for name in BUILD_FILES:
+        (dest_dir / name).unlink(missing_ok=True)
+        p = src / name
+        if p.is_file():
+            shutil.copy2(p, dest_dir / name)
+
+
+async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_faces: int, tex: int, upsample: int, remesh: bool,
+                         padding: int, keep_normal: bool, crisp: bool, picture: dict[str, Any] | None) -> dict[str, Any]:
+    """One TRELLIS.2 build into the version folder: model.glb and the maps, normal map flipped, maps grown into the
+    seams, and the base colour measured against the picture. Returns {seed, elapsed, maps, other, metrics, match}."""
+    prefix = sc.prefix() if n == 0 else sc.prefix(f"try{n + 1}")
+    entry = await sc.comfy(convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding),
+                           poll=5.0, message="TRELLIS.2 convert" if n == 0 else f"TRELLIS.2 convert, build {n + 1}", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     if not keep_normal or crisp:
         # The recipe's look: no bump map (the GLB's own copy goes too); crisp textures sampled nearest-neighbour.
         imaging.glb_replace_images(glb, drop_normal=not keep_normal, nearest=crisp)
-    sc.register("glb", glb)
     maps: dict[str, Path] = {}
+    other: list[str] = []
     for node, key in IMAGE_NODES.items():
         if key == "normal" and not keep_normal:
             continue  # the builder always bakes one; a look without surface bumps never registers or ships it
         imgs = ComfyClient.images_of(entry, node)
         if imgs:
             p = await sc.client().download_output(imgs[0], sc.dir / f"{key}.png")
-            sc.register(key, p)
             if key in TEXTURE_KEYS:
                 maps[key] = Path(p)
+            else:
+                other.append(key)
+    metrics: dict[str, Any] = {}
     if keep_normal:
         # The builder writes the normal map's green channel upside down (vgac/normalfix.py): flipped once, here, in
         # normal.png and in the GLB's own copy, and the version marked so the clean-up step never flips it again.
-        sc.set_metrics(**await asyncio.to_thread(normalfix.fix_download, Path(glb), maps.get("normal")))
-    sc.set_metrics(engine="trellis", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), target_faces=target_faces, texture_size=tex,
-                   unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
-                   normal_map=keep_normal, recipe=reference.recipe_record(rec, "mesh", "surface"))
+        metrics.update(await asyncio.to_thread(normalfix.fix_download, Path(glb), maps.get("normal")))
     try:
         sc.progress(0.76, "Growing the textures into the seams")
-        sc.set_metrics(**await asyncio.to_thread(finish_maps, Path(glb), maps, tex))
+        metrics.update(await asyncio.to_thread(finish_maps, Path(glb), maps, tex))
     except Exception as e:  # the maps stay as baked; the prep checks still measure the layout
-        sc.set_metrics(dilate_error=str(e)[:300])
+        metrics["dilate_error"] = str(e)[:300]
+    match = None
+    if picture is not None:
+        try:
+            match = texcolour.compare(picture, await asyncio.to_thread(texcolour.texture_stats, maps.get("base_color"), Path(glb)))
+        except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
+            metrics["texture_match_error"] = str(e)[:300]
+    return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
 
 
 async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
@@ -301,7 +380,32 @@ async def judge(sc: StageContext) -> None:
     nc = await upright_check(sc, "mesh", sc.file("glb"), sc.file("normal"))
     if nc:
         checks.append(nc)
+    tc = await colour_check(sc)
+    if tc:
+        checks.append(tc)
     sc.set_metrics(**quality.summarise(checks))
+
+
+async def colour_check(sc: StageContext) -> dict[str, Any] | None:
+    """The texture_matches_picture check (vgac/texcolour.py). A TRELLIS build measures itself while it is made; an older
+    version is measured once here, from its kept files and the picture it was built from, and the result kept in the
+    metrics. None for Hunyuan3D (no base colour), tileable materials and pictures with no cut-out. Never fails the job."""
+    m = sc.version.metrics or {}
+    if sc.asset.category == "material" or (sc.version.params or {}).get("engine", "trellis") != "trellis":
+        return None
+    if not m.get("texture_match") and "texture_match_measured" not in m:
+        try:
+            view = (sc.version.params or {}).get("input_view") or sc.category.get("input_view_default") or "concept"
+            pic = _input_image(sc, view)
+            match = await asyncio.to_thread(texcolour.measure, sc.file("base_color"), sc.file("glb"), pic)
+        except Exception as e:  # noqa: BLE001  (no picture or no texture layout: nothing to compare)
+            sc.set_metrics(texture_match_measured=False, texture_match_error=str(e)[:300])
+            return None
+        if match is None:
+            sc.set_metrics(texture_match_measured=False)
+            return None
+        sc.set_metrics(texture_match=match, texture_tries=1, texture_try_kept=1)
+    return texcolour.check(sc.version.metrics)
 
 
 async def upright_check(sc: StageContext, stage: str, glb: Path | None, normal: Path | None) -> dict[str, Any] | None:

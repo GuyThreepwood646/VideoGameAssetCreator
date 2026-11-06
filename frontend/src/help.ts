@@ -631,6 +631,13 @@ const CHECK_TEXT: Record<string, CheckText> = {
       ? 'The normal map (bump texture) is upside down, so the surface shows triangle-shaped facets and dark patches under light. Cleaning up again bakes it the right way up.'
       : 'The normal map (bump texture) is upside down, so the surface shows triangle-shaped facets and dark patches under light. Building the 3D model again writes it the right way up.'
   },
+  texture_matches_picture: (v, l, ok, _ctx, vars) => {
+    if (ok)
+      return vars.rebuilt
+        ? `The first build's base colour (the colour texture) came out too dark, so the 3D model was built again; build ${n0(vars.kept_try)} of ${n0(vars.tries)} keeps ${pct(v)} of the picture's brightness.`
+        : `The base colour (the colour texture) keeps ${pct(v)} of the picture's brightness.`
+    return `The base colour (the colour texture) came out much darker than the picture: ${pct(v)} of its brightness, it needs ${pct(l)}. ${vars.rebuilt ? `It was built ${n0(vars.tries)} times and this is the closest. ` : ''}Build it again, or use a picture with some soft light and shadow on the character.`
+  },
   texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
   atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
   face_matches_picture: (_v, _l, ok, _ctx, vars) => {
@@ -895,6 +902,7 @@ const FIX_LABELS: Record<string, string> = {
   openings_clear: 'Use several shapes',
   bake_matches: 'Repaint the surface',
   normal_map_upright: 'Build the 3D model again',
+  texture_matches_picture: 'Build it again',
   texture_padding: 'Add more space',
   atlas_used: 'Repaint the surface',
   face_matches_picture: 'Paint the face again',
@@ -949,6 +957,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'openings_clear') return { stage: 'export', params: { collider: vars.category === 'environment' ? 'mesh' : 'decompose' }, label }
   if (id === 'bake_matches' || id === 'atlas_used') return { stage: 'prep', params: { rebake: true }, label }
   if (id === 'normal_map_upright') return vars.stage === 'prep' ? { stage: 'prep', params: {}, label: check.fix?.label || 'Clean up again' } : { stage: 'mesh', params: {}, label }
+  if (id === 'texture_matches_picture') return { stage: 'mesh', params: { seed: null }, label }
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }

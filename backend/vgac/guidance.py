@@ -644,6 +644,22 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "prep" if _var(c, "stage") == "prep" else "mesh", "params": {}},
         "fix_label": lambda c: "Clean up again" if _var(c, "stage") == "prep" else "Build the 3D model again",
     },
+    # The 3D step's base colour against the picture (vgac/texcolour.py): the builder sometimes makes a near-black colour
+    # texture from a bright picture and is built again up to three times; this blocks only when even the closest build
+    # is too dark. The Fix builds it again with a new seed.
+    "texture_matches_picture": {
+        "severity": "block",
+        "ok": lambda c: ("The first build's base colour (the colour texture) came out too dark, so the 3D model was built again; "
+                         "build {kept_try:n} of {tries:n} keeps {value:pct} of the picture's brightness."
+                         if _var(c, "rebuilt") else
+                         "The base colour (the colour texture) keeps {value:pct} of the picture's brightness."),
+        "fail": lambda c: ("The base colour (the colour texture) came out much darker than the picture: {value:pct} of its brightness, "
+                           "it needs {limit:pct}. "
+                           + ("It was built {tries:n} times and this is the closest. " if _var(c, "rebuilt") else "")
+                           + "Build it again, or use a picture with some soft light and shadow on the character."),
+        "fix": lambda c: {"stage": "mesh", "params": {"seed": None}},
+        "fix_label": "Build it again",
+    },
     "texture_padding": {
         "severity": "warn",
         "ok": "Texture pieces have {value:n} px of space around them, enough for distant views.",
