@@ -305,11 +305,23 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
 
 # --- the bald pictures (hair from the library, docs/HAIR-LIBRARY-PLAN.md section 2) ----------------------------------
 
-# The wig trial's bald edit (runtime/tmp/wigtrial/edit.py PROMPTS["bald"], clean on 5 of 5 characters), plus the beard.
+# The wig trial's bald edit, word for word (runtime/tmp/wigtrial/edit.py PROMPTS["bald"], clean on 5 of 5 characters).
+# A sentence about keeping a beard is added only when the description has one: said to a beardless character, the word
+# drew a beard on her (the live run of 11-06: both women came back as bald bearded men).
 BALD_PROMPT = ("Make this character completely bald: remove all of the hair, including the fringe, any ponytail and any "
                "loose locks, and show a smooth, clean, hairless bald scalp with a natural rounded skull shape and both ears "
                "visible. Keep the face, eyes, expression, ears, skin tone, neck, outfit, pose, proportions, framing, art "
-               "style, lighting and background exactly the same. Keep any beard or moustache exactly as it is.")
+               "style, lighting and background exactly the same.")
+BALD_BEARD_SENTENCE = " Keep the beard and moustache exactly as they are."
+BEARD_WORDS = ("beard", "bearded", "moustache", "mustache", "moustached", "goatee", "stubble", "sideburns", "whiskers")
+
+
+def bald_prompt(description: str | None) -> str:
+    """The bald edit's prompt: the trial's, plus the beard sentence only when the description names facial hair."""
+    from .. import hairpic
+
+    t = hairpic.norm(description)
+    return BALD_PROMPT + (BALD_BEARD_SENTENCE if hairpic.any_of(t, list(BEARD_WORDS)) else "")
 BALD_SIDE_VIEWS = ("quarter", "left", "right")  # quarter is the 3D input; left and right are for the face pass. No back.
 BALD_KEPT_MIN = 0.9  # bald_picture: share of the picture outside the hair that must stay unchanged
 BALD_FACE_DELTA_MAX = 10.0  # over this the face changed (the measure's own units, from baldpic.kept_measure)
@@ -427,10 +439,14 @@ def _bald_measure(orig_img: Path, orig_cut: Path | None, bald_raw: Path, bald_cu
     kept = dict(baldpic.kept_measure(orig, bald, mask) or {})
     share = float(kept.get("kept_share") or 0.0)
     delta = kept.get("face_delta")
+    target = baldpic.measure_target(bald) if hasattr(baldpic, "measure_target") else _target(bald[..., 3])
+    fm = face_measure(orig, bald, mask, target)
     reason = kept.get("reason")
     if reason is None:
         if mask.mean() < BALD_NO_HAIR_SHARE:
             reason = "no_hair_removed"
+        elif not face_kept(fm):
+            reason = "face_changed"  # a beard or another face drawn: kept_share alone did not see it
         elif share >= BALD_KEPT_MIN:
             reason = None
         elif delta is not None and float(delta) > BALD_FACE_DELTA_MAX:
@@ -438,6 +454,7 @@ def _bald_measure(orig_img: Path, orig_cut: Path | None, bald_raw: Path, bald_cu
         else:
             reason = "clothes_changed"
     return {"mask": mask, "kept_share": round(share, 4), "face_delta": None if delta is None else round(float(delta), 3),
+            "face_dark": fm["face_dark"], "face_change": fm["face_change"], "face_px": fm["face_px"],
             "reason": reason, "ok": reason is None, "orig": orig, "bald": bald, "hair_px": int(mask.sum())}
 
 
@@ -477,7 +494,7 @@ def _resize_to(path: Path, size: tuple[int, int]) -> None:
 async def _bald_front(sc: StageContext, src_name: str, seed: int, n: int, size: tuple[int, int]) -> dict[str, Path]:
     """One bald edit of the concept, resized to the concept's size and cut out."""
     ew, eh = _edit_size(*size)
-    graph = edit_graph(src_name, BALD_PROMPT, seed, sc.prefix(f"bald_front_{seed}"), width=ew, height=eh)
+    graph = edit_graph(src_name, bald_prompt(getattr(sc.asset, "prompt", "")), seed, sc.prefix(f"bald_front_{seed}"), width=ew, height=eh)
     base = 0.95 + 0.01 * n
     entry = await sc.comfy(graph, message="bald picture (the character without hair)", base=base, span=0.005)
     raw = Path(await sc.download_image(entry, "save", sc.dir / f"bald_front_try{n + 1}_raw.png"))
@@ -512,7 +529,7 @@ async def _run_bald(sc: StageContext, source: Version | None, params: dict[str, 
         tries.append({"seed": seed + n, "files": files, "meas": meas})
         if meas["ok"]:
             break
-    best = max(range(len(tries)), key=lambda i: (bool(tries[i]["meas"]["ok"]), tries[i]["meas"].get("kept_share") or -1.0))
+    best = max(range(len(tries)), key=lambda i: _try_rank(tries[i]["meas"]))
     kept = tries[best]
     sc.register("bald_front", kept["files"]["raw"])
     sc.register("bald_front_cutout", kept["files"]["cutout"])
@@ -560,7 +577,9 @@ async def _run_bald(sc: StageContext, source: Version | None, params: dict[str, 
         pass
     record = {"seed": seed, "kept_seed": int(kept["seed"]), "seeds": seeds, "kept_share": meas.get("kept_share"),
               "face_delta": meas.get("face_delta"), "reason": meas.get("reason"), "rerolled": len(tries) > 1,
+              "face_dark": meas.get("face_dark"), "face_change": meas.get("face_change"),
               "tries": [{"seed": t["seed"], "kept_share": t["meas"].get("kept_share"), "face_delta": t["meas"].get("face_delta"),
+                         "face_dark": t["meas"].get("face_dark"), "face_change": t["meas"].get("face_change"),
                          "reason": t["meas"].get("reason")} for t in tries],
               "hair_px": meas.get("hair_px"), "eye_cover": (info.get("record") or {}).get("pic_eye_cover"),
               "colour": (info.get("record") or {}).get("colour"), "seconds": round(time.time() - t0, 1)}
@@ -575,5 +594,93 @@ def bald_check(record: dict[str, Any]) -> dict[str, Any]:
     share = record.get("kept_share")
     ok = record.get("reason") is None and share is not None and float(share) >= BALD_KEPT_MIN
     return quality.check("bald_picture", ok, share, BALD_KEPT_MIN,
-                         vars={"face_delta": record.get("face_delta"), "rerolled": bool(record.get("rerolled")),
+                         vars={"face_delta": record.get("face_delta"), "face_dark": record.get("face_dark"),
+                               "face_change": record.get("face_change"), "rerolled": bool(record.get("rerolled")),
                                "reason": None if ok else (record.get("reason") or "clothes_changed")})
+
+
+def _try_rank(meas: dict[str, Any]) -> tuple:
+    """Which bald front to keep: one that passes; else the one whose face changed least (the drawn beard, then the
+    change over the face), then the larger kept share."""
+    dark = meas.get("face_dark")
+    change = meas.get("face_change")
+    return (bool(meas.get("ok")), -(float(dark) if dark is not None else 1.0), -(float(change) if change is not None else 99.0),
+            float(meas.get("kept_share") or -1.0))
+
+
+# --- the face inside the bald edit (live fault 11-06: women came back as bearded men and kept_share passed) ----------
+
+# Where the face sits in the head box measured on the bald cut-out (top of the skull to the neck), as shares of its
+# height and width: the face below the brow, and the lower face (upper lip, jaw and chin), where a beard shows.
+FACE_BOX = (0.36, 1.0, 0.40)  # from, to (share of head height), half width (share of head width)
+LOWER_BOX = (0.66, 1.04, 0.32)
+CROWN_BOX = (-0.05, 0.22, 0.30)  # the top of the head, hair in the original wherever the outline covers it
+SKIN_BOX = (0.58, 0.72, 0.12)  # nose and inner cheeks: skin in the original
+FACE_DARKER_L = 18.0  # Lab lightness units: a pixel this much darker in the bald picture counts as darkened
+# Calibrated on 50 real bald edits (runtime/tmp/hairpipe/calib.json, bald_prompt_check.png): 32 clean ones (the trial
+# prompt and the trial prompt with a face sentence, 8 characters, 2 seeds) had face_dark 0.000 to 0.006 and face_change
+# 3.6 to 6.9; 18 with a drawn beard (the live ponytail and bob knight, and 16 from the prompt that named a beard) had
+# face_dark 0.056 to 0.285 and face_change 4.8 to 12.6. face_dark alone separates them.
+FACE_DARK_MAX = 0.03  # face_dark: share of the lower face darkened; over it a beard or stubble was drawn
+FACE_CHANGE_MAX = 9.0  # face_change: mean Lab difference over the face, outside the hair; over it the face changed
+
+
+def _box(target: dict[str, Any], spec: tuple[float, float, float], shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    top, hh = float(target["top_px"]), float(target["neck_px"]) - float(target["top_px"])
+    cx, hw = float(target["head_cx_px"]), float(target["head_w"]) * float(target["H_px"])
+    y0, y1 = int(round(top + spec[0] * hh)), int(round(top + spec[1] * hh))
+    x0, x1 = int(round(cx - spec[2] * hw)), int(round(cx + spec[2] * hw))
+    return max(0, x0), max(0, y0), min(shape[1], max(x0 + 1, x1)), min(shape[0], max(y0 + 1, y1))
+
+
+def face_measure(orig: np.ndarray, bald: np.ndarray, mask: np.ndarray, target: dict[str, Any]) -> dict[str, Any]:
+    """Original against bald inside the face only, at the picture's own resolution, leaving out the hair outline
+    (grown a little) and the background: face_change (mean Lab difference over the face) and face_dark (share of the
+    lower face, upper lip to chin, that became FACE_DARKER_L darker: a drawn beard or stubble)."""
+    from .. import baldpic  # lane 1
+
+    o, b = np.asarray(orig), np.asarray(bald)
+    H, W = o.shape[:2]
+    lab_o, lab_b = baldpic.to_lab(o[..., :3]), baldpic.to_lab(b[..., :3])
+    # The hair outline is where the two pictures differ, so a drawn beard falls inside it. Only the outline's pixels
+    # that were hair in the original are left out: those closer to the hair's colour (the outline on the crown) than
+    # to the skin's (the original's nose and cheeks).
+    outline = np.asarray(mask, bool)
+    crown = np.zeros((H, W), bool)
+    cx0, cy0, cx1, cy1 = _box(target, CROWN_BOX, (H, W))
+    crown[max(0, cy0 - int(0.2 * (cy1 - cy0))):cy1, cx0:cx1] = True
+    sx0, sy0, sx1, sy1 = _box(target, SKIN_BOX, (H, W))
+    skin_px = lab_o[sy0:sy1, sx0:sx1].reshape(-1, 3)
+    hair = outline.copy()
+    if (outline & crown).any() and len(skin_px):
+        hair_lab = np.median(lab_o[outline & crown], axis=0)
+        skin_lab = np.median(skin_px, axis=0)
+        hair = outline & (np.linalg.norm(lab_o - hair_lab, axis=-1) < np.linalg.norm(lab_o - skin_lab, axis=-1))
+    # Specks of shading that happen to match the hair colour are dropped (an opening) before the hair is left out.
+    r = max(1, int(round(0.003 * max(H, W))))
+    hair = baldpic.morph(baldpic.morph(hair, r, "erode"), r, "dilate")
+    keep = ~hair
+    if o.shape[2] == 4:
+        keep &= o[..., 3] > 127
+    if b.shape[2] == 4:
+        keep &= b[..., 3] > 127
+    out: dict[str, Any] = {}
+    for name, spec in (("face", FACE_BOX), ("lower", LOWER_BOX)):
+        x0, y0, x1, y1 = _box(target, spec, (H, W))
+        sel = keep[y0:y1, x0:x1]
+        out[f"{name}_px"] = int(sel.sum())
+        if not sel.any():
+            out[f"{name}_change"] = None
+            out[f"{name}_dark"] = None
+            continue
+        lo, lb = lab_o[y0:y1, x0:x1][sel], lab_b[y0:y1, x0:x1][sel]
+        out[f"{name}_change"] = round(float(np.linalg.norm(lo - lb, axis=1).mean()), 2)
+        out[f"{name}_dark"] = round(float(((lo[:, 0] - lb[:, 0]) > FACE_DARKER_L).mean()), 4)
+    return {"face_change": out["face_change"], "face_dark": out["lower_dark"], "face_px": out["face_px"],
+            "lower_px": out["lower_px"], "lower_change": out["lower_change"]}
+
+
+def face_kept(fm: dict[str, Any]) -> bool:
+    """The face is the picture's own: no beard drawn on the lower face and no large change over the face."""
+    dark, change = fm.get("face_dark"), fm.get("face_change")
+    return (dark is None or float(dark) <= FACE_DARK_MAX) and (change is None or float(change) <= FACE_CHANGE_MAX)

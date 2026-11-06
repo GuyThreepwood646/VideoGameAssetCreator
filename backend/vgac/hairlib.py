@@ -535,11 +535,34 @@ async def pick_hair(aid: str, body: HairPick, db: Session = Depends(get_session)
         prep_v = _selected(db, a.id, "prep")
         hl = ((prep_v.metrics or {}).get("hair_library") or {}) if prep_v is not None else {}
         if prep_v is not None and (prep_v.params or {}).get("hair_source") == LIBRARY and hl.get("style") != body.style:
-            from . import autopilot
-
-            started = autopilot.start(a.id, fix={"stage": "prep", "params": {"hair_style": body.style}})
+            started = rebuild_with_style(db, a, prep_v, body.style)
     db.refresh(a)
     return {"panel": panel(db, a), "autopilot": started}
+
+
+def rebuild_with_style(db: Session, a: Asset, kept: Version, style_id: str) -> dict[str, Any]:
+    """The pick-and-rebuild: an adjust of the kept Clean up with the new style (only the hair is fitted again when it
+    fits the allowance), kept at once, so the Autopilot builds the moves and the hand-off on it.
+
+    Not an Autopilot Fix: after a Fix the Autopilot ranks every finished version of the step again, and the old Clean
+    up, whose hair_fit may pass where the new style's fails, would win and be kept again (the live run of 11-06). The
+    person chose this style, so the new version is kept whatever its checks say; the old one stays in the history,
+    and is taken again only when the new one fails to build."""
+    from . import autopilot, pipeline
+    from .reference import STAGE_ORDER
+
+    later = STAGE_ORDER[STAGE_ORDER.index("prep") + 1:]
+    for v in a.versions:
+        if v.stage in later:
+            v.selected = False
+            if v.status == "done":
+                v.status = "rejected"  # built on the old style: rebuilt from the new Clean up
+    db.commit()
+    extra = {"hair_style": style_id}
+    v = pipeline.new_version(db, a, "prep", kept, {**(kept.params or {}), **extra})
+    pipeline.submit(db, a, v, "adjust", {"params": extra})
+    pipeline.select(db, v)
+    return autopilot.start(a.id)
 
 
 @router.get("/api/hair-library")
