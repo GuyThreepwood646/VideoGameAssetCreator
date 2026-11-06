@@ -534,6 +534,20 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "export", "params": {}},
         "fix_label": "Rebuild for Unity",
     },
+    "clips_face_forward": {
+        # Unity hand-off (VgacImport Version 16): the body's heading while each move the controller plays runs,
+        # against the prefab's forward; the moves were once imported facing backwards (docs/KNOWN-FAULTS-RESEARCH.md 5).
+        "severity": "warn",
+        "ok": lambda c: ("Every move faces the character's forward in Unity; the furthest any turns is {value} degrees"
+                         + (" ({clip})." if _var(c, "clip") else ".")),
+        "fail": lambda c: (("The {role} move ({clip})" if _var(c, "role") else ("The {clip} move" if _var(c, "clip") else "A move"))
+                           + " plays with the body turned {value} degrees away from the character's forward"
+                           + (" (to its {side})" if _var(c, "side") else "")
+                           + (", and {others} more moves are turned too" if _var(c, "others") else "")
+                           + ", so in a game the character would face the wrong way while it plays."),
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Rebuild for Unity",
+    },
     "placement_exact": {
         "severity": "warn",
         "ok": "Hit boxes and attachment points sit exactly where they were fitted.",
@@ -618,6 +632,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The surface detail was painted for an earlier copy of the model, so shading may look wavy.",
         "fix": lambda c: {"stage": "prep", "params": {"rebake": True}},
         "fix_label": "Repaint the surface",
+    },
+    # The 3D step's normal map with its green channel the right way up (vgac/normalfix.py), checked at the 3D step on
+    # its own map and at the clean-up step on the map it baked from. The Fix rebuilds the step that measured it.
+    "normal_map_upright": {
+        "severity": "warn",
+        "ok": "The normal map (bump texture) is the right way up, so the surface shades smoothly.",
+        "fail": lambda c: ("The normal map (bump texture) is upside down, so the surface shows triangle-shaped facets and dark patches "
+                           + ("under light. Cleaning up again bakes it the right way up." if _var(c, "stage") == "prep"
+                              else "under light. Building the 3D model again writes it the right way up.")),
+        "fix": lambda c: {"stage": "prep" if _var(c, "stage") == "prep" else "mesh", "params": {}},
+        "fix_label": lambda c: "Clean up again" if _var(c, "stage") == "prep" else "Build the 3D model again",
     },
     "texture_padding": {
         "severity": "warn",
@@ -796,6 +821,18 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                            "Hair covers the eyes ({value:pct} of the eye area). The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly."),
         "fix": _redraw_fix,
         "fix_label": "Move the hair off the face",
+    },
+    # The face is drawn (vgac/hairpic.face_check): a close-up of the head read by the local vision model, for the looks
+    # whose painter sometimes leaves the face empty or paints the figure from behind. The Fix asks the picture editor
+    # to draw the face.
+    "face_drawn": {
+        "severity": "warn",
+        "ok": "The face is drawn, with eyes, so the 3D model gets a face.",
+        "fail": lambda c: ("The character {problem}, so the 3D model would have no face."
+                           if _var(c, "problem") else
+                           "The face has no eyes drawn, so the 3D model would have no face."),
+        "fix": _redraw_fix,
+        "fix_label": "Draw the face",
     },
     # Material from a photo (readiness.photo_checks). No automatic fix: a better photo is the fix.
     "even_lighting": {

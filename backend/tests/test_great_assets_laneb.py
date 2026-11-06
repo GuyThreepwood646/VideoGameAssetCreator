@@ -47,6 +47,7 @@ SAMPLES = {
     "materials_connected": ((True, True), (False, True)),
     "textures_full_size": ((4096, 4096), (2048, 4096)),
     "clips_loop": ((True, True), ("walk", True)),
+    "clips_face_forward": ((12, 60), (178, 60)),  # hand-off: degrees the body turns from the prefab's forward, worst move
     "library_clips": ((15, ">0"), (0, ">0")),
     "added_moves": ((5, 5), (3, 5)),
     "controller_ready": ((True, True), (False, True)),
@@ -62,6 +63,7 @@ SAMPLES = {
     "collider_count": ((3, 8), (12, 8)),
     "openings_clear": ((0, 0), (1, 0)),
     "bake_matches": ((1.0, 0.99), (0.45, 0.99)),
+    "normal_map_upright": ((0.57, 1.25), (1.77, 1.25)),  # normal map green channel: seam disagreement as is over flipped
     "texture_padding": ((8, 8), (1, 8)),
     "atlas_used": ((0.57, 0.5), (0.28, 0.5)),
     "baked_light": ((0.1, 0.2), (0.4, 0.2)),
@@ -82,6 +84,7 @@ SAMPLES = {
     "big_enough": ((900, 400), (220, 400)),
     "arms_away": ((0.4, 0.2), (0.0, 0.2)),
     "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
+    "face_drawn": ((1, 1), (0, 1)),  # the vision model sees eyes on the face (1) or not, or the back of the head (0)
     "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }

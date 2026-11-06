@@ -59,7 +59,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, hairmat, headtris, imaging, quality, reference
+from .. import guidance, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -191,6 +191,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     keep_normal = bool(rec["mesh"]["normal_map"])
     mesh_maps = {k: sc.lineage_file(k, ("mesh",)) for k in TEXTURE_KEYS if keep_normal or k != "normal"}
     mesh_maps = {k: p for k, p in mesh_maps.items() if p is not None}
+    repaired = await repair_normal(sc, mesh_v, src, mesh_maps, keep_normal)
+    if repaired:
+        src, mesh_maps["normal"] = repaired["glb"], repaired["normal"]
     tex = texture_size_of(mesh_maps, mesh_v.params if mesh_v else {}, sc.budget.get("texture"))
     if mesh_maps:
         maps_json = sc.dir / "bake_maps.json"
@@ -209,6 +212,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.register(key, p)
     else:
         link_textures(sc, keep_normal=keep_normal)
+        if repaired:
+            sc.register("normal", repaired["normal"])  # the flipped copy, not the 3D step's own map
     sc.set_metrics(triangles=report.get("triangles"), vertices=report.get("vertices"), dims=report.get("dims_m"),
                    size_extent_m=report.get("size_extent_m"),
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"),
@@ -248,6 +253,14 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if fd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex))
         after_face = {**current, **{k: Path(p) for k, p in fd["files"].items() if k in TEXTURE_KEYS}}
+        # Skin is never metal (vgac/skinmetal.py): the face and the skin of the head and neck joined to it lose the metal
+        # the 3D builder spread onto them from armour and helmets, before the hair pass reads the maps.
+        sm = await asyncio.to_thread(skinmetal.clear, out, after_face, sc.asset.category, sc.asset.prompt, sc.dir / "skin")
+        if sm["files"].get("metallic") is not None:
+            after_face["metallic"] = Path(sm["files"]["metallic"])
+            sc.register("metallic", after_face["metallic"])
+            await asyncio.to_thread(imaging.glb_replace_images, out, metallic=after_face["metallic"])
+        sc.set_metrics(**sm["metrics"])
         hd = await hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout"))
         for key, p in hd["files"].items():
             sc.register(key, p)
@@ -260,6 +273,34 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     elif not keep_normal:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     await judge(sc)
+
+
+NORMAL_FIX_DIR = "normal_fix"
+
+
+async def repair_normal(sc: StageContext, mesh_v: Any, src: Path, mesh_maps: dict[str, Path], keep_normal: bool) -> dict[str, Any] | None:
+    """A 3D-step version from before the normal map fix (vgac/normalfix.py: TRELLIS, a normal map, no marker) has its
+    map's green channel upside down. Copies of its GLB and normal map with green flipped go into this version's
+    normal_fix folder and the clean-up step bakes from them; the 3D step's own files are never changed, and a marked
+    version is never flipped again. -> {glb, normal, glb_images} or None when nothing needed repair."""
+    if mesh_v is None or not keep_normal or mesh_maps.get("normal") is None:
+        return None
+    if not normalfix.needs_fix(mesh_v.params, mesh_v.metrics, True):
+        return None
+    rep = await asyncio.to_thread(normalfix.repair_inputs, Path(src), Path(mesh_maps["normal"]), sc.dir / NORMAL_FIX_DIR)
+    if rep.get("normal") is None:
+        return None
+    sc.set_metrics(normal_repaired=True, normal_repaired_glb_images=rep["glb_images"])
+    return rep
+
+
+def bake_inputs(sc: StageContext) -> tuple[Path | None, Path | None]:
+    """The model and normal map this clean-up version baked from: the flipped copies when it repaired an older 3D
+    step's map, else the 3D step's own."""
+    d = sc.dir / NORMAL_FIX_DIR
+    if (d / "normal.png").is_file() and (d / "model.glb").is_file():
+        return d / "model.glb", d / "normal.png"
+    return sc.lineage_file("glb", ("mesh",)), sc.lineage_file("normal", ("mesh",))
 
 
 def head_metrics(report: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
@@ -649,6 +690,12 @@ async def judge(sc: StageContext) -> None:
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)
+    if (rec.get("mesh") or {}).get("normal_map", True) and sc.file("normal") is not None:
+        from .mesh import upright_check
+
+        nc = await upright_check(sc, "prep", *bake_inputs(sc))
+        if nc:
+            checks.append(nc)
     sc.set_metrics(**quality.summarise(checks))
 
 

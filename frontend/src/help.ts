@@ -475,6 +475,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   big_enough: H('Big enough', 'How many pixels tall (or across) the subject is.', 'The 3D step reads about 500 pixels; a small subject loses its detail.', 'subject height in pixels, at least 400'),
   arms_away: H('Arms away from the body', 'Whether the arms stand clear of the sides, as in an A-pose or a T-pose.', 'Arms pressed to the body get joined to it in the 3D model, and the skeleton step cannot tell them apart.', 'silhouette gap between arm and torso, or arm span against waist width'),
   hair_off_eyes: H('Eyes clear of hair', 'Whether hair hangs over the eyes in the picture, found by telling the hair colour from the skin colour.', 'The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly. "Move the hair off the face" asks the picture editor to sweep it aside; it makes a new version and your picture stays. When your description asks for hair over the eyes, the app does not check this.', 'hair_off_eyes check (vgac/hairpic.py): hair against skin in each eye area'),
+  face_drawn: H('Face drawn', 'Whether the character in the picture has a face with eyes, and is not painted from behind. The local vision model (the review engine) looks at a close-up of the head.', 'The 3D model is built from the picture, so an empty face or the back of the head gives a model with no face. "Draw the face" asks the picture editor to draw it; it makes a new version and your picture stays. Only the Cel look is checked, because its painter sometimes leaves the face out. When your description hides the face (a closed helmet, a mask, a figure seen from behind), the app does not check this.', 'face_drawn check (vgac/hairpic.face_check): Gemma 3 on a head crop answers eyes, mouth and back'),
   redraw_ready: H('Redraw it ready for 3D', 'Asks the image edit model (picture editor) to redraw the same subject, same design and colours, in the standard pose on a plain light grey background.', 'It makes a new version; your picture stays as it was.', 'concept refine with the category pose block'),
   even_lighting: H('Even light', 'Whether the photo is about as bright on one side as on the other.', 'A tiling texture repeats the photo side by side, so a bright side and a dark side show as stripes.', 'brightness plane fitted across the photo'),
   straight_on: H('Taken straight on', 'Whether the photo looks at the surface square on, not at an angle.', 'A photo taken at an angle has finer detail at the far side, and the texture looks stretched.', 'local detail in opposite thirds of the photo'),
@@ -624,6 +625,12 @@ const CHECK_TEXT: Record<string, CheckText> = {
   },
   // Textures and light (3.9)
   bake_matches: (_v, _l, ok) => (ok ? 'The surface detail was painted onto the final model.' : 'The surface detail was painted for an earlier copy of the model, so shading may look wavy.'),
+  normal_map_upright: (_v, _l, ok, _ctx, vars) => {
+    if (ok) return 'The normal map (bump texture) is the right way up, so the surface shades smoothly.'
+    return vars.stage === 'prep'
+      ? 'The normal map (bump texture) is upside down, so the surface shows triangle-shaped facets and dark patches under light. Cleaning up again bakes it the right way up.'
+      : 'The normal map (bump texture) is upside down, so the surface shows triangle-shaped facets and dark patches under light. Building the 3D model again writes it the right way up.'
+  },
   texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
   atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
   face_matches_picture: (_v, _l, ok, _ctx, vars) => {
@@ -672,6 +679,16 @@ const CHECK_TEXT: Record<string, CheckText> = {
   },
   textures_full_size: (v, l, ok, _ctx, vars) => (ok ? `Unity imports every texture at its full size (the largest is ${String(vars.file_px ?? l)} px).` : `Unity imports the ${String(vars.texture || 'colour')} texture at ${String(vars.import_px ?? v)} px, smaller than the file's ${String(vars.file_px ?? l)} px, so it looks softer in the game.`),
   clips_loop: (v, _l, ok, _ctx, vars) => (ok ? 'Idle and walk loop smoothly.' : `The ${listText(vars.clip) || listText(v) || 'walk'} animation does not loop, so it would stop after one cycle.`),
+  clips_face_forward: (v, _l, ok, _ctx, vars) => {
+    const deg = n0(num(v) ?? 0)
+    const clip = str(vars.clip)
+    if (ok) return `Every move faces the character's forward in Unity; the furthest any turns is ${deg} degrees${clip ? ` (${clip})` : ''}.`
+    const role = str(vars.role)
+    const who = role ? `The ${role} move (${clip})` : clip ? `The ${clip} move` : 'A move'
+    const side = str(vars.side)
+    const others = num(vars.others) ?? 0
+    return `${who} plays with the body turned ${deg} degrees away from the character's forward${side ? ` (to its ${side})` : ''}${others > 0 ? `, and ${n0(others)} more moves are turned too` : ''}, so in a game the character would face the wrong way while it plays.`
+  },
   controller_ready: (_v, _l, ok) => (ok ? 'An animation controller switches between idle, walk and run by speed.' : 'No animation controller was built, so you would have to set one up in Unity.'),
   silhouette_iou: (v, l, ok) => (ok ? `The model outline matches the drawing (${pct(v)}).` : `The model outline only matches the drawing ${pct(v)}; it needs ${pct(l)}.`),
   coverage: (v, l, ok) => (ok ? `The character fills ${pct(v)} of the picture.` : `The character fills only ${pct(v)} of the picture; it needs at least ${pct(l)}.`),
@@ -779,6 +796,7 @@ const CHECK_HELP: Record<string, string> = {
   collider_count: 'collider_count',
   openings_clear: 'openings_clear',
   bake_matches: 'bake',
+  normal_map_upright: 'normal_map',
   texture_padding: 'padding',
   atlas_used: 'bake',
   baked_light: 'baked_light',
@@ -799,6 +817,7 @@ const CHECK_HELP: Record<string, string> = {
   big_enough: 'big_enough',
   arms_away: 'arms_away',
   hair_off_eyes: 'hair_off_eyes',
+  face_drawn: 'face_drawn',
   springs: 'springs',
   springs_shipped: 'springs',
   even_lighting: 'even_lighting',
@@ -829,7 +848,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|even_lighting|straight_on)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|normal_map_upright|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|face_drawn|even_lighting|straight_on|clips_face_forward)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -862,6 +881,7 @@ const FIX_LABELS: Record<string, string> = {
   materials_connected: 'Rebuild for Unity',
   textures_full_size: 'Rebuild for Unity',
   clips_loop: 'Rebuild for Unity',
+  clips_face_forward: 'Rebuild for Unity',
   controller_ready: 'Rebuild for Unity',
   unity_humanoid_avatar: 'Fit the standard skeleton again',
   clips: 'Make the moves again',
@@ -874,6 +894,7 @@ const FIX_LABELS: Record<string, string> = {
   collider_count: 'Use fewer shapes',
   openings_clear: 'Use several shapes',
   bake_matches: 'Repaint the surface',
+  normal_map_upright: 'Build the 3D model again',
   texture_padding: 'Add more space',
   atlas_used: 'Repaint the surface',
   face_matches_picture: 'Paint the face again',
@@ -927,6 +948,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'collider_count' && limit) return { stage: 'export', params: { collider_max_parts: limit }, label }
   if (id === 'openings_clear') return { stage: 'export', params: { collider: vars.category === 'environment' ? 'mesh' : 'decompose' }, label }
   if (id === 'bake_matches' || id === 'atlas_used') return { stage: 'prep', params: { rebake: true }, label }
+  if (id === 'normal_map_upright') return vars.stage === 'prep' ? { stage: 'prep', params: {}, label: check.fix?.label || 'Clean up again' } : { stage: 'mesh', params: {}, label }
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }

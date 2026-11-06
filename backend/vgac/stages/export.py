@@ -797,7 +797,9 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "hairSubmeshes": report.get("hairSubmeshes"), "hairTriangles": report.get("hairTriangles"),
             "hairTexturesAssigned": report.get("hairTexturesAssigned"),
             "springChains": report.get("springChains"), "springBones": report.get("springBones"),
-            "springWarning": report.get("springWarning")}
+            "springWarning": report.get("springWarning"),
+            "clipFacing": report.get("clipFacing"), "facingMeasured": report.get("facingMeasured"),
+            "bindFacing": report.get("bindFacing")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -1088,7 +1090,45 @@ def unity_checks(u: dict[str, Any], humanoid: bool, rigged: bool, expect_normal:
         valid = bool(u.get("humanoidValid"))
         checks.append(_check("unity_humanoid_avatar", valid, u.get("clipCount") if valid else 0, True,
                              {"mapping": u.get("avatar_mapping") or ""}))
+    facing = clip_facing(u)
+    if facing is not None:
+        worst = facing["worst"]
+        checks.append(_check("clips_face_forward", not facing["over"], round(abs(worst["degrees"])), FACING_MAX_DEG,
+                             {"clip": worst["plain"], "role": worst["role"], "side": worst["side"],
+                              "others": max(0, len(facing["over"]) - 1), "moves": facing["count"]}))
     return checks
+
+
+# A move may turn the body this far from the prefab's forward (averaged over the move) before the hand-off check
+# fails. Authored stances turn up to about 30 degrees (a bladed sword stance); a move imported backwards is 125 to 180.
+FACING_MAX_DEG = 60
+
+
+def plain_clip_name(name: str) -> str:
+    """"Rig|Idle_Loop" -> "idle loop"; "walk" -> "walk"."""
+    short = str(name).rsplit("|", 1)[-1]
+    return re.sub(r"[_\s]+", " ", short).strip().lower() or str(name)
+
+
+def clip_facing(u: dict[str, Any]) -> dict[str, Any] | None:
+    """The importer's clipFacing (Version 16) for the moves the controller plays: {worst, over, count}, where worst
+    is the measured move turned furthest from the prefab's forward ({name, plain, degrees, role, side}) and over the
+    moves past FACING_MAX_DEG, worst first. None when nothing was measured (Generic rigs, importers before 16)."""
+    if not u.get("facingMeasured"):
+        return None
+    rows = [f for f in u.get("clipFacing") or [] if isinstance(f, dict) and f.get("measured") and f.get("inController")]
+    if not rows:
+        return None
+    roles = {clip: role for role, clip in _role_clips(u).items()}
+
+    def entry(f: dict[str, Any]) -> dict[str, Any]:
+        deg = float(f.get("degrees") or 0.0)
+        return {"name": f.get("name", ""), "plain": plain_clip_name(f.get("name", "")), "degrees": deg,
+                "role": roles.get(f.get("name", ""), "").lower(), "side": "right" if deg > 0 else "left",
+                "based_on": f.get("basedOn") or ""}
+
+    ranked = sorted((entry(f) for f in rows), key=lambda e: -abs(e["degrees"]))
+    return {"worst": ranked[0], "over": [e for e in ranked if abs(e["degrees"]) > FACING_MAX_DEG], "count": len(ranked)}
 
 
 def texture_import_sizes(u: dict[str, Any]) -> list[tuple[str, int, int]]:
@@ -1266,6 +1306,11 @@ async def judge(sc: StageContext) -> None:
                                          group_per_vertex=rig_v.params.get("group_per_vertex"))
         rigged = bool(report.get("bones")) and not rig_v.metrics.get("rigid")
     u = sc.version.metrics.get("unity_report")
+    if u and "clipFacing" not in u:
+        # Metrics written before the facing fields existed: take them from the report file, when it has them.
+        rep = _read_json(sc.file("unity_report"))
+        if rep.get("clipFacing") is not None:
+            u = {**u, "clipFacing": rep.get("clipFacing"), "facingMeasured": rep.get("facingMeasured"), "bindFacing": rep.get("bindFacing")}
     if u:
         checks.append(quality.check("unity_import", bool(u.get("ok")), u.get("ok"), True))
         if u.get("ok"):

@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import guidance, headtris, imaging, library, quality, reference
+from .. import guidance, headtris, imaging, library, normalfix, quality, reference
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
@@ -172,6 +172,10 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
             sc.register(key, p)
             if key in TEXTURE_KEYS:
                 maps[key] = Path(p)
+    if keep_normal:
+        # The builder writes the normal map's green channel upside down (vgac/normalfix.py): flipped once, here, in
+        # normal.png and in the GLB's own copy, and the version marked so the clean-up step never flips it again.
+        sc.set_metrics(**await asyncio.to_thread(normalfix.fix_download, Path(glb), maps.get("normal")))
     sc.set_metrics(engine="trellis", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), target_faces=target_faces, texture_size=tex,
                    unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                    normal_map=keep_normal, recipe=reference.recipe_record(rec, "mesh", "surface"))
@@ -294,7 +298,25 @@ async def judge(sc: StageContext) -> None:
         # so each category may lower the floor (silhouette_min in its yaml); 0.6 is the biped default.
         floor = float(sc.category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
         checks.append(quality.check("silhouette_iou", iou >= floor, iou, floor))
+    nc = await upright_check(sc, "mesh", sc.file("glb"), sc.file("normal"))
+    if nc:
+        checks.append(nc)
     sc.set_metrics(**quality.summarise(checks))
+
+
+async def upright_check(sc: StageContext, stage: str, glb: Path | None, normal: Path | None) -> dict[str, Any] | None:
+    """The normal_map_upright check (vgac/normalfix.py) on a model and its normal map, measured once and kept in the
+    metrics (normal_upright); None without a normal map. Never fails the job."""
+    m = sc.version.metrics.get("normal_upright")
+    if not m and glb is not None and normal is not None and Path(glb).is_file() and Path(normal).is_file():
+        try:
+            m = await asyncio.to_thread(normalfix.upright, Path(glb), Path(normal))
+        except Exception as e:  # noqa: BLE001  (a measure that fails leaves the model as it is)
+            sc.set_metrics(normal_upright_error=str(e)[:300])
+            return None
+        if m:
+            sc.set_metrics(normal_upright=m)
+    return normalfix.check(m, stage)
 
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
