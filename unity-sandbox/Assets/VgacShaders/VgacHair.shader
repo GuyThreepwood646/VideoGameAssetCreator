@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Runtime Forge LLC. MIT licence, on purpose: the backend copies this file into your game project, so it must
+// not carry the app's GPL. You may use, copy, change and distribute it, in any project including commercial games, as long as this
+// notice stays in the file. It is provided "as is", without warranty of any kind.
 // VgacHair Version 2
 // Hair shader for Video Game Asset Creator characters, built-in render pipeline (a surface shader).
 // The importer (Assets/Editor/VgacImport.cs, Version 13 and later) puts it on the hair's own material when the hand-off

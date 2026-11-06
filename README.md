@@ -103,3 +103,7 @@ The full contract is `docs/API.md`. In short:
 - Files: `GET /api/library/{path}` serves files from the library folder (`library/projects/<pid>/assets/<aid>/<stage>/<vid>/`).
 
 The job queue runs one asyncio worker per instance (`a`, `b`, `host`), never runs two jobs on one instance, holds a job while free system RAM is under `min_free_ram_gb`, and re-queues jobs left running by a crash.
+
+## Licence
+
+Copyright (C) 2026 Runtime Forge LLC. Free software under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE. The few files the app copies into your Unity project (the importer, the spring-bone script and the hair shaders) are MIT instead, so they never put your game under the GPL. Credits for the projects this builds on are in CREDITS.md and THIRD-PARTY-NOTICES.md.

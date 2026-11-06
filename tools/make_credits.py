@@ -19,7 +19,7 @@ from vgac.credits import credits  # noqa: E402
 def render() -> str:
     ans = credits()
     s = ans["summary"]
-    out = ["# Credits", "", "Video Game Asset Creator is built on the work below. " + s["not_legal_advice"], ""]
+    out = ["# Credits", "", s.get("copyright", ""), "", "Video Game Asset Creator is built on the work below. " + s["not_legal_advice"], ""]
     for key in ("passing_on", "before_sharing", "game_credit"):
         out += ["## " + s[key]["title"], ""] + ["- " + p for p in s[key]["points"]] + [""]
     for g in ans["groups"]:
