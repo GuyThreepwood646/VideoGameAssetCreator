@@ -64,6 +64,7 @@ SAMPLES = {
     "openings_clear": ((0, 0), (1, 0)),
     "bake_matches": ((1.0, 0.99), (0.45, 0.99)),
     "normal_map_upright": ((0.57, 1.25), (1.77, 1.25)),  # normal map green channel: seam disagreement as is over flipped
+    "texture_matches_picture": ((0.82, 0.5), (0.16, 0.5)),  # 3D step: base colour brightness over the picture's
     "texture_padding": ((8, 8), (1, 8)),
     "atlas_used": ((0.57, 0.5), (0.28, 0.5)),
     "baked_light": ((0.1, 0.2), (0.4, 0.2)),
@@ -124,7 +125,7 @@ def test_passing_check_never_carries_the_fail_sentence():
 
 def test_existing_severities_kept():
     sev = {n: g["severity"] for n, g in guidance.CHECK_GUIDE.items()}
-    assert {n for n, s in sev.items() if s == "block"} == {"triangle_budget", "lod_count", "collider_present", "bones", "clips_loop"}
+    assert {n for n, s in sev.items() if s == "block"} == {"triangle_budget", "lod_count", "collider_present", "bones", "clips_loop", "texture_matches_picture"}
 
 
 def test_fix_labels_and_default_label(monkeypatch):

@@ -59,7 +59,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal
+from .. import guidance, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, texcolour
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -566,8 +566,11 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
                                  vars={"kept": kept, "removed": bool(m.get("delight_applied"))}))
     pbr = m.get("pbr") or {}
     fix_on = bool(m.get("pbr_fix_applied"))
-    # A look that keeps its painted shading also keeps its painted darks and lights: not a fault there.
-    kept_look = m.get("delight_mode") == "keep" and not fix_on
+    # A look that keeps its painted shading also keeps its painted darks and lights: not a fault there, as long as the
+    # base colour stays about as bright as the picture the 3D model was built from (texcolour.kept_look_excused, from
+    # texture_match measured in judge). A near-black texture from a bright picture is not the look: it fails in every look.
+    match = m.get("texture_match")
+    kept_look = m.get("delight_mode") == "keep" and not fix_on and texcolour.kept_look_excused(match)
     if pbr.get("albedo_out") is not None:
         in_range = float(pbr["albedo_out"]) <= ALBEDO_OUT_MAX
         out.append(quality.check("albedo_range", in_range or kept_look, float(pbr["albedo_out"]), ALBEDO_OUT_MAX,
@@ -669,6 +672,22 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     return checks
 
 
+async def picture_colour(sc: StageContext) -> dict[str, Any] | None:
+    """The colour stats of the picture the 3D model was built from (texcolour.picture_stats): the 3D step's own record
+    when it has one, else measured from the cut-out in the lineage. None without a picture or a cut-out."""
+    mv = sc.stage_version("mesh")
+    if mv is not None and (mv.metrics or {}).get("picture_colour"):
+        return mv.metrics["picture_colour"]
+    from .mesh import _input_image
+
+    try:
+        params = (mv.params if mv is not None else None) or {}
+        view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
+        return await asyncio.to_thread(texcolour.picture_stats, _input_image(sc, view))
+    except Exception:  # noqa: BLE001  (no picture: the look's darks stay excused, as before)
+        return None
+
+
 async def judge(sc: StageContext) -> None:
     rp = sc.file("report")
     if rp is None:
@@ -686,6 +705,16 @@ async def judge(sc: StageContext) -> None:
     if hv:
         tri_vars = {**(tri_vars or {}), **hv}
     checks = prep_checks(report, sc.version.params, m, sc.asset.category, limit, tri_vars)
+    if (m.get("pbr") or {}).get("albedo_out") is not None and "texture_match" not in m:
+        # The shipped base colour against the picture, measured once: albedo_range excuses a kept look's darks only
+        # while it passes (texcolour.kept_look_excused).
+        pic = await picture_colour(sc)
+        try:
+            tex = await asyncio.to_thread(texcolour.texture_stats, sc.file("base_color"), sc.file("glb"))
+        except Exception:  # noqa: BLE001  (no layout to measure: the look's darks stay excused, as before)
+            tex = None
+        sc.set_metrics(picture_colour=pic, texture_match=texcolour.compare(pic, tex))
+        m = sc.version.metrics
     checks += surface_checks(m, sc.version.params)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
