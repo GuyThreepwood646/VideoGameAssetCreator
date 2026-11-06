@@ -9,6 +9,7 @@ import time
 import pytest
 
 from vgac import stages
+from vgac.db import Job, session_factory
 
 from test_api import _project_asset, client, fake_execute, wait_job  # noqa: F401  (fixtures)
 
@@ -256,3 +257,50 @@ def test_resume_keeps_the_seed_the_stopped_run_picked(client, monkeypatch):  # n
     with session_factory()() as db:
         assert db.get(Job, out["job"]["id"]).payload["params"]["seed"] == 4242
     assert _versions(client, aid, "concept")[0]["params"]["seed"] == 4242
+
+
+def test_redrawing_views_after_a_stopped_redraw_was_set_aside(client, gate):  # noqa: F811
+    """Check all sides: redraw a view, Stop, Leave it stopped. The set-aside version cannot be redrawn from (409);
+    the finished one still can, several views at once, and views it does not have are refused before anything is made."""
+    p, a = _project_asset(client)
+    aid = a["id"]
+    gate["hold"] = False
+    concept = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    wait_job(client, concept["job"]["id"])
+    client.post(f"/api/versions/{concept['version']['id']}/select")
+    turn = client.post(f"/api/assets/{aid}/stages/turnaround/run", json={}).json()
+    assert wait_job(client, turn["job"]["id"])["status"] == "done"
+    tid = turn["version"]["id"]
+
+    gate["hold"] = True
+    redraw = client.post(f"/api/versions/{tid}/refine", json={"instruction": "Redraw this view", "views": ["front"]}).json()
+    _until(lambda: client.get(f"/api/jobs/{redraw['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "turnaround"})
+    _until(lambda: _versions(client, aid, "turnaround")[-1]["stopped"])
+    assert client.post(f"/api/assets/{aid}/stopped/dismiss", json={"stage": "turnaround"}).json() == {"dismissed": 1}
+    aside = _versions(client, aid, "turnaround")[-1]
+    assert aside["id"] == redraw["version"]["id"] and aside["status"] == "rejected" and aside["stopped"] is False
+
+    # The set-aside version is not finished: no redraw from it.
+    assert client.post(f"/api/versions/{aside['id']}/refine", json={"instruction": "Redraw this view", "views": ["left"]}).status_code == 409
+    # Bad requests make no version.
+    before = len(_versions(client, aid, "turnaround"))
+    for body in ({"views": []}, {"views": ["sideways"]}, {"views": ["top"]}, {"view": "top"}):
+        assert client.post(f"/api/versions/{tid}/refine", json={"instruction": "Redraw this view", **body}).status_code == 400
+    assert client.post(f"/api/versions/{concept['version']['id']}/refine", json={"instruction": "x", "views": ["left"]}).status_code == 400
+    assert len(_versions(client, aid, "turnaround")) == before
+
+    # The finished version still redraws, two views in one new version, and that one redraws again.
+    gate["hold"] = False
+    both = client.post(f"/api/versions/{tid}/refine", json={"instruction": "Redraw this view", "views": ["left", "back"]}).json()
+    assert wait_job(client, both["job"]["id"])["status"] == "done"
+    assert both["job"]["kind"] == "turnaround.refine"
+    with session_factory()() as db:  # the drawing itself is faked here; the stage tests cover what it does with `views`
+        assert db.get(Job, both["job"]["id"]).payload["views"] == ["left", "back"]
+    v = client.get(f"/api/versions/{both['version']['id']}").json()
+    assert v["status"] == "done"
+    again = client.post(f"/api/versions/{v['id']}/refine", json={"instruction": "Redraw this view", "views": ["right"]}).json()
+    assert wait_job(client, again["job"]["id"])["status"] == "done"
+    assert client.get(f"/api/versions/{again['version']['id']}").json()["status"] == "done"
+    assert len(_versions(client, aid, "turnaround")) == before + 2
+

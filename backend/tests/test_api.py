@@ -518,3 +518,47 @@ def test_stages_serve_option_labels_and_category_knobs(client):
     r = client.post(f"/api/assets/{a['id']}/stages/prep/run", json={"params": {"face_yaw": "90", "size_m": 0.9}})
     assert r.status_code == 200 and r.json()["version"]["params"]["face_yaw"] == 90
     assert client.post(f"/api/assets/{a['id']}/stages/prep/run", json={"params": {"face_yaw": 45}}).status_code == 400
+
+
+def test_remove_a_failed_version(client, fake_execute):
+    """DELETE /api/versions/{vid}: a failed, stopped or rejected version goes, with its folder and job lines; a
+    finished one and one that others were made from stay."""
+    from vgac import library
+    from vgac.db import Asset, Job
+
+    p, a = _project_asset(client)
+    aid = a["id"]
+    good = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    wait_job(client, good["job"]["id"])
+    bad = client.post(f"/api/assets/{aid}/stages/concept/run", json={"params": {"fail": True}}).json()
+    assert wait_job(client, bad["job"]["id"])["status"] == "error"
+    with session_factory()() as db:
+        folder = library.version_dir(db.get(Asset, aid), db.get(Version, bad["version"]["id"]), create=False)
+    assert folder.exists()
+
+    # A finished version is not removable; neither is an unknown one.
+    assert client.delete(f"/api/versions/{good['version']['id']}").status_code == 409
+    assert client.delete("/api/versions/nope").status_code == 404
+
+    r = client.delete(f"/api/versions/{bad['version']['id']}")
+    assert r.status_code == 200 and r.json() == {"ok": True, "deleted": bad["version"]["id"]}
+    ids = [v["id"] for v in client.get(f"/api/assets/{aid}").json()["stages"]["concept"]]
+    assert ids == [good["version"]["id"]]
+    assert not folder.exists()
+    with session_factory()() as db:
+        assert db.get(Job, bad["job"]["id"]) is None and db.get(Job, good["job"]["id"]) is not None
+    assert client.get(f"/api/versions/{bad['version']['id']}").status_code == 404
+
+    # A rejected version that another was made from stays; once that one is gone it can go too.
+    ref = client.post(f"/api/versions/{good['version']['id']}/refine", json={"instruction": "red cloak"}).json()
+    wait_job(client, ref["job"]["id"])
+    child = client.post(f"/api/versions/{ref['version']['id']}/refine", json={"instruction": "x", "params": {"fail": True}}).json()
+    assert wait_job(client, child["job"]["id"])["status"] == "error"
+    client.post(f"/api/versions/{ref['version']['id']}/reject")
+    assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 409
+    assert client.delete(f"/api/versions/{child['version']['id']}").status_code == 200
+    assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 200
+    # The kept version is untouched and the step still runs.
+    kept = client.get(f"/api/versions/{good['version']['id']}").json()
+    assert kept["status"] == "done" and kept["selected"] is True
+

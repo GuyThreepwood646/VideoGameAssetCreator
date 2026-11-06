@@ -152,6 +152,8 @@ class RunIn(BaseModel):
 class RefineIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=4000)
     view: str | None = None
+    # Check all sides: several views redrawn together in one new version (instead of `view`).
+    views: list[str] | None = Field(default=None, max_length=len(reference.TURNAROUND_VIEWS))
     mask_png: str | None = Field(default=None, max_length=6_000_000)
     # Experimental: a second picture the concept refine passes to the edit model (own_images.write_reference).
     reference_image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
@@ -688,6 +690,30 @@ def dismiss_stopped(aid: str, body: StageIn, db: Session = Depends(get_session))
     return {"dismissed": _queue().dismiss_stopped(aid, body.stage)}
 
 
+def _refine_views(parent: Version, body: RefineIn) -> list[str] | None:
+    """The views a turnaround redraw names (`views`, else `view`), checked before anything is made: a view the
+    version does not have is a 400 here, not a failed version in the history."""
+    if body.views is None:
+        wanted = [body.view] if body.view and parent.stage == "turnaround" else []
+    elif parent.stage != "turnaround":
+        raise HTTPException(400, "only the turnaround step redraws views")
+    elif not body.views:
+        raise HTTPException(400, "no views were chosen to redraw")
+    else:
+        wanted = list(dict.fromkeys(body.views))
+    if not wanted:
+        return None
+    from .stages.turnaround import turnaround_views  # late: the stage module loads the imaging code
+
+    have = turnaround_views(parent)
+    for view in wanted:
+        if view not in reference.TURNAROUND_VIEWS:
+            raise HTTPException(400, f"unknown view {view!r}")
+        if view not in have:
+            raise HTTPException(400, f"this version has no {view} view to redraw")
+    return wanted if body.views is not None else None
+
+
 @app.post("/api/versions/{vid}/refine")
 def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session)) -> dict[str, Any]:
     parent = _version(db, vid)
@@ -696,6 +722,7 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     a = _asset(db, parent.asset_id)
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
+    views = _refine_views(parent, body)
     _check_mask(body.mask_png)
     reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
@@ -703,7 +730,8 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     v = pipeline.new_version(db, a, parent.stage, parent, {**inherited, **rparams})
     if reference_img is not None:
         own_images.write_reference(db, a, v, reference_img)
-    job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "mask_png": body.mask_png, "params": rparams})
+    job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "views": views, "mask_png": body.mask_png,
+                                               "params": rparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 
@@ -738,6 +766,28 @@ def reject_version(vid: str, db: Session = Depends(get_session)) -> dict[str, An
     db.commit()
     db.refresh(v)
     return version_to_dict(v)
+
+
+@app.delete("/api/versions/{vid}")
+def delete_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Remove a version that failed, was stopped or was rejected, with its files and its job log lines. A finished
+    version, one still in the queue, or one other versions were made from stays (409)."""
+    v = _version(db, vid)
+    if v.status not in ("error", "rejected"):
+        raise HTTPException(409, "only a version that failed, was stopped or was rejected can be removed")
+    if db.scalar(select(func.count()).select_from(Version).where(Version.parent_version_id == vid)):
+        raise HTTPException(409, "other versions were made from this one, so it stays")
+    jobs = db.scalars(select(Job).where(Job.version_id == vid)).all()
+    if any(j.status in ("queued", "running") for j in jobs):
+        raise HTTPException(409, "this version still has work in the queue; stop it first")
+    a = _asset(db, v.asset_id)
+    folder = library.version_dir(a, v, create=False)
+    for j in jobs:
+        db.delete(j)
+    db.delete(v)
+    db.commit()
+    library.remove_tree(folder)
+    return {"ok": True, "deleted": vid}
 
 
 @app.get("/api/versions/{vid}")

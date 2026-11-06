@@ -60,16 +60,45 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
 
 const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' }
 
-export function TurnaroundView({ version, onRegenerateView }: { version: Version; onRegenerateView: (view: string) => void }) {
+// Words for a list of views: "Back", "Back and right side", "Front, back and right side".
+function viewList(views: string[]): string {
+  const names = views.map((v, i) => (i === 0 ? (VIEW_NAMES[v] ?? v) : (VIEW_NAMES[v] ?? v).toLowerCase()))
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+type Props = {
+  version: Version
+  // Redraw the ticked views together: one new version, every other view carried over unchanged.
+  onRedraw: (views: string[]) => void
+  // A request is on its way: the Redraw button waits.
+  busy?: boolean
+  // Why this version cannot be redrawn from (it is not finished). The ticks are not offered then.
+  locked?: string | null
+}
+
+export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
   const [cutout, setCutout] = useState(false)
+  const [picked, setPicked] = useState<string[]>([])
   const views = TURNAROUND_VIEWS.filter((v) => v in version.files)
   const perView = (version.metrics.views ?? {}) as Record<string, ViewMetrics>
   const passed = typeof version.metrics.views_passed === 'number' ? version.metrics.views_passed : null
   const total = typeof version.metrics.views_total === 'number' ? version.metrics.views_total : views.length
+  // Ticks kept in the order the views are shown, and only for views this version has.
+  const ticked = views.filter((v) => picked.includes(v))
+  const toggle = (view: string) => setPicked((list) => (list.includes(view) ? list.filter((v) => v !== view) : [...list, view]))
+  const flagged = views.filter((v) => perView[v]?.passed === false)
+  const untickedFlagged = flagged.filter((v) => !ticked.includes(v))
+  const own = ticked.filter((v) => perView[v]?.supplied === true)
+  const redraw = () => {
+    if (!ticked.length || busy) return
+    onRedraw(ticked)
+    setPicked([])
+  }
   return (
     <div className="turnaround-view">
       <div className="view-intro muted small">
-        We look at your character from every side so the 3D model gets the back right. If a view looks wrong, redraw just that view.
+        We look at your character from every side so the 3D model gets the back right.{locked ? '' : ' If a view looks wrong, tick it; you can redraw several views together.'}
         <Info term="term.turnaround" />
       </div>
       <div className="viewer-toolbar">
@@ -97,8 +126,9 @@ export function TurnaroundView({ version, onRegenerateView }: { version: Version
           const failed = m?.passed === false
           const checks = m && isCheckList(m.checks) ? m.checks : null
           const numbers = m ? Object.entries(m).filter(([k, v]) => k !== 'passed' && typeof v === 'number') : []
+          const on = ticked.includes(view)
           return (
-            <div key={view} className={'view-cell' + (failed ? ' failed' : '')}>
+            <div key={view} className={'view-cell' + (failed ? ' failed' : '') + (on ? ' picked' : '')}>
               <div className={'view-image' + (cutout ? ' checker' : '')}>
                 <img src={libraryUrl(path)} alt={view} />
               </div>
@@ -132,14 +162,54 @@ export function TurnaroundView({ version, onRegenerateView }: { version: Version
                   </div>
                 </Disclosure>
               )}
-              <button type="button" className="small-btn" onClick={() => onRegenerateView(view)}>
-                Redraw this view
-              </button>
+              {!locked && (
+                <label className={'redraw-pick' + (on ? ' on' : '')}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(view)} />
+                  <span>{on ? 'Will be redrawn' : 'Redraw this view'}</span>
+                </label>
+              )}
             </div>
           )
         })}
         {views.length === 0 && <div className="muted">No view images in this version.</div>}
       </div>
+      {views.length > 0 && locked && <div className="redraw-bar locked muted small">{locked}</div>}
+      {views.length > 0 && !locked && (
+        <div className={'redraw-bar' + (ticked.length ? ' ready' : '')}>
+          <div className="redraw-summary" aria-live="polite">
+            {ticked.length === 0 ? (
+              <span className="muted">Tick the views that look wrong, then redraw them together. You get one new version; this one stays.</span>
+            ) : (
+              <>
+                <strong>
+                  {ticked.length} of {views.length} ticked:
+                </strong>{' '}
+                {viewList(ticked)}. <span className="muted">The other views are carried over unchanged into one new version.</span>
+                {own.length > 0 && (
+                  <div className="redraw-own small">
+                    {viewList(own)} {own.length > 1 ? 'are your own pictures' : 'is your own picture'}: the new version has a drawn one instead. This version keeps yours.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="redraw-actions">
+            {untickedFlagged.length > 0 && (
+              <button type="button" className="link small" onClick={() => setPicked((list) => [...new Set([...list, ...flagged])])}>
+                {untickedFlagged.length === 1 ? 'Tick the one that needs attention' : `Tick the ${untickedFlagged.length} that need attention`}
+              </button>
+            )}
+            {ticked.length > 0 && (
+              <button type="button" className="link small" onClick={() => setPicked([])}>
+                Clear
+              </button>
+            )}
+            <button type="button" className="redraw-go" disabled={!ticked.length || busy} onClick={redraw} title={ticked.length ? 'Draws the ticked views again and makes one new version' : 'Tick at least one view first'}>
+              {ticked.length > 1 ? `Redraw ${ticked.length} views` : ticked.length === 1 ? 'Redraw 1 view' : 'Redraw'}
+            </button>
+          </div>
+        </div>
+      )}
       <BaldRow version={version} cutout={cutout} />
     </div>
   )

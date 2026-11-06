@@ -1,6 +1,6 @@
 // The strip of candidate cards above the active version: one card per version of
 // this step, with its thumbnail (or progress while it runs), checks light and likes.
-import { isStopped, libraryUrl, versionFeedback, type Job, type StageId, type Version } from '../api'
+import { isSetAside, isStopped, libraryUrl, versionFeedback, type Job, type StageId, type Version } from '../api'
 import { StatusBadge, TrafficDot } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
 import { firstFailing, looksGood } from '../help'
@@ -107,7 +107,7 @@ function CandidateCard({
             {good === false ? 'needs attention' : good ? 'looks good' : 'no checks'}
           </span>
         ) : (
-          <StatusBadge status={version.status} stopped={isStopped(version)} />
+          <StatusBadge status={version.status} stopped={isStopped(version)} setAside={isSetAside(version)} />
         )}
         {(isSelected || thumbs) && (
           <span className="chips">
