@@ -448,7 +448,21 @@ on('GET', '/api/suggest', (_m, _b, query) => {
   return { model, model_label: labels[model] ?? model, reason: `${reasons[model] ?? 'it fits this style'} for ${preset.label.toLowerCase()} on ${platform.replace('_', ' ')}`, budgets, estimates, recipe_plain }
 })
 
-on('GET', '/api/projects', () => store.projects)
+on('GET', '/api/projects', () =>
+  store.projects.map((p) => {
+    const assets = store.assets.filter((a) => a.project_id === p.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const covers: string[] = []
+    const times: string[] = [p.created_at]
+    for (const a of assets) {
+      times.push(a.created_at)
+      for (const list of Object.values(a.stages)) for (const v of list ?? []) times.push(v.created_at)
+      const kept = a.stages.concept?.find((v) => v.id === a.selected.concept)
+      const pic = kept?.files.cutout ?? kept?.files.image
+      if (pic && covers.length < 4) covers.push(pic)
+    }
+    return { ...p, asset_count: assets.length, covers, last_activity: times.sort().at(-1) }
+  }),
+)
 on('POST', '/api/projects', (_m, body) => {
   const name = String(body.name ?? '').trim()
   if (!name) throw new HttpError(422, 'name is required')
