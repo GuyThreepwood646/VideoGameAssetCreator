@@ -1,0 +1,18 @@
+{
+ "target": {
+  "H_px": 924,
+  "top_px": 26,
+  "neck_px": 128,
+  "head_cx_px": 66.0,
+  "head_w": 0.09523809523809523,
+  "head_h": 0.11038961038961038,
+  "img_w": 1024,
+  "img_h": 1024
+ },
+ "measured": {
+  "face_dark": 0.0,
+  "face_change": 4.99,
+  "kept_share": 0.9776,
+  "face_delta": 5.59
+ }
+}

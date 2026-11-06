@@ -74,6 +74,10 @@ SETTINGS = {
 # shape relative to the parent, as every other chain does; 1 points straight down), so a ponytail droops when the head
 # bows instead of standing out like a handle. Written to springs.json as "hang" for those chains only.
 LIBRARY_HAIR_HANG = 0.7
+# ... and never swings more than this many degrees from where it hangs.
+LIBRARY_HAIR_BEND_MAX = 50.0
+# ... and its chain holds the strands fully from this share of its length on (CHAIN_FULL for every other part).
+LIBRARY_HAIR_CHAIN_FULL = 0.15
 SUBSTEP = 1.0 / 120.0
 COLLIDE_ITER = 3  # rounds of "push out of the hit boxes, keep the length" per joint and step
 LOOP_PASSES = 3
@@ -645,8 +649,128 @@ def library_parts(groups, V_obj, role_obj, head, scale=1.0, shift=(0.0, 0.0, 0.0
         parts.append({"kind": str(g.get("kind") or "Hair"), "parent": head, "parent_role": "Head", "confidence": 1.0,
                       "columns": [[[round(float(v), 5) for v in p] for p in joints]], "length": length, "thickness": thick,
                       "width": thick, "gap_cm": None, "reason": None, "library": True, "group": k, "verts": int(len(ids)),
-                      "hair_vertex_ids": ids, "root": [round(float(v), 4) for v in joints[0]]})
+                      "hair_vertex_ids": ids, "root": [round(float(v), 4) for v in joints[0]],
+                      "surface_radius": surface_radius(V_obj[ids], joints)})
     return parts, used
+
+
+SURFACE_RADIUS_MIN, SURFACE_RADIUS_MAX = 0.01, 0.06
+KEEPOUT_SPHERE = 0.05     # metres: each keep-out is a sphere this big whose surface touches the body's surface
+KEEPOUT_SPACING = 0.035   # metres between keep-out spheres over the body where the hair can reach
+KEEPOUT_MAX = 64
+
+
+def surface_radius(P, joints):
+    """The chain's radius for library hair: how far the group's surface reaches from its centre line (the 90th
+    percentile of its vertices' distances, 1 to 6 cm), so the hair's surface, not its centre line, keeps out of the
+    body. (Measuring only the thinnest direction was tried: the thinner chains were trapped between keep-outs.)"""
+    P = np.asarray(P, float).reshape(-1, 3)
+    J = np.asarray(joints, float)
+    if len(P) == 0 or len(J) < 2:
+        return SURFACE_RADIUS_MIN
+    best = np.full(len(P), np.inf)
+    U = np.zeros_like(P)
+    for k in range(len(J) - 1):
+        a, ab = J[k], J[k + 1] - J[k]
+        t = np.clip(((P - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
+        off = P - (a + t[:, None] * ab)
+        d = np.linalg.norm(off, axis=1)
+        better = d < best
+        best[better] = d[better]
+        U[better] = off[better]
+    return float(np.clip(np.percentile(best, 90), SURFACE_RADIUS_MIN, SURFACE_RADIUS_MAX))
+
+
+HANG_BELOW_SHOULDERS = 0.05
+
+
+def lib_settings(part):
+    """The spring settings a library hair chain adds. Hanging clear below the shoulders: the pull toward down, its
+    surface radius all along it, the limit that never pulls it into a shape and the swing limit (and keep-outs, given
+    in main). Resting on the shoulders (a bob's side): only the pull toward down, as in Version 2."""
+    if part.get("rests"):
+        return {"hang": LIBRARY_HAIR_HANG}
+    return {"hang": LIBRARY_HAIR_HANG, "surface": True, "hang_limit": True, "bend_max": LIBRARY_HAIR_BEND_MAX}
+
+
+def rests_on_shoulders(joints, shoulder_z):
+    """True when a library hair chain ends at or above the shoulders (a bob's side resting on them). Such a chain gets
+    no keep-outs, surface radius or swing limit: pushed off the shoulders by them it flared out sideways (tried on the
+    live bob). Chains hanging clear below the shoulders (a ponytail, long hair) get them."""
+    if shoulder_z is None:
+        return False
+    return bool(float(joints[-1][2]) >= shoulder_z - HANG_BELOW_SHOULDERS)
+
+
+def hung_joints(joints, hang, down=(0.0, 0.0, -1.0)):
+    """The chain's shape when each bone is pulled `hang` of the way toward world down from its rest direction, built
+    from the root (the static shape the bake pulls toward while the parent stands at rest)."""
+    J = np.asarray(joints, float)
+    out = [J[0]]
+    dn = np.asarray(down, float)
+    for k in range(len(J) - 1):
+        seg = J[k + 1] - J[k]
+        L = float(np.linalg.norm(seg))
+        out.append(out[-1] + slerp_dir(seg / max(L, 1e-12), dn, hang) * L)
+    return np.array(out)
+
+
+def keepout_shapes(V, N, owner, bones, chain_points, reach, names=None, sphere=KEEPOUT_SPHERE, spacing=KEEPOUT_SPACING,
+                   most=KEEPOUT_MAX):
+    """Keep-outs on the body's real surface where library hair can reach: hit boxes are loose capsules, and a tail fitted
+    lying on the back starts inside them, so it would have nothing to push against (and fat capsules push it far off
+    the back). The body's vertices within `reach` of the hair's rest or hung chains whose surface faces the hair are
+    spread out `spacing` apart (farthest first); each gives a sphere of radius `sphere` set just inside the body
+    (centre one radius in from the vertex along its normal), riding on the vertex's strongest bone. Hair kept outside
+    these spheres rests on the body's surface. V, N (n, 3) body vertices and normals in Blender space; owner (n,) index
+    of each vertex's strongest bone (-1 none); bones [{name, ...}]; chain_points (m, 3). -> [{name, bone, a, b, r,
+    chains}] with a == b (a sphere)."""
+    V = np.asarray(V, float)
+    N = np.asarray(N, float)
+    owner = np.asarray(owner)
+    C = np.asarray(chain_points, float).reshape(-1, 3)
+    if len(C) == 0 or len(V) == 0:
+        return []
+    d2 = np.full(len(V), np.inf)
+    nearest = np.zeros(len(V), np.int64)
+    for j, c in enumerate(C):
+        dj = ((V - c) ** 2).sum(axis=1)
+        better = dj < d2
+        d2[better] = dj[better]
+        nearest[better] = j
+    toward = C[nearest] - V
+    faces = (N * toward).sum(axis=1) > 0
+    cand = np.nonzero((d2 <= reach * reach) & faces & (owner >= 0))[0]
+    if len(cand) == 0:
+        return []
+    # farthest-point spread, starting nearest the hair
+    picked = [int(cand[np.argmin(d2[cand])])]
+    dist = np.linalg.norm(V[cand] - V[picked[0]], axis=1)
+    while len(picked) < most:
+        j = int(np.argmax(dist))
+        if dist[j] < spacing:
+            break
+        picked.append(int(cand[j]))
+        dist = np.minimum(dist, np.linalg.norm(V[cand] - V[cand[j]], axis=1))
+    out = []
+    for k, vi in enumerate(picked):
+        n = N[vi] / max(float(np.linalg.norm(N[vi])), 1e-12)
+        c = V[vi] - n * sphere
+        out.append({"name": f"HairKeepOut_{k:02d}", "bone": bones[int(owner[vi])]["name"], "a": c, "b": c.copy(), "r": float(sphere),
+                    "chains": list(names or [])})
+    return out
+
+
+def keepout_json(shape):
+    """A keep-out capsule in springs.json's collider form (glTF model space), with the chains it is for."""
+    a, b = np.asarray(shape["a"], float), np.asarray(shape["b"], float)
+    c, ax = (a + b) / 2, b - a
+    L = float(np.linalg.norm(ax))
+    ax = ax / L if L > 1e-12 else np.array([0.0, 0.0, 1.0])
+    return {"name": shape["name"], "bone": shape["bone"], "kind": "sphere" if L < 1e-9 else "capsule", "center": to_gltf(c),
+            "axis": [round(float(ax[0]), 5), round(float(ax[2]), 5), round(float(-ax[1]), 5)],
+            "radius": round(float(shape["r"]), 5), "height": round(L + 2 * float(shape["r"]), 5),
+            "chains": list(shape.get("chains") or []), "keepout": True}
 
 
 # --- weights ---------------------------------------------------------------------------------------------------------
@@ -839,6 +963,11 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
     g = float(settings["gravity"]) * np.asarray(gravity_dir, float)
     hang = float(settings.get("hang") or 0.0)
     down = np.asarray(gravity_dir, float) / max(np.linalg.norm(gravity_dir), 1e-12)
+    # library hair: the radius is the hair's surface all along the chain (not tapering from the root), and the pull
+    # toward down is cut back while it would put the bone's end inside a shape (it never pulls the hair into the body)
+    surface = bool(settings.get("surface"))
+    hang_limit = bool(settings.get("hang_limit"))
+    bend_max = math.radians(float(settings.get("bend_max") or 0.0))
     v_air = np.zeros(3) if travel is None else np.asarray(travel, float)
     radius = float(chain.get("radius") or 0.0)
     nf = len(frames)
@@ -917,8 +1046,21 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
                 # library hair: the rest direction pulled toward world down, and no gravity across the bone there (the
                 # target is where it hangs)
                 seg_w = _q_rot(Q, seg_rest[k])
-                d = slerp_dir(seg_w / max(lengths[k], 1e-12), down, hang)
+                base = seg_w / max(lengths[k], 1e-12)
+                h_k = hang
+                d = slerp_dir(base, down, h_k)
                 tgt = newP[k] + d * lengths[k]
+                if hang_limit and len(cols[0]):
+                    # never pull the hair into the body: a hung end inside a shape is moved to the shape's surface
+                    # (and back to the bone's length), so the hair comes to rest on the body below rather than in it
+                    r_t = radius if surface else radius * (k + 1) / n
+                    for _ in range(3):
+                        out_t, dep_t = push_out(tgt, cols, r_t)
+                        if dep_t <= 1e-4:
+                            break
+                        dv = out_t - newP[k]
+                        d = dv / max(np.linalg.norm(dv), 1e-12)
+                        tgt = newP[k] + d * lengths[k]
                 g_eff = np.dot(g, d) * d
             else:
                 tgt = newP[k] + _q_rot(Q, seg_rest[k])
@@ -930,12 +1072,20 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
                 g_eff = g - _q_rot(Q, g_across[k])
             acc = w * w * (tgt - P[k + 1]) - 2 * zeta * w * (vel - vt) - drag * (vel + v_air) + g_eff
             x = P[k + 1] + vel * dt + acc * dt * dt
+            if bend_max > 0 and hang > 0:
+                # library hair: a bone never swings more than bend_max from where it hangs (a wider swing drags the
+                # strands blended between the head and the chain through the neck)
+                dv = x - newP[k]
+                dn_ = dv / max(np.linalg.norm(dv), 1e-12)
+                ang = math.acos(float(np.clip(np.dot(dn_, d), -1.0, 1.0)))
+                if ang > bend_max:
+                    x = newP[k] + slerp_dir(d, dn_, bend_max / ang) * lengths[k]
             for _ in range(COLLIDE_ITER):
                 # out of the hit boxes, then back to the bone's length (which can pull it in again: repeat)
-                x, dep = push_out(x, cols, radius * (k + 1) / n)
+                x, dep = push_out(x, cols, radius if surface else radius * (k + 1) / n)
                 if step >= settle_steps + record_from * per:
                     deepest = max(deepest, dep)
-                mid, _ = push_out(0.5 * (x + newP[k]), cols, radius * (k + 0.5) / n)
+                mid, _ = push_out(0.5 * (x + newP[k]), cols, radius if surface else radius * (k + 0.5) / n)
                 x = x + (mid - 0.5 * (x + newP[k])) * 2.0  # the bone's middle out too, by moving its far end
                 dvec = x - newP[k]
                 x = newP[k] + dvec / max(np.linalg.norm(dvec), 1e-12) * lengths[k]
@@ -1006,7 +1156,7 @@ def to_gltf(p):
     return [round(float(p[0]), 5), round(float(p[2]), 5), round(float(-p[1]), 5)]
 
 
-def springs_doc(chains, hitboxes_doc, height, version=1):
+def springs_doc(chains, hitboxes_doc, height, version=1, extra_colliders=None):
     """springs.json: glTF model space (Y up, metres). chains: [{name, kind, parent, bones, joints (Blender space),
     radius, settings, confidence}]."""
     cols = []
@@ -1024,9 +1174,12 @@ def springs_doc(chains, hitboxes_doc, height, version=1):
                     "stiffness": c["settings"]["stiffness"], "damping": c["settings"]["damping"],
                     "drag": c["settings"]["drag"], "gravity": c["settings"]["gravity"],
                     **({"hang": c["settings"]["hang"]} if c["settings"].get("hang") else {}),
+                    **({"surface": True} if c["settings"].get("surface") else {}),
+                    **({"hang_limit": True} if c["settings"].get("hang_limit") else {}),
+                    **({"bend_max": c["settings"]["bend_max"]} if c["settings"].get("bend_max") else {}),
                     "confidence": c.get("confidence"), "colliders": c.get("colliders", [h["name"] for h in cols])}
                    for c in chains],
-        "colliders": cols,
+        "colliders": cols + list(extra_colliders or []),
     }
 
 
@@ -1149,7 +1302,9 @@ def main():  # pragma: no cover - runs inside Blender
             head = next((b["name"] for b in bones if role_of(b["name"]) == "Head"), None)
             if head is not None:
                 lib_parts, lib_bones = library_parts(groups, HV, hrole, head, s_map, sh_map)
+            shoulders = [b["head"][2] for b in bones if role_of(b["name"]) in ("LeftArm", "RightArm")]
             for p in lib_parts:
+                p["rests"] = rests_on_shoulders(p["columns"][0], float(np.mean(shoulders)) if shoulders else None)
                 lib_counter["Hair"] = lib_counter.get("Hair", 0) + 1
                 p["names"] = [f"{PREFIX}Hair_{lib_counter['Hair']:02d}"]
             report["library_hair"] = {"object": hair_obj.name, "verts": int(len(HV)), "matched": int(np.sum(hrole >= 0)),
@@ -1203,9 +1358,11 @@ def main():  # pragma: no cover - runs inside Blender
                 b.use_deform = True
                 prev = b
                 bl.append(b.name)
+            lib = bool(p.get("library"))
             chains.append({"name": name, "kind": p["kind"], "parent": p["parent"], "bones": bl, "joints": joints,
-                           "part": p, "radius": float(np.clip(0.5 * p["thickness"], 0.01, 0.05)),
-                           "settings": dict(SETTINGS[p["kind"]], **({"hang": LIBRARY_HAIR_HANG} if p.get("library") else {})),
+                           "part": p, "radius": float(p["surface_radius"]) if lib and not p.get("rests")
+                           else float(np.clip(0.5 * p["thickness"], 0.01, 0.05)),
+                           "settings": dict(SETTINGS[p["kind"]], **(lib_settings(p) if lib else {})),
                            "confidence": p["confidence"]})
     bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -1233,7 +1390,9 @@ def main():  # pragma: no cover - runs inside Blender
             P = V[vids]
             olds = [old_w[i] for i in vids]
         cols = [{"bones": c["bones"], "joints": c["joints"]} for c in mine]
-        neww = chain_weights(P, olds, cols)
+        # library hair takes over from the head sooner: a long head-held stretch at the nape is carried into the neck
+        # when the head bows
+        neww = chain_weights(P, olds, cols, full=LIBRARY_HAIR_CHAIN_FULL if p.get("library") and not p.get("rests") else CHAIN_FULL)
         for c in mine:
             for bn in c["bones"]:
                 if bn not in target.vertex_groups:
@@ -1267,9 +1426,31 @@ def main():  # pragma: no cover - runs inside Blender
         for mod in m.modifiers:
             mod.show_viewport = False
     shapes_rest = hitbox_shapes(hb_doc)
+    n_hit = len(shapes_rest)
+    lib_all = [c for c in chains if c["part"].get("library")]
+    # keep-outs for the library hair that hangs below the shoulders; hair resting on them (a bob) moves as other chains
+    lib_chains = [c for c in lib_all if not c["part"].get("rests")]
+    keepouts = []
+    if lib_chains:
+        # library hair: keep-out capsules on the body's real surface where the hair hangs (rest and hung shapes)
+        pts = []
+        for c in lib_chains:
+            for J_ in (np.asarray(c["joints"], float), hung_joints(c["joints"], LIBRARY_HAIR_HANG)):
+                for k in range(len(J_) - 1):
+                    for t in np.linspace(0, 1, 5):
+                        pts.append(J_[k] + (J_[k + 1] - J_[k]) * t)
+        reach = 0.12 + max(c["radius"] for c in lib_chains)
+        mesh.data.update()
+        NB = np.array([tuple((MW.to_3x3() @ v.normal).normalized()) for v in me.vertices])
+        keepouts = keepout_shapes(V, NB, WI[:, 0], bones, np.array(pts), reach, [c["name"] for c in lib_chains])
+        report["keepouts"] = {"count": len(keepouts), "bones": sorted({k["bone"] for k in keepouts}), "radius": KEEPOUT_SPHERE}
+        shapes_rest = shapes_rest + keepouts
     for c in chains:
-        c["allow"] = collider_allowance(c["joints"], [(s["a"], s["b"], s["r"]) for s in shapes_rest], c["radius"])
-        c["colliders"] = [s["name"] for s in shapes_rest]
+        c["allow"] = collider_allowance(c["joints"], [(s["a"], s["b"], s["r"]) for s in shapes_rest[:n_hit]], c["radius"])
+        # keep-outs: their full radius for the chains they are for (they sit just under the body's surface, so hair
+        # that starts on the body has something to push against), none for others
+        c["allow"] += [s["r"] if c["name"] in s["chains"] else None for s in keepouts]
+        c["colliders"] = [s["name"] for s, al in zip(shapes_rest, c["allow"]) if al is not None]
     rest_mat = {b.name: (AW @ b.matrix_local) for b in arm.data.bones}
     clip_report = {}
     keyed = {}
@@ -1312,7 +1493,9 @@ def main():  # pragma: no cover - runs inside Blender
                 Mdef = samples[c["parent"]][i] @ Rrest.inverted()
                 qd = Mdef.to_quaternion()
                 fr.append({"root": np.array(Mdef @ Vector(c["joints"][0])), "q": np.array([qd.w, qd.x, qd.y, qd.z])})
-            per_frame = [[(a, b, r_) for (a, b, _), r_ in zip(fc, c["allow"])] for fc in colliders]
+            per_frame = [[(a, b, r_) for (a, b, _), r_ in zip(fc, c["allow"]) if r_ is not None] for fc in colliders]
+            mine = [[col for col, al in zip(fc, c["allow"]) if al is not None] for fc in colliders] if keepouts else colliders
+            mine_allow = [al for al in c["allow"] if al is not None]
             res = simulate(fr, {"rest": c["joints"], "radius": c["radius"]}, c["settings"], fps, per_frame,
                            travel, loop=loop and len(frames) > 2)
             J = res["joints"]
@@ -1320,11 +1503,11 @@ def main():  # pragma: no cover - runs inside Blender
                 np.save(os.path.join(os.environ["VGAC_SPRING_DUMP"], f"{name}_{c['name']}.npy"),
                         np.array({"frames": fr, "colliders": per_frame, "rest": c["joints"], "radius": c["radius"],
                                   "settings": c["settings"], "travel": travel, "loop": loop, "J": J}, dtype=object))
-            full_depth = deepest_in_shapes(J, colliders)
+            full_depth = deepest_in_shapes(J, mine)
             clip_report[name]["chains"][c["name"]] = {
                 "seam_m": round(seam_error(J), 5) if loop else None, "pushed_m": round(res["depth"], 4),
                 "into_hitbox_m": round(full_depth, 4),
-                "into_beyond_rest_m": round(deepest_beyond_rest(J, colliders, c["allow"]), 4),
+                "into_beyond_rest_m": round(deepest_beyond_rest(J, mine, mine_allow), 4),
                 "swing_deg": round(swing_degrees(J, fr, c["joints"]), 1)}
             if c["settings"].get("hang"):
                 hm, hx = hang_degrees(J)
@@ -1340,6 +1523,12 @@ def main():  # pragma: no cover - runs inside Blender
     for m in meshes:
         for mod in m.modifiers:
             mod.show_viewport = True
+    if lib_all and actions:
+        try:
+            report["hair_into_body"] = hair_into_body(bpy, scene, arm, mesh, hair_obj, actions,
+                                                      np.unique(np.concatenate([c["part"]["hair_vertex_ids"] for c in lib_all])))
+        except Exception as e:  # noqa: BLE001
+            report["hair_into_body_error"] = str(e)[:300]
     if pic_dir:
         try:
             report["chain_picture"] = render_chains(bpy, scene, mesh, arm, chains, pic_dir)
@@ -1363,7 +1552,7 @@ def main():  # pragma: no cover - runs inside Blender
                          **({"library": True} if c["part"].get("library") else {})} for c in chains]
     report["bones_added"] = sum(len(c["bones"]) for c in chains)
     if doc_path:
-        doc = springs_doc(chains, hb_doc, found["height"])
+        doc = springs_doc(chains, hb_doc, found["height"], extra_colliders=[keepout_json(k) for k in keepouts])
         with open(doc_path, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=1)
     report["ok"] = True
@@ -1408,6 +1597,50 @@ def hitbox_shapes(doc):
             r = float(h.get("radius") or 0.05)
             half = max(float(h.get("height") or 2 * r) / 2 - r, 0.0) if h.get("kind") != "sphere" else 0.0
         out.append({"name": h["name"], "bone": h["bone"], "a": c - ax * half, "b": c + ax * half, "r": r})
+    return out
+
+
+def hair_into_body(bpy, scene, arm, body, hair, actions, hanging_ids, clips=("idle", "walk", "run"), frames=8):  # pragma: no cover
+    """How deep the library hair's surface goes into the body over idle, walk and run: per clip, the deepest hair
+    vertex behind the nearest body surface (all hair, and the hanging groups' vertices), in metres, at `frames` frames
+    spread over the clip. The skinned body and hair are evaluated with the baked chains."""
+    from mathutils.bvhtree import BVHTree
+
+    ad = arm.animation_data
+    out = {}
+    hang = set(int(i) for i in hanging_ids)
+    for name, act, tr in actions:
+        if name not in clips:
+            continue
+        for t2 in ad.nla_tracks:
+            t2.mute = True
+        ad.action = act
+        if hasattr(ad, "action_slot") and len(getattr(act, "slots", [])) > 0:
+            ad.action_slot = act.slots[0]
+        f0, f1 = (int(round(x)) for x in act.frame_range)
+        worst_all = worst_hang = 0.0
+        for i in range(frames):
+            scene.frame_set(int(round(f0 + (f1 - f0) * i / max(1, frames - 1))))
+            dg = bpy.context.evaluated_depsgraph_get()
+            be = body.evaluated_get(dg)
+            bm_ = be.to_mesh()
+            tree = BVHTree.FromPolygons([be.matrix_world @ v.co for v in bm_.vertices], [tuple(p.vertices) for p in bm_.polygons])
+            be.to_mesh_clear()
+            he = hair.evaluated_get(dg)
+            hm_ = he.to_mesh()
+            for v in hm_.vertices:
+                p = he.matrix_world @ v.co
+                loc, nrm, _, dist = tree.find_nearest(p)
+                if loc is None or (p - loc).dot(nrm) >= 0:
+                    continue
+                worst_all = max(worst_all, dist)
+                if v.index in hang:
+                    worst_hang = max(worst_hang, dist)
+            he.to_mesh_clear()
+        out[name] = {"all_m": round(worst_all, 4), "hanging_m": round(worst_hang, 4)}
+        ad.action = None
+    for t2 in ad.nla_tracks:
+        t2.mute = False
     return out
 
 

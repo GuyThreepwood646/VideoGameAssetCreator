@@ -1213,6 +1213,37 @@ public static class VgacImport
         }
     }
 
+    // The world bounds of a renderer's second sub-mesh (the hair) as it stands now (a skinned mesh is baked first).
+    static bool HairSubmeshBounds(Renderer r, out Bounds b)
+    {
+        b = default;
+        Mesh mesh; Matrix4x4 toWorld; bool baked = false;
+        if (r is SkinnedMeshRenderer smr && smr.sharedMesh != null)
+        {
+            mesh = new Mesh();
+            smr.BakeMesh(mesh, true);
+            toWorld = Matrix4x4.TRS(smr.transform.position, smr.transform.rotation, Vector3.one);
+            baked = true;
+        }
+        else
+        {
+            var mf = r.GetComponent<MeshFilter>();
+            mesh = mf != null ? mf.sharedMesh : null;
+            toWorld = r.transform.localToWorldMatrix;
+        }
+        if (mesh == null || mesh.subMeshCount < 2) { if (baked) UnityEngine.Object.DestroyImmediate(mesh); return false; }
+        var verts = mesh.vertices;
+        var idx = mesh.GetIndices(1);
+        bool any = false;
+        foreach (var i in idx)
+        {
+            var p = toWorld.MultiplyPoint3x4(verts[i]);
+            if (!any) { b = new Bounds(p, Vector3.zero); any = true; } else b.Encapsulate(p);
+        }
+        if (baked) UnityEngine.Object.DestroyImmediate(mesh);
+        return any;
+    }
+
     static Color AverageColour(Texture2D t)
     {
         try
@@ -2621,7 +2652,7 @@ public static class VgacImport
             // Version 15: walk and run from the side with the spring script stepping, and the same frames without it
             SpringShots(go, cam, outDir, log, probes, clips);
             // Version 13: the hair close up, with its own shader and with the body's, under two light directions
-            HairShots(go, name, cam, outDir, log, probes);
+            HairShots(go, name, cam, outDir, log, probes, (Arg("-vgacHairLibrary") ?? "off").ToLowerInvariant() == "on");
             // Leave the showcase as it was, with this asset standing in its slot, and save it.
             UnityEngine.Object.DestroyImmediate(go);
             UnityEngine.Object.DestroyImmediate(camGo);
@@ -2766,7 +2797,10 @@ public static class VgacImport
 
     // The head close up for the hair (Version 13): hair_<shader>_<light>.png, 768 px, the instance in its bind pose. The
     // shader is the hair material's own (vgac when it is VGAC/Hair) and the body's shader with the hair textures (lit).
-    static void HairShots(GameObject go, string name, Camera cam, string outDir, List<string> log, List<string> notes)
+    // Version 17: with -vgacHairLibrary on (hair from the library, a hairstyle of its own that can reach the waist) the
+    // close-up is framed on the hair sub-mesh's own bounds in the bind pose, the whole hairstyle in view with a margin,
+    // from the same direction and under the same two lights; without it the framing is exactly as before.
+    static void HairShots(GameObject go, string name, Camera cam, string outDir, List<string> log, List<string> notes, bool libraryHair = false)
     {
         var r0 = go.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r.name.EndsWith("_LOD0") && r.sharedMaterials.Length > 1);
         if (r0 == null) return;
@@ -2786,6 +2820,13 @@ public static class VgacImport
         cam.targetTexture = rt;
         cam.fieldOfView = 20f;
         var dist = 0.2f * h / (2f * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad));
+        if (libraryHair && HairSubmeshBounds(r0, out var hb))
+        {
+            centre = hb.center;
+            // the sphere round the hairstyle's box fills the view with a 15 percent margin, from any direction
+            dist = hb.extents.magnitude * 1.15f / Mathf.Sin(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            notes.Add("hair closeup framed on the hair sub-mesh: size_m=" + hb.size.ToString("F3"));
+        }
         // Unity's model faces +Z after import (forward -Z in the FBX, turned): the camera sits at the front-left
         var fwd = go.transform.forward;
         var view = (Quaternion.AngleAxis(-35f, Vector3.up) * fwd + Vector3.up * 0.15f).normalized;
