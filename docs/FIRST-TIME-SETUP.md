@@ -32,9 +32,48 @@ Install the project-folder parts (asks before each step; `-Yes` answers yes to a
 
     powershell -ExecutionPolicy Bypass -File setup\Check-Setup.ps1 -Install
 
+## Part 2: models, node packs, Blender, packs and settings (`setup/Setup-Extras.ps1`)
+
+A second script does the rest of the list. Same rules as the first: the default mode only looks and changes nothing;
+`-Install` acts and asks before every single item; `-Install -DryRun` prints what it would do and does nothing;
+`-Yes` answers the plain questions (never a licence question). Name the parts you want, or leave them all on:
+`-Models -Nodes -Blender -Packs -Settings`.
+
+    powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1
+    powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Models -Nodes -ComfyRoot D:\ComfyUI -Install
+
+`-ComfyRoot` is the ComfyUI folder that holds `models` and `custom_nodes`. The script never lists a models folder
+(only exact file paths are looked at).
+
+| Part | What it does | Sources and limits |
+|------|--------------|--------------------|
+| Models and add-ons | A select list of every model in `models.yaml` and add-on in `addons.yaml` (exact file names), with size, the licence line from the yaml, and the source. Yes or no per item; files already there are skipped; nothing is replaced. Downloads resume after an interruption and are checked against the published size and SHA-256. It shows "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." and a `[!] Warning` line when `nvidia-smi` shows under 10 GB. `-Only id,id` picks items. Your own additions go in `setup/downloads.local.json` | Links, sizes and checksums are in `setup/downloads.json`, read from the Hugging Face file lists on 6 Nov 2026. Edit a link there; no code change |
+| Licence steps | Hunyuan3D-2mv (type "I have read this and I am not in the EU, UK or South Korea"), Anima ("I have read this"), Gemma 3 12B ("I accept the Gemma terms myself", with Google's terms link). You type the sentence; the helper never accepts for you, and `-Yes` skips these items | Hunyuan3D-2mv is off unless you type it |
+| Node packs | `ComfyUI-SkinToken`, `ComfyUI-PixelArt-Detector` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | Both GitHub repositories' default branch is `main` (checked) |
+| Blender | Accepts an existing Blender 5.x (a note says only 5.2.3 is tested), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
+| Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
+| Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json` | See "Hair packs: plan" |
+| Settings | Writes proposed copies `backend/config.proposed.yaml`, `desktop/config.proposed.json`, `runtime/start-comfy-b.proposed.ps1` and `runtime/start-comfy-a.proposed.ps1` from what it finds (project folder, cards, `-ComfyRoot` and `-ComfyInstall`, Blender 5.x, Unity, input and output folders, animation pack paths). Never edits or overwrites an existing file, an earlier proposed one included. A key whose value already fits this PC is left out | One card: engine B only, `stage_instances`, `material_stage_instances` and `judge_instance` all on b, and no engine A start script |
+
+Could not be confirmed (so left to you, or guarded):
+
+1. Blender: blender.org's download server refused an automated request on 6 Nov 2026, so the 5.2.3 link follows
+   Blender's standard release layout and was not read back. The script stops without downloading when the checksum
+   file is not readable, and says to download from blender.org/download by hand.
+2. `anima-turbo-v1.1.safetensors` was not found in the publisher's repository. It is listed as by hand, with the Anima
+   page.
+3. `z-image-turbo-fp8-aio.safetensors`, `z_image_int8_convrot.safetensors` and the pixel-art LoRA are community
+   uploads, and the Gemma 3 file is a Comfy-Org repack. The picker marks them "community or repack" and shows the page.
+4. Where ComfyUI looks: the folders used are `checkpoints`, `diffusion_models`, `loras`, `clip_vision`,
+   `text_encoders`, `background_removal` (as the Comfy-Org repositories lay them out) and `skintoken` (from the node
+   pack's README). `unet` and `clip` are checked as alternate names. A PC that remaps folders with an
+   `extra_model_paths` file may need the files moved.
+5. The proposed start scripts use `--base-directory` (or `--extra-model-paths-config` with `-ModelPathsConfig`). Not
+   tried against a fresh ComfyUI. Read them before using.
+
 Sizes below are approximate. Model sizes are from memory of the publishers' pages and must be confirmed on the
-download page before a large download. "Helper" means `Check-Setup.ps1 -Install` does it; "By hand" means the person
-does it, and the helper only reports on it.
+download page before a large download. "Helper" means `Check-Setup.ps1 -Install` does it; "Part 2" means `Setup-Extras.ps1` can do it after asking; "By hand"
+means the person does it, and the helper only reports on it.
 
 ## 1. The PC itself
 
@@ -144,26 +183,81 @@ GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
    "I have read this" before download.
 5. Gemma 3: Google's Gemma Terms of Use and Prohibited Use Policy; Google claims no rights in what it makes. The
    person must accept the terms themselves; the helper never accepts for them.
-6. Unity is not included: each person needs their own install. Unity's plans page says Personal is for hobbyists and
-   small teams and Pro is required above 200,000 dollars of annual revenue or funding. Say so plainly in setup.
+6. Unity is not included: each person needs their own install. Checked against Unity's own pages (6 Nov 2026):
+   Unity Personal is free for individuals and small organisations with under 200,000 US dollars of revenue and funds
+   raised in the last 12 months, and all users in one organisation must be on the same plan (sources:
+   unity.com/products/unity-personal, unity.com/pages/license-compliance). Unity's old page text still says 100,000
+   in one place; the 200,000 figure is the current one. Say so plainly in setup, and link Unity's page rather than
+   quoting the number as ours.
 7. ComfyUI node packs beyond ComfyUI: `ComfyUI-SkinToken` (github.com/Rizzlord/ComfyUI-SkinToken; licence not
    confirmed, it defers to the MIT SkinTokens project), `ComfyUI-PixelArt-Detector` (MIT) and `vgac-nodes` (ours,
-   GPL-3.0-or-later, source in `comfy-nodes/vgac-nodes/`). A later round of the helper should install these three;
-   this round does not.
+   GPL-3.0-or-later, source in `comfy-nodes/vgac-nodes/`). `Setup-Extras.ps1 -Nodes` installs these three
+   (after asking).
+
+## Optional content packs: hair and animation (the person picks)
+
+Decision: setup should let each person choose which packs to download, with a short description of each, so nothing
+is pushed on them and the credit notices follow what they actually took. Built in part: `Setup-Extras.ps1 -Packs` unpacks the two
+animation packs (about 91 MB together) from a zip you download, and records a hair pick. Today the hair library (about
+16 MB) ships inside the project, so the hair pick does not yet change what is installed or credited. The packs are all CC0 and, with the hair, are the only content that is not a model.
+
+Animation packs (both by Quaternius, from quaternius.com):
+
+| Pack | What it gives | Size here |
+|------|---------------|-----------|
+| Universal Animation Library (Standard) | The ready-made moves (walk, run, idle and more) for rigged humanoid characters | about 53 MB |
+| Universal Animation Library 2 (Standard) | More ready-made moves; uses Unreal-style bone names, which the app maps itself | about 38 MB |
+
+Hair packs (26 styles in the library now, all CC0; each style in the app has a plain name and a thumbnail):
+
+| Pack | Styles | What it gives |
+|------|--------|---------------|
+| Quaternius Universal Base Characters (Standard), hair part | 5 | Simple game-ready styles: two buns, buzz cut, rounded buzz cut, shoulder-length layered, short side-parted |
+| MakeHuman system assets (MakeHuman team) | 7 | Afro, bob with a fringe, single braid, long straight waist-length, mid ponytail, two short styles |
+| MakeHuman community hair pack hair01: Cortu | 4 | Shaggy and curly shoulder-length, short and messy, straight with a full fringe |
+| MakeHuman community hair pack hair01: Faydaen | 1 | Short and spiky |
+| MakeHuman community hair pack hair01: MargaretToigo | 6 | Bob family: blunt, curled under, inverted, each with and without a fringe |
+| VGAC rule-built styles (made by the app, no download) | 3 | Top bun, long straight with a centre parting, high ponytail |
+
+Left out on purpose, so the list stays CC0-only: the hair01 styles under AGPL-3.0 or CC BY, beards, and styles too
+heavy for a game character (see `backend/vgac/data/hairlib/CREDITS.txt`, "Left out").
+
+### Hair packs: plan
+
+Done: the credits follow the picks. Every catalogue style carries `pack` and `author`, and `setup/downloads.json` maps
+each pack above to that pair. `Setup-Extras.ps1 -Packs -Install` writes the picked packs to `library/hair-packs.json`;
+`hairstyles.py` (the one loader the hair picker, the fitting and the credits page all use) then hides styles from packs
+that were not kept, after the backend restarts. No file, or an unreadable one, means every style, as before. Tests:
+`backend/tests/test_hair_packs.py`.
+
+Not done: shipping each pack as its own download, so unpicked packs are not on disk at all. The pack sources, read from
+the official pages on 6 Nov 2026 and equal in size to the zips the library was built from (kept in `runtime/hairpacks`):
+
+| Pack | Source | Size |
+|------|--------|------|
+| MakeHuman system assets | https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip (page: static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | 280,737,770 bytes |
+| MakeHuman hair01 (Cortu, Faydaen, MargaretToigo are all in this one zip) | https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip (page: .../assetpacks/hair01.html) | 227,775,853 bytes |
+| Quaternius Universal Base Characters (Standard) | quaternius.itch.io/universal-base-characters: click-through, you download it yourself | 128,968,391 bytes |
+
+Those zips are far bigger than the 16 MB of hair the app keeps from them, because the library holds baked, trimmed
+copies (`tools/hairlib_build.py`), so a per-pack download would be a packaged form of the baked files, not these zips.
+That is the part left to do.
+
+Size: medium. No licence question: all are CC0.
 
 ## What is still needed before other people can install this
 
-Not built in this round. Ranked by how much each blocks a stranger; size is the rough effort (small, medium, large).
+Ranked by how much each blocks a stranger; size is the rough effort (small, medium, large).
 "Owner decision" means the owner has to choose before it can be built.
 
 | Rank | What | Size | Owner decision |
 |------|------|------|----------------|
 | 1 | How the app is handed over: DECIDED, a public Git repository. Still to do inside that: the licence notices a public repository needs (the credits work already under way feeds this) | Small | No |
-| 2 | Settings files written from what the helper finds, instead of this PC's paths: `backend/config.yaml`, `desktop/config.json` and the two `runtime/start-comfy-*.ps1` scripts (ComfyUI install folder, Windows user name, input and output folders, Blender path). The helper already finds Blender, Unity and the project folder; it needs to write proposed copies for the rest | Medium | No (rule already set: proposed copies, never overwrite) |
-| 3 | A tested one-card setup: run every step on one card, record the real graphics memory each model and step needs (a "needs about N GB" figure per model in `models.yaml`, measured, not guessed), fix the stage plan and `instance_capabilities` defaults, and give one-card PCs their own start script. The smallest card the app claims to support is then set by the hungriest required model, which is not necessarily the smallest file | Large (needs real hardware: a 10 GB and ideally a smaller card) | Decided: a plain disclaimer, not a full hardware spec. Wording: "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." Models get a "needs about N GB" figure once measured |
-| 4 | Fetching ComfyUI's node packs and the models from their official sources as a select list: size, licence and a yes or no per item, with a warning mark on any model that is likely too big for this PC's card (using the figures from item 3). Models are never bundled: each person downloads them under the model's own licence (some are not plain Apache-2.0: Anima is non-commercial, Hunyuan3D has its own community licence). Depends on item 3 for the warnings | Large (many sources, big downloads, resume and checksum handling) | Decided: a select list with GPU warnings. Open: which optional models are listed |
-| 5 | Blender portable fetched into the project's own `tools` folder, so no other Blender is touched and the path is known. Plan: fetch the version the app was built on (5.2.3) for new installs; accept an existing Blender 5.x with a notice if it is not 5.2.3; refuse below 5.0 (the app's own check already requires 5.0 or newer). Whether 5.0 and 5.1 really work is untested | Small | Decided in outline; test 5.0 and 5.1 to know how strong the notice must be |
-| 6 | A one-click path for the animation packs (CC0 downloads into `data/animations`) and a check that the Unity sandbox project is complete | Small | No |
+| 2 | DONE as proposed copies (`Setup-Extras.ps1 -Settings`). Settings files written from what the helper finds, instead of this PC's paths: `backend/config.yaml`, `desktop/config.json` and the two `runtime/start-comfy-*.ps1` scripts (ComfyUI install folder, Windows user name, input and output folders, Blender path). The helper already finds Blender, Unity and the project folder; it needs to write proposed copies for the rest | Medium | No (rule already set: proposed copies, never overwrite) |
+| 3 | A tested one-card setup: run every step on one card, record the real graphics memory each model and step needs (a "needs about N GB" figure per model in `models.yaml`, measured, not guessed), fix the stage plan and `instance_capabilities` defaults, and give one-card PCs their own start script. The smallest card the app claims to support is then set by the hungriest required model, which is not necessarily the smallest file | Large (needs real hardware: a 10 GB and ideally a smaller card) | Decided: a plain "your mileage may vary" disclaimer, not a full hardware spec and no benchmarking of each model. Wording: "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." |
+| 4 | DONE (`Setup-Extras.ps1 -Models`, `-Nodes`). Fetching ComfyUI's node packs and the models from their official sources as a select list: size, licence and a yes or no per item, with a warning mark on any model that is likely too big for this PC's card (using the figures from item 3). Models are never bundled: each person downloads them under the model's own licence (some are not plain Apache-2.0: Anima is non-commercial, Hunyuan3D has its own community licence). Depends on item 3 for the warnings | Large (many sources, big downloads, resume and checksum handling) | Decided: the app ships with no models at all; setup is the only way they arrive. It offers a select list of the models the app uses today (the table above) and stays open to the person's own additions, without naming further models or adding a licence clause for each. The warning marks are just the 10 GB disclaimer, no per-model figures |
+| 5 | DONE, link not read back (`Setup-Extras.ps1 -Blender`). Blender portable fetched into the project's own `tools` folder, so no other Blender is touched and the path is known. Plan: fetch 5.2.3 (the version the app was built on) for new installs; accept an existing Blender 5.x with a disclaimer that only 5.2.3 is tested; refuse below 5.0 (the app's own check already requires 5.0 or newer). Other versions are not tested and not promised | Small | No: decided (disclaimer only, no version testing) |
+| 6 | Animation picker DONE; hair pick recorded only (see "Hair packs: plan"). The pick-what-you-want hair and animation pack list described above (CC0 downloads, one description per pack, credits from the picks), and a check that the Unity sandbox project is complete | Medium | No: decided |
 | 7 | Installing Python, Node and Git for people who lack them (offering `winget` commands, asking first) | Small | No |
 
 Unity stays by hand whatever is built: it needs the person's own account and licence.

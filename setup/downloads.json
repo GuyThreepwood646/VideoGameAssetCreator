@@ -1,0 +1,334 @@
+{
+ "_comment": "Download sources for setup/Setup-Extras.ps1. Each url, size and sha256 was read from the Hugging Face file list on 2026-11-06. 'publisher' is true when the repository belongs to the model's own publisher (or ComfyUI's Comfy-Org for ComfyUI-format files); false means a community upload. Edit a link here when it changes; no code change needed. Your own additions go in setup/downloads.local.json (same shape).",
+ "verified": "2026-11-06",
+ "models": {
+  "zturbo": {
+   "url": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio/resolve/main/z-image-turbo-fp8-aio.safetensors",
+   "page": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio",
+   "size": 10345190658,
+   "sha256": "f569c42b6797a89e65e80c743d6dfd230ed9318237aa242c92777deb22fad660",
+   "dest": "checkpoints",
+   "save_as": "z-image-turbo-fp8-aio.safetensors",
+   "publisher": false,
+   "note": "Uploaded by a community member, not by the model's publisher (Tongyi-MAI). Check the page before you accept."
+  },
+  "zbase": {
+   "url": "https://huggingface.co/Winnougan/Z-Image-Base-Turbo-INT8-Convrot/resolve/main/z_image_int8_convrot.safetensors",
+   "page": "https://huggingface.co/Winnougan/Z-Image-Base-Turbo-INT8-Convrot",
+   "size": 6299127240,
+   "sha256": "bb74db6afc4b895415d915b245d2142c9aad420cf1698d6ade3d4cbcc450a3df",
+   "dest": "diffusion_models",
+   "save_as": "z_image_int8_convrot.safetensors",
+   "publisher": false,
+   "note": "Uploaded by a community member (an int8 conversion of Z-Image Base), not by the publisher. Check the page before you accept."
+  },
+  "klein": {
+   "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+   "page": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8",
+   "size": 4070624520,
+   "sha256": "97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6",
+   "dest": "diffusion_models",
+   "save_as": "flux-2-klein-4b-fp8.safetensors",
+   "publisher": true
+  },
+  "chroma": {
+   "url": "https://huggingface.co/Comfy-Org/Chroma1-HD/resolve/main/split_files/diffusion_models/Chroma1-HD-fp8mixed.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/Chroma1-HD",
+   "size": 9193379316,
+   "sha256": "a2928ca6075f308f4d5e2182e2b96120fa8ad270ec6ea9b1b5c724c85c49a575",
+   "dest": "diffusion_models",
+   "save_as": "Chroma1-HD-fp8mixed.safetensors",
+   "publisher": true
+  },
+  "qwen_edit": {
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI",
+   "size": 20533762817,
+   "sha256": "c9fdc158e46d3b61ef75f21ae866ca2fe808bf4a53643120d1c1e87c19280a4e",
+   "dest": "diffusion_models",
+   "save_as": "qwen_image_edit_2511_fp8mixed.safetensors",
+   "publisher": true
+  },
+  "birefnet": {
+   "url": "https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/BiRefNet",
+   "size": 444473596,
+   "sha256": "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154",
+   "dest": "background_removal",
+   "save_as": "birefnet.safetensors",
+   "publisher": true
+  },
+  "trellis2": {
+   "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/TRELLIS.2",
+   "size": 5253048192,
+   "sha256": "d01952ad137213f6a868f86b6b877026276f84af5eec23069217475a0bad3a31",
+   "dest": "diffusion_models",
+   "save_as": "trellis_2_int8_convrot.safetensors",
+   "publisher": true
+  },
+  "hy3d_mv": {
+   "url": "https://huggingface.co/tencent/Hunyuan3D-2mv/resolve/main/hunyuan3d-dit-v2-mv/model.fp16.safetensors",
+   "page": "https://huggingface.co/tencent/Hunyuan3D-2mv",
+   "size": 4928151562,
+   "sha256": "d36f5881bcdc56726b73e517cd444c13c60732431622da7268145355c8d38e9c",
+   "dest": "checkpoints",
+   "save_as": "Hunyuan3D-2mv.fp16.safetensors",
+   "publisher": true,
+   "optin": "hunyuan",
+   "licence_page": "https://huggingface.co/tencent/Hunyuan3D-2mv/blob/main/LICENSE",
+   "note": "Saved under the name the app expects (Hunyuan3D-2mv.fp16.safetensors); the publisher's file is hunyuan3d-dit-v2-mv/model.fp16.safetensors."
+  },
+  "skintoken": {
+   "url": "https://huggingface.co/VAST-AI/SkinTokens/resolve/main/experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
+   "page": "https://huggingface.co/VAST-AI/SkinTokens",
+   "size": 1131603979,
+   "sha256": "f4e4706a11cfb520cdde65156a0358545e4fbf8f36237aca01ea5e79d5cb5692",
+   "dest": "skintoken",
+   "save_as": "grpo_1400.ckpt",
+   "publisher": true,
+   "note": "The ComfyUI-SkinToken node pack also fetches this file itself on first use, into models/skintoken."
+  },
+  "trellis2_dino": {
+   "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/clip_vision/dino_v3_vit_l.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/TRELLIS.2",
+   "size": 1212559776,
+   "sha256": "5cb785e458de7c460579082418af81f5c62380c181599344bdc60898c63468ee",
+   "dest": "clip_vision",
+   "save_as": "dino_v3_vit_l.safetensors",
+   "publisher": true,
+   "name": "DINOv3 image encoder (TRELLIS.2 companion)",
+   "licence": "See the Comfy-Org/TRELLIS.2 page",
+   "extra": true,
+   "required": true,
+   "note": "The TRELLIS.2 graph loads dino_v3_vit_l.safetensors (backend/vgac/graphs/trellis.py). It is not in models.yaml, so the app's own check does not look for it."
+  },
+  "gemma3_12b": {
+   "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/ltx-2",
+   "size": 24379468890,
+   "sha256": "56eaa964a0d9325d2dc9ecaf7759bfaf0fac78ae36c789bed6e03e275a3729ec",
+   "dest": "text_encoders",
+   "save_as": "gemma_3_12B_it.safetensors",
+   "publisher": false,
+   "name": "Gemma 3 12B (local picture judge)",
+   "licence": "Google Gemma Terms of Use and Prohibited Use Policy",
+   "extra": true,
+   "required": false,
+   "optin": "gemma",
+   "licence_page": "https://ai.google.dev/gemma/terms",
+   "note": "Optional. A ComfyUI-format copy of Google's Gemma 3 12B hosted by Comfy-Org. The terms are Google's; you accept them yourself."
+  },
+  "anima": {
+   "name": "Anima Turbo v1.1",
+   "by_hand": true,
+   "optin": "anima",
+   "dest": "diffusion_models",
+   "page": "https://huggingface.co/circlestone-labs/Anima",
+   "reason": "The exact file anima-turbo-v1.1.safetensors was not found in the publisher's repository (it holds the base models, not the Turbo build). Find the Turbo v1.1 file yourself and put it in models/diffusion_models."
+  }
+ },
+ "addons": {
+  "pixel_art": {
+   "url": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo/resolve/main/pixel_art_style_z_image_turbo.safetensors",
+   "page": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo",
+   "size": 170128328,
+   "sha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
+   "dest": "loras/ZImage/pixel_art_style_z_image_turbo.safetensors",
+   "save_as": "pixel_art_style_z_image_turbo.safetensors",
+   "publisher": false
+  },
+  "qwen_lightning": {
+   "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+   "page": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "size": 849608296,
+   "sha256": "22226e8d05d354bb356627d428809f5afd7819399b077238a2b70a82883a904f",
+   "dest": "loras/Qwen/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+   "save_as": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+   "publisher": true
+  },
+  "qwen_angles": {
+   "url": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/resolve/main/qwen-image-edit-2511-multiple-angles-lora.safetensors",
+   "page": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+   "size": 295140688,
+   "sha256": "42426ded4e25fd22879d9e198b857556445ef4ca56e8da3246d0345155bb6765",
+   "dest": "loras/Qwen/qwen-image-edit-2511-multiple-angles-lora.safetensors",
+   "save_as": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+   "publisher": true
+  },
+  "stylised_3d": {
+   "url": "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE/resolve/main/%5BZImage.Turbo%5D3DRenderStyle_Redmond.safetensors",
+   "page": "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
+   "size": 85094920,
+   "sha256": "696528181cf00f14156d9eabb25408af4baf57711e26417ae244ddaa84b7551f",
+   "dest": "loras/VGAC/zit_3drender_redmond.safetensors",
+   "save_as": "zit_3drender_redmond.safetensors",
+   "publisher": true
+  },
+  "clay_finish": {
+   "url": "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE/resolve/main/%5BZImage.Turbo%5DClayAnimation_Redmond.safetensors",
+   "page": "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE",
+   "size": 85094904,
+   "sha256": "02d53533dc2032f510cf8c1b6c84d4cbb12b9d053fb748b2bfdc5908b478c2bf",
+   "dest": "loras/VGAC/zit_clay_redmond.safetensors",
+   "save_as": "zit_clay_redmond.safetensors",
+   "publisher": true
+  },
+  "retro_lowpoly": {
+   "url": "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO/resolve/main/%5BZImage.Turbo%5DPS1Screencap_Redmond.safetensors",
+   "page": "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
+   "size": 85094928,
+   "sha256": "668fbbb6212c4ce2e1b10784e9dbd9182dfba4bba82c1bbb5b827647e4354953",
+   "dest": "loras/VGAC/zit_ps1_redmond.safetensors",
+   "save_as": "zit_ps1_redmond.safetensors",
+   "publisher": true
+  },
+  "chunky_pixels": {
+   "url": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO/resolve/main/%5BZImage.Turbo%5DPixelArt_Redmond.safetensors",
+   "page": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO",
+   "size": 85094896,
+   "sha256": "767c914d816f8f4f0862eb8aa63c2b629595303d724546864671811c01461b84",
+   "dest": "loras/VGAC/zit_pixelart_redmond.safetensors",
+   "save_as": "zit_pixelart_redmond.safetensors",
+   "publisher": true
+  }
+ },
+ "node_packs": {
+  "skintoken": {
+   "name": "ComfyUI-SkinToken",
+   "what": "Rigging (skeleton and skin weights).",
+   "repo": "https://github.com/Rizzlord/ComfyUI-SkinToken",
+   "zip": "https://github.com/Rizzlord/ComfyUI-SkinToken/archive/refs/heads/main.zip",
+   "folder": "ComfyUI-SkinToken",
+   "licence": "No licence file in the pack; it defers to the MIT SkinTokens project (not confirmed as its own licence)"
+  },
+  "pixelart": {
+   "name": "ComfyUI-PixelArt-Detector",
+   "what": "Shrinks a picture to a small palette for the pixel-art look.",
+   "repo": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector",
+   "zip": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector/archive/refs/heads/main.zip",
+   "folder": "ComfyUI-PixelArt-Detector",
+   "licence": "MIT"
+  },
+  "vgac": {
+   "name": "vgac-nodes (this project)",
+   "what": "The project's own mesh loader nodes.",
+   "local": "comfy-nodes/vgac-nodes",
+   "folder": "vgac-nodes",
+   "licence": "GPL-3.0-or-later"
+  }
+ },
+ "blender": {
+  "version": "5.2.3",
+  "zip": "https://download.blender.org/release/Blender5.2/blender-5.2.3-windows-x64.zip",
+  "sha256_file": "https://download.blender.org/release/Blender5.2/blender-5.2.3.sha256",
+  "page": "https://www.blender.org/download/",
+  "folder": "blender-5.2.3-windows-x64",
+  "size_mb": 400,
+  "licence": "GPL",
+  "unconfirmed": "blender.org's download server refused an automated request on 2026-11-06, so this link follows Blender's standard release layout and was not read back. The script checks the file against Blender's published checksum and stops if the link or the checksum is missing; then download from the page."
+ },
+ "animation_packs": {
+  "ual1": {
+   "name": "Universal Animation Library (Standard)",
+   "what": "The ready-made moves (walk, run, idle and more) for rigged humanoid characters.",
+   "size_mb": 53,
+   "author": "Quaternius",
+   "licence": "CC0 1.0",
+   "page": "https://quaternius.itch.io/universal-animation-library",
+   "check_file": "AnimationLibrary_Unity_Standard.fbx"
+  },
+  "ual2": {
+   "name": "Universal Animation Library 2 (Standard)",
+   "what": "More ready-made moves; Unreal-style bone names, which the app maps itself.",
+   "size_mb": 38,
+   "author": "Quaternius",
+   "licence": "CC0 1.0",
+   "page": "https://quaternius.itch.io/universal-animation-library-2",
+   "check_file": "UAL2_Standard.fbx"
+  }
+ },
+ "animation_note": "Both packs are on itch.io (linked from quaternius.com). itch.io hands the file over after a click-through, so the helper does not fetch it: you download the zip, and the helper unpacks it into data/animations/<id>, keeping the folder names backend/config.yaml expects.",
+ "hair_packs": [
+  {
+   "id": "quaternius_ubc",
+   "name": "Quaternius Universal Base Characters (Standard), hair part",
+   "styles": 5,
+   "what": "Simple game-ready styles: two buns, buzz cut, rounded buzz cut, shoulder-length layered, short side-parted.",
+   "author": "Quaternius",
+   "licence": "CC0 1.0",
+   "catalogue_pack": "Universal Base Characters (Standard)",
+   "catalogue_author": "Quaternius",
+   "page": "https://quaternius.itch.io/universal-base-characters",
+   "zip_size": 128968391,
+   "zip_note": "itch.io click-through: download the zip yourself. Size equals the zip the project built the library from."
+  },
+  {
+   "id": "makehuman_system",
+   "name": "MakeHuman system assets (MakeHuman team)",
+   "styles": 7,
+   "what": "Afro, bob with a fringe, single braid, long straight waist-length, mid ponytail, two short styles.",
+   "author": "MakeHuman team",
+   "licence": "CC0 1.0",
+   "catalogue_pack": "MakeHuman system assets",
+   "catalogue_author": "MakeHuman team (Data Collection AB)",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html",
+   "zip_size": 280737770,
+   "zip": "https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip",
+   "zip_note": "Direct link read from the pack page on 2026-11-06; size equals the zip the project built the library from. hair01 is one zip for all three authors."
+  },
+  {
+   "id": "hair01_cortu",
+   "name": "MakeHuman community pack hair01: Cortu",
+   "styles": 4,
+   "what": "Shaggy and curly shoulder-length, short and messy, straight with a full fringe.",
+   "author": "Cortu",
+   "licence": "CC0 1.0",
+   "catalogue_pack": "MakeHuman community hair pack hair01",
+   "catalogue_author": "Cortu",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
+   "zip_size": 227775853,
+   "zip": "https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
+   "zip_note": "Direct link read from the pack page on 2026-11-06; size equals the zip the project built the library from. hair01 is one zip for all three authors."
+  },
+  {
+   "id": "hair01_faydaen",
+   "name": "MakeHuman community pack hair01: Faydaen",
+   "styles": 1,
+   "what": "Short and spiky.",
+   "author": "Faydaen",
+   "licence": "CC0 1.0",
+   "catalogue_pack": "MakeHuman community hair pack hair01",
+   "catalogue_author": "Faydaen",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
+   "zip_size": 227775853,
+   "zip": "https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
+   "zip_note": "Direct link read from the pack page on 2026-11-06; size equals the zip the project built the library from. hair01 is one zip for all three authors."
+  },
+  {
+   "id": "hair01_margarettoigo",
+   "name": "MakeHuman community pack hair01: MargaretToigo",
+   "styles": 6,
+   "what": "Bob family: blunt, curled under, inverted, each with and without a fringe.",
+   "author": "MargaretToigo",
+   "licence": "CC0 1.0",
+   "catalogue_pack": "MakeHuman community hair pack hair01",
+   "catalogue_author": "MargaretToigo",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
+   "zip_size": 227775853,
+   "zip": "https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
+   "zip_note": "Direct link read from the pack page on 2026-11-06; size equals the zip the project built the library from. hair01 is one zip for all three authors."
+  },
+  {
+   "id": "vgac_rules",
+   "name": "VGAC rule-built styles (made by the app, no download)",
+   "styles": 3,
+   "what": "Top bun, long straight with a centre parting, high ponytail.",
+   "author": "VGAC",
+   "licence": "GPL-3.0-or-later",
+   "no_download": true,
+   "catalogue_pack": "VGAC rule-built styles",
+   "catalogue_author": "VGAC"
+  }
+ ]
+}
