@@ -108,6 +108,19 @@ def test_project_and_asset_crud(client):
     assert client.get(f"/api/projects/{p['id']}").status_code == 404
 
 
+def test_project_list_summary(client, fake_execute):
+    empty = client.post("/api/projects", json={"name": "Empty"}).json()
+    p, a = _project_asset(client)
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == empty["id"])
+    assert row["asset_count"] == 0 and row["covers"] == [] and row["last_activity"] == empty["created_at"]
+    r = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"params": {"seed": 5}}).json()
+    assert wait_job(client, r["job"]["id"])["status"] == "done"
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == p["id"])
+    v = client.get(f"/api/versions/{r['version']['id']}").json()
+    assert row["asset_count"] == 1 and row["covers"] == [v["files"]["cutout"]]
+    assert row["last_activity"] >= p["created_at"]
+
+
 def _project_asset(client, category="humanoid"):
     p = client.post("/api/projects", json={"name": "P"}).json()
     a = client.post(f"/api/projects/{p['id']}/assets", json={"name": "knight", "category": category, "style_preset": "painted", "prompt": "a knight"}).json()
