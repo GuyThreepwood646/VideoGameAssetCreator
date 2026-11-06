@@ -284,8 +284,17 @@ ipcMain.handle('action', async (e, id) => {
 
 // ---- quit -----------------------------------------------------------------------------------------------------
 
+// app.quit() is never called from inside a window's own close event (the X on the app window gets here from one):
+// Electron then closes the windows but drops the quit, and the launcher stays running with no window, no tray and
+// no log, so the next launch only wakes that leftover copy (2026-11-06). Hence the setImmediate.
+function quitSoon() {
+  quitting = true;
+  setImmediate(() => app.quit());
+}
+
 async function requestQuit() {
-  if (quitting) return;
+  // Quit asked again while a quit is under way: ask Electron once more instead of doing nothing.
+  if (quitting) { quitSoon(); return; }
   const owned = ['comfyB', 'backend'].filter((k) => supervisor && supervisor.isOwned(k));
   if (owned.length && !process.env.VGAC_DESKTOP_EXIT_AFTER_MS) {
     const names = owned.map((k) => (k === 'backend' ? 'the backend' : 'ComfyUI B')).join(' and ');
@@ -299,19 +308,24 @@ async function requestQuit() {
     });
     if (choice.response !== 0) return;
   }
-  quitting = true;
-  app.quit();
+  quitSoon();
 }
 
 app.on('before-quit', () => {
-  quitting = true;
+  quitting = true; // lets the windows close; nothing is torn down until the quit is certain (will-quit)
+});
+
+// Every window has closed and the app is really going: only now stop the services, the tray and the log, so a quit
+// that does not go through never leaves a launcher that looks alive but watches nothing.
+app.on('will-quit', () => {
   if (supervisor) { supervisor.stop(); supervisor.stopOwned(); }
   if (tray) { tray.destroy(); tray = null; }
   log('quit');
-  if (logStream) logStream.end();
+  if (logStream) { logStream.end(); logStream = null; }
 });
 
-app.on('window-all-closed', () => { /* keep running in the tray */ });
+// Without a quit under way the launcher keeps running in the tray. With one, finish it: no window is left to do so.
+app.on('window-all-closed', () => { if (quitting) app.quit(); });
 
 // ---- startup --------------------------------------------------------------------------------------------------
 
