@@ -33,6 +33,7 @@ export function MeshView({ version, category }: { version: Version; category?: s
   const hairSheet = version.stage === 'prep' ? libraryUrl(version.files.hair_before_after) : null
   const hairMask = version.stage === 'prep' ? libraryUrl(version.files.hair_mask) : null
   const hairMetrics = (version.metrics?.hair_detail ?? null) as { ran?: boolean; texels_per_cm_before?: number; texels_per_cm_after?: number } | null
+  const hairMaterial = (version.metrics?.hair_material ?? null) as { use?: boolean; tex?: number; texels_per_cm?: number } | null
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
@@ -132,13 +133,19 @@ export function MeshView({ version, category }: { version: Version; category?: s
             <div className="small muted">The hair from five sides before and after, then lit, before and after.</div>
             {hairMetrics?.texels_per_cm_after ? (
               <div className="small muted">
-                {hairMetrics.texels_per_cm_before} texels (texture pixels) per cm on the hair before, {hairMetrics.texels_per_cm_after} now.
+                {hairMetrics.texels_per_cm_before} texels (texture pixels) per cm on the hair before,{' '}
+                {hairMaterial?.use ? hairMaterial.texels_per_cm : hairMetrics.texels_per_cm_after} now.
+              </div>
+            ) : null}
+            {hairMaterial?.use ? (
+              <div className="small muted">
+                Hair material (its own texture and shader): a {hairMaterial.tex} px texture for the hair alone, one more draw call per character.
               </div>
             ) : null}
             {hairMask && (
               <div className="small">
                 <a href={hairMask} target="_blank" rel="noreferrer">
-                  What was taken as hair
+                  {hairMaterial?.use ? 'What was taken as hair, and what has its own material' : 'What was taken as hair'}
                 </a>
               </div>
             )}

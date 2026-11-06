@@ -4,6 +4,7 @@ Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,
      [--collider-obj collider_parts.obj] [--formats fbx,glb]
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
      [--shading smooth|flat] [--texture-filter smooth|crisp] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
+     [--hair-layout hair_layout.json --hair-base-color hair_base_color.png [--hair-normal ...] [--hair-orm ...]]
 
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
@@ -35,6 +36,15 @@ Sockets (--sockets <category>, rigged assets only): vgac/sockets.py places the a
 Socket_Back and so on) from the rest pose; each becomes an empty (no geometry) parented to its bone in the FBX and in
 every GLB (the clean, Godot and LOD files), so every engine sees a named transform that follows the animation.
 sockets.json (glTF model space) is written to <out_dir>; report.json lists the names in `sockets`.
+
+Hair as its own material (--hair-layout, vgac/hairmat.py): the clean-up step laid the hair triangles out on a texture
+of their own (hair_layout.json: each hair triangle's centre, corners and coordinates on the hair texture, with the
+prep model's bounding box). Each face of LOD0 whose centre matches a hair triangle (both normalised to their bounding
+boxes, as for --uv-source) takes material slot 1 and, at each corner, the hair texture's coordinates of the nearest
+corner; every other face keeps slot 0. The slots are named <asset>_Body and <asset>_Hair in the FBX (names only; the
+Unity importer builds both materials) and the GLB files get two materials: the body's textures and the hair's own
+(--hair-base-color, --hair-normal, --hair-orm). LODs are decimated after this, so every level keeps both slots;
+report.json gives hair_material: {faces, lod_triangles, slots}.
 """
 import json
 import math
@@ -63,6 +73,10 @@ uv_source = _common.opt("--uv-source", "")
 shading = _common.opt("--shading", "smooth")
 texture_filter = _common.opt("--texture-filter", "smooth")
 socket_category = _common.opt("--sockets", "none")
+hair_layout = _common.opt("--hair-layout", "")
+hair_base = _common.opt("--hair-base-color", "")
+hair_normal = _common.opt("--hair-normal", "")
+hair_orm = _common.opt("--hair-orm", "")
 # vgac/sockets.py (pure maths, shared with the backend) sits one folder up.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.makedirs(out_dir, exist_ok=True)
@@ -154,10 +168,66 @@ def tri_count(o):
     return len(o.data.loop_triangles)
 
 
+def assign_hair(target, path):
+    """Slot 1 and the hair texture's coordinates for the faces in hair_layout.json (see the module docstring)."""
+    from mathutils import Vector
+
+    with open(path) as fh:
+        doc = json.load(fh)
+    rows = doc.get("faces") or []
+    if not rows:
+        return {"ok": False, "reason": "empty layout"}
+    lo, hi = [Vector(v) for v in doc["box"]]
+    sc_ = (lo + hi) / 2
+    ss = max(hi[i] - lo[i] for i in range(3)) or 1.0
+    tc, ts = _box(target)
+    kd = KDTree(len(rows))
+    for i, r in enumerate(rows):
+        kd.insert((Vector(r[0:3]) - sc_) / ss, i)
+    kd.balance()
+    td = target.data
+    tw = target.matrix_world
+    tvert = [(tw @ v.co - tc) / ts for v in td.vertices]
+    uvl = td.uv_layers.active.data
+    tol = 2e-4
+    hits, worst = 0, 0.0
+    for poly in td.polygons:
+        _, i, dist = kd.find((tw @ poly.center - tc) / ts)
+        if dist is None or dist > tol:
+            poly.material_index = 0
+            continue
+        worst = max(worst, dist)
+        r = rows[i]
+        corners = [(Vector(r[3 + 3 * k: 6 + 3 * k]) - sc_) / ss for k in range(3)]
+        uvs = [r[12 + 2 * k: 14 + 2 * k] for k in range(3)]
+        for li in poly.loop_indices:
+            vp = tvert[td.loops[li].vertex_index]
+            k = min(range(3), key=lambda kk: (corners[kk] - vp).length_squared)
+            uvl[li].uv = uvs[k]
+        poly.material_index = 1
+        hits += 1
+    return {"ok": hits > 0, "faces": hits, "layout_faces": len(rows), "max_face_offset": round(worst, 6)}
+
+
+hair_report = None
+if hair_layout and os.path.isfile(hair_layout) and mesh.data.uv_layers:
+    # the model's own material (the rig step's, with its base colour, which the FBX embeds) stays as the body's slot
+    body_slot = next((m for m in mesh.data.materials if m is not None), None) or bpy.data.materials.new(name + "_Body")
+    body_slot.name = name + "_Body"
+    hair_slot = bpy.data.materials.new(name + "_Hair")
+    mesh.data.materials.clear()
+    mesh.data.materials.append(body_slot)
+    mesh.data.materials.append(hair_slot)
+    hair_report = assign_hair(mesh, hair_layout)
+    if not hair_report.get("ok"):
+        mesh.data.materials.clear()
+
+
 report = {"asset": name, "lods": {}, "lod_ratios": lods, "bones": len(arm.data.bones) if arm else 0, "clips": [],
           "uvs": bool(mesh.data.uv_layers), "uv_transfer": uv_report, "shading": shading, "texture_filter": texture_filter,
           "normal_map": bool(tex_normal and os.path.isfile(tex_normal))}
 report["lods"]["LOD0"] = tri_count(mesh)
+report["hair_material"] = hair_report
 
 # LODs by decimation (keeps UVs and vertex groups).
 lod_objs = [mesh]
@@ -175,6 +245,16 @@ for i, ratio in enumerate(lods, start=1):
     lod.parent = mesh.parent
     report["lods"][f"LOD{i}"] = tri_count(lod)
     lod_objs.append(lod)
+
+
+def hair_tris(o):
+    o.data.calc_loop_triangles()
+    return sum(1 for t in o.data.loop_triangles if o.data.polygons[t.polygon_index].material_index == 1)
+
+
+if hair_report and hair_report.get("ok"):
+    hair_report["lod_triangles"] = {f"LOD{i}": hair_tris(o) for i, o in enumerate(lod_objs)}
+    hair_report["slots"] = [name + "_Body", name + "_Hair"]
 
 # --- Collision shapes (G16, G35; docs/GREAT-ASSETS-PLAN.md 3.4) ---------------------------------------------------------
 # hull: one convex hull of LOD0; parts: the shapes the backend made (vgac/colliders.py) in --collider-obj;
@@ -483,14 +563,14 @@ def _tex_node(nt, path, colorspace):
     return t
 
 
-def build_material():
+def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, mat_name=None):
     """Principled BSDF the glTF exporter reads: base colour, normal map, and one ORM image whose G drives roughness,
     B metallic and R occlusion (through the 'glTF Material Output' group), so the GLB references the ORM texture as
-    both metallicRoughnessTexture and occlusionTexture."""
+    both metallicRoughnessTexture and occlusionTexture. The hair's own material is built the same way from its maps."""
     have = [p for p in (tex_base, tex_normal, tex_orm) if p and os.path.isfile(p)]
     if not have:
         return None
-    mat = bpy.data.materials.new(name + "_mat")
+    mat = bpy.data.materials.new(mat_name or (name + "_mat"))
     mat.use_nodes = True
     nt = mat.node_tree
     bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
@@ -528,8 +608,21 @@ def export_glb(path, objects, animations=True):
 
 
 if "glb" in formats:
-    mat = build_material()
-    if mat is not None:
+    two = bool(hair_report and hair_report.get("ok"))
+    if two:
+        for m in (body_slot, hair_slot):
+            m.name = m.name + "_slot"  # the FBX already carries these names; the GLB's textured materials take them
+    mat = build_material(mat_name=(name + "_Body") if two else None)
+    hmat = build_material(hair_base, hair_normal, hair_orm, name + "_Hair") if two else None
+    if mat is not None and hmat is not None:
+        # every level kept both slots through the decimation: the slots get the textured materials, the faces keep
+        # their slot numbers
+        for o in lod_objs:
+            while len(o.data.materials) < 2:
+                o.data.materials.append(None)
+            o.data.materials[0] = mat
+            o.data.materials[1] = hmat
+    elif mat is not None:
         for o in lod_objs:
             o.data.materials.clear()
             o.data.materials.append(mat)

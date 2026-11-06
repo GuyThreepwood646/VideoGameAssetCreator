@@ -10,10 +10,15 @@ An Adjust that changes only the hit-box knobs (hitboxes, hitbox_fit, hitbox_regi
 parent's rigged files instead of running SkinToken again (about 10 seconds). An Adjust that changes only the moves
 (added_moves, removed_moves from "Add a move", and the moves knobs) makes only the moves again on the parent's
 skeleton the same way (moves.py); both together do both.
+
+Spring bones (vgac/springs.py, blender/springs.py; setting `springs`, humanoids, on by default) run after the moves:
+parts that hang clear of the body get a chain of bones and the sway is baked into every clip of anim.glb. Turning the
+setting on or off makes only the moves again. Check `springs`; files springs, springs_found, springs_report.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import time
@@ -304,11 +309,11 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
-MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion")
-ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip")
+MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs")
+ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report")
 _ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "retarget_error",
                  "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
-                 "moves", "clips_library", "added_moves_missing", "added_moves_reasons")
+                 "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs")
 KEEP_MARKER = "_keep_when_done"
 
 
@@ -537,6 +542,7 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
                            legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"),
                            clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []))
         await _retarget(sc, anim_glb, params, chosen_moves)
+        await _springs(sc, anim_glb, params)
         if not (sc.version.metrics.get("clips") or []):
             return
         sc.progress(0.88, "render clip strip")
@@ -622,6 +628,100 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     sc.set_metrics(models=kept_models + recs)
 
 
+def _hair_points(sc: StageContext, work: Path) -> Path | None:
+    """The hair pass's hair triangles (their centres, glTF space) for the spring bones: the clean-up version's
+    hair/hair_points.json when the hair pass found the hair; when the hair pass never ran on it (older versions, the
+    pass turned off), the hair is found here the same way (hair.find_hair, no pictures). None when there is no hair to
+    go by (the pass stood back, or nothing was found)."""
+    prep_v = sc.stage_version("prep")
+    if prep_v is None:
+        return None
+    try:
+        p = Path(library.version_dir(sc.asset, prep_v, sc.settings, create=False)) / "hair" / "hair_points.json"
+    except Exception:  # noqa: BLE001
+        return None
+    if p.is_file():
+        return p
+    if (prep_v.metrics or {}).get("hair_detail") is not None or sc.asset.category != "humanoid":
+        return None  # the hair pass ran and stood back: the hair could not be told apart
+    glb = library.version_file(prep_v, "glb", sc.settings)
+    base = sc.lineage_file("base_color", ("prep", "mesh"))
+    if glb is None or base is None:
+        return None
+    from .. import face, hair
+
+    def find() -> Path | None:
+        found = hair.find_hair(Path(glb), Path(base), sc.lineage_file("metallic", ("prep", "mesh")))
+        if not found.get("found"):
+            return None
+        out = work / "hair_points.json"
+        out.write_text(json.dumps(hair.hair_points(face.load_mesh(Path(glb)), found["tris"])), encoding="utf-8")
+        return out
+
+    try:
+        return find()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> None:
+    """Spring bones (vgac/springs.py, blender/springs.py): find the parts that hang free, add a chain of bones to each,
+    fade the weights onto it and bake the sway into every clip of anim.glb (in place; the file before is kept as
+    springs/anim_plain.glb). Files: springs (springs.json), springs_found (what was taken as a hanging part, with the
+    chains drawn on it), springs_report. metrics.springs says what sways or why nothing does. Never raises."""
+    from .. import springs as springs_mod
+
+    rep_path = sc.dir / "anim_anim.json"
+    try:
+        anim_rep = json.loads(rep_path.read_text(encoding="utf-8")) if rep_path.is_file() else {}
+    except (OSError, ValueError):
+        anim_rep = {}
+    on, reason = springs_mod.enabled(sc.asset.category, params, anim_rep)
+    if sc.asset.category in springs_mod.CATEGORIES:
+        sc.set_params(springs=bool(on or reason != "off"))
+    if not on:
+        sc.set_metrics(springs=springs_mod.metrics(None, False, reason) if reason else None)
+        return
+    if not (sc.version.metrics.get("clips") or []) or not anim_glb.is_file():
+        sc.set_metrics(springs=springs_mod.metrics(None, True, "no_clips"))
+        return
+    work = sc.dir / "springs"
+    work.mkdir(parents=True, exist_ok=True)
+    t0 = time.monotonic()
+    out = work / "anim_springs.glb"
+    try:
+        sc.progress(0.86, "spring bones: finding what hangs free")
+        hair_points = await asyncio.to_thread(_hair_points, sc, work)
+        hb = sc.file("hitboxes")
+        args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
+                                        sc.lineage_file("metallic", ("prep", "mesh")))
+        await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
+        sheet = springs_mod.found_sheet(rep, work / "springs_pictures", sc.dir / "springs_found.png")
+        if sheet is not None:
+            sc.register("springs_found", sheet)
+        sc.register("springs_report", work / "springs_report.json")
+        if rep.get("chains") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(anim_glb, work / "anim_plain.glb")
+            shutil.move(str(out), str(anim_glb))
+            doc = sc.dir / "springs.json"
+            shutil.copy2(work / "springs.json", doc)
+            sc.register("springs", doc)
+        sc.set_metrics(springs=springs_mod.metrics(rep, True, None, round(time.monotonic() - t0, 2)))
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(springs=springs_mod.metrics(None, True, None, round(time.monotonic() - t0, 2), error=str(e)))
+
+
+def springs_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The rig check `springs` from metrics.springs (vgac/springs.check_values), or None when it does not apply."""
+    from .. import springs as springs_mod
+
+    v = springs_mod.check_values(m)
+    if v is None:
+        return None
+    return quality.check("springs", v["ok"], v["value"], v["limit"], vars=v["vars"])
+
+
 def _faithful_max(rep: dict[str, Any]) -> float | None:
     """Largest angle between a source limb segment and the same target segment over every library clip (the IK
     that plants the feet accounts for most of it)."""
@@ -670,6 +770,9 @@ async def judge(sc: StageContext) -> None:
             checks.append(quality.check("legs_moved", (m.get("legs_moved") or 0) >= m["legs_total"], m.get("legs_moved"), m["legs_total"]))
         if sc.asset.category == "winged":
             checks.append(quality.check("wings_found", bool(m.get("wings_found")), bool(m.get("wings_found")), True))
+        sp = springs_check(m.get("springs"))
+        if sp is not None:
+            checks.append(sp)
     if not sc.version.metrics.get("rigid") and sc.asset.category in HITBOX_CATEGORIES:
         hb_path = sc.file("hitboxes")
         doc = json.loads(Path(hb_path).read_text()) if hb_path is not None else None
