@@ -348,6 +348,26 @@ def test_autopilot_fix_and_continue(client):
 
 
 
+def test_autopilot_uses_first_build_settings(client):
+    """Settings chosen for a step's first build (stage_params) go into that step when Autopilot starts it."""
+    import time
+    p = client.post("/api/projects", json={"name": "apsp"}).json()
+    a = client.post(f"/api/projects/{p['id']}/assets", json={"name": "crate", "category": "prop_rigid", "style_preset": "painted", "prompt": "a crate"}).json()
+    assert client.post(f"/api/assets/{a['id']}/autopilot", json={"stage_params": {"nope": {}}}).status_code == 400
+    st = client.post(f"/api/assets/{a['id']}/autopilot", json={"stop_on": "never", "stage_params": {"mesh": {"target_faces": 4321}}}).json()
+    assert st["status"] == "running" and st["stage_params"] == {"mesh": {"target_faces": 4321}}
+    for _ in range(200):
+        st = client.get(f"/api/assets/{a['id']}/autopilot").json()
+        if st["status"] in ("done", "error", "paused"):
+            break
+        time.sleep(0.1)
+    assert st["status"] == "done", st
+    full = client.get(f"/api/assets/{a['id']}").json()
+    assert full["stages"]["mesh"][0]["params"].get("target_faces") == 4321
+    assert full["stages"]["prep"][0]["params"].get("target_faces") != 4321  # other steps keep their own settings
+
+
+
 def test_feedback_and_gallery(client):
     assert client.get("/api/gallery").json() == []
     p, a = _project_asset(client)

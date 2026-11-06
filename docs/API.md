@@ -100,6 +100,7 @@ Variants
 
 Autopilot (decision D11)
 - POST /api/assets/{aid}/autopilot body { "until_stage"?: "export", "stop_on"?: "block" | "warn" | "never" } -> state. Runs the stages in order from the first without a kept result; concept makes 2 candidates and the automated metrics pick; a stage that already has finished versions but none kept is judged, not re-run (so Fix and Continue work by re-posting). Pauses on a failed check it cannot accept, errors when a job fails.
+- POST /api/assets/{aid}/autopilot also takes `stage_params` `{stage: params}` (2026-11-06): the settings chosen for a step's first build, validated like adjust params (400 for an unknown stage). The run uses them whenever it starts that step afresh, never for a fix or a resume; they are kept in the state as `stage_params`.
 - GET /api/assets/{aid}/autopilot -> state; POST /api/assets/{aid}/autopilot/stop -> state.
 - State { status: idle|running|paused|done|error, stage, job_id, version_id, reason, stop_on, until_stage, started_at, updated_at, stages_done[] }; Asset carries `autopilot`; WS event {"type": "autopilot", "asset_id", "autopilot"}.
 

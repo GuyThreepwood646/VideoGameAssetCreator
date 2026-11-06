@@ -24,6 +24,10 @@ export function FineTune({
   disabled,
   onSubmit,
   focus,
+  onPending,
+  describedChange = '',
+  resetNonce = 0,
+  submitLabel,
 }: {
   stage: StageId
   schema: AdjustParam[]
@@ -35,6 +39,14 @@ export function FineTune({
   onSubmit: (params: Record<string, unknown>) => void
   // A Fix that opens a tool (2.5): fill these params in and bring this setting into view; nothing runs.
   focus?: ToolFocus | null
+  // The changed settings as they would be sent (null when nothing changed), so Make the change can take them too.
+  onPending?: (params: Record<string, unknown> | null, names: string[]) => void
+  // Text waiting in Describe the change: Apply and re-run sends it along.
+  describedChange?: string
+  // Bumped by the panel after it sent these settings with a described change: the form goes back to the version's own.
+  resetNonce?: number
+  // The first build of a step: its own button words, and it may run with nothing changed (the recipe's defaults).
+  submitLabel?: string
 }) {
   // Knobs that apply to some categories only are left out for the others (2.3); they are never sent.
   const visible = useMemo(() => schema.filter((p) => knobApplies(p, asset.category)), [schema, asset.category])
@@ -128,9 +140,8 @@ export function FineTune({
   const hasSize = stage === 'concept' && simple.some((p) => p.name === 'width') && simple.some((p) => p.name === 'height')
   const simpleShown = hasSize ? simple.filter((p) => p.name !== 'height') : simple
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    if (!changed.length) return
+  // The changed settings as they are sent.
+  const collect = (): Record<string, unknown> => {
     const params: Record<string, unknown> = {}
     for (const p of changed) params[p.name] = values[p.name]
     // Add-ons: only the rows shown for this painter.
@@ -138,8 +149,24 @@ export function FineTune({
       const ids = new Set(rows.map((r) => r.entry.id))
       params[addonsParam.name] = Object.fromEntries(Object.entries(addonChoices(params[addonsParam.name])).filter(([k]) => ids.has(k)))
     }
-    onSubmit(params)
+    return params
   }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!changed.length && !submitLabel) return
+    onSubmit(changed.length ? collect() : {})
+  }
+  const pendingKey = changed.length ? JSON.stringify(collect()) : ''
+  useEffect(() => {
+    onPending?.(pendingKey ? (JSON.parse(pendingKey) as Record<string, unknown>) : null, changed.map((p) => paramPlain(p.name, p.label)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingKey])
+  useEffect(() => {
+    if (resetNonce) setValues(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetNonce])
+  // "Both" only when there are settings to apply as well as the text.
+  const withText = changed.length > 0 && describedChange.trim().length > 0
 
   const cat = refData?.categories.find((c) => c.id === asset.category)
   const plat = refData?.platforms.find((p) => p.id === asset.platform_target)
@@ -182,13 +209,20 @@ export function FineTune({
     if (stage === 'mesh' && p.name === 'target_faces' && !adv) {
       const cur = values.target_faces
       const curN = typeof cur === 'number' ? cur : null
+      // Each label names the count it sends (after the knob's limits), and two levels that land on the same count
+      // show once: the label used to say 15,000 while the limits sent 50,000.
+      const lower = clamp(Math.round(budget / 2), p)
+      const standard = clamp(budget, p)
+      const higher = clamp(budget * 2, p)
+      const tris = (n: number) => `${n.toLocaleString('en-US')} triangles`
       const levels: { label: string; value: number | null }[] = [
         ...(p.default === null || p.default === undefined ? [{ label: `Automatic (${budget.toLocaleString('en-US')} for ${stagePlainPlatform(asset.platform_target)})`, value: null }] : []),
-        { label: `Lower detail (${Math.round(budget / 2).toLocaleString('en-US')} triangles, smaller file)`, value: clamp(Math.round(budget / 2), p) },
-        { label: `Standard (${budget.toLocaleString('en-US')} triangles, the platform budget)`, value: clamp(budget, p) },
-        { label: `Higher detail (${(budget * 2).toLocaleString('en-US')} triangles, over budget)`, value: clamp(budget * 2, p) },
-      ]
-      if (curN !== null && !levels.some((l) => l.value === curN)) levels.push({ label: `Current (${curN.toLocaleString('en-US')} triangles)`, value: curN })
+        { label: `Lower detail (${tris(lower)}, smaller file)`, value: lower },
+        { label: `Standard (${tris(standard)}${standard === budget ? ', the platform budget' : ''})`, value: standard },
+        { label: `Higher detail (${tris(higher)}${higher > budget ? ', over budget' : ''})`, value: higher },
+      ].filter((l, i, all) => all.findIndex((o) => o.value === l.value) === i)
+      // A first build has no current model yet: its starting count is the usual one.
+      if (curN !== null && !levels.some((l) => l.value === curN)) levels.push({ label: `${submitLabel ? 'Usual' : 'Current'} (${curN.toLocaleString('en-US')} triangles)`, value: curN })
       return (
         <Field key={p.name} label="Triangle count (detail level)" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
           <select value={cur === null || cur === undefined ? '' : String(cur)} disabled={disabled} onChange={(e) => set('target_faces', e.target.value === '' ? null : Number(e.target.value))}>
@@ -328,13 +362,13 @@ export function FineTune({
         </Disclosure>
       )}
       <div className="row-gap">
-        <button type="submit" disabled={disabled || !changed.length}>
-          Apply and re-run
+        <button type="submit" disabled={disabled || (!changed.length && !submitLabel)} title={submitLabel ? 'Builds this step with the settings shown' : withText ? 'Re-runs with these settings and the change you described' : 'Re-runs with these settings'}>
+          {submitLabel ?? (withText ? 'Apply both and re-run' : 'Apply and re-run')}
         </button>
         <button type="button" disabled={!changed.length} onClick={() => setValues(initial)}>
           Reset
         </button>
-        <span className="muted small">{changed.length ? `${changed.length} changed: ${changed.map((p) => paramPlain(p.name, p.label)).join(', ')}` : 'no changes yet'}</span>
+        <span className="muted small">{withText && changed.length ? 'Your described change goes with it. ' : ''}{changed.length ? `${changed.length} changed: ${changed.map((p) => paramPlain(p.name, p.label)).join(', ')}` : submitLabel ? 'the usual settings for your look and platform' : 'no changes yet'}</span>
       </div>
     </form>
   )

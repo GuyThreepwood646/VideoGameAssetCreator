@@ -25,7 +25,7 @@ import { firstStaleStage, isRemovable, isSetAside, isStopped, STAGES as STAGE_LI
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
-import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
@@ -59,6 +59,12 @@ type Props = {
   hideStaleFrom?: StageId | null
 }
 
+// The first build of a step has no version yet: the settings form starts from an empty one, so every setting shows
+// its default (the recipe's, or the category's) and only what the person changes is sent.
+function firstTarget(asset: Asset, stage: StageId): Version {
+  return { id: `first-${asset.id}-${stage}`, asset_id: asset.id, stage, parent_version_id: null, status: 'queued', params: {}, files: {}, metrics: {}, job_id: null, error: null, created_at: '', selected: false }
+}
+
 export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped, hideStaleFrom }: Props) {
   const navigate = useNavigate()
   const versions = versionsOf(asset, stage)
@@ -71,6 +77,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const [count, setCount] = useState(2)
   const [busy, setBusy] = useState(false)
   const [changeOpen, setChangeOpen] = useState(false)
+  // Settings chosen for the first build of this step (shown while it has no versions); the build buttons send them.
+  const [firstParams, setFirstParams] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
   const { ref } = useRefData()
   const stageInfo = ref?.stages.find((s) => s.id === stage) ?? null
   const schema = stageInfo?.adjust_schema ?? []
@@ -89,10 +97,14 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   }
 
   const runParams = (s: StageId): Record<string, unknown> | undefined => {
-    if (s !== 'concept') return undefined
-    const model = preferredConceptModel(asset.id)
-    return model ? { model } : undefined
+    const chosen = s === stage && versions.length === 0 ? firstParams?.params : undefined
+    const model = s === 'concept' ? preferredConceptModel(asset.id) : null
+    const out = { ...(model ? { model } : {}), ...(chosen ?? {}) }
+    return Object.keys(out).length ? out : undefined
   }
+  // The first build from its own settings panel: what the form shows, on top of the usual painter choice.
+  const runFirst = (params: Record<string, unknown>) =>
+    act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...(runParams(stage) ?? {}), ...params } }))
 
   const run = () => act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: runParams(stage) }))
   const runNext = (next: StageId) =>
@@ -220,6 +232,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onFix={fix}
         onOpenTool={openTool}
         onChanged={onChanged}
+        firstParams={versions.length === 0 ? (firstParams?.params ?? null) : null}
       />
 
       {(() => {
@@ -264,7 +277,27 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             </button>
           </div>
         )}
-        {versions.length === 0 && <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>}
+        {versions.length === 0 && (!canRun || schema.length === 0 ? (
+          <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>
+        ) : (
+          <div className="first-build">
+            <div className="muted small first-build-intro">
+              <strong>Settings for the first build.</strong> These start at the usual settings for your look and platform. Change any of them before you build. The buttons above use them too, both {stageVerb(stage, stageInfo)} and Make it{firstParams ? ` (changed: ${firstParams.names.join(', ')})` : ''}.
+            </div>
+            <FineTune
+              stage={stage}
+              schema={schema}
+              target={firstTarget(asset, stage)}
+              asset={asset}
+              refData={ref}
+              suggestion={suggestion}
+              disabled={busy || state === 'running'}
+              onSubmit={runFirst}
+              onPending={(params, names) => setFirstParams(params ? { params, names } : null)}
+              submitLabel={`${stageVerb(stage, stageInfo)} with these settings`}
+            />
+          </div>
+        ))}
         {active && (
           <div className="active-version">
             <div className="row-between">
@@ -347,7 +380,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 suggestion={suggestion}
                 disabled={busy}
                 focus={toolFocus}
-                onRefine={(instruction, view, reference) => act(() => api.refine(active.id, { instruction, view, ...(reference ? { reference_image: reference } : {}) }))}
+                onRefine={(instruction, view, reference, params) => act(() => api.refine(active.id, { instruction, view, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}) }))}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
             )}
@@ -662,12 +695,16 @@ function ChangePanel({
   suggestion: Suggestion | null
   disabled: boolean
   focus: ToolFocus | null
-  onRefine: (instruction: string, view?: string, reference?: string) => void
+  // A described change, with any changed Fine-tune settings sent in the same new version.
+  onRefine: (instruction: string, view?: string, reference?: string, params?: Record<string, unknown>) => void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
   const [text, setText] = useState('')
   const [view, setView] = useState('')
   const [reference, setReference] = useState<string | null>(null)
+  // Fine-tune settings changed but not sent yet: Make the change takes them along, and Apply and re-run takes the text.
+  const [pending, setPending] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
+  const [resetNonce, setResetNonce] = useState(0)
   // The experimental reference picture only goes to the first picture of a character, creature or prop.
   const takesReference = stage === 'concept' && asset.category !== 'material'
   const panelRef = useRef<HTMLDivElement>(null)
@@ -683,11 +720,20 @@ function ChangePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.nonce])
   const ok = text.trim().length > 0
+  // Apply and re-run: with text waiting in Describe the change, both go in one new version.
+  const adjustOrBoth = (params: Record<string, unknown>) => {
+    if (!ok) return onAdjust(params)
+    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, params)
+    setText('')
+    setReference(null)
+    setResetNonce((n) => n + 1)
+  }
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined)
+    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, pending?.params)
     setText('')
+    if (pending) setResetNonce((n) => n + 1)
     setReference(null)
   }
   const availableViews = TURNAROUND_VIEWS.filter((v) => v in target.files)
@@ -715,17 +761,18 @@ function ChangePanel({
               ))}
             </select>
           )}
-          <button type="submit" disabled={disabled || !ok}>
-            Make the change
+          <button type="submit" disabled={disabled || !ok} title={pending ? 'Makes one new version with the change you described and your Fine-tune settings' : 'Makes one new version with the change you described'}>
+            {pending && ok ? 'Make both changes' : 'Make the change'}
           </button>
         </div>
         <div className="muted small">
+          {pending && ok ? `Your Fine-tune changes go with it (${pending.names.join(', ')}). ` : ''}
           Enter sends it. The result is a new version; this one stays.
           {stage === 'mesh' && target.params?.engine !== 'hy3d' && ' The picture is edited as you describe first, then the 3D model is built from the edited picture.'}
         </div>
         {takesReference && <ReferencePicture value={reference} onChange={setReference} disabled={disabled} />}
       </form>
-      <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} focus={focus} />
+      <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={adjustOrBoth} focus={focus} describedChange={text} resetNonce={resetNonce} onPending={(params, names) => setPending(params ? { params, names } : null)} />
     </div>
   )
 }

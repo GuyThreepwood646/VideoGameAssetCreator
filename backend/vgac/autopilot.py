@@ -77,17 +77,21 @@ def _rank(v: Version) -> tuple[int, int, float, float]:
 
 
 def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: dict[str, Any] | None = None,
-          from_stage: str | None = None) -> dict[str, Any]:
+          from_stage: str | None = None, stage_params: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """fix = {"stage", "params"}: before continuing, run that stage once more (as an adjust of its kept version when
     there is one) with those params; later stages are unkept so they are rebuilt from the fixed result.
     from_stage: go back to that step. It is made again, built on what is kept in the step before it, and every step
-    after it is rebuilt; the results they had are set aside (still in the history)."""
+    after it is rebuilt; the results they had are set aside (still in the history).
+    stage_params = {stage: params}: the settings the person chose for a step's first build; used whenever this run
+    starts that step afresh (never for a fix or a resume)."""
     if from_stage is not None and from_stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage {from_stage!r}")
     if until_stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage {until_stage!r}")
     if stop_on not in ("block", "warn", "never"):
         raise ValueError("stop_on must be block, warn or never")
+    if stage_params and any(k not in STAGE_ORDER or not isinstance(v, dict) for k, v in stage_params.items()):
+        raise ValueError("stage_params must map stage ids to settings")
     if fix and fix.get("stage") not in STAGE_ORDER:
         raise ValueError("fix.stage must be a stage id")
     if fix and fix.get("op") not in (None, "refine"):
@@ -98,7 +102,8 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     if t is not None and not t.done():
         return _set(aid)
     state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_iso(utcnow()),
-                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False, note=None)
+                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False, note=None,
+                 stage_params=stage_params or None)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
 
@@ -320,7 +325,7 @@ async def _run(aid: str) -> None:
                 # Run the stage.
                 count = CONCEPT_CANDIDATES if target == "concept" else 1
                 try:
-                    pairs = pipeline.run_stage(db, a, target, count=count, params={})
+                    pairs = pipeline.run_stage(db, a, target, count=count, params=dict((state.get("stage_params") or {}).get(target) or {}))
                 except Exception as e:  # noqa: BLE001
                     _set(aid, status="error", stage=target, reason=f"Could not start the step: {e}", stages_done=stages_done)
                     return
