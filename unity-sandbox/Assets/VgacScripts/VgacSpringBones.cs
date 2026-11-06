@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Runtime Forge LLC. MIT licence, on purpose: the backend copies this file into your game project, so it must
+// not carry the app's GPL. You may use, copy, change and distribute it, in any project including commercial games, as long as this
+// notice stays in the file. It is provided "as is", without warranty of any kind.
 // VgacSpringBones Version 3
 // Spring bones for characters made by Video Game Asset Creator: parts that hang free (a ponytail, a braid, a cape, a
 // tail) sway when the character moves. Our own small script, no package needed. The VGAC importer (VgacImport.cs)

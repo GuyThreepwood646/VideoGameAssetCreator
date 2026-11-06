@@ -69,7 +69,7 @@ def test_summary_names_the_exceptions_and_disclaimer():
     text = " ".join(_walk_strings(s)).lower()
     for key in ("game_credit", "passing_on", "before_sharing"):
         assert all(isinstance(p, str) for p in s[key]["points"])
-    assert "unlicensed" in text and "gpl" in text
+    assert "gpl-3.0-or-later" in text
     assert "not legal advice" in text
     assert "hunyuan3d" in text and "anima" in text and "blender" in text and "comfyui" in text
 

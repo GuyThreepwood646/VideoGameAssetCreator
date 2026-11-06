@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Runtime Forge LLC. MIT licence, on purpose: the backend copies this file into your game project, so it must
+// not carry the app's GPL. You may use, copy, change and distribute it, in any project including commercial games, as long as this
+// notice stays in the file. It is provided "as is", without warranty of any kind.
 // VgacHairCutout Version 1
 // Cut-out hair shader for Video Game Asset Creator characters, built-in render pipeline (a surface shader).
 // For hair from the library (docs/HAIR-LIBRARY-PLAN.md): hair cards (flat strips with a see-through texture) and shells

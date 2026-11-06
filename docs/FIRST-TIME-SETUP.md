@@ -127,6 +127,30 @@ What a one-card PC has to get right, not built or tested in this round:
    10 GB card can run the 3D model is not recorded anywhere in the repository. Treat it as unknown.
 4. Run one job at a time; two ComfyUIs sharing one card is likely to fail and the helper flags it.
 
+## Licence rules for the later download step
+
+From the credits work (`backend/vgac/data/credits.yaml`, `CREDITS.md` are the source of truth). The app itself is
+GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
+
+1. Model files are never bundled. Each is downloaded from its original source and used under its own licence. Before
+   a download, show the licence line from `models.yaml`.
+2. Models the code really uses: Z-Image Turbo and Base, FLUX.2 Klein, Chroma1-HD, Anima, the Z-Image pixel LoRA,
+   Qwen-Image-Edit-2511 with its angles and Lightning LoRAs, BiRefNet, TRELLIS.2, SkinToken, Hunyuan3D-2mv (opt-in
+   3D engine) and Gemma 3 12B (the local picture judge; optional, and not yet in the helper's model check).
+3. Hunyuan3D-2mv: off by default, an explicit opt-in. The Tencent licence is not granted in the EU, UK or South Korea
+   (people there must not use it), and a request to Tencent is needed above 1 million monthly users of their products.
+   Require "I have read this and I am not in those regions" before download.
+4. Anima: the model is non-commercial; what it makes is usable commercially. Show that line and require an explicit
+   "I have read this" before download.
+5. Gemma 3: Google's Gemma Terms of Use and Prohibited Use Policy; Google claims no rights in what it makes. The
+   person must accept the terms themselves; the helper never accepts for them.
+6. Unity is not included: each person needs their own install. Unity's plans page says Personal is for hobbyists and
+   small teams and Pro is required above 200,000 dollars of annual revenue or funding. Say so plainly in setup.
+7. ComfyUI node packs beyond ComfyUI: `ComfyUI-SkinToken` (github.com/Rizzlord/ComfyUI-SkinToken; licence not
+   confirmed, it defers to the MIT SkinTokens project), `ComfyUI-PixelArt-Detector` (MIT) and `vgac-nodes` (ours,
+   GPL-3.0-or-later, source in `comfy-nodes/vgac-nodes/`). A later round of the helper should install these three;
+   this round does not.
+
 ## What is still needed before other people can install this
 
 Not built in this round. Ranked by how much each blocks a stranger; size is the rough effort (small, medium, large).
@@ -134,11 +158,11 @@ Not built in this round. Ranked by how much each blocks a stranger; size is the 
 
 | Rank | What | Size | Owner decision |
 |------|------|------|----------------|
-| 1 | How the app is handed over at all: a zip of the project, a Git repository, or an installer. Everything below depends on it (where files live, how updates arrive, what the licence notices say) | Small to decide, medium to build (large for a true installer) | Yes: which of the three, and whether the project is public |
+| 1 | How the app is handed over: DECIDED, a public Git repository. Still to do inside that: the licence notices a public repository needs (the credits work already under way feeds this) | Small | No |
 | 2 | Settings files written from what the helper finds, instead of this PC's paths: `backend/config.yaml`, `desktop/config.json` and the two `runtime/start-comfy-*.ps1` scripts (ComfyUI install folder, Windows user name, input and output folders, Blender path). The helper already finds Blender, Unity and the project folder; it needs to write proposed copies for the rest | Medium | No (rule already set: proposed copies, never overwrite) |
-| 3 | A tested one-card setup: run every step on one card, record the real memory each step needs, fix the stage plan and `instance_capabilities` defaults, and give one-card PCs their own start script | Large (needs real hardware: a 10 GB and ideally a smaller card) | Yes: the smallest card the app will claim to support |
-| 4 | Fetching ComfyUI's node packs and the models from their official sources, showing size and licence and asking yes or no for each item. Models are never bundled: each person downloads them under the model's own licence (some are not plain Apache-2.0: Anima is non-commercial, Hunyuan3D has its own community licence) | Large (many sources, big downloads, resume and checksum handling) | Yes: whether to automate at all, and which optional models are offered |
-| 5 | Blender portable fetched into the project's own `tools` folder, so no other Blender is touched and the path is known | Small | Yes: pin to 5.2.3 or allow any 5.x |
+| 3 | A tested one-card setup: run every step on one card, record the real graphics memory each model and step needs (a "needs about N GB" figure per model in `models.yaml`, measured, not guessed), fix the stage plan and `instance_capabilities` defaults, and give one-card PCs their own start script. The smallest card the app claims to support is then set by the hungriest required model, which is not necessarily the smallest file | Large (needs real hardware: a 10 GB and ideally a smaller card) | Decided: a plain disclaimer, not a full hardware spec. Wording: "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." Models get a "needs about N GB" figure once measured |
+| 4 | Fetching ComfyUI's node packs and the models from their official sources as a select list: size, licence and a yes or no per item, with a warning mark on any model that is likely too big for this PC's card (using the figures from item 3). Models are never bundled: each person downloads them under the model's own licence (some are not plain Apache-2.0: Anima is non-commercial, Hunyuan3D has its own community licence). Depends on item 3 for the warnings | Large (many sources, big downloads, resume and checksum handling) | Decided: a select list with GPU warnings. Open: which optional models are listed |
+| 5 | Blender portable fetched into the project's own `tools` folder, so no other Blender is touched and the path is known. Plan: fetch the version the app was built on (5.2.3) for new installs; accept an existing Blender 5.x with a notice if it is not 5.2.3; refuse below 5.0 (the app's own check already requires 5.0 or newer). Whether 5.0 and 5.1 really work is untested | Small | Decided in outline; test 5.0 and 5.1 to know how strong the notice must be |
 | 6 | A one-click path for the animation packs (CC0 downloads into `data/animations`) and a check that the Unity sandbox project is complete | Small | No |
 | 7 | Installing Python, Node and Git for people who lack them (offering `winget` commands, asking first) | Small | No |
 
