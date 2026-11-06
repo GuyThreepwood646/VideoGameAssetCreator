@@ -158,6 +158,96 @@ def test_find_nose_prefers_a_small_bump_over_a_broad_fringe():
     assert abs(world_y[nose[1], nose[0]] - nose_y) < 0.01 and abs(world_x[nose[1], nose[0]]) < 0.01
 
 
+SKIN, HAIR = (0.8, 0.55, 0.45), (0.15, 0.1, 0.08)
+HEAD_TOP, NOSE_Y = 1.72, 1.635  # nose tip 0.085 m under the top, as on the bake-off knights
+
+
+def synthetic_head(haired: bool, n: int = 96) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """A front half-ellipsoid head (0.15 m wide, 0.2 m tall, 0.07 m deep) with a nose bump and an ear on each side,
+    set back behind the head's edge as on a real head. Bald: all skin. Haired: hair over the top (from 0.35 of the
+    height from the nose tip to the top), down the sides of the face and over the ears. Every triangle has its own
+    corners, so it takes one colour: the left half of the texture is skin, the right half hair."""
+    a, b, c, cy = 0.075, 0.1, 0.07, 1.62
+    xs = np.linspace(-a, a, n)
+    ys = np.linspace(cy - b, cy + b, n)
+    X, Y = np.meshgrid(xs, ys)
+    r2 = (X / a) ** 2 + ((Y - cy) / b) ** 2
+    Z = c * np.sqrt(np.clip(1 - r2, 0, None)) + 0.02 * np.exp(-(X ** 2 + (Y - NOSE_Y) ** 2) / (2 * 0.008 ** 2))
+    grid = np.stack([X, Y, Z], axis=-1)
+    tris = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            q = [grid[i, j], grid[i, j + 1], grid[i + 1, j + 1], grid[i + 1, j]]
+            if all(r2[k] < 1 for k in ((i, j), (i, j + 1), (i + 1, j + 1), (i + 1, j))):
+                tris += [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]
+    tris = np.array(tris)
+    centre = tris.mean(axis=1)
+    L = HEAD_TOP - NOSE_Y
+    hair = (centre[:, 1] > NOSE_Y + 0.35 * L) | (np.abs(centre[:, 0]) > 0.045) if haired else np.zeros(len(tris), bool)
+    ears = []
+    for side in (-1, 1):  # discs facing the camera, at the depth of the head's edge
+        t = np.linspace(0, 2 * np.pi, 25)[:-1]
+        cx, cyy, r = side * 0.08, 1.625, 0.018
+        for k in range(len(t)):
+            k2 = (k + 1) % len(t)
+            ears.append([[cx, cyy, 0.0], [cx + r * np.cos(t[k]), cyy + r * np.sin(t[k]), 0.0],
+                         [cx + r * np.cos(t[k2]), cyy + r * np.sin(t[k2]), 0.0]])
+    tris = np.concatenate([tris, np.array(ears)])
+    hair = np.concatenate([hair, np.full(len(ears), haired)])
+    verts = tris.reshape(-1, 3)
+    faces = np.arange(len(verts)).reshape(-1, 3)
+    uv = np.where(np.repeat(hair, 3)[:, None], [0.75, 0.5], [0.25, 0.5])
+    tex = np.zeros((16, 16, 3))
+    tex[:, :8], tex[:, 8:] = SKIN, HAIR
+    return {"verts": verts, "faces": faces, "uv": uv, "vnormals": face.smooth_normals(verts, faces)}, tex
+
+
+def find_synthetic_face(haired: bool, S: int = 256) -> tuple[dict, face.Camera]:
+    mesh, tex = synthetic_head(haired)
+    head = face.Head(centre=np.array([0.0, 1.62, 0.0]), width=0.2, top=HEAD_TOP, height=1.2)
+    c = face.head_camera(head, 0, S)
+    return face.find_face(face.render_view(mesh, tex, c), mesh, c, head), c
+
+
+def test_find_face_on_a_bald_head_stops_at_the_forehead_and_before_the_ears(monkeypatch):
+    info, c = find_synthetic_face(haired=False)
+    assert info["found"]
+    px = c.size / c.scale  # pixels per metre
+    # the face is narrower than the head's 0.15 m (the ears reach 0.196 m) ...
+    assert info["width_px"] < 0.135 * px
+    ear_x = int(round(c.size / 2 + 0.09 * px))
+    ear_y = int(round(c.size / 2 - (1.625 - c.target[1]) * px))
+    assert not info["region"][ear_y, ear_x] and not info["region"][ear_y, c.size - 1 - ear_x]
+    # ... and stops above the brows, well under the top of the head
+    top_y = c.size / 2 - (NOSE_Y + face.FACE_TOP * (HEAD_TOP - NOSE_Y) - c.target[1]) * px
+    assert info["box"][1] >= top_y - 2
+    # without the bounds the skin-coloured scalp and ears all joined the face (the bug)
+    monkeypatch.setattr(face, "FACE_TOP", 99.0)
+    monkeypatch.setattr(face, "FACE_DEPTH", 99.0)
+    unbounded, _ = find_synthetic_face(haired=False)
+    assert unbounded["width_px"] > 0.155 * px and unbounded["region"][ear_y, ear_x]
+    assert unbounded["box"][1] < top_y - 10
+
+
+def test_find_face_on_a_haired_head_is_what_the_hair_bounds_it_to(monkeypatch):
+    info, c = find_synthetic_face(haired=True)
+    assert info["found"]
+    monkeypatch.setattr(face, "FACE_TOP", 99.0)
+    monkeypatch.setattr(face, "FACE_DEPTH", 99.0)
+    unbounded, _ = find_synthetic_face(haired=True)
+    assert info["box"] == unbounded["box"] and (info["region"] == unbounded["region"]).all()
+
+
+def test_face_bounds_keep_the_jaw_and_neck_and_cut_only_deep_or_high_points():
+    head = face.Head(centre=np.zeros(3), width=0.2, top=1.0, height=1.7)  # L = 0.1 from a nose tip at y 0.9
+    z = np.array([[0.0, 0.05, 0.07, 0.07, 0.0]])  # depth behind the camera's plane; the nose tip is nearest
+    y = np.array([[0.9, 0.9, 0.9, 0.85, 0.97]])
+    pos = np.stack([np.zeros_like(y), y, -z], axis=-1)
+    ok = face.face_bounds(z, pos, head, (0, 0))
+    # the nose; a cheek 0.5 L back; an ear 0.7 L back (out); the neck 0.7 L back under the jaw (in); the scalp (out)
+    assert ok.tolist() == [[True, True, False, True, False]]
+
+
 def test_gain_needed():
     assert face.gain_needed(133, 256) == pytest.approx(256 / 133)
     assert face.gain_needed(300, 256) == 1.0
