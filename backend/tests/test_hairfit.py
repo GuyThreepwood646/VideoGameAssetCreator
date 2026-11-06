@@ -221,3 +221,29 @@ def test_rank_never_raises(tmp_path):
 
 def test_fit_words():
     assert hairfit.fit_words(0.8) == "close to the picture" and hairfit.fit_words(0.5) == "not like the picture"
+
+
+def test_tied_families_are_scored_on_the_head_only(tmp_path):
+    """Ponytail, bun and braid candidates are scored on the outline above the neck (the tail hangs behind the head in
+    a front picture); other families on the whole outline."""
+    hairstyles.use_dir(FIX / "lib")
+    try:
+        pj = tmp_path / "p.json"
+        pj.write_text(json.dumps(dict(colour=dict(dark=[1, 1, 1], median=[2, 2, 2], light=[3, 3, 3]))), encoding="utf-8")
+        for fam, head in (("ponytail", True), ("short", False)):
+            out = asyncio.run(hairfit.rank(_BrokenSC(), tmp_path / "x.glb", pj, tmp_path / "c.png", tmp_path / "o.png", fam, 0, tmp_path / fam))
+            job = json.loads((tmp_path / fam / "rank_job.json").read_text(encoding="utf-8"))
+            assert job["head_only"] is head
+            assert (out.get("score_region") == "head") is head
+    finally:
+        hairstyles.use_dir(None)
+
+
+def test_recolour_matches_a_dark_reddish_brown_without_a_render_push():
+    """The live ponytail's picture tones: the texture's average must land on the picture's median (the old render
+    correction pushed it to a strong red)."""
+    colour = dict(median=[66.0, 27.0, 18.0], dark=[43.0, 6.0, 3.0], light=[107.0, 66.0, 46.0])
+    for tex in (FIX / "lib" / "tex").glob("*_grey.png"):
+        a = np.asarray(Image.open(tex).convert("LA")).astype(float) / 255
+        rgb = hf.recolour(a[..., 0], a[..., 1], colour)
+        assert hf.colour_delta(rgb, a[..., 1] * 255, colour) < 3

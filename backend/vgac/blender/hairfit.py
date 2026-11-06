@@ -348,7 +348,7 @@ def recolour(grey, alpha, colour, mask=None, gain=None):
     m = (np.asarray(alpha) > 0.5) if alpha is not None else np.ones(col.shape[:2], bool)
     if m.any():
         mean = col[m].mean(0)
-        f = np.clip(med / np.maximum(mean, 1e-5), 0.6, 1.8)
+        f = np.clip(med / np.maximum(mean, 1e-5), 0.3, 3.0)
         col = col * f
     if gain is not None:
         col = col * np.asarray(gain, float)
@@ -459,7 +459,10 @@ def cap_grid(front, ear, cols=24, rows=6):
     return out
 
 
-def scalp_cap(S, bvh_body, bvh_hair, front=30.0, offset=CAP_OFFSET, extra_rows=0):
+SIDES_FULL = True      # module switch for the before/after survey (tools); the app always uses True
+
+
+def scalp_cap(S, bvh_body, bvh_hair, front=30.0, offset=CAP_OFFSET, extra_rows=0, sides_full=None):
     """Cap under the hair (see the module text). `extra_rows` > 0 lowers the cap edge for more cover."""
     G = cap_grid(front - 4 * extra_rows, S["ear_phi"] - 4 * extra_rows)
     rows, cols = G.shape[:2]
@@ -490,10 +493,17 @@ def scalp_cap(S, bvh_body, bvh_hair, front=30.0, offset=CAP_OFFSET, extra_rows=0
     # gaps in the hair (a thin shell's holes, card gaps) are covered too: a cell is kept when the hair is met at it
     # or further down its column, so the cap reaches from the crown down to the lowest row the hair covers there
     lowest = np.full(cols, -1)
+    th_cols = np.linspace(-180, 180, cols, endpoint=False)
+    full = SIDES_FULL if sides_full is None else sides_full
     for k in range(cols):
         rr = np.nonzero(hit[:, k])[0]
         if len(rr):
             lowest[k] = rr.max()
+            # at the sides and the back (not over the forehead) the cap goes all the way down to the hairline wherever
+            # the column has hair: a pulled-back style leaves the scalp above and behind the ears uncovered, and a
+            # hair-coloured cap there reads as short hair, not skin (the live ponytail: 8 percent of the sides bare)
+            if full and abs(th_cols[k]) >= 60:
+                lowest[k] = rows - 1
     keep = [f for f, (r, k) in zip(F, RC) if r <= lowest[k]]
     UV = np.array([(0.5, 0.5)] + [(0.5 + 0.5 * (r / (rows - 1)) * math.cos(2 * math.pi * k / cols),
                                     0.5 + 0.5 * (r / (rows - 1)) * math.sin(2 * math.pi * k / cols))
@@ -510,6 +520,10 @@ def skin_through(BV, BN, S, bvh_hair, front):
     ph = np.degrees(np.arcsin(np.clip(u[:, 2], -1, 1)))
     th = np.degrees(np.arctan2(u[:, 0], -u[:, 1]))
     scalp = (r < 1.25) & (ph > hairline(th, front, S["ear_phi"]) + 3)
+    # the ears are skin, not scalp: their rim stands out through a pulled-back style above the hairline the generic
+    # rule assumes (the live ponytail's 8 percent "sides" were all ear rim)
+    ear = (np.abs(th) >= 70) & (np.abs(th) <= 130) & (ph < S["ear_phi"] + 6)
+    scalp &= ~ear
     out = {}
     for name, sel in (("crown", scalp & (ph > 40)), ("sides", scalp & (ph <= 40))):
         idx = np.nonzero(sel)[0][::2]
@@ -600,6 +614,10 @@ def _picture(job, body):
         y1 = min(H, max(ys.max(), int(T["neck_px"] + 0.3 * (T["neck_px"] - T["top_px"]))) + 40)
     else:
         x0, y0, x1, y1 = 0, 0, W, H
+    if job.get("head_only"):
+        # tied styles (ponytail, bun, braid): only the outline on the head counts; the tail or braid below the jaw is
+        # mostly behind the head in a front picture, or falls where the picture's pose put it (over a shoulder)
+        y1 = min(y1, int(T["neck_px"]))
     EV = np.zeros((H, W), bool); EV[y0:y1, x0:x1] = True
     return dict(PM=PM, hair=hair, EV=EV, box=[int(x0), int(y0), int(x1), int(y1)], head_depth=head_depth, W=W, H=H,
                 align=dict(start_iou=round(start, 4), iou=round(best[0], 4), **{k: round(v, 4) for k, v in best[1].items()}))
@@ -927,37 +945,19 @@ def attach_mode(job):
             p = os.path.join(out, f"fit_{view}.png")
             _render(p, body, parts_r, size=384, yaw=yaw)
             files[view] = p
-        # the colour the hair reads as: median of the hair's own pixels in a front and three-quarter render; when it is
-        # off by more than 6 Lab the texture is corrected once by the ratio (linear, per channel) and measured again
-        def reads():
-            px = []
-            for yaw in (0, 35):
-                p = os.path.join(out, f"_hair_only_{yaw}.png")
-                _render(p, body, parts_r, size=256, yaw=yaw, hair_only=True)
-                a, _ = _read_png(p)
-                os.remove(p)
-                px.append(a[a[..., 3] > 0.9][:, :3])
-            px = np.vstack(px)
-            return np.median(px, 0) * 255 if len(px) else None
-        want = np.asarray(job["colour"]["median"], float)
-        got = reads()
-        if got is not None:
-            render_delta = float(np.linalg.norm(to_lab(got) - to_lab(want)))
-            gain = np.ones(3)
-            for _ in range(2):
-                if render_delta <= 6:
-                    break
-                gain = np.clip(gain * srgb_to_lin(want) / np.maximum(srgb_to_lin(got), 1e-4), 0.3, 2.0)
-                delta, has_cut = recolour_png(s["grey"], job["colour"], os.path.join(out, "hair_base_color.png"), size=job.get("tex"), gain=gain)
-                mat = hair_material("h2", os.path.join(out, "hair_base_color.png"), s.get("normal"), s.get("alpha") == "cutout", s.get("two_sided", False))
-                parts_r = [("hair", parts_r[0][1], parts_r[0][2], parts_r[0][3], mat)]
-                got2 = reads()
-                if got2 is not None:
-                    got = got2
-                    render_delta = float(np.linalg.norm(to_lab(got2) - to_lab(want)))
-            if gain is not None and not np.allclose(gain, 1):
-                for view, yaw in (("front", 0), ("quarter", 35), ("side", 90), ("back", 180)):
-                    _render(os.path.join(out, f"fit_{view}.png"), body, parts_r, size=384, yaw=yaw)
+        # what the preview render reads as (median of the hair's own pixels, front and three-quarter), recorded only:
+        # the preview's white lights and grey world add grey to dark hair, so correcting the texture against it pushed
+        # dark browns towards red (the live ponytail). The texture is matched to the picture instead (colour_delta).
+        px = []
+        for yaw in (0, 35):
+            p = os.path.join(out, f"_hair_only_{yaw}.png")
+            _render(p, body, parts_r, size=256, yaw=yaw, hair_only=True)
+            a, _ = _read_png(p)
+            os.remove(p)
+            px.append(a[a[..., 3] > 0.9][:, :3])
+        px = np.vstack(px)
+        if len(px):
+            render_delta = float(np.linalg.norm(to_lab(np.median(px, 0) * 255) - to_lab(np.asarray(job["colour"]["median"], float))))
     except Exception as e:
         print("RENDER_ERROR", e, flush=True)
     if job.get("export", True):
@@ -966,8 +966,8 @@ def attach_mode(job):
         except Exception as e:
             print("EXPORT_ERROR", e, flush=True)
     rep = dict(style=s["id"], params=params, score=score, eye_cover=eye_cover, triangles=int(len(tris)), cap_triangles=int(len(b["cF"])),
-               hair_triangles=int(len(b["tris"])), pushed_out=b["pushed_out"], skin_through=skin, colour_delta=None if render_delta is None else round(render_delta, 2),
-               texture_delta=None if delta is None else round(delta, 2),
+               hair_triangles=int(len(b["tris"])), pushed_out=b["pushed_out"], skin_through=skin, colour_delta=None if delta is None else round(delta, 2),
+               render_delta=None if render_delta is None else round(render_delta, 2),
                extra_height_m=parts["extra_height_m"], skull=body["S"], renders=files, seconds=round(time.time() - t0, 1),
                scale=body["s"], groups=len(groups))
     json.dump(rep, open(os.path.join(out, "attach.json"), "w"), indent=1)
