@@ -130,6 +130,10 @@ function setShading(root: THREE.Object3D, shading: Shading, originals: Map<THREE
 }
 
 function frameModel(h: SceneHandles, model: THREE.Object3D) {
+  // Measure with the frame back at the origin: the box is in world space, so a leftover offset from the last model
+  // (or the last Reset view) would be measured in and cancel the lift, sinking the model to its waist.
+  h.frame.position.set(0, 0, 0)
+  h.frame.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(model)
   if (box.isEmpty()) return
   const size = box.getSize(new THREE.Vector3())

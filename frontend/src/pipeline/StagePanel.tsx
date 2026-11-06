@@ -719,7 +719,10 @@ function ChangePanel({
             Make the change
           </button>
         </div>
-        <div className="muted small">Enter sends it. The result is a new version; this one stays.</div>
+        <div className="muted small">
+          Enter sends it. The result is a new version; this one stays.
+          {stage === 'mesh' && target.params?.engine !== 'hy3d' && ' The picture is edited as you describe first, then the 3D model is built from the edited picture.'}
+        </div>
         {takesReference && <ReferencePicture value={reference} onChange={setReference} disabled={disabled} />}
       </form>
       <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={onAdjust} focus={focus} />

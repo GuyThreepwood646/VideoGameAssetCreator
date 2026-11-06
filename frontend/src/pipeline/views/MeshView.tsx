@@ -48,6 +48,8 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
   // Where the chosen look changed the result (fewer triangles, small or crisp textures, flat faces, no bumps).
   const look = versionLook(version)
+  // A change described at this step edits the picture first; the model is built from the edited picture.
+  const editedPicture = version.stage === 'mesh' && version.params?.picture_edit ? libraryUrl(version.files.edited_picture ?? version.files.edited_cutout) : null
   return (
     <div className="mesh-view">
       {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
@@ -87,6 +89,20 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}
           </div>
         </div>
+        {editedPicture && (
+          <div>
+            <div className="field-label">
+              Built from the edited picture
+              <Info term="term.instruction" />
+            </div>
+            <a href={editedPicture} target="_blank" rel="noreferrer" className="tiling-thumb" title="The picture as edited for this version">
+              <img src={editedPicture} alt="The picture edited as described, which this model was built from" />
+            </a>
+            <div className="small muted">
+              {typeof version.params?.instruction === 'string' && version.params.instruction ? `"${version.params.instruction}" was drawn into the picture first, then the model was built from it.` : 'The picture was edited first, then the model was built from it.'}
+            </div>
+          </div>
+        )}
         {look && (
           <div>
             <div className="field-label">

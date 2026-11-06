@@ -41,7 +41,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     plain: 'Build the 3D model',
     verb: 'Build the 3D model',
     gerund: 'Building the 3D model',
-    placeholder: 'e.g. thicker sword, less bulky shoulders',
+    placeholder: 'e.g. hands apart from the backpack arms, thicker sword',
     help: H('Build the 3D model', 'Turns the pictures into a 3D shape with painted surfaces.', 'This is the raw model; the next step tidies it for the game.', 'mesh'),
   },
   prep: {
