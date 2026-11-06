@@ -263,8 +263,8 @@ def parts_record(text: str | None, style: dict[str, Any] | None, category: dict[
 # --- the face sentence ----------------------------------------------------------------------------------------------
 # The Cel painter (Anima Turbo) sometimes leaves a character's face empty, or draws the figure from behind, when
 # nothing in the prompt asks for a face (docs/KNOWN-FAULTS-RESEARCH.md section 2; runtime/tmp/celface). A look that
-# has the fault names a sentence asking for the face (`face: {sentence, categories}` in data/styles.yaml), added after
-# the style block. The description wins: no sentence when it says the face is hidden, absent or turned away.
+# has the fault names a sentence asking for the face (`face: {sentence, categories}` in data/styles.yaml), added at
+# the end of the prompt. The description wins: no sentence when it says the face is hidden, absent or turned away.
 
 # Phrases that say the face is hidden or there is none to draw (whole words, no negation looked for).
 FACE_HIDDEN_WORDS = [
@@ -330,6 +330,85 @@ def face_sentence(text: str | None, style: dict[str, Any] | None, category: dict
     if face_hidden(text):
         return ""
     return sentence
+
+
+# --- the check: the face is drawn -----------------------------------------------------------------------------------
+# Colour measures could not tell an empty pale face from pale hair (runtime/tmp/celface/proto.py), so the check asks
+# the local vision model the app already uses (graphs.judge, Gemma 3) about a close-up of the head. It runs for the
+# looks whose `face` block says `check: true`, on the categories named, unless the description hides the face.
+
+FACE_CHECK_PROMPT = (
+    "This is a close-up of the head of a character from a concept picture. Look only at the face area. "
+    "Answer three questions about what is actually drawn, not what you would expect: "
+    "(1) eyes: are eyes drawn on the face (open or closed)? "
+    "(2) mouth: is a mouth drawn? "
+    "(3) back: do we see the back of the head, with hair where the face would be? "
+    'Answer only with JSON: {"eyes": true or false, "mouth": true or false, "back": true or false}')
+FACE_FIX_INSTRUCTION = ("Draw the face: the character faces the viewer, with both eyes open and clearly drawn, eyebrows, "
+                        "a nose and a mouth. Keep everything else exactly the same: the same person, hair colour and "
+                        "length, clothes, colours, pose, framing and the plain light grey background.")
+
+
+def face_check_applies(description: str | None, category: dict[str, Any] | None, style: dict[str, Any] | None) -> bool:
+    fb = (style or {}).get("face") or {}
+    return bool(fb.get("check")) and (category or {}).get("id") in (fb.get("categories") or []) and not face_hidden(description)
+
+
+def head_crop(cutout: Any, size: int = 448) -> Any:
+    """A close-up of the head from a standing figure's cut-out (path or PIL image) on a light grey ground: the top of
+    the figure, 0.27 of its height across and 0.27 down, centred on the head. None when there is no figure."""
+    from PIL import Image
+
+    im = (cutout if isinstance(cutout, Image.Image) else Image.open(cutout)).convert("RGBA")
+    a = np.asarray(im)[..., 3] > 127
+    ys, _ = np.nonzero(a)
+    if len(ys) < 50:
+        return None
+    top, bot = int(ys.min()), int(ys.max())
+    h = bot - top
+    row = a[min(im.height - 1, top + int(0.06 * h))]
+    if not row.any():
+        return None
+    xc = int(np.mean(np.nonzero(row)[0]))
+    hs = int(0.18 * h)
+    if hs < 8:
+        return None
+    ground = Image.new("RGBA", im.size, (200, 200, 200, 255))
+    ground.alpha_composite(im)
+    box = (xc - hs * 3 // 4, top - 5, xc + hs * 3 // 4, top - 5 + int(1.5 * hs))
+    return ground.convert("RGB").crop(box).resize((size, size), Image.LANCZOS)
+
+
+def parse_face_answer(text: str | None) -> dict[str, bool] | None:
+    """{eyes, mouth, back} from the vision model's reply (JSON, fenced or bare), or None when it cannot be read."""
+    import json
+
+    t = text or ""
+    start, end = t.find("{"), t.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(t[start:end + 1])
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("eyes"), bool):
+        return None
+    return {"eyes": data["eyes"], "mouth": bool(data.get("mouth")), "back": bool(data.get("back"))}
+
+
+def face_check(answer: dict[str, bool] | None, seconds: float | None = None) -> dict[str, Any] | None:
+    """The readiness check `face_drawn` from the vision model's answer, or None when there is no answer. It fails when
+    no eyes are drawn or the figure is drawn from behind."""
+    from . import quality
+
+    if answer is None:
+        return None
+    back = bool(answer.get("back"))
+    ok = bool(answer.get("eyes")) and not back
+    problem = "" if ok else ("is drawn from behind" if back else "has no eyes drawn")
+    return quality.check("face_drawn", ok, 1 if ok else 0, 1,
+                         vars={"redraw": FACE_FIX_INSTRUCTION, "problem": problem, "answer": dict(answer),
+                               "seconds": seconds})
 
 
 # --- notes for the person -------------------------------------------------------------------------------------------

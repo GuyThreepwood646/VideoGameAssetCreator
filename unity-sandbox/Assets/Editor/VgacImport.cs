@@ -55,6 +55,17 @@
 // them. The shape-based Humanoid mapping never treats a spring bone as a body bone. The report gives springChains,
 // springBones and springWarning. Snapshot also renders walk and run from the side with the script stepping frame by
 // frame, and the same frames with it off (springs_*.png), and lists how far each chain tip trails (in loopProbes).
+// Version 16: moves face forward. The shared library (clips.fbx) imports with Bake Axis Conversion on, as its author's
+// setup sheet asks: without it the library's rig carries a half turn, and every looping move whose root rotation is
+// baked into the pose "based upon original" played facing backwards (measured 125 to 180 degrees; one-off moves, whose
+// root turn is thrown away, faced forward). After the loops are set, every Humanoid move is played on a copy of the
+// model and the body's heading measured (the hips and shoulders, averaged over the move); a baked loop more than 10
+// degrees off is tried "based upon body orientation" instead and keeps whichever faces closer to forward. The report
+// gives clipFacing (per move: degrees, how it is based, whether the controller uses it) and bindFacing (the model's own
+// stance unanimated). A project imported by an older importer is brought up to date once: RefreshClipFacing re-imports
+// every Assets/VGAC/*/clips.fbx that lacks the mark (userData "vgac-facing-16-2") the same way, at the next batch import,
+// hand-off sweep or Editor load (Tools/VGAC/Fix move facing). Snapshot evaluates with culling off, so the first frame
+// shows the real pose rather than the bind pose.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -71,7 +82,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "15";
+    public const string Version = "16";
     public const string HairShaderName = "VGAC/Hair";
 
     [Serializable]
@@ -81,6 +92,20 @@ public static class VgacImport
         public bool loop;          // Loop Time as imported (read back from the clip)
         public bool defaultLoop;   // Loop Time Unity chose by itself before this script set it
         public bool bakedInPlace;  // root rotation, height and XZ baked into the pose
+    }
+
+    // Version 16: which way the body faces while a move plays, against the prefab's forward.
+    [Serializable]
+    class ClipFacing
+    {
+        public string name = "";
+        public string source = "";     // shared (the clip library) | own (the model's FBX)
+        public bool inController;      // the prefab's controller plays it
+        public bool measured;          // false when the body lay sideways in too many samples to tell
+        public float degrees;          // circular mean of the heading over the move, signed about +Y (+ is to the right)
+        public float swing;            // widest swing either side of that mean
+        public string basedOn = "";    // original | body for a baked loop; "" when the root rotation is not baked
+        public float lean;             // degrees the hips-to-head line leans from upright, averaged (a broken retarget bends it)
     }
 
     [Serializable]
@@ -158,6 +183,9 @@ public static class VgacImport
         public int springChains;               // Version 15: chains set up on the prefab's VgacSpringBones
         public int springBones;
         public string springWarning = "";
+        public List<ClipFacing> clipFacing = new List<ClipFacing>();  // Version 16: per Humanoid move
+        public bool facingMeasured;            // false for Generic rigs and when the measuring copy could not be made
+        public float bindFacing;               // degrees: the model's own stance, unanimated
     }
 
     // attachments.json (backend/vgac/items.py equip): per item, its socket and offset in the socket's glTF frame.
@@ -309,6 +337,7 @@ public static class VgacImport
     public static void Run()
     {
         var a = ImportArgs.Parse(Environment.GetCommandLineArgs(), null);
+        RefreshClipFacing(a.name);  // Version 16: characters an older importer brought in, once
         var report = Import(a);
         if (!report.ok) EditorApplication.Exit(1);
     }
@@ -552,17 +581,20 @@ public static class VgacImport
                 ci.importAnimation = true;
                 ci.materialImportMode = ModelImporterMaterialImportMode.None;
                 ci.clipAnimations = new ModelImporterClipAnimation[0];
+                // Version 16: the library's author asks for Bake Axis Conversion; without it its rig's half turn is
+                // baked into every looping move and the character plays them facing backwards.
+                ci.bakeAxisConversion = true;
+                ci.userData = FacingMark;
+                ClearHumanDescription(ci);
                 ci.SaveAndReimport();
                 SetClipLoops(ci, report, null);
-                clipSet = LoadClips(clipsPath);
                 // Moves the person added are only in the model's own FBX: add those to the shared set.
                 var side = ReadClipInfo(a.clipInfo, report);
                 addedClips = AddedClips(side);
-                if (addedClips.Count > 0)
-                {
-                    SetClipLoops(importer, report, side, addedClips);
-                    clipSet.AddRange(LoadClips(fbxPath).Where(c => addedClips.Contains(ShortName(c.name))));
-                }
+                if (addedClips.Count > 0) SetClipLoops(importer, report, side, addedClips);
+                FaceForward(fbxPath, new[] { ci, importer }, report);
+                clipSet = LoadClips(clipsPath);
+                if (addedClips.Count > 0) clipSet.AddRange(LoadClips(fbxPath).Where(c => addedClips.Contains(ShortName(c.name))));
             }
             else
             {
@@ -570,7 +602,14 @@ public static class VgacImport
                 var side = ReadClipInfo(a.clipInfo, report);
                 SetClipLoops(importer, report, side);
                 addedClips = AddedClips(side);
+                if (avatar != null && avatar.isHuman && avatar.isValid) FaceForward(fbxPath, new[] { importer }, report);
                 clipSet = LoadClips(fbxPath);
+            }
+            // Which measured moves the controller plays (by asset and name).
+            foreach (var f in report.clipFacing)
+            {
+                var path = f.source == "shared" ? assetDir + "/clips.fbx" : fbxPath;
+                f.inController = clipSet.Any(c => c.name == f.name && AssetDatabase.GetAssetPath(c) == path);
             }
             // Read Loop Time back from the imported clips: that is what the game gets.
             foreach (var info in report.clips)
@@ -730,6 +769,7 @@ public static class VgacImport
     public static void ImportPending()
     {
         var pending = PendingRequests();
+        RefreshClipFacing();
         int n = Sweep();
         bool failed = false;
         foreach (var p in pending)
@@ -1702,7 +1742,8 @@ public static class VgacImport
                 d.loopPose = true;
                 if (inPlace)
                 {
-                    // In-place cycle: bake root rotation, height and XZ into the pose, based on the original root.
+                    // In-place cycle: bake root rotation, height and XZ into the pose, based on the original root
+                    // (FaceForward may switch the rotation to the body's orientation after measuring it).
                     d.lockRootRotation = true; d.keepOriginalOrientation = true;
                     d.lockRootHeightY = true; d.keepOriginalPositionY = true;
                     d.lockRootPositionXZ = true; d.keepOriginalPositionXZ = true;
@@ -1714,6 +1755,239 @@ public static class VgacImport
         }
         mi.clipAnimations = defs;
         mi.SaveAndReimport();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Facing (Version 16)
+
+    public const string FacingMark = "vgac-facing-16-2";
+    const float FacingRetryDeg = 10f;   // a baked loop further off than this is tried based upon the body's orientation
+    const int FacingSamples = 24;
+
+    // The body's heading in one pose: forward is (hip line + shoulder line) x up, in degrees about +Y from the root's
+    // forward (+ to the right). False when the body lies on its side (the lines point mostly up or down).
+    static bool BodyHeading(Animator an, out float deg)
+    {
+        deg = 0f;
+        var lu = an.GetBoneTransform(HumanBodyBones.LeftUpperLeg); var ru = an.GetBoneTransform(HumanBodyBones.RightUpperLeg);
+        var la = an.GetBoneTransform(HumanBodyBones.LeftUpperArm); var ra = an.GetBoneTransform(HumanBodyBones.RightUpperArm);
+        if (lu == null || ru == null || la == null || ra == null) return false;
+        var right = (ru.position - lu.position) + (ra.position - la.position);
+        float full = right.magnitude;
+        right.y = 0f;
+        if (full < 1e-4f || right.magnitude < 0.5f * full) return false;
+        var own = an.transform.forward; own.y = 0f;
+        deg = Vector3.SignedAngle(own, Vector3.Cross(right, Vector3.up), Vector3.up);
+        return true;
+    }
+
+    // The circular mean of the heading over FacingSamples poses of the move, and the widest swing from it. False when
+    // fewer than a quarter of the poses could be read.
+    static bool ClipHeading(Animator an, AnimationClip clip, out float mean, out float swing, out float lean)
+    {
+        mean = swing = lean = 0f;
+        var hips = an.GetBoneTransform(HumanBodyBones.Hips); var head = an.GetBoneTransform(HumanBodyBones.Head);
+        float leanSum = 0f; int leanN = 0;
+        var graph = PlayableGraph.Create("vgac_facing");
+        var got = new List<float>();
+        try
+        {
+            graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+            var output = AnimationPlayableOutput.Create(graph, "anim", an);
+            var p = AnimationClipPlayable.Create(graph, clip);
+            output.SetSourcePlayable(p);
+            graph.Play();
+            for (int i = 0; i < FacingSamples; i++)
+            {
+                double t = clip.length * i / FacingSamples;
+                p.SetTime(t); graph.Evaluate(0f); p.SetTime(t); graph.Evaluate(0f);
+                if (BodyHeading(an, out var d)) got.Add(d);
+                if (hips != null && head != null) { leanSum += Vector3.Angle(head.position - hips.position, Vector3.up); leanN++; }
+            }
+        }
+        finally { graph.Destroy(); }
+        if (got.Count < FacingSamples / 4) return false;
+        var v = Vector2.zero;
+        foreach (var d in got) v += new Vector2(Mathf.Cos(d * Mathf.Deg2Rad), Mathf.Sin(d * Mathf.Deg2Rad));
+        float m = Mathf.Atan2(v.y, v.x) * Mathf.Rad2Deg;
+        mean = m;
+        lean = leanN > 0 ? leanSum / leanN : 0f;
+        swing = got.Max(d => Mathf.Abs(Mathf.DeltaAngle(m, d)));
+        return true;
+    }
+
+    // A copy of the model at the origin, unturned, in its bind pose, animated whether or not a camera sees it (culling
+    // would leave the bones where they were). Null when the model has no valid Humanoid avatar.
+    static GameObject FacingRig(string fbxPath, out Animator an)
+    {
+        an = null;
+        var model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
+        var avatar = AssetDatabase.LoadAllAssetsAtPath(fbxPath).OfType<Avatar>().FirstOrDefault();
+        if (model == null || avatar == null || !avatar.isHuman || !avatar.isValid) return null;
+        var go = (GameObject)UnityEngine.Object.Instantiate(model);
+        go.name = "vgac_facing";
+        go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+        ResetToBindPose(go);
+        an = go.GetComponent<Animator>() ?? go.AddComponent<Animator>();
+        an.avatar = avatar;
+        an.runtimeAnimatorController = null;
+        an.applyRootMotion = false;
+        an.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        return go;
+    }
+
+    // Measure every Humanoid move in the importers' files on a copy of the model at fbxPath; a baked loop that faces
+    // more than FacingRetryDeg away based upon its original root is tried based upon the body's orientation and keeps
+    // the better one. Fills report.clipFacing (replacing earlier entries of the same files), facingMeasured and
+    // bindFacing. Never throws.
+    static void FaceForward(string fbxPath, IList<ModelImporter> importers, Report report)
+    {
+        GameObject rig = null;
+        try
+        {
+            rig = FacingRig(fbxPath, out var an);
+            if (rig == null) return;
+            if (BodyHeading(an, out var bind)) report.bindFacing = bind;
+            foreach (var mi in importers.Where(m => m != null).Distinct())
+            {
+                var path = mi.assetPath;
+                string source = path == fbxPath ? "own" : "shared";
+                var measured = new Dictionary<string, (bool ok, float mean, float swing, float lean)>();
+                void Measure(IEnumerable<string> only)
+                {
+                    var want = only == null ? null : new HashSet<string>(only);
+                    foreach (var c in LoadClips(path))
+                        if (want == null || want.Contains(c.name))
+                            measured[c.name] = ClipHeading(an, c, out var m, out var s, out var l) ? (true, m, s, l) : (false, 0f, 0f, 0f);
+                }
+                void Reimport()
+                {
+                    mi.SaveAndReimport();
+                    if (path == fbxPath)  // the copy came from this file: make it again from the new import
+                    {
+                        UnityEngine.Object.DestroyImmediate(rig);
+                        rig = FacingRig(fbxPath, out an);
+                        if (rig == null) throw new Exception("the model lost its Humanoid avatar on re-import");
+                    }
+                }
+                Measure(null);
+                var defs = mi.clipAnimations;
+                var tried = new List<int>();
+                for (int i = 0; i < defs.Length; i++)
+                {
+                    var d = defs[i];
+                    if (d.lockRootRotation && d.keepOriginalOrientation && measured.TryGetValue(d.name, out var r) && r.ok && Mathf.Abs(r.mean) > FacingRetryDeg)
+                    {
+                        d.keepOriginalOrientation = false;
+                        tried.Add(i);
+                    }
+                }
+                if (tried.Count > 0)
+                {
+                    var before = tried.ToDictionary(i => defs[i].name, i => measured[defs[i].name]);
+                    mi.clipAnimations = defs;
+                    Reimport();
+                    Measure(before.Keys);
+                    defs = mi.clipAnimations;
+                    bool back = false;
+                    foreach (var i in tried)
+                    {
+                        var nm = defs[i].name;
+                        var now = measured[nm];
+                        if (now.ok && Mathf.Abs(now.mean) < Mathf.Abs(before[nm].mean) - 1f) continue;
+                        defs[i].keepOriginalOrientation = true;  // no better: back to the original root
+                        measured[nm] = before[nm];
+                        back = true;
+                    }
+                    if (back) { mi.clipAnimations = defs; Reimport(); }
+                }
+                var how = defs.ToDictionary(d => d.name, d => d.lockRootRotation ? (d.keepOriginalOrientation ? "original" : "body") : "");
+                report.clipFacing.RemoveAll(f => f.source == source);
+                foreach (var kv in measured.OrderBy(k => k.Key, StringComparer.Ordinal))
+                    report.clipFacing.Add(new ClipFacing
+                    {
+                        name = kv.Key, source = source, measured = kv.Value.ok,
+                        degrees = (float)Math.Round(kv.Value.mean, 1), swing = (float)Math.Round(kv.Value.swing, 1),
+                        lean = (float)Math.Round(kv.Value.lean, 1),
+                        basedOn = how.TryGetValue(kv.Key, out var h) ? h : "",
+                    });
+            }
+            report.facingMeasured = true;
+        }
+        catch (Exception e)
+        {
+            report.facingMeasured = false;
+            report.warnings.Add("move facing not measured: " + e.Message);
+        }
+        finally
+        {
+            if (rig != null) UnityEngine.Object.DestroyImmediate(rig);
+        }
+    }
+
+    // The library's Humanoid mapping and skeleton are made again by Unity's auto-mapping on the next import. Needed
+    // whenever the axis conversion changes: a skeleton stored from the import without it no longer matches the file
+    // ("Avatar Rig Configuration mis-match") and every retargeted move comes out bent forward a quarter turn.
+    static void ClearHumanDescription(ModelImporter ci)
+    {
+        var hd = ci.humanDescription;
+        hd.human = new HumanBone[0];
+        hd.skeleton = new SkeletonBone[0];
+        ci.humanDescription = hd;
+        ci.animationType = ModelImporterAnimationType.Human;
+        ci.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+    }
+
+    // Version 16: characters imported by an older importer still carry the library's import without axis conversion.
+    // Each Assets/VGAC/<name>/clips.fbx without the facing mark is imported again with it on and the facing chosen as
+    // a fresh import would (the controller keeps its clips: they are found by name). skipName is the character being
+    // imported now (its import sets everything itself). -> the number of characters brought up to date. Never throws.
+    public static int RefreshClipFacing(string skipName = null)
+    {
+        int n = 0;
+        try
+        {
+            if (!Directory.Exists(RequestRoot)) return 0;
+            foreach (var dir in Directory.GetDirectories(RequestRoot).Select(d => d.Replace('\\', '/')))
+            {
+                var name = Path.GetFileName(dir);
+                if (name == skipName) continue;
+                var clipsPath = dir + "/clips.fbx";
+                var fbxPath = dir + "/" + name + ".fbx";
+                if (!File.Exists(clipsPath) || !File.Exists(fbxPath)) continue;
+                var ci = AssetImporter.GetAtPath(clipsPath) as ModelImporter;
+                if (ci == null || ci.userData == FacingMark) continue;
+                try
+                {
+                    var rep = new Report();
+                    ci.bakeAxisConversion = true;
+                    ci.userData = FacingMark;
+                    ClearHumanDescription(ci);
+                    // Loop and bake settings as SetClipLoops gives them, starting again from the original root.
+                    var defs = ci.clipAnimations.Length > 0 ? ci.clipAnimations : ci.defaultClipAnimations;
+                    foreach (var d in defs) if (d.lockRootRotation) d.keepOriginalOrientation = true;
+                    ci.clipAnimations = defs;
+                    ci.SaveAndReimport();
+                    var mi = AssetImporter.GetAtPath(fbxPath) as ModelImporter;
+                    bool ownBaked = mi != null && mi.clipAnimations.Any(d => d.lockRootRotation);
+                    FaceForward(fbxPath, ownBaked ? new[] { ci, mi } : new[] { ci }, rep);
+                    var worst = rep.clipFacing.Where(f => f.measured).OrderByDescending(f => Mathf.Abs(f.degrees)).FirstOrDefault();
+                    Debug.Log("VGAC: moves of " + name + " now face forward" + (worst != null ? " (furthest off: " + worst.name + ", " + worst.degrees.ToString("0") + " degrees)" : ""));
+                    n++;
+                }
+                catch (Exception e) { Debug.LogWarning("VGAC: could not update the move facing of " + name + ": " + e.Message); }
+            }
+            if (n > 0) AssetDatabase.SaveAssets();
+        }
+        catch (Exception e) { Debug.LogWarning("VGAC: move facing update failed: " + e.Message); }
+        return n;
+    }
+
+    [MenuItem("Tools/VGAC/Fix move facing")]
+    static void RefreshClipFacingMenu()
+    {
+        int n = RefreshClipFacing();
+        Debug.Log(n == 0 ? "VGAC: every character's moves already face forward." : "VGAC: updated the move facing of " + n + " character(s).");
     }
 
     static List<AnimationClip> LoadClips(string path) =>
@@ -2220,6 +2494,10 @@ public static class VgacImport
             var rt = new RenderTexture(size, size, 24);
             cam.targetTexture = rt;
             var animator = go.GetComponent<Animator>();
+            // Version 16: the imported Animator culls by renderer visibility, so an evaluation before the camera has
+            // drawn the model left the bones where they were (the strip's first frame showed the bind pose, not the
+            // move). The snapshot copy always animates.
+            if (animator != null) animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             var clips = animator != null && animator.runtimeAnimatorController != null ? animator.runtimeAnimatorController.animationClips.Distinct().ToArray() : new AnimationClip[0];
             var picked = clips.Select(c => (c, idx: filter.Length == 0 ? 0 : Array.FindIndex(filter, f => c.name.ToLowerInvariant().Contains(f))))
                 .Where(x => x.idx >= 0)
@@ -2475,7 +2753,8 @@ class VgacImportWatcher : AssetPostprocessor
         try
         {
             if (Application.isBatchMode) return;
-            if (VgacImport.PendingRequests().Count > 0) Schedule();
+            // Version 16: also once after a newer importer arrives, to bring older characters' move facing up to date.
+            Schedule();
         }
         catch (Exception e) { Debug.LogError("VGAC: watcher failed at load: " + e); }
     }
@@ -2490,6 +2769,7 @@ class VgacImportWatcher : AssetPostprocessor
             try
             {
                 if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode) { Schedule(); return; }
+                VgacImport.RefreshClipFacing();  // nothing to do (and quick) when every clips.fbx carries the mark
                 VgacImport.Sweep();
             }
             catch (Exception e) { Debug.LogError("VGAC: pending import failed: " + e); }

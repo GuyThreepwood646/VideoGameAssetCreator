@@ -1,8 +1,9 @@
 """Stage 1, concept: prompt -> image (+ BiRefNet cutout) on instance B.
 
 run: Z-Image Turbo by default; the model comes from params.model, else the project style lock, else the style preset
-(zturbo | zbase | klein | anima | pixel | chroma). The prompt is the asset prompt plus the style block plus the
-category readiness block, plus a palette sentence when the project style lock names colours. refine: Qwen-Image-Edit-2511
+(zturbo | zbase | klein | anima | pixel | chroma). The prompt is the asset prompt (ending in a full stop) plus the
+style block, the look's hair sentence (vgac/hairpic.py), a palette sentence when the project style lock names colours,
+the category readiness block, and last the look's face sentence (vgac/hairpic.face_sentence). refine: Qwen-Image-Edit-2511
 instruction edit of the parent image, optionally limited to a mask. adjust: re-run with the parent's params updated.
 
 Add-ons (data/addons.yaml): the recipe's defaults, then the project style lock's `loras` (registry ids, optionally
@@ -56,6 +57,26 @@ def hair_sentence(sc: StageContext, params: dict[str, Any], description: str) ->
     return hairpic.hair_sentence(description, getattr(sc, "style", None), getattr(sc, "category", None))
 
 
+def face_sentence(sc: StageContext, params: dict[str, Any], description: str) -> str:
+    """The look's face sentence for this description (vgac/hairpic.face_sentence); "" for a look without one, a
+    category it does not name, a description that hides the face, or with params.face_block false."""
+    from .. import hairpic
+
+    if not params.get("face_block", True):
+        return ""
+    return hairpic.face_sentence(description, getattr(sc, "style", None), getattr(sc, "category", None))
+
+
+def full_stop(text: str) -> str:
+    """The description ending in a full stop, so the style block that follows is a new sentence."""
+    text = text.rstrip().rstrip(",;:").rstrip()
+    if not text or text[-1] in ".!?":
+        return text
+    if text[-1] in "\"')" and len(text) > 1 and text[-2] in ".!?":
+        return text
+    return text + "."
+
+
 def hair_negative(sc: StageContext, params: dict[str, Any]) -> str:
     """The hair negative terms for the description the prompt was built from."""
     from .. import hairpic
@@ -80,7 +101,7 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
 
     held = items.concept_prompt_parts(sc.asset)
     base = (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
-    parts = [base]
+    parts = [full_stop(base)]
     style_block = (lock.get("prompt_block") or "").strip() or (sc.style.get("prompt_block") or "").strip()
     if style_block:
         parts.append(style_block)
@@ -98,6 +119,8 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
         parts.append(held["sentence"])
     if sc.asset.parts:
         parts.append("The following parts are clearly separate pieces: " + ", ".join(sc.asset.parts) + ".")
+    # Last: placed after the style block it changed the character more (runtime/tmp/celface).
+    parts.append(face_sentence(sc, params, base))
     return " ".join(p for p in parts if p)
 
 
@@ -178,6 +201,9 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     hair = await asyncio.to_thread(_hair_check, sc, cutout)
     if hair is not None:
         checks.append(hair)
+    drawn = await _face_check(sc, cutout)
+    if drawn is not None:
+        checks.append(drawn)
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -191,6 +217,37 @@ def _hair_check(sc: StageContext, cutout: Path) -> dict[str, Any] | None:
         text = (params.get("prompt_override") or "").strip() or (getattr(sc.asset, "prompt", "") or "")
         return hairpic.eyes_check(cutout, text, getattr(sc, "category", None), getattr(sc, "style", None))
     except Exception:  # noqa: BLE001  a readiness extra must never break the concept step
+        return None
+
+
+async def _face_check(sc: StageContext, cutout: Path) -> dict[str, Any] | None:
+    """The face is drawn (vgac/hairpic.face_check): for the looks whose face block asks for the check, a close-up of the
+    head goes to the local vision model (graphs.judge, Gemma 3) on the judge's card. Never fails the picture: anything
+    unexpected means no check; only a cancelled job stops it."""
+    from .. import hairpic
+    from ..comfy import ComfyClient
+    from ..graphs.judge import judge_graph
+
+    try:
+        params = getattr(getattr(sc, "version", None), "params", None) or {}
+        text = (params.get("prompt_override") or "").strip() or (getattr(sc.asset, "prompt", "") or "")
+        if not hairpic.face_check_applies(text, getattr(sc, "category", None), getattr(sc, "style", None)):
+            return None
+        crop = await asyncio.to_thread(hairpic.head_crop, cutout)
+        if crop is None:
+            return None
+        path = sc.dir / "face_check.png"
+        await asyncio.to_thread(crop.save, path)
+        instance = sc.ctx.instance if sc.ctx.instance in sc.ctx.clients else sc.settings.judge_instance
+        name = await sc.stage_input(path, f"vgac_{sc.version.id[:8]}_face_check.png", instance=instance)
+        sc.progress(0.97, "checking the face is drawn")
+        entry = await sc.comfy(judge_graph(name, hairpic.FACE_CHECK_PROMPT, max_length=60), instance=instance, poll=1.0,
+                               message="checking the face is drawn (Gemma 3)", base=0.97, span=0.02)
+        answer = hairpic.parse_face_answer("\n".join(ComfyClient.texts_of(entry, "show")))
+        return hairpic.face_check(answer, entry.get("elapsed_seconds"))
+    except Exception as e:  # noqa: BLE001  a readiness extra must never break the concept step
+        if type(e).__name__ == "JobCancelled":
+            raise
         return None
 
 
