@@ -869,7 +869,8 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
                                         library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
-        sheet = springs_mod.found_sheet(rep, work / "springs_pictures", sc.dir / "springs_found.png")
+        family = ((lib or {}).get("metrics") or {}).get("family")  # library hair: the hairstyle's family words
+        sheet = springs_mod.found_sheet(rep, work / "springs_pictures", sc.dir / "springs_found.png", family=family)
         if sheet is not None:
             sc.register("springs_found", sheet)
         sc.register("springs_report", work / "springs_report.json")
@@ -879,7 +880,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
             doc = sc.dir / "springs.json"
             shutil.copy2(work / "springs.json", doc)
             sc.register("springs", doc)
-        sc.set_metrics(springs=springs_mod.metrics(rep, True, None, round(time.monotonic() - t0, 2)))
+        sc.set_metrics(springs=springs_mod.metrics(rep, True, None, round(time.monotonic() - t0, 2), family=family))
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(springs=springs_mod.metrics(None, True, None, round(time.monotonic() - t0, 2), error=str(e)))
 

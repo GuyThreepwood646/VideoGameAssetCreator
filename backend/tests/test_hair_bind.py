@@ -609,3 +609,19 @@ def test_hair_on_the_skin_follows_the_skin():
     assert w[1] == {"Head": 1.0}  # far from the skin: the rule by height
     assert w[2] == pytest.approx({"Neck": 1.0})
     assert hairbind.skin_share(0.01) == 1.0 and hairbind.skin_share(0.1) == 0.0
+
+
+def test_library_hair_words_follow_the_style_family():
+    lib = [{"name": "Spring_Hair_01", "kind": "Hair", "library": True, "bones": ["a"], "part": {"length": 0.3}}]
+    cape = [{"name": "Spring_Cape_01", "kind": "Cape", "bones": ["b"], "part": {"length": 0.5}}]
+    assert springs_mod.what_sways(lib, "ponytail") == "the ponytail"
+    assert springs_mod.what_sways(lib, "braid") == "the braid"
+    assert springs_mod.what_sways(lib, "long") == "the long hair"
+    assert springs_mod.what_sways(lib, "bob") == "the hair" and springs_mod.what_sways(lib, None) == "the hair"
+    assert springs_mod.what_sways(lib + cape, "long") == "the long hair and the cape"
+    assert springs_mod.metrics({"chains": lib}, True, None, family="long")["what"] == "the long hair"
+    # today's detected hanging parts keep their words, family or not
+    today = [{"name": "Spring_Hair_01", "kind": "Hair", "bones": ["a"], "part": {"length": 0.3}}]
+    assert springs_mod.what_sways(today, "long") == "the hair (a ponytail or a braid)"
+    assert springs_mod.what_sways(today + cape) == "the hair (a ponytail or a braid) and the cape"
+    assert springs_mod.metrics({"chains": today}, True, None)["what"] == "the hair (a ponytail or a braid)"

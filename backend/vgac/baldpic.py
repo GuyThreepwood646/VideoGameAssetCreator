@@ -149,6 +149,15 @@ def measure_target(bald_rgba: Any) -> dict[str, Any]:
     head_cx = float(np.median(hx))
     rw = [r.sum() for r in head_rows if r.sum()]
     head_w = float(np.percentile(rw, 90)) if rw else 0.1 * H
+    # A full beard joins the head to the chest, so the narrowest row lands at the nose. A head is taller than it is
+    # wide, and a real neck is clearly narrower than the cranium: when the found head is not taller than wide, or the
+    # 'neck' is nearly as wide as the cranium, the head is taken as 1.25 times the cranium's width.
+    cw = [r.sum() for r in cut[top:top + max(2, int(0.6 * (neck - top)))] if r.sum()]
+    cranium_w = float(np.percentile(cw, 90)) if cw else head_w
+    neck_w = float(cut[neck].sum())
+    if neck - top < 1.0 * cranium_w or neck_w > 0.85 * cranium_w:     # no narrowing under the chin: a beard
+        neck = int(min(cut.shape[0] - 1, top + 1.25 * cranium_w))
+        head_w = cranium_w
     return dict(H_px=int(H), top_px=top, neck_px=int(neck), head_cx_px=head_cx, head_w=head_w / H, head_h=(neck - top) / H,
                 img_w=int(cut.shape[1]), img_h=int(cut.shape[0]))
 
@@ -193,13 +202,68 @@ def outline_mask(orig_rgba: Any, bald_rgba: Any) -> np.ndarray:
     core = morph(m0, _r(3, size), "erode")
     if core.sum() < 50:
         core = m0
-    med = np.median(lab_img[core], 0)
-    dist = np.linalg.norm(lab_img - med, axis=-1)
-    spread = np.percentile(np.linalg.norm(lab_img[core] - med, axis=-1), 80)
+    # The hair colour is taken where the edit certainly removed hair: the top of the head (from a little above the
+    # bald skull's top to a third of the head down). When the edit also changed the face (a beard kept, the face
+    # redrawn), the face's difference would otherwise drag the colour model to skin. The skin colour comes from the
+    # bald picture in the same band, and a pixel counts as hair only when it is nearer the hair colour than the skin.
+    hh = max(1, neck - top)
+    band = np.zeros((H, W), bool)
+    band[max(0, top - int(0.1 * hh)):top + int(0.35 * hh)] = True
     diff2 = np.abs(orig - bald).sum(-1) > 45
+    # where the bald head shows scalp in the band and the concept differs from it, the concept shows hair
+    top_hair = band & diff2 & (cut | m0)
+    if top_hair.sum() < 30:
+        top_hair = core & band
+    if top_hair.sum() < 30:
+        top_hair = core
+    med = np.median(lab_img[top_hair], 0)
+    dist = np.linalg.norm(lab_img - med, axis=-1)
+    spread = np.percentile(np.linalg.norm(lab_img[top_hair] - med, axis=-1), 80)
+    skin_px = cut & band & m0
+    face = np.zeros((H, W), bool)
+    face[top + int(0.35 * hh):min(H, neck + int(0.6 * hh)), max(0, int(t["head_cx_px"] - 0.42 * hw)):int(t["head_cx_px"] + 0.42 * hw)] = True
+    if skin_px.sum() >= 30:
+        skin = np.median(to_lab(bald)[skin_px], 0)
+        nearer = dist < np.linalg.norm(lab_img - skin, axis=-1)
+        # the skin rule only applies over the face (a redrawn face is the usual false hair); beside the face, shaded
+        # blond hair can be nearer the skin's colour and must stay
+        nearer = nearer | ~face
+    else:
+        nearer = np.ones((H, W), bool)
     grown = morph(m0, _r(14, size), "dilate")
     lim = max(14.0, 1.6 * spread)
-    hair = (grown & (dist < lim) & diff2) | (m0 & (dist < 1.6 * lim))
+    hair = (grown & (dist < lim) & diff2 & nearer) | (m0 & (dist < 1.6 * lim))
+    # Removed by colour: hair-coloured in the concept, not hair-coloured in the bald picture, near the head. This
+    # catches hair whose colour is close to the skin's lightness (blond), where the plain difference is patchy, and
+    # leaves out a beard the edit kept (hair-coloured in both pictures).
+    bald_dist = np.linalg.norm(to_lab(bald) - med, axis=-1)
+    near_head = np.zeros((H, W), bool)
+    near_head[max(0, top - int(0.15 * hh)):min(H, neck + int(2.5 * hh)), max(0, x0 - int(0.3 * hw)):max(0, x1 + int(0.3 * hw))] = True
+    removed = near_head & (dist < 2.2 * lim) & (bald_dist > 1.0 * lim) & nearer & diff2
+    lab3, sz3 = components(removed | hair)
+    ids3 = np.unique(lab3[hair | (removed & band)])
+    hair = hair | (removed & np.isin(lab3, ids3[ids3 > 0]))
+    # A beard or moustache the edit kept is hair-coloured in the bald picture too, only redrawn a little off: over the
+    # lower face, pixels near hair-coloured bald pixels are the kept beard, not removed hair.
+    if skin_px.sum() >= 30:
+        lower = np.zeros((H, W), bool)
+        lower[top + int(0.62 * hh):, :] = True          # below the eyes: the moustache and beard
+        low_face = face & lower
+        both = (dist < 0.7 * lim) & (bald_dist < 0.7 * lim)      # hair-coloured in both pictures: a kept beard
+        if low_face.any() and float(both[low_face].mean()) > 0.25:
+            kept_beard = morph(bald_dist < 1.5 * lim, _r(8, size), "dilate") & low_face
+            hair = hair & ~kept_beard
+    # Shape: where the concept's figure reaches beyond the bald figure round the head, that is hair whatever its
+    # colour (blond hair against the bald skin barely differs in colour). Used when the concept comes with its own
+    # cut-out (an RGBA picture with transparent background).
+    oa = _arr(orig_rgba, "RGBA") if not isinstance(orig_rgba, np.ndarray) else orig_rgba
+    if oa.ndim == 3 and oa.shape[2] == 4 and (oa[..., 3] < 128).mean() > 0.05:
+        o_cut = np.asarray(Image.fromarray(oa).resize((W, H))) [..., 3] > 127 if oa.shape[:2] != (H, W) else oa[..., 3] > 127
+        beyond = o_cut & ~morph(cut, _r(3, size), "dilate") & near_head
+        beyond = morph(morph(beyond, _r(2, size), "erode"), _r(2, size), "dilate")
+        lab4, sz4 = components(beyond | hair)
+        ids4 = np.unique(lab4[hair])
+        hair = hair | (beyond & (np.isin(lab4, ids4[ids4 > 0]) | band))
     r2 = _r(2, size)
     hair = morph(morph(hair, r2, "dilate"), r2, "erode")
     hair = fill_small_holes(hair)

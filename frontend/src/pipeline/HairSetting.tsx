@@ -2,6 +2,7 @@
 // the "Hair" line with Change on the asset page, and what happens when it is changed later (the bald pictures are drawn,
 // then the page offers "Rebuild from the 3D model"). Off is the default and leaves everything as it was.
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { ApiError, hairApi, STAGES, stageEstimateSeconds, type Asset, type HairPanel, type HairSource, type Job, type StageId } from '../api'
 import { Info } from '../components/Info'
 import { ResumeButton } from '../components/ui'
@@ -15,7 +16,7 @@ export const HAIR_OPTION_HINT: Record<HairSource, string> = {
   library:
     'The 3D model is built bald, and you pick a ready-made hairstyle that the app fits to the head and recolours to your picture. Long hair and ponytails can hang free and swing. It adds about 5 minutes: the bald pictures, then trying the hairstyles on.',
 }
-export const HAIR_PHONE_NOTE = 'On Phone only light hairstyles made as one solid shape are offered (750 triangles or fewer).'
+export const HAIR_PHONE_NOTE = 'On Phone only hairstyles made as one solid shape are offered, in a lighter version where the style has one.'
 
 // Looks whose hair is one simple solid shape on purpose (the backend's hairlib.available says the same).
 const PLAIN_LOOKS: Record<string, string> = { pixel: 'Pixel art', retro64: 'Retro 64', lowpoly_flat: 'Low-poly flat' }
@@ -72,9 +73,10 @@ export function HairFormLine({ value, onChange, platform }: { value: HairSource;
 
 function HairOptions({ name, value, onChange, disabled }: { name: string; value: HairSource; onChange: (v: HairSource) => void; disabled?: boolean }) {
   return (
-    <div className="segmented" role="radiogroup" aria-label={HAIR_SETTING}>
+    // One option per row, each row clickable across its whole width (the words select it, not only the round button).
+    <div className="segmented" role="radiogroup" aria-label={HAIR_SETTING} style={{ flexDirection: 'column', gap: 'var(--s1)' }}>
       {(['model', 'library'] as const).map((s) => (
-        <label className="check-item" key={s}>
+        <label className="check-item" key={s} style={{ display: 'flex', width: '100%', cursor: disabled ? 'default' : 'pointer', minHeight: 28 }}>
           <input type="radio" name={name} checked={value === s} disabled={disabled} onChange={() => onChange(s)} />
           <span>
             {HAIR_OPTION[s]}
@@ -117,7 +119,22 @@ export function useHairPanel(asset: Asset | null): { panel: HairPanel | null; re
 
 // The "Hair" line in the asset page's side column.
 export function HairRailLine({ panel, open, onToggle }: { panel: HairPanel; open: boolean; onToggle: () => void }) {
-  const pickName = panel.source === 'library' ? (panel.candidates.find((c) => c.style === (panel.applied?.style ?? panel.pick))?.name ?? null) : null
+  const chosen = panel.source === 'library' ? (panel.applied?.style ?? panel.pick ?? null) : null
+  const fromCandidates = chosen ? (panel.candidates.find((c) => c.style === chosen)?.name ?? null) : null
+  // A style chosen from "Show more hairstyles" is not among the candidates: its name comes from the catalogue.
+  const [fromCatalogue, setFromCatalogue] = useState<string | null>(null)
+  useEffect(() => {
+    if (!chosen || fromCandidates) return
+    let alive = true
+    hairApi.library().then(
+      (list) => alive && setFromCatalogue(list.find((s) => s.id === chosen)?.name ?? null),
+      () => undefined,
+    )
+    return () => {
+      alive = false
+    }
+  }, [chosen, fromCandidates])
+  const pickName = fromCandidates ?? (chosen ? fromCatalogue : null)
   return (
     <div className="muted small">
       Hair: {HAIR_OPTION[panel.source]}
@@ -204,7 +221,31 @@ export function HairSettingPanel({ asset, panel, onClose, onSaved, onError }: { 
 
 // After the setting changed: the bald pictures being drawn, then the offer to rebuild from the 3D model.
 export function HairRebuildNote({ asset, panel, jobs, busy, onRebuild }: { asset: Asset; panel: HairPanel; jobs: Job[]; busy: boolean; onRebuild: (from: StageId) => void }) {
-  const drawing = panel.source === 'library' && jobs.some((j) => (j.status === 'queued' || j.status === 'running') && (asset.stages.turnaround ?? []).some((v) => v.id === j.version_id))
+  const bs = panel.bald_state
+  // Older backends send no bald_state: a running Check all sides job stands for "drawing".
+  const drawing = panel.source === 'library' && (bs ? bs === 'drawing' : jobs.some((j) => (j.status === 'queued' || j.status === 'running') && (asset.stages.turnaround ?? []).some((v) => v.id === j.version_id)))
+  const turnaround = stagePlain('turnaround')
+  if (panel.source === 'library' && (bs === 'stopped' || bs === 'failed' || bs === 'missing'))
+    return (
+      <div className="stale-note">
+        <span>
+          {panel.sentence ||
+            (bs === 'stopped'
+              ? 'The bald pictures (the character without hair, used to build the 3D model) were stopped before they were finished.'
+              : bs === 'failed'
+                ? 'The bald pictures (the character without hair, used to build the 3D model) could not be made.'
+                : `The kept "${turnaround}" result has no bald pictures (the character without hair, used to build the 3D model) yet.`)}{' '}
+          {bs === 'stopped'
+            ? `Press Resume on "${turnaround}" to finish them. "Rebuild from the 3D model" is offered once they are ready.`
+            : bs === 'failed'
+              ? `Open "${turnaround}" to see what went wrong and try again. "Rebuild from the 3D model" is offered once they are ready.`
+              : '"Rebuild from the 3D model" is offered once they are ready.'}
+        </span>
+        <Link className="small" to={`/assets/${asset.id}/turnaround`}>
+          Go to "{turnaround}"
+        </Link>
+      </div>
+    )
   if (drawing)
     return (
       <div className="stale-note">
@@ -214,7 +255,7 @@ export function HairRebuildNote({ asset, panel, jobs, busy, onRebuild }: { asset
       </div>
     )
   const r = panel.rebuild
-  if (!r) return null
+  if (!r || (panel.source === 'library' && bs && bs !== 'ready')) return null
   const from = (STAGES.includes(r.from_stage as StageId) ? r.from_stage : 'mesh') as StageId
   return (
     <div className="stale-note">

@@ -9,6 +9,7 @@ import ProjectPage from './pages/ProjectPage'
 import AssetPage from './pages/AssetPage'
 import GalleryPage from './pages/GalleryPage'
 import GlossaryPage from './pages/GlossaryPage'
+import CreditsPage from './pages/CreditsPage'
 import { HealthPage } from './HealthPanel'
 
 async function boot() {
@@ -26,6 +27,7 @@ async function boot() {
         { path: 'assets/:aid/:stage?', Component: AssetPage },
         { path: 'gallery', Component: GalleryPage },
         { path: 'glossary', Component: GlossaryPage },
+        { path: 'credits', Component: CreditsPage },
         { path: 'health', Component: HealthPage },
       ],
     },

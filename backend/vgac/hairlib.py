@@ -407,8 +407,11 @@ def panel(db: Session, a: Asset) -> dict[str, Any]:
         applied = {"style": ph.get("style"), "score": ph.get("score"), "prep_version_id": prep_v.id}
     pick = (choice(a) or {}).get("pick")
     rebuild = rebuild_need(db, a)
+    state = bald_state(db, a)
     if src == LIBRARY and reason:
         sentence = f"Hair from the library is switched on, but it cannot be used: {reason} The hair is built with the 3D model."
+    elif src == LIBRARY and state in BALD_STATE_SENTENCES:
+        sentence = BALD_STATE_SENTENCES[state]
     elif src == LIBRARY and applied:
         sentence = f"The character wears \"{style_name(applied['style'])}\" from the hair library (ready-made hairstyles)."
     elif src == LIBRARY and cands:
@@ -421,7 +424,7 @@ def panel(db: Session, a: Asset) -> dict[str, Any]:
             "pick": pick, "candidates": cands, "mesh_version_id": mesh_v.id if mesh_v is not None else None,
             "best": hl.get("best"), "nothing_fits": bool(hl.get("nothing_fits")) if hl else False, "applied": applied,
             "allowance": kept_allowance(a, mesh_v, prep_v, pick),
-            "rebuild": rebuild, "sentence": sentence}
+            "rebuild": rebuild, "bald_state": state, "sentence": sentence}
 
 
 def style_name(style_id: str | None) -> str | None:
@@ -465,14 +468,52 @@ def has_bald(v: Version | None) -> bool:
     return v is not None and bool((v.files or {}).get("bald_front_cutout"))
 
 
+# The panel's bald_state: where the bald pictures of the kept Check all sides version stand.
+BALD_STATES = ("none", "missing", "drawing", "stopped", "failed", "ready")
+BALD_STATE_SENTENCES = {
+    "missing": "The bald picture (the character without hair, used to build the 3D model) has not been drawn yet. "
+               "Turn Hair from the library off and on again to draw it.",
+    "drawing": "The bald picture (the character without hair, used to build the 3D model) is being drawn. The 3D model "
+               "can be built again once it is ready.",
+    "stopped": "Drawing the bald picture (the character without hair, used to build the 3D model) was stopped. Press "
+               "Resume in Check all sides to finish it; the 3D model can be built again after that.",
+    "failed": "The bald picture (the character without hair, used to build the 3D model) could not be drawn. Make it "
+              "again in Check all sides, or use the hair built with the 3D model.",
+}
+
+
+def bald_state(db: Session, a: Asset) -> str:
+    """none (today's hair, or no Check all sides version kept), missing (kept and done, made without the bald pictures),
+    drawing (queued or running), stopped (stopped, waiting for Resume), failed (ended in an error, or set aside after
+    a stop) or ready (done, with the bald pictures)."""
+    from .db import is_stopped
+
+    if asset_source(a) != LIBRARY:
+        return "none"
+    v = _selected(db, a.id, "turnaround")
+    if v is None:
+        return "none"
+    if v.status in ("queued", "running"):
+        return "drawing"
+    if is_stopped(v):
+        return "stopped"
+    if v.status != "done":
+        return "failed"
+    files = v.files or {}
+    return "ready" if files.get("bald_front_cutout") and files.get("bald_quarter_cutout") else "missing"
+
+
 def rebuild_need(db: Session, a: Asset) -> dict[str, Any] | None:
-    """{from_stage, minutes} when what is kept was built with the other hair, else None."""
+    """{from_stage, minutes} when what is kept was built with the other hair, else None. With the library on, a
+    rebuild is offered only once the kept Check all sides version is done with its bald pictures (bald_state ready)."""
     src = asset_source(a) or MODEL
     mesh_v = _selected(db, a.id, "mesh")
     if mesh_v is None:
         return None
     built = (mesh_v.params or {}).get("hair_source") or MODEL
     if src == LIBRARY and available(a) is None:
+        if bald_state(db, a) != "ready":
+            return None
         if built != LIBRARY:
             stage = "mesh"
         else:
@@ -565,21 +606,55 @@ def rebuild_with_style(db: Session, a: Asset, kept: Version, style_id: str) -> d
     return autopilot.start(a.id)
 
 
+def used_triangles(style: dict[str, Any], platform: str | None) -> tuple[int, bool]:
+    """(triangles the style really has on that platform, whether that is its lighter version): on Phone a shell
+    with a lite variant uses it (blender/hairfit.py _style_job does the same)."""
+    full = int(style.get("triangles") or 0)
+    if platform == PHONE_PLATFORM and style.get("lite") and style.get("lite_triangles"):
+        return int(style["lite_triangles"]), True
+    return full, False
+
+
 @router.get("/api/hair-library")
-def hair_library() -> dict[str, Any]:
+def hair_library(platform: str | None = None, asset_id: str | None = None, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """The catalogue. With platform (or asset_id, which gives the asset's platform and look): only the styles offered
+    there, each with triangles_used (the count that would really be used) and lite_used (it is the lighter version)."""
+    look = None
+    if asset_id:
+        a = _asset_or_404(db, asset_id)
+        platform = platform or a.platform_target
+        look = a.style_preset
     try:
-        cat = _hairstyles().catalogue()
+        hs = _hairstyles()
+        cat = hs.catalogue()
         cat = list((cat.get("styles") or {}).values()) if isinstance(cat, dict) else list(cat)
+        offered = None
+        if platform or look:
+            offered = {s.get("id") for s in hs.styles_for(None, platform, look) or []}
     except Exception:  # noqa: BLE001
-        return {"styles": [], "families": [], "installed": False}
+        return {"styles": [], "families": [], "installed": False, "platform": platform}
+    budget = None
+    if platform:
+        try:
+            from . import reference
+
+            budget = int(reference.budget("humanoid", platform).get("triangles") or 0) or None
+        except Exception:  # noqa: BLE001
+            budget = None
     styles = []
     for s in cat:
+        if offered is not None and s.get("id") not in offered:
+            continue
+        used, lite = used_triangles(s, platform)
+        if budget and used + CAP_MARGIN > int(HAIR_SHARE_MAX * budget):
+            continue  # over the hair's share of this platform: not offered
         thumbs = {k: f"/api/hair-library/files/{p}" for k, p in (s.get("thumbs") or {}).items() if p}
         styles.append({"id": s.get("id"), "name": s.get("name"), "family": s.get("family"), "kind": s.get("kind"),
-                       "alpha": s.get("alpha"), "triangles": s.get("triangles"), "phone_ok": s.get("phone_ok"),
-                       "fringe": s.get("fringe"), "parting": s.get("parting"), "thumbs": thumbs, "credit": _credit(str(s.get("id")))})
+                       "alpha": s.get("alpha"), "triangles": s.get("triangles"), "triangles_used": used, "lite_used": lite,
+                       "phone_ok": s.get("phone_ok"), "fringe": s.get("fringe"), "parting": s.get("parting"), "thumbs": thumbs,
+                       "credit": _credit(str(s.get("id")))})
     families = sorted({str(s["family"]) for s in styles if s.get("family")})
-    return {"styles": styles, "families": families, "installed": True}
+    return {"styles": styles, "families": families, "installed": True, "platform": platform}
 
 
 @router.get("/api/hair-library/files/{path:path}")
