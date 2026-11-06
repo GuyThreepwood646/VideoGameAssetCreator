@@ -393,6 +393,28 @@ def find_nose(z: np.ndarray, m: np.ndarray, pos: np.ndarray, cam: Camera, head: 
     return int(ix), int(iy)
 
 
+FACE_TOP = 0.65  # the face reaches at most this share of (head top - nose tip) above the nose tip
+FACE_DEPTH = 0.6  # ... and lies at most this share of it behind the nose tip
+FACE_DEPTH_FROM = 0.25  # ... except this share of it and more below the nose tip (the jaw and neck, as before)
+
+
+def face_bounds(z: np.ndarray, pos: np.ndarray, head: Head, nose: tuple[int, int]) -> np.ndarray:
+    """Where the face can be, from the shape alone, so a skin-coloured scalp or ears cannot join it (a bald head: the
+    whole head is skin, and the region grew over the scalp and both ears, twice the face's width). Measured in L, the
+    height from the nose tip to the top of the head (about the same with and without hair: 0.085 m on both bake-off
+    knights): the face goes up at most FACE_TOP L above the nose tip (the haired knight's skin reaches 0.64 L, the
+    bald knight's brows 0.38 L), and above the jaw at most FACE_DEPTH L behind it (the cheeks lie under 0.5 L back,
+    the ears from 0.7 L). Below the jaw nothing is cut: the neck under a chin lies deep but always joined the face."""
+    ix, iy = nose
+    ny, nz = float(pos[iy, ix, 1]), float(z[iy, ix])
+    L = head.top - ny
+    if not np.isfinite(nz) or L <= 0:
+        return np.ones(z.shape, dtype=bool)
+    up = (pos[..., 1] - ny) / L
+    deep = np.nan_to_num((z - nz) / L, nan=np.inf) > FACE_DEPTH
+    return (up <= FACE_TOP) & (~deep | (up < -FACE_DEPTH_FROM))
+
+
 def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, head: Head,
               skin_tolerance: float = 16.0) -> dict[str, Any]:
     """The face in a front render: the nose tip (the nearest visible point in the upper head), the skin colour around
@@ -412,6 +434,7 @@ def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, he
     skin = np.median(lab[win][m[win]], axis=0)
     dist = np.linalg.norm((lab - skin) * np.array([0.5, 1.0, 1.0]), axis=-1)
     allowed = m & (dist < skin_tolerance) & (pos[..., 1] >= head.top - 0.16 * head.height)
+    allowed &= face_bounds(ras["z"], pos, head, nose)
     seed = np.zeros_like(m)
     seed[win] = True
     region = grow(seed, allowed)
