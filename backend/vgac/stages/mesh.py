@@ -7,8 +7,12 @@ The default triangle target sits 2 percent under the budget so prep need not dec
 padding is max(4, texture / 256) texels and every map is grown max(8, texture / 128) texels into the empty space
 after the bake (G03); metrics record the atlas share used, the measured gutter and the UV hash of the baked mesh.
 After the job: silhouette audit at 15-degree steps against the turnaround cutouts (Blender on the host).
-refine has no instruction engine for meshes: it re-runs with a new seed and records the instruction. adjust
-re-runs with merged params.
+refine with an instruction edits the picture first (TRELLIS only): the input view's cutout over white goes through the
+Qwen instruction edit on the picture card (the concept card, else this job's card) with "keep everything else the same"
+words after the person's, BiRefNet cuts it out, and the model is built from that cutout (files edited_picture and
+edited_cutout, params picture_edit and edit_seed). A refine of an edited version edits the edited picture again; adjust
+(Fine-tune) of one keeps its edited picture. A Resume keeps an edit already made. Hunyuan3D builds from all four views,
+so its refine still only re-runs with a new seed and records the instruction. adjust re-runs with merged params.
 
 Recipes (reference.recipe): when the version does not choose them, the triangle target is the recipe's share of the
 budget (a quarter for low-poly, 40 percent for Retro 64) and the texture size the recipe's cap (never over the
@@ -46,6 +50,7 @@ from typing import Any
 from .. import guidance, hairlib, headtris, imaging, library, normalfix, quality, reference, texcolour
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
+from ..graphs.qwen_edit import edit_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
 from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dilate_png, dilation_px, gutter_px, image_size,
                        load_uv_mesh, rasterise_uv, silhouette, unwrap_padding, uv_hash)
@@ -65,6 +70,9 @@ def _silhouette_match(views_dir: Path, yaws, refs: dict[str, Path]) -> dict[str,
 
 
 def _input_image(sc: StageContext, input_view: str) -> Path:
+    edited = _edited_cutout(sc)
+    if edited is not None:
+        return edited  # built from the picture its instruction edited (made from the bald view when the hair is the library's)
     if hairlib.is_library(sc):
         # Built bald on purpose: the bald counterpart of the view, and never the haired picture.
         key = "bald_front_cutout" if input_view in ("concept", "front") else f"bald_{input_view}_cutout"
@@ -536,16 +544,127 @@ def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
     parent = sc.parent
     merged = {**inherit(parent.params if parent else {}, params), "seed": params.get("seed") or random_seed(), "instruction": instruction}
+    for key in EDIT_PARAMS:
+        merged.pop(key, None)  # the parent's edit is used below as the picture to edit, never as this version's own
     sc.set_params(instruction=instruction, refine_of=parent.id if parent else None)
+    if (merged.get("engine") or "trellis") == "trellis" and instruction.strip() and merged.get("edit_picture") is not False:
+        input_view = merged.get("input_view") or sc.category.get("input_view_default") or "concept"
+        merged["input_view"] = input_view
+        if sc.file(EDITED_KEY) is None:  # a Resume keeps the edit it already made
+            from_parent = _parent_edit(sc, input_view)
+            await _edit_picture(sc, instruction, from_parent or _input_image(sc, input_view), parent.id if from_parent and parent else None)
+        else:
+            sc.set_params(picture_edit=True)
     await _rerun_from_mesh_parent(sc, merged)
 
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
     merged = inherit(parent.params if parent else {}, params)
+    for key in EDIT_PARAMS:
+        merged.pop(key, None)
+    # Fine-tune of a version built from an edited picture keeps that picture (same engine and view only).
+    input_view = merged.get("input_view") or sc.category.get("input_view_default") or "concept"
+    kept = _parent_edit(sc, input_view) if (merged.get("engine") or "trellis") == "trellis" else None
+    if kept is not None and sc.file(EDITED_KEY) is None:
+        sc.register(EDITED_KEY, sc.copy_in(kept, "edited_cutout.png"))
+        pic = library.version_file(parent, "edited_picture", sc.settings) if parent else None
+        if pic is not None and Path(pic).is_file():
+            sc.register("edited_picture", sc.copy_in(pic, "edited_picture.png"))
+    if kept is not None or (sc.file(EDITED_KEY) is not None and (sc.version.params or {}).get("picture_edit")):
+        sc.set_params(picture_edit=True, edit_seed=(parent.params or {}).get("edit_seed") if parent else None,
+                      edit_from=parent.id if parent else None)
     await _rerun_from_mesh_parent(sc, merged)
 
 
 async def _rerun_from_mesh_parent(sc: StageContext, merged: dict[str, Any]) -> None:
     # Inputs come from the lineage above the mesh parent; lineage_file walks through it, so nothing to swap.
     await run(sc, merged)
+
+
+# --- the picture edit behind a refine instruction ---------------------------------------------------------------------
+
+EDITED_KEY = "edited_cutout"
+# Params that belong to one version's own picture edit: never inherited as they are.
+EDIT_PARAMS = ("picture_edit", "edit_seed", "edit_from")
+# After the person's words, so the edit changes only what they asked for and the cutout stays usable for 3D.
+EDIT_SUFFIX = ("Change only what is asked. Keep everything else exactly the same: the same character, design, colours, "
+               "materials, outfit, every tool, weapon and attachment, pose, camera angle, size and framing, the whole body in "
+               "frame, on a plain white background.")
+EDIT_MEGAPIXELS = 1.0
+
+
+def edit_prompt(instruction: str) -> str:
+    text = " ".join(instruction.split())
+    if text and text[-1] not in ".!?":
+        text += "."
+    return f"{text} {EDIT_SUFFIX}"
+
+
+def edit_size(w: int, h: int, megapixels: float = EDIT_MEGAPIXELS) -> tuple[int, int]:
+    """The edit's output size: the picture's shape at about a megapixel, each side a multiple of 16."""
+    scale = (megapixels * 1024 * 1024 / max(1, w * h)) ** 0.5
+    return max(256, int(round(w * scale / 16)) * 16), max(256, int(round(h * scale / 16)) * 16)
+
+
+def _edited_cutout(sc: StageContext) -> Path | None:
+    if not (sc.version.params or {}).get("picture_edit"):
+        return None
+    p = sc.file(EDITED_KEY)
+    return Path(p) if p is not None and Path(p).is_file() else None
+
+
+def _parent_edit(sc: StageContext, input_view: str) -> Path | None:
+    """The parent mesh version's edited cutout, when it made one from the same view."""
+    parent = sc.parent
+    if parent is None or parent.stage != "mesh" or not (parent.params or {}).get("picture_edit"):
+        return None
+    if (parent.params.get("input_view") or sc.category.get("input_view_default") or "concept") != input_view:
+        return None
+    p = library.version_file(parent, EDITED_KEY, sc.settings)
+    return Path(p) if p is not None and Path(p).is_file() else None
+
+
+def _picture_cards(sc: StageContext) -> list[str]:
+    """Where the edit runs: the card that makes pictures, then this job's own card if that one cannot be reached."""
+    out: list[str] = []
+    for name in (sc.settings.stage_instances.get("concept"), sc.ctx.instance):
+        if name and name in sc.ctx.clients and name not in out:
+            out.append(name)
+    return out
+
+
+async def _edit_picture(sc: StageContext, instruction: str, src: Path, edit_from: str | None) -> Path:
+    """Edit the input picture with the instruction and cut it out; registers edited_picture and edited_cutout."""
+    seed = random_seed()
+    white = await asyncio.to_thread(imaging.white_composite, src, sc.dir / "edit_source.png")
+    w, h = edit_size(*image_size(white))
+    cards = _picture_cards(sc)
+    if not cards:
+        raise RuntimeError("no graphics card can edit the picture")
+    sc.use_model("qwen_edit")
+    sc.use_model("qwen_lightning_lora")
+    last: Exception | None = None
+    for card in cards:
+        try:
+            name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_mesh_edit_src.png", card)
+            entry = await sc.comfy(edit_graph(name, edit_prompt(instruction), seed, sc.prefix("edit"), w, h), instance=card, poll=1.0,
+                                   message="Editing the picture as described", base=0.0, span=0.04)
+            edited = await sc.download_image(entry, "save", sc.dir / "edited_picture.png", card)
+            cut = await sc.cutout(Path(edited), "edited_cutout", instance=card, base=0.04, span=0.01)
+            break
+        except Exception as e:  # noqa: BLE001  (try the next card; a cancelled job stops at once)
+            if type(e).__name__ == "JobCancelled":
+                raise
+            last = e
+    else:
+        raise RuntimeError(f"the picture could not be edited: {last}")
+    stats = cut.get("stats") or {}
+    if stats.get("empty") or float(stats.get("coverage") or 0) < 0.02:
+        raise RuntimeError("the edited picture came out without the character; try the change again or word it differently")
+    sc.register("edited_picture", edited)
+    sc.register(EDITED_KEY, cut["cutout"])
+    sc.set_params(picture_edit=True, edit_seed=seed, edit_from=edit_from)
+    sc.set_metrics(picture_edit={"seed": seed, "card": card, "size": [w, h], "elapsed_seconds": entry.get("elapsed_seconds"),
+                                 "prompt": edit_prompt(instruction)})
+    return Path(cut["cutout"])
