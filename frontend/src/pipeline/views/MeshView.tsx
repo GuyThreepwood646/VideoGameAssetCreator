@@ -1,8 +1,10 @@
-import { libraryUrl, type Version } from '../../api'
+import { libraryUrl, type Asset, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
+import { HairPicker, kindWords } from '../HairPicker'
+import type { FixAction } from '../../help'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
 const TEXTURE_NAMES: Record<string, string> = {
@@ -17,8 +19,16 @@ const TEXTURE_NAMES: Record<string, string> = {
   emissive: 'glow',
 }
 
-export function MeshView({ version, category }: { version: Version; category?: string }) {
-  const glb = libraryUrl(version.files.glb)
+// Hair from the library at Clean up (metrics.hair_library on the prep version).
+type LibraryHair = { attached?: boolean; style?: string; name?: string; triangles?: number; cap_triangles?: number; kind?: string; skin_through?: number; credit?: string; extra_height_m?: number; reused_body_of?: string | null }
+
+export function MeshView({ version, category, asset, hairFocus, onFix, onChanged }: { version: Version; category?: string; asset?: Asset; hairFocus?: number | null; onFix?: (fix: FixAction) => void; onChanged?: () => void }) {
+  // With a library hairstyle the viewer shows the body with its hair (with_hair_glb), else the model as it is.
+  const glb = libraryUrl(version.files.with_hair_glb ?? version.files.glb)
+  const libHair = version.stage === 'prep' ? ((version.metrics?.hair_library ?? null) as LibraryHair | null) : null
+  const libHairOn = !!libHair?.attached
+  const hairFit = version.stage === 'prep' ? libraryUrl(version.files.hair_fit_sheet) : null
+  const showPicker = version.stage === 'mesh' && !!asset && (version.params?.hair_source === 'library' || !!version.metrics?.hair_library)
   // Prep sets the size (3.2): "About 1.8 m tall", measured on the category's axis.
   const size = version.stage === 'prep' && category ? measuredSize(version.metrics, category) : null
   // Scenery on a grid: "On the grid: 3 x 1 squares, 3 m tall".
@@ -42,7 +52,30 @@ export function MeshView({ version, category }: { version: Version; category?: s
   return (
     <div className="mesh-view">
       {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
+        {libHairOn && libHair && (
+          <div>
+            <div className="field-label">
+              Hairstyle (Hair from the library)
+              <Info term="term.hair_library" />
+            </div>
+            <div className="small">
+              "{libHair.name ?? (libHair.style ?? '').replace(/_/g, ' ')}": {kindWords(libHair.kind ?? 'shell').toLowerCase()}
+              {typeof libHair.triangles === 'number' ? `, ${libHair.triangles.toLocaleString('en-US')} triangles` : ''}
+              {typeof libHair.cap_triangles === 'number' ? ` with a ${libHair.cap_triangles.toLocaleString('en-US')}-triangle scalp cap (a hair-coloured layer under the hair)` : ''}, in its own material.
+            </div>
+            {libHair.credit && <div className="small muted">Credit: {libHair.credit}</div>}
+            {libHair.reused_body_of && <div className="small muted">Only the hair was fitted again; the body is the same as before.</div>}
+            {hairFit && (
+              <div className="small">
+                <a href={hairFit} target="_blank" rel="noreferrer">
+                  How the hairstyle was fitted to the head
+                </a>
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <div className="field-label">
             Model
@@ -72,7 +105,10 @@ export function MeshView({ version, category }: { version: Version; category?: s
               Size in the game
               <Info term="term.size_m" />
             </div>
-            <div className="small">{aboutSize(size.value, size.word)}</div>
+            <div className="small">
+              {aboutSize(size.value, size.word)}
+              {libHairOn && typeof libHair?.extra_height_m === 'number' && libHair.extra_height_m > 0.005 ? `, about ${Math.round(libHair.extra_height_m * 100)} cm more with the hair` : ''}
+            </div>
           </div>
         )}
         {onGrid && (

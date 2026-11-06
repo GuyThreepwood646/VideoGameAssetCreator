@@ -32,7 +32,7 @@ import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { OwnPictures, ReferencePicture } from './OwnPictures'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
-import { readToolState, toolPath, type ToolFocus } from './openTool'
+import { opensInView, readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
 import { MeshView } from './views/MeshView'
@@ -109,10 +109,17 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   // the tool there. Nothing runs until the person applies it.
   const location = useLocation()
   const [toolFocus, setToolFocus] = useState<ToolFocus | null>(null)
+  // A tool inside the step's view (the hairstyle picker): the view opens it when this nonce changes.
+  const [viewTool, setViewTool] = useState<number | null>(null)
   const openTool = (f: FixRequest) => {
     const { to, state: navState } = toolPath(asset.id, f)
     if (f.stage !== stage) {
       navigate(to, { state: navState })
+      return
+    }
+    if (opensInView(f.ui)) {
+      if (selected) setActiveId(selected.id)
+      setViewTool(navState.openTool.nonce)
       return
     }
     if (selected) setActiveId(selected.id)
@@ -125,8 +132,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     if (!t || handledTool.current === t.nonce) return
     handledTool.current = t.nonce
     if (selected) setActiveId(selected.id)
-    setChangeOpen(true)
-    setToolFocus(t)
+    if (opensInView(t.ui)) setViewTool(t.nonce)
+    else {
+      setChangeOpen(true)
+      setToolFocus(t)
+    }
     // Drop the request from history so going back and forth does not open the tool again.
     navigate(location.pathname, { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,7 +251,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
+            <StageViewer stage={stage} version={active} asset={asset} viewTool={viewTool} onFix={fix} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -312,7 +322,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
-function StageViewer({ stage, version, category, assetName, onChanged, hideReady, onRefineView }: { stage: StageId; version: Version; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; onRefineView: (view: string) => void }) {
+function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, onRefineView }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; onRefineView: (view: string) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
     return <div className="placeholder-box">You stopped this version before it finished. Resume (above) runs it again with the same settings.</div>
@@ -330,7 +340,7 @@ function StageViewer({ stage, version, category, assetName, onChanged, hideReady
       return <TurnaroundView version={version} onRegenerateView={onRefineView} />
     case 'mesh':
     case 'prep':
-      return <MeshView version={version} category={category} />
+      return <MeshView version={version} category={category} asset={asset} hairFocus={stage === 'mesh' ? viewTool : null} onFix={onFix} onChanged={onChanged} />
     case 'rig':
       return <RigView version={version} />
     case 'export':

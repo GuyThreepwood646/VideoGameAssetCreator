@@ -6,6 +6,7 @@ import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, ty
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
+import { hairCatalogue, hairPanel } from './hair'
 import { addedOf, changeMoves, characterMoves, moveLibrary, mockReadMoveFile, myMoveFiles, removedOf } from './moves'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
@@ -321,7 +322,8 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
         job.status = 'done'
         job.progress = 1
         job.message = 'finished'
-        if (!asset.selected[version.stage]) setSelected(asset, version)
+        // A bald-pictures-only redraw (Hair from the library turned on later) is kept at once.
+        if (!asset.selected[version.stage] || version.params.bald_only === true) setSelected(asset, version)
       }
       job.finished_at = nowIso()
       broadcast({ type: 'job', job: clone(job) })
@@ -501,6 +503,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
     parts: (body.parts as string[]) ?? [],
     created_at: nowIso(),
     concept_model: typeof body.concept_model === 'string' && body.concept_model ? body.concept_model : null,
+    ...(body.hair === 'library' ? { hair: { source: 'library' as const, pick: null, changed_by: 'form' } } : {}),
     selected: {},
     stages: {},
   }
@@ -529,6 +532,7 @@ on('POST', '/api/assets/:id/variants', (m, body) => {
     created_at: nowIso(),
     base_asset_id: base.id,
     variant_change: change,
+    ...(base.hair ? { hair: { ...base.hair } } : {}),
     selected: {},
     stages: {},
   }
@@ -1294,6 +1298,46 @@ on('DELETE', '/api/my-moves/:id', (m) => {
   if (i < 0) throw new HttpError(404, 'That file is not on your list.')
   const [gone] = myMoveFiles.splice(i, 1)
   return { removed: gone.id }
+})
+
+// Hair from the library (mock/hair.ts; backend vgac/hairlib.py)
+on('GET', '/api/hair-library', () => hairCatalogue())
+on('GET', '/api/assets/:id/hair', (m) => hairPanel(findAsset(m.groups!.id)))
+on('PUT', '/api/assets/:id/hair', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  const source = body.source
+  if (source !== 'model' && source !== 'library') throw new HttpError(422, 'source must be "model" or "library"')
+  const panel = hairPanel(a)
+  if (source === 'library' && !panel.available) throw new HttpError(409, panel.unavailable_reason || 'Hair from the library is not available for this character.')
+  a.hair = { source, pick: a.hair?.pick ?? null, picked_at: a.hair?.picked_at ?? null, changed_by: 'page' }
+  const started: { job: Job; version: Version }[] = []
+  const turn = (a.stages.turnaround ?? []).find((v) => v.id === a.selected.turnaround)
+  if (source === 'library' && turn && turn.status === 'done' && !('bald_front' in turn.files)) {
+    const v = newVersion(a, 'turnaround', turn.id, { ...turn.params, bald_views: true, bald_only: true, bald_seed: Math.floor(Math.random() * 100000) })
+    started.push({ job: clone(startJob(a, v, 'turnaround.adjust')), version: clone(v) })
+  }
+  return { panel: hairPanel(a), started, rebuild_from: a.selected.mesh ? 'mesh' : null }
+})
+on('POST', '/api/assets/:id/hair/pick', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  const style = String(body.style ?? '')
+  if (!hairCatalogue().some((s) => s.id === style)) throw new HttpError(404, `unknown hairstyle '${style}'`)
+  a.hair = { source: 'library', pick: style, picked_at: nowIso(), changed_by: 'page' }
+  const panel = hairPanel(a)
+  if (body.rebuild && panel.applied && panel.applied.style !== style) {
+    // Like autopilot.start(fix={stage: prep, params: {hair_style}}): the later steps are set aside and made again.
+    for (const s of ['rig', 'export'] as StageId[]) {
+      delete a.selected[s]
+      for (const v of a.stages[s] ?? []) v.selected = false
+    }
+    const st = apState(a)
+    st.stop_on = 'block'
+    st.until_stage = 'export'
+    st.started_at = nowIso()
+    apRunStage(a, 'prep', { stage: 'prep', params: { hair_style: style, hair_style_source: 'chosen' } })
+    return { panel: hairPanel(a), autopilot: clone(apState(a)) }
+  }
+  return { panel, autopilot: null }
 })
 
 // Items (mock/items.ts; backend vgac/items.py)

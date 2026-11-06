@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import items, user_addons
+from . import hairlib, items, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -59,6 +59,7 @@ app.include_router(own_images.router)  # start from your own images (own_images.
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
+app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
 
 LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
 
@@ -128,6 +129,9 @@ class AssetIn(BaseModel):
     # Carried items found in the description (items.detect): "separate" (the default) makes the character
     # empty-handed and each item its own linked asset; "keep" leaves them part of the body.
     items: Literal["separate", "keep"] | None = None
+    # Hair from the library (hairlib.py): "library" builds the model bald and fits a ready-made hairstyle; "model" or
+    # nothing is today's hair.
+    hair: Literal["model", "library"] | None = None
 
 
 class AssetPatch(BaseModel):
@@ -454,6 +458,9 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     db.refresh(a)
     items.on_create(db, a, body.items)
     db.refresh(a)
+    if body.hair is not None:
+        hairlib.set_choice(db, a, body.hair, changed_by="form")
+        db.refresh(a)
     if picture is None:
         return asset_to_dict(a)
     started = own_images.start_concept_from_picture(db, a, picture)
@@ -485,6 +492,7 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     a.parts = list(base.parts)
     a.base_asset_id = base.id
     a.variant_change = change
+    a.hair_json = base.hair_json
     db.add(a)
     db.commit()
     db.refresh(a)

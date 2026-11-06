@@ -60,7 +60,22 @@ arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
 body = [o for o in scene.objects if o.type == "MESH" and not o.name.startswith("Socket_")]
 # Only the first detail level is the body (the GLB carries one mesh; LOD files are separate).
 body = [o for o in body if "_LOD" not in o.name or o.name.endswith("_LOD0")] or body
-report = {"ok": False, "items": [], "clearance": None, "fit": [], "ground": None, "between": None, "warnings": []}
+
+
+def _mat_extras(m):
+    try:
+        return {k: m[k] for k in m.keys()} if m is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# Per body object, the material slots' custom properties when one of them is hair from the library (else absent).
+hair_marks = {}
+for _o in body:
+    _ex = [_mat_extras(m) for m in _o.data.materials]
+    if any(itemfit.is_library_hair(e) for e in _ex):
+        hair_marks[_o.name] = _ex
+report ={"ok": False, "items": [], "clearance": None, "fit": [], "ground": None, "between": None, "warnings": []}
 ad = arm.animation_data if arm else None
 if ad:
     ad.action = None
@@ -163,7 +178,12 @@ if placed and arm and body:
                 be = b.evaluated_get(dg)
                 me = be.to_mesh()
                 mw = be.matrix_world
-                trees.append(BVHTree.FromPolygons([mw @ v.co for v in me.vertices], [tuple(p.vertices) for p in me.polygons]))
+                if hair_marks.get(b.name):
+                    # hair from the library is its own piece, not the body: its slot is left out of the body tree
+                    polys = itemfit.body_polygons([(p.vertices, p.material_index) for p in me.polygons], hair_marks[b.name])
+                else:
+                    polys = [tuple(p.vertices) for p in me.polygons]
+                trees.append(BVHTree.FromPolygons([mw @ v.co for v in me.vertices], polys))
                 be.to_mesh_clear()
             socks = {n: scene.objects[n].evaluated_get(dg).matrix_world.copy() for n in socket_names}
             frames.append({"clip": name, "frame": fr, "trees": trees, "sockets": socks})

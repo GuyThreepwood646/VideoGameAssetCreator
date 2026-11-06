@@ -1,0 +1,27 @@
+Hair library credits (backend/vgac/data/hairlib)
+
+Every style below is CC0 1.0 (public domain dedication) by its own file. No attribution is required; it is given anyway.
+
+mh_ponytail01: "Ponytail01" by MakeHuman team (Data Collection AB), from MakeHuman system assets (http://www.makehumancommunity.org). Licence line: # This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:
+q_buzzed: "Buzzed" by Quaternius, from Universal Base Characters (Standard) (https://quaternius.com). Licence line: CC0 1.0 Universal (CC0 1.0)
+
+Left out
+
+mh_hair01:culturalibre_hair_01: licence line found: # license AGPL3 (see also http://www.makehuman.org/node/320)
+mh_hair01:culturalibre_hair_02: licence line found: # license AGPL3 (see also http://www.makehuman.org/node/320)
+mh_hair01:elvs_double_mh_braid: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:elvs_french_braid_variation: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:elvs_reverse_french_braid_bun: licence line found: # license CC_by
+mh_hair01:elvs_unkempt_french_braid: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:learning_anime_hair: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:littleright_bobcut_hair: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:o4saken_long01: licence line found: # license CC BY 4.0
+mh_hair01:rehmanpolanski_hair_bun_brown: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:sonntag78_blond_with_headband: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+mh_hair01:sonntag78_junglebook_hair: licence line found: # license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)
+quaternius:Hair_Beard: a beard, not hair
+mh_system:short04: sideburns and a beard
+mh_system:short01: 200 loose card pieces, reads as noise on a game character
+mh_system:bob01: 8,474 triangles; bob02 and the toigo bobs cover the shape
+mh_hair01:culturalibre_hair_05: made for another base: sits above the head
+mh_hair01:culturalibre_hair_06: 14,688 triangles of loose flakes

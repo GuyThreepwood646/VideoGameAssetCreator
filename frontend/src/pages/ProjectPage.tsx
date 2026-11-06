@@ -8,6 +8,7 @@ import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
+import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
 import { presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
@@ -156,6 +157,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   // Carried items in the description (a sword, a quiver): made separately unless the person keeps them on the body.
   const [found, setFound] = useState<ItemDetect | null>(null)
   const [itemChoice, setItemChoice] = useState<'separate' | 'keep'>('separate')
+  // Hair from the library (ready-made hairstyles): offered only where the app can use it; off unless chosen.
+  const [hairChoice, setHairChoice] = useState<'model' | 'library'>('model')
   const { presets } = usePresets()
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -223,6 +226,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   const optionLabel = (m: string) => (suggestion && m === suggestion.model && !(STYLE_MODELS as readonly string[]).includes(m) ? suggestion.model_label : modelLabel(m))
 
   const fromPicture = startFrom === 'picture'
+  const hairOffered = (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
   const ready = !!category && (fromPicture ? !!picture : !!prompt.trim())
   const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || 'Untitled'
 
@@ -243,6 +247,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         ...(chosenModel && !fromPicture ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
+        ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       rememberAutopilotDefault(autopilot)
@@ -310,6 +315,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.hair_pictures" />
         </div>
       ))}
+      {hairOffered && <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />}
       {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
       {!fromPicture && (
         <div className="examples">
