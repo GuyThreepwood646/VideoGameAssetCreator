@@ -610,6 +610,8 @@ class AutopilotIn(BaseModel):
     fix: dict[str, Any] | None = None
     # Go back to this step: it is made again and every step after it is rebuilt (the old results are set aside).
     from_stage: str | None = None
+    # Settings the person chose for a step's first build ({stage: params}); used when the run starts that step afresh.
+    stage_params: dict[str, dict[str, Any]] | None = None
 
 
 @app.post("/api/assets/{aid}/autopilot")
@@ -618,8 +620,15 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
+    stage_params = None
+    if body.stage_params:
+        unknown = [k for k in body.stage_params if k not in STAGES]
+        if unknown:
+            raise HTTPException(400, f"unknown stage {unknown[0]!r} in stage_params")
+        stage_params = {k: _params(k, v, a.category) for k, v in body.stage_params.items() if v}
     try:
-        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix, from_stage=body.from_stage)
+        return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix, from_stage=body.from_stage,
+                               stage_params=stage_params)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

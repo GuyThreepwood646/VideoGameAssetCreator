@@ -81,7 +81,7 @@ Done when: a pytest asserts that every `CHECK_GUIDE` entry has `ok` and `fail`, 
 | `engine` | trellis: "TRELLIS (most detail from one picture)"; hy3d: "Hunyuan (uses all four sides; good for long animals)" |
 | `input_view` | concept: "The first picture"; front: "Front view"; quarter: "Three-quarter view" |
 | `texture_size` | 512: "512 px (smallest)"; 1024: "1024 px"; 2048: "2048 px"; 4096: "4096 px (largest)" |
-| `upsample` | 1024: "Normal"; 1536: "Fine (several times slower)" |
+| `upsample` | 1024: "Normal"; 1536: "Finer (about 2 to 3 times slower)" |
 | `pivot` | base: "At the bottom (stands on the ground)"; center: "In the middle (floats or spins)" |
 | `template` | auto: "Automatic (from the category)"; mixamo: "Standard human skeleton"; generic: "Fitted to the shape"; none: "No skeleton" |
 | `formats` | fbx: "FBX (Unity, Unreal, Godot)"; glb: "GLB (web, Godot, Blender)" |

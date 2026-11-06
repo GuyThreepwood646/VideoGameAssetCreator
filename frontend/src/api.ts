@@ -108,6 +108,8 @@ export type AutopilotBody = {
   // Go back to this step: it is made again (built on what is kept before it) and every step after it is
   // rebuilt. The old results stay in the history, set aside.
   from_stage?: StageId
+  // Settings chosen for a step's first build; Autopilot uses them when it starts that step afresh.
+  stage_params?: Partial<Record<StageId, Record<string, unknown>>>
 }
 
 export type Project = {

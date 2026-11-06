@@ -256,9 +256,9 @@ export const stages: StageInfo[] = [
     adjust_schema: [
       { name: 'engine', label: 'Engine', type: 'select', options: ['trellis', 'hy3d'], default: 'trellis' },
       { name: 'input_view', label: 'Input view', type: 'select', options: ['concept', 'front', 'quarter'], default: 'quarter' },
-      { name: 'target_faces', label: 'Target faces (dense)', type: 'integer', min: 50000, max: 2000000, step: 10000, default: 500000 },
+      { name: 'target_faces', label: 'Target faces (dense)', type: 'integer', min: 200, max: 500000, step: 1000, default: 500000 },
       { name: 'texture_size', label: 'Texture size', type: 'select', options: [1024, 2048, 4096], default: 2048 },
-      { name: 'upsample', label: 'Upsample', type: 'select', options: [1024, 1536], default: 1024 },
+      { name: 'upsample', label: 'Finer colour and shape', type: 'select', options: [1024, 1536], default: 1024 },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 5 },
       { name: 'remesh', label: 'Remesh to watertight', type: 'boolean', default: true },
       // 3.9: seam space around texture pieces; Advanced (not in SIMPLE_PARAMS), empty means automatic.
