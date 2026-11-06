@@ -25,6 +25,7 @@ from PIL import Image
 from . import hairstyles
 
 RANK_SECONDS = 150
+TIED = ("ponytail", "bun", "braid")      # scored on the head only: the tail or braid hangs behind the head in a front picture
 RANK_TOP = 4
 FIT_MIN = 0.6
 SKIN_MAX = 0.02
@@ -93,7 +94,9 @@ async def rank(sc: Any, glb: Path, picture_json: Path, bald_cutout: Path, outlin
         job = dict(glb=str(Path(glb).resolve()), yaw=int(yaw or 0), picture_json=str(Path(picture_json).resolve()),
                    bald_cutout=str(Path(bald_cutout).resolve()), outline=str(Path(outline).resolve()),
                    out_dir=str(out_dir.resolve()), family=family, seconds=RANK_SECONDS - 10, top=RANK_TOP, render_px=384,
-                   colour=pic["colour"], styles=[_style_job(e, platform) for e in offered])
+                   colour=pic["colour"], styles=[_style_job(e, platform) for e in offered], head_only=family in TIED)
+        if family in TIED:
+            block["score_region"] = "head"
         jp = out_dir / "rank_job.json"
         jp.write_text(json.dumps(job, indent=1), encoding="utf-8")
         await sc.blender("hairfit.py", ["rank", jp], log_name="hairfit_rank.log", timeout=RANK_SECONDS)
@@ -173,7 +176,7 @@ async def attach(sc: Any, body_glb: Path, style_id: str, params: dict | None, pi
     job = dict(glb=str(Path(body_glb).resolve()), yaw=0, picture_json=str(Path(picture_json).resolve()),
                bald_cutout=str(Path(bald_cutout).resolve()), outline=str(Path(outline).resolve()), out_dir=str(out_dir.resolve()),
                style=_style_job(e, platform), params=params, cover=cover or "normal", tex=int(tex), colour=pic["colour"],
-               export=True, measure=True)
+               export=True, measure=True, head_only=e["family"] in TIED)
     jp = out_dir / "attach_job.json"
     jp.write_text(json.dumps(job, indent=1), encoding="utf-8")
     await sc.blender("hairfit.py", ["attach", jp], log_name="hairfit_attach.log", timeout=600)
@@ -209,7 +212,8 @@ async def attach(sc: Any, body_glb: Path, style_id: str, params: dict | None, pi
                    eye_cover=rep.get("eye_cover"), params=rep.get("params"), triangles=rep.get("triangles"),
                    cap_triangles=rep.get("cap_triangles"), skin_through=dict(all=sk.get("all"), crown=sk.get("crown"), sides=sk.get("sides")),
                    pushed_out=rep.get("pushed_out"), kind=e["kind"], alpha=e["alpha"], two_sided=bool(e["two_sided"]), tex=nsz,
-                   colour_delta=rep.get("colour_delta"), extra_height_m=rep.get("extra_height_m"), groups=rep.get("groups"),
+                   colour_delta=rep.get("colour_delta"), render_delta=rep.get("render_delta"),
+                   score_region="head" if e["family"] in TIED else "whole", extra_height_m=rep.get("extra_height_m"), groups=rep.get("groups"),
                    credit=hairstyles.credit(style_id), seconds=round(time.time() - t0, 1))
     if rep.get("flow_error"):
         metrics["flow_error"] = rep["flow_error"]

@@ -99,8 +99,8 @@ async def one(ch: str) -> dict:
 
 
 def table(rows: list[dict]) -> str:
-    out = ["| Character | Family | Choice now | Score | Round two | Score | Same style | Diff | Skin through | Colour delta | Tris | Rank s | Attach s |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["| Character | Family | Choice now | Score | Round two | Score | Same style | Diff | Skin through | Colour delta (texture) | Render delta | Tris | Rank s | Attach s |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         hl, at = r["rank"], (r.get("attach") or {}).get("metrics", {})
         r2 = r.get("round_two") or {}
@@ -110,7 +110,7 @@ def table(rows: list[dict]) -> str:
             same = SAME.get(r2s) == hl["best"]
         diff = None if hl.get("best_score") is None or r2.get("score") is None else round(hl["best_score"] - r2["score"], 3)
         out.append(f"| {r['char']} | {r['family']} | {hl.get('best')} | {hl.get('best_score')} | {r2s} | {r2.get('score')} | {same} | {diff} | "
-                   f"{(at.get('skin_through') or {}).get('all')} | {at.get('colour_delta')} | {at.get('triangles')} | {r['seconds_rank']} | {r.get('seconds_attach')} |")
+                   f"{(at.get('skin_through') or {}).get('all')} | {at.get('colour_delta')} | {at.get('render_delta')} | {at.get('triangles')} | {r['seconds_rank']} | {r.get('seconds_attach')} |")
     return "\n".join(out)
 
 
