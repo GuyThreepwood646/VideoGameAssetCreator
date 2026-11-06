@@ -17,10 +17,10 @@ export const mockCredits: CreditsAnswer = {
       ],
     },
     before_sharing: {
-      title: 'Before you share the app (decisions that are yours, not settled here)',
+      title: 'Before you share the app (licence choices and what they rest on)',
       points: [
-        'The app has no licence of its own yet. Choose one before sharing.',
-        "Blender is GPL and the app's Blender scripts use its Python interface; ComfyUI is GPL-3.0 and vgac-nodes runs inside it. Both questions are open.",
+        "The app is GPL-3.0-or-later: pass on the source and keep the notices. Later versions could be licensed differently, but others' code would need their agreement.",
+        "Blender's FAQ says shared Python scripts that use its interface must be GPL; the app is GPL-3.0-or-later, so that is met. vgac-nodes is GPL too.",
       ],
     },
     game_credit: {
@@ -28,7 +28,7 @@ export const mockCredits: CreditsAnswer = {
       points: [
         "As recorded, nothing that ends up inside an exported asset needs a credit. The animations and hairstyles are CC0 (public domain dedication), and the AI models' licences cover the model files, not what they make.",
         'Crediting is still polite, and this page lists everyone so you can copy it.',
-        'Two exceptions are recorded: Hunyuan3D (optional, community licence with a revenue clause and regional limits) and Anima (model non-commercial, what it makes is usable).',
+        'Two exceptions are recorded: Hunyuan3D (optional; not granted in the EU, UK or South Korea; a 1-million-monthly-users clause) and Anima (model non-commercial, what it makes is usable).',
       ],
     },
   },

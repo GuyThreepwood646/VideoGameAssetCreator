@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Runtime Forge LLC. MIT licence, on purpose: the backend copies this file into your game project, so it must
+// not carry the app's GPL. You may use, copy, change and distribute it, in any project including commercial games, as long as this
+// notice stays in the file. It is provided "as is", without warranty of any kind.
 // Batch-mode validation importer for Video Game Asset Creator.
 // Run: Unity.exe -batchmode -nographics -quit -projectPath <sandbox> -executeMethod VgacImport.Run -vgacInput <dir> -vgacName <name>
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]

@@ -133,10 +133,13 @@ Review (keep or regenerate), Refine (describe a change, optional region brush), 
 | Model or tool | Terms | Use |
 |---|---|---|
 | TRELLIS.2, Z-Image (base and Turbo), Qwen-Image-Edit, Klein 4B, Chroma1-HD, pixel LoRAs, BiRefNet, SkinToken, Make-It-Animatable, Blender, xatlas, Instant Meshes, trimesh | Permissive (MIT, Apache 2.0, GPL for Blender as a tool) | Default |
-| Hunyuan3D 2.0, 2mv, 2.1, Part | Tencent community licence: free, revenue clause, regional restrictions | Opt-in per asset, recorded in manifest |
+| Hunyuan3D 2.0, 2mv, 2.1, Part | Tencent community licence: free, a 1-million-monthly-users clause, not granted in the EU, UK or South Korea | Opt-in per asset, recorded in manifest |
 | Anima | Outputs usable commercially, model non-commercial | Allowed for outputs, recorded |
 | CC0 animation and model packs | CC0 | Default |
 | Claude vision judge | Paid per call | Opt-in only |
+| This app (backend, frontend, launcher, Blender scripts, `comfy-nodes/vgac-nodes`) | GPL-3.0-or-later, Copyright (C) 2026 Runtime Forge LLC (`LICENSE`) | Blender and ComfyUI are GPL tools it calls; the app is GPL to match Blender's rule for scripts that use its Python interface |
+| Files copied into a user's Unity project (`unity-sandbox/Assets/VgacScripts`, `VgacShaders`, `Editor/VgacImport.cs`) | MIT, notice kept in each file | Deliberately not GPL: they end up inside users' games |
+| Gemma 3 (local vision judge), models generally | Own terms, downloaded by each user, never bundled | Credits page, `CREDITS.md`, `THIRD-PARTY-NOTICES.md` |
 
 ## 8. Build plan
 

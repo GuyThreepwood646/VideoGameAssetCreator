@@ -6,7 +6,7 @@
   "main": "main.js",
   "private": true,
   "author": "VGAC",
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "start": "electron .",
     "icon": "node make-icon.js",
