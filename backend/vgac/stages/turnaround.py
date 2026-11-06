@@ -243,24 +243,43 @@ async def upload(sc: StageContext, params: dict[str, Any], view: str | None = No
     sc.set_params(views=views)
 
 
-async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
+def turnaround_views(v: Any) -> list[str]:
+    """Every view a turnaround version has: the ones its settings list plus any it holds a result for. (A redraw made
+    before 2026-11-06 left only the redrawn view in the settings, so the results are read too.)"""
+    listed = list((v.params or {}).get("views") or DEFAULT_VIEWS)
+    extra = [x for x in ((v.metrics or {}).get("views") or {}) if x not in listed]
+    if not extra:
+        return listed
+    known = list(reference.TURNAROUND_VIEWS)
+    return sorted(listed + extra, key=lambda x: known.index(x) if x in known else len(known))
+
+
+async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any],
+                 views: list[str] | None = None) -> None:
+    """Redraw one view (`view`) or several together (`views`) in one new version; every other view is copied
+    forward from the parent, so the new version is complete and can be redrawn from again."""
     parent = sc.parent
     if parent is None or parent.stage != "turnaround":
         raise ValueError("turnaround refine needs a turnaround parent version")
-    view = view or "front"
-    if view not in (parent.params.get("views") or DEFAULT_VIEWS):
-        raise ValueError(f"view {view!r} is not part of the parent turnaround")
+    targets = list(dict.fromkeys(views or [view or "front"]))
+    all_views = turnaround_views(parent)
+    for t in targets:
+        if t not in all_views:
+            raise ValueError(f"view {t!r} is not part of the parent turnaround")
     # Copy every other view forward so the new version is complete.
     keep: dict[str, dict[str, Any]] = {}
     for v, info in (parent.metrics.get("views") or {}).items():
-        if v == view:
+        if v in targets:
             continue
         for key in (v, f"{v}_cutout", f"{v}_white"):
             p = library.version_file(parent, key, sc.settings)
             if p is not None:
                 sc.register(key, sc.copy_in(p, p.name))
         keep[v] = info
-    merged = {**inherit(parent.params, params), "seed": params.get("seed"), "instruction": instruction, "refine_of": parent.id, "refined_view": view}
+    # A view the person supplied and now has redrawn is no longer their own picture.
+    still_supplied = [v for v in (parent.params.get("supplied_views") or []) if v not in targets]
+    merged = {**inherit(parent.params, params), "seed": params.get("seed"), "instruction": instruction, "refine_of": parent.id,
+              "refined_view": targets[0], "refined_views": targets, "views": all_views, "supplied_views": still_supplied}
     sc.set_params(**merged)
     sc.set_metrics(views=keep)
     _copy_bald(sc, parent)
@@ -268,7 +287,9 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     grand = concept_of(sc, parent)
     if grand is None:
         raise ValueError("turnaround parent has no concept parent")
-    await _run_views(sc, [view], merged, grand, keep=keep, extra=instruction)
+    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction)
+    # _run_views records the views it drew; the version holds all of them (as upload does).
+    sc.set_params(views=all_views)
 
 
 def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:

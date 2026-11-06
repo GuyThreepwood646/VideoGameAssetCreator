@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from vgac import imaging
@@ -149,6 +150,66 @@ def test_turnaround_refine_uses_concept_without_touching_parent(tmp_path, monkey
     views = sc.metrics["views"]
     assert set(views) == {"front", "back", "left"} and views["left"]["passed"]
     assert new.params["refine_of"] == ta.id and new.params["refined_view"] == "left"
+
+
+def test_turnaround_refine_keeps_every_view_so_the_result_can_be_redrawn_again(tmp_path, monkeypatch):
+    """A redraw used to leave only the redrawn view in the new version's settings, so the next redraw of another
+    view from it failed with "view 'back' is not part of the parent turnaround" (2026-11-06)."""
+    _patch_turnaround(monkeypatch)
+    concept, ta, new = _lineage(tmp_path)
+    sc = FakeSC(tmp_path, new, FakeDB(concept, ta, new))
+    asyncio.run(turnaround.refine(sc, "Redraw this view", "left", None, {}))
+    assert new.params["views"] == ["front", "left", "back", "right"]
+    # The redrawn version is the parent of the next redraw, of a different view.
+    new.metrics = sc.metrics
+    nxt = SimpleNamespace(id="x" * 32, parent_version_id=new.id, stage="turnaround", params={}, metrics={}, image=None)
+    sc2 = FakeSC(tmp_path, nxt, FakeDB(concept, ta, new, nxt))
+    asyncio.run(turnaround.refine(sc2, "Redraw this view", "back", None, {}))
+    assert sc2.staged == [concept.image]  # still drawn from the concept, two redraws down
+    assert nxt.params["views"] == ["front", "left", "back", "right"] and nxt.params["refined_views"] == ["back"]
+
+
+def test_turnaround_refine_from_a_version_that_lists_only_its_redrawn_view(tmp_path, monkeypatch):
+    """Versions made before the fix list one view in their settings but hold a result for each: those count."""
+    _patch_turnaround(monkeypatch)
+    concept, ta, new = _lineage(tmp_path)
+    ta.params["views"] = ["left"]
+    ta.metrics["views"] = {v: {"passed": True} for v in ("front", "left", "back", "right", "quarter")}
+    assert turnaround.turnaround_views(ta) == ["front", "left", "back", "right", "quarter"]
+    sc = FakeSC(tmp_path, new, FakeDB(concept, ta, new))
+    asyncio.run(turnaround.refine(sc, "Redraw this view", "back", None, {}))
+    assert set(sc.metrics["views"]) == {"front", "left", "back", "right", "quarter"}
+    assert new.params["views"] == ["front", "left", "back", "right", "quarter"]
+
+
+def test_turnaround_refine_redraws_several_views_in_one_version(tmp_path, monkeypatch):
+    _patch_turnaround(monkeypatch)
+    concept, ta, new = _lineage(tmp_path)
+    ta.params["supplied_views"] = ["back", "left"]
+    drawn: list[str] = []
+    real = turnaround._generate_view
+
+    async def counting(sc, src_name, view, *a, **kw):
+        drawn.append(view)
+        return await real(sc, src_name, view, *a, **kw)
+
+    monkeypatch.setattr(turnaround, "_generate_view", counting)
+    sc = FakeSC(tmp_path, new, FakeDB(concept, ta, new))
+    asyncio.run(turnaround.refine(sc, "Redraw this view", None, None, {}, views=["left", "right", "left"]))
+    assert sorted(set(drawn)) == ["left", "right"] and "front" not in drawn and "back" not in drawn
+    assert set(sc.metrics["views"]) == {"front", "back", "left", "right"}
+    assert new.params["refined_views"] == ["left", "right"] and new.params["refined_view"] == "left"
+    assert new.params["views"] == ["front", "left", "back", "right"]
+    # A view the person supplied and then had redrawn is no longer their own picture.
+    assert new.params["supplied_views"] == ["back"]
+
+
+def test_turnaround_refine_refuses_a_view_the_parent_does_not_have(tmp_path, monkeypatch):
+    _patch_turnaround(monkeypatch)
+    concept, ta, new = _lineage(tmp_path)
+    sc = FakeSC(tmp_path, new, FakeDB(concept, ta, new))
+    with pytest.raises(ValueError, match="not part of the parent turnaround"):
+        asyncio.run(turnaround.refine(sc, "Redraw this view", None, None, {}, views=["left", "top"]))
 
 
 def test_turnaround_adjust_uses_concept_and_mirror_checks(tmp_path, monkeypatch):
