@@ -66,6 +66,19 @@ styles:
     prompt_block: >-
       Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and
       simple readable shapes, suitable for a stylized video game character.
+    # The face sentence (vgac/hairpic.face_sentence), added at the end of the prompt for the categories named: this
+    # painter sometimes leaves a character's face empty or draws the figure from behind when nothing asks for a face
+    # (docs/KNOWN-FAULTS-RESEARCH.md section 2). Left out when the description hides the face. Tested 2026-11-05
+    # (runtime/tmp/celface, 4 characters x 3 seeds): without it 8 of 12 had a face; five wordings and places all gave
+    # 12 of 12, and this one, last in the prompt, changed the characters least (after the style block, "two eyes,
+    # eyebrows, a nose and a mouth" turned the red-haired knight's bob into short spiky hair on two seeds).
+    # check: the readiness check face_drawn (hairpic.face_check) asks the local vision model whether the head has
+    # eyes or is seen from behind; on the test pictures it caught 22 of 22 blank or turned-away faces with no false
+    # alarm on 69 drawn faces, at about 30 to 60 seconds a picture while the engine was shared.
+    face:
+      sentence: The face is clearly drawn, with both eyes and a mouth.
+      categories: [humanoid]
+      check: true
     # No hair sentence for characters: every wording tried changed the character on one of four pictures (a bob became
     # short spiky hair) or blew long hair out to the side (runtime/tmp/hairpics, round 2). Fur for creatures stays.
     hair: &hair_fur_only
