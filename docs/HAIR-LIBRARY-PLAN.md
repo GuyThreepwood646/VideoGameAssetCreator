@@ -113,6 +113,7 @@ Curated set, about 25 styles:
 - Thinned: braid01 to about 3,000 triangles, elvs_french_braid_variation to about 3,500.
 - The round-one generated waist-length long hair and high ponytail.
 - Beards, the misplaced styles and heavy card styles are excluded.
+- Correction found while building (2026-11-05): several MakeHuman styles carry AGPL3 or CC-BY in their own .mhclo header although the pack page says CC0 (culturalibre_hair_01, littleright_bobcut_hair, rehmanpolanski_hair_bun_brown, the elvs braids, learning_anime_hair, both sonntag78 styles, o4saken_long01). The builder refuses all of them; the rule is the style's own file, not the pack page. To fill the gaps the library adds a rule-built bun and a rule-built long hair with a centre parting. Braid, like afro, may have a single style.
 
 Offline builder (venv; drives Blender; reads runtime/hairpacks read-only; runs no pack scripts): `tools/hairlib_build.py`, `tools/hairlib_blender.py` (the round-two `lib_prep.py` logic plus baking `q` and `rho_r`, thinning, `lite` variants, clustering loose hanging pieces into up to 3 paths, thumbnails), `tools/hairlib_rulebuilt.py` (a port of `hairgen.py`'s long and ponytail styles, because runtime/ is not in git). The builder refuses any style whose `.mhclo` or pack page licence is not CC0.
 

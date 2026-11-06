@@ -1010,10 +1010,15 @@ def enlarge(src: Path, size: int, dest: Path) -> Path:
 
 
 def side_pictures(sc: StageContext) -> dict[str, Path]:
-    """The side-views step's cut-out pictures this pass can paint from (quarter, left, right), the ones that exist."""
+    """The side-views step's cut-out pictures this pass can paint from (quarter, left, right), the ones that exist.
+    With hair from the library (the 3D model was built bald) only the bald side pictures are read, and none at all when
+    they are missing, so no haired side picture is ever painted onto the skull."""
+    from .. import hairlib
+
+    bald = hairlib.is_library(sc)
     out: dict[str, Path] = {}
     for name, _ in SIDE_VIEWS:
-        p = sc.lineage_file(f"{name}_cutout", ("turnaround",))
+        p = sc.lineage_file(f"bald_{name}_cutout" if bald else f"{name}_cutout", ("turnaround",))
         if p is not None and Path(p).is_file():
             out[name] = Path(p)
     return out

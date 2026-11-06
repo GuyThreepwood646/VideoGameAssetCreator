@@ -232,6 +232,23 @@ export function finishLines(asset: Asset): FinishLine[] {
     lines.push({ id: 'hair_material', text: `Hair material (its own texture and shader): ${num(hm.texels_per_cm)?.toFixed(1) ?? 'more'} texels per cm on the hair, one more draw call per character.`, state: 'ok', term: 'hair_material' })
   }
 
+  // Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6): the style, its own material, whether it sways, and
+  // the credit to the style's author.
+  const lib = selectedVersion(asset, 'prep')?.metrics.hair_library as { attached?: boolean; style?: string; name?: string; triangles?: number; credit?: string } | undefined
+  if (lib?.attached) {
+    const bound = findCheck(asset, 'hair_bound')
+    const sway = num(bound?.vars?.groups_swaying) ?? 0
+    const name = lib.name ?? (lib.style ?? '').replace(/_/g, ' ')
+    if (failed(bound)) lines.push(warnFrom('hair_library', bound!, 'hair_library'))
+    else
+      lines.push({
+        id: 'hair_library',
+        text: `Hair from the library (ready-made hairstyles): "${name}"${num(lib.triangles) !== null ? `, ${num(lib.triangles)!.toLocaleString('en-US')} triangles` : ''}, in its own material${sway > 0 ? ', and it sways with spring bones (small extra bones that sway on their own)' : ', moving with the head'}.${lib.credit ? ` Credit: ${lib.credit.replace(/\.\s*$/, '')}.` : ''}`,
+        state: 'ok',
+        term: 'hair_library',
+      })
+  }
+
   // 6. Engine files.
   const files: string[] = []
   if (exp.files.fbx) files.push('FBX (Unity, Unreal, Godot)')
@@ -242,7 +259,7 @@ export function finishLines(asset: Asset): FinishLine[] {
 
   // Six lines as the backend writes them, seven when the lighting line is there too.
   return lines.slice(0, 6 + (lines.some((l) => l.id === 'lighting') ? 1 : 0) + (lines.some((l) => l.id === 'sockets') ? 1 : 0)
-    + (lines.some((l) => l.id === 'hair_material') ? 1 : 0))
+    + (lines.some((l) => l.id === 'hair_material') ? 1 : 0) + (lines.some((l) => l.id === 'hair_library') ? 1 : 0))
 }
 
 const PRIMITIVE_WORD: Record<string, string> = { box: 'one box', sphere: 'one ball', capsule: 'one capsule', hull: 'one wrapped shape' }

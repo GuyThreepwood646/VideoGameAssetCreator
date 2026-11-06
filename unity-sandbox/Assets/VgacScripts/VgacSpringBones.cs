@@ -1,4 +1,4 @@
-// VgacSpringBones Version 1
+// VgacSpringBones Version 2
 // Spring bones for characters made by Video Game Asset Creator: parts that hang free (a ponytail, a braid, a cape, a
 // tail) sway when the character moves. Our own small script, no package needed. The VGAC importer (VgacImport.cs)
 // adds it to the prefab and calls Setup with springs.json while the prefab stands in its bind pose; Setup finds the
@@ -13,6 +13,11 @@
 // its length. The parent's pose is interpolated across the steps of a frame, so the result does not depend on the
 // frame rate; gravity, lengths and radii scale with the character's size, so it looks the same at every size.
 //
+// Version 2: a chain may carry "hang" (0..1) in springs.json, written for hair from the library: each bone's rest
+// direction is pulled that share of the way toward world down, with no gravity across the bone there, so a ponytail
+// droops when the head bows instead of standing out like a handle (the backend bakes the same, springs.py simulate).
+// A chain without the field has hang 0 and moves exactly as in Version 1.
+//
 // The chains are not humanoid bones, so the shared Humanoid clips never move them: this script is what moves them
 // there. In the character's own clips the sway is also baked in; the script replaces it with sway that reacts.
 using System;
@@ -22,7 +27,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class VgacSpringBones : MonoBehaviour
 {
-    public const string Version = "1";
+    public const string Version = "2";
     public const float StepSeconds = 1f / 120f;
 
     [Serializable]
@@ -36,6 +41,7 @@ public class VgacSpringBones : MonoBehaviour
         public float[] colliderRadius = new float[0];        // per collider: the radius this chain uses (at scale 1)
         public float radius = 0.02f;
         public float stiffness = 1.8f, damping = 0.35f, drag = 1.6f, gravity = 9.81f;
+        public float hang;                                   // Version 2: pull toward world down, 0..1 (0: as Version 1)
         [NonSerialized] public Vector3[] p, prev, tprev;
         [NonSerialized] public Vector3 lastRoot;
         [NonSerialized] public Quaternion lastParent;
@@ -59,7 +65,7 @@ public class VgacSpringBones : MonoBehaviour
     float acc;
 
     // --- springs.json -----------------------------------------------------------------------------------------------
-    [Serializable] class JChain { public string name = "", kind = "", parent = ""; public string[] bones = new string[0]; public JVec[] joints_list; public float radius = 0.02f, stiffness = 1.8f, damping = 0.35f, drag = 1.6f, gravity = 9.81f; }
+    [Serializable] class JChain { public string name = "", kind = "", parent = ""; public string[] bones = new string[0]; public JVec[] joints_list; public float radius = 0.02f, stiffness = 1.8f, damping = 0.35f, drag = 1.6f, gravity = 9.81f, hang = 0f; }
     [Serializable] class JVec { public float[] v; }
     [Serializable] class JCol { public string name = "", bone = "", kind = ""; public float[] center = new float[3], axis = new float[3], size = new float[3]; public float radius, height; }
     [Serializable] class JDoc { public List<JChain> chains = new List<JChain>(); public List<JCol> colliders = new List<JCol>(); }
@@ -135,7 +141,7 @@ public class VgacSpringBones : MonoBehaviour
             var bones = new List<Transform>();
             foreach (var n in jc.bones) { var t = Find(n); if (t == null) { missing.Add(n); break; } bones.Add(t); }
             if (bones.Count != jc.bones.Length || bones.Count == 0 || jc.joints_list == null || jc.joints_list.Length != bones.Count + 1) continue;
-            var ch = new Chain { name = jc.name, kind = jc.kind, bones = bones.ToArray(), radius = jc.radius * scale, stiffness = jc.stiffness, damping = jc.damping, drag = jc.drag, gravity = jc.gravity };
+            var ch = new Chain { name = jc.name, kind = jc.kind, bones = bones.ToArray(), radius = jc.radius * scale, stiffness = jc.stiffness, damping = jc.damping, drag = jc.drag, gravity = jc.gravity, hang = Mathf.Clamp01(jc.hang) };
             int n2 = bones.Count;
             ch.restLocal = new Quaternion[n2];
             ch.segLocal = new Vector3[n2];
@@ -235,9 +241,17 @@ public class VgacSpringBones : MonoBehaviour
             {
                 var segW = Q * Vector3.Scale(c.segLocal[k], c.bones[k].lossyScale);
                 var target = np[k] + segW;
+                Vector3 gEff;
+                if (c.hang > 0f)
+                {
+                    // Version 2: the rest direction pulled toward world down; no gravity across the bone where it hangs
+                    var d = Vector3.Slerp(segW.normalized, Vector3.down, c.hang).normalized;
+                    target = np[k] + d * segW.magnitude;
+                    gEff = Vector3.Dot(g, d) * d;
+                }
+                else gEff = g - Q * c.gravityAcross[k] * c.gravity * scale;
                 var vel = (c.p[k + 1] - c.prev[k + 1]) / h;
                 var vt = (target - c.tprev[k + 1]) / h;
-                var gEff = g - Q * c.gravityAcross[k] * c.gravity * scale;
                 var accel = w * w * (target - c.p[k + 1]) - 2f * c.damping * w * (vel - vt) - c.drag * vel + gEff;
                 var x = c.p[k + 1] + vel * h + accel * h * h;
                 float rad = c.radius * scale * (k + 1) / nb;

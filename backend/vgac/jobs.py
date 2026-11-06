@@ -325,7 +325,7 @@ def free_ram_gb() -> float:
 
 # The random seeds a Resume carries from the stopped run: the step's own, and the face detail pass's sharpening redraw
 # and close-up (stages/face_detail.py picked_seed), so a resumed clean-up draws the same pictures.
-RESUME_SEEDS = ("seed", "face_seed", "face_closeup_seed", "face_closeup_seed_2")
+RESUME_SEEDS = ("seed", "face_seed", "face_closeup_seed", "face_closeup_seed_2", "bald_seed")
 
 
 class JobCancelled(Exception):

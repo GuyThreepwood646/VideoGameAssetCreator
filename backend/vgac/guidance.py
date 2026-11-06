@@ -850,6 +850,90 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _redraw_fix,
         "fix_label": "Draw the face",
     },
+    # Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 7): the bald picture at Check all sides, the fit at the
+    # 3D step (best style) and at Clean up (the style used), skin through and triangles at Clean up, the skeleton at
+    # Make it move. All warn.
+    "bald_picture": {
+        "severity": "warn",
+        "ok": lambda c: ("Bald picture (the character without hair, used to build the 3D model): only the hair was taken away, "
+                         "and {value:pct} of the rest of the picture is unchanged."
+                         + (" The first try changed too much, so it was drawn a second time." if _var(c, "rerolled") else "")),
+        "fail": lambda c: {
+            "face_changed": "Bald picture (the character without hair, used to build the 3D model): the face changed as well as the hair "
+                            "({value:pct} of the rest of the picture is unchanged, it needs {limit:pct}). The face is still painted from "
+                            "your own picture, but the head of the 3D model may not match it.",
+            "clothes_changed": "Bald picture (the character without hair, used to build the 3D model): the clothes changed as well as the hair "
+                               "({value:pct} of the rest of the picture is unchanged, it needs {limit:pct}), so the 3D model would not match "
+                               "your picture.",
+            "no_hair_removed": "Bald picture (the character without hair, used to build the 3D model): the hair was not taken away, so the "
+                               "library hairstyle would sit on top of the old hair.",
+            "error": "Bald picture (the character without hair, used to build the 3D model): it could not be made, because something "
+                     "went wrong on the way.",
+        }.get(_var(c, "reason") or "", "Bald picture (the character without hair, used to build the 3D model): more than the hair "
+                                       "changed ({value:pct} of the rest of the picture is unchanged, it needs {limit:pct}).")
+        + (" It was drawn twice and this is the closer one." if _var(c, "rerolled") and _var(c, "reason") != "error" else ""),
+        "fix": lambda c: {"stage": "turnaround", "params": {"bald_only": True, "bald_seed": None}},
+        "fix_label": "Make the bald picture again",
+    },
+    "hair_fit": {
+        "severity": "warn",
+        "ok": lambda c: ((("Hair from the library (ready-made hairstyles): \"{style_name}\" was fitted to the head"
+                           + (", the style you picked" if _var(c, "picked") else ", the best match") + ". ")
+                          if _var(c, "step") == "prep" and _var(c, "style_name") else
+                          ("Hair from the library (ready-made hairstyles): {candidates:n} styles were tried on the bald model, and "
+                           + ("\"{best_name}\"" if _var(c, "best_name") else "the best one") + " matches best. ")
+                          if _var(c, "candidates") else "Hair from the library (ready-made hairstyles): ")
+                         + "It follows the hair outline in the picture well (fit score {value:x}, good from {limit:x})."
+                         + (" The description does not name a hairstyle, so the styles were ranked by outline alone; check them by eye."
+                            if _var(c, "family_source") == "none" else "")),
+        "fail": lambda c: (("Hair from the library (ready-made hairstyles): "
+                            + ("\"{style_name}\"" if _var(c, "style_name") else "the hairstyle")
+                            + " follows the hair outline in the picture poorly (fit score {value:x}, good from {limit:x}). "
+                              "Choose another style, or use the hair built with the 3D model.")
+                           if _var(c, "step") == "prep" else
+                           ("Hair from the library (ready-made hairstyles): nothing in the library fits this picture well. "
+                            + ("The closest, \"{best_name}\", has" if _var(c, "best_name") else "The closest style has")
+                            + " a fit score of {value:x} (good from {limit:x}). Pick one by eye, or use the hair built with the "
+                              "3D model.")),
+        "fix": lambda c: {"stage": "mesh", "params": {"hair_source": "model"}},
+        "fix_label": "Use the hair built with the 3D model",
+    },
+    "hair_skin_through": {
+        "severity": "warn",
+        "ok": lambda c: ("No skin shows through the library hairstyle. A scalp cap (a hair-coloured layer under the hair) sits under it."
+                         if _is_zero(c) else
+                         "The library hairstyle covers the head: {value:pct} of the scalp shows through, under the {limit:pct} limit. "
+                         "A scalp cap (a hair-coloured layer under the hair) hides small gaps."),
+        "fail": lambda c: ("Skin shows through the library hairstyle on {value:pct} of the scalp"
+                           + (" (crown {crown:pct}, sides {sides:pct})" if _var(c, "crown") is not None and _var(c, "sides") is not None else "")
+                           + ", more than {limit:pct}. Fitting it again with more cover pushes the hair out a little and thickens "
+                             "the scalp cap (a hair-coloured layer under the hair)."),
+        "fix": lambda c: {"stage": "prep", "params": {"hair_cover": "more"}},
+        "fix_label": "Fit the hair again with more cover",
+    },
+    "hair_triangles": {
+        "severity": "warn",
+        "ok": lambda c: ("With the library hairstyle the character has {value:n} triangles, within your platform's {limit:n}"
+                         + (": {body:n} for the body and {hair:n} for the hair." if _var(c, "body") is not None and _var(c, "hair") is not None else ".")),
+        "fail": lambda c: ("With the library hairstyle the character has {over:n} more triangles than your platform allows "
+                           "({value:n} of {limit:n}" + ("; the hair alone has {hair:n}" if _var(c, "hair") is not None else "")
+                           + "), so it would run slower than it should. Choose a lighter hairstyle."),
+        "vars": _over,
+        "fix": lambda c: {"stage": "mesh", "ui": "hair_picker", "params": {}},
+        "fix_label": "Choose a lighter hairstyle",
+    },
+    "hair_bound": {
+        "severity": "warn",
+        "ok": lambda c: ("The library hairstyle follows the skeleton: it moves with the head, and "
+                         + ("1 hanging part sways" if _as_float(_var(c, "groups_swaying")) == 1 else "{groups_swaying:n} hanging parts sway")
+                         + " with spring bones (small extra bones that sway on their own)."
+                         if (_as_float(_var(c, "groups_swaying")) or 0) > 0 else
+                         "The library hairstyle follows the skeleton: it rests on the head, so it moves with the head."),
+        "fail": "Only {value:pct} of the library hairstyle follows the skeleton, so the rest would stay behind when the character "
+                "moves. Making the moves again joins all of it to the skeleton.",
+        "fix": lambda c: {"stage": "rig", "params": {}},
+        "fix_label": "Make the moves again",
+    },
     # Material from a photo (readiness.photo_checks). No automatic fix: a better photo is the fix.
     "even_lighting": {
         "severity": "warn",

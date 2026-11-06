@@ -44,6 +44,14 @@ purpose (mesh params head_room), the budget decimation is weighted so the head k
 decimation leaves it; the option head_triangles turns it off (then the decimation is even). The report's head counts
 become metrics (head_weighted, head_triangles, head_triangles_even, head_weight_seconds) and the triangle_budget
 check sentence says how many triangles the head has. A model built at the budget is not decimated, as before.
+
+Hair from the library (vgac/hairlib.py, docs/HAIR-LIBRARY-PLAN.md sections 3, 5 and 6): when the 3D version was built
+bald (its hair_source is "library"), the style is resolved (params.hair_style, then the asset's pick, then the 3D
+step's best), the body is decimated to the budget less hair_allowance, the hair pass and the fused hair material stand
+back, and after skin metal hairfit.attach fits the style to the final body as separate files (prep.glb stays the bald
+body; body_glb_hash is its sha1). An adjust that changes only hair_style or hair_cover with a style that fits the
+parent's allowance copies the parent's body files and attaches again (hairlib.only_hair_change). Checks hair_fit,
+hair_skin_through and hair_triangles.
 """
 
 from __future__ import annotations
@@ -59,7 +67,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, texcolour
+from .. import guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, texcolour
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -165,6 +173,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     shading = resolve_shading(rec, params)
     mesh_v_params = sc.stage_version("mesh").params if sc.stage_version("mesh") else {}
     tri_limit = prep_triangle_limit(rec, mesh_v_params, sc.budget)
+    hair = hair_plan(sc, params, mesh_v, tri_limit["limit"]) if hairlib.is_library(sc) else None
+    if hair is not None:
+        # The body is decimated to the budget less the hair's allowance; the hair pass sees the library and stands back.
+        params = {**params, "hair_source": hairlib.LIBRARY}
+        tri_limit = {**tri_limit, "limit": hair["body_limit"]}
     head = headtris.plan(rec, sc.asset.category, params, shading["shading"], mesh_v_params)
     sc.set_params(size_m=size["size_m"], size_axis=size["size_axis"], size_word=size["size_word"],
                   face_yaw=face_yaw if face_yaw not in (None, "") else "auto", symmetric=symmetric, pivot=pivot, smooth_angle=smooth,
@@ -172,6 +185,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                   shading=params.get("shading") if params.get("shading") in reference.SHADING_OPTIONS else "auto", **(grid or {}))
     if headtris.applies(rec, sc.asset.category):
         sc.set_params(**{headtris.PARAM: headtris.on(params)})
+    if hair is not None:
+        sc.set_params(hair_source=hairlib.LIBRARY, hair_style=hair["style"], hair_style_source=hair["style_source"],
+                      hair_allowance=hair["allowance"], hair_cover=hair["cover"])
     sc.set_metrics(size_source=size["size_source"], shading_applied=shading["shading"], shading_source=shading["source"],
                    triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"],
                    recipe=reference.recipe_record(rec, "mesh", "surface"), **facing)
@@ -272,7 +288,122 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.set_metrics(base_color_size=int(fd["base_color_size"]), texture_size_shipped=int(fd["base_color_size"]))
     elif not keep_normal:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
+    if hair is not None:
+        await attach_hair(sc, out, hair, mesh_v.metrics if mesh_v else {})
     await judge(sc)
+
+
+HAIR_FILE_PREFIXES = ("hair_", "with_hair_")
+HAIR_DIR = "hairlib"
+
+
+def hair_plan(sc: StageContext, params: dict[str, Any], mesh_v: Any, limit: int | None) -> dict[str, Any]:
+    """{style, style_source, allowance, cover, budget, body_limit} for a Clean up on a bald 3D model."""
+    mm = (mesh_v.metrics if mesh_v is not None else None) or {}
+    style, source = hairlib.resolve_style(params.get("hair_style"), sc.asset, mm)
+    allow = params.get("hair_allowance")
+    allow = int(allow) if allow not in (None, "") else hairlib.allowance(limit, mm, style)
+    body = int(limit) - allow if limit else None
+    return {"style": style, "style_source": source, "allowance": allow, "cover": hairlib.cover_of(params), "budget": limit,
+            "body_limit": body}
+
+
+async def attach_hair(sc: StageContext, body: Path, hair: dict[str, Any], mesh_metrics: dict[str, Any],
+                      reused_body_of: str | None = None) -> None:
+    """hairfit.attach on the final body: the hair as its own files, metrics.hair_library and body_glb_hash. A failure
+    is recorded (attached false) and never fails the step."""
+    from ..jobs import JobCancelled
+
+    t0 = time.time()
+    style = hair.get("style")
+    hl_mesh = (mesh_metrics or {}).get("hair_library") or {}
+    best = hairlib.candidate(mesh_metrics, hl_mesh.get("best"))
+    record: dict[str, Any] = {"style": style, "style_source": hair.get("style_source"), "allowance": hair.get("allowance"),
+                              "budget": hair.get("budget"), "cover": hair.get("cover"), "family_source": hl_mesh.get("family_source"),
+                              "best_name": (best or {}).get("name"), "candidates_n": len(hl_mesh.get("candidates") or []),
+                              "reused_body_of": reused_body_of}
+    try:
+        if not style:
+            raise ValueError("no hairstyle to fit: the 3D step found none and none was picked")
+        from .. import hairfit, hairstyles  # lane 1
+
+        need = {k: sc.lineage_file(k, ("turnaround",)) for k in ("hair_picture", "bald_front_cutout", "hair_outline_front")}
+        missing = [k for k, p in need.items() if p is None]
+        if missing:
+            raise FileNotFoundError("the bald pictures from Check all sides are missing: " + ", ".join(missing))
+        info = hairstyles.style(style) or {}
+        lib_tex = int(((info.get("textures") or {}).get("size")) or hairmat.hair_texture_size(sc.budget))
+        tex = min(lib_tex, hairmat.hair_texture_size(sc.budget))
+        cand = hairlib.candidate(mesh_metrics, style)
+        sc.progress(0.95, "Fitting the hairstyle from the library")
+        res = await hairfit.attach(sc, Path(body), style, (cand or {}).get("params"), need["hair_picture"], need["bald_front_cutout"],
+                                   need["hair_outline_front"], hair.get("cover") or "normal", tex, sc.dir / HAIR_DIR)
+        for key, path in ((res or {}).get("files") or {}).items():
+            if path is not None and Path(path).is_file():
+                sc.register(key, Path(path))
+        record = {**record, "name": info.get("name"), **((res or {}).get("metrics") or {})}
+        record.setdefault("attached", True)
+        record.setdefault("tex", tex)
+        if reused_body_of:
+            record["reused_body_of"] = reused_body_of
+    except JobCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001  (the bald body stands; the check says the hair is missing)
+        record.update(attached=False, error=str(e)[:300])
+    record.setdefault("seconds", round(time.time() - t0, 1))
+    sc.set_metrics(hair_library=record, body_glb_hash=hairlib.file_sha1(body))
+
+
+async def hair_only(sc: StageContext, parent: Any, merged: dict[str, Any], explicit: dict[str, Any]) -> None:
+    """A Clean up adjust that changes only the hairstyle or its cover: the parent's body files and measures are copied
+    as they are (prep.glb byte for byte, so body_glb_hash stays the same) and only the hair is attached again."""
+    from .. import library
+
+    pdir = library.version_dir(sc.asset, parent, sc.settings, create=False).resolve()
+    files = sc.version.files
+    for key, rel in (parent.files or {}).items():
+        if key.startswith(HAIR_FILE_PREFIXES):
+            continue
+        src = library.abs_path(rel, sc.settings)
+        try:
+            sub = src.resolve().relative_to(pdir)
+        except ValueError:
+            files[key] = rel  # a link to an earlier step's file (the 3D step's maps): linked again
+            continue
+        dest = sc.dir / sub
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        files[key] = library.rel_path(dest, sc.settings)
+    sc.version.files = files
+    sc.save()
+    skip = ("hair_library", "body_glb_hash", "checks", "checks_passed", "checks_failed", "gate_ok")
+    sc.set_metrics(**{k: v for k, v in (parent.metrics or {}).items() if k not in skip})
+    mesh_v = sc.stage_version("mesh")
+    mm = (mesh_v.metrics if mesh_v is not None else None) or {}
+    style, source = hairlib.resolve_style(explicit.get("hair_style") or merged.get("hair_style"), sc.asset, mm)
+    if not explicit.get("hair_style") and merged.get("hair_style"):
+        source = (parent.params or {}).get("hair_style_source") or source
+    hair = {"style": style, "style_source": source, "allowance": int(parent.params.get("hair_allowance") or 0),
+            "cover": hairlib.cover_of(merged), "budget": ((parent.metrics or {}).get("hair_library") or {}).get("budget")}
+    sc.set_params(**{**merged, "hair_source": hairlib.LIBRARY, "hair_style": style, "hair_style_source": source,
+                     "hair_allowance": hair["allowance"], "hair_cover": hair["cover"], "hair_only_of": parent.id})
+    body = sc.file("glb")
+    if body is None:
+        raise FileNotFoundError("the clean-up step this builds on has no model file")
+    await attach_hair(sc, body, hair, mm, reused_body_of=parent.id)
+    await judge(sc)
+
+
+def _hair_merge(merged: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Under library hair a new Clean up resolves the style and allowance again: an inherited style stays only when
+    the person chose it, and the allowance and source are worked out anew. Nothing changes for today's hair."""
+    out = dict(merged)
+    if "hair_style" not in params and out.get("hair_style_source") != "chosen":
+        out.pop("hair_style", None)
+    for key in ("hair_style_source", "hair_allowance", "hair_source", "hair_only_of"):
+        if key not in params:
+            out.pop(key, None)
+    return out
 
 
 NORMAL_FIX_DIR = "normal_fix"
@@ -719,6 +850,10 @@ async def judge(sc: StageContext) -> None:
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)
+    if hairlib.is_library(sc):
+        hl = m.get("hair_library") or {}
+        checks += hairlib.prep_checks(m, hl.get("budget") or sc.budget.get("triangles"),
+                                      picked=(sc.version.params or {}).get("hair_style_source") in ("picked", "chosen"))
     if (rec.get("mesh") or {}).get("normal_map", True) and sc.file("normal") is not None:
         from .mesh import upright_check
 
@@ -746,11 +881,17 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
     parent = sc.parent
-    merged = {**_merge(parent.params if parent else {}, params), "instruction": instruction}
+    merged = {**_hair_merge(_merge(parent.params if parent else {}, params), params), "instruction": instruction}
     await _prep(sc, merged)
 
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
     merged = _merge(parent.params if parent else {}, params)
-    await _prep(sc, merged)
+    if parent is not None and parent.stage == "prep" and hairlib.is_library(sc):
+        mesh_v = sc.stage_version("mesh")
+        style = params.get("hair_style") or parent.params.get("hair_style")
+        if hairlib.only_hair_change(parent.params, params, hairlib.style_triangles(style, mesh_v.metrics if mesh_v else None)):
+            await hair_only(sc, parent, merged, params)
+            return
+    await _prep(sc, _hair_merge(merged, params))

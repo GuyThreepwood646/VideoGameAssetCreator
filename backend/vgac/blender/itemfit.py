@@ -50,6 +50,26 @@ DEPTH_LIMIT_M = 0.03   # item_clear_of_body: the deepest a counted point may go
 SHARE_LIMIT = 0.05     # item_clear_of_body: the most of the item's counted points that may be inside
 
 
+LIBRARY_HAIR_MARK = ("vgac_hair", "library")
+
+
+def is_library_hair(extras: Any) -> bool:
+    """True for a material marked as hair from the library (pack.py writes extras {"vgac_hair": "library"} on it; the
+    glTF importer turns extras into the material's custom properties). Such faces are a separate hairstyle, not the
+    body, so the items' body tree leaves them out. Today's hair slot carries no mark and stays in the body."""
+    try:
+        return extras is not None and extras.get(LIBRARY_HAIR_MARK[0]) == LIBRARY_HAIR_MARK[1]
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def body_polygons(polys, material_extras) -> list:
+    """The polygons of the body tree: polys [(vertex indices, material index)]; material_extras per slot (a mapping or
+    None). Polygons on a library hair slot are left out."""
+    skip = {i for i, e in enumerate(material_extras or []) if is_library_hair(e)}
+    return [tuple(v) for v, mi in polys if mi not in skip]
+
+
 def point_depth(nearest: float, escape: float | None = None) -> float:
     """One inside point's depth: the nearest way out, or the way out along the push direction when that is longer."""
     return max(float(nearest), float(escape) if escape is not None else 0.0)

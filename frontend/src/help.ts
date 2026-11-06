@@ -359,9 +359,14 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   beauty_render: H('Beauty render (beauty picture)', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Blender Eevee render of the final model under a CC0 HDRI, Filmic or AgX view transform'),
   // Hair and fur (docs/HAIR-RESEARCH.md 5.4)
   hair_pictures: H('Hair-friendly pictures', 'For characters with hair the app adds a short hair sentence to the picture request: in the Painted look, hair as one smooth, simple shape with both eyes clearly visible; in Photoreal, tidy hair with nothing over the face; in Low-poly, Pixel and Retro 64, one simple solid shape. Cel and Clay characters get none, because every wording tried changed the character. Creatures get fur lying flat in clear clumps.', 'The 3D builder turns the outline of the picture into one solid shape, so wispy hair becomes loose flakes and separated locks become jagged edges. Your description always wins: long loose hair, a fringe over one eye, dreadlocks or curls are kept, and long loose hair gets no hair sentence at all.', 'Hair sentence per look in the concept prompt (data/styles.yaml hair, vgac/hairpic.py)'),
-  hair_cards: H('Hair cards (flat strips with a see-through picture of hair on them)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'This app does not make them yet. Its hair is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Alpha-tested hair cards'),
+  hair_cards: H('Hair cards (flat strips with a see-through picture of hair on them)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'Some styles in the hair library are made of them. The hair built with the 3D model is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Alpha-tested hair cards'),
   spring_bones: H('Spring bones (small extra bones that sway on their own)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'The app adds them at the Make it move step to parts that hang clear of the body; hair resting on the shoulders is joined to them and moves only with the body.', 'Spring bone (jiggle bone) chains'),
   anisotropic_highlight: H('Anisotropic highlight (a shine stretched into a band)', 'The bright band across hair, running across the strands instead of sitting as a round spot.', 'It is much of what makes hair look like hair rather than plastic. The app does not add one yet; in painted looks the picture may already have one painted in.', 'Anisotropic specular (Kajiya-Kay, Marschner hair shading)'),
+  // Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 7)
+  hair_library: H('Hair library (ready-made hairstyles fitted to the head)', 'A choice per character, off unless you turn it on: the 3D model is built bald, and you pick one of the ready-made hairstyles the app tried on your character. The app fits it to the head, recolours it to the hair in your picture and gives it its own material.', 'Ready-made hairstyles are made by artists and can hang free, so long hair and ponytails swing with spring bones (small extra bones that sway on their own). The hair built with the 3D model often looks more like the picture where the hair rests on the head. Every style is CC0 (free to use, also in games you sell), and the hand-off credits its author. Turn it on when you create the character, or later with Change next to Hair on the asset page.', 'Asset.hair_json; bald turnaround pictures; hairfit rank at the 3D step and attach at Clean up; material slot <name>_Hair; backend/vgac/data/hairlib'),
+  bald_picture: H('Bald picture (the character without hair, used to build the 3D model)', 'A copy of your picture with only the hair taken away, drawn by the picture editor from the front, the three-quarter view and both sides.', 'The 3D model is built from it, so the library hairstyle gets a clean head to sit on. The face is still painted from your own picture. Check that the face and the clothes look the same in both pictures.', 'Qwen-Image-Edit bald edit: bald_front, bald_quarter, bald_left, bald_right; bald_picture check (share of the picture outside the hair that stayed the same)'),
+  alpha_cutout: H('Alpha cutout (see-through parts of a texture)', 'A texture whose pixels are either shown or left out, so a flat strip can look like a lock of hair with gaps between the strands.', 'Hair cards (see-through strips) need it. Each pixel is either fully there or fully gone, which is cheap and draws in the right order in game engines; the edges look a little harder than real see-through.', 'Alpha test (glTF alphaMode MASK, cutoff 0.5), VGAC/HairCutout shader in Unity, mipmaps that keep their coverage'),
+  scalp_cap: H('Scalp cap (a hair-coloured layer under the hair)', 'A thin layer in the hair colour, fitted just over the head under a library hairstyle.', 'Where the hairstyle leaves a small gap, you see hair colour instead of skin.', '2.5 mm off the head surface; role 1 in hair_mesh.npz'),
   // Hit boxes and the body shape for moving (4.2)
   socket: H('Socket (attachment point)', 'A named spot on the skeleton where your game can attach a weapon, hat, backpack, or a shield strapped to the forearm.', 'The item then follows the hand, forearm, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
   items: H('Items', 'A sword, shield, bow, quiver, hat or backpack made as its own asset and put on a socket (attachment point) of a character, instead of being part of the body.', 'The character can then really hold the sword when he attacks, and you can swap or take items off in your game. Clothes that bend with the body, such as a cloak or armour, stay part of the body. A shield is strapped to the outside of the forearm. Items you have not moved yourself are fitted to the moves automatically so they stay clear of the body; Fit it for me does the same for one you placed. The hand does not close around the handle (no finger bones).', 'Item asset (prop_rigid, Asset.held_item) with its pivot at the detected grip; attachments.json, <name>_equipped.glb and the Unity prefab "<name> (equipped)"'),
@@ -657,6 +662,45 @@ const CHECK_TEXT: Record<string, CheckText> = {
     return `The hair has its own material: ${n0(v)} texels per cm against ${n0(l)} in the body texture, at one more draw call.`
   },
   hair_material_shipped: (v, _l, ok) => (ok ? 'The files carry the hair as its own material.' : `The files that ship have ${n0(v)} material(s), not the hair's own.`),
+  // Hair from the library (the backend writes these sentences; these are the fallback, and the passing ones show).
+  bald_picture: (v, l, ok, _ctx, vars) =>
+    ok
+      ? `Bald picture (the character without hair, used to build the 3D model): only the hair was taken away, and ${pct(v)} of the rest of the picture is unchanged.${vars.rerolled ? ' The first try changed too much, so it was drawn a second time.' : ''}`
+      : `Bald picture (the character without hair, used to build the 3D model): more than the hair changed (${pct(v)} of the rest of the picture is unchanged, it needs ${pct(l)}).`,
+  hair_fit: (v, l, ok, _ctx, vars) => {
+    const score = num(v) !== null ? num(v)!.toFixed(2) : '?'
+    const good = num(l) !== null ? num(l)!.toFixed(2) : '0.60'
+    const name = str(vars.style_name)
+    const best = str(vars.best_name)
+    if (!ok)
+      return vars.step === 'prep'
+        ? `Hair from the library (ready-made hairstyles): ${name ? `"${name}"` : 'the hairstyle'} follows the hair outline in the picture poorly (fit score ${score}, good from ${good}). Choose another style, or use the hair built with the 3D model.`
+        : `Hair from the library (ready-made hairstyles): nothing in the library fits this picture well. ${best ? `The closest, "${best}", has` : 'The closest style has'} a fit score of ${score} (good from ${good}). Pick one by eye, or use the hair built with the 3D model.`
+    const head =
+      vars.step === 'prep' && name
+        ? `Hair from the library (ready-made hairstyles): "${name}" was fitted to the head, ${vars.picked ? 'the style you picked' : 'the best match'}. `
+        : num(vars.candidates) !== null
+          ? `Hair from the library (ready-made hairstyles): ${n0(vars.candidates)} styles were tried on the bald model, and ${best ? `"${best}"` : 'the best one'} matches best. `
+          : 'Hair from the library (ready-made hairstyles): '
+    const none = vars.family_source === 'none' ? ' The description does not name a hairstyle, so the styles were ranked by outline alone; check them by eye.' : ''
+    return `${head}It follows the hair outline in the picture well (fit score ${score}, good from ${good}).${none}`
+  },
+  hair_skin_through: (v, l, ok) => {
+    if (!ok) return `Skin shows through the library hairstyle on ${pct(v)} of the scalp, more than ${pct(l)}. Fitting it again with more cover pushes the hair out a little and thickens the scalp cap (a hair-coloured layer under the hair).`
+    if (num(v) === 0) return 'No skin shows through the library hairstyle. A scalp cap (a hair-coloured layer under the hair) sits under it.'
+    return `The library hairstyle covers the head: ${pct(v)} of the scalp shows through, under the ${pct(l)} limit. A scalp cap (a hair-coloured layer under the hair) hides small gaps.`
+  },
+  hair_triangles: (v, l, ok, _ctx, vars) => {
+    if (!ok) return `With the library hairstyle the character has ${n0(v)} triangles, more than your platform's ${n0(l)}, so it would run slower than it should. Choose a lighter hairstyle.`
+    const split = num(vars.body) !== null && num(vars.hair) !== null ? `: ${n0(vars.body)} for the body and ${n0(vars.hair)} for the hair` : ''
+    return `With the library hairstyle the character has ${n0(v)} triangles, within your platform's ${n0(l)}${split}.`
+  },
+  hair_bound: (v, _l, ok, _ctx, vars) => {
+    if (!ok) return `Only ${pct(v)} of the library hairstyle follows the skeleton, so the rest would stay behind when the character moves. Making the moves again joins all of it to the skeleton.`
+    const n = num(vars.groups_swaying) ?? 0
+    if (n > 0) return `The library hairstyle follows the skeleton: it moves with the head, and ${n === 1 ? '1 hanging part sways' : `${n0(n)} hanging parts sway`} with spring bones (small extra bones that sway on their own).`
+    return 'The library hairstyle follows the skeleton: it rests on the head, so it moves with the head.'
+  },
   springs: (v, _l, ok, _ctx, vars) => {
     if (!ok) return 'The spring bones did not come out as they should.'
     if (vars.skipped) return `No spring bones were added: ${String(vars.why || 'nothing hangs clear of the body')}.`
@@ -825,6 +869,11 @@ const CHECK_HELP: Record<string, string> = {
   arms_away: 'arms_away',
   hair_off_eyes: 'hair_off_eyes',
   face_drawn: 'face_drawn',
+  bald_picture: 'bald_picture',
+  hair_fit: 'hair_library',
+  hair_skin_through: 'scalp_cap',
+  hair_triangles: 'hair_library',
+  hair_bound: 'spring_bones',
   springs: 'springs',
   springs_shipped: 'springs',
   even_lighting: 'even_lighting',
@@ -855,7 +904,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|normal_map_upright|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|face_drawn|even_lighting|straight_on|clips_face_forward)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|normal_map_upright|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|face_drawn|even_lighting|straight_on|clips_face_forward|bald_picture|hair_fit|hair_skin_through|hair_triangles|hair_bound)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -871,6 +920,7 @@ export const REDRAW_LABEL = 'Redraw it ready for 3D'
 export const FIX_TOOLS: Record<string, { stage: StageId; knob?: string; plain: string }> = {
   front_picker: { stage: 'prep', knob: 'face_yaw', plain: 'the front picker' },
   parts_editor: { stage: 'rig', plain: 'the parts editor' },
+  hair_picker: { stage: 'mesh', plain: 'the hairstyle picker' },
 }
 
 // Button text when the backend sends no fix_label (2.1 item 4).
@@ -916,6 +966,11 @@ const FIX_LABELS: Record<string, string> = {
   metal_mixed: 'Make metal clearly metal',
   grid_fit: 'Snap to the grid',
   look_applied: 'Apply the look again',
+  bald_picture: 'Make the bald picture again',
+  hair_fit: 'Use the hair built with the 3D model',
+  hair_skin_through: 'Fit the hair again with more cover',
+  hair_triangles: 'Choose a lighter hairstyle',
+  hair_bound: 'Make the moves again',
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
@@ -966,6 +1021,11 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'hair_matches_picture') return { stage: 'prep', params: { hair_detail: true }, label }
   if (id === 'hair_material') return { stage: 'prep', params: { hair_material: 'on' }, label }
   if (id === 'hair_material_shipped') return { stage: 'export', params: {}, label }
+  if (id === 'bald_picture') return { stage: 'turnaround', params: { bald_only: true, bald_seed: null }, label }
+  if (id === 'hair_fit') return { stage: 'mesh', params: { hair_source: 'model' }, label }
+  if (id === 'hair_skin_through') return { stage: 'prep', params: { hair_cover: 'more' }, label }
+  if (id === 'hair_triangles') return { stage: 'mesh', params: {}, label, ui: 'hair_picker' }
+  if (id === 'hair_bound') return { stage: 'rig', params: {}, label }
   if (id === 'springs') return { stage: 'rig', params: { springs: true }, label }
   if (id === 'springs_shipped') return { stage: 'export', params: {}, label }
   return null
@@ -974,7 +1034,10 @@ export function checkFix(check: Check): FixAction | null {
 // The Fix button's tooltip: what pressing it does, in words (never the raw params).
 export function fixTooltip(fix: FixAction, stages?: StageInfo[] | null): string {
   const name = stagePlain(fix.stage, stages?.find((s) => s.id === fix.stage) ?? null)
+  if (fix.ui === 'hair_picker') return `Opens the hairstyle picker in "${name}". Nothing changes until you pick a style.`
   if (fix.ui) return `Opens ${FIX_TOOLS[fix.ui]?.plain ?? 'the tool'} in "${name}". Nothing changes until you apply it.`
+  if (fix.stage === 'mesh' && fix.params.hair_source === 'model') return 'Builds the 3D model again with the hair built in, as without the library. The bald build stays in the history.'
+  if (fix.stage === 'turnaround' && fix.params.bald_only) return 'Draws the bald pictures again with a new seed and keeps every other view. It makes a new version; this one stays.'
   if (fix.op === 'refine' && fix.label === 'Move the hair off the face') return 'Asks the picture editor to move the hair away from the eyes and keep everything else the same. It makes a new version; this one stays.'
   if (fix.op === 'refine') return 'Asks the picture editor to redraw the same subject in the standard pose on a plain background. It makes a new version; this one stays.'
   return `Makes a new version of "${name}" with this change.`

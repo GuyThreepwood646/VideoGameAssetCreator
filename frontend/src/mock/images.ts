@@ -12,7 +12,11 @@ type Opts = {
   figure?: Figure
   view?: ViewName
   seed?: number
+  // The head: a helmet (default, as before), hair of a family (hair from the library mock), or bald.
+  head?: 'helmet' | 'bald' | HairShape
 }
+
+export type HairShape = { family: string; hue: number; light?: number }
 
 function rng(seed: number) {
   let s = seed >>> 0 || 1
@@ -43,7 +47,7 @@ function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, hue
   ctx.fill()
 }
 
-function drawBiped(ctx: CanvasRenderingContext2D, w: number, h: number, hue: number, view: ViewName, rand: () => number) {
+function drawBiped(ctx: CanvasRenderingContext2D, w: number, h: number, hue: number, view: ViewName, rand: () => number, head: Opts['head'] = 'helmet') {
   const cx = w / 2
   const scale = h / 512
   const widthFactor = view === 'left' || view === 'right' ? 0.55 : view === 'quarter' ? 0.8 : 1
@@ -123,6 +127,15 @@ function drawBiped(ctx: CanvasRenderingContext2D, w: number, h: number, hue: num
   ctx.beginPath()
   ctx.arc(cx, h * 0.2, 44 * scale * Math.max(widthFactor, 0.85), 0, Math.PI * 2)
   ctx.fill()
+  if (head !== 'helmet') {
+    if (head !== 'bald') drawHair(ctx, cx, h * 0.2, 44 * scale * Math.max(widthFactor, 0.85), head, view)
+    if (view !== 'back') {
+      ctx.fillStyle = 'hsl(0 0% 12%)'
+      ctx.fillRect(cx - 18 * scale, h * 0.2 - 4 * scale, 8 * scale, 6 * scale)
+      ctx.fillRect(cx + 10 * scale, h * 0.2 - 4 * scale, 8 * scale, 6 * scale)
+    }
+    return
+  }
   // helmet
   ctx.fillStyle = armour
   ctx.beginPath()
@@ -132,6 +145,77 @@ function drawBiped(ctx: CanvasRenderingContext2D, w: number, h: number, hue: num
     ctx.fillStyle = 'hsl(0 0% 10%)'
     ctx.fillRect(cx - 24 * scale, h * 0.2 - 6 * scale, 48 * scale, 8 * scale)
   }
+}
+
+// A hairstyle of a family on a head of radius r centred at (cx, cy).
+export function drawHair(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, hair: HairShape, view: ViewName = 'front') {
+  ctx.fillStyle = `hsl(${hair.hue} 45% ${hair.light ?? 28}%)`
+  const cap = () => {
+    ctx.beginPath()
+    ctx.arc(cx, cy - r * 0.05, r * 1.08, Math.PI * 1.02, Math.PI * 1.98)
+    ctx.closePath()
+    ctx.fill()
+  }
+  const side = view === 'left' ? -1 : view === 'right' ? 1 : 0
+  switch (hair.family) {
+    case 'bob':
+      cap()
+      ctx.fillRect(cx - r * 1.08, cy - r * 0.2, r * 0.35, r * 1.05)
+      ctx.fillRect(cx + r * 0.73, cy - r * 0.2, r * 0.35, r * 1.05)
+      break
+    case 'long':
+      cap()
+      ctx.fillRect(cx - r * 1.1, cy - r * 0.2, r * 0.4, r * 2.6)
+      ctx.fillRect(cx + r * 0.7, cy - r * 0.2, r * 0.4, r * 2.6)
+      break
+    case 'ponytail':
+      cap()
+      ctx.beginPath()
+      ctx.ellipse(cx - side * r * 1.1, cy - r * 0.7, r * 0.28, r * 1.1, side * 0.6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillRect(cx + (side ? -side * r * 1.2 : r * 0.55) - r * 0.15, cy - r * 0.6, r * 0.3, r * 1.9)
+      break
+    case 'bun':
+      cap()
+      ctx.beginPath()
+      ctx.arc(cx, cy - r * 1.15, r * 0.42, 0, Math.PI * 2)
+      ctx.fill()
+      break
+    case 'braid':
+      cap()
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath()
+        ctx.arc(cx + r * 0.85, cy + r * (0.2 + i * 0.38), r * 0.2, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      break
+    case 'afro':
+      ctx.beginPath()
+      ctx.arc(cx, cy - r * 0.35, r * 1.45, Math.PI * 0.9, Math.PI * 2.1)
+      ctx.closePath()
+      ctx.fill()
+      break
+    default:
+      // short
+      ctx.beginPath()
+      ctx.arc(cx, cy - r * 0.1, r * 1.03, Math.PI * 1.05, Math.PI * 1.95)
+      ctx.closePath()
+      ctx.fill()
+  }
+}
+
+// A hairstyle thumbnail: the style on a plain grey head (the catalogue's thumbs).
+export function makeHairThumb(hair: HairShape, size = 160): string {
+  const { c, ctx } = canvas(size, size)
+  ctx.fillStyle = 'hsl(220 6% 30%)'
+  ctx.fillRect(0, 0, size, size)
+  ctx.fillStyle = 'hsl(0 0% 62%)'
+  ctx.beginPath()
+  ctx.arc(size / 2, size * 0.5, size * 0.24, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillRect(size * 0.42, size * 0.7, size * 0.16, size * 0.2)
+  drawHair(ctx, size / 2, size * 0.5, size * 0.24, hair)
+  return c.toDataURL('image/png')
 }
 
 function drawBox(ctx: CanvasRenderingContext2D, w: number, h: number, hue: number, view: ViewName) {
@@ -164,7 +248,7 @@ export function makeImage(opts: Opts = {}): string {
   const rand = rng(opts.seed ?? 1)
   const { c, ctx } = canvas(w, h)
   if (!opts.transparent) drawBackground(ctx, w, h, hue)
-  if ((opts.figure ?? 'biped') === 'biped') drawBiped(ctx, w, h, hue, view, rand)
+  if ((opts.figure ?? 'biped') === 'biped') drawBiped(ctx, w, h, hue, view, rand, opts.head)
   else drawBox(ctx, w, h, hue, view)
   if (opts.label) {
     ctx.font = `${Math.round(12 * (h / 256))}px Inter, system-ui, sans-serif`

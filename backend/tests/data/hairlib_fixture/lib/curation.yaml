@@ -1,0 +1,56 @@
+# Hair library: the hand-kept choices (docs/HAIR-LIBRARY-PLAN.md section 4). Read by tools/hairlib_build.py.
+#
+# Per style:
+#   pack        quaternius | mh_hair01 | mh_system | rule
+#   src         file inside the pack (relative to the pack's hair folder), or the rule-built style id
+#   ref         reference head: q_female | q_male | mh_female | mh_male
+#   family      bob | short | long | ponytail | bun | braid | afro
+#   fringe      true when the style has a fringe (bangs) over the forehead
+#   parting     left | right | centre | none   (left = the character's left)
+#   curly       true for curly styles (ranked after straight ones unless the description asks for curls)
+#   kind        shell (solid) | cards (strips with a see-through texture)
+#   thin        optional: decimate to about this many triangles (every style stays at or under 4,500 so that with its
+#               scalp cap, at most about 270 triangles on the five test characters, it fits the 5,000 PC allowance)
+#   two_sided   cards are always two-sided; shells only when set
+#   texture_from  use another style's texture (colour versions of one atlas are stored once)
+#   hang_groups [] to switch off the hanging groups found offline (the nape blend then carries the hair)
+#   notes       why it is in, and what to watch
+#
+# Licence rule: a pack style is built only when its own file says CC0 (the .mhclo header for MakeHuman, the pack's
+# licence file for Quaternius). Styles whose header says otherwise are left out and listed in CREDITS.txt.
+styles:
+  q_buns: {pack: quaternius, src: Hair_Buns.gltf, ref: q_female, family: bun, fringe: false, parting: centre, kind: shell, notes: "two buns, painted shell"}
+  q_buzzed: {pack: quaternius, src: Hair_Buzzed.gltf, ref: q_male, family: short, fringe: false, parting: none, kind: shell, notes: "close crop"}
+  q_buzzed_female: {pack: quaternius, src: Hair_BuzzedFemale.gltf, ref: q_female, family: short, fringe: false, parting: none, kind: shell, notes: "close crop, round two's pick for the man"}
+  q_long: {pack: quaternius, src: Hair_Long.gltf, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "shoulder length, layered"}
+  q_simple_parted: {pack: quaternius, src: Hair_SimpleParted.gltf, ref: q_male, family: short, fringe: false, parting: left, kind: shell, notes: "short men's cut with some volume on top"}
+  mh_cortu_short_messy: {pack: mh_hair01, src: cortu_short_messy_hair, ref: mh_female, family: short, fringe: false, parting: none, kind: cards}
+  mh_cortu_straight_bangs: {pack: mh_hair01, src: cortu_straight_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards, notes: "straight with a full fringe, about shoulder length"}
+  mh_cortu_shaggy: {pack: mh_hair01, src: cortu_shaggy_green_hair, ref: mh_female, family: long, fringe: true, parting: none, kind: cards}
+  mh_cortu_strawberry: {pack: mh_hair01, src: cortu_strawberry_cloud_hair, ref: mh_female, family: long, curly: true, fringe: false, parting: left, kind: cards, notes: "curly"}
+  mh_faydaen_1: {pack: mh_hair01, src: faydaen_hair_1, ref: mh_female, family: short, fringe: false, parting: none, kind: shell, notes: "spiky short"}
+  mh_toigo_blunt_bob: {pack: mh_hair01, src: toigo_blunt_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_blunt_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_blunt_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_toigo_curled_bob: {texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_curled_under_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_curled_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_curled_under_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_toigo_inverted_bob: {texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_inverted_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_inverted_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_inverted_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_afro01: {pack: mh_system, src: afro01, ref: mh_female, family: afro, curly: true, fringe: false, parting: none, kind: cards}
+  mh_bob02: {pack: mh_system, src: bob02, ref: mh_female, family: bob, fringe: true, parting: left, kind: cards, notes: "side-swept fringe; round two's pick for knight2"}
+  mh_long01: {pack: mh_system, src: long01, ref: mh_female, family: long, fringe: false, parting: centre, kind: cards, notes: "waist length"}
+  mh_ponytail01: {pack: mh_system, src: ponytail01, ref: mh_female, family: ponytail, fringe: false, parting: none, kind: cards, thin: 4500, notes: "mid ponytail, hangs free"}
+  mh_short02: {pack: mh_system, src: short02, ref: mh_male, family: short, fringe: false, parting: left, kind: cards}
+  mh_short03: {pack: mh_system, src: short03, ref: mh_female, family: short, fringe: true, parting: left, kind: cards}
+  mh_braid01: {pack: mh_system, src: braid01, ref: mh_female, family: braid, fringe: true, parting: left, kind: shell, thin: 3000, notes: "single braid, thinned from 5,518"}
+  rule_long_centre: {pack: rule, src: rule_long_centre, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "round one's generator, waist length"}
+  rule_ponytail_high: {pack: rule, src: rule_ponytail_high, ref: q_female, family: ponytail, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
+  rule_bun: {pack: rule, src: rule_bun, ref: q_female, family: bun, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
+
+# Looked at and left out on purpose (besides the licence refusals the builder lists itself)
+left_out:
+  quaternius:Hair_Beard: "a beard, not hair"
+  mh_system:short04: "sideburns and a beard"
+  mh_system:short01: "200 loose card pieces, reads as noise on a game character"
+  mh_system:bob01: "8,474 triangles; bob02 and the toigo bobs cover the shape"
+  mh_hair01:culturalibre_hair_05: "made for another base: sits above the head"
+  mh_hair01:culturalibre_hair_06: "14,688 triangles of loose flakes"

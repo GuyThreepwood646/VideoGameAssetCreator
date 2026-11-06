@@ -4,6 +4,7 @@ import type { Asset, Category, Job, LookPreset, Platform, Project, SetupItem, Se
 import { CONCEPT_CATALOG, LOOK_OF, lookSummary, mockRecipe, recipeRecord } from './recipes'
 import { makeBendStrip, makeImage, makeSpriteSheet, makeTexture, makeTiling, type Figure, type ViewName } from './images'
 import { clipNamesFor } from './moves'
+import { fabricateHair } from './hair'
 
 const RIGGED_IDS = ['humanoid', 'quadruped', 'multileg', 'winged', 'serpent'] as const
 export const files = new Map<string, string>() // library-relative path -> data URL
@@ -914,6 +915,7 @@ export function fabricate(asset: Asset, version: Version) {
       break
     }
   }
+  fabricateHair(asset, version, f, m, base, putDataFile, hue) // Hair from the library (hair.ts); nothing when it is off
   version.files = f
   version.metrics = m
 }
@@ -1311,6 +1313,35 @@ export function seedStore() {
     note: 'Your Unity project was open, so the asset waits in Assets/VGAC/Pixel_hero/_incoming and imports itself the next time you switch to Unity (or use Tools > VGAC > Import pending assets).',
   }
   setSelected(hero, he)
+
+  // Hair from the library (hair.ts): an archer built bald with a high ponytail from the library, through to export.
+  const archer: Asset = {
+    id: uid('a'),
+    project_id: p1.id,
+    name: 'Archer',
+    category: 'humanoid',
+    style_preset: 'painterly',
+    platform_target: 'pc_mid',
+    prompt: 'a young archer with dark brown hair in a long high ponytail, green tunic, leather boots',
+    parts: [],
+    created_at: nowIso(-15 * 60_000),
+    hair: { source: 'library', pick: null, changed_by: 'form' },
+    selected: {},
+    stages: {},
+  }
+  store.assets.push(archer)
+  const ac = seedVersion(archer, 'concept', null, { model: 'zturbo', seed: 8, width: 1024, height: 1024, steps: 8, readiness_block: true }, 14, 'b')
+  setSelected(archer, ac)
+  const at = seedVersion(archer, 'turnaround', ac, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true, bald_views: true, bald_seed: 1405 }, 13, 'b')
+  setSelected(archer, at)
+  const am = seedVersion(archer, 'mesh', at, { engine: 'trellis', input_view: 'quarter', seed: 2, remesh: true, hair_source: 'library' }, 11, 'a')
+  setSelected(archer, am)
+  const ap = seedVersion(archer, 'prep', am, { size_m: 1.75, face_yaw: 'auto', symmetric: false, pivot: 'base', seed: 1 }, 9, 'host')
+  setSelected(archer, ap)
+  const ar = seedVersion(archer, 'rig', ap, { template: 'auto', group_per_vertex: 4, bottom_center_origin: true, bend_test: true, motion: 'legs', moves: SAMPLE_CLIPS, hitboxes: 'detailed', hitbox_fit: 'normal' }, 7, 'b')
+  setSelected(archer, ar)
+  const ae = seedVersion(archer, 'export', ar, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 5, 'host')
+  setSelected(archer, ae)
 
   // A variant of the knight: same identity, winter outfit.
   const winter: Asset = {
