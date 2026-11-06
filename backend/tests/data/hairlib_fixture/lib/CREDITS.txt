@@ -2,8 +2,8 @@ Hair library credits (backend/vgac/data/hairlib)
 
 Every style below is CC0 1.0 (public domain dedication) by its own file. No attribution is required; it is given anyway.
 
-mh_ponytail01: "Ponytail01" by MakeHuman team (Data Collection AB), from MakeHuman system assets (http://www.makehumancommunity.org). Licence line: # This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:
-q_buzzed: "Buzzed" by Quaternius, from Universal Base Characters (Standard) (https://quaternius.com). Licence line: CC0 1.0 Universal (CC0 1.0)
+mh_ponytail01: "ponytail01" (shown as "Mid ponytail, swept back") by MakeHuman team (Data Collection AB), from MakeHuman system assets (http://www.makehumancommunity.org). Licence line: # This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:
+q_buzzed: "Hair_Buzzed" (shown as "Buzz cut") by Quaternius, from Universal Base Characters (Standard) (https://quaternius.com). Licence line: CC0 1.0 Universal (CC0 1.0)
 
 Left out
 

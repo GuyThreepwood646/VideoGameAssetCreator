@@ -308,12 +308,18 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         # With the recipe's own target (vars recipe, look): a low-poly model is measured against its look, not the platform.
         # The 3D step's model with room for the head (vars head_room, headtris) is measured against its own target, which
         # is over the platform's budget on purpose; the clean-up step's sentence adds the head's share (vars head_weighted).
-        "ok": lambda c: ("The model's {value:n} triangles are more than your platform's {platform_triangles:n} on purpose: Clean up for the game "
+        "ok": lambda c: ("The body's {value:n} triangles fit the {limit:n} left for it after {hair_allowance:n} of your platform's "
+                         "{platform_triangles:n} are kept for the library hairstyle."
+                         if _var(c, "hair_allowance") is not None and _var(c, "platform_triangles") is not None else
+                         "The model's {value:n} triangles are more than your platform's {platform_triangles:n} on purpose: Clean up for the game "
                          "brings it back to the budget with weighted decimation (more triangles on the head)."
                          if _var(c, "head_room") else
                          "The model's {value:n} triangles fit the {look} look's target of {limit:n}; your platform would allow up to {platform_triangles:n}."
                          if _var(c, "recipe") else "The model's {value:n} triangles fit your platform's budget of {limit:n}.") + _head_line(c),
-        "fail": lambda c: ("The model has {over:n} more triangles than the 3D step asked for ({value:n} of {limit:n}, which already leaves room for the head)."
+        "fail": lambda c: ("The body has {over:n} more triangles than the {limit:n} left for it ({value:n}) after {hair_allowance:n} of your "
+                           "platform's {platform_triangles:n} are kept for the library hairstyle."
+                           if _var(c, "hair_allowance") is not None and _var(c, "platform_triangles") is not None else
+                           "The model has {over:n} more triangles than the 3D step asked for ({value:n} of {limit:n}, which already leaves room for the head)."
                            if _var(c, "head_room") else
                            "The model has {over:n} more triangles than the {look} look calls for ({value:n} of {limit:n}), so it looks less chunky than it should."
                            if _var(c, "recipe") else
@@ -859,9 +865,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                          "and {value:pct} of the rest of the picture is unchanged."
                          + (" The first try changed too much, so it was drawn a second time." if _var(c, "rerolled") else "")),
         "fail": lambda c: {
-            "face_changed": "Bald picture (the character without hair, used to build the 3D model): the face changed as well as the hair "
-                            "({value:pct} of the rest of the picture is unchanged, it needs {limit:pct}). The face is still painted from "
-                            "your own picture, but the head of the 3D model may not match it.",
+            "face_changed": "Bald picture (the character without hair, used to build the 3D model): the face changed as well as the hair, "
+                            "although {value:pct} of the rest of the picture is unchanged. The face is still painted from your own "
+                            "picture, but the head of the 3D model may not match it.",
             "clothes_changed": "Bald picture (the character without hair, used to build the 3D model): the clothes changed as well as the hair "
                                "({value:pct} of the rest of the picture is unchanged, it needs {limit:pct}), so the 3D model would not match "
                                "your picture.",

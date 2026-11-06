@@ -1,6 +1,8 @@
 # Hair library: the hand-kept choices (docs/HAIR-LIBRARY-PLAN.md section 4). Read by tools/hairlib_build.py.
 #
 # Per style:
+#   name        the display name the owner sees: what it looks like, sentence case, unique (the pack's own name
+#               is kept as pack_name and in the credit)
 #   pack        quaternius | mh_hair01 | mh_system | rule
 #   src         file inside the pack (relative to the pack's hair folder), or the rule-built style id
 #   ref         reference head: q_female | q_male | mh_female | mh_male
@@ -19,32 +21,32 @@
 # Licence rule: a pack style is built only when its own file says CC0 (the .mhclo header for MakeHuman, the pack's
 # licence file for Quaternius). Styles whose header says otherwise are left out and listed in CREDITS.txt.
 styles:
-  q_buns: {pack: quaternius, src: Hair_Buns.gltf, ref: q_female, family: bun, fringe: false, parting: centre, kind: shell, notes: "two buns, painted shell"}
-  q_buzzed: {pack: quaternius, src: Hair_Buzzed.gltf, ref: q_male, family: short, fringe: false, parting: none, kind: shell, notes: "close crop"}
-  q_buzzed_female: {pack: quaternius, src: Hair_BuzzedFemale.gltf, ref: q_female, family: short, fringe: false, parting: none, kind: shell, notes: "close crop, round two's pick for the man"}
-  q_long: {pack: quaternius, src: Hair_Long.gltf, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "shoulder length, layered"}
-  q_simple_parted: {pack: quaternius, src: Hair_SimpleParted.gltf, ref: q_male, family: short, fringe: false, parting: left, kind: shell, notes: "short men's cut with some volume on top"}
-  mh_cortu_short_messy: {pack: mh_hair01, src: cortu_short_messy_hair, ref: mh_female, family: short, fringe: false, parting: none, kind: cards}
-  mh_cortu_straight_bangs: {pack: mh_hair01, src: cortu_straight_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards, notes: "straight with a full fringe, about shoulder length"}
-  mh_cortu_shaggy: {pack: mh_hair01, src: cortu_shaggy_green_hair, ref: mh_female, family: long, fringe: true, parting: none, kind: cards}
-  mh_cortu_strawberry: {pack: mh_hair01, src: cortu_strawberry_cloud_hair, ref: mh_female, family: long, curly: true, fringe: false, parting: left, kind: cards, notes: "curly"}
-  mh_faydaen_1: {pack: mh_hair01, src: faydaen_hair_1, ref: mh_female, family: short, fringe: false, parting: none, kind: shell, notes: "spiky short"}
-  mh_toigo_blunt_bob: {pack: mh_hair01, src: toigo_blunt_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
-  mh_toigo_blunt_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_blunt_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
-  mh_toigo_curled_bob: {texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_curled_under_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
-  mh_toigo_curled_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_curled_under_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
-  mh_toigo_inverted_bob: {texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_inverted_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
-  mh_toigo_inverted_bob_bangs: {texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_inverted_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
-  mh_afro01: {pack: mh_system, src: afro01, ref: mh_female, family: afro, curly: true, fringe: false, parting: none, kind: cards}
-  mh_bob02: {pack: mh_system, src: bob02, ref: mh_female, family: bob, fringe: true, parting: left, kind: cards, notes: "side-swept fringe; round two's pick for knight2"}
-  mh_long01: {pack: mh_system, src: long01, ref: mh_female, family: long, fringe: false, parting: centre, kind: cards, notes: "waist length"}
-  mh_ponytail01: {pack: mh_system, src: ponytail01, ref: mh_female, family: ponytail, fringe: false, parting: none, kind: cards, thin: 4500, notes: "mid ponytail, hangs free"}
-  mh_short02: {pack: mh_system, src: short02, ref: mh_male, family: short, fringe: false, parting: left, kind: cards}
-  mh_short03: {pack: mh_system, src: short03, ref: mh_female, family: short, fringe: true, parting: left, kind: cards}
-  mh_braid01: {pack: mh_system, src: braid01, ref: mh_female, family: braid, fringe: true, parting: left, kind: shell, thin: 3000, notes: "single braid, thinned from 5,518"}
-  rule_long_centre: {pack: rule, src: rule_long_centre, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "round one's generator, waist length"}
-  rule_ponytail_high: {pack: rule, src: rule_ponytail_high, ref: q_female, family: ponytail, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
-  rule_bun: {pack: rule, src: rule_bun, ref: q_female, family: bun, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
+  q_buns: {name: "Two buns", pack: quaternius, src: Hair_Buns.gltf, ref: q_female, family: bun, fringe: false, parting: centre, kind: shell, notes: "two buns, painted shell"}
+  q_buzzed: {name: "Buzz cut", pack: quaternius, src: Hair_Buzzed.gltf, ref: q_male, family: short, fringe: false, parting: none, kind: shell, notes: "close crop"}
+  q_buzzed_female: {name: "Buzz cut, rounded hairline", pack: quaternius, src: Hair_BuzzedFemale.gltf, ref: q_female, family: short, fringe: false, parting: none, kind: shell, notes: "close crop, round two's pick for the man"}
+  q_long: {name: "Shoulder-length, layered", pack: quaternius, src: Hair_Long.gltf, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "shoulder length, layered"}
+  q_simple_parted: {name: "Short, side-parted with volume", pack: quaternius, src: Hair_SimpleParted.gltf, ref: q_male, family: short, fringe: false, parting: left, kind: shell, notes: "short men's cut with some volume on top"}
+  mh_cortu_short_messy: {name: "Short and messy", pack: mh_hair01, src: cortu_short_messy_hair, ref: mh_female, family: short, fringe: false, parting: none, kind: cards}
+  mh_cortu_straight_bangs: {name: "Straight with a full fringe", pack: mh_hair01, src: cortu_straight_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards, notes: "straight with a full fringe, about shoulder length"}
+  mh_cortu_shaggy: {name: "Shaggy, shoulder-length", pack: mh_hair01, src: cortu_shaggy_green_hair, ref: mh_female, family: long, fringe: true, parting: none, kind: cards}
+  mh_cortu_strawberry: {name: "Curly, shoulder-length", pack: mh_hair01, src: cortu_strawberry_cloud_hair, ref: mh_female, family: long, curly: true, fringe: false, parting: left, kind: cards, notes: "curly"}
+  mh_faydaen_1: {name: "Short and spiky", pack: mh_hair01, src: faydaen_hair_1, ref: mh_female, family: short, fringe: false, parting: none, kind: shell, notes: "spiky short"}
+  mh_toigo_blunt_bob: {name: "Chin-length bob, side parting", pack: mh_hair01, src: toigo_blunt_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_blunt_bob_bangs: {name: "Chin-length bob with a fringe", texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_blunt_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_toigo_curled_bob: {name: "Bob, curled under", texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_curled_under_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_curled_bob_bangs: {name: "Bob, curled under, with a fringe", texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_curled_under_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_toigo_inverted_bob: {name: "Inverted bob, longer at the front", texture_from: mh_toigo_blunt_bob, pack: mh_hair01, src: toigo_inverted_bob, ref: mh_female, family: bob, fringe: false, parting: left, kind: cards}
+  mh_toigo_inverted_bob_bangs: {name: "Inverted bob with a fringe", texture_from: mh_toigo_blunt_bob, thin: 4500, pack: mh_hair01, src: toigo_inverted_bob_with_bangs, ref: mh_female, family: bob, fringe: true, parting: none, kind: cards}
+  mh_afro01: {name: "Afro", pack: mh_system, src: afro01, ref: mh_female, family: afro, curly: true, fringe: false, parting: none, kind: cards}
+  mh_bob02: {name: "Bob with a side-swept fringe", pack: mh_system, src: bob02, ref: mh_female, family: bob, fringe: true, parting: left, kind: cards, notes: "side-swept fringe; round two's pick for knight2"}
+  mh_long01: {name: "Long, straight, waist-length", pack: mh_system, src: long01, ref: mh_female, family: long, fringe: false, parting: centre, kind: cards, notes: "waist length"}
+  mh_ponytail01: {name: "Mid ponytail, swept back", pack: mh_system, src: ponytail01, ref: mh_female, family: ponytail, fringe: false, parting: none, kind: cards, thin: 4500, notes: "mid ponytail, hangs free"}
+  mh_short02: {name: "Short, textured", pack: mh_system, src: short02, ref: mh_male, family: short, fringe: false, parting: left, kind: cards}
+  mh_short03: {name: "Short with a side-swept fringe", pack: mh_system, src: short03, ref: mh_female, family: short, fringe: true, parting: left, kind: cards}
+  mh_braid01: {name: "Single braid with a side fringe", pack: mh_system, src: braid01, ref: mh_female, family: braid, fringe: true, parting: left, kind: shell, thin: 3000, notes: "single braid, thinned from 5,518"}
+  rule_long_centre: {name: "Long, straight, centre parting", pack: rule, src: rule_long_centre, ref: q_female, family: long, fringe: false, parting: centre, kind: shell, notes: "round one's generator, waist length"}
+  rule_ponytail_high: {name: "High ponytail", pack: rule, src: rule_ponytail_high, ref: q_female, family: ponytail, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
+  rule_bun: {name: "Top bun", pack: rule, src: rule_bun, ref: q_female, family: bun, fringe: false, parting: none, kind: shell, notes: "round one's generator"}
 
 # Looked at and left out on purpose (besides the licence refusals the builder lists itself)
 left_out:

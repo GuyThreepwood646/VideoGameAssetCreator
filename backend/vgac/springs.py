@@ -77,14 +77,25 @@ def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, 
     return args
 
 
-def what_sways(chains: list[dict[str, Any]]) -> str:
-    """"the hair (a ponytail or a braid) and the cape": the kinds that sway, each once, in plain words."""
-    kinds = []
+# Hair from the library: the words follow the hairstyle's family (the clean-up step's hair_library.family), not the
+# detected part's guess. Today's detected hanging parts keep KIND_WORDS.
+LIBRARY_FAMILY_WORDS = {"ponytail": "the ponytail", "braid": "the braid", "long": "the long hair"}
+LIBRARY_HAIR_WORDS = "the hair"
+
+
+def library_hair_words(family: str | None) -> str:
+    return LIBRARY_FAMILY_WORDS.get(str(family or "").lower(), LIBRARY_HAIR_WORDS)
+
+
+def what_sways(chains: list[dict[str, Any]], family: str | None = None) -> str:
+    """"the hair (a ponytail or a braid) and the cape": the kinds that sway, each once, in plain words. Chains on hair
+    from the library ("library": true) take the hairstyle's family words instead ("the ponytail", "the long hair")."""
+    words: list[str] = []
     for c in chains:
         k = c.get("kind")
-        if k in KIND_WORDS and k not in kinds:
-            kinds.append(k)
-    words = [KIND_WORDS[k] for k in kinds]
+        w = library_hair_words(family) if c.get("library") else KIND_WORDS.get(k)
+        if w and w not in words:
+            words.append(w)
     if not words:
         return ""
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
@@ -107,7 +118,7 @@ def left_alone(rejected: list[dict[str, Any]], limit: int = 3) -> list[str]:
 
 
 def metrics(report: dict[str, Any] | None, on: bool, reason: str | None, seconds: float | None = None,
-            error: str | None = None) -> dict[str, Any]:
+            error: str | None = None, family: str | None = None) -> dict[str, Any]:
     """metrics.springs from springs_report.json: what sways, the bones added, the seam and depth numbers per clip."""
     rep = report or {}
     chains = rep.get("chains") or []
@@ -127,7 +138,7 @@ def metrics(report: dict[str, Any] | None, on: bool, reason: str | None, seconds
                        "length_m": round(float((c.get("part") or {}).get("length") or 0), 3),
                        "gap_cm": (c.get("part") or {}).get("gap_cm"),
                        **({"library": True} if c.get("library") else {})} for c in chains],
-           "bones_added": int(rep.get("bones_added") or 0), "what": what_sways(chains),
+           "bones_added": int(rep.get("bones_added") or 0), "what": what_sways(chains, family),
            "left_alone": left_alone(rep.get("rejected") or []),
            "seam_max_m": round(max(seam), 5) if seam else None,
            "into_body_max_m": round(max(beyond), 4) if beyond else None,
@@ -171,7 +182,7 @@ def check_values(m: dict[str, Any] | None) -> dict[str, Any] | None:
 # --- What was taken as a hanging part -----------------------------------------------------------------------------------
 
 
-def found_sheet(report: dict[str, Any], pic_dir: Path, dest: Path, cell: int = 360) -> Path | None:
+def found_sheet(report: dict[str, Any], pic_dir: Path, dest: Path, cell: int = 360, family: str | None = None) -> Path | None:
     """The model from behind, the side, the back three-quarter and the front with what sways tinted green and each
     chain drawn on it (joints as dots, root to tip), with a caption line: what sways, or why nothing does."""
     pics = (report or {}).get("pictures") or {}
@@ -197,7 +208,7 @@ def found_sheet(report: dict[str, Any], pic_dir: Path, dest: Path, cell: int = 3
         return None
     chains = report.get("chains") or []
     if chains:
-        caption = "Sways: " + what_sways(chains) + f" ({sum(len(c.get('bones') or []) for c in chains)} bones)"
+        caption = "Sways: " + what_sways(chains, family) + f" ({sum(len(c.get('bones') or []) for c in chains)} bones)"
     else:
         caption = "Nothing sways: " + REASONS.get(report.get("reason") or "none_found", REASONS["none_found"])
     sheet = Image.new("RGB", (cell * len(tiles), cell + 44), (32, 32, 32))

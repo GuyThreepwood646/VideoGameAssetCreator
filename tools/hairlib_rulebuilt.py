@@ -617,7 +617,10 @@ def place_on(locks, S, ray, nearest):
         if lk.centre is not None:
             lk.centre = to_world_s(S, lk.centre)
         resample(lk, lock_samples(lk))
-    for lk in locks:
+    for li, lk in enumerate(locks):
+        # neighbouring locks meet at the crown at the same height; a small stagger in depth (0 to 1.8 mm) keeps their
+        # surfaces from coinciding, which a renderer shows as speckles
+        stagger = 0.0006 * (li % 4)
         for i in range(len(lk.pts)):
             if lk.wrap[i] <= 0.01:
                 continue
@@ -629,7 +632,7 @@ def place_on(locks, S, ray, nearest):
             h = ray(c, d, 0.4)
             if h is None:
                 continue
-            q = np.asarray(h) + d * max(0.003, lk.lift[i])
+            q = np.asarray(h) + d * (max(0.003, lk.lift[i]) + stagger)
             lk.pts[i] = (1 - lk.wrap[i]) * lk.pts[i] + lk.wrap[i] * q
     set_widths(locks)
     for it in range(4):

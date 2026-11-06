@@ -417,6 +417,7 @@ export default function AssetPage() {
           onStop={() => stopStep(stage)}
           onResume={() => resumeStep(stage)}
           onDismissStopped={() => dismissStopped(stage)}
+          hideStaleFrom={hair.panel?.rebuild && autopilot?.status !== 'running' ? (hair.panel.rebuild.from_stage as StageId) : null}
         />
       </section>
       {showLog && (

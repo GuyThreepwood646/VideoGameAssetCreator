@@ -2,7 +2,8 @@
  "styles": {
   "q_buns": {
    "id": "q_buns",
-   "name": "Buns",
+   "name": "Two buns",
+   "pack_name": "Hair_Buns",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -129,15 +130,16 @@
    "sha256": {
     "npz": "26c93ee385a7b8903443b9f61594b09314ceda6adf0ece312623dfd2d2ed3e23",
     "lite": "30f84dd6621a2e23ae2146254f69cef057f1ca7bf5f347dc7aae3f83a545bef6",
-    "thumb_front": "962742004f5f260b1eb7004c6fe00964b4be100b709ddc1a316a216386376ccb",
-    "thumb_quarter": "dbd02ddfd6c61a102ce84e335ec63cdf612ef7da4053a8b286017c4564c1be0c",
+    "thumb_front": "39b875525173a76b8495d40125fe17953c96718a19247b567c78a7ef5641093d",
+    "thumb_quarter": "f87119b933d4b7f0b235e5ee6f6123b26cea4d0c3baadad0274d24ad0f5f09d8",
     "grey": "b8b8aba844170f645e13278de52baace476b39b76c334caa52ca0db9235c05ec",
     "normal": "14eccca3e06f8860f183b4281afdca9fb3fbdd7c88cc996d1841a81adc188ad8"
    }
   },
   "q_buzzed": {
    "id": "q_buzzed",
-   "name": "Buzzed",
+   "name": "Buzz cut",
+   "pack_name": "Hair_Buzzed",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -179,15 +181,16 @@
    "sha256": {
     "npz": "2d7d0a4da9455e2e24c661496a3f302875b52a443e020cbaa0c282c74691e18c",
     "lite": "816006ca1ca4e4fae7c81a1baeefdeb80de7768ae2e7bc5877461815dbbfa4e8",
-    "thumb_front": "2a7aee2429d59e0d684f4f2693e6d16a784b57f7bff142c08eff6861ceeea00e",
-    "thumb_quarter": "384f159f701050f2b541bf14db916f74b33cae009fe52e8acebc22ce21eae321",
+    "thumb_front": "283dc48be7cae3a694070a244576586f372439cec89034803bada15521a21653",
+    "thumb_quarter": "523864dc75b7680c958ea3e0d7ec725bab36d37c6a9653764f256db6eb803476",
     "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
     "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
    }
   },
   "q_buzzed_female": {
    "id": "q_buzzed_female",
-   "name": "Buzzed female",
+   "name": "Buzz cut, rounded hairline",
+   "pack_name": "Hair_BuzzedFemale",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -229,15 +232,16 @@
    "sha256": {
     "npz": "084f4a52d0b84360c446227dd24010e6017d95e171a63ed3c7cfa29972583d5a",
     "lite": "8bc96b63239d21c564520896fe1d7640f7e389efa227c491bb0461bcfce6b213",
-    "thumb_front": "9a1d6e52f4ed79b5dd17e9b8dfd2b281cb2e78b95d0f2f9e8f2a6c61ee790ff0",
-    "thumb_quarter": "9f1782ae8b6ab39905040880ae3091513c5f2af9b6a8c22b6f7c291cd60b5bf3",
+    "thumb_front": "fedc165f3a892edd2fc7c14d69f44583a055bf5cc5e387c0190a4a97fd5da553",
+    "thumb_quarter": "d8f445f8447aa8d7cdb2af26c9102146d980fc85c3fb11997f93970c6285eb6f",
     "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
     "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
    }
   },
   "q_long": {
    "id": "q_long",
-   "name": "Long",
+   "name": "Shoulder-length, layered",
+   "pack_name": "Hair_Long",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -406,15 +410,16 @@
    "sha256": {
     "npz": "8cc010f619fd5b8ceec22ec825cd243b322ade8b3430ce413ac403ddc803fbb0",
     "lite": "80c01ef591fb0095b5b02be1d2a392e0e4f11e9e840390386a0abd8dc1e16a35",
-    "thumb_front": "e1b2878de8513360d8830497225134cfddc2cd8a5be22c7a61142a9c8266b042",
-    "thumb_quarter": "56922637209a64e3dd824c3aa09d4fdc74d2428d3d44ba8358e486571499ffd8",
+    "thumb_front": "b17b6cdab6cdfcf4869bef7eff981f4fb778967df698aef3d7c4e325439ed3b0",
+    "thumb_quarter": "2a7c9418edf69d1742aa647dde6b1d101eb9aff16d54f5580fe0d08336ae135e",
     "grey": "b8b8aba844170f645e13278de52baace476b39b76c334caa52ca0db9235c05ec",
     "normal": "14eccca3e06f8860f183b4281afdca9fb3fbdd7c88cc996d1841a81adc188ad8"
    }
   },
   "q_simple_parted": {
    "id": "q_simple_parted",
-   "name": "Simple parted",
+   "name": "Short, side-parted with volume",
+   "pack_name": "Hair_SimpleParted",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -456,15 +461,16 @@
    "sha256": {
     "npz": "4e01c5dc186f274e754791004428599e840abfe8fc0a4cad1ac5c7dd9f04f793",
     "lite": "a9bb6972a88202e9351ad5c9a013627dc0c18beaa2a4f5fced8508d3a0d8f975",
-    "thumb_front": "4013d77c5c8463537dbae39302661b99136a4db38fb3bb72c51961244f2476a3",
-    "thumb_quarter": "40b0a1bd77a0f096202ca0ba674c64cbd11f4e59cea83dcba9db6ab473feff71",
+    "thumb_front": "705f9a4505fc3126e5f7dc694507513b9633d6c301e56ffe733d1ed0f4439a8a",
+    "thumb_quarter": "bbf1d2d4e0a232f9a980d332fbff493ded3b72a9113fe30da2b7aef40df2bb20",
     "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
     "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
    }
   },
   "mh_cortu_short_messy": {
    "id": "mh_cortu_short_messy",
-   "name": "Cortu short messy",
+   "name": "Short and messy",
+   "pack_name": "short_messy",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "Cortu",
@@ -505,14 +511,15 @@
    "notes": "",
    "sha256": {
     "npz": "1683a844c8403582f7629c14832eb725b132cf582bfe5acf53d4aca274d4561d",
-    "thumb_front": "40192a1548b488ad1f49d02bebd2218e500a319cf54a022098170db493558e44",
-    "thumb_quarter": "56f6083e0c4b61c4e1d0b7544d0a8c267df1576eca8f93e3f0a11755f836271d",
+    "thumb_front": "aa1c25ad639924af3b3ad21bae62c329012a9b4bd84633fe579c73a65d55f476",
+    "thumb_quarter": "7a953c5358ede6ef4947645be4a1461c73c01ec2dd8d1ec10a1aae4b8b922209",
     "grey": "4782bd9a17c440d459f63c5ad8c1a0fa3b87f87c68e91fd029fcd693fe3f7c07"
    }
   },
   "mh_cortu_straight_bangs": {
    "id": "mh_cortu_straight_bangs",
-   "name": "Cortu straight bangs",
+   "name": "Straight with a full fringe",
+   "pack_name": "straight_bangs",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "Cortu",
@@ -638,14 +645,15 @@
    "notes": "straight with a full fringe, about shoulder length",
    "sha256": {
     "npz": "a17e55c49f9421da09516b8293e4def65bed2a72f928153b1de6545eeea66c91",
-    "thumb_front": "48806993ab5c7d11896d37b3042fcba33ba37b85986c387d68522b83f7c9486e",
-    "thumb_quarter": "ca3e221629570d0493007127a016687e552dd0d6e8b09f64a2c7bdb0fcf67a9b",
+    "thumb_front": "155b43cfe6eebb5c2e54f09bc6b0309c1401f6d89772c56455ba21125628a8e7",
+    "thumb_quarter": "ca516cd164eeb4a804126b26338cf50438372fff9e712305bb657008eadf98a6",
     "grey": "926e5df272ef2e0bb2233a030ad89c5cbcc0b1b059f7f92347ea503aad7c6d12"
    }
   },
   "mh_cortu_shaggy": {
    "id": "mh_cortu_shaggy",
-   "name": "Cortu shaggy",
+   "name": "Shaggy, shoulder-length",
+   "pack_name": "shaggy_green",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "Cortu",
@@ -771,14 +779,15 @@
    "notes": "",
    "sha256": {
     "npz": "03f10ed17c9822bbab1c9230f1948619bd8d18a31f8b3a34b2c758b431034328",
-    "thumb_front": "838eeb10461f06fe9badf64aa08220d391272ae14ff5abc5f008c270dc427de1",
-    "thumb_quarter": "88b5b862d6dd7fff8055c600df76b8a24538230be1af4b627abbb3e5b78d092c",
+    "thumb_front": "151aafb6c20b79e9cb1b9787b771bf0b2d338d5067f6c59648a8d8c54476e24e",
+    "thumb_quarter": "70d57ba47e174e60c3b24632f81f2f783cce24042a74605e37c68a622bea119e",
     "grey": "84c2dfaf874ddd73f3fe21a9947a71970102867ad159cf02bcdb73360762d168"
    }
   },
   "mh_cortu_strawberry": {
    "id": "mh_cortu_strawberry",
-   "name": "Cortu strawberry",
+   "name": "Curly, shoulder-length",
+   "pack_name": "strawberry_cloud",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "Cortu",
@@ -946,14 +955,15 @@
    "notes": "curly",
    "sha256": {
     "npz": "e80ada39df4491a625c154728f19373299e0dd018114b0f72027903c16093698",
-    "thumb_front": "15de15faa1afae83dfa96c47929d4873e4d34f24ae7610476ed0bab6064272ef",
-    "thumb_quarter": "3d2a6291e1b2393a2b295d1c78013278c4b927a59fc71d7589e19c378a89f706",
+    "thumb_front": "287dbf42a29b452bcb68efa99ac1c851ab822056e89b8196690d3f5ef7462d8e",
+    "thumb_quarter": "ac6a136439c501b47ab9565d8649437d4f35e8061c2d53336233efdf074ebef2",
     "grey": "8089f1caf0f15d0c885f9b739538b7ab41dfb5f3238292909f21ebd7536374e8"
    }
   },
   "mh_faydaen_1": {
    "id": "mh_faydaen_1",
-   "name": "Faydaen 1",
+   "name": "Short and spiky",
+   "pack_name": "hair1",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "Faydaen",
@@ -995,14 +1005,15 @@
    "sha256": {
     "npz": "178e4c9a22d36988b1c2c693be3c0493de3f4adca39a7bfe1e307ca0fd682392",
     "lite": "bf57bf54e3388033675a34f7a554ede41f70417d685df99a4da122ff66388ce5",
-    "thumb_front": "35db8d08f13c7a6e4d2ad0694119eddca932c25260e965de175a64e7b63d12bf",
-    "thumb_quarter": "873a7d1d4a176fcecd13b911b50a49ab040a7b7c771534469e43b5a35eb9dcc7",
+    "thumb_front": "7c362bdc1f600df5ed3ba694abf7e5a4d99ace5a0a46cfd5ace38fab264566c8",
+    "thumb_quarter": "ab2b6593262084bcc6fc1da8a6b04b4dbe86e431036d98c09da8055bbbf4f464",
     "grey": "c0c41735554c1308dd737757fe98480639415425aecc73f4958072d4901db39d"
    }
   },
   "mh_toigo_blunt_bob": {
    "id": "mh_toigo_blunt_bob",
-   "name": "Toigo blunt bob",
+   "name": "Chin-length bob, side parting",
+   "pack_name": "Bob_Blunt",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -1170,14 +1181,15 @@
    "notes": "",
    "sha256": {
     "npz": "6173098edc18d5b1a627e7ad822b38ea461f3d622125dc2f5ba1e0379f6405ee",
-    "thumb_front": "ea57e1adb988c86b4450af7961be07611950d0f1e5b761002feaf304e56bf371",
-    "thumb_quarter": "61360410aedf1c3988e7e6b54c0fbb744366fb462e42237429a823de12815ebb",
+    "thumb_front": "a1c84a458a81add602c36382b8fb61af06628e0b6bd7809e3ad988aa81d92653",
+    "thumb_quarter": "c688edff846e6ef56844d4c5184b3c5f54a11506a7bb31065cd4c3f3cf978bb3",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_toigo_blunt_bob_bangs": {
    "id": "mh_toigo_blunt_bob_bangs",
-   "name": "Toigo blunt bob bangs",
+   "name": "Chin-length bob with a fringe",
+   "pack_name": "Bob_Blunt_Bangs",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -1345,14 +1357,15 @@
    "notes": "",
    "sha256": {
     "npz": "11c002fb33cbbafc284f035c9b0359eb679cb46d0bf4cf68d70135c9087bc344",
-    "thumb_front": "05651f69704f8b4196d7b92b2a9c8c2e91cc03b2f8f4dbcba9de5b57924a64cd",
-    "thumb_quarter": "909d237ce0f6c5d94cc05a177e90661e232c68c11f7bd81f25a2ec5068427b3b",
+    "thumb_front": "6acd23f8486bcb736f7294f3b6b46aa4b93b7fea3385ca5a792b8e955ad3d52d",
+    "thumb_quarter": "7356056c908f724f7876405d23f42fbcb2bcafdb6f2f8ed7fd112906c64b7561",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_toigo_curled_bob": {
    "id": "mh_toigo_curled_bob",
-   "name": "Toigo curled bob",
+   "name": "Bob, curled under",
+   "pack_name": "Bob_Curled_Under",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -1520,14 +1533,15 @@
    "notes": "",
    "sha256": {
     "npz": "f61a22d33239db41007eef69d11860fbccc03eedc37087c06ac4053eec627397",
-    "thumb_front": "807d2b46004d57c8bee987d8121167ce687c47959f66a74554d32720c2e799bd",
-    "thumb_quarter": "23bca61f0ba9bd66a92142d25335faa6d5e054cdf2ff16373ae809d29fd97af8",
+    "thumb_front": "64a4a410e38f0ecf1cbb9c798322ed040e9707f9a56d586cad4fdbc1125862bd",
+    "thumb_quarter": "81733321094d58755cf33a1eb913d164411122101345211ce58ec3f8c5278073",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_toigo_curled_bob_bangs": {
    "id": "mh_toigo_curled_bob_bangs",
-   "name": "Toigo curled bob bangs",
+   "name": "Bob, curled under, with a fringe",
+   "pack_name": "Bob_Curled_Under_Bangs",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -1695,14 +1709,15 @@
    "notes": "",
    "sha256": {
     "npz": "f35c958e50a8138550ae40305cc55be5ec07557d4e8dce35701bd08b94e4b03d",
-    "thumb_front": "dca46142e72dca9b1bb2c7940ee95fc19d5bfb443824789e12b4bede313ff9d6",
-    "thumb_quarter": "22397b0b28cbfc551c22ece9d6b98e2ab670c6d895a220d0ce9eee7148a92dc8",
+    "thumb_front": "960123cb446ded26fabc03cd02707584e30d42003e5825d6364519f8ac174a72",
+    "thumb_quarter": "c77fe431aee194f44b52c5e50086a21393fa1ed279fa02c2bf878d41b5502591",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_toigo_inverted_bob": {
    "id": "mh_toigo_inverted_bob",
-   "name": "Toigo inverted bob",
+   "name": "Inverted bob, longer at the front",
+   "pack_name": "Bob_Inverted",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -1870,14 +1885,15 @@
    "notes": "",
    "sha256": {
     "npz": "ca313f701202fef846529c5a0c9b5e05e0d2337fd00f89caa5aa1cae94dc97e1",
-    "thumb_front": "38e95de0b6edade181e4103bdfe4c4a52864213e9d37dd700ca95861742c1315",
-    "thumb_quarter": "e6304a2a750020734eb98b669b65458cd66d91d4c55dc6a094513759ba2e7bb0",
+    "thumb_front": "5da80934ce89c9a8fce09e0e69d4464121bfdfec00a49b0a574cccb191254c03",
+    "thumb_quarter": "1a83bcc378bb718694fddc3f623af58f6ff80ba1e992b98af5202d9b6e5ed693",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_toigo_inverted_bob_bangs": {
    "id": "mh_toigo_inverted_bob_bangs",
-   "name": "Toigo inverted bob bangs",
+   "name": "Inverted bob with a fringe",
+   "pack_name": "Bob_Inverted_bangs",
    "pack": "MakeHuman community hair pack hair01",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MargaretToigo",
@@ -2045,14 +2061,15 @@
    "notes": "",
    "sha256": {
     "npz": "e8dcac959ed000f41ebd3c927a306130bb191e4887efe0243cfb8936cd106e61",
-    "thumb_front": "48dce0663dd5ecf5113ffa986ad68ca7a4cf439fafe1589edc8856108f1d9304",
-    "thumb_quarter": "cfca7c5b4023a7abc40c83dce57c63788fb29936b80ce2e66df4f24fe50940aa",
+    "thumb_front": "508bacaee8ccabdd38c8d3593ae86bbd897c1500e64f352f83efdbb066194627",
+    "thumb_quarter": "2c8e2fc27475e3f7617a4bb5835af8388cec62525b6fbd0fb40e640cd1bbaa10",
     "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
    }
   },
   "mh_afro01": {
    "id": "mh_afro01",
-   "name": "Afro01",
+   "name": "Afro",
+   "pack_name": "afro01",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2093,14 +2110,15 @@
    "notes": "",
    "sha256": {
     "npz": "da29aedfebb73f8b53846014208a51171bb665dd77d1a297e3146936683be415",
-    "thumb_front": "d4875b66b1c912b8ea63e02158d4ae2f331403c31035fae509999e585610e2b9",
-    "thumb_quarter": "e1878b3af34829bce8c6ef8c12d80968cad095a5115f85f1f6ca111a5b99a62a",
+    "thumb_front": "f4557844f381c3063718fd20d0b0e33eb3fb745103705b6d419598e3ebb4873a",
+    "thumb_quarter": "2ea95b96f44d2df710276d598cb28bafca381afabeb56671b09a9f9ecc904663",
     "grey": "5921f5639d31605084aff6e247e46d72de247d7f4e767852fee13ceef0496356"
    }
   },
   "mh_bob02": {
    "id": "mh_bob02",
-   "name": "Bob02",
+   "name": "Bob with a side-swept fringe",
+   "pack_name": "bob02",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2268,14 +2286,15 @@
    "notes": "side-swept fringe; round two's pick for knight2",
    "sha256": {
     "npz": "d0d105606f444ec5950350aa829e446d551b1025bccb6b5b1d7ea66997234cee",
-    "thumb_front": "c97bef08679181018ff5087b779eac1e3e24ba7bd3828cf3b2d03a8f9b949d65",
-    "thumb_quarter": "fe1ff97b630fd282f744ff1ab666f95e133b8af494c3f4ece26874e427f91a0c",
+    "thumb_front": "1da1eed10b95d56fc4c51e3ee4901eedfb1ccc91714911eead5ed14b7a229777",
+    "thumb_quarter": "3438ca4ff331f4b531efbab3638dd09b5451d54278c16fac57bf6d0bab97712a",
     "grey": "1cc01d407a9a7a654b4eda0212c6e2d45f9b150ce11f6a207306ed56454a8127"
    }
   },
   "mh_long01": {
    "id": "mh_long01",
-   "name": "Long01",
+   "name": "Long, straight, waist-length",
+   "pack_name": "long01",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2443,14 +2462,15 @@
    "notes": "waist length",
    "sha256": {
     "npz": "e9f67911103699d24f031e5772a3b0d3b8d39b2d2d90031ca44df8879b376f77",
-    "thumb_front": "e38b8ca639edd2aeaab82a0466b4cbe8f85946909bb68e4d1e7871abdae343e9",
-    "thumb_quarter": "a093d1d1fff599ce9f4f607dea779f530c99e68de296c8fa717f6d453191c8a2",
+    "thumb_front": "5dcd9cb4412f29facc3a027634191391dd0cea540093ce5f1db811058f1482cc",
+    "thumb_quarter": "65c2de9d55aed56de7d0f60015e0dffa4ec59ed50f9bd934868ecf1f375b39e8",
     "grey": "88ac658c15d6092e98af3d5b9718fc12f8f682d6668070d3fedf4f82fe9ee2e4"
    }
   },
   "mh_ponytail01": {
    "id": "mh_ponytail01",
-   "name": "Ponytail01",
+   "name": "Mid ponytail, swept back",
+   "pack_name": "ponytail01",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2534,14 +2554,15 @@
    "notes": "mid ponytail, hangs free",
    "sha256": {
     "npz": "4c26cb9320fa8dfff5d332e1ac72497d148a0036e3a4c18b9dc59505ca437b44",
-    "thumb_front": "40cb6fe52f52ba09361136c634f8bb156f1ccfb5ef69ee9c4882ca3de9bdec83",
-    "thumb_quarter": "ee22b1070b53828961fe9b6451ab04a4c29918ec1ecb6f069b15e33976d4a2d7",
+    "thumb_front": "a405274c392feaa4e710b2e12bc70b75a8be8b46124754a2fa2b5a7ea5f4a916",
+    "thumb_quarter": "37d394910e81891ab0aedffddb562662058199edadbd8b6c01628c92e82b5166",
     "grey": "6206275044fce71e2575af6a665d951d44b05610bca91682f408879c635eb65e"
    }
   },
   "mh_short02": {
    "id": "mh_short02",
-   "name": "Short02",
+   "name": "Short, textured",
+   "pack_name": "short02",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2582,14 +2603,15 @@
    "notes": "",
    "sha256": {
     "npz": "6bbe1eb257ec34a7662322cf6982d006be3e04be4256fea79c916d3870f598dc",
-    "thumb_front": "661d4451dd0a264404a2d703975d2e2513e65d4f39eb0e45f80d5902ea377a83",
-    "thumb_quarter": "823e139470296f0a65277e555642ca2feba69bf3f995f59eec8d0487f22fc714",
+    "thumb_front": "048cce4ef6c18faf1a275d6d8b2e51bbfd93a6ce596eeefbf154bd1773b9da1d",
+    "thumb_quarter": "8fe0a44677a2b31fbabaefa1ffdcf262c5ab5c8eae72f27b75af2060ad46dcc6",
     "grey": "610aaadee376fd3074d16464fa3a22175bb15b7721514416d405da2c5a4e3d1e"
    }
   },
   "mh_short03": {
    "id": "mh_short03",
-   "name": "Short03",
+   "name": "Short with a side-swept fringe",
+   "pack_name": "short03",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2757,14 +2779,15 @@
    "notes": "",
    "sha256": {
     "npz": "82640d3dbf4e0e012fa716375e4a05fe566c2899630fa1b2fb314f936722325f",
-    "thumb_front": "3b51680fe1160f25b7256f0de355740dee1a9a80b2620f4301af4f6e8b4e96b1",
-    "thumb_quarter": "aa5d435cd99bb3613b8299ac318ba712763d58e42744ee0b3d07be0c3f1672ec",
+    "thumb_front": "07018bb1c164074a9ac5898a554eca7d859f1463936a3864b8b6b40087b7b2f5",
+    "thumb_quarter": "8f6791d504cf8da92fa1d2cf6ff86eb96aa8170bfa71adb76dee238a96138362",
     "grey": "081066133380b83a05c994ca9c8613129acf99f951035aae243b2c3f2b82dd52"
    }
   },
   "mh_braid01": {
    "id": "mh_braid01",
-   "name": "Braid01",
+   "name": "Single braid with a side fringe",
+   "pack_name": "Braid01",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -2849,14 +2872,15 @@
    "sha256": {
     "npz": "cbc16f217e550a3edbf585927b1ba1e71ca839665c357185852ffb68f5b69c21",
     "lite": "b6811aa2966038d02e890a77408daea949d179a04c4e02e97a2f6ee485362330",
-    "thumb_front": "89b89f89b8e2f849eee5f0cf3506eb68a27c4bd8b8e30efe8f42ad1637e07160",
-    "thumb_quarter": "d324aa57d96192c4b6bf5528d6348eed66baa872659526c20d84ec2ab3e12e1f",
+    "thumb_front": "5c9363fe1530c8a7e5095c06fa3de48f60badc81d4df426db406c69313c02e3f",
+    "thumb_quarter": "1a2b3187f2271b8605be2b9eabdbe22c22c117baef1d6a601c91a3852ae68ce7",
     "grey": "86f5f4f0e17d27b5b67fbe0b3b264267616da2bf9e9ef80dec555610ca4d1e74"
    }
   },
   "rule_long_centre": {
    "id": "rule_long_centre",
-   "name": "Long straight, centre parting (rule-built)",
+   "name": "Long, straight, centre parting",
+   "pack_name": "Long straight, centre parting (rule-built)",
    "pack": "VGAC rule-built styles",
    "source_url": "",
    "author": "VGAC",
@@ -2880,76 +2904,76 @@
      "kind": "Hair",
      "path_q": [
       [
-       0.01585,
-       0.90739,
-       -0.74842
+       0.01539,
+       0.91122,
+       -0.75078
       ],
       [
-       0.01756,
-       0.94631,
-       -1.24447
+       0.01754,
+       0.9486,
+       -1.24642
       ],
       [
-       -0.00089,
-       1.10483,
-       -2.25813
+       -0.00066,
+       1.10551,
+       -2.25956
       ],
       [
-       0.01066,
-       1.26644,
-       -3.1934
+       0.01069,
+       1.26688,
+       -3.19441
       ],
       [
-       -0.00135,
-       1.44331,
-       -4.25379
+       -0.00134,
+       1.44343,
+       -4.25414
       ],
       [
-       -0.01534,
-       1.63413,
-       -5.40368
+       -0.01535,
+       1.63416,
+       -5.40376
       ],
       [
        -0.00105,
        1.69156,
-       -5.84353
+       -5.84354
       ]
      ],
-     "length_q": 5.1575
+     "length_q": 5.1547
     },
     {
      "k": 1,
      "kind": "Hair",
      "path_q": [
       [
-       1.0121,
-       -0.23871,
-       -0.80357
+       1.01592,
+       -0.23845,
+       -0.80548
       ],
       [
-       1.03391,
-       -0.3618,
-       -1.26082
+       1.03681,
+       -0.36186,
+       -1.26255
       ],
       [
-       1.0948,
-       -0.67855,
-       -2.19647
+       1.09599,
+       -0.67888,
+       -2.19757
       ],
       [
-       1.26288,
-       -0.99588,
-       -3.19709
+       1.26309,
+       -0.99604,
+       -3.19746
       ],
       [
-       1.30171,
-       -1.14851,
-       -4.17224
+       1.30173,
+       -1.14857,
+       -4.17238
       ],
       [
-       1.16307,
-       -1.34169,
-       -5.45637
+       1.16306,
+       -1.3417,
+       -5.45639
       ],
       [
        1.1323,
@@ -2957,49 +2981,49 @@
        -5.86081
       ]
      ],
-     "length_q": 5.2313
+     "length_q": 5.2293
     },
     {
      "k": 2,
      "kind": "Hair",
      "path_q": [
       [
-       -1.01082,
-       -0.2053,
-       -0.81581
+       -1.01576,
+       -0.20683,
+       -0.81832
       ],
       [
-       -1.03208,
-       -0.34382,
-       -1.26973
+       -1.03571,
+       -0.34516,
+       -1.27219
       ],
       [
-       -1.09039,
-       -0.67807,
-       -2.19782
+       -1.09225,
+       -0.67896,
+       -2.20013
       ],
       [
-       -1.26032,
-       -1.00235,
-       -3.2145
+       -1.26221,
+       -1.00247,
+       -3.21652
       ],
       [
-       -1.29653,
-       -1.14809,
-       -4.17193
+       -1.29755,
+       -1.14796,
+       -4.1729
       ],
       [
        -1.15815,
-       -1.3402,
-       -5.45683
+       -1.34021,
+       -5.45686
       ],
       [
        -1.12749,
        -1.40514,
-       -5.86105
+       -5.86106
       ]
      ],
-     "length_q": 5.23
+     "length_q": 5.2271
     }
    ],
    "textures": {
@@ -3023,16 +3047,17 @@
    "self_check_mm": 0.0,
    "notes": "round one's generator, waist length",
    "sha256": {
-    "npz": "7ea899a6aef504315c8d14a8605e47416e9cc4dbcd30e7c9d7d28d92d380fe76",
-    "lite": "1680b451c87a9872e1f97be30bcb48ff7b03e8160b17e110663dc420d583d302",
-    "thumb_front": "07c81647b816ef83a7f6ae5759a9e2a60d22380bf28a8af01a3727dac5431e10",
-    "thumb_quarter": "ef157be6a77291456fdf8619bf94ff46162a4179983a43d2ad2dbb23ae217345",
+    "npz": "015285f938f1cdcfd971ad61e06a33197397f772874f03ad0ed49575167a7ee6",
+    "lite": "1ed2507ab65def8c06cf651edc26c909baba166e9d336e97ad1ade86e3b8038c",
+    "thumb_front": "5c0f84c988a2dcdcd6ba9ab08ca82f463c8fb49648ab1c5edacb11bd3bd64c6b",
+    "thumb_quarter": "ed52e083715bb975d2cd47f2e8f84f7eed8de632a1f614d2ce4c7ca552828b1a",
     "grey": "178494e1b470c23ac704422ac4f759b9a6699aca911ab07b12d90a24e2b15f1e"
    }
   },
   "rule_ponytail_high": {
    "id": "rule_ponytail_high",
-   "name": "High ponytail (rule-built)",
+   "name": "High ponytail",
+   "pack_name": "High ponytail (rule-built)",
    "pack": "VGAC rule-built styles",
    "source_url": "",
    "author": "VGAC",
@@ -3115,16 +3140,17 @@
    "self_check_mm": 0.0,
    "notes": "round one's generator",
    "sha256": {
-    "npz": "b15676e06e3d95075d4f511ffef1f4589a6dfb67d45abe26c9f34440c2dd100a",
-    "lite": "3aaf6ad721e325e09821d13398e570f33f323cdd704a5d85a3dc42d569b5ab52",
-    "thumb_front": "fd61c6947480a28a5499f14f9598a5c13c94d9f877e9a03c361d4695fd82fb83",
-    "thumb_quarter": "d149bd8d224e1d4f1f4d11634879f087ea7cd6dff29d5c52db823c2700c500fb",
+    "npz": "b6cb169292a3caaae4b8b0c800e86b068cb260d95702304c6a8d1905cea86797",
+    "lite": "8d72e09258f6bd9baad40ac102025045a0f833c0fcfe441d44546a8c4216c58f",
+    "thumb_front": "9fbc2bc8b09f60e9d17a7aef58f00182d01742a07e7b192da03fefb3c2966977",
+    "thumb_quarter": "1df7ad5579d9b0b2eee9a7af7f00fd298fe27f457318d72f368b2ac5c0f59028",
     "grey": "a8dee02f8c5964ad179eedf6a7183b1e68bbeccf80bf8d8ab0d6202a56039c0f"
    }
   },
   "rule_bun": {
    "id": "rule_bun",
-   "name": "Bun (rule-built)",
+   "name": "Top bun",
+   "pack_name": "Bun (rule-built)",
    "pack": "VGAC rule-built styles",
    "source_url": "",
    "author": "VGAC",
@@ -3164,10 +3190,10 @@
    "self_check_mm": 0.0,
    "notes": "round one's generator",
    "sha256": {
-    "npz": "63cb531bba309d57a9f8b78138c3471faab2683421c1bd78e101f15133a55fcb",
-    "lite": "2b75e883f5229246c3256f7a9a82627b785931036be52b7150b51394e4a66a54",
-    "thumb_front": "6d347767ede3ef602cb796c970830170ddd3b3b460ef2bef9e504827a62c4065",
-    "thumb_quarter": "fe8657279a39c854ed8590331b4f0f9ca070b8c51bda36ea517bcf79b9a4172b",
+    "npz": "f30279bc95a6d7f30d1971d79d51b26244c71795fe207fed6e7d6b6e8306f813",
+    "lite": "e53677a599228039f27045faee6c91d371ea889273588f25c896cd28cc40f4f4",
+    "thumb_front": "40de835820936b66220066c54eddcc5bca8e4ec0db062b02d574555a26b8aa1b",
+    "thumb_quarter": "736cd210c170e8a3d9422b52460920d37382affd27c1dfcd0691f8d825aa54e6",
     "grey": "1b5ee72dc75c5a4599a2c15ea98108bd74aab58ac7ea5c9cf302f5cd4a436a6f"
    }
   }

@@ -2,7 +2,8 @@
  "styles": {
   "q_buzzed": {
    "id": "q_buzzed",
-   "name": "Buzzed",
+   "name": "Buzz cut",
+   "pack_name": "Hair_Buzzed",
    "pack": "Universal Base Characters (Standard)",
    "source_url": "https://quaternius.com",
    "author": "Quaternius",
@@ -44,15 +45,16 @@
    "sha256": {
     "npz": "2d7d0a4da9455e2e24c661496a3f302875b52a443e020cbaa0c282c74691e18c",
     "lite": "816006ca1ca4e4fae7c81a1baeefdeb80de7768ae2e7bc5877461815dbbfa4e8",
-    "thumb_front": "e7a4f78153e0871fe10687adab3670a71f1614181886835ae158eab77c030c25",
-    "thumb_quarter": "e2c602446918367a3c2f9865588ef265eafa4eb60cee68cf3a92834652071be5",
+    "thumb_front": "6fb628d26cfdd6bd86a93547d7e35a409585afb01e0eec45f825dfd0412e1299",
+    "thumb_quarter": "65877e5611700b3297efade936d1a9d8864a619c09904e720118cfc3740aeaa9",
     "grey": "69ec52d0683349cb7472e23109a6325885f8bfa387f40ad1daf26e5a1fb5f931",
     "normal": "0315d1651f4c670f9fa014852edc664588a19581ac283ae91f1882520c50e148"
    }
   },
   "mh_ponytail01": {
    "id": "mh_ponytail01",
-   "name": "Ponytail01",
+   "name": "Mid ponytail, swept back",
+   "pack_name": "ponytail01",
    "pack": "MakeHuman system assets",
    "source_url": "http://www.makehumancommunity.org",
    "author": "MakeHuman team (Data Collection AB)",
@@ -136,8 +138,8 @@
    "notes": "mid ponytail, hangs free",
    "sha256": {
     "npz": "c2a992cf98c354000ea14145169541021960c9a4b59a3a24870f170e11768b66",
-    "thumb_front": "6c975d56e576d9cce558e63ecc10a8d9dccb34ff90019460fa98d3dbf9a69900",
-    "thumb_quarter": "a7dc1d0cfe195394d3b945f8282b073258c2c8403b8e14bd22144cd380f8efca",
+    "thumb_front": "6ff2adafae737d341a1cdcf543907d6e03c9d0cc4c72a302311093c54bdb9e46",
+    "thumb_quarter": "3ca56989b637f4342f38a78e6a7990f3c97c302008a253e32d11799faf2d0102",
     "grey": "07102f8ff86d9b4dc979085a1f17311282bef0757142776bfe62a98e97c7c568"
    }
   }

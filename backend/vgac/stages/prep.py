@@ -835,6 +835,11 @@ async def judge(sc: StageContext) -> None:
     hv = headtris.head_vars(m)
     if hv:
         tri_vars = {**(tri_vars or {}), **hv}
+    if hairlib.is_library(sc):
+        # The limit is the body's share: the sentence also names the triangles kept for the hair and the whole budget.
+        hl = m.get("hair_library") or {}
+        tri_vars = {**(tri_vars or {}), "hair_allowance": (sc.version.params or {}).get("hair_allowance"),
+                    "platform_triangles": hl.get("budget") or sc.budget.get("triangles")}
     checks = prep_checks(report, sc.version.params, m, sc.asset.category, limit, tri_vars)
     if (m.get("pbr") or {}).get("albedo_out") is not None and "texture_match" not in m:
         # The shipped base colour against the picture, measured once: albedo_range excuses a kept look's darks only

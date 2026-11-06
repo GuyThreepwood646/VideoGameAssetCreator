@@ -1,56 +1,76 @@
-// Mock of "Hair from the library" (docs/HAIR-LIBRARY-PLAN.md): a small catalogue, the bald pictures at Check all
-// sides, the ranked candidates at the 3D step, the fitted hair at Clean up, the hair on the skeleton at Make it move,
-// and GET /api/assets/{aid}/hair. A description with "waist" gets candidates that do not fit well (nothing_fits).
-import type { Asset, HairCandidate, HairPanel, HairStyleEntry, Version } from '../api'
+// Mock of "Hair from the library" (docs/HAIR-LIBRARY-PLAN.md), in the shapes the real backend sends (checked against
+// the live app on 2026-11-06): a small catalogue (GET /api/hair-library {styles, families, installed}, credit as an
+// object), the bald pictures at Check all sides (metrics.bald), the ranked candidates at the 3D step
+// (metrics.hair_library, pictures as files hair_cand_N), the fitted hair at Clean up (skin_through {all, crown, sides}),
+// the hair on the skeleton at Make it move (metrics.hair_bind), and GET /api/assets/{aid}/hair.
+// Prompt words for trying the rare paths: "waist" gives candidates that do not fit well (nothing_fits), "heavy" fails
+// hair_triangles once, "changed face" makes the bald picture fail on the face.
+import type { Asset, HairCandidate, HairCreditInfo, HairLibrary, HairPanel, HairStyleEntry, LibraryHairMetrics, Version } from '../api'
 import { hairLibraryOffer } from '../pipeline/HairSetting'
-import { fitWords } from '../pipeline/HairPicker'
-import { makeHairThumb, makeImage, type HairShape, type ViewName } from './images'
+import { makeHairCandidate, makeHairThumb, makeImage, type HairShape, type ViewName } from './images'
 
 type Put = (path: string, dataUrl: string) => string
+type MockStyle = HairStyleEntry & { author: string; source_url: string }
 
-const S = (id: string, name: string, family: string, kind: 'shell' | 'cards', triangles: number, author: string, pack: string): HairStyleEntry => ({
+const S = (id: string, name: string, family: string, kind: 'shell' | 'cards', triangles: number, author: string, site: string): MockStyle => ({
   id,
   name,
   family,
   kind,
+  alpha: kind === 'cards' ? 'cutout' : 'opaque',
   triangles,
+  phone_ok: kind === 'shell',
+  fringe: false,
+  parting: 'centre',
   author,
-  pack,
-  licence: 'CC0-1.0',
-  source_url: pack.startsWith('Quaternius') ? 'https://quaternius.com' : 'https://static.makehumancommunity.org/assets/assetpacks/hair01.html',
-  phone_ok: kind === 'shell' && triangles <= 750,
+  source_url: site,
 })
+const Q = 'https://quaternius.com'
+const MH = 'http://www.makehumancommunity.org'
 
-export const HAIR_CATALOGUE: HairStyleEntry[] = [
-  S('quaternius_simpleparted', 'Simple parted', 'short', 'shell', 830, 'Quaternius', 'Quaternius Universal Base Characters'),
-  S('quaternius_buzzed', 'Buzzed', 'short', 'shell', 700, 'Quaternius', 'Quaternius Universal Base Characters'),
-  S('quaternius_long', 'Long', 'long', 'shell', 3284, 'Quaternius', 'Quaternius Universal Base Characters'),
-  S('quaternius_buns', 'Buns', 'bun', 'shell', 1960, 'Quaternius', 'Quaternius Universal Base Characters'),
-  S('littleright_bobcut', 'Bob cut', 'bob', 'cards', 2410, 'littleright', 'MakeHuman Hair 01'),
-  S('toigo_bob_short', 'Short bob', 'bob', 'cards', 1880, 'Toigo', 'MakeHuman Hair 01'),
-  S('cortu_straight_bangs', 'Straight with bangs', 'long', 'cards', 2900, 'Cortu', 'MakeHuman Hair 01'),
-  S('cortu_short_messy', 'Short and messy', 'short', 'cards', 2240, 'Cortu', 'MakeHuman Hair 01'),
-  S('ponytail01', 'Low ponytail', 'ponytail', 'cards', 2650, 'MakeHuman team', 'MakeHuman system assets'),
-  S('vgac_high_ponytail', 'High ponytail', 'ponytail', 'shell', 2180, 'VGAC (made by rule)', 'VGAC generated styles'),
-  S('rehmanpolanski_bun', 'Neat bun', 'bun', 'cards', 2050, 'Rehman Polanski', 'MakeHuman Hair 01'),
-  S('braid01', 'Single braid', 'braid', 'cards', 3000, 'MakeHuman team', 'MakeHuman system assets'),
-  S('afro01', 'Afro', 'afro', 'cards', 3400, 'MakeHuman team', 'MakeHuman system assets'),
-  S('vgac_waist_long', 'Waist-length', 'long', 'shell', 3500, 'VGAC (made by rule)', 'VGAC generated styles'),
+const HAIR_STYLES: MockStyle[] = [
+  S('q_simple_parted', 'Simple parted', 'short', 'shell', 1014, 'Quaternius', Q),
+  S('q_buzzed', 'Buzzed', 'short', 'shell', 1000, 'Quaternius', Q),
+  S('q_long', 'Long', 'long', 'shell', 3168, 'Quaternius', Q),
+  S('q_buns', 'Buns', 'bun', 'shell', 3284, 'Quaternius', Q),
+  S('mh_toigo_blunt_bob', 'Bob, blunt, chin length', 'bob', 'cards', 3116, 'MargaretToigo', MH),
+  S('mh_toigo_curled_bob', 'Bob, curled ends', 'bob', 'cards', 3112, 'MargaretToigo', MH),
+  S('mh_cortu_straight_bangs', 'Long, straight with bangs', 'long', 'cards', 1128, 'Cortu', MH),
+  S('mh_cortu_shaggy', 'Long, shaggy layers', 'long', 'cards', 1548, 'Cortu', MH),
+  S('mh_ponytail01', 'Mid ponytail, swept back', 'ponytail', 'cards', 4764, 'MakeHuman team (Data Collection AB)', MH),
+  S('rule_high_ponytail', 'High ponytail', 'ponytail', 'shell', 2988, 'VGAC (rule-built)', 'https://github.com'),
+  S('mh_rehmanpolanski_bun', 'Neat low bun', 'bun', 'cards', 2050, 'Rehman Polanski', MH),
+  S('mh_braid01', 'Single braid', 'braid', 'cards', 3000, 'MakeHuman team (Data Collection AB)', MH),
+  S('mh_afro01', 'Afro', 'afro', 'cards', 3400, 'MakeHuman team (Data Collection AB)', MH),
+  S('rule_long_centre', 'Long, straight, centre parting', 'long', 'shell', 3500, 'VGAC (rule-built)', 'https://github.com'),
 ]
-
+const FAMILIES = ['afro', 'bob', 'braid', 'bun', 'long', 'ponytail', 'short']
 const HAIR_HUE = 28
 
+const style = (id: string | null | undefined) => HAIR_STYLES.find((s) => s.id === id) ?? null
+// The credit object the backend sends everywhere a style is named.
+export const credit = (s: MockStyle): HairCreditInfo => ({ id: s.id, name: s.id.replace(/^(q|mh|rule)_/, ''), author: s.author, licence: 'CC0-1.0', source_url: s.source_url })
+
 let thumbsMade = false
-export function hairCatalogue(): HairStyleEntry[] {
+// On Phone a solid style uses its lite version (at most 1,000 triangles); cards are not offered there.
+const liteOf = (s: MockStyle) => Math.min(s.triangles, 1000)
+// GET /api/hair-library, with ?platform= or ?asset_id= the styles offered there and the triangles used there.
+export function hairCatalogue(platform: string | null = null): HairLibrary {
   if (!thumbsMade) {
-    for (const s of HAIR_CATALOGUE) s.thumbs = { front: makeHairThumb({ family: s.family, hue: 220, light: 72 }) }
+    for (const s of HAIR_STYLES) {
+      const shape = { family: s.family, hue: 220, light: 72 }
+      s.thumbs = { front: makeHairThumb(shape), quarter: makeHairThumb(shape) }
+      s.credit = credit(s)
+    }
     thumbsMade = true
   }
-  return HAIR_CATALOGUE
+  const phone = platform === 'mobile_low'
+  const offered = HAIR_STYLES.filter((s) => !phone || s.phone_ok)
+  const styles = offered.map(({ author: _a, source_url: _s, ...entry }) =>
+    platform ? { ...entry, triangles_used: phone ? liteOf(entry as MockStyle) : entry.triangles, lite_used: phone && liteOf(entry as MockStyle) < entry.triangles } : entry,
+  )
+  return { styles, families: FAMILIES, installed: true, platform }
 }
-
-const style = (id: string | null | undefined) => HAIR_CATALOGUE.find((s) => s.id === id) ?? null
-export const credit = (s: HairStyleEntry) => `${s.author}, ${s.pack}, CC0`
 
 const FAMILY_WORDS: [string, string[]][] = [
   ['ponytail', ['ponytail', 'pony tail']],
@@ -58,14 +78,14 @@ const FAMILY_WORDS: [string, string[]][] = [
   ['braid', ['braid', 'braids', 'plait']],
   ['bob', ['bob']],
   ['afro', ['afro']],
-  ['long', ['long']],
-  ['short', ['short', 'cropped', 'buzz cut']],
+  ['long', ['long loose hair', 'long hair', 'long']],
+  ['short', ['short hair', 'short', 'cropped', 'buzz cut']],
 ]
 export function familyOf(prompt: string): { family: string | null; words: string[] } {
   const t = ' ' + prompt.toLowerCase().replace(/[^a-z]+/g, ' ') + ' '
   for (const [family, words] of FAMILY_WORDS) {
-    const hit = words.filter((w) => t.includes(' ' + w + ' '))
-    if (hit.length) return { family, words: hit.map((w) => `${w}`) }
+    const hit = words.find((w) => t.includes(' ' + w + ' '))
+    if (hit) return { family, words: [hit] }
   }
   return { family: null, words: [] }
 }
@@ -78,15 +98,20 @@ function keptOf(a: Asset, stage: 'turnaround' | 'mesh' | 'prep' | 'rig'): Versio
   return list.find((v) => v.id === a.selected[stage]) ?? list.find((v) => v.selected)
 }
 
-// The ranked candidates for an asset's description: the family's styles first, best first.
-function rank(a: Asset): HairCandidate[] {
+// The backend's own short fit words (hairfit.fit_words); the picker shows its own sentences instead.
+const backendFitWords = (score: number) => (score >= 0.75 ? 'close to the picture' : score >= 0.6 ? 'a fair match' : 'not like the picture')
+
+type MeshCandidate = { style: string; name: string; score: number; iou: number; eye_penalty: number; params: Record<string, unknown>; triangles: number; kind: string }
+
+// The ranked candidates for an asset's description: the family's styles first, best first (metrics.hair_library shape).
+function rank(a: Asset): MeshCandidate[] {
   const { family } = familyOf(a.prompt)
   const phone = a.platform_target === 'mobile_low'
-  const offered = HAIR_CATALOGUE.filter((s) => !phone || s.phone_ok)
+  const offered = HAIR_STYLES.filter((s) => !phone || s.phone_ok)
   const pool = family ? [...offered.filter((s) => s.family === family), ...offered.filter((s) => s.family !== family)] : offered
   const poor = /\bwaist\b/i.test(a.prompt)
   const scores = poor ? [0.55, 0.51, 0.47, 0.42] : family ? [0.78, 0.71, 0.64, 0.57] : [0.66, 0.63, 0.6, 0.58]
-  return pool.slice(0, 4).map((s, i) => ({ style: s.id, name: s.name, score: scores[i], fit_words: fitWords(scores[i]), picture_url: null, triangles: s.triangles, kind: s.kind, credit: credit(s) }))
+  return pool.slice(0, 4).map((s, i) => ({ style: s.id, name: s.name, score: scores[i], iou: scores[i], eye_penalty: 0, params: { dz_head: 0, length: 1, mirror: false, volume: 0.85 }, triangles: phone ? liteOf(s) : s.triangles, kind: s.kind as string }))
 }
 
 // Files and metrics for library hair, added to what fabricate made. f and m are the version's new files and metrics.
@@ -107,75 +132,89 @@ export function fabricateHair(a: Asset, v: Version, f: Record<string, string>, m
         f[`${view}_cutout`] = put(`${base}/${view}_cutout.png`, makeImage({ w: 384, h: 512, hue, seed, view, transparent: true, head: hairShape(family ?? 'bob') }))
         f[`bald_${view}`] = put(`${base}/bald_${view}.png`, makeImage({ w: 384, h: 512, hue, seed, view, label: `${view}, bald`, head: 'bald' }))
         f[`bald_${view}_cutout`] = put(`${base}/bald_${view}_cutout.png`, makeImage({ w: 384, h: 512, hue, seed, view, transparent: true, head: 'bald' }))
+        f[`bald_${view}_white`] = f[`bald_${view}`]
       }
-      const rerolled = Number(v.params.bald_seed) % 4 === 1
-      const kept = 0.96
-      m.bald = { kept_share: kept, face_delta: 2.1, rerolled, seed: v.params.bald_seed }
-      chk('bald_picture', true, kept, 0.9, { face_delta: 2.1, rerolled })
+      const bseed = Number(v.params.bald_seed)
+      const face = /changed face/i.test(a.prompt)
+      const rerolled = face || bseed % 4 === 1
+      const kept = 0.976
+      const reason = face ? 'face_changed' : null
+      const bearded = /\b(beard|bearded|moustache|mustache)\b/i.test(a.prompt)
+      const beard = bearded ? { bearded: true, beard_change: 0.04, face_dark: null } : { face_dark: 0.01 }
+      m.bald = { kept_share: kept, face_delta: face ? 15.3 : 2.1, face_change: face ? 11.3 : 1.2, ...beard, reason, rerolled, seed: bseed, kept_seed: bseed, seconds: 156, tries: [{ seed: bseed, kept_share: kept, reason }] }
+      chk('bald_picture', !face, kept, 0.9, { face_delta: face ? 15.3 : 2.1, ...beard, rerolled, ...(reason ? { reason } : {}) })
+      if (face) checks[checks.length - 1].fix = { stage: 'turnaround', params: { bald_only: true, bald_seed: null }, label: 'Make the bald picture again' }
       return
     }
     case 'mesh': {
       if (!isLibrary(a) || v.params.hair_source === 'model' || v.params.engine === 'hy3d') return
       v.params.hair_source = 'library'
-      const { family } = familyOf(a.prompt)
+      const { family, words } = familyOf(a.prompt)
       const cands = rank(a)
+      // Each picture: the character's own head in plain grey with the recoloured hair, front and three-quarter.
       cands.forEach((c, i) => {
-        const s = style(c.style)!
-        c.picture_url = f[`hair_cand_${i + 1}`] = put(`${base}/hair_cand_${i + 1}.png`, makeImage({ w: 320, h: 420, hue, seed, view: 'quarter', head: hairShape(s.family) }))
+        f[`hair_cand_${i + 1}`] = put(`${base}/hair_rank/hair_cand_${i + 1}.png`, makeHairCandidate(hairShape(style(c.style)!.family)))
       })
       const best = cands[0]
       const nothing = best.score < 0.6
-      m.hair_library = { family, family_source: family ? 'description' : 'none', candidates: cands.map((c) => ({ style: c.style, name: c.name, score: c.score, triangles: c.triangles, kind: c.kind, picture: c.picture_url, credit: c.credit })), best: best.style, best_score: best.score, nothing_fits: nothing, seconds: 41, error: null }
-      chk('hair_fit', !nothing, best.score, 0.6, { step: 'mesh', best_name: best.name, family, family_source: family ? 'description' : 'none', candidates: cands.length })
+      m.hair_library = { best: best.style, best_score: best.score, candidates: cands, error: null, family, family_source: family ? 'description' : 'none', family_words: words, nothing_fits: nothing, offered: cands.length + 1, searched: cands.length + 1, seconds: 33, timed_out: false, yaw: 0 }
+      chk('hair_fit', !nothing, best.score, 0.6, { step: 'mesh', best_name: best.name, family, family_source: family ? 'description' : 'none', candidates: cands.length, picked: false, colour_delta: null, eye_cover: null })
       if (nothing) checks[checks.length - 1].fix = { stage: 'mesh', params: { hair_source: 'model' }, label: 'Use the hair built with the 3D model' }
       return
     }
     case 'prep': {
       const mesh = keptOf(a, 'mesh')
-      const lm = mesh?.metrics.hair_library as { candidates?: { style: string; score: number }[]; best?: string } | undefined
+      const lm = mesh?.metrics.hair_library as { candidates?: MeshCandidate[]; best?: string; family_source?: string } | undefined
       if (!mesh || mesh.params.hair_source !== 'library' || !lm) return
       const explicit = typeof v.params.hair_style === 'string' && v.params.hair_style_source !== 'best' && v.params.hair_style_source !== 'picked'
       const picked = explicit ? (v.params.hair_style as string) : (a.hair?.pick ?? null)
       const source = explicit ? 'chosen' : a.hair?.pick ? 'picked' : 'best'
       const reused = explicit && v.parent_version_id && (a.stages.prep ?? []).some((x) => x.id === v.parent_version_id) ? v.parent_version_id : null
-      const id = picked ?? lm.best ?? HAIR_CATALOGUE[0].id
-      const s = style(id) ?? HAIR_CATALOGUE[0]
+      const s = style(picked ?? lm.best) ?? HAIR_STYLES[0]
       const score = lm.candidates?.find((c) => c.style === s.id)?.score ?? 0.62
-      const allowance = Math.ceil(Math.max(s.triangles, ...(lm.candidates ?? []).map((c) => style(c.style)?.triangles ?? 0)) / 250) * 250
+      const allowance = Math.ceil(Math.max(s.triangles, ...(lm.candidates ?? []).map((c) => c.triangles)) / 250) * 250
       const tb = checks.find((c) => c.id === 'triangle_budget')
       const budget = Number(tb?.limit) || (a.platform_target === 'mobile_low' ? 5000 : 20000)
       const body = Math.min(Number(tb?.value) || budget, budget) - allowance - 120
-      const more = v.params.hair_cover === 'more'
-      const skin = more ? 0.004 : seed % 2 === 0 ? 0.035 : 0.0
+      const cap = 262
+      const skinAll = v.params.hair_cover === 'more' ? 0.004 : seed % 2 === 0 ? 0.035 : 0.0
+      const skin = { all: skinAll, crown: skinAll * 1.4, sides: skinAll * 0.6 }
       v.params.hair_source = 'library'
       v.params.hair_style = s.id
       v.params.hair_style_source = source
       v.params.hair_allowance = allowance
+      v.params.hair_cover = v.params.hair_cover ?? 'normal'
       f.with_hair_glb = 'samples/sample.glb'
-      f.hair_fit_sheet = put(`${base}/hair_fit_sheet.png`, makeImage({ w: 640, h: 320, hue, seed, view: 'front', label: 'fit sheet', head: hairShape(s.family) }))
-      m.hair_library = { attached: true, style: s.id, name: s.name, family: s.family, score, triangles: s.triangles, cap_triangles: 180, allowance, skin_through: skin, kind: s.kind, alpha: s.kind === 'cards' ? 'cutout' : 'opaque', two_sided: s.kind === 'cards', credit: credit(s), extra_height_m: s.family === 'bun' ? 0.09 : 0.03, seconds: 28, reused_body_of: reused }
-      m.triangles = body + s.triangles + 180
-      chk('hair_fit', score >= 0.6, score, 0.6, { step: 'prep', style_name: s.name, picked: !!picked, family: s.family })
-      chk('hair_skin_through', skin <= 0.02, skin, 0.02, { crown: skin * 1.4, sides: skin * 0.6 })
+      f.hair_fit_sheet = put(`${base}/hair_fit_sheet.png`, makeHairCandidate(hairShape(s.family)))
+      const lib: LibraryHairMetrics & Record<string, unknown> = {
+        attached: true, style: s.id, name: s.name, family: s.family, score, iou: score, triangles: s.triangles, cap_triangles: cap, allowance, budget,
+        skin_through: skin, kind: s.kind, alpha: s.alpha, two_sided: s.kind === 'cards', credit: credit(s), extra_height_m: s.family === 'bun' ? 0.09 : 0.017,
+        seconds: 9.8, reused_body_of: reused, style_source: source, cover: v.params.hair_cover, groups: s.family === 'short' || s.family === 'bob' ? 0 : 1, tex: 1024,
+      }
+      m.hair_library = lib
+      m.triangles = body
+      chk('hair_fit', score >= 0.6, score, 0.6, { step: 'prep', style_name: s.name, picked: !!picked, family: s.family, best_name: style(lm.best)?.name, family_source: lm.family_source })
+      chk('hair_skin_through', skinAll <= 0.02, skinAll, 0.02, { crown: skin.crown, sides: skin.sides })
       // A description with "heavy" goes over the budget, so "Choose a lighter hairstyle" can be tried.
-      const heavy = /\bheavy\b/i.test(a.prompt) && !v.params.hair_style_source?.toString().startsWith('chosen')
-      chk('hair_triangles', !heavy, body + s.triangles + 180 + (heavy ? 1500 : 0), budget, { hair: s.triangles + 180, body, allowance })
+      const heavy = /\bheavy\b/i.test(a.prompt) && source !== 'chosen'
+      chk('hair_triangles', !heavy, body + s.triangles + (heavy ? 1500 : 0), budget, { hair: s.triangles, body, allowance })
       if (heavy) checks[checks.length - 1].fix = { stage: 'mesh', ui: 'hair_picker', params: {}, label: 'Choose a lighter hairstyle' }
       return
     }
     case 'rig': {
       const prep = keptOf(a, 'prep')
-      const lh = prep?.metrics.hair_library as { attached?: boolean; family?: string } | undefined
+      const lh = prep?.metrics.hair_library as (LibraryHairMetrics & { groups?: number }) | undefined
       if (!lh?.attached) return
-      const groups = lh.family === 'ponytail' || lh.family === 'long' || lh.family === 'braid' ? 1 : 0
-      m.hair_bind = { ok: true, verts: 1400, rest_share: groups ? 0.7 : 1, nape_blend_verts: 210, groups, seconds: 3.1 }
+      const groups = lh.groups ?? 0
+      m.hair_bind = { ok: true, error: null, verts: 3225, bound_share: 1.0, follow_error_m: 0, rest_share: groups ? 0.5 : 1, nape_blend_verts: 1628, groups, seconds: 2.4 }
       chk('hair_bound', true, 1.0, 1.0, { groups_swaying: groups, rest_on_head: !groups })
       return
     }
     case 'export': {
       const prep = keptOf(a, 'prep')
-      if (!(prep?.metrics.hair_library as { attached?: boolean } | undefined)?.attached) return
-      m.hair_material = { ok: true, slots: [`${a.name}_Body`, `${a.name}_Hair`], source: 'library' }
+      const lh = prep?.metrics.hair_library as LibraryHairMetrics | undefined
+      if (!lh?.attached) return
+      m.hair_material = { ok: true, planned: true, source: 'library', kind: lh.kind, alpha: lh.alpha, two_sided: lh.two_sided, faces: lh.triangles, cap_faces: lh.cap_triangles, draws_added: 1, slots: [`${a.name}_Body`, `${a.name}_Hair`] }
       checks.push({ id: 'hair_material_shipped', name: 'hair_material_shipped', passed: true, ok: true, value: 2, limit: 2, severity: 'warn', vars: { source: 'library', slots: `${a.name}_Body and ${a.name}_Hair` } })
       return
     }
@@ -189,14 +228,46 @@ export function hairPanel(a: Asset): HairPanel {
   const mesh = keptOf(a, 'mesh')
   const prep = keptOf(a, 'prep')
   const turn = keptOf(a, 'turnaround')
-  const lm = mesh && mesh.params.hair_source === 'library' ? (mesh.metrics.hair_library as { candidates?: (HairCandidate & { picture?: string })[]; best?: string; nothing_fits?: boolean; family?: string | null } | undefined) : undefined
-  const lp = prep?.metrics.hair_library as { attached?: boolean; style?: string; score?: number } | undefined
-  const { family, words } = familyOf(a.prompt)
   const meshIsLibrary = mesh?.params.hair_source === 'library'
-  const bald = !!turn && 'bald_front' in turn.files
+  const lm = meshIsLibrary ? (mesh!.metrics.hair_library as { candidates?: MeshCandidate[]; best?: string; nothing_fits?: boolean } | undefined) : undefined
+  const lp = prep?.metrics.hair_library as LibraryHairMetrics | undefined
+  const { family, words } = familyOf(a.prompt)
+  // Where the bald pictures of the kept (or newest) Check all sides version stand, as the backend's bald_state.
+  const newest = (a.stages.turnaround ?? []).filter((v) => v.params.bald_only || v.params.bald_views).slice(-1)[0]
+  const baldState: HairPanel['bald_state'] =
+    source !== 'library' || !turn
+      ? 'none'
+      : newest && newest.stopped
+        ? 'stopped'
+        : newest && (newest.status === 'queued' || newest.status === 'running')
+          ? 'drawing'
+          : newest && newest.status === 'error'
+            ? 'failed'
+            : 'bald_front' in turn.files && 'bald_quarter' in turn.files
+              ? 'ready'
+              : 'missing'
   let rebuild: HairPanel['rebuild'] = null
-  if (mesh && source === 'library' && !meshIsLibrary && bald) rebuild = { from_stage: 'mesh', minutes: 9 }
-  if (mesh && source === 'model' && meshIsLibrary) rebuild = { from_stage: 'mesh', minutes: 8 }
+  if (mesh && source === 'library' && !meshIsLibrary && baldState === 'ready') rebuild = { from_stage: 'mesh', minutes: 12 }
+  if (mesh && source === 'model' && meshIsLibrary) rebuild = { from_stage: 'mesh', minutes: 10 }
+  const candidates: HairCandidate[] = (lm?.candidates ?? []).map((c, i) => ({
+    style: c.style, name: c.name, score: c.score, fit_words: backendFitWords(c.score), picture_url: mesh!.files[`hair_cand_${i + 1}`] ?? null, triangles: c.triangles, kind: c.kind, credit: style(c.style) ? credit(style(c.style)!) : null,
+  }))
+  const applied = lp?.attached && lp.style ? { style: lp.style, score: lp.score ?? null, prep_version_id: prep!.id } : null
+  const baldSentence: Partial<Record<NonNullable<HairPanel['bald_state']>, string>> = {
+    missing: 'Hair from the library is on, but the kept side views have no bald pictures yet.',
+    drawing: 'The bald pictures are being drawn.',
+    stopped: 'The bald pictures were stopped before they were finished; press Resume on Check all sides.',
+    failed: 'The bald pictures could not be made.',
+  }
+  const sentence = baldSentence[baldState ?? 'none'] ?? (!offer.ok
+    ? `Hair from the library is switched on, but it cannot be used: ${offer.reason} The hair is built with the 3D model.`
+    : source === 'library' && applied
+      ? `The character wears "${style(applied.style)?.name ?? applied.style}" from the hair library (ready-made hairstyles).`
+      : source === 'library' && candidates.length
+        ? 'Pick the hairstyle you like best; the best match is used when you do not pick one.'
+        : source === 'library'
+          ? 'The hairstyles are tried on the bald 3D model when it is built.'
+          : 'The hair is built with the 3D model.')
   return {
     source,
     available: offer.ok,
@@ -204,12 +275,14 @@ export function hairPanel(a: Asset): HairPanel {
     family,
     family_words: words,
     pick: a.hair?.pick ?? null,
-    candidates: (lm?.candidates ?? []).map((c) => ({ style: c.style, name: c.name, score: c.score, fit_words: fitWords(c.score), picture_url: c.picture ?? null, triangles: c.triangles, kind: c.kind, credit: c.credit })),
-    mesh_version_id: meshIsLibrary ? mesh!.id : null,
+    candidates,
+    mesh_version_id: mesh ? mesh.id : null,
     best: lm?.best ?? null,
     nothing_fits: !!lm?.nothing_fits,
-    applied: lp?.attached && lp.style ? { style: lp.style, score: lp.score ?? null, prep_version_id: prep!.id } : null,
+    applied,
+    allowance: typeof lp?.allowance === 'number' ? lp.allowance : null,
     rebuild,
-    sentence: null,
+    bald_state: baldState,
+    sentence,
   }
 }

@@ -218,6 +218,24 @@ export function makeHairThumb(hair: HairShape, size = 160): string {
   return c.toDataURL('image/png')
 }
 
+// A ranked candidate's picture as the backend renders it: the character's own head in plain grey with the recoloured
+// hair, front and three-quarter, side by side (2:1).
+export function makeHairCandidate(hair: HairShape, h = 192): string {
+  const w = h * 2
+  const { c, ctx } = canvas(w, h)
+  ctx.fillStyle = 'hsl(220 4% 62%)'
+  ctx.fillRect(0, 0, w, h)
+  for (const [cx, view] of [[w * 0.27, 'front'], [w * 0.73, 'quarter']] as [number, ViewName][]) {
+    ctx.fillStyle = 'hsl(0 0% 84%)'
+    ctx.fillRect(cx - h * 0.4, h * 0.82, h * 0.8, h * 0.2)
+    ctx.beginPath()
+    ctx.ellipse(cx, h * 0.52, h * 0.2, h * 0.26, 0, 0, Math.PI * 2)
+    ctx.fill()
+    drawHair(ctx, cx, h * 0.5, h * 0.21, hair, view)
+  }
+  return c.toDataURL('image/png')
+}
+
 function drawBox(ctx: CanvasRenderingContext2D, w: number, h: number, hue: number, view: ViewName) {
   const cx = w / 2
   const cy = h * 0.6

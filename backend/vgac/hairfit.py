@@ -27,6 +27,7 @@ from . import hairstyles
 RANK_SECONDS = 150
 TIED = ("ponytail", "bun", "braid")      # scored on the head only: the tail or braid hangs behind the head in a front picture
 RANK_TOP = 4
+HANG_BLOCKED = 0.3     # over this share of the hanging hair started inside the body (a mantle or high collar round the head)
 FIT_MIN = 0.6
 SKIN_MAX = 0.02
 ROUGHNESS = 0.55
@@ -106,7 +107,7 @@ async def rank(sc: Any, glb: Path, picture_json: Path, bald_cutout: Path, outlin
             e = hairstyles.style(c["style"])
             cands.append(dict(style=c["style"], name=e["name"], score=c["score"], iou=c["iou"], eye_penalty=c["eye_penalty"],
                               params=c["params"], triangles=c.get("triangles"), kind=e["kind"], fit_words=fit_words(c["score"]),
-                              credit=hairstyles.credit(c["style"]), _files=c.get("files", {})))
+                              credit=hairstyles.credit(c["style"]), hang_inside=c.get("hang_inside"), _files=c.get("files", {})))
         # the description's words order the candidates before the score: curly styles go last unless it asks for curls,
         # and a fringe (bangs) puts the fringe styles first
         prompt = str(getattr(getattr(sc, "asset", None), "prompt", "") or "")
@@ -126,6 +127,10 @@ async def rank(sc: Any, glb: Path, picture_json: Path, bald_cutout: Path, outlin
                      best=best["style"] if best else None, best_score=best["score"] if best else None,
                      nothing_fits=(best is None) or best["score"] < FIT_MIN, searched=rep.get("searched"), offered=rep.get("offered"),
                      timed_out=rep.get("timed_out"))
+        if best and (best.get("hang_inside") or 0) > HANG_BLOCKED:
+            block["hang_blocked"] = round(float(best["hang_inside"]), 3)
+            block["note"] = ("the body rises round the head (a mantle or high collar): long hair is laid over it and "
+                             "cannot hang freely; a shorter or tied style may suit this character better")
         try:
             sc.use_model(MODEL_ID)
         except Exception:  # noqa: BLE001  (the models list is a record only)
@@ -154,8 +159,32 @@ def _flow_png(npz: Path, tex: int, dest: Path) -> Path | None:
     reg = hair.texel_region(mesh, tex, np.ones(len(F), dtype=bool))
     flow_t = fl.reshape(-1, 3, 3).mean(1)[reg["tri"]]
     img = hairmat.flow_map(mesh, tex, reg["ys"], reg["xs"], flow_t)
+    img = smooth_flow(img, reg["ys"], reg["xs"], radius=max(2, tex // 256))
     Image.fromarray(img, "RGBA").save(dest)
     return dest
+
+
+def smooth_flow(img: np.ndarray, ys: np.ndarray, xs: np.ndarray, radius: int = 4) -> np.ndarray:
+    """The flow map is written one direction per triangle (blocky); a masked box blur of the direction over the hair
+    texels, renormalised, makes it run smoothly along the locks so the anisotropic highlight does not sparkle."""
+    T = img.shape[0]
+    m = np.zeros((T, T), np.float32); m[ys, xs] = 1
+    d = img[..., :2].astype(np.float32) / 255.0 * 2 - 1
+
+    def blur(a):
+        k = 2 * radius + 1
+        p = np.pad(a, radius + 1, mode="constant")
+        c = p.cumsum(0).cumsum(1)
+        out = c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]
+        return out[:T, :T] / (k * k)
+    den = blur(m)
+    out = np.stack([blur(d[..., k] * m) for k in range(2)], -1) / np.maximum(den, 1e-4)[..., None]
+    out /= np.maximum(np.linalg.norm(out, axis=-1, keepdims=True), 1e-6)
+    res = img.copy()
+    sel = m > 0
+    res[..., 0][sel] = np.clip(np.round((out[..., 0][sel] * 0.5 + 0.5) * 255), 0, 255).astype(np.uint8)
+    res[..., 1][sel] = np.clip(np.round((out[..., 1][sel] * 0.5 + 0.5) * 255), 0, 255).astype(np.uint8)
+    return res
 
 
 def _solid(dest: Path, size: int, value: tuple[int, ...], mode: str) -> Path:
@@ -211,7 +240,8 @@ async def attach(sc: Any, body_glb: Path, style_id: str, params: dict | None, pi
                    iou=(rep.get("score") or {}).get("iou"), eye_penalty=(rep.get("score") or {}).get("eye_penalty"),
                    eye_cover=rep.get("eye_cover"), params=rep.get("params"), triangles=rep.get("triangles"),
                    cap_triangles=rep.get("cap_triangles"), skin_through=dict(all=sk.get("all"), crown=sk.get("crown"), sides=sk.get("sides")),
-                   pushed_out=rep.get("pushed_out"), kind=e["kind"], alpha=e["alpha"], two_sided=bool(e["two_sided"]), tex=nsz,
+                   pushed_out=rep.get("pushed_out"), hang_inside=rep.get("hang_inside"),
+                   hang_blocked=bool((rep.get("hang_inside") or 0) > HANG_BLOCKED), kind=e["kind"], alpha=e["alpha"], two_sided=bool(e["two_sided"]), tex=nsz,
                    colour_delta=rep.get("colour_delta"), render_delta=rep.get("render_delta"),
                    score_region="head" if e["family"] in TIED else "whole", extra_height_m=rep.get("extra_height_m"), groups=rep.get("groups"),
                    credit=hairstyles.credit(style_id), seconds=round(time.time() - t0, 1))

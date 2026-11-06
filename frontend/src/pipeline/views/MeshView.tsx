@@ -1,4 +1,4 @@
-import { libraryUrl, type Asset, type Version } from '../../api'
+import { creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
@@ -20,12 +20,11 @@ const TEXTURE_NAMES: Record<string, string> = {
 }
 
 // Hair from the library at Clean up (metrics.hair_library on the prep version).
-type LibraryHair = { attached?: boolean; style?: string; name?: string; triangles?: number; cap_triangles?: number; kind?: string; skin_through?: number; credit?: string; extra_height_m?: number; reused_body_of?: string | null }
 
 export function MeshView({ version, category, asset, hairFocus, onFix, onChanged }: { version: Version; category?: string; asset?: Asset; hairFocus?: number | null; onFix?: (fix: FixAction) => void; onChanged?: () => void }) {
   // With a library hairstyle the viewer shows the body with its hair (with_hair_glb), else the model as it is.
   const glb = libraryUrl(version.files.with_hair_glb ?? version.files.glb)
-  const libHair = version.stage === 'prep' ? ((version.metrics?.hair_library ?? null) as LibraryHair | null) : null
+  const libHair = version.stage === 'prep' ? ((version.metrics?.hair_library ?? null) as LibraryHairMetrics | null) : null
   const libHairOn = !!libHair?.attached
   const hairFit = version.stage === 'prep' ? libraryUrl(version.files.hair_fit_sheet) : null
   const showPicker = version.stage === 'mesh' && !!asset && (version.params?.hair_source === 'library' || !!version.metrics?.hair_library)
@@ -63,9 +62,9 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             <div className="small">
               "{libHair.name ?? (libHair.style ?? '').replace(/_/g, ' ')}": {kindWords(libHair.kind ?? 'shell').toLowerCase()}
               {typeof libHair.triangles === 'number' ? `, ${libHair.triangles.toLocaleString('en-US')} triangles` : ''}
-              {typeof libHair.cap_triangles === 'number' ? ` with a ${libHair.cap_triangles.toLocaleString('en-US')}-triangle scalp cap (a hair-coloured layer under the hair)` : ''}, in its own material.
+              {typeof libHair.cap_triangles === 'number' ? ` including a ${libHair.cap_triangles.toLocaleString('en-US')}-triangle scalp cap (a hair-coloured layer under the hair)` : ''}, in its own material.
             </div>
-            {libHair.credit && <div className="small muted">Credit: {libHair.credit}</div>}
+            {creditText(libHair.credit) && <div className="small muted">Credit: {creditText(libHair.credit)}</div>}
             {libHair.reused_body_of && <div className="small muted">Only the hair was fitted again; the body is the same as before.</div>}
             {hairFit && (
               <div className="small">
@@ -83,6 +82,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
           </div>
           <div className="small">
             {tris !== null ? `${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
+            {libHairOn && tris !== null && typeof libHair?.triangles === 'number' ? ` in the body and ${libHair.triangles.toLocaleString('en-US')} in the hair` : ''}
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
             {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}
           </div>

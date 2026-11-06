@@ -55,9 +55,11 @@ type Props = {
   onStop: () => void
   onResume: () => void
   onDismissStopped: () => void
+  // A step the hair setting's own note already offers to rebuild from (HairRebuildNote): the general note stays away.
+  hideStaleFrom?: StageId | null
 }
 
-export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped }: Props) {
+export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped, hideStaleFrom }: Props) {
   const navigate = useNavigate()
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
@@ -196,7 +198,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         // An earlier step was changed after later steps were made: offer to rebuild them.
         const stale = firstStaleStage(asset)
         const apBusy = autopilot?.status === 'running' || autopilot?.status === 'paused' || autopilot?.status === 'error'
-        if (!stale || apBusy || apAvailable === false || jobs.some((j) => j.status === 'running' || j.status === 'queued')) return null
+        if (!stale || stale === hideStaleFrom || apBusy || apAvailable === false || jobs.some((j) => j.status === 'running' || j.status === 'queued')) return null
         const name = stagePlain(stale, ref?.stages.find((s) => s.id === stale) ?? null)
         return (
           <div className="stale-note">

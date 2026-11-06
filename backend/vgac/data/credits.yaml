@@ -1,0 +1,106 @@
+# Hand-kept credits: what no other data file records. vgac/credits.py joins this with models.yaml, addons.yaml and the
+# hair library catalogue and serves it as GET /api/credits; tools/make_credits.py writes CREDITS.md from the same answer.
+#
+# Fields on an entry: name, does (plain words, what it does in this app), author, licence, link,
+#   attribution_required (true when the licence makes you credit it), in_your_assets (true when it ends up inside the
+#   files you ship in a game), note (optional), confirmed ("lookup" = checked on the project's own page on 2026-11-06,
+#   "records" = taken from this repository's own records, "not confirmed" = no licence could be confirmed).
+# A licence that could not be confirmed is written "not confirmed", never guessed.
+
+summary:
+  not_legal_advice: This page is information, not legal advice. Licences are the authors' own terms; read the linked ones if a lot depends on it.
+  game_credit:
+    title: What you must credit in a game made with these assets
+    points:
+      - "As recorded, nothing that ends up inside an exported asset needs a credit. The animations and hairstyles are CC0 (public domain dedication: free to use with no conditions), and the AI models' licences cover the model files, not the pictures and 3D shapes they make for you."
+      - Crediting is still polite, and this page lists everyone so you can copy it.
+      - Two exceptions are recorded. Hunyuan3D (the optional second 3D model) is under the Tencent Hunyuan Community Licence, which has a revenue clause and regional limits (it does not cover every country); read it before shipping anything made with it. Anima (the anime-style picture model) is a non-commercial model, but what it makes is usable commercially.
+      - "Unity is its own licence (Personal or Pro): the game you build in it falls under Unity's terms, not this app's."
+  passing_on:
+    title: If you share the app with other people, what you must do
+    points:
+      - "Keep THIRD-PARTY-NOTICES.md (every package that ships with the app, with its licence) and CREDITS.md with the app. The licences of the libraries (MIT, BSD and similar) require their notices to travel with it."
+      - "The AI models are not shipped with the app. Each person downloads them, so each model's own licence applies to that person, including Hunyuan3D, Anima and Gemma (Google's Gemma Terms of Use, with a use policy)."
+      - "Blender and ComfyUI are GPL (a licence that requires sharing changes to the program itself) tools. The app calls them but does not include them. If you ever bundle either one, its licence text and source offer must come with it."
+  before_sharing:
+    title: Before you share the app (decisions that are yours, not settled here)
+    points:
+      - "The app has no licence of its own yet (desktop/package.json says UNLICENSED). Choose one before sharing; until then other people have no stated right to use or copy it."
+      - "Blender is GPL. The app's own Blender scripts (backend/vgac/blender/) use Blender's Python interface. Blender's licence page says of such scripts, \"(if published) are being shared under a GPL compliant license\" (https://www.blender.org/about/license/). Whether that applies to these scripts, and what licence to pick, is yours to decide, ideally with advice."
+      - "ComfyUI is GPL-3.0 and the app's own node pack (vgac-nodes) runs inside it. The same question applies and is open."
+      - "Models are not shipped with the app: each person downloads them and each model's own licence applies to that person. Hunyuan3D (revenue clause, regional limits) and Anima (model non-commercial) deserve a read before anyone relies on them."
+
+# Models: who made each and what it does. Licence and file come from models.yaml. in_assets is false for all of them:
+# the model files are not shipped, only what they make.
+models:
+  zturbo: {author: "Tongyi-MAI (Alibaba)", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo", does: "Paints the first concept picture quickly.", confirmed: lookup}
+  zbase: {author: "Tongyi-MAI (Alibaba)", link: "https://huggingface.co/Tongyi-MAI/Z-Image", does: "Paints the concept picture at higher quality, more slowly.", confirmed: records}
+  klein: {author: "Black Forest Labs", link: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B", does: "Paints quick draft concept pictures.", confirmed: lookup}
+  anima: {author: "circlestone-labs", link: "https://huggingface.co/circlestone-labs/Anima", does: "Paints anime line-art concept pictures.", attribution_required: false, note: "The model is non-commercial; what it makes may be used commercially. Do not sell or host the model itself.", confirmed: lookup}
+  pixel: {author: "Tongyi-MAI (Alibaba) with a community pixel-art add-on", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo", does: "Z-Image Turbo with a pixel-art add-on built in, for blocky pixel concept pictures.", confirmed: records}
+  chroma: {author: "lodestones", link: "https://huggingface.co/lodestones/Chroma1-HD", does: "Paints loose, painterly concept pictures.", confirmed: lookup}
+  qwen_edit: {author: "Qwen team (Alibaba)", link: "https://huggingface.co/Qwen/Qwen-Image-Edit-2511", does: "Edits a picture and draws the side, back and other views of your concept (the turnaround).", confirmed: records}
+  qwen_angles_lora: {author: "fal", link: "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", does: "Helps the side-view model turn the character to exact camera angles.", confirmed: records}
+  qwen_lightning_lora: {author: "lightx2v", link: "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning", does: "Lets the side-view model finish each view in 4 passes instead of many.", confirmed: records}
+  birefnet: {author: "Peng Zheng and co-authors (BiRefNet)", link: "https://github.com/ZhengPeng7/BiRefNet", does: "Cuts the subject out of its background.", confirmed: records}
+  trellis2: {author: "Microsoft", link: "https://github.com/microsoft/TRELLIS.2", does: "Builds the 3D model with its colours from the pictures. The default 3D model.", confirmed: records}
+  hy3d_mv: {author: "Tencent", link: "https://huggingface.co/tencent/Hunyuan3D-2mv", does: "Optional second 3D model that builds the shape from several views.", attribution_required: false, note: "Opt-in. Community licence with a revenue clause and regional limits: read it before shipping anything made with it.", confirmed: records}
+  skintoken: {author: "VAST-AI-Research", link: "https://github.com/VAST-AI-Research/SkinTokens", does: "Rigs the 3D model: builds its skeleton and works out how the surface follows each bone.", confirmed: lookup}
+  blender: {skip: true}
+  unity: {skip: true}
+  ual1: {skip: true}
+  ual2: {skip: true}
+  hair_library: {skip: true}
+
+addons:
+  pixel_art: {author: "community add-on for Z-Image Turbo", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo"}
+  qwen_lightning: {author: "lightx2v", link: "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning"}
+  qwen_angles: {author: "fal", link: "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA"}
+  stylised_3d: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE"}
+  clay_finish: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE"}
+  retro_lowpoly: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO"}
+  chunky_pixels: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO"}
+
+# Ready-made data that is not a model. Hairstyles are not listed here: they come from the hair library catalogue.
+data:
+  - {name: "Universal Animation Library (Standard)", does: "The ready-made moves (walk, run, idle and more) your rigged characters can use.", author: Quaternius, licence: "CC0 1.0", link: "https://quaternius.com", attribution_required: false, in_your_assets: true, confirmed: records}
+  - {name: "Universal Animation Library 2 (Standard)", does: "More ready-made moves for rigged characters.", author: Quaternius, licence: "CC0 1.0", link: "https://quaternius.com", attribution_required: false, in_your_assets: true, confirmed: records}
+  - {name: "Light picture: Outdoors (kloofendal_48d_partly_cloudy)", does: "The Outdoors lighting choice in the 3D viewer, the preview picture and the Unity showcase.", author: "Greg Zaal (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/kloofendal_48d_partly_cloudy", attribution_required: false, in_your_assets: false, confirmed: records}
+  - {name: "Light picture: Overcast (overcast_soil)", does: "The Overcast lighting choice in the viewer and previews.", author: "Sergej Majboroda (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/overcast_soil", attribution_required: false, in_your_assets: false, confirmed: records}
+  - {name: "Light picture: Night (dikhololo_night)", does: "The Night lighting choice in the viewer and previews.", author: "Greg Zaal (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/dikhololo_night", attribution_required: false, in_your_assets: false, confirmed: records}
+
+# Outside programs the app calls. None of them is included in the app.
+tools:
+  - {name: Blender, does: "Does the heavy 3D work: cleaning the mesh, fitting hair, building detail levels and collision shapes, and drawing preview renders.", author: "Blender Foundation", licence: "GPL-3.0-or-later (a GPL tool; what you make with it is yours)", link: "https://www.blender.org/about/license/", attribution_required: false, in_your_assets: false, note: "Called as a separate program; not included in this app.", confirmed: records}
+  - {name: "Unity Editor", does: "Imports the finished asset in a sandbox project to prove it works, and makes the Unity showcase.", author: "Unity Technologies", licence: "Unity Personal or Pro terms", link: "https://unity.com/legal", attribution_required: false, in_your_assets: false, note: "Your game falls under Unity's terms for the plan you use.", confirmed: records}
+  - {name: ComfyUI, does: "The engine that runs every AI model on your graphics card. The app sends it a recipe and gets the picture or 3D model back. Its built-in parts also supply the nodes used for the 3D steps and the picture check.", author: "Comfy Org and contributors", licence: "GPL-3.0", link: "https://github.com/Comfy-Org/ComfyUI", attribution_required: false, in_your_assets: false, note: "Called over its local web address; not included in this app.", confirmed: lookup}
+  - {name: ComfyUI-SkinToken, does: "The ComfyUI add-on (custom node pack) that lets ComfyUI run the SkinToken rigging model.", author: "Rizzlord", licence: "not confirmed", link: "https://github.com/Rizzlord/ComfyUI-SkinToken", attribution_required: false, in_your_assets: false, note: "The pack has no licence file and says to read the SkinTokens project's terms, which are MIT. Not confirmed as its own licence.", confirmed: "not confirmed"}
+  - {name: "vgac-nodes (VGACLoadTrimesh, VGACSaveTrimesh)", does: "Two small ComfyUI nodes written for this app to load and save 3D files.", author: "This project", licence: "not confirmed", link: "", attribution_required: false, in_your_assets: false, note: "Your own code; no licence is recorded for it yet. Choose one before passing it on.", confirmed: "not confirmed"}
+  - {name: "Gemma 3 12B (instruction tuned)", does: "The local vision model that looks at pictures and judges them for the review checks and hairstyle choice. Runs inside ComfyUI.", author: "Google DeepMind", licence: "Gemma Terms of Use (Google's own terms, with a Prohibited Use Policy)", link: "https://ai.google.dev/gemma/terms", attribution_required: false, in_your_assets: false, note: "Google states it claims no rights in what you generate with it. The terms must be accepted by whoever downloads the model.", confirmed: lookup}
+
+# Direct software libraries (backend/requirements.txt, frontend/package.json, desktop/package.json). Their licence
+# notices must travel with the app if it is passed on.
+libraries:
+  - {name: FastAPI, does: "The web server framework behind the app's backend.", author: "Sebastian Ramirez", licence: MIT, link: "https://fastapi.tiangolo.com", confirmed: records}
+  - {name: Uvicorn, does: "Runs the backend and serves it to the browser.", author: "Encode", licence: BSD-3-Clause, link: "https://www.uvicorn.org", confirmed: records}
+  - {name: SQLAlchemy, does: "Keeps your projects, assets and versions in the local database.", author: "Mike Bayer and contributors", licence: MIT, link: "https://www.sqlalchemy.org", confirmed: records}
+  - {name: Pydantic, does: "Checks that the data the app handles has the right shape.", author: "Samuel Colvin and contributors", licence: MIT, link: "https://docs.pydantic.dev", confirmed: records}
+  - {name: HTTPX, does: "Lets the backend talk to ComfyUI over its local address.", author: "Encode", licence: BSD-3-Clause, link: "https://www.python-httpx.org", confirmed: records}
+  - {name: websockets, does: "The live-updates channel between ComfyUI and the app.", author: "Aymeric Augustin and contributors", licence: BSD-3-Clause, link: "https://websockets.readthedocs.io", confirmed: records}
+  - {name: PyYAML, does: "Reads the app's recipe and settings files.", author: "Kirill Simonov and contributors", licence: MIT, link: "https://pyyaml.org", confirmed: records}
+  - {name: Pillow, does: "Opens, resizes and saves pictures.", author: "Jeffrey A. Clark and contributors", licence: MIT-CMU, link: "https://python-pillow.org", confirmed: records}
+  - {name: psutil, does: "Reads how much memory and processor the computer has free.", author: "Giampaolo Rodola", licence: BSD-3-Clause, link: "https://github.com/giampaolo/psutil", confirmed: records}
+  - {name: trimesh, does: "Reads, checks and repairs 3D mesh files.", author: "Michael Dawson-Haggerty", licence: MIT, link: "https://trimesh.org", confirmed: records}
+  - {name: NumPy, does: "The number-crunching behind mesh and picture measurements.", author: "NumPy developers", licence: BSD-3-Clause, link: "https://numpy.org", confirmed: records}
+  - {name: CoACD, does: "Builds the simple collision shapes (colliders) around a 3D model.", author: "Xinyue Wei and co-authors", licence: MIT, link: "https://github.com/SarahWeiii/CoACD", confirmed: records}
+  - {name: pytest, does: "Runs the app's own automatic tests (development only).", author: "pytest developers", licence: MIT, link: "https://pytest.org", confirmed: records}
+  - {name: React, does: "Draws every screen of the app.", author: "Meta and contributors", licence: MIT, link: "https://react.dev", confirmed: records}
+  - {name: React DOM, does: "Puts the React screens in the browser window.", author: "Meta and contributors", licence: MIT, link: "https://react.dev", confirmed: records}
+  - {name: React Router, does: "Moves between pages (Projects, Gallery, Credits and so on).", author: "Remix Software", licence: MIT, link: "https://reactrouter.com", confirmed: records}
+  - {name: three.js, does: "Shows your 3D model in the viewer.", author: "mrdoob and contributors", licence: MIT, link: "https://threejs.org", confirmed: records}
+  - {name: Vite, does: "Builds and serves the app's screens (development and build only).", author: "Evan You and contributors", licence: MIT, link: "https://vite.dev", confirmed: records}
+  - {name: "Vite React plugin (@vitejs/plugin-react)", does: "Lets Vite build the React screens.", author: "Vite team", licence: MIT, link: "https://github.com/vitejs/vite-plugin-react", confirmed: records}
+  - {name: oxlint, does: "Checks the screen code for mistakes (development only).", author: "Oxc project", licence: MIT, link: "https://oxc.rs", confirmed: records}
+  - {name: TypeScript, does: "Type-checks the screen code (development only).", author: Microsoft, licence: Apache-2.0, link: "https://www.typescriptlang.org", confirmed: records}
+  - {name: Electron, does: "The desktop window the app opens in.", author: "OpenJS Foundation and contributors", licence: MIT, link: "https://www.electronjs.org", confirmed: records}
+  - {name: electron-builder, does: "Packs the desktop app into an installer.", author: "Vladimir Krivosheev and contributors", licence: MIT, link: "https://www.electron.build", confirmed: records}

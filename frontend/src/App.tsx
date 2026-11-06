@@ -28,6 +28,7 @@ export default function App() {
           </NavLink>
           <NavLink to="/gallery">Gallery</NavLink>
           <NavLink to="/glossary">Glossary</NavLink>
+          <NavLink to="/credits">Credits</NavLink>
           <NavLink to="/health">Health</NavLink>
         </nav>
         <span className="grow" />

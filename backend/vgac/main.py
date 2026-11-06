@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import hairlib, items, user_addons
+from . import credits as credits_mod, hairlib, items, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -332,6 +332,12 @@ def categories() -> list[dict[str, Any]]:
 def models_() -> list[dict[str, Any]]:
     """The concept painters from data/models.yaml: id, label, description, name, licence, version, default_steps, negative."""
     return reference.models_public()
+
+
+@app.get("/api/credits")
+def credits_() -> dict[str, Any]:
+    """The Credits page: who made what the app builds on, with licences, in groups (vgac/credits.py)."""
+    return credits_mod.credits()
 
 
 @app.get("/api/styles")

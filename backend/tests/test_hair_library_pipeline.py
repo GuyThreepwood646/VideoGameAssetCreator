@@ -80,6 +80,7 @@ class Engines:
         self.staged: list[Path] = []
         self.body_at_budget = False
         self.fail_prep = False
+        self.fail_edit = False
 
     def install(self, mp: pytest.MonkeyPatch) -> None:
         eng = self
@@ -93,6 +94,8 @@ class Engines:
             if "l2" not in graph:
                 if eng.stop_on_edit:
                     raise JobCancelled()
+                if eng.fail_edit:
+                    raise RuntimeError("the image engine stopped with an error")
                 eng.in_edit = True
                 while eng.hold_edit:
                     self.ctx.check_cancelled()
@@ -874,10 +877,12 @@ def test_turning_it_on_later_queues_the_bald_pictures_and_the_pick(app_client, l
     assert _autopilot_done(c, aid)["status"] == "done"
     assert c.get(f"/api/assets/{aid}/hair").json()["source"] == "model"
     out = c.put(f"/api/assets/{aid}/hair", json={"source": "library"}).json()
-    assert len(out["started"]) == 1 and out["rebuild_from"] == "mesh"
+    assert len(out["started"]) == 1
     assert out["panel"]["allowance"] is None  # the kept 3D model still has today's hair
     vid = out["started"][0]["version"]["id"]
     _until(lambda: c.get(f"/api/versions/{vid}").json()["status"] == "done")
+    panel = c.get(f"/api/assets/{aid}/hair").json()
+    assert panel["bald_state"] == "ready" and panel["rebuild"]["from_stage"] == "mesh"
     v = c.get(f"/api/versions/{vid}").json()
     assert v["params"]["bald_only"] is True and v["selected"] and "bald_quarter_cutout" in v["files"]
     # Rebuild from the 3D model through the autopilot's from_stage, then pick the other style and rebuild.
@@ -1271,3 +1276,144 @@ def test_a_fix_whose_result_fails_a_blocking_check_is_paused_on(app_client, lane
     full = c.get(f"/api/assets/{aid}").json()
     assert "prep" not in full["selected"]
     assert {v["id"]: v for v in full["stages"]["prep"]}[old_prep["id"]]["status"] == "rejected"
+
+
+
+# --- the panel's bald_state: a rebuild only once the bald pictures are ready --------------------------------------------
+
+
+def test_panel_bald_state_drawing_stopped_ready_failed_and_missing(app_client, engines):
+    """Turning the library on after the 3D model: while the bald pictures are being drawn, stopped or failed, the panel
+    says so and offers no rebuild (the 3D step would end in the missing-file error); once they are ready it does."""
+    c = app_client
+    a = _new_asset(c, hair=None)
+    aid = a["id"]
+    c.post(f"/api/assets/{aid}/autopilot", json={"until_stage": "mesh"})
+    assert _autopilot_done(c, aid)["status"] == "done"
+    assert c.get(f"/api/assets/{aid}/hair").json()["bald_state"] == "none"
+
+    # missing: the setting is on, but the kept turnaround was made without the bald pictures (nothing queued yet).
+    from vgac import hairlib
+
+    with session_factory()() as db:
+        hairlib.set_choice(db, db.get(Asset, aid), "library", changed_by="page")
+    p = c.get(f"/api/assets/{aid}/hair").json()
+    assert p["bald_state"] == "missing" and p["rebuild"] is None and "has not been drawn" in p["sentence"]
+
+    # drawing: PUT queues the bald pictures; held in the edit.
+    engines.hold_edit = True
+    out = c.put(f"/api/assets/{aid}/hair", json={"source": "library"}).json()
+    vid = out["started"][0]["version"]["id"]
+    assert out["rebuild_from"] is None and out["panel"]["bald_state"] == "drawing" and out["panel"]["rebuild"] is None
+    _until(lambda: engines.in_edit)
+    p = c.get(f"/api/assets/{aid}/hair").json()
+    assert p["bald_state"] == "drawing" and p["rebuild"] is None and "is being drawn" in p["sentence"]
+
+    # stopped: waiting for Resume.
+    c.post(f"/api/assets/{aid}/stop", json={"stage": "turnaround"})
+    _until(lambda: c.get(f"/api/versions/{vid}").json()["stopped"])
+    p = c.get(f"/api/assets/{aid}/hair").json()
+    assert p["bald_state"] == "stopped" and p["rebuild"] is None and "Resume" in p["sentence"]
+
+    # ready: resumed and finished with the bald pictures; now the rebuild is offered.
+    engines.hold_edit = False
+    c.post(f"/api/assets/{aid}/resume", json={"stage": "turnaround"})
+    _until(lambda: c.get(f"/api/versions/{vid}").json()["status"] == "done")
+    p = c.get(f"/api/assets/{aid}/hair").json()
+    assert p["bald_state"] == "ready" and p["rebuild"]["from_stage"] == "mesh"
+    assert "bald picture" not in p["sentence"]
+
+    # failed: a bald_only turnaround whose edit errors.
+    engines.fail_edit = True
+    with session_factory()() as db:
+        aa = db.get(Asset, aid)
+        kept = hairlib._selected(db, aid, "turnaround")
+        files = dict(kept.files)
+        for k in [k for k in files if k.startswith("bald_")]:
+            files.pop(k)
+        kept.files = files  # as if the kept turnaround had none, so PUT draws them again
+        db.commit()
+        hairlib.set_choice(db, aa, "model", changed_by="page")
+    out = c.put(f"/api/assets/{aid}/hair", json={"source": "library"}).json()
+    vid2 = out["started"][0]["version"]["id"]
+    _until(lambda: c.get(f"/api/versions/{vid2}").json()["status"] == "error")
+    p = c.get(f"/api/assets/{aid}/hair").json()
+    assert p["bald_state"] == "failed" and p["rebuild"] is None and "could not be drawn" in p["sentence"]
+    assert set(hairlib.BALD_STATES) == {"none", "missing", "drawing", "stopped", "failed", "ready"}
+
+
+def test_triangle_budget_names_the_allowance_and_the_whole_budget_only_for_library_hair(settings, engines, lane1):
+    on = World(settings, hair={"source": "library", "pick": None}).chain()["prep"]
+    tb = check(on, "triangle_budget")
+    assert tb["limit"] == 20000 - on.params["hair_allowance"]  # still the body against the body's limit
+    assert tb["vars"]["hair_allowance"] == on.params["hair_allowance"] and tb["vars"]["platform_triangles"] == 20000
+    off = World(settings).chain()["prep"]
+    assert not {"hair_allowance", "platform_triangles"} & set(check(off, "triangle_budget").get("vars") or {})
+
+
+def test_hair_library_route_per_platform(app_client, monkeypatch):
+    from vgac import hairlib, hairstyles
+
+    c = app_client
+    monkeypatch.setattr(hairlib, "DATA_DIR", FIXTURE / "lib")
+    whole = c.get("/api/hair-library").json()
+    assert {s["id"] for s in whole["styles"]} == {SHELL, CARDS} and whole["platform"] is None
+    assert all(s["triangles_used"] == s["triangles"] and s["lite_used"] is False for s in whole["styles"])
+    phone = c.get("/api/hair-library", params={"platform": "mobile_low"}).json()
+    assert [s["id"] for s in phone["styles"]] == [SHELL]  # cards are not offered on Phone
+    s = phone["styles"][0]
+    assert s["lite_used"] is True and s["triangles_used"] == CATALOGUE[SHELL]["lite_triangles"] and s["triangles"] == CATALOGUE[SHELL]["triangles"]
+    pc = c.get("/api/hair-library", params={"platform": "pc_mid"}).json()
+    assert {s["id"] for s in pc["styles"]} == {SHELL, CARDS} and not any(s["lite_used"] for s in pc["styles"])
+    p = c.post("/api/projects", json={"name": "Phone"}).json()
+    a = c.post(f"/api/projects/{p['id']}/assets", json={"name": "x", "category": "humanoid", "style_preset": "painted",
+                                                      "platform_target": "mobile_low", "prompt": "a woman with a ponytail"}).json()
+    by_asset = c.get("/api/hair-library", params={"asset_id": a["id"]}).json()
+    assert by_asset["platform"] == "mobile_low" and [s["id"] for s in by_asset["styles"]] == [SHELL]
+    assert c.get("/api/hair-library", params={"asset_id": "nope"}).status_code == 404
+    assert hairstyles.library_dir() == FIXTURE / "lib"
+
+
+# --- a bearded character: the beard is not face skin, and losing it is a change (live viking 11-06) --------------------
+
+
+@pytest.mark.parametrize("name", ["beardkept_viking", "beardkept_smith"])
+def test_bearded_face_measure_passes_a_kept_beard(name):
+    """The live viking warned face_changed (face_dark 0.0325) although his beard was kept: measured as a bearded face
+    his upper face and beard are unchanged."""
+    fm = turn_stage.face_measure(*_face_case(name), bearded=True)
+    assert fm["bearded"] and fm["face_dark"] is None
+    assert fm["beard_change"] <= 0.25 and fm["face_change"] <= 9.0 and turn_stage.face_kept(fm)
+
+
+@pytest.mark.parametrize("name", ["beardlost_ranger", "beardlost_elder"])
+def test_bearded_face_measure_catches_a_lost_beard(name):
+    fm = turn_stage.face_measure(*_face_case(name), bearded=True)
+    assert fm["beard_change"] >= 0.45 and not turn_stage.face_kept(fm)
+
+
+def test_unbearded_faces_measure_exactly_as_before():
+    """The beard words switch the bearded measure on; without them the earlier measure is untouched."""
+    # The crops' values from the previous round's measure (runtime/tmp/hairpipe/face_add.py, before the bearded branch).
+    before = {"good_knight": (0.0, 4.53), "good_ponytail": (0.0, 4.3), "beard_bob": (0.3034, 10.62), "beard_ponytail": (0.2241, 11.46)}
+    for name, (dark, change) in before.items():
+        a = turn_stage.face_measure(*_face_case(name))
+        b = turn_stage.face_measure(*_face_case(name), bearded=False)
+        assert a == b and "beard_change" not in a
+        assert a["face_dark"] == dark and a["face_change"] == change
+    assert turn_stage.has_facial_hair("a broad man with a thick blond beard and long blond hair")
+    assert not turn_stage.has_facial_hair("a young woman with dark brown hair in a long high ponytail")
+
+
+def test_the_bald_step_measures_a_bearded_description_as_bearded(settings, engines, lane1):
+    w = World(settings, prompt="a broad man with a thick blond beard and long blond hair", hair={"source": "library", "pick": None})
+    t = w.run("turnaround", "run", w.new("turnaround", w.concept))
+    b = t.metrics["bald"]
+    assert b["bearded"] is True and b["face_dark"] is None and b["beard_change"] is not None
+    edits = [g for g in engines.graphs if "l2" not in g]
+    assert edits[0]["pos"]["inputs"]["prompt"] == turn_stage.BALD_PROMPT + turn_stage.BALD_BEARD_SENTENCE
+    c = check(t, "bald_picture")
+    assert "beard_change" in c["vars"]
+    plain = World(settings, hair={"source": "library", "pick": None})
+    p = plain.run("turnaround", "run", plain.new("turnaround", plain.concept))
+    assert p.metrics["bald"]["bearded"] is False and p.metrics["bald"]["beard_change"] is None

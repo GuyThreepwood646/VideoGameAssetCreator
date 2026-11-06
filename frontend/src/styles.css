@@ -2926,3 +2926,26 @@ button.small-btn .resume-icon {
 .items-tile img { width: 96px; height: 96px; object-fit: contain; }
 .warn-text { color: var(--warn); }
 .ok-text { color: var(--ok); }
+
+.credits-summary {
+  margin: var(--s3) 0;
+}
+.credits-summary li {
+  margin: 4px 0;
+}
+.credits-group {
+  margin-top: var(--s4, 24px);
+}
+.credits-table {
+  font-size: 13px;
+  width: 100%;
+}
+.credits-table td {
+  vertical-align: top;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.credits-unsure {
+  color: var(--warn, #b26a00);
+  font-weight: 600;
+}

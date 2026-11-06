@@ -2,7 +2,7 @@
 // hairstyles shown on the person's own character with plain fit words, triangles, solid shape or strips and the credit,
 // "Use this hairstyle", what changing the pick costs before it is made, and "Show more hairstyles" from the catalogue.
 import { useEffect, useRef, useState } from 'react'
-import { hairApi, hairLibraryUrl, libraryUrl, stageEstimateSeconds, type Asset, type HairCandidate, type HairPanel, type HairStyleEntry, type Version } from '../api'
+import { creditText, hairApi, hairLibraryUrl, libraryUrl, stageEstimateSeconds, type Asset, type HairCandidate, type HairPanel, type HairStyleEntry, type Version } from '../api'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
 import { fmtDuration, joinAnd, stagePlain, type FixAction } from '../help'
@@ -25,8 +25,8 @@ export function kindWords(kind: string): string {
   return kind === 'cards' ? 'Hair cards (see-through strips)' : 'One solid shape'
 }
 
-function creditOf(s: HairStyleEntry & { credit?: string | null }): string {
-  if (s.credit) return s.credit
+function creditOf(s: HairStyleEntry): string {
+  if (creditText(s.credit)) return creditText(s.credit)
   const lic = !s.licence || /^CC0/i.test(s.licence) ? 'CC0 (free to use)' : s.licence
   return [s.author ? `By ${s.author}` : null, s.pack, lic].filter(Boolean).join(', ')
 }
@@ -90,17 +90,20 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     boxRef.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
   }, [focus, loaded])
+  // The catalogue gives names, credits and thumbnails for styles that were not among the four tried (the one in use
+  // may be one of them).
+  const libraryOn = panel?.source === 'library'
   useEffect(() => {
-    if (!more || catalogue) return
-    hairApi.library().then(setCatalogue, (e) => setError(e))
-  }, [more, catalogue])
+    if (!libraryOn || catalogue) return
+    hairApi.library(asset.id).then(setCatalogue, (e) => setError(e))
+  }, [libraryOn, catalogue, asset.id])
 
   if (!panel || panel.source !== 'library') return null
   const metrics = (version.metrics.hair_library ?? null) as { error?: string | null; seconds?: number } | null
   const current = panel.applied?.style ?? panel.pick ?? panel.best ?? null
   const byId = new Map<string, HairStyleEntry>((catalogue ?? []).map((s) => [s.id, s]))
   const nameOf = (id: string | null | undefined) => (id ? (panel.candidates.find((c) => c.style === id)?.name ?? byId.get(id)?.name ?? id) : '')
-  const appliedTriangles = panel.applied ? (panel.candidates.find((c) => c.style === panel.applied!.style)?.triangles ?? byId.get(panel.applied.style)?.triangles ?? null) : null
+  const appliedTriangles = panel.applied ? (panel.candidates.find((c) => c.style === panel.applied!.style)?.triangles ?? (byId.get(panel.applied.style)?.triangles_used ?? byId.get(panel.applied.style)?.triangles) ?? null) : null
 
   const pick = async (style: string, rebuild: boolean) => {
     setBusy(true)
@@ -133,15 +136,21 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         : 'Your description does not name a hairstyle, so every style was tried quickly on your character. The order is a rough guide; pick by eye.')
   const notFromThisVersion = panel.mesh_version_id && panel.mesh_version_id !== version.id
 
-  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; fit: string; score?: number | null }, tried: boolean) => {
+  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; fit: string; score?: number | null; lite?: boolean }, tried: boolean) => {
+    // Tried styles: the backend renders your character's own head in plain grey with the recoloured hair, front and
+    // three-quarter. Catalogue thumbnails: the style itself in grey on a grey reference figure.
     const inUse = panel.applied?.style === c.style
     const isPick = !inUse && panel.pick === c.style
     const isBest = !inUse && !isPick && !panel.pick && !panel.applied && panel.best === c.style
     const cost = confirm === c.style ? changeCost(panel, c.triangles, appliedTriangles) : null
     return (
       <div key={c.style} className={'move-card' + (current === c.style ? ' move-card-on' : '')} style={{ cursor: 'default', alignItems: 'stretch' }}>
-        <div className="view-image checker" style={{ height: tried ? 200 : 140 }}>
-          {c.picture ? <img src={c.picture} alt={`${c.name} on ${tried ? 'your character' : 'a grey head'}`} /> : <span className="muted small">No picture</span>}
+        <div className="view-image" style={tried ? { height: 'auto', minHeight: 90, background: 'var(--panel-2)' } : { height: 150, background: 'var(--panel-2)' }}>
+          {c.picture ? (
+            <img src={c.picture} alt={tried ? `${c.name} on your character's head, shown in plain grey` : `${c.name} on a grey reference figure`} style={tried ? { width: '100%', height: 'auto' } : undefined} loading="lazy" />
+          ) : (
+            <span className="muted small">No picture</span>
+          )}
         </div>
         <div className="move-card-text">
           <span className="move-card-label">
@@ -152,7 +161,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
           </span>
           <span className={'small' + (typeof c.score === 'number' && c.score < 0.6 ? ' warn-text' : '')}>{c.fit}</span>
           <span className="small muted">
-            {c.triangles.toLocaleString('en-US')} triangles, {kindWords(c.kind).charAt(0).toLowerCase() + kindWords(c.kind).slice(1)}
+            {c.triangles.toLocaleString('en-US')} triangles{c.lite ? ' (lite version)' : ''}, {kindWords(c.kind).charAt(0).toLowerCase() + kindWords(c.kind).slice(1)}
             <Info term={c.kind === 'cards' ? 'term.hair_cards' : 'term.triangles'} />
           </span>
           {c.credit && <span className="small muted">Credit: {c.credit}</span>}
@@ -179,11 +188,21 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   }
 
   const tried = panel.candidates.map((c: HairCandidate) =>
-    card({ style: c.style, name: c.name, triangles: c.triangles, kind: c.kind, credit: c.credit, picture: libraryUrl(c.picture_url), fit: fitWords(c.score), score: c.score }, true),
+    card({ style: c.style, name: c.name, triangles: c.triangles, kind: c.kind, credit: creditText(c.credit), picture: libraryUrl(c.picture_url), fit: fitWords(c.score), score: c.score }, true),
   )
-  const triedIds = new Set(panel.candidates.map((c) => c.style))
+  // The style in use came from "Show more hairstyles": it leads the row, from the catalogue, with its fit from Clean up.
+  const appliedEntry = panel.applied && !panel.candidates.some((c) => c.style === panel.applied!.style) ? byId.get(panel.applied.style) : undefined
+  if (appliedEntry)
+    tried.unshift(
+      card({ style: appliedEntry.id, name: appliedEntry.name, triangles: typeof appliedEntry.triangles_used === 'number' ? appliedEntry.triangles_used : appliedEntry.triangles, lite: appliedEntry.lite_used, kind: appliedEntry.kind, credit: creditOf(appliedEntry), picture: thumbOf(appliedEntry), fit: fitWords(panel.applied?.score ?? null), score: panel.applied?.score ?? null }, false),
+    )
+  const triedIds = new Set([...panel.candidates.map((c) => c.style), ...(appliedEntry ? [appliedEntry.id] : [])])
   const phone = asset.platform_target === 'mobile_low'
-  const others = (catalogue ?? []).filter((s) => !triedIds.has(s.id) && (!phone || s.phone_ok || (s.kind !== 'cards' && s.triangles <= 750)))
+  // A backend that answers per platform has already left out what is not offered here (it sends triangles_used).
+  const perPlatform = (catalogue ?? []).some((s) => typeof s.triangles_used === 'number')
+  const used = (s: HairStyleEntry) => (typeof s.triangles_used === 'number' ? s.triangles_used : s.triangles)
+  const others = (catalogue ?? []).filter((s) => !triedIds.has(s.id) && (perPlatform || !phone || s.phone_ok || (s.kind !== 'cards' && s.triangles <= 750)))
+  const anyLite = others.some((s) => s.lite_used)
   const families = [...new Set([panel.family ?? '', ...FAMILY_ORDER, ...others.map((s) => s.family)])].filter((f) => others.some((s) => s.family === f))
   const allowance = allowanceOf(panel, appliedTriangles)
 
@@ -194,6 +213,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         <Info term="term.hair_library" />
       </div>
       <div className="small muted">{intro}</div>
+      {panel.candidates.length > 0 && <div className="small muted">Each picture shows your character's own head in plain grey, from the front and from three-quarters, with the hairstyle in the hair colour of your picture.</div>}
       {notFromThisVersion && <div className="small muted">These were tried on the 3D model you kept.</div>}
       {panel.nothing_fits && (
         <div className="tool-note small">
@@ -233,22 +253,23 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
       {more && (
         <div className="col" style={{ gap: 'var(--s2)' }}>
           <div className="small muted">
-            These have not been tried on your character; the one you choose is fitted at {stagePlain('prep')}. The pictures show each style on a plain grey head.
-            {phone ? ' On Phone only light hairstyles made as one solid shape are shown.' : ''}
+            These have not been tried on your character; the one you choose is fitted at {stagePlain('prep')}. The pictures show each style in grey on a stand-in figure.
+            {phone ? ' On Phone only hairstyles made as one solid shape are shown.' : ''}
+            {anyLite ? ' Styles marked "lite version" use their lite version (a lighter copy of the style with fewer triangles) here; the count shown is the one used.' : ''}
           </div>
           {lighter && allowance > 0 && <div className="small">Lightest first. The room kept for hair on this body is about {allowance.toLocaleString('en-US')} triangles; heavier styles make {stagePlain('prep')} run in full.</div>}
           {!catalogue && !error && <div className="muted small">Loading the hair library...</div>}
           {catalogue && others.length === 0 && <div className="muted small">Every hairstyle in the library is shown above.</div>}
           {lighter ? (
             <div className="move-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-              {[...others].sort((a, b) => a.triangles - b.triangles).map((s) => card({ style: s.id, name: s.name, triangles: s.triangles, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
+              {[...others].sort((a, b) => used(a) - used(b)).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
             </div>
           ) : (
             families.map((f) => (
               <div key={f} className="move-group">
                 <div className="field-label">{FAMILY_WORDS[f] ?? f}</div>
                 <div className="move-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-                  {others.filter((s) => s.family === f).map((s) => card({ style: s.id, name: s.name, triangles: s.triangles, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
+                  {others.filter((s) => s.family === f).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
                 </div>
               </div>
             ))
