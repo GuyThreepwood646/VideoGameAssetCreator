@@ -6,6 +6,56 @@ import { metricPlain } from '../../help'
 
 type ViewMetrics = Record<string, unknown> & { passed?: boolean; checks?: Check[] }
 
+// Hair from the library: the bald pictures, each next to the picture it was drawn from (concept for the front).
+const BALD_VIEWS = ['front', 'quarter', 'left', 'right'] as const
+
+function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
+  const shown = BALD_VIEWS.filter((v) => `bald_${v}` in version.files)
+  if (!shown.length) return null
+  const bald = (version.metrics.bald ?? null) as { kept_share?: number; rerolled?: boolean } | null
+  const sheet = libraryUrl(version.files.bald_sheet)
+  const pick = (key: string) => (cutout ? (version.files[`${key}_cutout`] ?? version.files[key]) : version.files[key])
+  return (
+    <div className="bald-row">
+      <div className="view-intro muted small" style={{ paddingBottom: 0 }}>
+        <strong>Bald pictures (the character without hair, used to build the 3D model)</strong>
+        <Info term="term.bald_picture" /> Check that only the hair is gone: the face and the clothes should look the same in both pictures of each pair.
+        {typeof bald?.kept_share === 'number' ? ` ${Math.round(bald.kept_share * 100)}% of the picture outside the hair is unchanged.` : ''}
+        {bald?.rerolled ? ' The first try changed too much, so it was drawn a second time.' : ''}
+        {sheet && (
+          <>
+            {' '}
+            <a href={sheet} target="_blank" rel="noreferrer">
+              All of them side by side
+            </a>
+          </>
+        )}
+      </div>
+      <div className="views-row">
+        {shown.map((view) => {
+          const haired = pick(view)
+          return (
+            <div key={view} className="view-cell" style={{ minWidth: 220 }}>
+              <div className="row-gap" style={{ gap: 'var(--s1)' }}>
+                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 180 }}>
+                  {haired ? <img src={libraryUrl(haired)} alt={`${view} with hair`} /> : <span className="muted small">the first picture</span>}
+                </div>
+                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 180 }}>
+                  <img src={libraryUrl(pick(`bald_${view}`))} alt={`${view} without hair`} />
+                </div>
+              </div>
+              <div className="row-between small">
+                <strong>{VIEW_NAMES[view] ?? view}</strong>
+                <span className="muted">with hair, then bald</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' }
 
 export function TurnaroundView({ version, onRegenerateView }: { version: Version; onRegenerateView: (view: string) => void }) {
@@ -88,6 +138,7 @@ export function TurnaroundView({ version, onRegenerateView }: { version: Version
         })}
         {views.length === 0 && <div className="muted">No view images in this version.</div>}
       </div>
+      <BaldRow version={version} cutout={cutout} />
     </div>
   )
 }

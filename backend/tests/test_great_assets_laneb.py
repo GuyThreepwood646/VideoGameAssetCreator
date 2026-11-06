@@ -86,6 +86,12 @@ SAMPLES = {
     "arms_away": ((0.4, 0.2), (0.0, 0.2)),
     "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
     "face_drawn": ((1, 1), (0, 1)),  # the vision model sees eyes on the face (1) or not, or the back of the head (0)
+    # Hair from the library: the bald picture, the fit, skin through, triangles with the hair, the hair on the skeleton.
+    "bald_picture": ((0.97, 0.9), (0.7, 0.9)),
+    "hair_fit": ((0.77, 0.6), (0.55, 0.6)),
+    "hair_skin_through": ((0.0, 0.02), (0.06, 0.02)),
+    "hair_triangles": ((19800, 20000), (21500, 20000)),
+    "hair_bound": ((1.0, 1.0), (0.8, 1.0)),
     "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }

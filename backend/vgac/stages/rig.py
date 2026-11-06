@@ -14,6 +14,13 @@ skeleton the same way (moves.py); both together do both.
 Spring bones (vgac/springs.py, blender/springs.py; setting `springs`, humanoids, on by default) run after the moves:
 parts that hang clear of the body get a chain of bones and the sway is baked into every clip of anim.glb. Turning the
 setting on or off makes only the moves again. Check `springs`; files springs, springs_found, springs_report.
+
+Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6; only when the clean-up version attached a hairstyle,
+metrics.hair_library.attached): after the moves and before the spring bones, hair_bind keeps anim.glb as anim_body and
+binds the VGAC_Hair object into anim.glb (blender/hairbind.py; metrics.hair_bind, check hair_bound); the spring bones
+then give the hairstyle's hanging groups their chains. When a done rig of the asset was built on the same body
+(body_glb_hash), template and weights per vertex, it is the donor: no SkinToken, its rigged body and moves are reused and
+only the hair is bound again. With today's hair none of this runs.
 """
 
 from __future__ import annotations
@@ -186,6 +193,15 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if template is None:
         await _skip(sc, f"rig_engine {sc.category.get('rig_engine', 'none')}", src)
         return
+    lib_hair = library_hair(sc)
+    if lib_hair is not None:
+        # Hair from the library: the body is the clean-up GLB without hair; a rig built on the same body is reused.
+        sc.set_metrics(body_glb_hash=lib_hair.get("body_glb_hash"))
+        donor = find_donor(sc, template, gpv, lib_hair.get("body_glb_hash"))
+        if donor is not None:
+            sc.progress(0.05, "only the hair changed: reusing the rigged body")
+            await rig_from_donor(sc, donor, params, bend_test)
+            return
 
     sc.use_model("skintoken")
     mesh_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_rig_in.glb")
@@ -310,10 +326,13 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
 MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs")
-ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report")
+# anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
+# keys are never present, so listing them changes nothing there.
+ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
+              "anim_body", "hair_bind")
 _ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "retarget_error",
                  "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
-                 "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs")
+                 "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs", "hair_bind")
 KEEP_MARKER = "_keep_when_done"
 
 
@@ -542,23 +561,173 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
                            legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"),
                            clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []))
         await _retarget(sc, anim_glb, params, chosen_moves)
-        await _springs(sc, anim_glb, params)
-        if not (sc.version.metrics.get("clips") or []):
-            return
-        sc.progress(0.88, "render clip strip")
-        frames_dir = sc.dir / "anim_frames"
-        await sc.blender("render_anim.py", [anim_glb, frames_dir, 6, 256], log_name="render_anim.log", timeout=sc.settings.blender_timeout_seconds)
-        frames = json.loads((frames_dir / "frames.json").read_text())
-        paths, labels = [], []
-        for clip, files in (frames.get("clips") or {}).items():
-            for i, f in enumerate(files):
-                paths.append(frames_dir / f)
-                labels.append(f"{clip} {i}")
-        if paths:
-            strip = contact_sheet(paths, sc.dir / "anim_strip.png", cell=256, columns=frames.get("frames", 6), labels=labels)
-            sc.register("anim_strip", strip)
+        await _after_moves(sc, anim_glb, params)
     except Exception as e:
         sc.set_metrics(anim_error=str(e)[:500])
+
+
+async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> None:
+    """After the moves: the library hair joins the skeleton (only when the hair comes from the library), the spring
+    bones, then the rendered strip. Raises like the rest of _animate (the caller records anim_error)."""
+    await hair_bind(sc, anim_glb)
+    await _springs(sc, anim_glb, params)
+    await _strip(sc, anim_glb)
+
+
+async def _strip(sc: StageContext, anim_glb: Path) -> None:
+    """The rendered strip of the final clips (anim_strip)."""
+    if not (sc.version.metrics.get("clips") or []):
+        return
+    sc.progress(0.88, "render clip strip")
+    frames_dir = sc.dir / "anim_frames"
+    await sc.blender("render_anim.py", [anim_glb, frames_dir, 6, 256], log_name="render_anim.log", timeout=sc.settings.blender_timeout_seconds)
+    frames = json.loads((frames_dir / "frames.json").read_text())
+    paths, labels = [], []
+    for clip, files in (frames.get("clips") or {}).items():
+        for i, f in enumerate(files):
+            paths.append(frames_dir / f)
+            labels.append(f"{clip} {i}")
+    if paths:
+        strip = contact_sheet(paths, sc.dir / "anim_strip.png", cell=256, columns=frames.get("frames", 6), labels=labels)
+        sc.register("anim_strip", strip)
+
+
+# --- Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6) ----------------------------------------------------
+# Everything below runs only when the clean-up version on the lineage attached a library hairstyle
+# (metrics.hair_library.attached and its hair_mesh file). With today's hair none of it is reached.
+
+HAIR_OBJECT = "VGAC_Hair"
+HAIR_BOUND_MIN = 0.999
+
+
+def library_hair(sc: Any) -> dict[str, Any] | None:
+    """{mesh: hair_mesh.npz, parts: hair_parts.json or None, prep_glb, metrics} when the clean-up version on the
+    lineage attached library hair; None otherwise (today's hair)."""
+    prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
+    if prep_v is None:
+        return None
+    hl = (prep_v.metrics or {}).get("hair_library") or {}
+    if not hl.get("attached"):
+        return None
+    mesh = library.version_file(prep_v, "hair_mesh", sc.settings)
+    if mesh is None:
+        return None
+    return {"mesh": Path(mesh), "parts": library.version_file(prep_v, "hair_parts", sc.settings),
+            "prep_glb": library.version_file(prep_v, "glb", sc.settings), "metrics": hl,
+            "body_glb_hash": (prep_v.metrics or {}).get("body_glb_hash"), "prep_version": prep_v}
+
+
+def hair_bind_metrics(rep: dict[str, Any] | None, seconds: float | None = None, error: str | None = None) -> dict[str, Any]:
+    """metrics.hair_bind from hairbind.py's report."""
+    r = rep or {}
+    return {"ok": bool(r.get("ok")) and not error, "verts": int(r.get("verts") or 0), "rest_share": r.get("rest_share"),
+            "nape_blend_verts": int(r.get("nape_blend_verts") or 0), "groups": len(r.get("groups") or []),
+            "bound_share": r.get("bound_share"), "follow_error_m": r.get("follow_error_m"), "seconds": seconds,
+            "error": (error or r.get("error") or "")[:300] or None}
+
+
+async def hair_bind(sc: StageContext, anim_glb: Path) -> None:
+    """Join the library hair to the skeleton (blender/hairbind.py), between the moves and the spring bones. anim.glb
+    is kept first as the version file anim_body (what the donor path starts from), then written again with the
+    VGAC_Hair object in it. Does nothing (no files, no metrics) when the hair is not from the library. A failure keeps
+    the body-only anim.glb and records metrics.hair_bind.error."""
+    lib = library_hair(sc)
+    if lib is None or not anim_glb.is_file():
+        return
+    body = sc.dir / "anim_body.glb"
+    if anim_glb.resolve() != body.resolve():
+        shutil.copy2(anim_glb, body)
+    sc.register("anim_body", body)
+    out, rep_path = sc.dir / "hair_bind_out.glb", sc.dir / "hair_bind.json"
+    args: list[Any] = [anim_glb, out, "--hair-mesh", lib["mesh"], "--report", rep_path]
+    if lib.get("prep_glb") is not None:
+        args += ["--reference", lib["prep_glb"]]
+    t0 = time.monotonic()
+    sc.progress(0.85, "fitting the hair to the skeleton")
+    try:
+        await sc.blender("hairbind.py", args, log_name="hairbind.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(rep_path.read_text(encoding="utf-8")) if rep_path.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.move(str(out), str(anim_glb))
+            sc.register("hair_bind", rep_path)
+        sc.set_metrics(hair_bind=hair_bind_metrics(rep, round(time.monotonic() - t0, 2)))
+    except Exception as e:  # noqa: BLE001
+        rep = json.loads(rep_path.read_text(encoding="utf-8")) if rep_path.is_file() else {}
+        sc.set_metrics(hair_bind=hair_bind_metrics(rep, round(time.monotonic() - t0, 2), error=str(e)))
+
+
+def hair_bound_check(m: dict[str, Any]) -> dict[str, Any] | None:
+    """hair_bound (warn): the share of the library hair's vertices following the skeleton, against 1.0. vars
+    groups_swaying (spring chains made on the hair's hanging groups) and rest_on_head. None without library hair."""
+    hb = m.get("hair_bind")
+    if not hb:
+        return None
+    share = float(hb.get("bound_share") or 0.0) if hb.get("ok") else 0.0
+    sp = m.get("springs") or {}
+    swaying = sum(1 for c in sp.get("chains") or [] if c.get("library"))
+    return quality.check("hair_bound", share >= HAIR_BOUND_MIN, round(share, 4), 1.0,
+                         vars={"groups_swaying": swaying, "rest_on_head": int(hb.get("groups") or 0) == 0})
+
+
+# Settings a donor rig must share with this one: the same body (body_glb_hash), template and weights per vertex.
+def _same_moves(category: dict[str, Any], a: dict[str, Any], b: dict[str, Any]) -> bool:
+    keys = ("added_moves", "removed_moves", "move_size", "move_speed", "clips_library")
+    if any((a.get(k) or None) != (b.get(k) or None) for k in keys):
+        return False
+    if clips_source(a) != clips_source(b):  # the stage writes the default ("auto") back into its params
+        return False
+    return chosen_moves_of(category, a) == chosen_moves_of(category, b) and (a.get("motion") or category.get("motion")) == (b.get("motion") or category.get("motion"))
+
+
+def find_donor(sc: Any, template: str, gpv: int, body_hash: str | None) -> Any:
+    """A done rig of this asset built on a clean-up body with the same body_glb_hash, template and weights per vertex,
+    with its rigged GLB on disk and the current weight clean-up; newest first. None when there is none."""
+    if not body_hash or getattr(sc, "db", None) is None:
+        return None
+    from sqlalchemy import select
+
+    from ..db import Version
+
+    rows = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.status == "done",
+                                               Version.id != sc.version.id).order_by(Version.created_at.desc())).all()
+    for v in rows:
+        m, p = v.metrics or {}, v.params or {}
+        if m.get("rigid") or m.get("body_glb_hash") != body_hash or needs_weights_fix(m):
+            continue
+        if p.get("template_label") != template or int(p.get("group_per_vertex") or 4) != gpv:
+            continue
+        if library.version_file(v, "glb", sc.settings) is None:
+            continue
+        return v
+    return None
+
+
+async def rig_from_donor(sc: StageContext, donor: Any, params: dict[str, Any], bend_test: bool) -> None:
+    """Only the hair changed: reuse the donor's rigged body (rig.glb, rig_fix, rig_info, hit boxes; no SkinToken). When
+    the moves settings match, start from the donor's anim_body.glb and only bind the hair, add the spring bones and
+    render the strip; otherwise make the moves again on the donor's skeleton."""
+    same = _same_moves(sc.category, params, donor.params or {}) and library.version_file(donor, "anim_body", sc.settings) is not None
+    skip = ("anim_glb", "anim_strip", "springs", "springs_found", "springs_report", "hair_bind") if same else ANIM_FILES
+    skip_m = ("springs", "hair_bind") if same else _ANIM_METRICS
+    rig_glb = _reuse_parent(sc, donor, skip, skip_m)
+    m = sc.version.metrics
+    m.pop("refit_of", None)
+    sc.version.metrics = m
+    sc.set_metrics(rig_donor=donor.id)
+    link_textures(sc)
+    if rig_glb is None:
+        raise FileNotFoundError("the donor rig has no rigged GLB")
+    if same:
+        anim_glb = sc.dir / "anim.glb"
+        shutil.copy2(sc.file("anim_body"), anim_glb)
+        sc.register("anim_glb", anim_glb)
+        try:
+            await _after_moves(sc, anim_glb, params)
+        except Exception as e:  # noqa: BLE001
+            sc.set_metrics(anim_error=str(e)[:500])
+    else:
+        await _animate(sc, rig_glb, params)
+    await judge(sc)
 
 
 async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], chosen_moves: Any) -> None:
@@ -691,10 +860,13 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
     out = work / "anim_springs.glb"
     try:
         sc.progress(0.86, "spring bones: finding what hangs free")
-        hair_points = await asyncio.to_thread(_hair_points, sc, work)
+        lib = library_hair(sc) if (sc.version.metrics.get("hair_bind") or {}).get("ok") else None
+        # With library hair the body is bald: its hair points mean nothing, and the hair object brings its own groups.
+        hair_points = None if lib is not None else await asyncio.to_thread(_hair_points, sc, work)
         hb = sc.file("hitboxes")
         args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
-                                        sc.lineage_file("metallic", ("prep", "mesh")))
+                                        sc.lineage_file("metallic", ("prep", "mesh")),
+                                        library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
         sheet = springs_mod.found_sheet(rep, work / "springs_pictures", sc.dir / "springs_found.png")
@@ -773,6 +945,9 @@ async def judge(sc: StageContext) -> None:
         sp = springs_check(m.get("springs"))
         if sp is not None:
             checks.append(sp)
+        hb = hair_bound_check(m)
+        if hb is not None:
+            checks.append(hb)
     if not sc.version.metrics.get("rigid") and sc.asset.category in HITBOX_CATEGORIES:
         hb_path = sc.file("hitboxes")
         doc = json.loads(Path(hb_path).read_text()) if hb_path is not None else None

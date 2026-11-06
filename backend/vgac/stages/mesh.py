@@ -25,6 +25,14 @@ picture. Each build's base colour is measured against the picture; while it is u
 built again with the next seed (texcolour.MAX_TRIES builds in all), the closest is kept, and its seed becomes the
 version's seed (first_seed keeps the one it started from). Check texture_matches_picture (block) when even the closest
 is too dark.
+
+Hair from the library (vgac/hairlib.py, docs/HAIR-LIBRARY-PLAN.md sections 2 and 5): when the version's hair_source is
+"library" (an explicit param, else the asset's setting), the model is built from the bald counterpart of its input
+view (concept and front: bald_front_cutout; quarter: bald_quarter_cutout), the silhouette audit compares against the
+bald front, left and right (no back) and texture_matches_picture against the picture it was built from; at the end
+the library's hairstyles are ranked on the bald model (hairfit.rank) and the hair_fit check reports the best. A
+missing bald picture is a plain error, never a quiet fall back to the haired one. An explicit hair_source "model" (the
+hair_fit Fix) also sets the asset back to today's hair. Hunyuan3D always builds today's hair.
 """
 
 from __future__ import annotations
@@ -35,7 +43,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .. import guidance, headtris, imaging, library, normalfix, quality, reference, texcolour
+from .. import guidance, hairlib, headtris, imaging, library, normalfix, quality, reference, texcolour
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
@@ -57,6 +65,15 @@ def _silhouette_match(views_dir: Path, yaws, refs: dict[str, Path]) -> dict[str,
 
 
 def _input_image(sc: StageContext, input_view: str) -> Path:
+    if hairlib.is_library(sc):
+        # Built bald on purpose: the bald counterpart of the view, and never the haired picture.
+        key = "bald_front_cutout" if input_view in ("concept", "front") else f"bald_{input_view}_cutout"
+        p = sc.lineage_file(key, ("turnaround",))
+        if p is None:
+            raise FileNotFoundError(f"Hair from the library needs the bald {key[5:-7]} picture from Check all sides, and "
+                                    "it is missing. Make the bald picture again in Check all sides, or use the hair built "
+                                    "with the 3D model.")
+        return p
     if input_view == "concept":
         p = sc.lineage_file("cutout", ("concept",))
         if p is None:
@@ -288,8 +305,11 @@ async def audit(sc: StageContext) -> None:
     if glb is None:
         return
     refs = {}
+    bald = hairlib.is_library(sc)
     for v in VIEW_YAW:
-        p = sc.lineage_file(f"{v}_cutout", ("turnaround",))
+        if bald and v == "back":
+            continue  # no bald back picture is drawn
+        p = sc.lineage_file(f"bald_{v}_cutout" if bald else f"{v}_cutout", ("turnaround",))
         if p is not None:
             refs[v] = p
     try:
@@ -312,7 +332,53 @@ async def audit(sc: StageContext) -> None:
             sc.register("sheet", sheet)
     except Exception as e:  # Blender missing or render failed: keep the mesh, record the problem
         sc.set_metrics(audit_error=str(e)[:500])
+    if hairlib.is_library(sc):
+        await rank_hair(sc, glb)
     await judge(sc)
+
+
+HAIR_RANK_DIR = "hair_rank"
+HAIR_CANDIDATES_MAX = 4
+
+
+async def rank_hair(sc: StageContext, glb: Path) -> None:
+    """Hair from the library: the hairstyles ranked on the bald model (hairfit.rank, Blender on the host), turned by
+    the audit's best turn. Files hair_candidates and hair_cand_1 to 4; metrics.hair_library. Never fails the job."""
+    from ..jobs import JobCancelled
+
+    m = sc.version.metrics or {}
+    try:
+        from .. import hairfit, hairstyles  # lane 1
+
+        family, words = hairstyles.family_of(sc.asset.prompt or "")
+        need = {k: sc.lineage_file(k, ("turnaround",)) for k in ("hair_picture", "bald_front_cutout", "hair_outline_front")}
+        missing = [k for k, p in need.items() if p is None]
+        if missing:
+            raise FileNotFoundError("the bald pictures from Check all sides are missing: " + ", ".join(missing))
+        best = None
+        floor = float(sc.category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
+        if m.get("silhouette_offset") is not None and m.get("silhouette_iou") is not None and float(m["silhouette_iou"]) >= floor:
+            best = quality.best_turn(m["silhouette_offset"], int(m.get("silhouette_sign") or 1))
+        yaw = quality.auto_turn(best)
+        sc.progress(0.9, "Trying the hairstyles from the library on the bald model")
+        out_dir = sc.dir / HAIR_RANK_DIR
+        hl = dict(await hairfit.rank(sc, Path(glb), need["hair_picture"], need["bald_front_cutout"], need["hair_outline_front"],
+                                     family, yaw, out_dir) or {})
+        hl.setdefault("family", family)
+        hl.setdefault("family_words", list(words or []))
+        hl["yaw"] = yaw
+        cj = out_dir / "hair_candidates.json"
+        if cj.is_file():
+            sc.register("hair_candidates", cj)
+        for i in range(1, HAIR_CANDIDATES_MAX + 1):
+            png = out_dir / f"hair_cand_{i}.png"
+            if png.is_file():
+                sc.register(f"hair_cand_{i}", png)
+    except JobCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001  (the 3D model stands; the pick can still be made by hand later)
+        hl = {"error": str(e)[:300], "candidates": [], "best": None, "best_score": None, "nothing_fits": True}
+    sc.set_metrics(hair_library=hl)
 
 
 DEFAULT_SILHOUETTE_MIN = 0.6
@@ -376,13 +442,18 @@ async def judge(sc: StageContext) -> None:
         # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,
         # so each category may lower the floor (silhouette_min in its yaml); 0.6 is the biped default.
         floor = float(sc.category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
-        checks.append(quality.check("silhouette_iou", iou >= floor, iou, floor))
+        bald = {"bald": True} if hairlib.is_library(sc) else None
+        checks.append(quality.check("silhouette_iou", iou >= floor, iou, floor, vars=bald))
     nc = await upright_check(sc, "mesh", sc.file("glb"), sc.file("normal"))
     if nc:
         checks.append(nc)
     tc = await colour_check(sc)
     if tc:
         checks.append(tc)
+    if hairlib.is_library(sc):
+        hc = hairlib.fit_check(sc.version.metrics, "mesh")
+        if hc:
+            checks.append(hc)
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -423,8 +494,23 @@ async def upright_check(sc: StageContext, stage: str, glb: Path | None, normal: 
     return normalfix.check(m, stage)
 
 
+def hair_source(sc: StageContext, params: dict[str, Any], engine: str) -> None:
+    """Record the version's hair_source (only when the library is on or a param names it, so today's builds keep
+    today's params). An explicit "model" (the hair_fit Fix) sets the asset back to today's hair."""
+    explicit = params.get("hair_source")
+    src, note = hairlib.mesh_source(sc.asset, explicit, engine)
+    if src is None:
+        return
+    sc.set_params(hair_source=src)
+    if note:
+        sc.set_metrics(hair_library_note=note)
+    if explicit == hairlib.MODEL and hairlib.asset_source(sc.asset) == hairlib.LIBRARY:
+        hairlib.set_choice(sc.db, sc.asset, hairlib.MODEL, changed_by="fix")
+
+
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
     engine = params.get("engine") or "trellis"
+    hair_source(sc, params, engine)
     if engine == "hy3d":
         await _hy3d(sc, params)
     elif engine == "trellis":
@@ -438,6 +524,8 @@ def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, 
     """Parent params under the new ones, without the triangle target and texture size the parent took from the recipe
     (only a chosen value carries over, so a new run follows the recipe as it is now)."""
     base = dict(parent_params or {})
+    if "hair_source" not in params:
+        base.pop("hair_source", None)  # upstream follows the asset's hair setting unless the new params name one
     for key, src in (("target_faces", "target_faces_source"), ("texture_size", "texture_source")):
         if base.get(src) == "recipe" and key not in params:
             base.pop(key, None)

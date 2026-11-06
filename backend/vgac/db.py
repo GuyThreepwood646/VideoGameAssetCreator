@@ -89,6 +89,8 @@ class Asset(Base):
     # character: the items set aside from its description and what is attached where ({choice, set_aside, attachments}).
     held_item_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     equipment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Hair from the library (vgac/hairlib.py): {source: "library"|"model", pick, picked_at, changed_by}. None is today's hair.
+    hair_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="assets")
@@ -119,6 +121,14 @@ class Asset(Base):
     @equipment.setter
     def equipment(self, value: dict[str, Any] | None) -> None:
         self.equipment_json = _dumps(value) if value is not None else None
+
+    @property
+    def hair(self) -> dict[str, Any] | None:
+        return _loads(self.hair_json, None) if self.hair_json else None
+
+    @hair.setter
+    def hair(self, value: dict[str, Any] | None) -> None:
+        self.hair_json = _dumps(value) if value is not None else None
 
     @property
     def parts(self) -> list[str]:
@@ -248,7 +258,7 @@ def init_db() -> None:
 
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
-                                                                                          "held_item_json": "TEXT", "equipment_json": "TEXT"},
+                                                                                          "held_item_json": "TEXT", "equipment_json": "TEXT", "hair_json": "TEXT"},
                   "job": {"result_json": "TEXT"}}
 
 
@@ -346,6 +356,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
         "autopilot": a.autopilot,
         "held_item": a.held_item,
         "equipment": a.equipment,
+        "hair": a.hair,
         "created_at": _iso(a.created_at),
         "selected": {},
         "stages": {s: [] for s in STAGES},

@@ -8,6 +8,7 @@ import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
+import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
 import { ViewerLookContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
@@ -26,6 +27,8 @@ export default function AssetPage() {
   // "Add an item" (items): the panel on a character with a skeleton.
   const [itemsOpen, setItemsOpen] = useState(false)
   const [baseName, setBaseName] = useState<string | null>(null)
+  // Hair from the library: the "Hair" line and its Change panel (characters only; nothing shows on an older backend).
+  const [hairOpen, setHairOpen] = useState(false)
   // The autopilot state has one home: asset.autopilot. Asset reloads, the websocket
   // event, the mount fetch and the action responses all go through newerAutopilot.
   // apAvailable is null until known, false when the backend has no autopilot (404).
@@ -36,6 +39,7 @@ export default function AssetPage() {
   const followRef = useRef<string | null>(null) // the autopilot stage the page last followed to
   const jobStatusRef = useRef(new Map<string, JobStatus>()) // last seen status per job id
   const autopilot = asset && asset.id === aid ? (asset.autopilot ?? null) : null
+  const hair = useHairPanel(asset && asset.id === aid ? asset : null)
 
   const applyAutopilot = useCallback((assetId: string, st: AutopilotState) => {
     setAsset((cur) => {
@@ -300,6 +304,7 @@ export default function AssetPage() {
               <Info term="term.items" />
             </div>
           )}
+          {hair.panel && <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />}
           {asset.parts.length > 0 && (
             <div className="muted small">
               parts: {asset.parts.join(', ')}
@@ -381,6 +386,20 @@ export default function AssetPage() {
         </header>
         {variantOpen && <VariantPanel asset={asset} onClose={() => setVariantOpen(false)} onError={setError} />}
         {itemsOpen && <ItemsPanel asset={asset} onClose={() => setItemsOpen(false)} />}
+        {hairOpen && hair.panel && (
+          <HairSettingPanel
+            asset={asset}
+            panel={hair.panel}
+            onClose={() => setHairOpen(false)}
+            onSaved={(p) => {
+              hair.setPanel(p)
+              reloadSoon()
+              api.listJobs({ asset_id: aid }).then(setJobs, () => undefined)
+            }}
+            onError={setError}
+          />
+        )}
+        {hair.panel && autopilot?.status !== 'running' && <HairRebuildNote asset={asset} panel={hair.panel} jobs={jobs} busy={apBusy} onRebuild={(from) => autopilotActions.resumeFrom(from)} />}
         <ErrorText error={error} />
         <StagePanel
           key={stage}

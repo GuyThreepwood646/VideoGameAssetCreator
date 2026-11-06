@@ -30,7 +30,7 @@ export const HAIR_NOTES: Record<string, string> = {
   photoreal_hair:
     'Hair is built as one solid shape with its colour and strands painted on from the picture. It looks right from a few steps away and simpler up close. Short, tied-back or braided hair comes out best; long loose hair and wispy fringes come out worst.',
   long_loose:
-    'Long loose hair will be joined to the shoulders in the 3D model and will not swing. A ponytail or braid that hangs clear of the neck can move. Hair that is tied back, braided or cut short also keeps a cleaner shape.',
+    'Long loose hair will be joined to the shoulders in the 3D model and will not swing. A ponytail or braid that hangs clear of the neck can move. Hair that is tied back, braided or cut short also keeps a cleaner shape. Hair from the library (ready-made hairstyles) can hang free and swing.',
   fur: 'Fur is painted onto the surface of the model, not made of separate hairs. It reads as fur at game distance and looks smoother up close.',
 }
 

@@ -5,6 +5,8 @@ Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
      [--shading smooth|flat] [--texture-filter smooth|crisp] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
      [--hair-layout hair_layout.json --hair-base-color hair_base_color.png [--hair-normal ...] [--hair-orm ...]]
+     [--hair-object VGAC_Hair --hair-mesh hair_mesh.npz --hair-base-color ... [--hair-kind cards] [--hair-alpha cutout]
+      [--hair-two-sided]]
 
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
@@ -45,6 +47,15 @@ corner; every other face keeps slot 0. The slots are named <asset>_Body and <ass
 Unity importer builds both materials) and the GLB files get two materials: the body's textures and the hair's own
 (--hair-base-color, --hair-normal, --hair-orm). LODs are decimated after this, so every level keeps both slots;
 report.json gives hair_material: {faces, lod_triangles, slots}.
+
+Hair from the library (--hair-object VGAC_Hair --hair-mesh hair_mesh.npz [--hair-kind shell|cards] [--hair-alpha cutout]
+[--hair-two-sided], docs/HAIR-LIBRARY-PLAN.md section 6): the rig step bound the hairstyle as its own object. It is
+joined to the body as slot 1 (<name>_Hair; the body is slot 0, <name>_Body), the scalp cap marked by matching positions
+to the canonical npz (role 1). LODs: shells decimate with the body; cards keep every hair face at LOD1 (only the body is
+decimated) and from LOD2 keep only the cap. Measured on the body faces alone: manifold, watertight (with "edges" for
+the tolerance), dims_m, lods_body, the collider points and the sockets. Every GLB's hair material gets alphaMode MASK
+with alphaCutoff 0.5 for cut-out hair, doubleSided from the flag, and extras {"vgac_hair": "library"}. Without
+--hair-object everything above is as before.
 """
 import json
 import math
@@ -77,6 +88,12 @@ hair_layout = _common.opt("--hair-layout", "")
 hair_base = _common.opt("--hair-base-color", "")
 hair_normal = _common.opt("--hair-normal", "")
 hair_orm = _common.opt("--hair-orm", "")
+# Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6): the rig step's VGAC_Hair object, joined as slot 1.
+hair_object = _common.opt("--hair-object", "")
+hair_mesh_npz = _common.opt("--hair-mesh", "")
+hair_alpha = _common.opt("--hair-alpha", "opaque")
+hair_two_sided = _common.flag("--hair-two-sided")
+hair_kind = _common.opt("--hair-kind", "shell")
 # vgac/sockets.py (pure maths, shared with the backend) sits one folder up.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.makedirs(out_dir, exist_ok=True)
@@ -86,6 +103,14 @@ meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
 if not meshes:
     raise SystemExit("no mesh")
+hair_src = None
+if hair_object:
+    hair_src = next((o for o in meshes if o.name == hair_object or o.name.startswith(hair_object + ".")), None)
+    if hair_src is not None and len(meshes) > 1:
+        meshes = [o for o in meshes if o is not hair_src]  # the body; the hair joins after the UVs are back
+    else:
+        hair_src = None
+library_hair = hair_src is not None
 mesh = meshes[0]
 if len(meshes) > 1:
     bpy.ops.object.select_all(action="DESELECT")
@@ -148,6 +173,55 @@ uv_report = None
 if not mesh.data.uv_layers and uv_source and os.path.isfile(uv_source):
     uv_report = transfer_uvs(mesh, uv_source)
 
+
+def join_library_hair(body, hair, npz_path):
+    """Join the library hair into the body as material slot 1 (<name>_Hair; the body keeps slot 0, <name>_Body), with
+    the hair's UV layer under the body's UV name and a face attribute vgac_cap marking the scalp cap (npz role 1,
+    found by matching positions to the canonical npz). -> hair report."""
+    import numpy as np
+    import hairbind
+
+    global body_slot, hair_slot
+    hd = hair.data
+    HV = np.array([tuple(hair.matrix_world @ v.co) for v in hd.vertices])
+    role = np.zeros(len(HV), np.int64)
+    matched = None
+    if npz_path and os.path.isfile(npz_path):
+        nz = np.load(npz_path)
+        nrole = np.asarray(nz["role"]) if "role" in nz.files else np.zeros(len(nz["verts"]), np.int64)
+        role, _worst = hairbind.roles_by_position(HV, hairbind.gltf_to_blender(nz["verts"]), nrole)
+        matched = round(float(np.mean(role >= 0)), 4) if len(role) else 0.0
+    cap = [all(role[i] == 1 for i in p.vertices) for p in hd.polygons]
+    attr = hd.attributes.get("vgac_cap") or hd.attributes.new("vgac_cap", "BOOLEAN", "FACE")
+    attr.data.foreach_set("value", cap)
+    body_slot = next((m for m in body.data.materials if m is not None), None) or bpy.data.materials.new(name + "_Body")
+    body_slot.name = name + "_Body"
+    hair_slot = bpy.data.materials.new(name + "_Hair")
+    for o, idx in ((body, 0), (hair, 1)):
+        o.data.materials.clear()
+        o.data.materials.append(body_slot)
+        o.data.materials.append(hair_slot)
+        for p in o.data.polygons:
+            p.material_index = idx
+    if body.data.uv_layers and hd.uv_layers:
+        keep = hd.uv_layers.active
+        for lay in [lay for lay in hd.uv_layers if lay != keep]:
+            hd.uv_layers.remove(lay)
+        hd.uv_layers[0].name = body.data.uv_layers.active.name
+    faces = len(hd.polygons)
+    bpy.ops.object.select_all(action="DESELECT")
+    hair.select_set(True)
+    body.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.join()
+    return {"ok": faces > 0, "source": "library", "faces": faces, "cap_faces": int(sum(cap)), "matched": matched,
+            "kind": hair_kind, "alpha": hair_alpha, "two_sided": bool(hair_two_sided)}
+
+
+hair_report = None
+if library_hair:
+    hair_report = join_library_hair(mesh, hair_src, hair_mesh_npz)
+
 # The glTF importer splits vertices along UV seams and sharp edges; weld them back (UVs and vertex groups
 # survive the merge) so decimation and the manifold check see one connected surface, as bakeoff/finish.py did.
 bpy.ops.object.select_all(action="DESELECT")
@@ -209,8 +283,7 @@ def assign_hair(target, path):
     return {"ok": hits > 0, "faces": hits, "layout_faces": len(rows), "max_face_offset": round(worst, 6)}
 
 
-hair_report = None
-if hair_layout and os.path.isfile(hair_layout) and mesh.data.uv_layers:
+if not library_hair and hair_layout and os.path.isfile(hair_layout) and mesh.data.uv_layers:
     # the model's own material (the rig step's, with its base colour, which the FBX embeds) stays as the body's slot
     body_slot = next((m for m in mesh.data.materials if m is not None), None) or bpy.data.materials.new(name + "_Body")
     body_slot.name = name + "_Body"
@@ -229,6 +302,53 @@ report = {"asset": name, "lods": {}, "lod_ratios": lods, "bones": len(arm.data.b
 report["lods"]["LOD0"] = tri_count(mesh)
 report["hair_material"] = hair_report
 
+def decimate_body_keep_cards(lod, ratio, drop_cards):
+    """Library hair cards: decimating thin cards tears them, so the hair (slot 1) is split off, only the body is
+    decimated, and the hair joins again whole (LOD1) or as its scalp cap alone (LOD2 on: every non-cap hair face is
+    deleted)."""
+    bpy.ops.object.select_all(action="DESELECT")
+    lod.select_set(True)
+    bpy.context.view_layer.objects.active = lod
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    lod.active_material_index = 1
+    bpy.ops.object.material_slot_select()
+    bpy.ops.mesh.separate(type="SELECTED")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    parts = [o for o in bpy.context.selected_objects if o is not lod]
+    mod = lod.modifiers.new("dec", "DECIMATE")
+    mod.ratio = ratio
+    bpy.context.view_layer.objects.active = lod
+    bpy.ops.object.modifier_apply(modifier="dec")
+    for hp in parts:
+        if drop_cards:
+            a = hp.data.attributes.get("vgac_cap")
+            keep = [bool(d.value) for d in a.data] if a is not None and a.domain == "FACE" else [False] * len(hp.data.polygons)
+            bm = bmesh.new()
+            bm.from_mesh(hp.data)
+            bm.faces.ensure_lookup_table()
+            kill = [f for f in bm.faces if not keep[f.index]]
+            bmesh.ops.delete(bm, geom=kill, context="FACES")
+            loose = [v for v in bm.verts if not v.link_faces]
+            if loose:
+                bmesh.ops.delete(bm, geom=loose, context="VERTS")
+            bm.to_mesh(hp.data)
+            bm.free()
+        if not hp.data.polygons:
+            bpy.data.objects.remove(hp, do_unlink=True)
+            continue
+        bpy.ops.object.select_all(action="DESELECT")
+        hp.select_set(True)
+        lod.select_set(True)
+        bpy.context.view_layer.objects.active = lod
+        bpy.ops.object.join()
+
+
+def body_tris(o):
+    o.data.calc_loop_triangles()
+    return sum(1 for t in o.data.loop_triangles if o.data.polygons[t.polygon_index].material_index == 0)
+
+
 # LODs by decimation (keeps UVs and vertex groups).
 lod_objs = [mesh]
 for i, ratio in enumerate(lods, start=1):
@@ -239,9 +359,12 @@ for i, ratio in enumerate(lods, start=1):
     lod = bpy.context.active_object
     lod.name = f"{name}_LOD{i}"
     lod.data.name = lod.name
-    mod = lod.modifiers.new("dec", "DECIMATE")
-    mod.ratio = ratio
-    bpy.ops.object.modifier_apply(modifier="dec")
+    if library_hair and hair_kind == "cards":
+        decimate_body_keep_cards(lod, ratio, drop_cards=i >= 2)
+    else:
+        mod = lod.modifiers.new("dec", "DECIMATE")
+        mod.ratio = ratio
+        bpy.ops.object.modifier_apply(modifier="dec")
     lod.parent = mesh.parent
     report["lods"][f"LOD{i}"] = tri_count(lod)
     lod_objs.append(lod)
@@ -255,6 +378,17 @@ def hair_tris(o):
 if hair_report and hair_report.get("ok"):
     hair_report["lod_triangles"] = {f"LOD{i}": hair_tris(o) for i, o in enumerate(lod_objs)}
     hair_report["slots"] = [name + "_Body", name + "_Hair"]
+if library_hair:
+    # The LOD ratios are about the body: the hair cards keep their count at LOD1 and drop to the cap from LOD2.
+    report["lods_body"] = {f"LOD{i}": body_tris(o) for i, o in enumerate(lod_objs)}
+
+
+def body_points(o):
+    """World positions of the vertices the body's faces use (slot 0); every vertex without library hair."""
+    if not library_hair:
+        return _world_points(o)
+    used = {i for p in o.data.polygons if p.material_index == 0 for i in p.vertices}
+    return [o.matrix_world @ o.data.vertices[i].co for i in sorted(used)]
 
 # --- Collision shapes (G16, G35; docs/GREAT-ASSETS-PLAN.md 3.4) ---------------------------------------------------------
 # hull: one convex hull of LOD0; parts: the shapes the backend made (vgac/colliders.py) in --collider-obj;
@@ -354,7 +488,7 @@ report["collider_verts"] = 0
 report["collider_mode"] = collider_mode
 if collider_mode == "hull":
     # The hull of LOD0 (a decimated level can lose its corners), then cut down to the triangle cap.
-    bm = limited_hull(_world_points(mesh))
+    bm = limited_hull(body_points(mesh))
     _new_collider(f"{name}_collider_00", bm, "hull")
 elif collider_mode == "mesh":
     # LOD1 when LOD0 is big, so a static mesh collider stays cheap; small pieces keep their exact LOD0.
@@ -362,12 +496,14 @@ elif collider_mode == "mesh":
     bm = bmesh.new()
     bm.from_mesh(src_lod.data)
     bm.transform(src_lod.matrix_world)
+    if library_hair:
+        bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index == 1], context="FACES")
     bmesh.ops.triangulate(bm, faces=bm.faces[:])
     _new_collider(f"{name}_collider_mesh", bm, "mesh")
 elif collider_mode == "parts" and collider_obj and os.path.isfile(collider_obj):
     from mathutils import Vector
     parts, src_box = read_collider_obj(collider_obj)
-    pts0 = _world_points(mesh)
+    pts0 = body_points(mesh)
     t_lo = [min(p[i] for p in pts0) for i in range(3)]
     t_hi = [max(p[i] for p in pts0) for i in range(3)]
     scale, shift = [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]
@@ -409,10 +545,17 @@ report["collider_triangles_total"] = sum(p["triangles"] for p in parts_report)
 # Manifold check on LOD0.
 bm = bmesh.new()
 bm.from_mesh(mesh.data)
+if library_hair:
+    # body faces only: hair cards are open sheets and the hair is a separate piece by design
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index == 1], context="FACES")
+    loose = [v for v in bm.verts if not v.link_faces]
+    if loose:
+        bmesh.ops.delete(bm, geom=loose, context="VERTS")
+    report["edges"] = len(bm.edges)
 report["non_manifold_edges"] = sum(1 for e in bm.edges if not e.is_manifold)
 report["boundary_edges"] = sum(1 for e in bm.edges if e.is_boundary)
 bm.free()
-pts = [mesh.matrix_world @ v.co for v in mesh.data.vertices]
+pts = body_points(mesh)
 if pts:
     report["dims_m"] = [max(p.x for p in pts) - min(p.x for p in pts), max(p.y for p in pts) - min(p.y for p in pts),
                         max(p.z for p in pts) - min(p.z for p in pts)]
@@ -451,7 +594,17 @@ if arm is not None and socket_category not in ("", "none"):
         me.calc_loop_triangles()
         tri = np.empty(len(me.loop_triangles) * 3, dtype=np.int64)
         me.loop_triangles.foreach_get("vertices", tri)
-        result = sockets_mod.compute(bone_list, V, owner, tri.reshape(-1, 3), socket_category)
+        tri = tri.reshape(-1, 3)
+        if library_hair:
+            # the sockets are placed on the body alone, as without library hair
+            mi = np.empty(len(me.loop_triangles), dtype=np.int64)
+            me.loop_triangles.foreach_get("material_index", mi)
+            tri = tri[mi == 0]
+            used = np.unique(tri)
+            remap = np.full(n, -1, dtype=np.int64)
+            remap[used] = np.arange(len(used))
+            V, owner, tri = V[used], owner[used], remap[tri]
+        result = sockets_mod.compute(bone_list, V, owner, tri, socket_category)
         from mathutils import Matrix, Vector
         for s in result["sockets"]:
             e = bpy.data.objects.new(s["name"], None)
@@ -563,7 +716,7 @@ def _tex_node(nt, path, colorspace):
     return t
 
 
-def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, mat_name=None):
+def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, mat_name=None, alpha=False):
     """Principled BSDF the glTF exporter reads: base colour, normal map, and one ORM image whose G drives roughness,
     B metallic and R occlusion (through the 'glTF Material Output' group), so the GLB references the ORM texture as
     both metallicRoughnessTexture and occlusionTexture. The hair's own material is built the same way from its maps."""
@@ -577,6 +730,8 @@ def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, ma
     if tex_base and os.path.isfile(tex_base):
         t = _tex_node(nt, tex_base, "sRGB")
         nt.links.new(t.outputs["Color"], bsdf.inputs["Base Color"])
+        if alpha:  # library hair cards: the texture's alpha cuts the cards out (the GLB gets alphaMode MASK below)
+            nt.links.new(t.outputs["Alpha"], bsdf.inputs["Alpha"])
     if tex_normal and os.path.isfile(tex_normal):
         t = _tex_node(nt, tex_normal, "Non-Color")
         nm = nt.nodes.new("ShaderNodeNormalMap")
@@ -613,7 +768,7 @@ if "glb" in formats:
         for m in (body_slot, hair_slot):
             m.name = m.name + "_slot"  # the FBX already carries these names; the GLB's textured materials take them
     mat = build_material(mat_name=(name + "_Body") if two else None)
-    hmat = build_material(hair_base, hair_normal, hair_orm, name + "_Hair") if two else None
+    hmat = build_material(hair_base, hair_normal, hair_orm, name + "_Hair", alpha=library_hair and hair_alpha == "cutout") if two else None
     if mat is not None and hmat is not None:
         # every level kept both slots through the decimation: the slots get the textured materials, the faces keep
         # their slot numbers
@@ -652,6 +807,52 @@ if "glb" in formats:
             p = os.path.join(out_dir, "lods", f"{name}_LOD{i}.glb")
             export_glb(p, [o] + rig, animations=False)
             report["glb_lods"][f"LOD{i}"] = p
+
+
+def patch_library_hair_glb(path):
+    """The library hair material in a written GLB: alphaMode MASK with alphaCutoff 0.5 for cutout hair (OPAQUE
+    otherwise), doubleSided from the catalogue flag, and extras {"vgac_hair": "library"} so later readers (the items'
+    body tree in equip.py) can tell it from today's hair slot. -> True when the material was found."""
+    import struct
+
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:4] != b"glTF":
+        return False
+    n = struct.unpack_from("<I", data, 12)[0]
+    doc = json.loads(data[20:20 + n].decode("utf-8"))
+    rest = data[20 + n:]
+    hit = False
+    for m in doc.get("materials") or []:
+        if str(m.get("name", "")).endswith("_Hair"):
+            if hair_alpha == "cutout":
+                m["alphaMode"] = "MASK"
+                m["alphaCutoff"] = 0.5
+            else:
+                m.pop("alphaMode", None)
+                m.pop("alphaCutoff", None)
+            m["doubleSided"] = bool(hair_two_sided)
+            m.setdefault("extras", {})["vgac_hair"] = "library"
+            hit = True
+    if not hit:
+        return False
+    js = json.dumps(doc, separators=(",", ":")).encode("utf-8")
+    js += b" " * ((4 - len(js) % 4) % 4)
+    total = 12 + 8 + len(js) + len(rest)
+    with open(path, "wb") as fh:
+        fh.write(struct.pack("<III", 0x46546C67, 2, total))
+        fh.write(struct.pack("<II", len(js), 0x4E4F534A))
+        fh.write(js)
+        fh.write(rest)
+    return True
+
+
+if library_hair and hair_report and hair_report.get("ok") and "glb" in formats:
+    patched = []
+    for p in [report.get("glb"), report.get("glb_godot")] + list((report.get("glb_lods") or {}).values()):
+        if p and os.path.isfile(p) and patch_library_hair_glb(p):
+            patched.append(os.path.basename(p))
+    hair_report["glb_patched"] = patched
 with open(os.path.join(out_dir, "report.json"), "w") as f:
     json.dump(report, f, indent=1)
 print("PACK_OK", json.dumps(report))

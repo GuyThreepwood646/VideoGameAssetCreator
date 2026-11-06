@@ -41,6 +41,7 @@ REASONS = {
     "none_found": "nothing hangs clear of the body, so nothing can sway. Hair that rests on the shoulders or the head "
                   "is joined to them in the 3D model",
     "error": "something went wrong on the way",
+    "library_rests": "the hairstyle rests on the head, so it moves with the head",
 }
 
 
@@ -59,12 +60,20 @@ def enabled(category: str | None, params: dict[str, Any], anim_report: dict[str,
 
 
 def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, hitboxes: Path | None,
-                 hair_points: Path | None, metallic: Path | None, fps: int = 24) -> list[Any]:
+                 hair_points: Path | None, metallic: Path | None, fps: int = 24,
+                 library_hair: tuple[str, Path, Path | None] | None = None) -> list[Any]:
+    """springs.py's command line. library_hair (object name, hair_mesh.npz, hair_parts.json) only when the hair comes
+    from the library: the hair object is left out of the hanging-part search and its hanging groups get chains."""
     args: list[Any] = [anim_glb, out_glb, "--report", work / "springs_report.json", "--doc", work / "springs.json",
                        "--pictures", work / "springs_pictures", "--fps", fps]
     for flag, p in (("--clips", clips), ("--hitboxes", hitboxes), ("--hair-points", hair_points), ("--metallic", metallic)):
         if p is not None and Path(p).is_file():
             args += [flag, p]
+    if library_hair is not None:
+        obj, mesh, parts = library_hair
+        args += ["--hair-object", obj, "--hair-mesh", mesh]
+        if parts is not None and Path(parts).is_file():
+            args += ["--hair-parts", parts]
     return args
 
 
@@ -116,7 +125,8 @@ def metrics(report: dict[str, Any] | None, on: bool, reason: str | None, seconds
            "chains": [{"name": c.get("name"), "kind": c.get("kind"), "parent": c.get("parent"), "bones": c.get("bones"),
                        "confidence": c.get("confidence"), "verts": c.get("verts"),
                        "length_m": round(float((c.get("part") or {}).get("length") or 0), 3),
-                       "gap_cm": (c.get("part") or {}).get("gap_cm")} for c in chains],
+                       "gap_cm": (c.get("part") or {}).get("gap_cm"),
+                       **({"library": True} if c.get("library") else {})} for c in chains],
            "bones_added": int(rep.get("bones_added") or 0), "what": what_sways(chains),
            "left_alone": left_alone(rep.get("rejected") or []),
            "seam_max_m": round(max(seam), 5) if seam else None,

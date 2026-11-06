@@ -27,6 +27,12 @@ What it does, in order:
    as if the character travelled at the clip's speed through still air, so the part trails behind as in the game.
 4. Writes springs.json (glTF model space, Y up, metres): the chains, their settings and the hit boxes as colliders.
 
+Hair from the library (--hair-object VGAC_Hair --hair-mesh hair_mesh.npz [--hair-parts hair_parts.json]): the hair
+object bound by hairbind.py is left out of step 1; each of its hanging groups (role 2+k in the npz, found on the object
+by matching positions, the path from hair_parts.json) gets a chain of 2 to 4 bones along its path, parented to the Head
+bone, before the body's own parts and within the same cap of 12 bones. When nothing sways and the hair is from the
+library, the reason is library_rests. Without these arguments nothing changes.
+
 Everything above main() is plain numpy so the backend tests can run it without Blender; only main() touches bpy.
 """
 import json
@@ -64,6 +70,10 @@ SETTINGS = {
     "Tail": {"stiffness": 1.5, "damping": 0.3, "drag": 1.2, "gravity": 9.81},
     "Cloth": {"stiffness": 1.6, "damping": 0.4, "drag": 1.8, "gravity": 9.81},
 }
+# Hair from the library hangs: its chains' rest direction is pulled toward world down by this share (0 keeps the built
+# shape relative to the parent, as every other chain does; 1 points straight down), so a ponytail droops when the head
+# bows instead of standing out like a handle. Written to springs.json as "hang" for those chains only.
+LIBRARY_HAIR_HANG = 0.7
 SUBSTEP = 1.0 / 120.0
 COLLIDE_ITER = 3  # rounds of "push out of the hit boxes, keep the length" per joint and step
 LOOP_PASSES = 3
@@ -210,7 +220,7 @@ def segment_points(heads, tails, step):
 # --- finding the hanging parts ---------------------------------------------------------------------------------------
 
 
-def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="humanoid"):
+def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="humanoid", max_bones=MAX_BONES, counter=None):
     """The parts that hang free. V (n, 3) vertices and bones in Blender world space (Z up, the character's front -Y,
     its left +X); F (m, 3) triangles; bones: [{name, head, tail, parent}]; weights: (WI (n, 4) bone indices, WW (n, 4))
     or None; hair_v (n,) bool: vertex on a hair triangle; metal_v (n,) metallic 0..1. -> {"parts": accepted,
@@ -280,14 +290,14 @@ def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="h
     kept = []
     for p in accepted:
         nb = sum(len(c) - 1 for c in p["columns"])
-        if total + nb > MAX_BONES:
+        if total + nb > max_bones:
             p["reason"] = "low_confidence"
             p["why"] = "There were already as many spring bones as a character gets."
             rejected.append(p)
             continue
         total += nb
         kept.append(p)
-    counter = {}
+    counter = dict(counter or {})
     for p in kept:
         for c in range(len(p["columns"])):
             counter[p["kind"]] = counter.get(p["kind"], 0) + 1
@@ -537,6 +547,108 @@ def resample(line, nbones):
     return np.stack([np.interp(t, d, line[:, k]) for k in range(3)], axis=1)
 
 
+# --- library hair (docs/HAIR-LIBRARY-PLAN.md section 6) ---------------------------------------------------------------
+# A hairstyle from the library is its own object (VGAC_Hair, bound by hairbind.py) with its hanging groups known from
+# the library: role 2+k in hair_mesh.npz, the path of each group in hair_parts.json (glTF, the npz's frame, root
+# first). Each group becomes a chain of 2 to 4 bones along its path, parented to the Head bone, before the body's own
+# hanging parts are looked for, within the same cap.
+
+
+def gltf_to_blender(P):
+    P = np.asarray(P, float).reshape(-1, 3)
+    return np.stack([P[:, 0], -P[:, 2], P[:, 1]], axis=1)
+
+
+def box_map(src, dst):
+    """(scale, shift) with dst ~ src * scale + shift for two copies of the same points (uniform scale, a shift): the
+    hair object in the animated file against the npz it was built from."""
+    src, dst = np.asarray(src, float), np.asarray(dst, float)
+    slo, shi, dlo, dhi = src.min(0), src.max(0), dst.min(0), dst.max(0)
+    s = float(np.max(dhi - dlo)) / max(float(np.max(shi - slo)), 1e-9)
+    return s, (dlo + dhi) / 2 - s * (slo + shi) / 2
+
+
+def match_roles(V_obj, npz_verts_b, npz_role, tol=1e-4):
+    """The npz role of every vertex of the hair object, matched by position after normalising both to their boxes.
+    -> (n,) roles, -1 where nothing matched."""
+    def norm(P):
+        lo, hi = P.min(axis=0), P.max(axis=0)
+        return (P - (lo + hi) / 2) / max(float(np.max(hi - lo)), 1e-9)
+
+    A, B = norm(np.asarray(V_obj, float)), norm(np.asarray(npz_verts_b, float))
+    key = lambda P: np.floor(P / tol).astype(np.int64)  # noqa: E731
+    table = {}
+    for i, k in enumerate(map(tuple, key(B))):
+        table.setdefault(k, []).append(i)
+    out = np.full(len(A), -1, np.int64)
+    offs = [(a, b, c) for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)]
+    role = np.asarray(npz_role)
+    for i, k in enumerate(map(tuple, key(A))):
+        best, bd = -1, tol
+        for o in offs:
+            for j in table.get((k[0] + o[0], k[1] + o[1], k[2] + o[2]), ()):
+                d = float(np.linalg.norm(B[j] - A[i]))
+                if d <= bd:
+                    best, bd = j, d
+        if best >= 0:
+            out[i] = int(role[best])
+    return out
+
+
+def path_from_points(P, step=0.02):
+    """A root-first centre line for a group with no usable path: slice centroids from its top down."""
+    P = np.asarray(P, float)
+    if len(P) == 0:
+        return np.zeros((0, 3))
+    z1, z0 = float(P[:, 2].max()), float(P[:, 2].min())
+    out = []
+    z = z1
+    while z > z0 - 1e-9:
+        s = (P[:, 2] <= z) & (P[:, 2] > z - step)
+        if s.any():
+            out.append(P[s].mean(axis=0))
+        z -= step
+    if len(out) == 1:
+        out.append(P[np.argmin(P[:, 2])])
+    return np.array(out)
+
+
+def library_parts(groups, V_obj, role_obj, head, scale=1.0, shift=(0.0, 0.0, 0.0), max_bones=MAX_BONES):
+    """Chains for the library hair's hanging groups. groups: hair_parts.json groups ({k, kind, path glTF, length_m});
+    V_obj (n, 3) the hair object's vertices (Blender space); role_obj (n,) their npz roles; head the Head bone's name;
+    scale and shift carry the npz frame onto the object (box_map). -> (parts, bones used). Each part: kind Hair,
+    parent the Head, columns [joints root first], length, thickness, confidence 1, library True, group k,
+    hair_vertex_ids."""
+    V_obj = np.asarray(V_obj, float)
+    role_obj = np.asarray(role_obj)
+    parts, used = [], 0
+    for g in sorted(groups or [], key=lambda g: int(g.get("k", 0)))[:3]:
+        k = int(g.get("k", 0))
+        ids = np.nonzero(role_obj == 2 + k)[0]
+        if len(ids) == 0:
+            continue
+        path = np.asarray(g.get("path") or [], float).reshape(-1, 3)
+        if len(path) >= 2:
+            path = gltf_to_blender(path) * scale + np.asarray(shift, float)
+        else:
+            path = path_from_points(V_obj[ids])
+        if len(path) < 2:
+            continue
+        length = float(np.sum(np.linalg.norm(np.diff(path, axis=0), axis=1)))
+        nb = bones_for(length)
+        if used + nb > max_bones:
+            break
+        joints = resample(path, nb)
+        _, dist = project_on_chain(V_obj[ids], joints)
+        thick = float(np.clip(2.0 * np.median(dist), 0.02, 0.1))
+        used += nb
+        parts.append({"kind": str(g.get("kind") or "Hair"), "parent": head, "parent_role": "Head", "confidence": 1.0,
+                      "columns": [[[round(float(v), 5) for v in p] for p in joints]], "length": length, "thickness": thick,
+                      "width": thick, "gap_cm": None, "reason": None, "library": True, "group": k, "verts": int(len(ids)),
+                      "hair_vertex_ids": ids, "root": [round(float(v), 4) for v in joints[0]]})
+    return parts, used
+
+
 # --- weights ---------------------------------------------------------------------------------------------------------
 
 
@@ -647,6 +759,24 @@ def _q_between(a, b):
     return q / np.linalg.norm(q)
 
 
+def slerp_dir(a, b, t):
+    """The unit direction t of the way from unit vector a to unit vector b along the great circle."""
+    a = np.asarray(a, float)
+    b = np.asarray(b, float)
+    d = float(np.clip(np.dot(a, b), -1.0, 1.0))
+    ang = math.acos(d)
+    if ang < 1e-6:
+        return a.copy()
+    if ang > math.pi - 1e-4:  # opposite: turn about any axis square to a
+        axis = np.cross(a, [1.0, 0.0, 0.0])
+        if np.linalg.norm(axis) < 1e-6:
+            axis = np.cross(a, [0.0, 1.0, 0.0])
+        axis /= np.linalg.norm(axis)
+        return a * math.cos(ang * t) + np.cross(axis, a) * math.sin(ang * t)
+    sa = math.sin(ang)
+    return (math.sin((1 - t) * ang) / sa) * a + (math.sin(t * ang) / sa) * b
+
+
 def _q_nlerp(a, b, t):
     if np.dot(a, b) < 0:
         b = -b
@@ -696,7 +826,9 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
     clip frame; chain: {"rest": [(3,)...] joints at rest (root first), "radius": metres}; settings: stiffness (Hz),
     damping (ratio), drag (1/s), gravity (m/s^2, relative to the rest pose); colliders: per frame a list of
     (a, b, r) capsules (a == b for a sphere) with the chain's own allowances already applied; travel: (3,) m/s the
-    clip moves through the air. -> {"joints": (frames, n+1, 3) world positions, "depth": deepest push in metres}."""
+    clip moves through the air; settings "hang" (0..1, default 0): the share by which each bone's rest direction is
+    pulled toward world down (library hair; 0 is the behaviour every other chain has). -> {"joints": (frames, n+1, 3)
+    world positions, "depth": deepest push in metres}."""
     rest = np.asarray(chain["rest"], float)
     seg_rest = np.diff(rest, axis=0)
     lengths = np.linalg.norm(seg_rest, axis=1)
@@ -705,6 +837,8 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
     zeta = float(settings["damping"])
     drag = float(settings["drag"])
     g = float(settings["gravity"]) * np.asarray(gravity_dir, float)
+    hang = float(settings.get("hang") or 0.0)
+    down = np.asarray(gravity_dir, float) / max(np.linalg.norm(gravity_dir), 1e-12)
     v_air = np.zeros(3) if travel is None else np.asarray(travel, float)
     radius = float(chain.get("radius") or 0.0)
     nf = len(frames)
@@ -779,12 +913,21 @@ def simulate(frames, chain, settings, fps, colliders=None, travel=None, loop=Fal
         Q = q
         newP = P.copy()
         for k in range(n):
-            tgt = newP[k] + _q_rot(Q, seg_rest[k])
+            if hang > 0:
+                # library hair: the rest direction pulled toward world down, and no gravity across the bone there (the
+                # target is where it hangs)
+                seg_w = _q_rot(Q, seg_rest[k])
+                d = slerp_dir(seg_w / max(lengths[k], 1e-12), down, hang)
+                tgt = newP[k] + d * lengths[k]
+                g_eff = np.dot(g, d) * d
+            else:
+                tgt = newP[k] + _q_rot(Q, seg_rest[k])
             vel = (P[k + 1] - prev[k + 1]) / dt
             vt = (tgt - T_prev[k + 1]) / dt
             # gravity, less the part of it across the bone at rest, carried by the parent: the part keeps its built
             # shape standing still, and gravity along the bone still swings it back like a pendulum
-            g_eff = g - _q_rot(Q, g_across[k])
+            if hang <= 0:
+                g_eff = g - _q_rot(Q, g_across[k])
             acc = w * w * (tgt - P[k + 1]) - 2 * zeta * w * (vel - vt) - drag * (vel + v_air) + g_eff
             x = P[k + 1] + vel * dt + acc * dt * dt
             for _ in range(COLLIDE_ITER):
@@ -880,6 +1023,7 @@ def springs_doc(chains, hitboxes_doc, height, version=1):
                     "joints": [to_gltf(p) for p in c["joints"]], "radius": round(float(c["radius"]), 4),
                     "stiffness": c["settings"]["stiffness"], "damping": c["settings"]["damping"],
                     "drag": c["settings"]["drag"], "gravity": c["settings"]["gravity"],
+                    **({"hang": c["settings"]["hang"]} if c["settings"].get("hang") else {}),
                     "confidence": c.get("confidence"), "colliders": c.get("colliders", [h["name"] for h in cols])}
                    for c in chains],
         "colliders": cols,
@@ -915,6 +1059,9 @@ def main():  # pragma: no cover - runs inside Blender
     fps = int(_opt(argv, "--fps", "24"))
     category = _opt(argv, "--category", "humanoid")
     find_only = "--find-only" in argv
+    hair_obj_name = _opt(argv, "--hair-object")
+    hair_mesh_path = _opt(argv, "--hair-mesh")
+    hair_parts_path = _opt(argv, "--hair-parts")
     report = {"ok": False, "chains": [], "rejected": [], "reason": None}
 
     def finish():
@@ -927,11 +1074,16 @@ def main():  # pragma: no cover - runs inside Blender
     scene.render.fps = fps
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
     meshes = [o for o in scene.objects if o.type == "MESH" and o.vertex_groups]
-    if arm is None or not meshes:
+    # Library hair (--hair-object): its own object, left out of the hanging-part search; its groups get chains below.
+    hair_obj = None
+    if hair_obj_name:
+        hair_obj = next((o for o in meshes if o.name == hair_obj_name or o.name.startswith(hair_obj_name + ".")), None)
+    bodies = [o for o in meshes if o is not hair_obj]
+    if arm is None or not bodies:
         report["reason"] = "no_rig"
         finish()
         return
-    mesh = max(meshes, key=lambda o: len(o.data.vertices))
+    mesh = max(bodies, key=lambda o: len(o.data.vertices))
     me = mesh.data
     me.calc_loop_triangles()
     MW = mesh.matrix_world
@@ -980,19 +1132,43 @@ def main():  # pragma: no cover - runs inside Blender
             metal_v = px[ys, xs]
         except Exception as e:  # noqa: BLE001
             report["metallic_error"] = str(e)[:200]
-    found = find_parts(V, Ft, bones, (WI, WW), hair_v, metal_v, category)
+    lib_parts, lib_bones, lib_counter = [], 0, {}
+    if hair_obj is not None and hair_mesh_path and os.path.isfile(hair_mesh_path):
+        try:
+            nz = np.load(hair_mesh_path)
+            NV = gltf_to_blender(nz["verts"])
+            nrole = np.asarray(nz["role"]) if "role" in nz.files else np.zeros(len(NV), int)
+            HW = hair_obj.matrix_world
+            HV = np.array([tuple(HW @ v.co) for v in hair_obj.data.vertices])
+            hrole = match_roles(HV, NV, nrole)
+            s_map, sh_map = box_map(NV, HV)
+            groups = (json.load(open(hair_parts_path, encoding="utf-8")).get("groups") or []) \
+                if hair_parts_path and os.path.isfile(hair_parts_path) else []
+            if not groups:  # no parts file: one group per hang role found in the npz
+                groups = [{"k": int(r) - 2, "kind": "Hair", "path": []} for r in sorted(set(int(x) for x in nrole if x >= 2))]
+            head = next((b["name"] for b in bones if role_of(b["name"]) == "Head"), None)
+            if head is not None:
+                lib_parts, lib_bones = library_parts(groups, HV, hrole, head, s_map, sh_map)
+            for p in lib_parts:
+                lib_counter["Hair"] = lib_counter.get("Hair", 0) + 1
+                p["names"] = [f"{PREFIX}Hair_{lib_counter['Hair']:02d}"]
+            report["library_hair"] = {"object": hair_obj.name, "verts": int(len(HV)), "matched": int(np.sum(hrole >= 0)),
+                                      "groups": len(groups), "chains": len(lib_parts), "scale": round(s_map, 6)}
+        except Exception as e:  # noqa: BLE001
+            report["library_hair"] = {"error": str(e)[:300]}
+    found = find_parts(V, Ft, bones, (WI, WW), hair_v, metal_v, category, max_bones=MAX_BONES - lib_bones, counter=lib_counter)
     report.update(height=found["height"], cell=found["cell"], find_seconds=found["seconds"],
                   rejected=[_public(r) for r in found["rejected"]], parts_seen=found["part_count"])
-    parts = found["parts"]
+    parts = lib_parts + found["parts"]
     hb_doc = json.load(open(hb_path, encoding="utf-8")) if hb_path and os.path.isfile(hb_path) else None
     if pic_dir:
         try:
             os.makedirs(pic_dir, exist_ok=True)
-            report["pictures"] = render_pictures(bpy, scene, mesh, arm, V, parts, found, pic_dir)
+            report["pictures"] = render_pictures(bpy, scene, mesh, arm, V, parts, found, pic_dir, hair_obj)
         except Exception as e:  # noqa: BLE001
             report["picture_error"] = str(e)[:300]
     if not parts:
-        report["reason"] = "none_found"
+        report["reason"] = "library_rests" if hair_obj is not None else "none_found"
         report["ok"] = True
         finish()
         return
@@ -1029,25 +1205,44 @@ def main():  # pragma: no cover - runs inside Blender
                 bl.append(b.name)
             chains.append({"name": name, "kind": p["kind"], "parent": p["parent"], "bones": bl, "joints": joints,
                            "part": p, "radius": float(np.clip(0.5 * p["thickness"], 0.01, 0.05)),
-                           "settings": dict(SETTINGS[p["kind"]]), "confidence": p["confidence"]})
+                           "settings": dict(SETTINGS[p["kind"]], **({"hang": LIBRARY_HAIR_HANG} if p.get("library") else {})),
+                           "confidence": p["confidence"]})
     bpy.ops.object.mode_set(mode="OBJECT")
 
     # --- weights ---
+    hair_old_w = None
     for p in parts:
         mine = [c for c in chains if c["part"] is p]
-        vids = p["vertex_ids"]
-        P = V[vids]
+        if p.get("library"):
+            # the library hair's own object: its weights from hairbind.py (Head) fade onto the chain
+            target, tme = hair_obj, hair_obj.data
+            vids = p["hair_vertex_ids"]
+            if hair_old_w is None:
+                hg = {g.index: g.name for g in hair_obj.vertex_groups}
+                hair_old_w = []
+                for v in tme.vertices:
+                    e = sorted(((hg[g.group], g.weight) for g in v.groups if g.weight > 0 and hg.get(g.group) in bidx), key=lambda t: -t[1])[:4]
+                    tot = sum(w for _, w in e) or 1.0
+                    hair_old_w.append({b: w / tot for b, w in e})
+            HWm = hair_obj.matrix_world
+            P = np.array([tuple(HWm @ tme.vertices[int(i)].co) for i in vids])
+            olds = [hair_old_w[int(i)] for i in vids]
+        else:
+            target, tme = mesh, me
+            vids = p["vertex_ids"]
+            P = V[vids]
+            olds = [old_w[i] for i in vids]
         cols = [{"bones": c["bones"], "joints": c["joints"]} for c in mine]
-        neww = chain_weights(P, [old_w[i] for i in vids], cols)
+        neww = chain_weights(P, olds, cols)
         for c in mine:
             for bn in c["bones"]:
-                if bn not in mesh.vertex_groups:
-                    mesh.vertex_groups.new(name=bn)
+                if bn not in target.vertex_groups:
+                    target.vertex_groups.new(name=bn)
         for vi, wmap in zip(vids, neww):
-            for g in list(me.vertices[int(vi)].groups):
-                mesh.vertex_groups[g.group].remove([int(vi)])
+            for g in list(tme.vertices[int(vi)].groups):
+                target.vertex_groups[g.group].remove([int(vi)])
             for bn, w in wmap.items():
-                grp = mesh.vertex_groups.get(bn) or mesh.vertex_groups.new(name=bn)
+                grp = target.vertex_groups.get(bn) or target.vertex_groups.new(name=bn)
                 grp.add([int(vi)], float(w), "REPLACE")
         for c in mine:
             c["verts"] = int(len(vids))
@@ -1131,6 +1326,9 @@ def main():  # pragma: no cover - runs inside Blender
                 "into_hitbox_m": round(full_depth, 4),
                 "into_beyond_rest_m": round(deepest_beyond_rest(J, colliders, c["allow"]), 4),
                 "swing_deg": round(swing_degrees(J, fr, c["joints"]), 1)}
+            if c["settings"].get("hang"):
+                hm, hx = hang_degrees(J)
+                clip_report[name]["chains"][c["name"]].update(hang_mean_deg=round(hm, 1), hang_max_deg=round(hx, 1))
             keyed[(name, c["name"])] = (J, fr)
             write_chain_keys(arm, act, c, J, samples[c["parent"]], rest_mat)
         ad.action = None
@@ -1161,7 +1359,8 @@ def main():  # pragma: no cover - runs inside Blender
         bpy.ops.export_scene.gltf(**args)
     report["chains"] = [{"name": c["name"], "kind": c["kind"], "parent": c["parent"], "bones": c["bones"],
                          "joints": c["joints"], "radius": round(c["radius"], 4), "confidence": c["confidence"],
-                         "verts": c.get("verts", 0), "settings": c["settings"], "part": _public(c["part"])} for c in chains]
+                         "verts": c.get("verts", 0), "settings": c["settings"], "part": _public(c["part"]),
+                         **({"library": True} if c["part"].get("library") else {})} for c in chains]
     report["bones_added"] = sum(len(c["bones"]) for c in chains)
     if doc_path:
         doc = springs_doc(chains, hb_doc, found["height"])
@@ -1173,7 +1372,7 @@ def main():  # pragma: no cover - runs inside Blender
 
 
 def _public(p):
-    return {k: v for k, v in p.items() if k not in ("vertex_ids",)}
+    return {k: v for k, v in p.items() if k not in ("vertex_ids", "hair_vertex_ids")}
 
 
 def match_points(cen, pts, tol):
@@ -1238,6 +1437,15 @@ def deepest_beyond_rest(J, colliders, allow):
                 d = float(np.linalg.norm(p - _closest_on_segment(p, a, b)))
                 worst = max(worst, r - d)
     return max(0.0, worst)
+
+
+def hang_degrees(J, down=(0.0, 0.0, -1.0)):
+    """Mean and largest angle between the chain's root-to-tip direction and world down over the clip, in degrees."""
+    J = np.asarray(J, float)
+    v = J[:, -1] - J[:, 0]
+    c = (v @ np.asarray(down, float)) / np.maximum(np.linalg.norm(v, axis=1), 1e-12)
+    a = np.degrees(np.arccos(np.clip(c, -1, 1)))
+    return float(a.mean()), float(a.max())
 
 
 def swing_degrees(J, frames, rest):
@@ -1359,19 +1567,31 @@ def _project(cam, scene, p):  # pragma: no cover - Blender
     return co.x * R, (1 - co.y) * R
 
 
-def render_pictures(bpy, scene, mesh, arm, V, parts, found, out_dir):  # pragma: no cover - Blender
+def render_pictures(bpy, scene, mesh, arm, V, parts, found, out_dir, hair_obj=None):  # pragma: no cover - Blender
     """"What was taken as a hanging part": the model from behind, the side and the back three-quarter, the parts that
-    sway tinted green and the parts looked at and left alone tinted orange. -> {view: png, camera points}."""
+    sway tinted green and the parts looked at and left alone tinted orange. -> {view: png, camera points}. Library hair
+    (hair_obj) is drawn light brown, its swaying groups green."""
     me = mesh.data
     col = np.tile(np.array([0.72, 0.72, 0.72, 1.0]), (len(V), 1))
-    for p in found.get("rejected") or []:
-        pass
     grid = found["grid"]
     vcell = to_cells(grid, V)
     for p in parts:
-        col[p["vertex_ids"]] = [0.15, 0.85, 0.25, 1.0]
+        if "vertex_ids" in p:
+            col[p["vertex_ids"]] = [0.15, 0.85, 0.25, 1.0]
     attr = me.color_attributes.get("vgac_spring") or me.color_attributes.new("vgac_spring", "FLOAT_COLOR", "POINT")
     attr.data.foreach_set("color", col.ravel().astype(np.float32))
+    hattr = None
+    if hair_obj is not None:
+        hcol = np.tile(np.array([0.55, 0.42, 0.3, 1.0]), (len(hair_obj.data.vertices), 1))
+        for p in parts:
+            if "hair_vertex_ids" in p:
+                hcol[p["hair_vertex_ids"]] = [0.15, 0.85, 0.25, 1.0]
+        hattr = hair_obj.data.color_attributes.new("vgac_spring", "FLOAT_COLOR", "POINT")
+        hattr.data.foreach_set("color", hcol.ravel().astype(np.float32))
+        try:
+            hair_obj.data.color_attributes.active_color = hattr
+        except Exception:  # noqa: BLE001
+            pass
     _ = vcell
     scene.render.engine = "BLENDER_WORKBENCH"
     scene.display.shading.light = "STUDIO"
@@ -1396,6 +1616,8 @@ def render_pictures(bpy, scene, mesh, arm, V, parts, found, out_dir):  # pragma:
         out[label_] = {"file": os.path.basename(fn),
                        "lines": [[_project(cam, scene, q) for q in c] for p in parts for c in p["columns"]]}
     me.color_attributes.remove(attr)
+    if hattr is not None:
+        hair_obj.data.color_attributes.remove(hattr)
     scene.display.shading.color_type = "MATERIAL"
     for t, m in states:
         t.mute = m

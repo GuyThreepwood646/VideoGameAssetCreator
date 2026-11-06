@@ -17,3 +17,10 @@ export function readToolState(state: unknown, stage: StageId): ToolFocus | null 
   if (!t || t.stage !== stage) return null
   return { ui: t.ui, knob: t.knob, params: t.params ?? {}, nonce: t.nonce ?? Date.now() }
 }
+
+// Tools that live in a step's view rather than in "Change something": the hairstyle picker in Build the 3D model
+// (the hair_triangles Fix, "Choose a lighter hairstyle"). The page goes to that step and the view opens the tool.
+const VIEW_TOOLS = new Set(['hair_picker'])
+export function opensInView(ui: string | undefined): boolean {
+  return !!ui && VIEW_TOOLS.has(ui)
+}

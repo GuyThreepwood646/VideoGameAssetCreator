@@ -44,7 +44,7 @@ PICTURE_KEYS = (("front", "cutout", ("concept",)), ("front_turn", "front_cutout"
                 ("quarter", "quarter_cutout", ("turnaround",)), ("left", "left_cutout", ("turnaround",)),
                 ("right", "right_cutout", ("turnaround",)), ("back", "back_cutout", ("turnaround",)))
 # Not something to warn about: the pass does not apply.
-NOT_APPLICABLE = ("off", "not_category", "style", "strength_zero", "no_maps")
+NOT_APPLICABLE = ("off", "not_category", "style", "strength_zero", "no_maps", "library")
 METHOD = ("hair found by a vote of the model's colours and the turnaround pictures; strands and clumps painted along "
           "the hair's flow from 3D positions (line integral convolution), shading from the occlusion map and the hair's "
           "edges, a strand height in the normal map")
@@ -54,6 +54,8 @@ def skip_reason(category_id: str, rec: dict[str, Any] | None, params: dict[str, 
     """Why the pass does not run for this version, or None when it should run."""
     if params.get("hair_detail") is False:
         return "off"
+    if params.get("hair_source") == "library":
+        return "library"  # hair from the library: the model is bald and the hair is its own fitted mesh
     if category_id not in CATEGORIES:
         return "not_category"
     srf = (rec or {}).get("surface") or {}

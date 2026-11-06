@@ -24,6 +24,13 @@ pack.py gives the hair triangles the second material slot (FBX slots <name>_Body
 materials in every GLB); every GLB's hair material gets KHR_materials_anisotropy with the flow map; the Unity importer
 gets -vgacHair on and builds the second material; the manifest gets a hair_material block and README.txt the plain
 lines for Unreal and Godot. The check hair_material_shipped says whether the files carry it.
+
+Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6; library_hair: the clean-up step attached a hairstyle and the
+rig step bound it): the same hair maps come in with the canonical hair_mesh.npz instead of a layout, pack.py joins the
+VGAC_Hair object as the second slot (cards keep their faces at LOD1 and only the scalp cap from LOD2; body-only
+measures and lods_body), the Unity importer also gets -vgacHairCutout and -vgacHairTwoSided as the hairstyle needs
+(VGAC/HairCutout, importer Version 17, the shader travels with the importer), the manifest's hair_material block says
+source library with the style's credit, and README.txt gets the credit lines. LOD ratios are checked on the body.
 """
 
 from __future__ import annotations
@@ -220,6 +227,33 @@ def sync_shader(src: Path | str, dest: Path | str) -> dict[str, Any]:
     if not src_p.is_file():
         return {"action": "no_source", "version": None, "previous": shader_version(dest_p)}
     new, old = shader_version(src_p), shader_version(dest_p)
+    existed = dest_p.is_file()
+    if not existed or old is None or (new is not None and old < new):
+        dest_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_p, dest_p)
+        return {"action": "updated" if existed else "copied", "version": new, "previous": old}
+    return {"action": "current" if old == new else "kept_newer", "version": old, "previous": old}
+
+
+CUTOUT_SHADER_REL = Path("Assets") / "VgacShaders" / "VgacHairCutout.shader"
+_CUTOUT_VERSION_RE = re.compile(r"VgacHairCutout\s+Version\s+(\d+)")
+
+
+def cutout_shader_version(path: Path | str) -> int | None:
+    """The "// VgacHairCutout Version N" line of VgacHairCutout.shader; None when the file or the line is missing."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    m = _CUTOUT_VERSION_RE.search(p.read_text(encoding="utf-8", errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def sync_cutout_shader(src: Path | str, dest: Path | str) -> dict[str, Any]:
+    """Copy VgacHairCutout.shader into a user's project when the copy there is missing or older (as sync_shader)."""
+    src_p, dest_p = Path(src), Path(dest)
+    if not src_p.is_file():
+        return {"action": "no_source", "version": None, "previous": cutout_shader_version(dest_p)}
+    new, old = cutout_shader_version(src_p), cutout_shader_version(dest_p)
     existed = dest_p.is_file()
     if not existed or old is None or (new is not None and old < new):
         dest_p.parent.mkdir(parents=True, exist_ok=True)
@@ -521,7 +555,19 @@ def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: s
             args += [flag, p]
     if socket_cat:
         args += ["--sockets", socket_cat]
-    if hair and hair.get("layout") and hair.get("base_color"):
+    if hair and hair.get("library") and hair.get("mesh") and hair.get("base_color"):
+        # hair from the library: the rig step's VGAC_Hair object joins as slot 1 (no layout)
+        lib = hair["library"]
+        args += ["--hair-object", HAIR_OBJECT, "--hair-mesh", hair["mesh"], "--hair-base-color", hair["base_color"]]
+        for flag, key in (("--hair-normal", "normal"), ("--hair-orm", "orm")):
+            if hair.get(key) is not None:
+                args += [flag, hair[key]]
+        args += ["--hair-kind", "cards" if lib.get("kind") == "cards" else "shell"]
+        if lib.get("alpha") == "cutout":
+            args += ["--hair-alpha", "cutout"]
+        if lib.get("two_sided"):
+            args.append("--hair-two-sided")
+    elif hair and hair.get("layout") and hair.get("base_color"):
         args += ["--hair-layout", hair["layout"], "--hair-base-color", hair["base_color"]]
         for flag, key in (("--hair-normal", "normal"), ("--hair-orm", "orm")):
             if hair.get(key) is not None:
@@ -533,10 +579,40 @@ HAIR_KEYS = ("hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hai
 HAIR_PACK_KEYS = ("hair_metallic_smoothness", "hair_orm")
 
 
+HAIR_OBJECT = "VGAC_Hair"
+
+
+def library_hair(sc: Any) -> dict[str, Any] | None:
+    """The clean-up step's hair_library metrics when it attached a hairstyle from the library and the rig step bound
+    it, else None: today's hair, and every branch below stays as it was."""
+    prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
+    hl = ((getattr(prep_v, "metrics", None) or {}).get("hair_library") or {})
+    if not hl.get("attached"):
+        return None
+    rig_v = sc.stage_version("rig") if hasattr(sc, "stage_version") else None
+    if rig_v is None or not ((getattr(rig_v, "metrics", None) or {}).get("hair_bind") or {}).get("ok"):
+        return None  # the hair never joined the skeleton: there is no hair object to hand off
+    return hl
+
+
 def hair_inputs(sc: Any, keep_normal: bool = True) -> dict[str, Path]:
     """The hair's own maps and layout from the clean-up step, copied in, when it gave the hair its own material
-    (metrics hair_material.use); {} otherwise. Keys: HAIR_KEYS that exist, plus hair_layout."""
+    (metrics hair_material.use); {} otherwise. Keys: HAIR_KEYS that exist, plus hair_layout. With hair from the
+    library: the same HAIR_KEYS and hair_mesh (the canonical npz) instead of the layout."""
     prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
+    if library_hair(sc) is not None:
+        npz = sc.lineage_file("hair_mesh", ("prep",))
+        base = sc.lineage_file("hair_base_color", ("prep",))
+        if npz is None or base is None:
+            return {}
+        out_l: dict[str, Path] = {"hair_mesh": sc.copy_in(npz, "hair_mesh.npz")}
+        for key in HAIR_KEYS:
+            if key == "hair_normal" and not keep_normal:
+                continue
+            p = sc.lineage_file(key, ("prep",))
+            if p is not None:
+                out_l[key] = sc.copy_in(p, f"{key}.png")
+        return out_l
     hm = ((getattr(prep_v, "metrics", None) or {}).get("hair_material") or {})
     if not hm.get("use"):
         return {}
@@ -659,20 +735,31 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     stale = sc.dir / "sockets.json"
     if stale.is_file():
         stale.unlink()
+    lib_hair = library_hair(sc) if hair_in.get("hair_mesh") else None
+    hair_arg = None
+    if hair_in:
+        hair_arg = {"layout": hair_in.get("hair_layout"), "base_color": hair_in.get("hair_base_color"),
+                    "normal": hair_in.get("hair_normal"), "orm": hair_packs.get("hair_orm")}
+        if lib_hair is not None:
+            hair_arg.update(library=lib_hair, mesh=hair_in.get("hair_mesh"))
     args = pack_args(src, sc.dir, name, lods, pack_mode, formats, look, col_plan.get("obj") if pack_mode == "parts" else None,
-                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat,
-                     {"layout": hair_in.get("hair_layout"), "base_color": hair_in.get("hair_base_color"),
-                      "normal": hair_in.get("hair_normal"), "orm": hair_packs.get("hair_orm")} if hair_in else None)
+                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat, hair_arg)
     await sc.blender("pack.py", args, log_name="pack.log")
     report = json.loads((sc.dir / "report.json").read_text())
     hr = report.get("hair_material") or None
     if hair_in:
         glbs = [sc.dir / f"{name}.glb", sc.dir / f"{name}_godot.glb"] + [Path(p) for p in (report.get("glb_lods") or {}).values()]
         aniso = hair_glb_finish(glbs, hair_in.get("hair_flow"), sc.dir) if hr and hr.get("ok") else []
-        sc.set_metrics(hair_material={"planned": True, "ok": bool(hr and hr.get("ok")), "faces": (hr or {}).get("faces"),
-                                      "lod_triangles": (hr or {}).get("lod_triangles"), "slots": (hr or {}).get("slots"),
-                                      "anisotropy_glbs": aniso, "draws_added": hairmat.DRAWS_ADDED,
-                                      "error": None if hr and hr.get("ok") else ((hr or {}).get("reason") or "pack.py did not split the hair")})
+        block = {"planned": True, "ok": bool(hr and hr.get("ok")), "faces": (hr or {}).get("faces"),
+                 "lod_triangles": (hr or {}).get("lod_triangles"), "slots": (hr or {}).get("slots"),
+                 "anisotropy_glbs": aniso, "draws_added": hairmat.DRAWS_ADDED,
+                 "error": None if hr and hr.get("ok") else ((hr or {}).get("reason") or "pack.py did not split the hair")}
+        if lib_hair is not None:
+            block.update(source="library", alpha=lib_hair.get("alpha") or "opaque", two_sided=bool(lib_hair.get("two_sided")),
+                         kind=lib_hair.get("kind"), cap_faces=(hr or {}).get("cap_faces"), lods_body=report.get("lods_body"))
+            if not hr:
+                block["error"] = "pack.py did not find the hair object"
+        sc.set_metrics(hair_material=block)
     else:
         sc.set_metrics(hair_material=None)
     sc.register("pack_report", sc.dir / "report.json")
@@ -749,8 +836,15 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     sj = Path(sc.dir) / "sockets.json"
     if sj.is_file():
         args["-vgacSockets"] = sj
-    if (Path(sc.dir) / "hair_base_color.png").is_file() and (sc.version.metrics.get("hair_material") or {}).get("ok"):
+    hm = (sc.version.metrics.get("hair_material") or {}) if (Path(sc.dir) / "hair_base_color.png").is_file() else {}
+    if hm.get("ok"):
         args["-vgacHair"] = "on"  # the second material from the hair's own textures (VgacImport.cs Version 13)
+        if hm.get("source") == "library":
+            # hair from the library: cut out and two-sided on VGAC/HairCutout (Version 17)
+            if hm.get("alpha") == "cutout":
+                args["-vgacHairCutout"] = "on"
+            if hm.get("two_sided"):
+                args["-vgacHairTwoSided"] = "on"
     spj = Path(sc.dir) / "springs.json"
     if spj.is_file() and sc.version.files.get("springs"):
         args["-vgacSprings"] = spj  # spring bones: the importer adds VgacSpringBones to the prefab (Version 15)
@@ -799,7 +893,9 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "springChains": report.get("springChains"), "springBones": report.get("springBones"),
             "springWarning": report.get("springWarning"),
             "clipFacing": report.get("clipFacing"), "facingMeasured": report.get("facingMeasured"),
-            "bindFacing": report.get("bindFacing")}
+            "bindFacing": report.get("bindFacing"),
+            # Version 17, only when the hair is cut out or two-sided (hair from the library)
+            **{k: report[k] for k in ("hairCutout", "hairTwoSided") if report.get(k)}}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -946,6 +1042,8 @@ def _hair_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dic
     prep_m = (getattr(sc.stage_version("prep"), "metrics", None) or {}).get("hair_material") or {}
     files = {k: Path(p).name for k in HAIR_KEYS + HAIR_PACK_KEYS if (p := sc.file(k)) is not None}
     u = unity_report or {}
+    if m.get("source") == "library":
+        return _library_hair_manifest(sc, m, files, u)
     return {"materials": m.get("slots"), "texture_size": prep_m.get("tex"), "texels_per_cm": prep_m.get("texels_per_cm"),
             "texels_per_cm_in_body_texture": prep_m.get("texels_per_cm_body_texture"), "triangles": m.get("faces"),
             "lod_triangles": m.get("lod_triangles"), "draw_calls_added": m.get("draws_added"), "files": files,
@@ -954,6 +1052,48 @@ def _hair_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dic
             "unity": {"material": u.get("hairMaterial"), "shader": u.get("hairShader")} if u else None,
             "readme": "README.txt", "unreal": "by hand: Shading Model Hair (README.txt); not verified",
             "godot": "by hand: Anisotropy on, Flowmap set to the flow map (README.txt); not verified"}
+
+
+def hair_credit(hl: dict[str, Any] | None) -> dict[str, Any]:
+    """The hairstyle's credit from the clean-up step's hair_library metrics: {id, name, author, licence, source_url}."""
+    c = (hl or {}).get("credit") or {}
+    return {k: c.get(k) for k in ("id", "name", "author", "licence", "source_url")}
+
+
+def _library_hair_manifest(sc: Any, m: dict[str, Any], files: dict[str, str], u: dict[str, Any]) -> dict[str, Any]:
+    """The manifest's hair_material block for hair from the library."""
+    hl = (getattr(sc.stage_version("prep"), "metrics", None) or {}).get("hair_library") or {}
+    rig_v = sc.stage_version("rig")
+    sp = (getattr(rig_v, "metrics", None) or {}).get("springs") or {}
+    return {"source": "library", "style": hair_credit(hl), "materials": m.get("slots"), "kind": hl.get("kind"),
+            "alpha": m.get("alpha"), "two_sided": m.get("two_sided"), "texture_size": hl.get("tex"),
+            "triangles": m.get("faces"), "cap_triangles": hl.get("cap_triangles") or m.get("cap_faces"), "lod_triangles": m.get("lod_triangles"),
+            "lod_triangles_body": m.get("lods_body"), "draw_calls_added": m.get("draws_added"), "files": files,
+            "flow_map": files.get("hair_flow"),
+            "hanging_groups": [c.get("name") for c in sp.get("chains") or [] if c.get("library")],
+            "glb_anisotropy": {"extension": "KHR_materials_anisotropy", "files": m.get("anisotropy_glbs"),
+                               "strength": hairmat.ANISOTROPY_STRENGTH},
+            "unity": {"material": u.get("hairMaterial"), "shader": u.get("hairShader"), "cutout": u.get("hairCutout"),
+                      "two_sided": u.get("hairTwoSided")} if u else None,
+            "readme": "README.txt",
+            "unreal": "by hand: Shading Model Hair, Blend Mode Masked for cut-out hair (README.txt); not verified",
+            "godot": "by hand: Transparency Alpha Scissor for cut-out hair (README.txt); not verified"}
+
+
+def library_readme_lines(hl: dict[str, Any] | None, m: dict[str, Any]) -> list[str]:
+    """README.txt lines for hair from the library: the credit and how cut-out hair is set up by hand elsewhere."""
+    c = hair_credit(hl)
+    where = f", from {c['source_url']}" if c.get("source_url") else ""
+    lines = ["Hair from the library (ready-made hairstyles)",
+             f"Hairstyle: {c.get('name') or c.get('id') or 'unknown'} by {c.get('author') or 'unknown'}, "
+             f"licence {c.get('licence') or 'unknown'}{where}."]
+    if m.get("alpha") == "cutout":
+        lines.append("The hair is made of hair cards (flat strips with a see-through texture). Its material uses alpha cutout "
+                     "(pixels under half opacity are not drawn): in Unity the importer puts it on VGAC/HairCutout; in Unreal "
+                     "set Blend Mode to Masked; in Godot set Transparency to Alpha Scissor. Not tried in Unreal or Godot here.")
+    if m.get("two_sided"):
+        lines.append("The hair is drawn from both sides (two-sided).")
+    return lines + [""]
 
 
 def _read_json(p: Path | str | None) -> dict[str, Any]:
@@ -1230,8 +1370,10 @@ def hair_shipped_checks(m: dict[str, Any], glb: Path | str | None) -> list[dict[
     elif u.get("ok") and not u.get("hairMaterial"):
         problem = "Unity did not build the hair material"
     ok = hm.get("ok") and n >= 2 and not problem
-    return [quality.check("hair_material_shipped", bool(ok), n, 2,
-                          vars={"slots": ", ".join(hm.get("slots") or []), "shader": u.get("hairShader") or "", "problem": problem})]
+    vars_ = {"slots": ", ".join(hm.get("slots") or []), "shader": u.get("hairShader") or "", "problem": problem}
+    if hm.get("source"):
+        vars_["source"] = hm["source"]
+    return [quality.check("hair_material_shipped", bool(ok), n, 2, vars=vars_)]
 
 
 def glb_node_names(glb: Path | str | None) -> list[str]:
@@ -1291,7 +1433,11 @@ async def judge(sc: StageContext) -> None:
         tri_limit, tri_vars = int(prep_m["triangle_limit"]), {**look_vars(rec, sc.budget), "recipe": True}
     tex_limit, tex_vars = texture_target(rec, sc.budget) if rec is not None else (sc.budget["texture"], None)
     checks += with_vars(quality.geometry_checks(report, tri_limit), tri_vars, "triangle_budget")
-    checks += quality.lod_checks(report, sc.version.params.get("lods"))
+    if report.get("lods_body"):
+        # hair from the library: the LOD ratios are measured on the body (hair cards keep their count at LOD1)
+        checks += quality.lod_checks({**report, "lods": report["lods_body"]}, sc.version.params.get("lods"))
+    else:
+        checks += quality.lod_checks(report, sc.version.params.get("lods"))
     checks += collider_checks(report, _read_json(sc.file("colliders")), sc.asset.category, sc.version.params.get("collider"))
     checks += with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                         tex_vars, "_budget")
@@ -1364,8 +1510,14 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     hm_block = _hair_manifest(sc, unity_report)
     readme = sc.dir / "README.txt"
     spring_lines = springs_mod.readme_lines(name, springs_mod.read_doc(sc.file("springs")))
+    if hm_block and hm_block.get("source") == "library":
+        hl = (getattr(sc.stage_version("prep"), "metrics", None) or {}).get("hair_library") or {}
+        spring_lines = library_readme_lines(hl, sc.version.metrics.get("hair_material") or {}) + spring_lines
     if hm_block or spring_lines:
         text = hair_readme(name, {"tex": hm_block.get("texture_size")}, hm_block["files"]) if hm_block else f"{name}\n\n"
+        if hm_block and hm_block.get("source") == "library" and (hm_block.get("alpha") == "cutout" or hm_block.get("two_sided")):
+            text = text.replace("the VGAC/Hair shader with a stretched highlight", "the VGAC/HairCutout shader, cut out and drawn from both "
+                                "sides as the hairstyle needs, with a stretched highlight")
         readme.write_text(text + ("\n" if hm_block and spring_lines else "") + "\n".join(spring_lines), encoding="utf-8")
         sc.register("readme", readme)
     elif readme.is_file():
@@ -1438,6 +1590,10 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
         if script_src is not None and (sc.version.metrics.get("hair_material") or {}).get("ok"):
             # the hair shader travels with the importer (Assets/VgacShaders/VgacHair.shader), when the hair needs it
             importer["hair_shader"] = sync_shader(Path(sc.settings.unity_project) / SHADER_REL, proj / SHADER_REL)
+            if (sc.version.metrics.get("hair_material") or {}).get("source") == "library":
+                # cut-out and two-sided library hair needs VGAC/HairCutout (Assets/VgacShaders/VgacHairCutout.shader)
+                importer["hair_cutout_shader"] = sync_cutout_shader(Path(sc.settings.unity_project) / CUTOUT_SHADER_REL,
+                                                                    proj / CUTOUT_SHADER_REL)
         if script_src is not None and sc.version.files.get("springs"):
             # the spring script travels with the importer (Assets/VgacScripts/VgacSpringBones.cs), when there are chains
             importer["spring_script"] = sync_spring_script(Path(sc.settings.unity_project) / SPRING_SCRIPT_REL, proj / SPRING_SCRIPT_REL)

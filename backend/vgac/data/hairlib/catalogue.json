@@ -1,0 +1,3234 @@
+{
+ "styles": {
+  "q_buns": {
+   "id": "q_buns",
+   "name": "Buns",
+   "pack": "Universal Base Characters (Standard)",
+   "source_url": "https://quaternius.com",
+   "author": "Quaternius",
+   "licence": "CC0-1.0",
+   "licence_line": "CC0 1.0 Universal (CC0 1.0)",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\quaternius_ubc\\unpacked\\Universal Base Characters[Standard]\\Hairstyles\\Origin at 0\\glTF (Godot)\\Hair_Buns.gltf",
+   "family": "bun",
+   "fringe": false,
+   "curly": false,
+   "parting": "centre",
+   "length_rel_head": 1.07,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 3284,
+   "source_triangles": 3284,
+   "vertices": 3502,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.92018,
+       -0.3662,
+       -0.44791
+      ],
+      [
+       0.90305,
+       -0.36319,
+       -0.53687
+      ],
+      [
+       0.89813,
+       -0.36731,
+       -0.73884
+      ],
+      [
+       0.91367,
+       -0.4043,
+       -0.9444
+      ],
+      [
+       0.95324,
+       -0.45504,
+       -1.11501
+      ],
+      [
+       0.98603,
+       -0.43405,
+       -1.29149
+      ],
+      [
+       0.98246,
+       -0.37982,
+       -1.41621
+      ]
+     ],
+     "length_q": 1.0013
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.92018,
+       -0.3662,
+       -0.44791
+      ],
+      [
+       -0.90305,
+       -0.36319,
+       -0.53687
+      ],
+      [
+       -0.89813,
+       -0.36731,
+       -0.73884
+      ],
+      [
+       -0.91367,
+       -0.4043,
+       -0.9444
+      ],
+      [
+       -0.95324,
+       -0.45504,
+       -1.11501
+      ],
+      [
+       -0.98603,
+       -0.43405,
+       -1.29149
+      ],
+      [
+       -0.98246,
+       -0.37982,
+       -1.41621
+      ]
+     ],
+     "length_q": 1.0013
+    }
+   ],
+   "textures": {
+    "grey": "tex/f51cce4f_grey.png",
+    "normal": "tex/efe30c6d_normal.png",
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/q_buns_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/q_buns_front.png",
+    "quarter": "thumbs/q_buns_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "two buns, painted shell",
+   "sha256": {
+    "npz": "26c93ee385a7b8903443b9f61594b09314ceda6adf0ece312623dfd2d2ed3e23",
+    "lite": "30f84dd6621a2e23ae2146254f69cef057f1ca7bf5f347dc7aae3f83a545bef6",
+    "thumb_front": "962742004f5f260b1eb7004c6fe00964b4be100b709ddc1a316a216386376ccb",
+    "thumb_quarter": "dbd02ddfd6c61a102ce84e335ec63cdf612ef7da4053a8b286017c4564c1be0c",
+    "grey": "b8b8aba844170f645e13278de52baace476b39b76c334caa52ca0db9235c05ec",
+    "normal": "14eccca3e06f8860f183b4281afdca9fb3fbdd7c88cc996d1841a81adc188ad8"
+   }
+  },
+  "q_buzzed": {
+   "id": "q_buzzed",
+   "name": "Buzzed",
+   "pack": "Universal Base Characters (Standard)",
+   "source_url": "https://quaternius.com",
+   "author": "Quaternius",
+   "licence": "CC0-1.0",
+   "licence_line": "CC0 1.0 Universal (CC0 1.0)",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\quaternius_ubc\\unpacked\\Universal Base Characters[Standard]\\Hairstyles\\Origin at 0\\glTF (Godot)\\Hair_Buzzed.gltf",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 0.87,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 830,
+   "source_triangles": 830,
+   "vertices": 466,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/07e351d4_grey.png",
+    "normal": "tex/cedd9654_normal.png",
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/q_buzzed_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/q_buzzed_front.png",
+    "quarter": "thumbs/q_buzzed_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "close crop",
+   "sha256": {
+    "npz": "2d7d0a4da9455e2e24c661496a3f302875b52a443e020cbaa0c282c74691e18c",
+    "lite": "816006ca1ca4e4fae7c81a1baeefdeb80de7768ae2e7bc5877461815dbbfa4e8",
+    "thumb_front": "2a7aee2429d59e0d684f4f2693e6d16a784b57f7bff142c08eff6861ceeea00e",
+    "thumb_quarter": "384f159f701050f2b541bf14db916f74b33cae009fe52e8acebc22ce21eae321",
+    "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
+    "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
+   }
+  },
+  "q_buzzed_female": {
+   "id": "q_buzzed_female",
+   "name": "Buzzed female",
+   "pack": "Universal Base Characters (Standard)",
+   "source_url": "https://quaternius.com",
+   "author": "Quaternius",
+   "licence": "CC0-1.0",
+   "licence_line": "CC0 1.0 Universal (CC0 1.0)",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\quaternius_ubc\\unpacked\\Universal Base Characters[Standard]\\Hairstyles\\Origin at 0\\glTF (Godot)\\Hair_BuzzedFemale.gltf",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 0.75,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 830,
+   "source_triangles": 830,
+   "vertices": 466,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/07e351d4_grey.png",
+    "normal": "tex/cedd9654_normal.png",
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/q_buzzed_female_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/q_buzzed_female_front.png",
+    "quarter": "thumbs/q_buzzed_female_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "close crop, round two's pick for the man",
+   "sha256": {
+    "npz": "084f4a52d0b84360c446227dd24010e6017d95e171a63ed3c7cfa29972583d5a",
+    "lite": "8bc96b63239d21c564520896fe1d7640f7e389efa227c491bb0461bcfce6b213",
+    "thumb_front": "9a1d6e52f4ed79b5dd17e9b8dfd2b281cb2e78b95d0f2f9e8f2a6c61ee790ff0",
+    "thumb_quarter": "9f1782ae8b6ab39905040880ae3091513c5f2af9b6a8c22b6f7c291cd60b5bf3",
+    "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
+    "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
+   }
+  },
+  "q_long": {
+   "id": "q_long",
+   "name": "Long",
+   "pack": "Universal Base Characters (Standard)",
+   "source_url": "https://quaternius.com",
+   "author": "Quaternius",
+   "licence": "CC0-1.0",
+   "licence_line": "CC0 1.0 Universal (CC0 1.0)",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\quaternius_ubc\\unpacked\\Universal Base Characters[Standard]\\Hairstyles\\Origin at 0\\glTF (Godot)\\Hair_Long.gltf",
+   "family": "long",
+   "fringe": false,
+   "curly": false,
+   "parting": "centre",
+   "length_rel_head": 1.2,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 2906,
+   "source_triangles": 2906,
+   "vertices": 3080,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.0,
+       1.27149,
+       -0.50988
+      ],
+      [
+       0.0,
+       1.26563,
+       -0.69023
+      ],
+      [
+       0.0,
+       1.29297,
+       -0.8938
+      ],
+      [
+       0.0,
+       1.31472,
+       -1.14635
+      ],
+      [
+       0.0,
+       1.28761,
+       -1.35928
+      ],
+      [
+       0.0,
+       1.12165,
+       -1.63008
+      ],
+      [
+       0.0,
+       1.06655,
+       -1.69401
+      ]
+     ],
+     "length_q": 1.256
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.0028,
+       0.48715,
+       -0.47019
+      ],
+      [
+       1.00909,
+       0.42339,
+       -0.60126
+      ],
+      [
+       1.03819,
+       0.44037,
+       -0.83723
+      ],
+      [
+       1.10754,
+       0.56201,
+       -1.04561
+      ],
+      [
+       1.18124,
+       0.63583,
+       -1.3375
+      ],
+      [
+       1.09458,
+       0.54462,
+       -1.53615
+      ],
+      [
+       1.04552,
+       0.49812,
+       -1.61525
+      ]
+     ],
+     "length_q": 1.2845
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -1.0028,
+       0.48715,
+       -0.47019
+      ],
+      [
+       -1.00509,
+       0.42368,
+       -0.59859
+      ],
+      [
+       -1.03513,
+       0.44089,
+       -0.83852
+      ],
+      [
+       -1.10754,
+       0.56201,
+       -1.04561
+      ],
+      [
+       -1.18124,
+       0.63583,
+       -1.3375
+      ],
+      [
+       -1.09458,
+       0.54462,
+       -1.53615
+      ],
+      [
+       -1.04552,
+       0.49812,
+       -1.61525
+      ]
+     ],
+     "length_q": 1.2854
+    }
+   ],
+   "textures": {
+    "grey": "tex/f51cce4f_grey.png",
+    "normal": "tex/efe30c6d_normal.png",
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/q_long_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/q_long_front.png",
+    "quarter": "thumbs/q_long_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "shoulder length, layered",
+   "sha256": {
+    "npz": "8cc010f619fd5b8ceec22ec825cd243b322ade8b3430ce413ac403ddc803fbb0",
+    "lite": "80c01ef591fb0095b5b02be1d2a392e0e4f11e9e840390386a0abd8dc1e16a35",
+    "thumb_front": "e1b2878de8513360d8830497225134cfddc2cd8a5be22c7a61142a9c8266b042",
+    "thumb_quarter": "56922637209a64e3dd824c3aa09d4fdc74d2428d3d44ba8358e486571499ffd8",
+    "grey": "b8b8aba844170f645e13278de52baace476b39b76c334caa52ca0db9235c05ec",
+    "normal": "14eccca3e06f8860f183b4281afdca9fb3fbdd7c88cc996d1841a81adc188ad8"
+   }
+  },
+  "q_simple_parted": {
+   "id": "q_simple_parted",
+   "name": "Simple parted",
+   "pack": "Universal Base Characters (Standard)",
+   "source_url": "https://quaternius.com",
+   "author": "Quaternius",
+   "licence": "CC0-1.0",
+   "licence_line": "CC0 1.0 Universal (CC0 1.0)",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\quaternius_ubc\\unpacked\\Universal Base Characters[Standard]\\Hairstyles\\Origin at 0\\glTF (Godot)\\Hair_SimpleParted.gltf",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 0.78,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 1301,
+   "source_triangles": 1301,
+   "vertices": 757,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/07e351d4_grey.png",
+    "normal": "tex/cedd9654_normal.png",
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/q_simple_parted_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/q_simple_parted_front.png",
+    "quarter": "thumbs/q_simple_parted_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "short men's cut with some volume on top",
+   "sha256": {
+    "npz": "4e01c5dc186f274e754791004428599e840abfe8fc0a4cad1ac5c7dd9f04f793",
+    "lite": "a9bb6972a88202e9351ad5c9a013627dc0c18beaa2a4f5fced8508d3a0d8f975",
+    "thumb_front": "4013d77c5c8463537dbae39302661b99136a4db38fb3bb72c51961244f2476a3",
+    "thumb_quarter": "40b0a1bd77a0f096202ca0ba674c64cbd11f4e59cea83dcba9db6ab473feff71",
+    "grey": "51a716ef613f5ce365dae53df9c124a91dbc3b964fa5c8952dfbc550217a9fb6",
+    "normal": "784d97d5f0518b353e1789d187bab06f5bcdc048c44f11705ef13a679d1fb24e"
+   }
+  },
+  "mh_cortu_short_messy": {
+   "id": "mh_cortu_short_messy",
+   "name": "Cortu short messy",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "Cortu",
+   "licence": "CC0-1.0",
+   "licence_line": "# Cortu Johnstone - CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\cortu_short_messy_hair\\short_messy.obj",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 0.96,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 1092,
+   "source_triangles": 1092,
+   "vertices": 832,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/c26bfa39_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_cortu_short_messy_front.png",
+    "quarter": "thumbs/mh_cortu_short_messy_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "1683a844c8403582f7629c14832eb725b132cf582bfe5acf53d4aca274d4561d",
+    "thumb_front": "40192a1548b488ad1f49d02bebd2218e500a319cf54a022098170db493558e44",
+    "thumb_quarter": "56f6083e0c4b61c4e1d0b7544d0a8c267df1576eca8f93e3f0a11755f836271d",
+    "grey": "4782bd9a17c440d459f63c5ad8c1a0fa3b87f87c68e91fd029fcd693fe3f7c07"
+   }
+  },
+  "mh_cortu_straight_bangs": {
+   "id": "mh_cortu_straight_bangs",
+   "name": "Cortu straight bangs",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "Cortu",
+   "licence": "CC0-1.0",
+   "licence_line": "# Cortu Johnstone - CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\cortu_straight_bangs\\straight_bangs.obj",
+   "family": "bob",
+   "fringe": true,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.31,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 1128,
+   "source_triangles": 1128,
+   "vertices": 848,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.9425,
+       -0.03119,
+       -0.49365
+      ],
+      [
+       0.9425,
+       -0.03119,
+       -0.49365
+      ],
+      [
+       0.88514,
+       0.20673,
+       -1.21832
+      ],
+      [
+       0.85922,
+       0.04577,
+       -1.24785
+      ],
+      [
+       0.76008,
+       -0.05773,
+       -1.57948
+      ],
+      [
+       0.68249,
+       0.13896,
+       -2.20322
+      ],
+      [
+       0.67058,
+       0.05007,
+       -2.25133
+      ]
+     ],
+     "length_q": 2.0522
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.9425,
+       -0.03052,
+       -0.49896
+      ],
+      [
+       -0.9425,
+       -0.03052,
+       -0.49896
+      ],
+      [
+       -0.88516,
+       0.20694,
+       -1.22001
+      ],
+      [
+       -0.85923,
+       0.04644,
+       -1.25316
+      ],
+      [
+       -0.76008,
+       -0.05632,
+       -1.59064
+      ],
+      [
+       -0.68249,
+       0.13963,
+       -2.20854
+      ],
+      [
+       -0.67058,
+       0.05085,
+       -2.25753
+      ]
+     ],
+     "length_q": 2.0486
+    }
+   ],
+   "textures": {
+    "grey": "tex/32db2913_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_cortu_straight_bangs_front.png",
+    "quarter": "thumbs/mh_cortu_straight_bangs_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "straight with a full fringe, about shoulder length",
+   "sha256": {
+    "npz": "a17e55c49f9421da09516b8293e4def65bed2a72f928153b1de6545eeea66c91",
+    "thumb_front": "48806993ab5c7d11896d37b3042fcba33ba37b85986c387d68522b83f7c9486e",
+    "thumb_quarter": "ca3e221629570d0493007127a016687e552dd0d6e8b09f64a2c7bdb0fcf67a9b",
+    "grey": "926e5df272ef2e0bb2233a030ad89c5cbcc0b1b059f7f92347ea503aad7c6d12"
+   }
+  },
+  "mh_cortu_shaggy": {
+   "id": "mh_cortu_shaggy",
+   "name": "Cortu shaggy",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "Cortu",
+   "licence": "CC0-1.0",
+   "licence_line": "# Cortu Johnstone - CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\cortu_shaggy_green_hair\\shaggy_green.obj",
+   "family": "long",
+   "fringe": true,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.63,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 1284,
+   "source_triangles": 1284,
+   "vertices": 968,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.75016,
+       -0.46351,
+       -0.5604
+      ],
+      [
+       0.7826,
+       -0.27919,
+       -0.88642
+      ],
+      [
+       0.89157,
+       -0.00869,
+       -1.32066
+      ],
+      [
+       1.01328,
+       0.11688,
+       -1.65869
+      ],
+      [
+       1.08246,
+       0.04057,
+       -2.18638
+      ],
+      [
+       1.07776,
+       -0.09268,
+       -2.58731
+      ],
+      [
+       1.14038,
+       -0.19335,
+       -2.91183
+      ]
+     ],
+     "length_q": 2.5852
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.69797,
+       -0.53943,
+       -0.59592
+      ],
+      [
+       -0.8088,
+       -0.34673,
+       -0.85344
+      ],
+      [
+       -0.98029,
+       0.07424,
+       -1.30047
+      ],
+      [
+       -1.07917,
+       0.2423,
+       -1.69064
+      ],
+      [
+       -1.08246,
+       0.04057,
+       -2.18638
+      ],
+      [
+       -1.07776,
+       -0.09268,
+       -2.58731
+      ],
+      [
+       -1.14038,
+       -0.19335,
+       -2.91183
+      ]
+     ],
+     "length_q": 2.7172
+    }
+   ],
+   "textures": {
+    "grey": "tex/4305693e_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_cortu_shaggy_front.png",
+    "quarter": "thumbs/mh_cortu_shaggy_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "03f10ed17c9822bbab1c9230f1948619bd8d18a31f8b3a34b2c758b431034328",
+    "thumb_front": "838eeb10461f06fe9badf64aa08220d391272ae14ff5abc5f008c270dc427de1",
+    "thumb_quarter": "88b5b862d6dd7fff8055c600df76b8a24538230be1af4b627abbb3e5b78d092c",
+    "grey": "84c2dfaf874ddd73f3fe21a9947a71970102867ad159cf02bcdb73360762d168"
+   }
+  },
+  "mh_cortu_strawberry": {
+   "id": "mh_cortu_strawberry",
+   "name": "Cortu strawberry",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "Cortu",
+   "licence": "CC0-1.0",
+   "licence_line": "# Cortu Johnstone - CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\cortu_strawberry_cloud_hair\\strawberry_cloud.obj",
+   "family": "long",
+   "fringe": false,
+   "curly": true,
+   "parting": "left",
+   "length_rel_head": 1.44,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 576,
+   "source_triangles": 576,
+   "vertices": 479,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.07825,
+       0.97602,
+       -0.50977
+      ],
+      [
+       0.13061,
+       1.01127,
+       -0.67507
+      ],
+      [
+       0.15997,
+       1.08491,
+       -1.02758
+      ],
+      [
+       0.07434,
+       1.05047,
+       -1.32245
+      ],
+      [
+       0.11276,
+       1.0501,
+       -1.62808
+      ],
+      [
+       0.14354,
+       1.12969,
+       -1.93588
+      ],
+      [
+       0.07387,
+       1.15189,
+       -2.10884
+      ]
+     ],
+     "length_q": 1.6625
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.01546,
+       0.0316,
+       -0.52735
+      ],
+      [
+       1.05245,
+       0.14837,
+       -0.75109
+      ],
+      [
+       1.09137,
+       0.22944,
+       -1.1171
+      ],
+      [
+       1.1168,
+       0.19654,
+       -1.47754
+      ],
+      [
+       1.12253,
+       0.23767,
+       -1.87054
+      ],
+      [
+       1.13848,
+       0.23569,
+       -2.20787
+      ],
+      [
+       1.17803,
+       0.11862,
+       -2.40032
+      ]
+     ],
+     "length_q": 1.9564
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.8889,
+       0.1213,
+       -0.52823
+      ],
+      [
+       -0.90944,
+       0.15644,
+       -0.73211
+      ],
+      [
+       -0.93518,
+       0.17287,
+       -1.09303
+      ],
+      [
+       -0.9161,
+       0.18566,
+       -1.47035
+      ],
+      [
+       -0.94737,
+       0.25282,
+       -1.90153
+      ],
+      [
+       -0.99112,
+       0.22879,
+       -2.23227
+      ],
+      [
+       -0.96757,
+       0.14919,
+       -2.45694
+      ]
+     ],
+     "length_q": 1.9596
+    }
+   ],
+   "textures": {
+    "grey": "tex/661bcbf3_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_cortu_strawberry_front.png",
+    "quarter": "thumbs/mh_cortu_strawberry_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "curly",
+   "sha256": {
+    "npz": "e80ada39df4491a625c154728f19373299e0dd018114b0f72027903c16093698",
+    "thumb_front": "15de15faa1afae83dfa96c47929d4873e4d34f24ae7610476ed0bab6064272ef",
+    "thumb_quarter": "3d2a6291e1b2393a2b295d1c78013278c4b927a59fc71d7589e19c378a89f706",
+    "grey": "8089f1caf0f15d0c885f9b739538b7ab41dfb5f3238292909f21ebd7536374e8"
+   }
+  },
+  "mh_faydaen_1": {
+   "id": "mh_faydaen_1",
+   "name": "Faydaen 1",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "Faydaen",
+   "licence": "CC0-1.0",
+   "licence_line": "# license: CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\faydaen_hair_1\\hair1.obj",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 0.97,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 836,
+   "source_triangles": 836,
+   "vertices": 541,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/447db481_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/mh_faydaen_1_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_faydaen_1_front.png",
+    "quarter": "thumbs/mh_faydaen_1_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "spiky short",
+   "sha256": {
+    "npz": "178e4c9a22d36988b1c2c693be3c0493de3f4adca39a7bfe1e307ca0fd682392",
+    "lite": "bf57bf54e3388033675a34f7a554ede41f70417d685df99a4da122ff66388ce5",
+    "thumb_front": "35db8d08f13c7a6e4d2ad0694119eddca932c25260e965de175a64e7b63d12bf",
+    "thumb_quarter": "873a7d1d4a176fcecd13b911b50a49ab040a7b7c771534469e43b5a35eb9dcc7",
+    "grey": "c0c41735554c1308dd737757fe98480639415425aecc73f4958072d4901db39d"
+   }
+  },
+  "mh_toigo_blunt_bob": {
+   "id": "mh_toigo_blunt_bob",
+   "name": "Toigo blunt bob",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_blunt_bob\\bob_blunt.obj",
+   "family": "bob",
+   "fringe": false,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 1.27,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 2858,
+   "source_triangles": 2858,
+   "vertices": 1510,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.01593,
+       0.99315,
+       -0.48064
+      ],
+      [
+       -0.07265,
+       0.98246,
+       -0.57672
+      ],
+      [
+       -0.09255,
+       1.00142,
+       -0.84002
+      ],
+      [
+       -0.04322,
+       1.03647,
+       -1.06017
+      ],
+      [
+       -0.06732,
+       1.02509,
+       -1.31418
+      ],
+      [
+       -0.06716,
+       0.97702,
+       -1.55781
+      ],
+      [
+       -0.04519,
+       0.95897,
+       -1.64958
+      ]
+     ],
+     "length_q": 1.2049
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.98824,
+       -0.0796,
+       -0.5084
+      ],
+      [
+       0.99623,
+       -0.0404,
+       -0.67088
+      ],
+      [
+       1.00466,
+       0.04462,
+       -0.97506
+      ],
+      [
+       0.9903,
+       0.12787,
+       -1.29371
+      ],
+      [
+       0.94388,
+       0.16508,
+       -1.59241
+      ],
+      [
+       0.89172,
+       0.07664,
+       -1.83826
+      ],
+      [
+       0.84614,
+       -0.13009,
+       -2.05189
+      ]
+     ],
+     "length_q": 1.6847
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.94829,
+       -0.21576,
+       -0.50572
+      ],
+      [
+       -0.97121,
+       -0.15994,
+       -0.66577
+      ],
+      [
+       -1.00726,
+       -0.05808,
+       -0.98136
+      ],
+      [
+       -1.01243,
+       0.02409,
+       -1.29826
+      ],
+      [
+       -0.97271,
+       0.0472,
+       -1.61272
+      ],
+      [
+       -0.92465,
+       -0.05777,
+       -1.85443
+      ],
+      [
+       -0.87949,
+       -0.27016,
+       -2.07222
+      ]
+     ],
+     "length_q": 1.7253
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_blunt_bob_front.png",
+    "quarter": "thumbs/mh_toigo_blunt_bob_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "6173098edc18d5b1a627e7ad822b38ea461f3d622125dc2f5ba1e0379f6405ee",
+    "thumb_front": "ea57e1adb988c86b4450af7961be07611950d0f1e5b761002feaf304e56bf371",
+    "thumb_quarter": "61360410aedf1c3988e7e6b54c0fbb744366fb462e42237429a823de12815ebb",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_toigo_blunt_bob_bangs": {
+   "id": "mh_toigo_blunt_bob_bangs",
+   "name": "Toigo blunt bob bangs",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_blunt_bob_with_bangs\\bob_blunt_bangs.obj",
+   "family": "bob",
+   "fringe": true,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.21,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 4500,
+   "source_triangles": 4976,
+   "vertices": 2425,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00021,
+       0.9841,
+       -0.46065
+      ],
+      [
+       -0.00016,
+       0.99196,
+       -0.585
+      ],
+      [
+       -0.00016,
+       1.01325,
+       -0.85523
+      ],
+      [
+       -0.00018,
+       1.03051,
+       -1.06882
+      ],
+      [
+       -0.00019,
+       1.02465,
+       -1.36208
+      ],
+      [
+       -0.0002,
+       0.97123,
+       -1.58965
+      ],
+      [
+       -0.0002,
+       0.93231,
+       -1.70464
+      ]
+     ],
+     "length_q": 1.2584
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.01662,
+       -0.21259,
+       -0.50783
+      ],
+      [
+       1.02633,
+       -0.19319,
+       -0.68287
+      ],
+      [
+       1.03798,
+       -0.15105,
+       -0.97524
+      ],
+      [
+       1.03374,
+       -0.07887,
+       -1.26589
+      ],
+      [
+       0.9817,
+       -0.02847,
+       -1.5671
+      ],
+      [
+       0.91415,
+       -0.16136,
+       -1.81278
+      ],
+      [
+       0.86462,
+       -0.42253,
+       -1.99671
+      ]
+     ],
+     "length_q": 1.6919
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.99592,
+       -0.18148,
+       -0.50647
+      ],
+      [
+       -1.00644,
+       -0.15686,
+       -0.68375
+      ],
+      [
+       -1.0083,
+       -0.12774,
+       -0.98032
+      ],
+      [
+       -0.99845,
+       -0.08087,
+       -1.27129
+      ],
+      [
+       -0.95761,
+       -0.03713,
+       -1.56373
+      ],
+      [
+       -0.89792,
+       -0.16119,
+       -1.80919
+      ],
+      [
+       -0.85026,
+       -0.41802,
+       -1.99613
+      ]
+     ],
+     "length_q": 1.6733
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_blunt_bob_bangs_front.png",
+    "quarter": "thumbs/mh_toigo_blunt_bob_bangs_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "11c002fb33cbbafc284f035c9b0359eb679cb46d0bf4cf68d70135c9087bc344",
+    "thumb_front": "05651f69704f8b4196d7b92b2a9c8c2e91cc03b2f8f4dbcba9de5b57924a64cd",
+    "thumb_quarter": "909d237ce0f6c5d94cc05a177e90661e232c68c11f7bd81f25a2ec5068427b3b",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_toigo_curled_bob": {
+   "id": "mh_toigo_curled_bob",
+   "name": "Toigo curled bob",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_curled_under_bob\\bob_curled_under.obj",
+   "family": "bob",
+   "fringe": false,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 1.16,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 2852,
+   "source_triangles": 2852,
+   "vertices": 1507,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00282,
+       1.01603,
+       -0.47858
+      ],
+      [
+       -0.00286,
+       1.02049,
+       -0.57787
+      ],
+      [
+       -0.00286,
+       1.05713,
+       -0.73104
+      ],
+      [
+       -0.00287,
+       1.10239,
+       -0.92724
+      ],
+      [
+       -0.003,
+       1.0938,
+       -1.06942
+      ],
+      [
+       -0.00329,
+       0.96212,
+       -1.27844
+      ],
+      [
+       -0.00338,
+       0.91028,
+       -1.32572
+      ]
+     ],
+     "length_q": 0.9179
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.93111,
+       -0.13219,
+       -0.50025
+      ],
+      [
+       0.93813,
+       -0.05298,
+       -0.65888
+      ],
+      [
+       0.95017,
+       0.01167,
+       -0.90762
+      ],
+      [
+       0.92095,
+       0.06444,
+       -1.17961
+      ],
+      [
+       0.84715,
+       0.07964,
+       -1.40708
+      ],
+      [
+       0.69951,
+       -0.08251,
+       -1.67833
+      ],
+      [
+       0.58288,
+       -0.24851,
+       -1.85283
+      ]
+     ],
+     "length_q": 1.5694
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.93095,
+       -0.11658,
+       -0.50192
+      ],
+      [
+       -0.93614,
+       -0.04285,
+       -0.65991
+      ],
+      [
+       -0.94468,
+       0.00583,
+       -0.9134
+      ],
+      [
+       -0.91809,
+       0.05582,
+       -1.17981
+      ],
+      [
+       -0.84852,
+       0.07863,
+       -1.40952
+      ],
+      [
+       -0.7054,
+       -0.08685,
+       -1.67648
+      ],
+      [
+       -0.5925,
+       -0.25485,
+       -1.84807
+      ]
+     ],
+     "length_q": 1.5567
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_curled_bob_front.png",
+    "quarter": "thumbs/mh_toigo_curled_bob_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "f61a22d33239db41007eef69d11860fbccc03eedc37087c06ac4053eec627397",
+    "thumb_front": "807d2b46004d57c8bee987d8121167ce687c47959f66a74554d32720c2e799bd",
+    "thumb_quarter": "23bca61f0ba9bd66a92142d25335faa6d5e054cdf2ff16373ae809d29fd97af8",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_toigo_curled_bob_bangs": {
+   "id": "mh_toigo_curled_bob_bangs",
+   "name": "Toigo curled bob bangs",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_curled_under_bob_with_bangs\\bob_curled_under_bangs.obj",
+   "family": "bob",
+   "fringe": true,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.16,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 4500,
+   "source_triangles": 4976,
+   "vertices": 2427,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00317,
+       0.95156,
+       -0.48234
+      ],
+      [
+       -0.00298,
+       0.99386,
+       -0.56383
+      ],
+      [
+       -0.00281,
+       1.06368,
+       -0.78567
+      ],
+      [
+       -0.00286,
+       1.09718,
+       -0.9457
+      ],
+      [
+       -0.003,
+       1.10508,
+       -1.15254
+      ],
+      [
+       -0.00471,
+       0.95414,
+       -1.37616
+      ],
+      [
+       -0.00541,
+       0.89449,
+       -1.43123
+      ]
+     ],
+     "length_q": 1.0459
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.92224,
+       -0.11645,
+       -0.47329
+      ],
+      [
+       0.92179,
+       -0.16278,
+       -0.61606
+      ],
+      [
+       0.93976,
+       -0.11599,
+       -0.91141
+      ],
+      [
+       0.9505,
+       -0.03485,
+       -1.13693
+      ],
+      [
+       0.88502,
+       0.04746,
+       -1.41588
+      ],
+      [
+       0.72145,
+       -0.05592,
+       -1.67698
+      ],
+      [
+       0.59919,
+       -0.23308,
+       -1.83012
+      ]
+     ],
+     "length_q": 1.5769
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.93103,
+       -0.09777,
+       -0.48931
+      ],
+      [
+       -0.92965,
+       -0.14696,
+       -0.63485
+      ],
+      [
+       -0.93887,
+       -0.1176,
+       -0.90837
+      ],
+      [
+       -0.94842,
+       -0.0433,
+       -1.1365
+      ],
+      [
+       -0.89122,
+       0.03955,
+       -1.41095
+      ],
+      [
+       -0.73151,
+       -0.05687,
+       -1.67112
+      ],
+      [
+       -0.61169,
+       -0.22187,
+       -1.82086
+      ]
+     ],
+     "length_q": 1.5345
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_curled_bob_bangs_front.png",
+    "quarter": "thumbs/mh_toigo_curled_bob_bangs_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "f35c958e50a8138550ae40305cc55be5ec07557d4e8dce35701bd08b94e4b03d",
+    "thumb_front": "dca46142e72dca9b1bb2c7940ee95fc19d5bfb443824789e12b4bede313ff9d6",
+    "thumb_quarter": "22397b0b28cbfc551c22ece9d6b98e2ab670c6d895a220d0ce9eee7148a92dc8",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_toigo_inverted_bob": {
+   "id": "mh_toigo_inverted_bob",
+   "name": "Toigo inverted bob",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_inverted_bob\\bob_inverted.obj",
+   "family": "bob",
+   "fringe": false,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 1.34,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 2856,
+   "source_triangles": 2856,
+   "vertices": 1509,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.01477,
+       0.87002,
+       -0.4486
+      ],
+      [
+       0.00455,
+       0.86012,
+       -0.52852
+      ],
+      [
+       -0.00656,
+       0.84398,
+       -0.69144
+      ],
+      [
+       0.02148,
+       0.82731,
+       -0.84045
+      ],
+      [
+       0.02148,
+       0.79536,
+       -0.98858
+      ],
+      [
+       0.00018,
+       0.74576,
+       -1.09377
+      ],
+      [
+       0.00063,
+       0.65361,
+       -1.21039
+      ]
+     ],
+     "length_q": 0.8162
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.92491,
+       -0.23761,
+       -0.53163
+      ],
+      [
+       0.924,
+       -0.20692,
+       -0.71755
+      ],
+      [
+       0.90316,
+       -0.1465,
+       -1.08875
+      ],
+      [
+       0.87881,
+       -0.1757,
+       -1.39667
+      ],
+      [
+       0.81686,
+       -0.36919,
+       -1.73174
+      ],
+      [
+       0.6579,
+       -0.59808,
+       -2.08754
+      ],
+      [
+       0.53028,
+       -0.67957,
+       -2.30915
+      ]
+     ],
+     "length_q": 1.9875
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.90535,
+       -0.26984,
+       -0.52274
+      ],
+      [
+       -0.9091,
+       -0.21929,
+       -0.71444
+      ],
+      [
+       -0.9043,
+       -0.11988,
+       -1.06452
+      ],
+      [
+       -0.87792,
+       -0.11887,
+       -1.38994
+      ],
+      [
+       -0.78949,
+       -0.29015,
+       -1.71287
+      ],
+      [
+       -0.5824,
+       -0.51095,
+       -2.0727
+      ],
+      [
+       -0.42281,
+       -0.58933,
+       -2.28596
+      ]
+     ],
+     "length_q": 2.0127
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_inverted_bob_front.png",
+    "quarter": "thumbs/mh_toigo_inverted_bob_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "ca313f701202fef846529c5a0c9b5e05e0d2337fd00f89caa5aa1cae94dc97e1",
+    "thumb_front": "38e95de0b6edade181e4103bdfe4c4a52864213e9d37dd700ca95861742c1315",
+    "thumb_quarter": "e6304a2a750020734eb98b669b65458cd66d91d4c55dc6a094513759ba2e7bb0",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_toigo_inverted_bob_bangs": {
+   "id": "mh_toigo_inverted_bob_bangs",
+   "name": "Toigo inverted bob bangs",
+   "pack": "MakeHuman community hair pack hair01",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MargaretToigo",
+   "licence": "CC0-1.0",
+   "licence_line": "# license CC0",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_hair01\\unpacked\\hair\\toigo_inverted_bob_with_bangs\\bob_inverted_bangs.obj",
+   "family": "bob",
+   "fringe": true,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.39,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 4500,
+   "source_triangles": 4996,
+   "vertices": 2422,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00012,
+       0.90411,
+       -0.46408
+      ],
+      [
+       -0.00016,
+       0.90889,
+       -0.58085
+      ],
+      [
+       -0.00014,
+       0.88501,
+       -0.77236
+      ],
+      [
+       -0.00018,
+       0.86981,
+       -0.96709
+      ],
+      [
+       -0.01073,
+       0.85055,
+       -1.1784
+      ],
+      [
+       -0.01015,
+       0.78546,
+       -1.34989
+      ],
+      [
+       -9e-05,
+       0.73549,
+       -1.43771
+      ]
+     ],
+     "length_q": 1.0026
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.95766,
+       -0.19927,
+       -0.54997
+      ],
+      [
+       0.9714,
+       -0.12969,
+       -0.77935
+      ],
+      [
+       0.97351,
+       -0.07311,
+       -1.15851
+      ],
+      [
+       0.93352,
+       -0.08857,
+       -1.49699
+      ],
+      [
+       0.85664,
+       -0.19595,
+       -1.80862
+      ],
+      [
+       0.64212,
+       -0.51394,
+       -2.2346
+      ],
+      [
+       0.48602,
+       -0.68802,
+       -2.4467
+      ]
+     ],
+     "length_q": 2.192
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.95925,
+       -0.19797,
+       -0.55503
+      ],
+      [
+       -0.97561,
+       -0.1244,
+       -0.78234
+      ],
+      [
+       -0.97889,
+       -0.08297,
+       -1.15984
+      ],
+      [
+       -0.93119,
+       -0.11193,
+       -1.4948
+      ],
+      [
+       -0.84325,
+       -0.22142,
+       -1.81416
+      ],
+      [
+       -0.63178,
+       -0.52954,
+       -2.24174
+      ],
+      [
+       -0.4817,
+       -0.69549,
+       -2.45993
+      ]
+     ],
+     "length_q": 2.1881
+    }
+   ],
+   "textures": {
+    "grey": "tex/a671430f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_toigo_inverted_bob_bangs_front.png",
+    "quarter": "thumbs/mh_toigo_inverted_bob_bangs_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "e8dcac959ed000f41ebd3c927a306130bb191e4887efe0243cfb8936cd106e61",
+    "thumb_front": "48dce0663dd5ecf5113ffa986ad68ca7a4cf439fafe1589edc8856108f1d9304",
+    "thumb_quarter": "cfca7c5b4023a7abc40c83dce57c63788fb29936b80ce2e66df4f24fe50940aa",
+    "grey": "27bfd57a0669dafd3842b4c63f5afa9a84a1add1d21282721bce8a0a527c2ef9"
+   }
+  },
+  "mh_afro01": {
+   "id": "mh_afro01",
+   "name": "Afro01",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\afro01\\afro01.obj",
+   "family": "afro",
+   "fringe": false,
+   "curly": true,
+   "parting": "none",
+   "length_rel_head": 0.62,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 2192,
+   "source_triangles": 2192,
+   "vertices": 2196,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/5a0c455a_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_afro01_front.png",
+    "quarter": "thumbs/mh_afro01_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "da29aedfebb73f8b53846014208a51171bb665dd77d1a297e3146936683be415",
+    "thumb_front": "d4875b66b1c912b8ea63e02158d4ae2f331403c31035fae509999e585610e2b9",
+    "thumb_quarter": "e1878b3af34829bce8c6ef8c12d80968cad095a5115f85f1f6ca111a5b99a62a",
+    "grey": "5921f5639d31605084aff6e247e46d72de247d7f4e767852fee13ceef0496356"
+   }
+  },
+  "mh_bob02": {
+   "id": "mh_bob02",
+   "name": "Bob02",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\bob02\\bob02.obj",
+   "family": "bob",
+   "fringe": true,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 1.08,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 2248,
+   "source_triangles": 2248,
+   "vertices": 1653,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.45865,
+       0.95169,
+       -0.41092
+      ],
+      [
+       0.35518,
+       1.00173,
+       -0.53663
+      ],
+      [
+       0.21466,
+       0.97559,
+       -0.76177
+      ],
+      [
+       0.1864,
+       0.93035,
+       -0.91179
+      ],
+      [
+       0.26306,
+       0.87788,
+       -1.08434
+      ],
+      [
+       0.29409,
+       0.8026,
+       -1.23231
+      ],
+      [
+       0.22599,
+       0.76606,
+       -1.32435
+      ]
+     ],
+     "length_q": 1.0813
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.01739,
+       -0.25679,
+       -0.45103
+      ],
+      [
+       1.01266,
+       -0.24056,
+       -0.55057
+      ],
+      [
+       0.98744,
+       -0.20538,
+       -0.80553
+      ],
+      [
+       0.94725,
+       -0.16353,
+       -1.05218
+      ],
+      [
+       0.85859,
+       -0.16508,
+       -1.31759
+      ],
+      [
+       0.76552,
+       -0.24624,
+       -1.48822
+      ],
+      [
+       0.68831,
+       -0.33939,
+       -1.61198
+      ]
+     ],
+     "length_q": 1.2765
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.60733,
+       -0.68693,
+       -0.48137
+      ],
+      [
+       -0.62466,
+       -0.7341,
+       -0.59387
+      ],
+      [
+       -0.68308,
+       -0.71673,
+       -0.82475
+      ],
+      [
+       -0.76582,
+       -0.55615,
+       -1.08347
+      ],
+      [
+       -0.77749,
+       -0.42102,
+       -1.34864
+      ],
+      [
+       -0.68485,
+       -0.38113,
+       -1.58206
+      ],
+      [
+       -0.63907,
+       -0.37999,
+       -1.67082
+      ]
+     ],
+     "length_q": 1.3295
+    }
+   ],
+   "textures": {
+    "grey": "tex/8b7c1852_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_bob02_front.png",
+    "quarter": "thumbs/mh_bob02_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "side-swept fringe; round two's pick for knight2",
+   "sha256": {
+    "npz": "d0d105606f444ec5950350aa829e446d551b1025bccb6b5b1d7ea66997234cee",
+    "thumb_front": "c97bef08679181018ff5087b779eac1e3e24ba7bd3828cf3b2d03a8f9b949d65",
+    "thumb_quarter": "fe1ff97b630fd282f744ff1ab666f95e133b8af494c3f4ece26874e427f91a0c",
+    "grey": "1cc01d407a9a7a654b4eda0212c6e2d45f9b150ce11f6a207306ed56454a8127"
+   }
+  },
+  "mh_long01": {
+   "id": "mh_long01",
+   "name": "Long01",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\long01\\long01.obj",
+   "family": "long",
+   "fringe": false,
+   "curly": false,
+   "parting": "centre",
+   "length_rel_head": 3.5,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 4108,
+   "source_triangles": 4108,
+   "vertices": 3239,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00769,
+       1.21383,
+       -1.09104
+      ],
+      [
+       0.02623,
+       1.39046,
+       -1.74168
+      ],
+      [
+       0.13456,
+       1.65355,
+       -2.80131
+      ],
+      [
+       0.22429,
+       1.83115,
+       -3.9947
+      ],
+      [
+       0.16256,
+       1.9295,
+       -5.18171
+      ],
+      [
+       0.26316,
+       2.02213,
+       -6.69737
+      ],
+      [
+       0.31983,
+       2.03619,
+       -7.02866
+      ]
+     ],
+     "length_q": 6.033
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.03101,
+       0.33097,
+       -1.03971
+      ],
+      [
+       1.0525,
+       0.7352,
+       -1.64084
+      ],
+      [
+       1.13644,
+       1.20417,
+       -2.51322
+      ],
+      [
+       1.2553,
+       1.56813,
+       -3.94287
+      ],
+      [
+       1.20498,
+       1.64725,
+       -5.05197
+      ],
+      [
+       1.14897,
+       1.78573,
+       -6.38109
+      ],
+      [
+       1.14372,
+       1.85882,
+       -6.92458
+      ]
+     ],
+     "length_q": 6.1977
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -1.02037,
+       0.37976,
+       -1.0365
+      ],
+      [
+       -1.04451,
+       0.79457,
+       -1.62565
+      ],
+      [
+       -1.1195,
+       1.27848,
+       -2.55284
+      ],
+      [
+       -1.20718,
+       1.57876,
+       -3.90889
+      ],
+      [
+       -1.1785,
+       1.66018,
+       -5.03618
+      ],
+      [
+       -1.09261,
+       1.81356,
+       -6.47349
+      ],
+      [
+       -1.06019,
+       1.88228,
+       -6.96386
+      ]
+     ],
+     "length_q": 6.236
+    }
+   ],
+   "textures": {
+    "grey": "tex/ede0e090_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_long01_front.png",
+    "quarter": "thumbs/mh_long01_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "waist length",
+   "sha256": {
+    "npz": "e9f67911103699d24f031e5772a3b0d3b8d39b2d2d90031ca44df8879b376f77",
+    "thumb_front": "e38b8ca639edd2aeaab82a0466b4cbe8f85946909bb68e4d1e7871abdae343e9",
+    "thumb_quarter": "a093d1d1fff599ce9f4f607dea779f530c99e68de296c8fa717f6d453191c8a2",
+    "grey": "88ac658c15d6092e98af3d5b9718fc12f8f682d6668070d3fedf4f82fe9ee2e4"
+   }
+  },
+  "mh_ponytail01": {
+   "id": "mh_ponytail01",
+   "name": "Ponytail01",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\ponytail01\\ponytail01.obj",
+   "family": "ponytail",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.74,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 4500,
+   "source_triangles": 5352,
+   "vertices": 3250,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00371,
+       1.34075,
+       -0.58154
+      ],
+      [
+       -0.00733,
+       1.36909,
+       -0.82426
+      ],
+      [
+       -0.00214,
+       1.42045,
+       -1.237
+      ],
+      [
+       0.01118,
+       1.49715,
+       -1.72652
+      ],
+      [
+       0.00377,
+       1.57112,
+       -2.20525
+      ],
+      [
+       -0.01639,
+       1.59965,
+       -2.55605
+      ],
+      [
+       -0.03599,
+       1.60103,
+       -2.78709
+      ]
+     ],
+     "length_q": 2.2249
+    }
+   ],
+   "textures": {
+    "grey": "tex/6b4560af_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_ponytail01_front.png",
+    "quarter": "thumbs/mh_ponytail01_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "mid ponytail, hangs free",
+   "sha256": {
+    "npz": "4c26cb9320fa8dfff5d332e1ac72497d148a0036e3a4c18b9dc59505ca437b44",
+    "thumb_front": "40cb6fe52f52ba09361136c634f8bb156f1ccfb5ef69ee9c4882ca3de9bdec83",
+    "thumb_quarter": "ee22b1070b53828961fe9b6451ab04a4c29918ec1ecb6f069b15e33976d4a2d7",
+    "grey": "6206275044fce71e2575af6a665d951d44b05610bca91682f408879c635eb65e"
+   }
+  },
+  "mh_short02": {
+   "id": "mh_short02",
+   "name": "Short02",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\short02\\short02.obj",
+   "family": "short",
+   "fringe": false,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 0.89,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 3344,
+   "source_triangles": 3344,
+   "vertices": 1755,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/c0676b6f_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_short02_front.png",
+    "quarter": "thumbs/mh_short02_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "6bbe1eb257ec34a7662322cf6982d006be3e04be4256fea79c916d3870f598dc",
+    "thumb_front": "661d4451dd0a264404a2d703975d2e2513e65d4f39eb0e45f80d5902ea377a83",
+    "thumb_quarter": "823e139470296f0a65277e555642ca2feba69bf3f995f59eec8d0487f22fc714",
+    "grey": "610aaadee376fd3074d16464fa3a22175bb15b7721514416d405da2c5a4e3d1e"
+   }
+  },
+  "mh_short03": {
+   "id": "mh_short03",
+   "name": "Short03",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\short03\\short03.obj",
+   "family": "short",
+   "fringe": true,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 0.97,
+   "kind": "cards",
+   "alpha": "cutout",
+   "two_sided": true,
+   "triangles": 1922,
+   "source_triangles": 1922,
+   "vertices": 1011,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.03374,
+       0.89262,
+       -0.43728
+      ],
+      [
+       -0.01492,
+       0.88674,
+       -0.51111
+      ],
+      [
+       -0.00237,
+       0.85447,
+       -0.6572
+      ],
+      [
+       -0.03906,
+       0.81176,
+       -0.82246
+      ],
+      [
+       -0.05144,
+       0.7867,
+       -0.95961
+      ],
+      [
+       -0.03249,
+       0.75969,
+       -1.12917
+      ],
+      [
+       -0.03475,
+       0.75395,
+       -1.20045
+      ]
+     ],
+     "length_q": 0.7854
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.78336,
+       0.42274,
+       -0.42217
+      ],
+      [
+       0.76547,
+       0.40505,
+       -0.4905
+      ],
+      [
+       0.73759,
+       0.36519,
+       -0.61005
+      ],
+      [
+       0.69166,
+       0.34613,
+       -0.75604
+      ],
+      [
+       0.65112,
+       0.33679,
+       -0.88522
+      ],
+      [
+       0.61822,
+       0.28214,
+       -1.05192
+      ],
+      [
+       0.60473,
+       0.25735,
+       -1.12137
+      ]
+     ],
+     "length_q": 0.7453
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.75721,
+       -0.131,
+       -0.4253
+      ],
+      [
+       -0.74815,
+       -0.09846,
+       -0.47931
+      ],
+      [
+       -0.75055,
+       0.09543,
+       -0.66951
+      ],
+      [
+       -0.74603,
+       0.22817,
+       -0.8423
+      ],
+      [
+       -0.68443,
+       0.18698,
+       -1.01931
+      ],
+      [
+       -0.63236,
+       0.18032,
+       -1.17665
+      ],
+      [
+       -0.59666,
+       0.21371,
+       -1.2901
+      ]
+     ],
+     "length_q": 1.0345
+    }
+   ],
+   "textures": {
+    "grey": "tex/6162ec32_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": false,
+   "lite": null,
+   "lite_triangles": null,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_short03_front.png",
+    "quarter": "thumbs/mh_short03_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "",
+   "sha256": {
+    "npz": "82640d3dbf4e0e012fa716375e4a05fe566c2899630fa1b2fb314f936722325f",
+    "thumb_front": "3b51680fe1160f25b7256f0de355740dee1a9a80b2620f4301af4f6e8b4e96b1",
+    "thumb_quarter": "aa5d435cd99bb3613b8299ac318ba712763d58e42744ee0b3d07be0c3f1672ec",
+    "grey": "081066133380b83a05c994ca9c8613129acf99f951035aae243b2c3f2b82dd52"
+   }
+  },
+  "mh_braid01": {
+   "id": "mh_braid01",
+   "name": "Braid01",
+   "pack": "MakeHuman system assets",
+   "source_url": "http://www.makehumancommunity.org",
+   "author": "MakeHuman team (Data Collection AB)",
+   "licence": "CC0-1.0",
+   "licence_line": "# This asset was explicitly released as CC0 in september 2020. The license / # text for CC0 can be found in the root of this repository. / # The copyright holders at the point of the release to CC0 were:",
+   "source_file": "F:\\Projects\\VideoGameAssetCreator\\runtime\\hairpacks\\makehuman_system\\unpacked\\hair\\braid01\\braid01.obj",
+   "family": "braid",
+   "fringe": true,
+   "curly": false,
+   "parting": "left",
+   "length_rel_head": 2.87,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 3000,
+   "source_triangles": 5518,
+   "vertices": 2797,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00767,
+       0.92062,
+       -0.98373
+      ],
+      [
+       0.06725,
+       1.05884,
+       -1.35321
+      ],
+      [
+       0.0688,
+       1.23176,
+       -1.76615
+      ],
+      [
+       0.03984,
+       1.4753,
+       -2.49866
+      ],
+      [
+       0.07168,
+       1.63106,
+       -3.24052
+      ],
+      [
+       0.08745,
+       1.70223,
+       -3.82881
+      ],
+      [
+       0.06063,
+       1.71473,
+       -4.24804
+      ]
+     ],
+     "length_q": 3.3935
+    }
+   ],
+   "textures": {
+    "grey": "tex/872826e6_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/mh_braid01_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/mh_braid01_front.png",
+    "quarter": "thumbs/mh_braid01_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "single braid, thinned from 5,518",
+   "sha256": {
+    "npz": "cbc16f217e550a3edbf585927b1ba1e71ca839665c357185852ffb68f5b69c21",
+    "lite": "b6811aa2966038d02e890a77408daea949d179a04c4e02e97a2f6ee485362330",
+    "thumb_front": "89b89f89b8e2f849eee5f0cf3506eb68a27c4bd8b8e30efe8f42ad1637e07160",
+    "thumb_quarter": "d324aa57d96192c4b6bf5528d6348eed66baa872659526c20d84ec2ab3e12e1f",
+    "grey": "86f5f4f0e17d27b5b67fbe0b3b264267616da2bf9e9ef80dec555610ca4d1e74"
+   }
+  },
+  "rule_long_centre": {
+   "id": "rule_long_centre",
+   "name": "Long straight, centre parting (rule-built)",
+   "pack": "VGAC rule-built styles",
+   "source_url": "",
+   "author": "VGAC",
+   "licence": "CC0-1.0",
+   "licence_line": "generated by VGAC, CC0",
+   "source_file": null,
+   "family": "long",
+   "fringe": false,
+   "curly": false,
+   "parting": "centre",
+   "length_rel_head": 3.08,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 3240,
+   "source_triangles": 3240,
+   "vertices": 1656,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       0.01585,
+       0.90739,
+       -0.74842
+      ],
+      [
+       0.01756,
+       0.94631,
+       -1.24447
+      ],
+      [
+       -0.00089,
+       1.10483,
+       -2.25813
+      ],
+      [
+       0.01066,
+       1.26644,
+       -3.1934
+      ],
+      [
+       -0.00135,
+       1.44331,
+       -4.25379
+      ],
+      [
+       -0.01534,
+       1.63413,
+       -5.40368
+      ],
+      [
+       -0.00105,
+       1.69156,
+       -5.84353
+      ]
+     ],
+     "length_q": 5.1575
+    },
+    {
+     "k": 1,
+     "kind": "Hair",
+     "path_q": [
+      [
+       1.0121,
+       -0.23871,
+       -0.80357
+      ],
+      [
+       1.03391,
+       -0.3618,
+       -1.26082
+      ],
+      [
+       1.0948,
+       -0.67855,
+       -2.19647
+      ],
+      [
+       1.26288,
+       -0.99588,
+       -3.19709
+      ],
+      [
+       1.30171,
+       -1.14851,
+       -4.17224
+      ],
+      [
+       1.16307,
+       -1.34169,
+       -5.45637
+      ],
+      [
+       1.1323,
+       -1.4067,
+       -5.86081
+      ]
+     ],
+     "length_q": 5.2313
+    },
+    {
+     "k": 2,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -1.01082,
+       -0.2053,
+       -0.81581
+      ],
+      [
+       -1.03208,
+       -0.34382,
+       -1.26973
+      ],
+      [
+       -1.09039,
+       -0.67807,
+       -2.19782
+      ],
+      [
+       -1.26032,
+       -1.00235,
+       -3.2145
+      ],
+      [
+       -1.29653,
+       -1.14809,
+       -4.17193
+      ],
+      [
+       -1.15815,
+       -1.3402,
+       -5.45683
+      ],
+      [
+       -1.12749,
+       -1.40514,
+       -5.86105
+      ]
+     ],
+     "length_q": 5.23
+    }
+   ],
+   "textures": {
+    "grey": "tex/4c97e373_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/rule_long_centre_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/rule_long_centre_front.png",
+    "quarter": "thumbs/rule_long_centre_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "round one's generator, waist length",
+   "sha256": {
+    "npz": "7ea899a6aef504315c8d14a8605e47416e9cc4dbcd30e7c9d7d28d92d380fe76",
+    "lite": "1680b451c87a9872e1f97be30bcb48ff7b03e8160b17e110663dc420d583d302",
+    "thumb_front": "07c81647b816ef83a7f6ae5759a9e2a60d22380bf28a8af01a3727dac5431e10",
+    "thumb_quarter": "ef157be6a77291456fdf8619bf94ff46162a4179983a43d2ad2dbb23ae217345",
+    "grey": "178494e1b470c23ac704422ac4f759b9a6699aca911ab07b12d90a24e2b15f1e"
+   }
+  },
+  "rule_ponytail_high": {
+   "id": "rule_ponytail_high",
+   "name": "High ponytail (rule-built)",
+   "pack": "VGAC rule-built styles",
+   "source_url": "",
+   "author": "VGAC",
+   "licence": "CC0-1.0",
+   "licence_line": "generated by VGAC, CC0",
+   "source_file": null,
+   "family": "ponytail",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 1.51,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 2724,
+   "source_triangles": 2724,
+   "vertices": 1404,
+   "hang_groups": [
+    {
+     "k": 0,
+     "kind": "Hair",
+     "path_q": [
+      [
+       -0.00539,
+       1.07059,
+       -0.62661
+      ],
+      [
+       -0.00606,
+       1.07205,
+       -0.80556
+      ],
+      [
+       -0.00885,
+       1.07834,
+       -1.17484
+      ],
+      [
+       -0.00475,
+       1.08641,
+       -1.55123
+      ],
+      [
+       -0.0011,
+       1.10406,
+       -1.91988
+      ],
+      [
+       -0.00266,
+       1.13188,
+       -2.37973
+      ],
+      [
+       -0.00228,
+       1.13722,
+       -2.49659
+      ]
+     ],
+     "length_q": 1.8716
+    }
+   ],
+   "textures": {
+    "grey": "tex/5bea6dc4_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/rule_ponytail_high_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/rule_ponytail_high_front.png",
+    "quarter": "thumbs/rule_ponytail_high_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "round one's generator",
+   "sha256": {
+    "npz": "b15676e06e3d95075d4f511ffef1f4589a6dfb67d45abe26c9f34440c2dd100a",
+    "lite": "3aaf6ad721e325e09821d13398e570f33f323cdd704a5d85a3dc42d569b5ab52",
+    "thumb_front": "fd61c6947480a28a5499f14f9598a5c13c94d9f877e9a03c361d4695fd82fb83",
+    "thumb_quarter": "d149bd8d224e1d4f1f4d11634879f087ea7cd6dff29d5c52db823c2700c500fb",
+    "grey": "a8dee02f8c5964ad179eedf6a7183b1e68bbeccf80bf8d8ab0d6202a56039c0f"
+   }
+  },
+  "rule_bun": {
+   "id": "rule_bun",
+   "name": "Bun (rule-built)",
+   "pack": "VGAC rule-built styles",
+   "source_url": "",
+   "author": "VGAC",
+   "licence": "CC0-1.0",
+   "licence_line": "generated by VGAC, CC0",
+   "source_file": null,
+   "family": "bun",
+   "fringe": false,
+   "curly": false,
+   "parting": "none",
+   "length_rel_head": 0.78,
+   "kind": "shell",
+   "alpha": "opaque",
+   "two_sided": false,
+   "triangles": 2340,
+   "source_triangles": 2340,
+   "vertices": 1204,
+   "hang_groups": [],
+   "textures": {
+    "grey": "tex/31571775_grey.png",
+    "normal": null,
+    "size": 1024
+   },
+   "phone_ok": true,
+   "lite": "styles/rule_bun_lite.npz",
+   "lite_triangles": 750,
+   "default_params": {
+    "volume": 1.0,
+    "dz_head": 0.0,
+    "length": 1.0,
+    "mirror": false
+   },
+   "thumbs": {
+    "front": "thumbs/rule_bun_front.png",
+    "quarter": "thumbs/rule_bun_quarter.png"
+   },
+   "self_check_mm": 0.0,
+   "notes": "round one's generator",
+   "sha256": {
+    "npz": "63cb531bba309d57a9f8b78138c3471faab2683421c1bd78e101f15133a55fcb",
+    "lite": "2b75e883f5229246c3256f7a9a82627b785931036be52b7150b51394e4a66a54",
+    "thumb_front": "6d347767ede3ef602cb796c970830170ddd3b3b460ef2bef9e504827a62c4065",
+    "thumb_quarter": "fe8657279a39c854ed8590331b4f0f9ca070b8c51bda36ea517bcf79b9a4172b",
+    "grey": "1b5ee72dc75c5a4599a2c15ea98108bd74aab58ac7ea5c9cf302f5cd4a436a6f"
+   }
+  }
+ },
+ "version": 1,
+ "refused": [
+  {
+   "style": "mh_hair01:culturalibre_hair_01",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/node/320)"
+  },
+  {
+   "style": "mh_hair01:culturalibre_hair_02",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/node/320)"
+  },
+  {
+   "style": "mh_hair01:elvs_double_mh_braid",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:elvs_french_braid_variation",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:elvs_reverse_french_braid_bun",
+   "licence_line": "# license CC_by"
+  },
+  {
+   "style": "mh_hair01:elvs_unkempt_french_braid",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:learning_anime_hair",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:littleright_bobcut_hair",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:o4saken_long01",
+   "licence_line": "# license CC BY 4.0"
+  },
+  {
+   "style": "mh_hair01:rehmanpolanski_hair_bun_brown",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:sonntag78_blond_with_headband",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  },
+  {
+   "style": "mh_hair01:sonntag78_junglebook_hair",
+   "licence_line": "# license AGPL3 (see also http://www.makehuman.org/doc/node/external_tools_license.html)"
+  }
+ ],
+ "left_out": {
+  "quaternius:Hair_Beard": "a beard, not hair",
+  "mh_system:short04": "sideburns and a beard",
+  "mh_system:short01": "200 loose card pieces, reads as noise on a game character",
+  "mh_system:bob01": "8,474 triangles; bob02 and the toigo bobs cover the shape",
+  "mh_hair01:culturalibre_hair_05": "made for another base: sits above the head",
+  "mh_hair01:culturalibre_hair_06": "14,688 triangles of loose flakes"
+ }
+}

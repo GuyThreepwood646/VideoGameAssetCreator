@@ -5,7 +5,7 @@
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
 //      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
-//      [-vgacSprings <springs.json>]
+//      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -66,6 +66,15 @@
 // every Assets/VGAC/*/clips.fbx that lacks the mark (userData "vgac-facing-16-2") the same way, at the next batch import,
 // hand-off sweep or Editor load (Tools/VGAC/Fix move facing). Snapshot evaluates with culling off, so the first frame
 // shows the real pose rather than the bind pose.
+// Version 17: hair from the library (docs/HAIR-LIBRARY-PLAN.md). With -vgacHairCutout on (hair cards: flat strips with a
+// see-through texture) or -vgacHairTwoSided on, the hair material is built on "VGAC/HairCutout"
+// (Assets/VgacShaders/VgacHairCutout.shader: the same two-band lighting as VGAC/Hair, alpha cutout, both sides drawn with
+// the normal turned round on back faces, cut-out shadows) with _Cutoff 0.5 and _Cull 0 (two-sided) or 2. The hair's
+// colour texture then keeps its alpha (alpha from input, alpha is transparency) and its mipmaps preserve coverage at
+// alpha 0.5, so cards do not thin out at a distance. URP and HDRP fall back to their Lit shader with alpha clipping
+// (not verified). The report gives hairCutout and hairTwoSided. Without the two arguments nothing changes: VGAC/Hair
+// stays the hair shader and VgacHair.shader is not touched. Snapshot with -vgacHeadPitch on (diagnostics, never passed by
+// the export) also lists in loopProbes how far idle, walk and run bow the head from its bind pose.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -82,8 +91,9 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "16";
+    public const string Version = "17";
     public const string HairShaderName = "VGAC/Hair";
+    public const string HairCutoutShaderName = "VGAC/HairCutout";
 
     [Serializable]
     class ClipInfo
@@ -177,6 +187,8 @@ public static class VgacImport
         public int hairSubmeshes;              // renderers that got the hair material on their second sub-mesh
         public int hairTriangles;              // LOD0's hair sub-mesh
         public List<string> hairTexturesAssigned = new List<string>();
+        public bool hairCutout;                // Version 17: hair from the library, cut out (VGAC/HairCutout)
+        public bool hairTwoSided;              // Version 17: drawn from both sides
         public List<string> lod0Materials = new List<string>();   // LOD0's materials in the saved prefab
         public string equippedPrefab = "";     // items: "<Name> (equipped).prefab", a variant with the items on
         public List<string> equippedItems = new List<string>();  // "Ranger - sword>Socket_Hand_R"
@@ -287,6 +299,8 @@ public static class VgacImport
         public bool mipmaps = true, compress = true, normalMap = true;
         public bool hair;                      // -vgacHair on: the hair's own material (Version 13)
         public string hairShader = "vgac";     // vgac | lit
+        public bool hairCutout;                // -vgacHairCutout on: alpha cutout hair (Version 17)
+        public bool hairTwoSided;              // -vgacHairTwoSided on: two-sided hair (Version 17)
         public float speedScale = 1f, scale = 1f;
         public string requestId = "";
 
@@ -328,6 +342,8 @@ public static class VgacImport
                 normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
                 hair = (A("-vgacHair") ?? "off").ToLowerInvariant() == "on",
                 hairShader = (A("-vgacHairShader") ?? "vgac").ToLowerInvariant() == "lit" ? "lit" : "vgac",
+                hairCutout = (A("-vgacHairCutout") ?? "off").ToLowerInvariant() == "on",
+                hairTwoSided = (A("-vgacHairTwoSided") ?? "off").ToLowerInvariant() == "on",
             };
             if (a.speedScale <= 0.01f) a.speedScale = 1f;
             return a;
@@ -1129,8 +1145,10 @@ public static class VgacImport
     // the body's shader otherwise, with the hair's textures.
     static Material BuildHairMaterial(string assetDir, string name, Report report, ImportArgs a)
     {
-        var hairShader = Shader.Find(HairShaderName);
         bool builtin = GraphicsSettings.currentRenderPipeline == null;
+        // Version 17: cut-out or two-sided hair (from the library) takes VGAC/HairCutout; everything else VGAC/Hair.
+        bool cutoutShader = a.hairCutout || a.hairTwoSided;
+        var hairShader = Shader.Find(cutoutShader ? HairCutoutShaderName : HairShaderName);
         Material mat;
         var hs = "T_" + name + "_Hair_MetallicSmoothness.png";
         if (a.hairShader == "vgac" && builtin && hairShader != null)
@@ -1148,18 +1166,51 @@ public static class VgacImport
             if (f) { mat.SetTexture("_FlowMap", f); report.hairTexturesAssigned.Add("flow"); }
             // the strand highlight in the hair's own colour family: a warm white for the primary band
             if (b) mat.SetColor("_SpecColor1", Color.Lerp(Color.white, AverageColour(b), 0.5f));
+            if (cutoutShader)
+            {
+                mat.SetFloat("_Cutoff", a.hairCutout ? 0.5f : 0f);
+                mat.SetFloat("_Cull", a.hairTwoSided ? 0f : 2f);
+                mat.renderQueue = (int)RenderQueue.AlphaTest;
+            }
         }
         else
         {
             if (a.hairShader == "vgac" && builtin && hairShader == null)
-                report.warnings.Add("VGAC/Hair shader not found (Assets/VgacShaders/VgacHair.shader); the hair uses the body's shader");
+                report.warnings.Add((cutoutShader ? "VGAC/HairCutout shader not found (Assets/VgacShaders/VgacHairCutout.shader)"
+                                                  : "VGAC/Hair shader not found (Assets/VgacShaders/VgacHair.shader)") + "; the hair uses the body's shader");
             var tmp = new Report { normalMap = report.normalMap };
             mat = BuildMaterialFrom(assetDir, "hair_base_color.png", "hair_normal.png", "hair_ao.png", hs, tmp);
             report.hairTexturesAssigned.AddRange(tmp.texturesAssigned);
+            if (cutoutShader) SetLitCutout(mat, a);
         }
+        report.hairCutout = a.hairCutout;
+        report.hairTwoSided = a.hairTwoSided;
         mat.name = name + "_Hair";
         report.hairShader = mat.shader.name;
         return mat;
+    }
+
+    // Version 17: alpha clipping on a Standard, URP or HDRP Lit material for cut-out hair outside the built-in VGAC shader
+    // (URP and HDRP not verified).
+    static void SetLitCutout(Material mat, ImportArgs a)
+    {
+        if (a.hairCutout)
+        {
+            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", 0.5f);
+            if (mat.HasProperty("_AlphaCutoff")) mat.SetFloat("_AlphaCutoff", 0.5f);
+            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+            if (mat.HasProperty("_AlphaCutoffEnable")) mat.SetFloat("_AlphaCutoffEnable", 1f);
+            if (mat.HasProperty("_Mode")) mat.SetFloat("_Mode", 1f);  // Standard: Cutout
+            mat.EnableKeyword("_ALPHATEST_ON");
+            mat.SetOverrideTag("RenderType", "TransparentCutout");
+            mat.renderQueue = (int)RenderQueue.AlphaTest;
+        }
+        if (a.hairTwoSided)
+        {
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+            if (mat.HasProperty("_CullMode")) mat.SetFloat("_CullMode", 0f);
+            if (mat.HasProperty("_DoubleSidedEnable")) mat.SetFloat("_DoubleSidedEnable", 1f);
+        }
     }
 
     static Color AverageColour(Texture2D t)
@@ -1203,6 +1254,14 @@ public static class VgacImport
             {
                 ti.textureType = TextureImporterType.Default;
                 ti.sRGBTexture = true;
+                if (t == "hair_base_color.png" && a != null && a.hairCutout)
+                {
+                    // Version 17: cut-out hair keeps its alpha, and the mipmaps keep the cards' coverage at the cutoff
+                    ti.alphaSource = TextureImporterAlphaSource.FromInput;
+                    ti.alphaIsTransparency = true;
+                    ti.mipMapsPreserveCoverage = true;
+                    ti.alphaTestReferenceValue = 0.5f;
+                }
             }
             else if (t == "normal.png" || t == "hair_normal.png")
             {
@@ -2557,6 +2616,8 @@ public static class VgacImport
                            + (strides.Count > 0 ? " feet_apart_m=" + string.Join("/", strides) : ""));
                 graph.Destroy();
             }
+            // Version 17, only when asked (-vgacHeadPitch on; the export never asks): how far the shared moves bow the head
+            if ((Arg("-vgacHeadPitch") ?? "off").ToLowerInvariant() == "on") HeadPitchProbe(go, animator, clips, probes);
             // Version 15: walk and run from the side with the spring script stepping, and the same frames without it
             SpringShots(go, cam, outDir, log, probes, clips);
             // Version 13: the hair close up, with its own shader and with the body's, under two light directions
@@ -2577,6 +2638,50 @@ public static class VgacImport
             Debug.Log("VGAC_SNAPSHOT fail " + e);
             EditorApplication.Exit(1);
         }
+    }
+
+    // Version 17, diagnostics only (-vgacHeadPitch on with Snapshot): for idle, walk and run, the average over 12 frames
+    // of how far the head is turned forward from its bind pose, about the character's side axis, in degrees: "head" in
+    // the world and "head_on_body" relative to the hips (the bow of the neck and head alone). In loopProbes.
+    static void HeadPitchProbe(GameObject go, Animator animator, AnimationClip[] clips, List<string> notes)
+    {
+        if (animator == null || !animator.isHuman) return;
+        var head = animator.GetBoneTransform(HumanBodyBones.Head);
+        var hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+        if (head == null || hips == null) return;
+        ResetToBindPose(go);
+        var headBind = head.rotation; var hipsBind = hips.rotation;
+        var fwd = go.transform.forward; var up = go.transform.up; var side = go.transform.right;
+        float Pitch(Quaternion rel)
+        {
+            var u = rel * up;
+            return Mathf.Atan2(Vector3.Dot(u, fwd), Vector3.Dot(u, up)) * Mathf.Rad2Deg;
+        }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var want in new[] { "idle", "walk", "run" })
+        {
+            var clip = clips.Where(c => Words(c.name).Contains(want) && !c.name.ToLowerInvariant().Contains("crouch")).OrderBy(c => c.name.Length).FirstOrDefault();
+            if (clip == null) continue;
+            var graph = PlayableGraph.Create("vgac_headpitch");
+            graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+            var output = AnimationPlayableOutput.Create(graph, "anim", animator);
+            var playable = AnimationClipPlayable.Create(graph, clip);
+            output.SetSourcePlayable(playable);
+            graph.Play();
+            float sw = 0f, sb = 0f;
+            for (int i = 0; i < 12; i++)
+            {
+                double t = clip.length * i / 12.0;
+                playable.SetTime(t); graph.Evaluate(0f); playable.SetTime(t); graph.Evaluate(0f);
+                var relHead = head.rotation * Quaternion.Inverse(headBind);
+                var relHips = hips.rotation * Quaternion.Inverse(hipsBind);
+                sw += Pitch(relHead);
+                sb += Pitch(Quaternion.Inverse(relHips) * relHead);
+            }
+            notes.Add("headpitch " + clip.name + " head_deg=" + (sw / 12f).ToString("0.0", inv) + " head_on_body_deg=" + (sb / 12f).ToString("0.0", inv));
+            graph.Destroy();
+        }
+        ResetToBindPose(go);
     }
 
     // Spring bones (Version 15): for each of walk and run, the clip is played twice through at 30 frames a second with

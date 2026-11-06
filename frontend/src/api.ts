@@ -112,7 +112,7 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // How the app can fix a failing check. A re-run fix names a stage and params; a tool fix (`ui`) opens an editor
 // instead (2.5): the parts editor, or the front picker in prep. `label` is the button text (fix_label in the
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
-export type FixTool = 'parts_editor' | 'front_picker'
+export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
 export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine'; instruction?: string }
 
@@ -176,6 +176,8 @@ export type Asset = {
   // Items: on an item, what it is and whose; on a character, the items set aside and attached.
   held_item?: HeldItem | null
   equipment?: Equipment | null
+  // Hair from the library: the choice and the pick (absent or null: the hair is built with the 3D model, as before).
+  hair?: HairChoice | null
   selected: Partial<Record<StageId, string>>
   stages: Partial<Record<StageId, Version[]>>
 }
@@ -588,7 +590,7 @@ export const api = {
   createAsset: (
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep' },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource },
   ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
 
   // Your own pictures
@@ -963,4 +965,69 @@ export const itemsApi = {
   apply: (aid: string) => post<RunResult>(`/api/assets/${aid}/items/apply`),
   fit: (aid: string, attId: string) => post<RunResult & { attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/fit`),
   build: (aid: string) => post<ItemsPanel>(`/api/assets/${aid}/items/build`),
+}
+
+// --- Hair from the library (docs/HAIR-LIBRARY-PLAN.md sections 1 and 5; backend vgac/hairlib.py) -------------------
+
+export type HairSource = 'model' | 'library'
+// Asset.hair (absent or null means today's hair, built with the 3D model).
+export type HairChoice = { source: HairSource; pick?: string | null; picked_at?: string | null; changed_by?: 'form' | 'page' | 'fix' | string }
+export type HairKind = 'shell' | 'cards'
+// One hairstyle tried on the character at the 3D step: its picture on the character and its plain fit words.
+export type HairCandidate = { style: string; name: string; score: number; fit_words?: string | null; picture_url?: string | null; triangles: number; kind: HairKind | string; credit?: string | null }
+export type HairPanel = {
+  source: HairSource
+  available: boolean
+  unavailable_reason?: string | null
+  family?: string | null
+  family_words?: string[] | null
+  pick?: string | null
+  candidates: HairCandidate[]
+  mesh_version_id?: string | null
+  best?: string | null
+  nothing_fits?: boolean
+  // The style the kept Clean up result was made with.
+  applied?: { style: string; score?: number | null; prep_version_id?: string | null } | null
+  // Offered after the setting changed: the step to rebuild from and about how long it takes.
+  rebuild?: { from_stage: StageId | string; minutes?: number | null } | null
+  // Triangles kept for hair on the kept body (the backend's hair allowance), when it says.
+  allowance?: number | null
+  sentence?: string | null
+}
+// One catalogue entry (backend/vgac/data/hairlib/catalogue.json), as GET /api/hair-library lists it.
+export type HairStyleEntry = {
+  id: string
+  name: string
+  family: string
+  kind: HairKind | string
+  triangles: number
+  author?: string | null
+  licence?: string | null
+  source_url?: string | null
+  pack?: string | null
+  phone_ok?: boolean
+  // Thumbnail paths inside the library (served by GET /api/hair-library/files/{path}): an object by view or a list.
+  thumbs?: Record<string, string> | string[] | null
+}
+export type HairSetResult = { panel: HairPanel; started?: RunResult[]; rebuild_from?: StageId | string | null }
+export type HairPickResult = { panel: HairPanel; autopilot?: AutopilotState | null }
+
+// A hair library file (a thumbnail); data: and absolute URLs pass through, as libraryUrl does.
+export function hairLibraryUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined
+  if (/^(data:|blob:|https?:\/\/|\/)/.test(path)) return path
+  return '/api/hair-library/files/' + path.split('/').map(encodeURIComponent).join('/')
+}
+
+// GET /api/hair-library may answer with the list itself or with {styles: [...]}.
+function hairStyles(x: unknown): HairStyleEntry[] {
+  const list = Array.isArray(x) ? x : x && typeof x === 'object' ? (x as { styles?: unknown }).styles : null
+  return Array.isArray(list) ? (list as HairStyleEntry[]).filter((s) => s && typeof s.id === 'string') : []
+}
+
+export const hairApi = {
+  panel: (aid: string) => get<HairPanel>(`/api/assets/${aid}/hair`),
+  setSource: (aid: string, source: HairSource) => put<HairSetResult>(`/api/assets/${aid}/hair`, { source }),
+  pick: (aid: string, style: string, rebuild: boolean) => post<HairPickResult>(`/api/assets/${aid}/hair/pick`, { style, rebuild }),
+  library: () => get<unknown>('/api/hair-library').then(hairStyles),
 }
