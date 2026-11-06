@@ -3,9 +3,10 @@
 // the page: it lives here, except in the review state where it is the "Yes, keep it"
 // answer next to the picture.
 import { Link } from 'react-router'
-import { libraryUrl, previousStage, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
+import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, ResumeButton, StopButton, type FixRequest } from '../components/ui'
+import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
+import { finishLines } from './finish'
 import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -40,12 +41,61 @@ type Props = {
   onChanged?: () => void
 }
 
-// Whether the finishing card (turntable, downloads, what next) shows for this stage.
+// Whether the finishing card (turntable, downloads, what next) shows for this stage. Only on the last step: there the
+// finished asset is the step. Earlier steps show the one-row finished bar instead (docs/STEP-FOCUS-SPEC.md), so going
+// back to a step shows that step, not the finished product.
 export function finishShown(asset: Asset, stage: StageId, autopilot: AutopilotState | null, jobs: Job[]): boolean {
-  if (!isFinished(asset)) return false
+  if (stage !== 'export' || !isFinished(asset)) return false
   if (isAutopilotActive(autopilot)) return false
-  if (guideState(asset, stage, jobs, undefined) === 'running') return false
-  return autopilot?.status === 'done' || stage === 'export'
+  return guideState(asset, stage, jobs, undefined) !== 'running'
+}
+
+// Whether the one-row finished bar replaces the guide card: an earlier step of a finished asset, with this step's kept
+// version done and nothing waiting here (a new result to judge, a running, stopped or failed version keep their card).
+export function finishedBarShown(asset: Asset, stage: StageId, autopilot: AutopilotState | null, jobs: Job[], selected: Version | undefined): boolean {
+  if (stage === 'export' || !isFinished(asset) || isAutopilotActive(autopilot)) return false
+  return guideState(asset, stage, jobs, selected) === 'selected'
+}
+
+// "Step 3 of 6: Build the 3D model. You kept version 1, and it passed every check." with the way to the finished asset.
+function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: StageId; info: StageInfo | null; selected: Version | undefined }) {
+  const stepNo = STAGES.indexOf(stage) + 1
+  const name = stagePlain(stage, info)
+  const versions = versionsOf(asset, stage)
+  const idx = selected ? versions.indexOf(selected) + 1 : 0
+  const good = selected ? looksGood(selected.metrics) : null
+  const kept = `You kept version ${idx}${good === true ? ', and it passed every check' : good === false ? ', though a check needs attention' : ''}.`
+  const warns = finishLines(asset).filter((l) => l.state === 'warn').length
+  const exp = selectedVersion(asset, 'export')
+  const file = exp?.files.fbx ?? exp?.files.glb
+  return (
+    <section className="guide guide-finished finish-bar" aria-label={`Step ${stepNo} of ${STAGES.length}, finished asset`}>
+      <div className="guide-body">
+        <div className="guide-kicker">
+          Step {stepNo} of {STAGES.length}: {name}
+          <Info term={'stage.' + stage} />
+        </div>
+        <div className="guide-happened">{kept}</div>
+        <div className="guide-now muted">The whole asset is finished. A change here makes a new version; the finished files stay until you rebuild the steps after it.</div>
+        {warns > 0 && (
+          <div className="finish-bar-warn small">
+            <TrafficDot state="warn" />
+            {warns === 1 ? '1 check on the finished asset needs a look.' : `${warns} checks on the finished asset need a look.`}
+          </div>
+        )}
+      </div>
+      <div className="guide-action finish-bar-actions">
+        <Link className="btn primary" to={`/assets/${asset.id}/export`}>
+          See the finished asset
+        </Link>
+        {file && (
+          <a className="btn" href={libraryUrl(file)} download={file.split('/').pop()}>
+            Download {exp?.files.fbx ? 'FBX' : 'GLB'}
+          </a>
+        )}
+      </div>
+    </section>
+  )
 }
 
 export function nextStage(stage: StageId): StageId | null {
@@ -90,6 +140,9 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // The finishing moment, once every step is kept.
   if (finishShown(asset, stage, autopilot, jobs)) {
     return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} onChanged={onChanged} />
+  }
+  if (finishedBarShown(asset, stage, autopilot, jobs, selected)) {
+    return <FinishedBar asset={asset} stage={stage} info={info(stage)} selected={selected} />
   }
 
   // "Make it" shows whenever nothing is running and the asset is not finished.
