@@ -79,6 +79,7 @@ class Engines:
         self.in_edit = False
         self.staged: list[Path] = []
         self.body_at_budget = False
+        self.fail_prep = False
 
     def install(self, mp: pytest.MonkeyPatch) -> None:
         eng = self
@@ -125,6 +126,8 @@ class Engines:
                     save_rgb(figure(bald=True, narrow=y % 180 != 0), views / f"shade_{y}.png")
                 (views / "info.json").write_text(json.dumps({"triangles": 19000, "dims": [0.6, 0.3, 1.7], "yaws": list(range(0, 360, 15))}))
             elif script == "prep.py":
+                if eng.fail_prep:
+                    raise RuntimeError("Blender stopped with an error")
                 out = Path(args[1])
                 out.write_bytes(b"glTF-prep " + Path(args[0]).read_bytes())
                 budget = int(args[args.index("--budget") + 1]) if "--budget" in args else None
@@ -218,6 +221,7 @@ class Lane1:
 
         me = self
         me.kept: list[float] = []
+        me.attach_scores: dict[str, float] = {}
         # Lane 1's real loader on its fixture library, and its real picture maths; only the Blender parts are faked.
         hairstyles.use_dir(FIXTURE / "lib")
         mp.setattr(hairstyles, "use_dir", hairstyles.use_dir)  # restored below
@@ -259,7 +263,7 @@ class Lane1:
                 (out_dir / name).write_bytes(f"{style_id} {key}".encode())
                 files[key] = out_dir / name
             st = CATALOGUE[style_id]
-            return {"files": files, "metrics": {"attached": True, "style": style_id, "family": st["family"], "score": me.score,
+            return {"files": files, "metrics": {"attached": True, "style": style_id, "family": st["family"], "score": me.attach_scores.get(style_id, me.score),
                                                 "params": params or {}, "triangles": fitted(style_id), "cap_triangles": CAP_TRIS,
                                                 "skin_through": {"all": 0.01, "crown": 0.01, "sides": 0.0}, "kind": st["kind"],
                                                 "alpha": st["alpha"], "two_sided": st["two_sided"], "tex": tex, "seconds": 3.0,
@@ -493,7 +497,7 @@ def test_library_chain_bald_pictures_mesh_and_prep(settings, engines, lane1):
     # Check all sides: one bald edit of the concept with the trial's prompt plus the beard, sides from the bald front.
     edits = [g for g in engines.graphs if "l2" not in g]
     assert len(edits) == 1 and edits[0]["ks"]["inputs"]["seed"] == turn.params["bald_seed"]
-    assert "completely bald" in edits[0]["pos"]["inputs"]["prompt"] and "beard or moustache" in edits[0]["pos"]["inputs"]["prompt"]
+    assert edits[0]["pos"]["inputs"]["prompt"] == turn_stage.BALD_PROMPT  # the trial's words; no beard is named
     bald_views = [g for g in engines.graphs if "l2" in g and "bald" in g["img"]["inputs"]["image"]]
     assert len(bald_views) == 3
     seeds = {v: turn.metrics["views"][v]["seed"] for v in ("quarter", "left", "right")}
@@ -885,12 +889,24 @@ def test_turning_it_on_later_queues_the_bald_pictures_and_the_pick(app_client, l
     assert _autopilot_done(c, aid)["status"] == "done"
     assert c.get(f"/api/assets/{aid}/hair").json()["applied"]["style"] == CARDS
     assert c.post(f"/api/assets/{aid}/hair/pick", json={"style": "nope"}).status_code == 404
+    # The new style fits worse than the old one (its hair_fit fails, as on the live bob knight 11-06): the person's
+    # pick is kept all the same, and the moves and the hand-off are built on it.
+    lane1.attach_scores[SHELL] = 0.5
+    old_prep = c.get(f"/api/assets/{aid}").json()["selected"]["prep"]
     out = c.post(f"/api/assets/{aid}/hair/pick", json={"style": SHELL, "rebuild": True}).json()
     assert out["panel"]["pick"] == SHELL and out["autopilot"]["status"] == "running"
     assert _autopilot_done(c, aid)["status"] == "done"
     full = c.get(f"/api/assets/{aid}").json()
     prep = next(v for v in full["stages"]["prep"] if v["id"] == full["selected"]["prep"])
-    assert prep["metrics"]["hair_library"]["style"] == SHELL and prep["metrics"]["hair_library"]["reused_body_of"]
+    assert prep["id"] != old_prep and prep["parent_version_id"] == old_prep
+    assert prep["metrics"]["hair_library"]["style"] == SHELL and prep["metrics"]["hair_library"]["reused_body_of"] == old_prep
+    assert "hair_fit" in prep["metrics"]["checks_failed"]
+    rig = next(v for v in full["stages"]["rig"] if v["id"] == full["selected"]["rig"])
+    export = next(v for v in full["stages"]["export"] if v["id"] == full["selected"]["export"])
+    assert rig["parent_version_id"] == prep["id"] and export["parent_version_id"] == rig["id"]
+    assert c.get(f"/api/assets/{aid}/hair").json()["applied"]["style"] == SHELL
+    by_id = {v["id"]: v for v in full["stages"]["prep"]}
+    assert by_id[old_prep]["status"] == "done" and not by_id[old_prep]["selected"]  # still in the history
     # Off again: nothing is rejected, and the panel offers the rebuild.
     out = c.put(f"/api/assets/{aid}/hair", json={"source": "model"}).json()
     assert out["started"] == [] and out["rebuild_from"] == "mesh"
@@ -1080,3 +1096,178 @@ def test_a_style_over_the_hair_share_is_not_offered_or_pickable(app_client, monk
     r = c.post(f"/api/assets/{a['id']}/hair/pick", json={"style": CARDS})
     assert r.status_code == 409 and "lighter" in r.json()["detail"]
     assert c.post(f"/api/assets/{a['id']}/hair/pick", json={"style": SHELL}).status_code == 200
+
+
+def test_the_bald_prompt_names_a_beard_only_when_the_description_has_one():
+    trial = ("Make this character completely bald: remove all of the hair, including the fringe, any ponytail and any "
+             "loose locks, and show a smooth, clean, hairless bald scalp with a natural rounded skull shape and both ears "
+             "visible. Keep the face, eyes, expression, ears, skin tone, neck, outfit, pose, proportions, framing, art "
+             "style, lighting and background exactly the same.")
+    assert turn_stage.BALD_PROMPT == trial  # runtime/tmp/wigtrial/edit.py PROMPTS["bald"], word for word
+    for d in ("a young woman with dark brown hair in a long high ponytail", "a knight with a red bob", None):
+        p = turn_stage.bald_prompt(d)
+        assert p == trial and "beard" not in p.lower() and "moustache" not in p.lower()
+    for d in ("a dwarf with a long braided beard", "an old man with a grey moustache", "a bearded pirate", "a rogue with stubble"):
+        assert turn_stage.bald_prompt(d) == trial + turn_stage.BALD_BEARD_SENTENCE
+
+
+# --- the face inside the bald edit (live run 11-06: two women came back as bald bearded men) -------------------------
+
+FACES = Path(__file__).resolve().parent / "data" / "hairpipe_faces"
+
+
+def _face_case(name: str):
+    """A head-sized crop cut from real pictures: the concept, the bald edit, the hair outline and the head box."""
+    orig = np.asarray(Image.open(FACES / f"{name}_orig.png").convert("RGBA"))
+    bald = np.asarray(Image.open(FACES / f"{name}_bald.png").convert("RGBA"))
+    outline = np.asarray(Image.open(FACES / f"{name}_outline.png")) > 127
+    return orig, bald, outline, json.loads((FACES / f"{name}.json").read_text())["target"]
+
+
+@pytest.mark.parametrize("name", ["good_knight", "good_ponytail"])
+def test_face_measure_passes_a_clean_bald_edit(name):
+    fm = turn_stage.face_measure(*_face_case(name))
+    assert fm["face_dark"] <= 0.01 and fm["face_change"] <= 7.0 and fm["lower_px"] > 500
+    assert turn_stage.face_kept(fm)
+
+
+@pytest.mark.parametrize("name", ["beard_bob", "beard_ponytail"])
+def test_face_measure_catches_a_drawn_beard(name):
+    """kept_share passed these at 0.968 and 0.986; the lower face shows the beard."""
+    fm = turn_stage.face_measure(*_face_case(name))
+    assert fm["face_dark"] >= 0.2 and not turn_stage.face_kept(fm)
+
+
+def test_a_bearded_bald_picture_warns_as_face_changed_and_the_redraw_keeps_the_clean_one():
+    bearded = {"ok": False, "reason": "face_changed", "kept_share": 0.986, "face_dark": 0.22, "face_change": 12.0}
+    clean = {"ok": True, "reason": None, "kept_share": 0.95, "face_dark": 0.0, "face_change": 4.9}
+    also_bearded = {"ok": False, "reason": "face_changed", "kept_share": 0.99, "face_dark": 0.29, "face_change": 10.9}
+    assert max([bearded, clean], key=turn_stage._try_rank) is clean
+    assert max([also_bearded, bearded], key=turn_stage._try_rank) is bearded  # the smaller beard, not the larger kept share
+    c = turn_stage.bald_check({"kept_share": 0.986, "reason": "face_changed", "face_delta": 23.5, "face_dark": 0.22,
+                               "face_change": 12.0, "rerolled": True})
+    assert not c["passed"] and c["severity"] == "warn" and c["vars"]["reason"] == "face_changed" and c["vars"]["face_dark"] == 0.22
+    assert c["fix"]["params"] == {"bald_only": True, "bald_seed": None}
+
+
+
+# --- a Fix is the owner's decision: its result is kept, never re-ranked against older versions ----------------------------
+
+
+def _kept(c, aid, stage):
+    full = c.get(f"/api/assets/{aid}").json()
+    return next(v for v in full["stages"][stage] if v["id"] == full["selected"][stage]), full
+
+
+def _fix(c, aid, fix):
+    c.post(f"/api/assets/{aid}/autopilot", json={"fix": fix})
+    return _autopilot_done(c, aid)
+
+
+def _library_asset_done(c):
+    a = _new_asset(c)
+    c.post(f"/api/assets/{a['id']}/autopilot", json={})
+    assert _autopilot_done(c, a["id"])["status"] == "done"
+    return a["id"]
+
+
+def test_use_the_hair_built_with_the_3d_model_keeps_todays_chain_even_when_the_bald_model_passed_more(app_client, lane1):
+    """The bald 3D model passes hair_fit (21 checks); the Fix's model has no hair_fit (20). Re-ranking kept the bald one
+    again while the asset said "model"; now the Fix's result is kept and the setting matches the kept chain."""
+    c = app_client
+    lane1.score = 0.77
+    aid = _library_asset_done(c)
+    old_mesh, _ = _kept(c, aid, "mesh")
+    assert old_mesh["params"]["hair_source"] == "library" and "hair_fit" not in old_mesh["metrics"]["checks_failed"]
+    st = _fix(c, aid, {"stage": "mesh", "params": {"hair_source": "model"}})
+    assert st["status"] == "done" and st["reason"] is None, st
+    mesh, full = _kept(c, aid, "mesh")
+    assert mesh["id"] != old_mesh["id"] and mesh["params"]["hair_source"] == "model"
+    assert mesh["metrics"]["checks_passed"] < old_mesh["metrics"]["checks_passed"]
+    assert {v["id"]: v for v in full["stages"]["mesh"]}[old_mesh["id"]]["status"] == "rejected"
+    assert full["hair"]["source"] == "model"
+    prep, _ = _kept(c, aid, "prep")
+    rig, _ = _kept(c, aid, "rig")
+    assert prep["parent_version_id"] == mesh["id"] and "hair_library" not in prep["metrics"] and rig["parent_version_id"] == prep["id"]
+
+
+def test_fit_the_hair_again_with_more_cover_is_kept_though_it_passes_fewer_checks(app_client, lane1):
+    c = app_client
+    aid = _library_asset_done(c)
+    old_prep, _ = _kept(c, aid, "prep")
+    lane1.attach_scores[CARDS] = 0.5  # the new fit scores under 0.6: hair_fit warns on it
+    st = _fix(c, aid, {"stage": "prep", "params": {"hair_cover": "more"}})
+    assert st["status"] == "done", st
+    prep, full = _kept(c, aid, "prep")
+    assert prep["id"] != old_prep["id"] and prep["params"]["hair_cover"] == "more"
+    assert prep["metrics"]["checks_passed"] < old_prep["metrics"]["checks_passed"] and "hair_fit" in prep["metrics"]["checks_failed"]
+    assert prep["metrics"]["hair_library"]["reused_body_of"] == old_prep["id"]  # only the hair was fitted again
+    rig, _ = _kept(c, aid, "rig")
+    export, _ = _kept(c, aid, "export")
+    assert rig["parent_version_id"] == prep["id"] and export["parent_version_id"] == rig["id"]
+    assert c.get(f"/api/assets/{aid}/hair").json()["applied"]["prep_version_id"] == prep["id"]
+    assert {v["id"]: v for v in full["stages"]["prep"]}[old_prep["id"]]["status"] == "rejected"
+
+
+def test_make_the_bald_picture_again_is_kept_and_the_3d_model_is_built_from_it(app_client, lane1):
+    c = app_client
+    aid = _library_asset_done(c)
+    old_turn, _ = _kept(c, aid, "turnaround")
+    lane1.kept = [0.7, 0.75]  # both new tries change too much: bald_picture warns on the Fix's result
+    st = _fix(c, aid, {"stage": "turnaround", "params": {"bald_only": True, "bald_seed": None}})
+    assert st["status"] == "done", st
+    turn, full = _kept(c, aid, "turnaround")
+    assert turn["id"] != old_turn["id"] and turn["params"]["bald_seed"] != old_turn["params"]["bald_seed"]
+    assert "bald_picture" in turn["metrics"]["checks_failed"] and not old_turn["metrics"]["checks_failed"]
+    mesh, _ = _kept(c, aid, "mesh")
+    assert mesh["parent_version_id"] == turn["id"] and mesh["params"]["hair_source"] == "library"
+    from vgac.config import get_settings
+
+    lib = get_settings().library_path
+    assert (lib / mesh["files"]["input"]).read_bytes() == (lib / turn["files"]["bald_quarter_cutout"]).read_bytes()
+    assert full["hair"]["source"] == "library"
+    prep, _ = _kept(c, aid, "prep")
+    assert prep["parent_version_id"] == mesh["id"] and prep["metrics"]["hair_library"]["attached"]
+
+
+def test_a_fix_that_fails_to_build_falls_back_to_the_version_kept_before(app_client, engines):
+    c = app_client
+    aid = _library_asset_done(c)
+    old_prep, _ = _kept(c, aid, "prep")
+    old_rig, _ = _kept(c, aid, "rig")
+    engines.fail_prep = True
+    st = _fix(c, aid, {"stage": "prep", "params": {"size_m": 1.6}})
+    assert st["status"] == "done", st
+    assert "could not be made" in st["reason"] and "Blender stopped with an error" in st["reason"]
+    prep, full = _kept(c, aid, "prep")
+    assert prep["id"] == old_prep["id"] and prep["status"] == "done"
+    new = [v for v in full["stages"]["prep"] if v["id"] != old_prep["id"]]
+    assert len(new) == 1 and new[0]["status"] == "error" and not new[0]["selected"]
+    rig, _ = _kept(c, aid, "rig")
+    assert rig["parent_version_id"] == old_prep["id"] and rig["id"] != old_rig["id"]  # rebuilt on the old Clean up
+    engines.fail_prep = False
+    c.post(f"/api/assets/{aid}/autopilot", json={})  # a later run says nothing about the old failure
+    assert _autopilot_done(c, aid)["reason"] is None
+
+
+def test_a_fix_whose_result_fails_a_blocking_check_is_paused_on(app_client, lane1, monkeypatch):
+    """Kept as the step's result to judge, not swapped for the older version: the autopilot pauses on it as usual."""
+    from vgac import quality
+
+    c = app_client
+    aid = _library_asset_done(c)
+    old_prep, _ = _kept(c, aid, "prep")
+    real = quality.check
+
+    def blocking(id_, ok, value, limit, vars=None):
+        out = real(id_, ok, value, limit, vars=vars)
+        if id_ == "hair_skin_through":
+            out = {**out, "passed": False, "ok": False, "severity": "block"}
+        return out
+
+    monkeypatch.setattr(quality, "check", blocking)
+    st = _fix(c, aid, {"stage": "prep", "params": {"hair_cover": "more"}})
+    assert st["status"] == "paused" and st["stage"] == "prep" and st["version_id"] != old_prep["id"], st
+    full = c.get(f"/api/assets/{aid}").json()
+    assert "prep" not in full["selected"]
+    assert {v["id"]: v for v in full["stages"]["prep"]}[old_prep["id"]]["status"] == "rejected"

@@ -11,7 +11,9 @@ group k) with the material VGAC_Hair, parents it to the armature with an Armatur
 - below it, over `--blend` metres (10 cm), a smooth blend from Head toward the weights of the nearest body vertex
   held by Neck, Spine2, Spine1 or the shoulders (a data transfer limited to those bones), so hair resting on the nape
   and shoulders follows them;
-- hang-group vertices: Head 1.0 (the spring chains, added next by springs.py, take them over).
+- hang-group vertices: the same rule (Head above the neck joint, the nape blend below it); the spring chains, added
+  next by springs.py, then take them over along the chain. Hair of a hanging group held by the head alone below the
+  neck joint was carried into the neck when the head bowed.
 The clips are left as they are; the file is written again with the same NLA export as procanim and springs.
 
 With --reference (the clean-up GLB the hair was fitted on) the hair is carried by the same box fit rig_fix used to put
@@ -34,6 +36,9 @@ import numpy as np
 HAIR_OBJECT = "VGAC_Hair"
 HAIR_MATERIAL = "VGAC_Hair"
 BLEND_M = 0.10
+SKIN_UP_M = 0.06      # hair follows the skin's weights from the neck joint up to this height above it (then fades)
+SKIN_NEAR_M = 0.02    # hair this close to the skin follows the skin's own weights fully...
+SKIN_REACH_M = 0.06   # ... fading to none at this distance (then the rules by height apply)
 NAPE_ROLES = ("Neck", "Spine2", "Spine1", "LeftShoulder", "RightShoulder")
 HEAD_ROLES = ("Head",)
 MAX_INFLUENCES = 4
@@ -131,18 +136,49 @@ def limit_normalise(w, n=MAX_INFLUENCES):
     return {b: x / tot for b, x in top} if tot > 0 else {}
 
 
-def bind_weights(V, role, neck_z, head, near, blend=BLEND_M):
+def skin_share(dist, near=SKIN_NEAR_M, reach=SKIN_REACH_M):
+    """The share of the skin's own weights a hair vertex takes by its distance to the skin: 1 within `near`, falling
+    smoothly to 0 at `reach`. A rig often holds the back of the skull partly by the neck; hair held by the head alone
+    there sinks into the scalp when the head bows, so hair on the skin moves as the skin does."""
+    return 1.0 - smoothstep(near, reach, np.asarray(dist, float))
+
+
+def bind_weights(V, role, neck_z, head, near, blend=BLEND_M, skin=None, skin_dist=None, reach=SKIN_REACH_M):
     """Weights for the hair's vertices. V (n, 3) Blender space; role (n,) npz roles (2+k hang group); neck_z the
     Head bone's head height; head the Head bone's name; near: per vertex the nearest body vertex's weights limited to
-    the nape bones ({bone: w}, possibly empty). -> (weights list of {bone: w}, stats)."""
+    the nape bones ({bone: w}, possibly empty). skin and skin_dist (optional): per vertex the nearest body vertex's
+    weights on the head and nape bones and how far that vertex is; hair lying on the skin round the neck joint
+    (within `reach`) moves as the skin under it does (skin_share), so a bowing head cannot carry it into the neck.
+    -> (weights list of {bone: w}, stats)."""
     V = np.asarray(V, float)
     role = np.asarray(role)
     share = nape_share(V[:, 2], neck_z, blend)
+    # only round the neck joint (up to SKIN_UP_M above it, fading out over as much again): higher up the head holds it
+    sshare = (skin_share(skin_dist) * (1.0 - smoothstep(SKIN_UP_M, 2 * SKIN_UP_M, V[:, 2] - neck_z))
+              if skin_dist is not None else np.zeros(len(V)))
     out, blended, rest = [], 0, 0
     for i in range(len(V)):
-        hang = role[i] >= 2
-        s = 0.0 if hang else float(share[i])
+        s = float(share[i])
         nw = near[i] if near is not None and i < len(near) else {}
+        if skin is not None and skin[i] and sshare[i] > 0:
+            # on the skin: the skin's own weights (head and nape bones), blended with the rule by height
+            ws = float(sshare[i])
+            base = {head: 1.0 - s}
+            for b, x in (nw or {}).items():
+                base[b] = base.get(b, 0.0) + s * x
+            if s > 0 and not nw:
+                base = {head: 1.0}
+            w = {}
+            for b, x in base.items():
+                w[b] = w.get(b, 0.0) + (1 - ws) * x
+            for b, x in skin[i].items():
+                w[b] = w.get(b, 0.0) + ws * x
+            w = limit_normalise(w)
+            blended += 1
+            if w.get(head, 0.0) >= 1.0 - 1e-6:
+                rest += 1
+            out.append(w)
+            continue
         if s > 0 and not nw:
             s = 0.0  # nothing to blend toward: the head carries it
         w = {head: 1.0 - s}
@@ -297,7 +333,28 @@ def main():  # pragma: no cover - runs inside Blender
         for i in np.nonzero(share > 0)[0]:
             _, j, _ = kd.find(Vector(V[i]))
             near[int(i)] = nape_w[j]
-    weights, stats = bind_weights(V, role, neck_z, head.name, near, blend)
+    # hair lying on the skin round the neck joint: the nearest body vertex's weights on the head and nape bones
+    skin_w = [{} for _ in range(len(V))]
+    skin_d = np.full(len(V), np.inf)
+    head_nape = {b for b, r in roles.items() if r in NAPE_ROLES or r in HEAD_ROLES}
+    kd_all = KDTree(len(BV))
+    for j in range(len(BV)):
+        kd_all.insert(Vector(BV[j]), j)
+    kd_all.balance()
+    body_w = {}
+    for i in range(len(V)):
+        _, j, dist = kd_all.find(Vector(V[i]))
+        if dist is None or dist > SKIN_REACH_M:
+            continue
+        if j not in body_w:
+            vv = body.data.vertices[j]
+            w = {gname[g.group]: g.weight for g in vv.groups if g.weight > 0 and gname.get(g.group) in head_nape}
+            t = sum(w.values())
+            body_w[j] = {b: x / t for b, x in w.items()} if t > 0 else {}
+        skin_w[int(i)] = body_w[j]
+        skin_d[int(i)] = dist
+    weights, stats = bind_weights(V, role, neck_z, head.name, near, blend, skin=skin_w, skin_dist=skin_d)
+    stats["skin_follow_verts"] = int(sum(1 for i in range(len(V)) if skin_w[i] and skin_d[i] < SKIN_REACH_M))
     for i, w in enumerate(weights):
         for b, x in w.items():
             g = hair.vertex_groups.get(b) or hair.vertex_groups.new(name=b)

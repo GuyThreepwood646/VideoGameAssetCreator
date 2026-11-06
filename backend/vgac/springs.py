@@ -134,6 +134,9 @@ def metrics(report: dict[str, Any] | None, on: bool, reason: str | None, seconds
            "into_hitbox_max_m": round(max(into), 4) if into else None,
            "swing_deg": swing, "seconds": seconds, "find_seconds": rep.get("find_seconds"), "bake_seconds": rep.get("bake_seconds"),
            "hair_points": rep.get("hair_points"), "error": (error or "")[:300] or None}
+    if rep.get("hair_into_body"):
+        # hair from the library: how deep the hair's surface went into the body in idle, walk and run (metres)
+        out["hair_into_body"] = rep["hair_into_body"]
     return out
 
 

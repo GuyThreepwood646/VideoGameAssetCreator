@@ -143,7 +143,7 @@ def test_nape_share_is_zero_above_the_neck_and_one_a_blend_below():
     assert abs(s[2] - 0.5) < 1e-9  # smoothstep half way
 
 
-def test_bind_weights_head_above_blend_below_hanging_to_head():
+def test_bind_weights_head_above_blend_below_for_every_vertex():
     V = np.array([[0, 0, 1.6], [0, 0.05, 1.45], [0, 0.05, 1.30], [0, 0.1, 1.30]])
     role = np.array([0, 0, 1, 2])
     near = [{}, {"Neck": 0.7, "Spine2": 0.3}, {"Spine2": 1.0}, {"Spine2": 1.0}]
@@ -152,10 +152,10 @@ def test_bind_weights_head_above_blend_below_hanging_to_head():
     assert set(w[1]) == {"Head", "Neck", "Spine2"} and w[1]["Head"] == pytest.approx(0.5)
     assert sum(w[1].values()) == pytest.approx(1.0)
     assert w[2] == {"Spine2": 1.0}  # the cap below the blend follows the chest
-    assert w[3] == {"Head": 1.0}  # hanging group: Head, the spring chain takes over
-    assert st["nape_blend_verts"] == 2 and st["groups"] == [0] and st["rest_share"] == 0.5
+    assert w[3] == {"Spine2": 1.0}  # hanging group below the neck joint: the nape blend too (the chain takes over later)
+    assert st["nape_blend_verts"] == 3 and st["groups"] == [0] and st["rest_share"] == 0.25
     assert hairbind.bound_share(w, ["Head", "Neck", "Spine2"]) == 1.0
-    assert hairbind.bound_share(w, ["Head"]) == 0.5
+    assert hairbind.bound_share(w, ["Head"]) == 0.25
 
 
 def test_bind_weights_without_body_weights_stay_on_the_head():
@@ -521,6 +521,91 @@ def test_slerp_dir():
 
 def test_unity_spring_script_reads_hang_and_keeps_version_one_behaviour():
     cs = (SANDBOX / "VgacScripts" / "VgacSpringBones.cs").read_text(encoding="utf-8")
-    assert export.spring_script_version(SANDBOX / "VgacScripts" / "VgacSpringBones.cs") == 2
+    assert export.spring_script_version(SANDBOX / "VgacScripts" / "VgacSpringBones.cs") == 3
     assert "hang = 0f" in cs and "if (c.hang > 0f)" in cs
     assert "else gEff = g - Q * c.gravityAcross[k] * c.gravity * scale;" in cs  # the Version 1 line, unchanged
+
+
+def test_snapshot_args_frame_library_hair_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(export, "showcase_sky", lambda: None)
+    sc = SimpleNamespace(version=SimpleNamespace(metrics={}))
+    plain = export.snapshot_args(sc, "n", tmp_path)
+    assert plain == {"-vgacName": "n", "-vgacOut": tmp_path, "-vgacClipFilter": "walk,idle", "-vgacFrames": 4, "-vgacSize": 384}
+    sc.version.metrics = {"hair_material": {"ok": True, "planned": True}}  # today's hair material
+    assert export.snapshot_args(sc, "n", tmp_path) == plain
+    sc.version.metrics = {"hair_material": {"ok": True, "source": "library"}}
+    assert export.snapshot_args(sc, "n", tmp_path) == {**plain, "-vgacHairLibrary": "on"}
+    cs = (SANDBOX / "Editor" / "VgacImport.cs").read_text(encoding="utf-8")
+    assert "HairSubmeshBounds" in cs and '"-vgacHairLibrary"' in cs
+
+
+# --- library hair stays out of the body (keep-outs, surface, swing limit, skin-following weights) -----------------------
+
+
+def test_rests_on_shoulders_and_library_settings():
+    assert bsprings.rests_on_shoulders([[0, 0, 1.6], [0, 0, 1.47]], 1.45) is True     # a bob's side ends at the shoulders
+    assert bsprings.rests_on_shoulders([[0, 0, 1.6], [0, 0, 1.2]], 1.45) is False     # a ponytail hangs below them
+    assert bsprings.rests_on_shoulders([[0, 0, 1.6], [0, 0, 1.47]], None) is False
+    assert bsprings.lib_settings({"rests": True}) == {"hang": bsprings.LIBRARY_HAIR_HANG}
+    assert bsprings.lib_settings({}) == {"hang": bsprings.LIBRARY_HAIR_HANG, "surface": True, "hang_limit": True,
+                                         "bend_max": bsprings.LIBRARY_HAIR_BEND_MAX}
+
+
+def test_surface_radius_tube_and_sheet():
+    J = np.array([[0, 0, 1.6], [0, 0, 1.3]])
+    ang = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+    tube = np.array([[0.02 * np.cos(a), 0.02 * np.sin(a), z] for a in ang for z in (1.55, 1.45, 1.35)])
+    assert bsprings.surface_radius(tube, J) == pytest.approx(0.02, abs=0.002)
+    sheet = np.array([[x, 0.004 * (i % 2), z] for i, x in enumerate(np.linspace(-0.08, 0.08, 30)) for z in (1.55, 1.4)])
+    assert bsprings.surface_radius(sheet, J) == bsprings.SURFACE_RADIUS_MAX  # capped
+
+
+def test_keepouts_sit_on_the_surface_facing_the_hair():
+    # a flat "back" at y = 0.1 facing +Y (behind), hair hanging behind it at y = 0.15
+    xs, zs = np.meshgrid(np.linspace(-0.2, 0.2, 21), np.linspace(1.1, 1.5, 21))
+    V = np.stack([xs.ravel(), np.full(xs.size, 0.1), zs.ravel()], axis=1)
+    N = np.tile([0.0, 1.0, 0.0], (len(V), 1))
+    bones = [{"name": "mixamorig:Spine2"}]
+    chain = np.array([[0, 0.15, z] for z in np.linspace(1.5, 1.2, 10)])
+    ko = bsprings.keepout_shapes(V, N, np.zeros(len(V), int), bones, chain, 0.12, ["Spring_Hair_01"])
+    assert ko and all(k["bone"] == "mixamorig:Spine2" and k["chains"] == ["Spring_Hair_01"] for k in ko)
+    for k in ko:
+        assert np.isclose(k["a"][1], 0.1 - bsprings.KEEPOUT_SPHERE) and np.array_equal(k["a"], k["b"])
+    # the far side of the surface (normals facing away from the hair) gives none
+    assert bsprings.keepout_shapes(V, -N, np.zeros(len(V), int), bones, chain, 0.12) == []
+    j = bsprings.keepout_json(ko[0])
+    assert j["kind"] == "sphere" and j["keepout"] and j["chains"] == ["Spring_Hair_01"] and j["radius"] == bsprings.KEEPOUT_SPHERE
+
+
+def test_hung_joints_point_down_by_the_share():
+    J = [[0, 0, 1.6], [0, 0.1, 1.6]]  # straight back
+    H = bsprings.hung_joints(J, 1.0)
+    assert np.allclose(H[1], [0, 0, 1.5])
+    H = bsprings.hung_joints(J, 0.5)
+    assert np.isclose(np.degrees(np.arccos(-(H[1] - H[0])[2] / 0.1)), 45.0)
+
+
+def test_bend_limit_and_keepout_in_the_bake():
+    frames = [{"root": np.array(REST[0], float), "q": _bow(0)} for _ in range(48)]
+    st = dict(bsprings.SETTINGS["Hair"], hang=0.7, bend_max=20.0)
+    run = bsprings.simulate(frames, {"rest": REST, "radius": 0.01}, st, 24, None, np.array([0.0, -6.0, 0.0]))["joints"]
+    free = bsprings.simulate(frames, {"rest": REST, "radius": 0.01}, dict(st, bend_max=0), 24, None, np.array([0.0, -6.0, 0.0]))["joints"]
+    assert bsprings.hang_degrees(run[-10:])[0] < bsprings.hang_degrees(free[-10:])[0]
+    # a keep-out sphere right where the tail would hang: hang_limit and the push-out keep the hair's surface out of it
+    c = np.array([0.0, 0.16, 1.40])
+    cols = [[(c, c, 0.05)] for _ in frames]
+    st2 = dict(bsprings.SETTINGS["Hair"], hang=0.7, hang_limit=True, surface=True)
+    J = bsprings.simulate(frames, {"rest": REST, "radius": 0.02}, st2, 24, cols, None)["joints"]
+    grown = [[(a, b, r + 0.02) for a, b, r in fc] for fc in cols]  # the hair's surface: 2 cm round the centre line
+    assert bsprings.deepest_in_shapes(J[-10:], grown[-10:]) < 0.005
+
+
+def test_hair_on_the_skin_follows_the_skin():
+    V = np.array([[0, 0.1, 1.55], [0, 0.2, 1.55], [0, 0.1, 1.40]])
+    skin = [{"Head": 0.6, "Neck": 0.4}, {"Head": 0.6, "Neck": 0.4}, {"Neck": 1.0}]
+    w, st = hairbind.bind_weights(V, np.array([0, 0, 2]), 1.5, "Head", [{}, {}, {"Neck": 1.0}], 0.1,
+                                  skin=skin, skin_dist=np.array([0.01, 0.2, 0.005]))
+    assert w[0] == pytest.approx({"Head": 0.6, "Neck": 0.4})  # on the skin above the joint: the skin's weights
+    assert w[1] == {"Head": 1.0}  # far from the skin: the rule by height
+    assert w[2] == pytest.approx({"Neck": 1.0})
+    assert hairbind.skin_share(0.01) == 1.0 and hairbind.skin_share(0.1) == 0.0

@@ -929,13 +929,21 @@ async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[st
     return report
 
 
+def snapshot_args(sc: Any, name: str, snap_dir: Path) -> dict[str, Any]:
+    """VgacImport.Snapshot's arguments. -vgacHairLibrary on only for hair from the library (its close-ups are framed on
+    the hairstyle's own bounds); otherwise the arguments are as they always were."""
+    args: dict[str, Any] = {"-vgacName": name, "-vgacOut": snap_dir, "-vgacClipFilter": "walk,idle", "-vgacFrames": 4, "-vgacSize": 384,
+                            **({"-vgacHdri": sky} if (sky := showcase_sky()) else {})}
+    if ((getattr(sc, "version", None) and sc.version.metrics.get("hair_material")) or {}).get("source") == "library":
+        args["-vgacHairLibrary"] = "on"
+    return args
+
+
 async def _unity_snapshot(sc: StageContext, params: dict[str, Any], name: str) -> None:
     snap_dir = sc.dir / "unity_snapshots"
     try:
         sc.progress(0.7, "Unity clip snapshots")
-        await sc.unity("VgacImport.Snapshot", {"-vgacName": name, "-vgacOut": snap_dir, "-vgacClipFilter": "walk,idle", "-vgacFrames": 4, "-vgacSize": 384,
-                                                    **({"-vgacHdri": sky} if (sky := showcase_sky()) else {})},
-                       [], "unity_snapshot.log", timeout=1800)
+        await sc.unity("VgacImport.Snapshot", snapshot_args(sc, name, snap_dir), [], "unity_snapshot.log", timeout=1800)
     except Exception as e:
         sc.set_metrics(unity_snapshot_error=str(e)[-600:])
     rp = snap_dir / "snapshot_report.json"

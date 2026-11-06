@@ -5,6 +5,11 @@ A version is kept when it finished and has no failed check of severity "block" (
 all (stop_on="warn"), or always (stop_on="never"). A stage that already has finished versions but none kept (the
 user paused, fixed, or rejected) is re-evaluated instead of re-run. State lives on Asset.autopilot_json and every
 change is pushed on the websocket bus as {"type": "autopilot", "asset_id", "autopilot"}.
+
+A Fix is the owner's decision: its result is what the later steps are built on. The version the Fix adjusts (or
+redraws) is set aside, the Fix's result is judged on its own (kept when it passes, paused on as usual when it fails a
+check it cannot accept), and it is never re-ranked against the older versions of its step. When the Fix's build fails
+(an error, not a failed check), the version kept before it is kept again and the reason says so.
 """
 from __future__ import annotations
 
@@ -93,7 +98,7 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     if t is not None and not t.done():
         return _set(aid)
     state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_iso(utcnow()),
-                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False)
+                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False, note=None)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
 
@@ -142,6 +147,39 @@ async def _wait(version_ids: list[str]) -> None:
             vs = [db.get(Version, vid) for vid in version_ids]
             if all(v is None or v.status in ("done", "error", "rejected") for v in vs):
                 return
+
+
+FIX_FAILED_REASON = ("The fix could not be made ({error}), so the result kept before it is used again and the later "
+                     "steps are built on that.")
+
+
+def _settle_fix(aid: str, vid: str, fallback: str | None, stop_on: str) -> bool:
+    """After a Fix's version finished: keep it when it passes (it is never re-ranked against older versions); pause on
+    it when it fails a check it cannot accept; when it errored, keep the version kept before again (said in the
+    reason). Returns False when the autopilot paused or stopped."""
+    with session_factory()() as db:
+        v = db.get(Version, vid)
+        if v is not None and v.status == "done":
+            ok, reason = _passes(v, stop_on)
+            if not ok:
+                _set(aid, status="paused", stage=v.stage, version_id=v.id, job_id=None, reason=reason)
+                return False
+            pipeline.select(db, v)
+            _set(aid, stage=v.stage, version_id=v.id, job_id=None)
+            return True
+        err = (v.error if v is not None else None) or "the step failed"
+        old = db.get(Version, fallback) if fallback else None
+        if old is None:
+            _set(aid, status="error", stage=v.stage if v is not None else None, job_id=None,
+                 reason=f"The step failed: {str(err)[:300]}")
+            return False
+        old.status = "done"
+        db.commit()
+        pipeline.select(db, old)
+        bus.publish_threadsafe({"type": "version", "version": version_to_dict(old)})
+        note = FIX_FAILED_REASON.format(error=str(err)[:200])
+        _set(aid, stage=old.stage, version_id=old.id, job_id=None, reason=note, note=note)
+        return True
 
 
 async def _run(aid: str) -> None:
@@ -193,15 +231,16 @@ async def _run(aid: str) -> None:
                         cand = db.get(Version, state["version_id"])
                         if cand is not None and cand.asset_id == aid and cand.stage == fstage and cand.status == "done":
                             base = cand
+                    # What the Fix replaces: set aside below, so the Fix's result is judged on its own; kept again only
+                    # when the Fix fails to build.
+                    replaced = base if fix.get("op") == "refine" else (kept if kept is not None and kept.status == "done" else None)
+                    fallback = kept.id if kept is not None and kept.status == "done" else None
                     if fix.get("op") == "refine" and base is not None:
                         inherited = {k: val for k, val in base.params.items() if k != "reference_experimental"}
                         v = pipeline.new_version(db, a, fstage, base, {**inherited, **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "refine", {"instruction": fix["instruction"], "view": None, "mask_png": None,
                                                                     "params": fix.get("params") or {}})
                         pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
-                        # The result it replaces is set aside, so the redraw is judged on its own.
-                        if base.status == "done" and not base.selected:
-                            base.status = "rejected"
                     elif kept is not None and kept.status == "done":
                         v = pipeline.new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
@@ -211,11 +250,18 @@ async def _run(aid: str) -> None:
                     for v in a.versions:
                         if v.stage == fstage:
                             v.selected = False
+                    if replaced is not None and replaced.status == "done":
+                        replaced.status = "rejected"
                     db.commit()
                     target = fstage
                     version_ids = [pair["version"]["id"] for pair in pairs]
                     _set(aid, status="running", stage=target, job_id=pairs[0]["job"]["id"], version_id=version_ids[0], pending_fix=None)
                     await _wait(version_ids)
+                    if _stopped_among(version_ids):
+                        _set(aid, status="paused", stage=target, job_id=None, reason=STOPPED_REASON, stopped_by_user=True)
+                        return
+                    if not _settle_fix(aid, version_ids[0], fallback, stop_on):
+                        return
                     continue
                 stages_done: list[str] = []
                 target: str | None = None
@@ -229,7 +275,7 @@ async def _run(aid: str) -> None:
                     target = s
                     break
                 if target is None:
-                    _set(aid, status="done", stage=None, job_id=None, reason=None, stages_done=stages_done)
+                    _set(aid, status="done", stage=None, job_id=None, reason=state.get("note"), stages_done=stages_done)
                     # Items set aside from a character are made after it, then put on it (vgac/items.py).
                     try:
                         from . import items
