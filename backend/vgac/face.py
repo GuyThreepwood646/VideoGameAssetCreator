@@ -790,9 +790,14 @@ def hair_and_skin(old: np.ndarray, picture: np.ndarray, info: dict[str, Any], ma
     hair_p = np.median(lab_p[hair_src], axis=0) if hair_src.sum() > 200 else hair_o
     pic_hair_any = d(lab_p, hair_p) < d(lab_p, skin_p) - margin
     pic_hair = grow(pic_hair_any & ~dilate_mask(region, max(2, int(w / 40))), pic_hair_any)
-    # the grey background around the painted head (where the painted face is narrower than the model's)
+    # the grey background around the painted head (where the painted face is narrower than the model's): grey of the
+    # background's colour joined to the picture's edge, so a dark grey pupil or brow inside the face is not background
+    # (the silver-haired mage's close-up had both filled as background when the model's nose was found too low)
     bg = to_lab(np.full((1, 1, 3), 0.25))[0, 0]
-    pic_background = (d(lab_p, bg) < 6.0)
+    grey = d(lab_p, bg) < 6.0
+    edge = np.zeros_like(grey)
+    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
+    pic_background = grow(grey & edge, grey) if (grey & edge).any() else np.zeros_like(grey)
     return {"old_hair": old_hair, "pic_hair": pic_hair, "pic_background": pic_background, "found": True,
             "hair_lab": [round(float(v), 1) for v in hair_o]}
 

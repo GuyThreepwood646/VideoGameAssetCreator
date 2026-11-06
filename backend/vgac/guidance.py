@@ -138,6 +138,9 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                    "thigh_l": "Left thigh", "shin_l": "Left shin", "thigh_r": "Right thigh", "shin_r": "Right shin",
                                    "leg_fl": "Left front leg", "leg_fr": "Right front leg", "leg_bl": "Left back leg", "leg_br": "Right back leg",
                                    "leg_l": "Left leg", "leg_r": "Right leg", "wing_l": "Left wing", "wing_r": "Right wing", "wings": "Wings"}},
+    "springs": {"simple": True, "help": {"meaning": "Spring bones (small extra bones that sway on their own): parts that hang clear of the body, such as a ponytail, a braid, a cape or a tail, get a short chain of bones that lags behind the body and settles again.",
+                                         "why": "A ponytail or cape that swings makes a character feel alive. Only parts that hang clear of the body can move: hair resting on the shoulders is joined to them in the 3D model, and a short haircut has nothing that hangs. Rigid things such as a sword, a scabbard or a quiver are left alone.",
+                                         "technical": "Voxel slices find parts joined to the body at one end only; 2 to 4 bones per chain, weights faded from the root; a 120 Hz spring simulation with the hit boxes as colliders baked into every clip; springs.json and a VgacSpringBones script in Unity"}},
     "movement_shape": {"simple": False, "help": {"meaning": "One simple shape around the whole body that the game uses for walking into walls and standing on floors.",
                                                  "why": "It stays still while the hit boxes move, so movement is smooth and predictable.",
                                                  "technical": "Root CapsuleCollider (direction Y or Z) or BoxCollider"},
@@ -183,13 +186,17 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                      "options": {"auto": "Automatic (by platform and picture)", "standard": "Standard", "high": "High"}},
     "face_closeup": {"simple": False, "help": {"meaning": "Close-up source (a larger picture of the face): when the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.",
                                                "why": "A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.",
-                                               "technical": "Qwen-Image-Edit close-up at 1024, checked by likeness at the painting's resolution, eye, skin and hair colour, and feature positions"}},
+                                               "technical": "Qwen-Image-Edit close-up at 1024 (drawn once more in the look's own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting's resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)"}},
     "hair_detail": {"simple": True, "help": {"meaning": "Hair detail (strands and shading painted on): the hair gets strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
                                              "why": "The 3D builder makes hair as one flat-coloured shape; this makes it read as hair. Nothing is added to the shape. It stands back when hair cannot be told from skin or clothes.",
                                              "technical": "Hair mask by a colour vote over the model and the turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels for the hair in the face's relayout"}},
     "hair_strength": {"simple": False, "help": {"meaning": "How strongly the hair detail is painted: 1 is full, 0 changes nothing.",
                                                 "why": "Lower it if the strands look too busy for your look.",
                                                 "technical": "Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1"}},
+    "hair_material": {"simple": False, "help": {"meaning": "Hair material (its own texture and shader): the hair gets a second material with its own texture, so it holds about three times the texels and, in Unity, a highlight that stretches across the strands.",
+                                                "why": "Hair is what people look at up close. It costs one more draw call per character, so Automatic turns it on for PC and Showcase and leaves Phone with one material. It stays one material when the hair cannot be told from the skin or the clothes with confidence.",
+                                                "technical": "Second material slot on the hair triangles (triangles across the hairline stay with the body), own UV layout and 1024 px maps (2048 on Showcase), flow map, KHR_materials_anisotropy in the GLB, VGAC/Hair Kajiya-Kay shader on the Unity built-in pipeline"},
+                      "options": {"auto": "Automatic (PC and Showcase on, Phone off)", "on": "On", "off": "Off"}},
     "head_triangles": {"simple": False, "help": {"meaning": "Weighted decimation (more triangles on the head): when the model is shrunk to your platform's triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.",
                                                  "why": "Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Characters in the Low-poly, Pixel-art and Retro 64 looks never get it.",
                                                  "technical": "The 3D step builds twice the target; Blender's Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake"}},
@@ -410,6 +417,38 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Try again",
     },
+    # Spring bones (vgac/springs.py, blender/springs.py), checked in rig: what sways, or why nothing does. Passes when
+    # the pass stood back with its reason; fails softly on an error, a looping move that jumps at its seam or a part
+    # that passes into the body.
+    "springs": {
+        "severity": "warn",
+        "ok": lambda c: ("No spring bones (small extra bones that sway on their own) were added: {why}"
+                         + ("" if (_var(c, "why") or "").endswith(".") else ".") + (" {left_alone}" if _var(c, "left_alone") else "")
+                         if _var(c, "skipped") else
+                         "Spring bones (small extra bones that sway on their own): {what} sway"
+                         + ("" if _var(c, "plural") else "s") + " when the character moves, on {value:n} added bones. "
+                         "The sway is baked into every move, and looping moves still join up without a jump."
+                         + (" {left_alone}" if _var(c, "left_alone") else "")),
+        "fail": lambda c: {
+            "error": "Spring bones (small extra bones that sway on their own) were not added: something went wrong on the way.",
+            "seam": "Spring bones were added to {what}, but a looping move jumps by {seam_cm} cm where it starts again.",
+            "into_body": "Spring bones were added to {what}, but in some moves it passes {deep_cm} cm into the body.",
+        }.get(_var(c, "problem") or _var(c, "reason") or "", "The spring bones did not come out as they should."),
+        "fix": lambda c: {"stage": "rig", "params": {"springs": True}},
+        "fix_label": "Make the spring bones again",
+    },
+    # The hand-off's side: the files carry the chains, springs.json, and Unity put the spring script on the prefab.
+    "springs_shipped": {
+        "severity": "warn",
+        "ok": lambda c: ("The files carry the spring bones: {value:n} chain" + ("" if c.get("value") == 1 else "s")
+                         + " with the sway baked into the moves in the FBX and every GLB, and springs.json for other engines"
+                         + (". In Unity the prefab has the spring script, so the chains sway in the shared moves too" if _var(c, "unity") else "")
+                         + "."),
+        "fail": lambda c: ("The spring bones were made at the rig step, but the files that ship do not carry them"
+                           + (" ({problem})" if _var(c, "problem") else "") + "."),
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Make the files again",
+    },
     "max_influences": {
         "severity": "warn",
         "ok": "Each surface point follows at most {value:n} bones.",
@@ -617,7 +656,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
             "eye_blurry": "The face was painted, but {eye_words} came out blurry, much softer than the picture's.",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
         "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") == "eye_under_hair"
-                          else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None}}),
+                          else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None, "face_closeup_seed_2": None}}),
         "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") == "eye_under_hair" else "Paint the face again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
@@ -637,6 +676,34 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         }.get(_var(c, "reason") or "", "The hair detail did not come out as it should."),
         "fix": lambda c: {"stage": "prep", "params": {"hair_detail": True, **({"hair_strength": 0.5} if _var(c, "reason") == "face_changed" else {})}},
         "fix_label": "Paint the hair again",
+    },
+    # Hair as its own material (vgac/hairmat.py), checked in prep: humanoids whose hair pass ran, on PC and Showcase
+    # budgets. Passes with the reason when the split was doubtful or not worth it (the hair stays in the body material).
+    "hair_material": {
+        "severity": "warn",
+        "ok": lambda c: ("Hair material (its own texture and shader) was not used: {why}. The hair stays in the body material, "
+                         "painted as before, and the character keeps one material."
+                         if _var(c, "used") is False else
+                         "Hair material (its own texture and shader): the hair has its own material"
+                         + (" and a {tex} px texture" if _var(c, "tex") else "")
+                         + ", with {value} texels (texture pixels) per cm on the hair against {limit} in the body texture. "
+                         "It costs one more draw call per character."
+                         + (" The rest of the body has {body} texels per cm ({body_before} before)." if _var(c, "body") and _var(c, "body_before") else "")),
+        "fail": "Hair material (its own texture and shader) was not made: something went wrong on the way, so the hair stays in the body material.",
+        "fix": lambda c: {"stage": "prep", "params": {"hair_material": "on"}},
+        "fix_label": "Give the hair its own material again",
+    },
+    # The hand-off's side of it: the files that ship carry the second material.
+    "hair_material_shipped": {
+        "severity": "warn",
+        "ok": lambda c: ("The hair ships with its own material: the GLB has {value} materials (body and hair) and the FBX two "
+                         "material slots" + (" named {slots}" if _var(c, "slots") else "")
+                         + (". Unity built the hair material with the {shader} shader" if _var(c, "shader") else "")
+                         + ". One more draw call per character."),
+        "fail": lambda c: ("The hair was meant to have its own material, but the files that ship have {value} material(s)"
+                           + (" ({problem})" if _var(c, "problem") else "") + "."),
+        "fix": lambda c: {"stage": "export", "params": {}},
+        "fix_label": "Make the files again",
     },
     # G15 (plan 3.8): scenery on the grid, checked in prep.
     "grid_fit": {

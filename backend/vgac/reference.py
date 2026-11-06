@@ -135,6 +135,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Paints strands, clumps and shading along the hair; skipped when the hair cannot be told from skin or clothes"),
         _param("hair_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Hair strength",
                description="How strongly the hair detail is painted: 1 is full, 0 changes nothing"),
+        # Hair as its own material (vgac/hairmat.py): automatic on PC and Showcase budgets, off on Phone.
+        _param("hair_material", "select", "auto", options=["auto", "on", "off"], categories=["humanoid"],
+               label="Hair material (its own texture and shader)",
+               description="The hair gets a second material with its own texture, so it is sharper and shines like hair in Unity; costs one more draw call. Automatic: on for PC and Showcase, off for Phone"),
         # More triangles on the head (vgac/headtris.py): humanoids in looks with smooth shading and the full budget.
         _param("head_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the head)",
                description="When the 3D model was built with room for it, the head keeps about twice its share of the triangles and the body gives them up; the total stays inside the budget"),
@@ -161,6 +165,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                options=["head", "neck", "chest", "hips", "body", "tail", "upper_arm_l", "forearm_l", "upper_arm_r", "forearm_r", "thigh_l", "shin_l",
                         "thigh_r", "shin_r", "leg_fl", "leg_fr", "leg_bl", "leg_br", "leg_l", "leg_r", "wing_l", "wing_r", "wings"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every region found when empty"),
+        # Spring bones (vgac/springs.py): humanoids; parts that hang clear of the body sway in every move.
+        _param("springs", "boolean", True, categories=["humanoid"], label="Spring bones (small extra bones that sway on their own)",
+               description="A ponytail, braid, cape or tail that hangs clear of the body gets a short chain of bones and sways in every move; hair resting on the shoulders and rigid things like a scabbard are left alone"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),

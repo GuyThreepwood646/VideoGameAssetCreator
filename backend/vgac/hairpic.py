@@ -260,14 +260,87 @@ def parts_record(text: str | None, style: dict[str, Any] | None, category: dict[
             "sentence": hair_sentence(text, style, category), "negative": hair_negative(text, style, category)}
 
 
+# --- the face sentence ----------------------------------------------------------------------------------------------
+# The Cel painter (Anima Turbo) sometimes leaves a character's face empty, or draws the figure from behind, when
+# nothing in the prompt asks for a face (docs/KNOWN-FAULTS-RESEARCH.md section 2; runtime/tmp/celface). A look that
+# has the fault names a sentence asking for the face (`face: {sentence, categories}` in data/styles.yaml), added after
+# the style block. The description wins: no sentence when it says the face is hidden, absent or turned away.
+
+# Phrases that say the face is hidden or there is none to draw (whole words, no negation looked for).
+FACE_HIDDEN_WORDS = [
+    "faceless", "no face", "featureless face", "hidden face", "shadowed face", "obscured face", "covered face",
+    "face covered by", "concealed face", "veiled face", "visor down", "visor lowered", "visor closed", "closed visor",
+    "lowered visor", "closed helmet", "closed helm", "full helmet", "full helm", "great helm", "greathelm",
+    "full face helmet", "full face mask", "gas mask", "face mask", "hood pulled low", "hood drawn low", "cowl pulled low",
+    "eyeless", "no eyes", "cyclops", "one eyed",
+]
+# "face" followed within three words by one of these: "face in shadow", "her face is hidden", "face obscured by".
+FACE_HIDING_AFTER = ["hidden", "shadow", "shadows", "shadowed", "obscured", "concealed", "veiled", "masked", "unseen"]
+# Drawn from behind on purpose.
+BACK_VIEW_WORDS = ["from behind", "from the back", "back view", "rear view", "facing away", "turned away", "back turned",
+                   "back to the viewer", "back to the camera"]
+# Eye covers through which the eyes still show: the face sentence stays (the other EYE_COVER_WORDS take it away).
+CLEAR_EYEWEAR = ["glasses", "spectacles", "monocle"]
+# A cover pushed out of the way: "visor raised", "an open visor", "mask pushed up".
+OPEN_BEFORE = ["open", "raised", "lifted"]
+OPEN_AFTER = ["up", "raised", "open", "lifted", "pushed"]
+
+
+def _worn(t: str, phrases: list[str]) -> bool:
+    """A phrase from the list, not negated in the three words before it ("no mask", "without a mask", "holding a
+    mask", "an open visor") and not followed by "down", "lowered", "off", "under" (the same rule as covered()) or
+    "up", "raised", "open", "pushed" ("visor raised", "mask pushed up")."""
+    words = _words(t)
+    before_not, after_not = COVER_NEGATORS + OPEN_BEFORE, COVER_AFTER + OPEN_AFTER
+    for c in phrases:
+        n = len(c.split())
+        for i in _find(words, c):
+            if any(w in before_not for w in words[max(0, i - 3): i]) or any(w in after_not for w in words[i + n: i + n + 1]):
+                continue
+            return True
+    return False
+
+
+def face_hidden(text: str | None) -> str | None:
+    """Why the description itself leaves the face out, or None when it does not: "hidden" (a closed helmet, a face in
+    shadow, faceless, one eye or none), "back" (seen from behind), "body" (a robot, a skeleton, a golem), "cover"
+    (a mask, a visor, a blindfold, an eyepatch, goggles; not clear glasses) or "hair" (hair over the eyes or face)."""
+    t = norm(text)
+    words = _words(t)
+    if any_of(t, FACE_HIDDEN_WORDS) or any(w in FACE_HIDING_AFTER for i in _find(words, "face") for w in words[i + 1: i + 4]):
+        return "hidden"
+    if any_of(t, BACK_VIEW_WORDS):
+        return "back"
+    if any_of(t, NO_HAIR_BODIES):
+        return "body"
+    if _worn(t, [w for w in EYE_COVER_WORDS if w not in CLEAR_EYEWEAR]):
+        return "cover"
+    if over_eye(t):
+        return "hair"
+    return None
+
+
+def face_sentence(text: str | None, style: dict[str, Any] | None, category: dict[str, Any] | None) -> str:
+    """The look's face sentence for this description and category, or "": the look has none, the category is not one
+    it names, or the description leaves the face out (face_hidden)."""
+    fb = (style or {}).get("face") or {}
+    sentence = " ".join(str(fb.get("sentence") or "").split())
+    if not sentence or (category or {}).get("id") not in (fb.get("categories") or []):
+        return ""
+    if face_hidden(text):
+        return ""
+    return sentence
+
+
 # --- notes for the person -------------------------------------------------------------------------------------------
 
 NOTES = {
     "photoreal_hair": ("Hair is built as one solid shape with its colour and strands painted on from the picture. It looks "
                        "right from a few steps away and simpler up close. Short, tied-back or braided hair comes out "
                        "best; long loose hair and wispy fringes come out worst."),
-    "long_loose": ("Long loose hair is joined to the shoulders in the 3D model and moves with them; it does not swing on "
-                   "its own. Hair that is tied back, braided or cut short keeps a cleaner shape."),
+    "long_loose": ("Long loose hair will be joined to the shoulders in the 3D model and will not swing. A ponytail or "
+                   "braid that hangs clear of the neck can move. Hair that is tied back, braided or cut short also keeps a "
+                   "cleaner shape."),
     "fur": ("Fur is painted onto the surface of the model, not made of separate hairs. It reads as fur at game distance "
             "and looks smoother up close."),
 }

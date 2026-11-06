@@ -354,6 +354,9 @@ def name_report(bones, skeleton):
 STRAY_FAR = 0.2
 STRAY_RATIO = 4.0
 STRAY_NEAR_FLOOR = 0.02
+# Spring chains (springs.py, bones named Spring_*) hold a hanging part with weights that fade from the body bone at the
+# root to the chain at the tip; the body bone is far from the tip on purpose, so those vertices are never cleaned here.
+SPRING_PREFIX = "Spring_"
 
 
 def _segment_distance(p, a, b):
@@ -367,6 +370,8 @@ def _segment_distance(p, a, b):
 def stray_influences(p, weights, segments, height):
     """Names of the bones in `weights` ({bone: weight}) that hold the point `p` from too far away. `segments` is
     {bone: (head, tail)} in the same space as `p`; bones without a segment are never dropped."""
+    if any(b.startswith(SPRING_PREFIX) for b, w in weights.items() if w > 0):
+        return []
     dist = {b: _segment_distance(p, *segments[b]) for b, w in weights.items() if w > 0 and b in segments}
     if len(dist) < 2:
         return []
@@ -570,6 +575,8 @@ def main():
             if height > 1e-6:
                 for v in verts:
                     w = {names[g.group]: g.weight for g in v.groups if g.weight > 0 and g.group in names}
+                    if any(n.startswith(SPRING_PREFIX) for n in w):
+                        continue  # a hanging part on its spring chain (springs.py): its weights fade on purpose
                     drop = stray_influences(tuple(obj.matrix_world @ v.co), w, segs, height)
                     if drop:
                         stray["verts"] += 1

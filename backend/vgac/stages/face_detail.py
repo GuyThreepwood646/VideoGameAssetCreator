@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .. import face, imaging, quality
+from .. import face, facecloseup, imaging, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.qwen_edit import edit_graph
 from ..jobs import JobCancelled
@@ -83,15 +83,30 @@ METHOD_CLOSEUP = ("painted picture's colour and light with the fine detail of a 
 # that size. When the painting has fewer pixels across the face than the texture will hold, the image edit model draws
 # the same head as a close-up at 1024 (the crop's framing: Qwen keeps the framing of its input, which here is what is
 # wanted). The face is then painted from the painting's colour and light at the painting's own resolution plus all the
-# close-up's finer detail (closeup_source); the separate sharpening redraw is not run. Only when it is still the same face: compared with the
-# painting at the painting's own resolution (likeness), the eyes', skin's and hair's colours, and where the eyes and
-# mouth fall, before and after fitting to the model. Otherwise today's path (the crop, sharpened) is used and the reason
-# recorded.
+# close-up's finer detail (closeup_source); the separate sharpening redraw is not run. Only when it is still the same face
+# in the same look (vgac/facecloseup.py: likeness at the painting's own resolution, each feature found again by matching
+# and put back if a little off, the eyes', skin's and hair's colours, skin texture). Otherwise today's path (the crop,
+# sharpened) is used and the reason recorded.
 CLOSEUP_PROMPT = ("A head-and-shoulders close-up portrait of this same character, drawn again at high resolution with crisp, "
                   "fine detail: the same face and features, the same eye colour, the same hair and hairstyle, the same "
                   "expression, the same clothing at the shoulders, lit from the same direction. Facing straight toward the "
                   "viewer, the head centred and the same size and position in the picture, plain flat grey background. The "
                   "same painting style and the same colours.")
+# The look's own words, for a second close-up when the first drifted from the painting (closeup_tries). With the plain
+# prompt the editor drew the Ranger's painted face as a photograph (pores, creases; likeness 0.86 to 0.95); with the
+# look's words in the painted look and closer (0.978 and 0.983). Not first: on the first knight they gave visible brush
+# strokes across the cheeks, where the plain close-up was already used. Only the painted look is measured; other looks
+# get no second try.
+CLOSEUP_LOOK_WORDS = {
+    "painted": "a digital painting with smooth painterly shading, clean readable shapes, slightly exaggerated proportions "
+               "and muted colours",
+}
+CLOSEUP_LOOK_PROMPT = ("A head-and-shoulders close-up of this same character, drawn again larger in the same look as the "
+                       "picture: {look}. The same face and features, the same eye colour, the same hair, the same "
+                       "expression, the same clothing at the shoulders, lit from the same direction. Facing straight "
+                       "toward the viewer, the head centred and the same size and position in the picture, plain flat "
+                       "grey background.")
+RETRY_REASONS = ("likeness", "features", "style")
 CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
 LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.980, different faces 0.19 to 0.87
 CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
@@ -99,6 +114,8 @@ CLOSEUP_HAIR_MAX = 10.0  # hair colour, the same; good close-ups 1.6 to 3.5, a d
 CLOSEUP_MOVE_MAX = 0.04  # how far the eyes and mouth may sit from the painting's, as a share of the face's width
 CLOSEUP_REASONS = {
     "likeness": "it did not look enough like the painted face",
+    "features": "its eyes or mouth did not look like the painting's",
+    "style": "it was drawn in a different style, more like a photograph than the painting",
     "eye_colour": "its eyes were a different colour from the painting's",
     "skin_colour": "its skin was a different colour from the painting's",
     "hair_colour": "its hair was a different colour from the painting's",
@@ -146,6 +163,24 @@ def target_texels(tex: int) -> int:
 def density_choice(params: dict[str, Any]) -> str:
     c = params.get("face_density")
     return c if c in DENSITY_CHOICES else "auto"
+
+
+def closeup_tries(style_id: str | None) -> list[tuple[str, str]]:
+    """The close-ups the pass may draw, in order, as (the version's seed key, the instruction): the plain prompt, then,
+    for a look whose words are known (CLOSEUP_LOOK_WORDS), the same request in the look's own words. Each try has its
+    own seed, carried by Resume (jobs.RESUME_SEEDS)."""
+    out = [("face_closeup_seed", CLOSEUP_PROMPT)]
+    words = CLOSEUP_LOOK_WORDS.get(style_id or "")
+    if words:
+        out.append(("face_closeup_seed_2", CLOSEUP_LOOK_PROMPT.format(look=words)))
+    return out
+
+
+def retry_wanted(first: dict[str, Any]) -> bool:
+    """A second close-up is drawn only when the first was not the painting's face or look (likeness, features, style):
+    the editor's drift, which the look's own words reduce. A close-up refused for its colours or for moved features is
+    not drawn again."""
+    return not first.get("ok") and first.get("reason") in RETRY_REASONS
 
 
 def closeup_on(params: dict[str, Any]) -> bool:
@@ -332,9 +367,13 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
 
 
 def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painted_head_px: float) -> dict[str, Any]:
-    """Is the close-up still the painted face? Measured against the painted crop (the same framing) at the painting's
-    own resolution, and against the model's front render. Returns {ok, reason (a CLOSEUP_REASONS key or None),
-    likeness, eye_colour_shift, skin_shift, hair_shift, feature_move, fit_residual, source_face_px}."""
+    """Is the close-up still the painted face? (vgac/facecloseup.py) Each of the painting's eyes and its mouth is
+    looked for in the close-up by block matching at the painting's own resolution; one that sits a little off is moved
+    back onto the painting's place by a local warp (the head's outline stays); then likeness at the painting's
+    resolution, how well each feature matches, what is left of the move and the eye, skin and hair colours are judged.
+    The corrected close-up is written next to it (<name>_fixed.png, "registered" in the result) and is the one painted
+    from. Returns {ok, reason (a CLOSEUP_REASONS key or None), likeness, feature_scores, feature_score_min,
+    feature_move, feature_move_raw, eye_colour_shift, skin_shift, hair_shift, correction, registered, source_face_px}."""
     mesh = face.load_mesh(glb)
     tex = face.read_rgb(base_color)
     head = face.find_head(mesh["verts"])
@@ -343,51 +382,27 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
         return {"ok": False, "reason": "no_features"}
-    a = face.read_rgb(crop, 1024)
-    b = face.read_rgb(closeup, 1024)
-    w = float(info["width_px"])
-    inner = face.inner_face(info)
-    out: dict[str, Any] = {"likeness": face.likeness(a, b, inner, painted_head_px), "source_face_px": round(w, 1)}
-    seg = face.hair_and_skin(view["image"], a, info, view["mask"])
-    skin = inner & ~seg["pic_hair"]
-    out["skin_shift"] = face.colour_distance(a, b, skin)
-    out["hair_shift"] = face.colour_distance(a, b, seg["pic_hair"]) if seg.get("found") else None
-    # When the crop's eyes and mouth as framed do not fit the model's, they are searched after lining the crop up with
-    # the model's face by the whole face, the close-up moved the same way (so how far its features moved from the crop's is unchanged), as fit_picture does: as framed,
-    # the crop's eyes can sit above the band face.landmarks searches, and the darkest spots found there are not eyes
-    # (the second knight's close-up was rejected as "moved" for that). The eye colours are measured on the moved pictures.
-    lm = face.landmarks(view["image"], info)
-    la = face.landmarks(a, info)
-    direct = face.fit_landmarks(la, lm, info["nose"]) if la and lm else None
-    if direct is None or direct["residual_px"] > LANDMARK_RESIDUAL_MAX * w:
-        pre = face.align(a, view["image"], inner)
-        if face.feature_match(face.apply_alignment(a, pre), view["image"], inner, 6.0, 24.0) >= ALIGN_MIN:
-            a, b = face.apply_alignment(a, pre), face.apply_alignment(b, pre)
-            out["lined_up_first"] = True
-    la, lb = face.landmarks(a, info), face.landmarks(b, info)
-    reason = None
-    if not la or not lb:
-        reason = "no_features"
-    else:
-        pa = la["eyes"] + [la["mouth"]]
-        pb = lb["eyes"] + [lb["mouth"]]
-        out["feature_move"] = round(max(float(np.hypot(p[0] - q[0], p[1] - q[1])) for p, q in zip(pa, pb)) / w, 4)
-        out["eye_colour_shift"] = face.colour_shift(face.eye_colour(a, la["eyes"], w), face.eye_colour(b, la["eyes"], w))
-        fit = face.fit_landmarks(lb, lm, info["nose"]) if lm else None
-        out["fit_residual"] = None if fit is None else round(fit["residual_px"] / w, 4)
-    if reason is None:
-        reason = closeup_verdict(out)
+    out = facecloseup.guard(view, info, face.read_rgb(crop, 1024), face.read_rgb(closeup, 1024), painted_head_px,
+                            LANDMARK_RESIDUAL_MAX, ALIGN_MIN)
+    fixed = facecloseup.save_registered(out, Path(closeup).with_name(Path(closeup).stem + "_fixed.png"))
+    out["registered"] = str(fixed) if fixed else None
+    reason = closeup_verdict(out)
     return {"ok": reason is None, "reason": reason, **out}
 
 
 def closeup_verdict(m: dict[str, Any]) -> str | None:
     """Why a close-up is not used (a CLOSEUP_REASONS key), from closeup_guard's measures, or None when it is the same
     face. Not measurable colours do not count against it; an unmeasurable fit to the model is left to the paint step's
-    whole-face fit and its ALIGN_MIN, as for the painting."""
+    whole-face fit and its ALIGN_MIN, as for the painting (the second guard measures none: the close-up is painted
+    through the painting's own fit)."""
     if m.get("feature_move") is None:
         return "no_features"
     if float(m.get("likeness") or 0.0) < LIKENESS_MIN:
         return "likeness"
+    if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
+        return "features"
+    if m.get("skin_texture") is not None and float(m["skin_texture"]) > facecloseup.SKIN_TEXTURE_MAX:
+        return "style"
     if float(m["feature_move"]) > CLOSEUP_MOVE_MAX:
         return "moved"
     if float(m.get("eye_colour_shift") or 0.0) > EYE_COLOUR_MAX:
@@ -422,14 +437,16 @@ def redraw_kept(sharp: Path, crop: Path) -> float:
 
 def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, before_tex: Path, crop: Path, out_dir: Path,
                   strength: float, sides: dict[str, Path] | None = None, colour_source: Path | None = None,
-                  require_landmarks: bool = False) -> dict[str, Any]:
+                  require_landmarks: bool = False, fit_from_crop: bool = False) -> dict[str, Any]:
     """Steps 3 and 5 on the final layout: fit the picture to the render, paint it back, measure, and draw the before
     and after sheet. Writes base_color_face.png and face_before_after.png into out_dir.
 
     colour_source: the picture whose colours and broad tone are painted (the painted crop by default; the checked
     close-up when one is used). The eye colour is always measured against the painted crop. require_landmarks: the
     eye-and-mouth fit must work (a close-up whose features do not land on the model's is not used: reason
-    "closeup_off_model")."""
+    "closeup_off_model"). fit_from_crop: the fit is found on the painted crop and the picture painted through it (a
+    close-up checked by facecloseup has its features where the crop has them, and its sharp lashes would only mislead
+    the darkest-spot search)."""
     mesh = face.load_mesh(glb)
     tex = face.read_rgb(base_color)
     T = tex.shape[0]
@@ -450,7 +467,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # width of the model's and the broad features agree; it keeps the eye line and the mouth where the model has them.
     # Otherwise the whole-face correlation (bounded stretch). Scores are on broad features: the model's face is
     # blurred, so its fine detail matches nothing.
-    a = fit_picture(src, view["image"], info, inner)
+    a = fit_picture(crop_img if fit_from_crop else src, view["image"], info, inner)
     if a["how"] != "eyes and mouth" and require_landmarks:
         return {"ok": False, "reason": "closeup_off_model"}
     if a["score"] < ALIGN_MIN:
@@ -465,7 +482,9 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     painted_fitted = face.apply_alignment(crop_img, a)  # the eye colour is measured against the painting itself
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
     paint = region & ~face.dilate_mask(seg["old_hair"], 2)
-    core = seg["pic_hair"] | (seg["pic_background"] & ~inner)
+    # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
+    # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
+    core = seg["pic_hair"] | (seg["pic_background"] & ~inner & ~face.features_box(info))
     # Outside the eyes-nose-mouth area the painted face's own rim goes too (the shadow along its jaw and cheek, which
     # lands inside the model's wider cheek and shows as a line from the side).
     rim = face.dilate_mask(core, max(2, int(RIM_FRAC * view["image"].shape[0]))) & ~face.features_box(info)
@@ -854,17 +873,32 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     picture, colour_source, method, source = crop, None, METHOD_UNSHARPENED, "painting"
     closeup: dict[str, Any] = {"wanted": closeup_wanted(params, crop_px, wanted), "needed_texels": wanted}
     if closeup["wanted"]:
-        seed_c = picked_seed(sc, params, "face_closeup_seed")
         sc.progress(0.77, "Drawing a close-up of the painted face")
         t1 = time.time()
+        look = (getattr(sc, "style", None) or {}).get("id")
         try:
-            cu = await redraw(sc, instance, crop, seed_c, out_dir / "painted_head_closeup.png", CLOSEUP_PROMPT,
-                              "face_closeup", "Drawing a close-up of the painted face")
-            guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"])
+            tries: list[dict[str, Any]] = []
+            for n, (key, prompt) in enumerate(closeup_tries(look)):
+                if n and not retry_wanted(tries[-1]):
+                    break
+                seed_c = picked_seed(sc, params, key)
+                name = "painted_head_closeup.png" if n == 0 else f"painted_head_closeup_{n + 1}.png"
+                cu = await redraw(sc, instance, crop, seed_c, out_dir / name, prompt, "face_closeup" if n == 0 else f"face_closeup_{n + 1}",
+                                  "Drawing a close-up of the painted face" if n == 0 else "Drawing the close-up again in the picture's own look")
+                guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"])
+                tries.append({**guard, "file": name, "prompt": "plain" if prompt == CLOSEUP_PROMPT else "look"})
+                if guard["ok"]:
+                    break
+            guard = tries[-1]
             closeup.update({k: v for k, v in guard.items() if k != "ok"})
+            if len(tries) > 1:
+                closeup["tries"] = [{k: t.get(k) for k in ("prompt", "reason", "likeness", "feature_score_min", "feature_move", "skin_texture")}
+                                    for t in tries]
             closeup["used"] = bool(guard["ok"])
             if guard["ok"]:
-                merged = await asyncio.to_thread(closeup_source, crop, cu, found["painted_head_px"], out_dir / "painted_head_closeup_merged.png")
+                # the close-up with any feature that sat a little off moved back onto the painting's place
+                fixed = Path(guard["registered"]) if guard.get("registered") else out_dir / guard["file"]
+                merged = await asyncio.to_thread(closeup_source, crop, fixed, found["painted_head_px"], out_dir / "painted_head_closeup_merged.png")
                 picture, colour_source, method, source = merged, merged, METHOD_CLOSEUP, "closeup"
             sc.use_model("qwen_edit")
             sc.use_model("qwen_lightning_lora")
@@ -936,7 +970,7 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     sc.progress(0.88, "Painting the face")
     sides = side_pictures(sc)
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
-                                   crop, out_dir, strength, sides, colour_source, source == "closeup")
+                                   crop, out_dir, strength, sides, colour_source, False, source == "closeup")
     if not done.get("ok") and done.get("reason") == "closeup_off_model":
         closeup.update(used=False, reason="off_model")
         source, colour_source = "painting", None

@@ -290,13 +290,16 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   face_detail: H('Match the face to the picture', 'Paint the face from the picture onto the model, so the eyes, brows and mouth are sharp and look like the picture.', 'The 3D builder makes up the face from one picture and blurs it; this puts the painted face back.', 'Front render, painted head sharpened by Qwen-Image-Edit, fitted to the render, projected through the UVs'),
   face_strength: H('Face strength', 'How much of the painted face goes onto the model.', 'Lower it if the painted face looks pasted on; 1 uses all of it.', 'Projection weight multiplier, 0 to 1'),
   face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
-  face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024, checked by likeness at the painting\'s resolution, eye, skin and hair colour, and feature positions'),
+  face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024 (drawn once more in the look\'s own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting\'s resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)'),
   hair_detail: H('Hair detail (strands and shading painted on)', 'Strands and clumps along the way the hair falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.', 'The 3D builder makes hair as one flat-coloured shape; this makes it read as hair without adding to the shape. It stands back when hair cannot be told from skin or clothes.', 'Colour vote over the model and turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels in the face relayout'),
   head_triangles: H('Weighted decimation (more triangles on the head)', 'When the model is shrunk to your platform\'s triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.', 'Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Characters in the Low-poly, Pixel-art and Retro 64 looks never get it.', 'The 3D step builds twice the target; Blender Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake'),
   hair_strength: H('Hair strength', 'How strongly the hair detail is painted: 1 is full, 0 changes nothing.', 'Lower it if the strands look too busy for your look.', 'Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1'),
+  hair_material: H('Hair material (its own texture and shader)', 'The hair gets a second material with its own texture, so it holds about three times the texels and, in Unity, a highlight that stretches across the strands.', 'Hair is what people look at up close. It costs one more draw call per character, so Automatic turns it on for PC and Showcase and leaves Phone with one material.', 'Second material slot on the hair triangles (straddling triangles stay with the body), own UV layout and 1024 px maps (2048 on Showcase), flow map, KHR_materials_anisotropy in the GLB, VGAC/Hair Kajiya-Kay shader on the Unity built-in pipeline'),
   textures_full_size: H('Textures at full size', 'Whether Unity imports each texture at the size of its file.', 'Unity shrinks textures over 2048 px unless told otherwise, which softens a 4096 texture.', 'TextureImporter.maxTextureSize against the source size'),
   face_matches_picture: H('Face matches the picture', 'Whether the face was painted from the picture and came out sharp.', 'A blurred face is the first thing people notice on a character.', 'Sharpness of the front render and feature match to the fitted picture'),
   hair_matches_picture: H('Hair detail (strands and shading painted on)', 'Whether the hair got strands and shading, or why the pass stood back.', 'Flat-coloured hair reads as a helmet; painted strands read as hair.', 'Hair mask, flow, texels per cm before and after, the face measures before and after'),
+  hair_material_check: H('Hair material (its own texture and shader)', 'Whether the hair got its own material and texture, its texels per cm, or why it stayed in the body material.', 'A second material makes the hair sharper and lets Unity give it a hair highlight, at one more draw call.', 'Triangle split confidence, hair texture texels per cm, body texture texels per cm'),
+  hair_material_shipped: H('Hair material in the files', 'Whether the files that ship carry the hair as its own material.', 'Without it the game would show the hair with the body texture only.', 'GLB material count, FBX material slot names, Unity hair material and shader'),
   pbr_fix: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pbr_range: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
   pivot: H('Pivot (anchor point)', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
@@ -357,7 +360,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Hair and fur (docs/HAIR-RESEARCH.md 5.4)
   hair_pictures: H('Hair-friendly pictures', 'For characters with hair the app adds a short hair sentence to the picture request: in the Painted look, hair as one smooth, simple shape with both eyes clearly visible; in Photoreal, tidy hair with nothing over the face; in Low-poly, Pixel and Retro 64, one simple solid shape. Cel and Clay characters get none, because every wording tried changed the character. Creatures get fur lying flat in clear clumps.', 'The 3D builder turns the outline of the picture into one solid shape, so wispy hair becomes loose flakes and separated locks become jagged edges. Your description always wins: long loose hair, a fringe over one eye, dreadlocks or curls are kept, and long loose hair gets no hair sentence at all.', 'Hair sentence per look in the concept prompt (data/styles.yaml hair, vgac/hairpic.py)'),
   hair_cards: H('Hair cards (flat strips with a see-through picture of hair on them)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'This app does not make them yet. Its hair is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Alpha-tested hair cards'),
-  spring_bones: H('Spring bones (small extra bones that sway on their own)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'This app does not add them yet, so hair and capes move only with the body.', 'Spring bone (jiggle bone) chains'),
+  spring_bones: H('Spring bones (small extra bones that sway on their own)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'The app adds them at the Make it move step to parts that hang clear of the body; hair resting on the shoulders is joined to them and moves only with the body.', 'Spring bone (jiggle bone) chains'),
   anisotropic_highlight: H('Anisotropic highlight (a shine stretched into a band)', 'The bright band across hair, running across the strands instead of sitting as a round spot.', 'It is much of what makes hair look like hair rather than plastic. The app does not add one yet; in painted looks the picture may already have one painted in.', 'Anisotropic specular (Kajiya-Kay, Marschner hair shading)'),
   // Hit boxes and the body shape for moving (4.2)
   socket: H('Socket (attachment point)', 'A named spot on the skeleton where your game can attach a weapon, hat, backpack, or a shield strapped to the forearm.', 'The item then follows the hand, forearm, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
@@ -365,6 +368,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   hitboxes: H('Hit boxes', 'Invisible shapes on each body part that tell the game where an attack landed.', 'Hits count where they look like they land, and you can tell a head hit from an arm hit.', 'Per-bone trigger capsules and boxes, fitted from skin weights'),
   hitbox_fit: H('Hit box fit (how snug)', 'How tightly the hit boxes wrap the body.', 'Snug is fairer for the player being hit; loose is kinder to the player aiming.', 'Radius factor 0.9, 1.0 or 1.15 on the 80th-percentile vertex distance'),
   hitbox_regions: H('Body parts with hit boxes', 'Which body parts get their own hit box.', 'Leave out parts your game never needs to tell apart.', 'Region ids from hitboxes.json regions_found'),
+  springs: H('Spring bones (small extra bones that sway on their own)', 'Parts that hang clear of the body, such as a ponytail, a braid, a cape or a tail, get a short chain of bones that lags behind the body and settles again. The sway is baked into every move, and in Unity a small script makes it react to the game.', 'Only parts that hang clear of the body can move: hair resting on the shoulders is joined to them in the 3D model, and a short haircut has nothing that hangs. Rigid things such as a sword, a scabbard or a quiver are left alone.', 'Voxel slices find parts joined to the body at one end only; 2 to 4 bones per chain, weights faded from the root; a 120 Hz spring simulation with the hit boxes as colliders baked into every clip; springs.json; VgacSpringBones in Unity'),
   movement_shape: H('Character collider (body shape for moving)', 'One simple shape around the whole body that the game uses for walking into walls and standing on floors.', 'It stays still while the hit boxes move, so movement is smooth and predictable.', 'Root CapsuleCollider (direction Y or Z) or BoxCollider'),
   // Export
   lod: H('LOD (detail levels)', 'Lighter copies of the model used when it is far away.', 'Keeps the game fast with many assets on screen.', 'LOD (level of detail)'),
@@ -633,6 +637,18 @@ const CHECK_TEXT: Record<string, CheckText> = {
     return 'The face does not match the picture yet.'
   },
   hair_matches_picture: (_v, _l, ok) => (ok ? 'Strands and shading were painted on the hair, or the pass stood back where hair could not be told apart.' : 'The hair detail did not come out as it should.'),
+  hair_material: (v, l, ok, _ctx, vars) => {
+    if (!ok) return 'The hair material was not made: something went wrong, so the hair stays in the body material.'
+    if (vars.used === false) return 'The hair stays in the body material (one material), as the split was doubtful or not worth it.'
+    return `The hair has its own material: ${n0(v)} texels per cm against ${n0(l)} in the body texture, at one more draw call.`
+  },
+  hair_material_shipped: (v, _l, ok) => (ok ? 'The files carry the hair as its own material.' : `The files that ship have ${n0(v)} material(s), not the hair's own.`),
+  springs: (v, _l, ok, _ctx, vars) => {
+    if (!ok) return 'The spring bones did not come out as they should.'
+    if (vars.skipped) return `No spring bones were added: ${String(vars.why || 'nothing hangs clear of the body')}.`
+    return `${String(vars.what || 'A hanging part')} sways when the character moves, on ${n0(v)} added bones.`
+  },
+  springs_shipped: (v, _l, ok) => (ok ? `The files carry ${n0(v)} spring chain(s), with the sway baked into the moves.` : 'The files that ship do not carry the spring bones.'),
   baked_light: (_v, _l, ok, _ctx, vars) => {
     if (!ok) return "The colours still carry shadows from the picture, so they will fight your game's lights."
     if (vars.kept) return 'Painted shading is kept on purpose for this look.'
@@ -783,6 +799,8 @@ const CHECK_HELP: Record<string, string> = {
   big_enough: 'big_enough',
   arms_away: 'arms_away',
   hair_off_eyes: 'hair_off_eyes',
+  springs: 'springs',
+  springs_shipped: 'springs',
   even_lighting: 'even_lighting',
   straight_on: 'straight_on',
 }
@@ -811,7 +829,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|even_lighting|straight_on)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|even_lighting|straight_on)$/.test(id)) return 'warn'
   return 'block'
 }
 
@@ -860,6 +878,10 @@ const FIX_LABELS: Record<string, string> = {
   atlas_used: 'Repaint the surface',
   face_matches_picture: 'Paint the face again',
   hair_matches_picture: 'Paint the hair again',
+  hair_material: 'Give the hair its own material again',
+  hair_material_shipped: 'Make the files again',
+  springs: 'Make the spring bones again',
+  springs_shipped: 'Make the files again',
   baked_light: 'Remove painted-on shadows',
   albedo_range: 'Bring colours into range',
   metal_mixed: 'Make metal clearly metal',
@@ -909,8 +931,12 @@ export function checkFix(check: Check): FixAction | null {
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }
   if (id === 'face_matches_picture' && vars.reason === 'eye_under_hair') return { stage: 'mesh', params: {}, label: check.fix?.label || 'Build the 3D model again' }
-  if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null }, label }
+  if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null, face_closeup_seed_2: null }, label }
   if (id === 'hair_matches_picture') return { stage: 'prep', params: { hair_detail: true }, label }
+  if (id === 'hair_material') return { stage: 'prep', params: { hair_material: 'on' }, label }
+  if (id === 'hair_material_shipped') return { stage: 'export', params: {}, label }
+  if (id === 'springs') return { stage: 'rig', params: { springs: true }, label }
+  if (id === 'springs_shipped') return { stage: 'export', params: {}, label }
   return null
 }
 

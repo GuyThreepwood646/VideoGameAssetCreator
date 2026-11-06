@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import face, hair, imaging, quality
+from .. import face, hair, hairmat, imaging, quality
 from .base import StageContext
 
 CATEGORIES = ("humanoid",)  # creatures: see docs/HAIR-RESEARCH.md; off until fur is judged better than the plain coat
@@ -136,13 +136,38 @@ def hair_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
         moved = max(float(np.hypot(a[0] - b[0], a[1] - b[1])) for a, b in zip(fa["eyes"], fb["eyes"]))
         face_ok = face_ok and moved <= FACE_EYES_MOVE_MAX
     lay = hd.get("layout") or {}
-    return [quality.check("hair_matches_picture", face_ok, hd.get("texels_per_cm_after"), hd.get("texels_per_cm_before"),
+    hm = (metrics or {}).get("hair_material") or {}
+    after = hm.get("texels_per_cm") if hm.get("use") else hd.get("texels_per_cm_after")
+    return [_matches(face_ok, after, hd, lay)] + material_checks(metrics)
+
+
+def material_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    """hair_material (warn), from the "hair_material" metrics block: nothing when it does not apply (option off,
+    Phone budgets, not a humanoid). A passing check with the hair's own texture, its texels per cm and the one more
+    draw it costs; a passing check with the plain reason when the hair stayed in the body material because the split
+    was doubtful or not worth it; a soft failure when something went wrong."""
+    hm = (metrics or {}).get("hair_material") or {}
+    if not hm or not hm.get("applies", True) or hm.get("reason") in hairmat.NOT_APPLICABLE:
+        return []
+    if hm.get("use"):
+        return [quality.check("hair_material", True, _one(hm.get("texels_per_cm")), _one(hm.get("texels_per_cm_body_texture")),
+                              vars={"used": True, "tex": str(hm.get("tex") or ""), "after": _one(hm.get("texels_per_cm")),
+                                    "body_texture": _one(hm.get("texels_per_cm_body_texture")),
+                                    "body": _one(hm.get("body_texels_per_cm")), "body_before": _one(hm.get("body_texels_per_cm_before")),
+                                    "draws": hairmat.DRAWS_ADDED})]
+    reason = hm.get("reason")
+    return [quality.check("hair_material", reason != "error", reason, None,
+                          vars={"used": False, "reason": reason, "why": hairmat.reason_words(reason)})]
+
+
+def _matches(face_ok: bool, after: Any, hd: dict[str, Any], lay: dict[str, Any]) -> dict[str, Any]:
+    return (quality.check("hair_matches_picture", face_ok, after, hd.get("texels_per_cm_before"),
                           vars={"reason": None if face_ok else "face_changed", "skipped": False,
-                                "before": _one(hd.get("texels_per_cm_before")), "after": _one(hd.get("texels_per_cm_after")),
+                                "before": _one(hd.get("texels_per_cm_before")), "after": _one(after),
                                 "asked": hd.get("gain_asked"), "gain": lay.get("hair_gain"),
                                 "room_note": room_note(hd), "highlight": bool(hd.get("highlight")),
                                 "from_picture": round(100 * float(hd.get("flow_from_picture") or 0.0)),
-                                "share": round(100 * float(hd.get("mask_share_of_head") or 0.0))})]
+                                "share": round(100 * float(hd.get("mask_share_of_head") or 0.0))}))
 
 
 def _one(v: Any) -> Any:
@@ -208,7 +233,40 @@ async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
               "atlas_share_before": hair.atlas_share(mesh, found["tris"]), "gain_asked": gain, "texture_size": T,
               "body_texels_per_cm_before": hair.texels_per_cm(mesh, ~found["tris"], T), "seed": seed,
               "find_seconds": round(time.time() - t0, 1)}
-    return {"plan": {"points": pts, "gain": gain}, "record": record, "found": found, "t0": t0}
+    plan: dict[str, Any] = {"points": pts, "gain": gain}
+    # Hair as its own material (vgac/hairmat.py): decided here, before the face pass lays the texture out, so that a
+    # hair with its own texture takes no extra room in the body's texture (the gain becomes 1 and the body keeps it).
+    mat = await asyncio.to_thread(material_plan, sc, mesh, found, Path(base), params, out_dir)
+    record["material"] = mat["record"]
+    if mat.get("points") is not None:
+        plan.update(gain=1.0, material={"points": mat["points"], "tex": mat["record"]["tex"]})
+        record["gain_asked"] = 1.0
+        record["gain_without_material"] = gain
+    record["find_seconds"] = round(time.time() - t0, 1)
+    return {"plan": plan, "record": record, "found": found, "t0": t0}
+
+
+def material_plan(sc: Any, mesh: dict[str, np.ndarray], found: dict[str, Any], base: Path, params: dict[str, Any],
+                  out_dir: Path) -> dict[str, Any]:
+    """Whether the hair gets its own material, and which triangles (hairmat.choose). -> {points (Path) or None,
+    record: {applies, reason, tex, ...measures}}. Never raises: a failure keeps one material."""
+    not_here = hairmat.applies(sc.asset.category, getattr(sc, "platform", None), getattr(sc, "budget", None), params)
+    tex = hairmat.hair_texture_size(getattr(sc, "budget", None))
+    if not_here:
+        return {"points": None, "record": {"applies": False, "reason": not_here, "tex": tex}}
+    try:
+        b = face.read_rgb(base)
+        prot = hair.face_protect(mesh, b).get("protect")
+        sel = hairmat.choose(mesh, found["tris"], b, np.asarray(found["centres"]), int(found["hair_i"]), int(found["skin_i"]),
+                             prot, found.get("confidence"), found.get("tri_label"))
+    except Exception as e:  # noqa: BLE001
+        return {"points": None, "record": {"applies": True, "use": False, "reason": "error", "error": str(e)[:300], "tex": tex}}
+    rec = {"applies": True, "use": sel["use"], "reason": sel["reason"], "tex": tex, **sel["measures"]}
+    if not sel["use"]:
+        return {"points": None, "record": rec}
+    p = out_dir / "hair_material_points.json"
+    p.write_text(json.dumps(hair.hair_points(mesh, sel["tris"])), encoding="utf-8")
+    return {"points": p, "record": rec}
 
 
 def skipped_mask(glb: Path, base: Path, tris: np.ndarray, dest: Path) -> Path:
@@ -253,14 +311,21 @@ def _write(arr: np.ndarray, dest: Path) -> Path:
 
 
 def paint(glb: Path, maps: dict[str, Path], points: Path, find_json: Path, out_dir: Path, strength: float, seed: int,
-          look: dict[str, Any], flow_files: list[Path], cutout: Path | None) -> dict[str, Any]:
+          look: dict[str, Any], flow_files: list[Path], cutout: Path | None, material_points: Path | None = None) -> dict[str, Any]:
     """The CPU part of step 2 on the final layout: paint, measure, draw the pictures. Writes the changed maps and the
-    two pictures into out_dir. Returns {files: {key: path}, measures}."""
+    two pictures into out_dir. Returns {files: {key: path}, measures}.
+
+    material_points (the hair's own material is planned, vgac/hairmat.py): only the hair the body texture keeps (the
+    hairline band and the locks at the face) is painted here, with the strands as wide as on the hair's own texture;
+    the 3D fields (flow, under-layers, roots, tips) still come from all of the hair and are returned for the hair
+    texture's paint, and the pictures are left to that step."""
     mesh = face.load_mesh(glb)
     pts = json.loads(Path(points).read_text())
     fj = json.loads(Path(find_json).read_text())
     centres = np.asarray(fj["centres"], dtype=np.float64)
     tris = hair.match_tris(mesh, pts)
+    mat_tris = hair.match_tris(mesh, json.loads(Path(material_points).read_text())) if material_points else None
+    split = {} if mat_tris is None else {"paint_tris": ~mat_tris, "strand_cell": hair.STRAND_CELL}
     base = _read_map(maps.get("base_color"))
     arrays: dict[str, np.ndarray | None] = {"base_color": base, "normal": _read_map(maps.get("normal")) if look.get("normal_map", True) else None,
                                             "roughness": _read_map(maps.get("roughness"), True), "metallic": _read_map(maps.get("metallic"), True),
@@ -290,8 +355,15 @@ def paint(glb: Path, maps: dict[str, Path], points: Path, find_json: Path, out_d
     same = {k: v for k, v in arrays.items() if v is not None and v.shape[0] == T}
     res = hair.paint_hair(mesh, same, tris, centres, int(fj["hair_i"]), int(fj["skin_i"]), strength=strength, seed=seed,
                           highlight=bool(look.get("highlight")), photoreal=bool(look.get("photoreal")), protect=fp["protect"],
-                          flow_pictures=flow_pics, stats=stats)
+                          flow_pictures=flow_pics, stats=stats, **split)
     changed = dict(res["maps"])
+    # hair-coloured metal the 3D step left on the head outside the hair found (a lock over the brow)
+    met_now = changed.get("metallic", arrays.get("metallic"))
+    stray = 0
+    if met_now is not None and met_now.shape[0] == T:
+        cleared, stray = hair.clear_hair_metal(mesh, met_now, base, tris, centres, int(fj["hair_i"]), int(fj["skin_i"]))
+        if stray:
+            changed["metallic"] = cleared
     # maps at another size (a 4096 base colour with 2048 data maps): painted again at their own size
     others = {k: v for k, v in arrays.items() if v is not None and v.shape[0] != T and k in ("normal", "roughness", "metallic")}
     if others:
@@ -299,7 +371,8 @@ def paint(glb: Path, maps: dict[str, Path], points: Path, find_json: Path, out_d
         small = {**others, "base_color": face.resize(base, T2, Image.BOX), "ao": arrays.get("ao")}
         fp2 = hair.face_protect(mesh, small["base_color"])
         r2 = hair.paint_hair(mesh, small, tris, centres, int(fj["hair_i"]), int(fj["skin_i"]), strength=strength, seed=seed,
-                             highlight=False, photoreal=bool(look.get("photoreal")), protect=fp2["protect"], flow_pictures=flow_pics, stats=stats)
+                             highlight=False, photoreal=bool(look.get("photoreal")), protect=fp2["protect"], flow_pictures=flow_pics, stats=stats,
+                             **split)
         changed.update({k: v for k, v in r2["maps"].items() if k != "base_color"})
     files: dict[str, Path] = {}
     for key, arr in changed.items():
@@ -308,16 +381,20 @@ def paint(glb: Path, maps: dict[str, Path], points: Path, find_json: Path, out_d
     after_view = face.render_view(mesh, after_base, fp["cam"]) if fp.get("cam") is not None else None
     face_after = hair.face_measures(after_view, fp["info"]) if after_view is not None else {}
     mask = res["mask"]
-    files["hair_mask"] = hair.mask_sheet(mesh, base, mask, out_dir / "hair_mask.png")
     before_maps = {k: v for k, v in arrays.items() if v is not None}
     after_maps = {**before_maps, **changed}
-    files["hair_before_after"] = hair.before_after_sheet(mesh, before_maps, after_maps, out_dir / "hair_before_after.png")
+    if mat_tris is None:  # with the hair's own material its step draws both pictures
+        files["hair_mask"] = hair.mask_sheet(mesh, base, mask, out_dir / "hair_mask.png")
+        files["hair_before_after"] = hair.before_after_sheet(mesh, before_maps, after_maps, out_dir / "hair_before_after.png")
     measures = {**res["measures"], "face_before": fp.get("measures") or {}, "face_after": face_after,
                 "triangles_matched": int(tris.sum()), "texels_per_cm_after": hair.texels_per_cm(mesh, tris, T),
-                "atlas_share_after": hair.atlas_share(mesh, tris), "picture_stats": stats}
+                "atlas_share_after": hair.atlas_share(mesh, tris), "picture_stats": stats, "stray_metal_texels": stray}
     head_tris = mesh["verts"][mesh["faces"]].mean(axis=1)[:, 1] >= (head.top - 0.13 * head.height if head else -1e9)
     measures["mask_share_of_head"] = round(float(tris[head_tris].mean()), 3) if head_tris.any() else None
-    return {"files": files, "measures": measures}
+    # what the hair's own material (paint_material) paints with again: the same pictures and colours
+    return {"files": files, "measures": measures, "flow_pictures": flow_pics, "stats": stats, "mask": mask,
+            "before_maps": before_maps, "after_maps": after_maps, "body_texels_per_cm": hair.texels_per_cm(mesh, ~tris, T),
+            "fields": res.get("fields"), "mesh": mesh, "material_tris": mat_tris}
 
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
@@ -358,8 +435,9 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
         sc.progress(0.93, "Painting the hair")
         flow_files = [sc.dir / "face" / "painted_head_closeup_merged.png"]  # only when the face pass checked and used it
         cutout = sc.lineage_file("cutout", ("concept",))
+        mat_points = (plan.get("material") or {}).get("points")
         done = await asyncio.to_thread(paint, work_glb, work_maps, plan["points"], out_dir / "hair_find.json", out_dir, strength,
-                                       int(record.get("seed") or 0), look, flow_files, cutout)
+                                       int(record.get("seed") or 0), look, flow_files, cutout, mat_points)
     except Exception as e:  # noqa: BLE001
         record.update(ran=False, skipped="error", error=str(e)[:300], seconds=round(time.time() - t0, 1))
         return {"files": {}, "metrics": {"hair_detail": record}, "relayout": False}
@@ -375,6 +453,100 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
                             roughness=swap["roughness"])
     if done["files"].get("normal") is not None:
         await asyncio.to_thread(hair.glb_replace_normal, glb, done["files"]["normal"])
-    record.update(ran=True, method=METHOD, layout=layout, **done["measures"], paint_seconds=round(time.time() - t1, 1),
-                  seconds=round(float(record.get("find_seconds") or 0.0) + time.time() - t1, 1))
-    return {"files": files, "metrics": {"hair_detail": record}, "relayout": did_relayout}
+    record.update(ran=True, method=METHOD, layout=layout, **done["measures"], paint_seconds=round(time.time() - t1, 1))
+    metrics: dict[str, Any] = {"hair_detail": record}
+    mat_rec = record.get("material")
+    if (plan.get("material") or {}).get("points") is not None:
+        t2 = time.time()
+        mat = await material(sc, Path(glb), work_maps, plan, record, look, done)
+        files.update(mat["files"])
+        mat_rec = {**(mat_rec or {}), **mat["record"], "seconds": round(time.time() - t2, 1)}
+        body = mat.get("body_files") or {}
+        if body:
+            # the hair texture's paint, carried into the body texture (the previews and the rig step read it there)
+            files.update(body)
+            await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=body.get("base_color"), metallic=body.get("metallic"),
+                                    roughness=body.get("roughness"))
+            if body.get("normal") is not None:
+                await asyncio.to_thread(hair.glb_replace_normal, glb, body["normal"])
+        elif not mat["record"].get("use"):
+            # the split fell through after the body texture was painted for it: the whole hair is painted there now
+            redo = await asyncio.to_thread(paint, work_glb, work_maps, plan["points"], out_dir / "hair_find.json", out_dir, strength,
+                                           int(record.get("seed") or 0), look, flow_files, cutout, None)
+            files.update(redo["files"])
+            record.update(**redo["measures"])
+            await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=redo["files"].get("base_color"),
+                                    metallic=redo["files"].get("metallic"), roughness=redo["files"].get("roughness"))
+            if redo["files"].get("normal") is not None:
+                await asyncio.to_thread(hair.glb_replace_normal, glb, redo["files"]["normal"])
+    if mat_rec is not None:
+        metrics["hair_material"] = mat_rec
+    record["seconds"] = round(float(record.get("find_seconds") or 0.0) + time.time() - t1, 1)
+    return {"files": files, "metrics": metrics, "relayout": did_relayout}
+
+
+MATERIAL_FILES = ("hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow", "hair_layout")
+
+
+async def material(sc: StageContext, glb: Path, maps: dict[str, Path], plan: dict[str, Any], record: dict[str, Any],
+                   look: dict[str, Any], done: dict[str, Any]) -> dict[str, Any]:
+    """Hair as its own material (vgac/hairmat.py), after the paint on the body's texture: blender/hairmat.py lays the
+    chosen hair triangles out on their own texture and bakes the maps there from the body's (before the strands),
+    then the strands are painted again at that texture's density and the flow map is written. The prep GLB is not
+    changed. -> {files, record: {use, ...}}; on any failure use is False with reason "error" and nothing ships."""
+    out_dir = sc.dir / "hair"
+    mdir = out_dir / "material"
+    mdir.mkdir(parents=True, exist_ok=True)
+    m = plan["material"]
+    tex = int(m.get("tex") or 1024)
+    t_start = time.time()
+    try:
+        sc.progress(0.95, "Giving the hair its own texture")
+        mj = mdir / "maps.json"
+        mj.write_text(json.dumps({k: str(p) for k, p in maps.items() if k in ("base_color", "normal", "roughness", "ao")}), encoding="utf-8")
+        await sc.blender("hairmat.py", [glb, mdir / "bake", "--points", m["points"], "--maps", mj, "--tex", tex,
+                                        "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex)], log_name="hairmat.log")
+        rep = json.loads((mdir / "bake" / "hairmat_report.json").read_text())
+        baked = {k: Path(p) for k, p in (rep.get("rebake_maps") or {}).items() if Path(p).is_file()}
+        t_bake = time.time()
+        fj = json.loads((out_dir / "hair_find.json").read_text())
+        mesh = done.get("mesh") or face.load_mesh(glb)
+        sc.progress(0.97, "Painting the hair on its own texture")
+        res = await asyncio.to_thread(hairmat.paint_atlas, mdir / "bake" / "hair_layout.json", baked, mdir, np.asarray(fj["centres"]),
+                                      int(fj["hair_i"]), int(fj["skin_i"]), strength=float(record.get("strength") or 1.0),
+                                      seed=int(record.get("seed") or 0), look=look, flow_pictures=done.get("flow_pictures"),
+                                      stats=done.get("stats"), view_mesh=mesh, fields=done.get("fields"), strand_cell=hair.STRAND_CELL)
+        t_paint = time.time()
+        tpc_body_tex = float(record.get("texels_per_cm_after") or 0.0)
+        if res["measures"]["texels_per_cm"] < 1.1 * tpc_body_tex:
+            return {"files": {}, "record": {"use": False, "reason": "no_gain", "texels_per_cm": res["measures"]["texels_per_cm"]}}
+        files = {k: Path(p) for k, p in res["files"].items()}
+        layout_dst = mdir / "hair_layout.json"
+        shutil.copy2(mdir / "bake" / "hair_layout.json", layout_dst)
+        files["hair_layout"] = layout_dst
+        # the hair texture's paint carried into the body texture, where the prep and rig previews read it
+        body_arrays = await asyncio.to_thread(hairmat.into_body, mesh, done["after_maps"], done["material_tris"], res["layout"], res["after"],
+                                              res["measures"]["texels_per_cm"], float(done.get("hair_texels_per_cm_body") or record.get("texels_per_cm_after") or 0.0))
+        body_files = {k: _write(v, out_dir / f"{k}.png") for k, v in body_arrays.items()}
+        after_maps = {**done["after_maps"], **body_arrays}
+        t_body = time.time()
+        # the pictures: what was split off, and the hair before and after on its own texture
+        T = int(record.get("texture_size") or 2048)
+        split = hair.tri_mask(mesh, hair.match_tris(mesh, json.loads(Path(m["points"]).read_text())), done["mask"].shape[0])
+        files["hair_mask"] = await asyncio.to_thread(hairmat.split_sheet, mesh, done["before_maps"]["base_color"], done["mask"],
+                                                     split & done["mask"], out_dir / "hair_mask.png")
+        files["hair_before_after"] = await asyncio.to_thread(hairmat.before_after_sheet, mesh, done["before_maps"], after_maps,
+                                                             res["sub"], res["after"], out_dir / "hair_before_after.png")
+        meas = res["measures"]
+        rec = {"use": True, "reason": None, "tex": meas["tex"], "texels_per_cm": meas["texels_per_cm"],
+               "texels_per_cm_body_texture": record.get("texels_per_cm_after"), "triangles": meas["triangles"],
+               "fill": rep.get("fill"), "bake_seconds": rep.get("rebake_seconds"), "strand_mm": meas.get("strand_mm"),
+               "highlight": bool(look.get("highlight")), "body_texels_per_cm": done.get("body_texels_per_cm"),
+               "body_texels_per_cm_before": record.get("body_texels_per_cm_before"), "texture_size": T,
+               "draws_added": hairmat.DRAWS_ADDED, "paint": {k: meas.get(k) for k in ("hair_texels", "streak_amplitude", "highlight_share",
+                                                                                       "bump_tilt_mean", "roughness_after", "tip_share", "root_share")},
+               "split_seconds": {"layout_and_bake": round(t_bake - t_start, 1), "paint": round(t_paint - t_bake, 1),
+                                 "into_body_texture": round(t_body - t_paint, 1), "pictures": round(time.time() - t_body, 1)}}
+        return {"files": files, "record": rec, "body_files": body_files}
+    except Exception as e:  # noqa: BLE001  (the hair keeps the body material; never fails the clean-up step)
+        return {"files": {}, "record": {"use": False, "reason": "error", "error": str(e)[:300]}}

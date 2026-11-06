@@ -206,9 +206,12 @@ def test_note_triggers():
 
 
 def test_notes_never_promise_movement():
+    # Spring bones (stage 2) move only parts that hang clear of the neck: the note says long loose hair will not swing
+    # and promises movement only for a ponytail or braid that hangs clear (docs/HAIR-RESEARCH.md 5.4, item 2).
+    assert "will not swing" in hairpic.NOTES["long_loose"] and "hangs clear of the neck can move" in hairpic.NOTES["long_loose"]
     for text in hairpic.NOTES.values():
         low = text.lower()
-        assert "will swing" not in low and "can move" not in low and "spring" not in low
+        assert "will swing" not in low and "spring" not in low
         assert re.search(r"[\U0001F300-\U0001FAFF]", text) is None
 
 

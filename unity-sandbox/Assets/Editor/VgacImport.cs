@@ -4,7 +4,8 @@
 //      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
-//      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>]
+//      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
+//      [-vgacSprings <springs.json>]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -37,6 +38,23 @@
 // include the backend's fit to the motion ("Fit it for me"), so nothing here changes them.
 // Version 12: every texture imports at its own size (Unity's default import limit is 2048, so a 4096 base colour used
 // to arrive at 2048); the report lists textureSizes ("base_color.png:4096:4096": the file's size, the import's limit).
+// Version 13: hair as its own material. With -vgacHair on the input also holds hair_base_color.png, hair_normal.png,
+// hair_ao.png, hair_flow.png and T_<name>_Hair_MetallicSmoothness.png, and the FBX's meshes have two material slots
+// (<name>_Body, <name>_Hair; the hair is the second sub-mesh). A second material, <name>_Hair.mat, is built from the hair
+// textures: on the built-in render pipeline with the "VGAC/Hair" shader (Assets/VgacShaders/VgacHair.shader, a two-band
+// Kajiya-Kay highlight along the strands from the flow map), elsewhere, or with -vgacHairShader lit, or when that
+// shader is missing, with the same Lit or Standard shader as the body. Every renderer with two sub-meshes gets both
+// materials. The report gives hairMaterial, hairShader, hairSubmeshes (renderers with the hair sub-mesh),
+// hairTriangles (LOD0's hair sub-mesh) and hairTexturesAssigned. Snapshot also renders the head close up under two
+// light directions with the hair shader and with the body's shader (hair_*.png) when the prefab has a hair material.
+// Version 14: the primary hair highlight takes half the hair's own colour (it washed the crown out in white).
+// Version 15: spring bones. With -vgacSprings the input holds springs.json (backend/vgac/blender/springs.py): chains
+// of bones named Spring_* that hang from a body bone (a ponytail, a cape, a tail). The prefab gets VgacSpringBones
+// (Assets/VgacScripts/VgacSpringBones.cs, found by name, so a project without it still compiles and only warns), set up
+// while the instance stands in its bind pose; it sways the chains during the shared Humanoid clips, which never move
+// them. The shape-based Humanoid mapping never treats a spring bone as a body bone. The report gives springChains,
+// springBones and springWarning. Snapshot also renders walk and run from the side with the script stepping frame by
+// frame, and the same frames with it off (springs_*.png), and lists how far each chain tip trails (in loopProbes).
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -53,7 +71,8 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "12";
+    public const string Version = "15";
+    public const string HairShaderName = "VGAC/Hair";
 
     [Serializable]
     class ClipInfo
@@ -128,8 +147,17 @@ public static class VgacImport
         public float bindPoseMoved;            // metres: how far the model's default pose was from its bind pose
         public float socketMaxAngle;           // degrees: worst forward or up mismatch between the FBX and the file
         public int socketsAdded;               // sockets the FBX lacked, added from the file
+        public string hairMaterial = "";       // Version 13: the hair's own material ("" when there is none)
+        public string hairShader = "";
+        public int hairSubmeshes;              // renderers that got the hair material on their second sub-mesh
+        public int hairTriangles;              // LOD0's hair sub-mesh
+        public List<string> hairTexturesAssigned = new List<string>();
+        public List<string> lod0Materials = new List<string>();   // LOD0's materials in the saved prefab
         public string equippedPrefab = "";     // items: "<Name> (equipped).prefab", a variant with the items on
         public List<string> equippedItems = new List<string>();  // "Ranger - sword>Socket_Hand_R"
+        public int springChains;               // Version 15: chains set up on the prefab's VgacSpringBones
+        public int springBones;
+        public string springWarning = "";
     }
 
     // attachments.json (backend/vgac/items.py equip): per item, its socket and offset in the socket's glTF frame.
@@ -163,6 +191,7 @@ public static class VgacImport
     }
 
     static bool IsSocketName(string n) => n.StartsWith("Socket_", StringComparison.Ordinal);
+    static bool IsSpringName(string n) => StripName(n).StartsWith("Spring_", StringComparison.Ordinal);
 
     // colliders.json (backend/vgac/stages/export.py _write_colliders): the kind of each collision part.
     [Serializable]
@@ -224,10 +253,12 @@ public static class VgacImport
     // one of these and call Import, so the two paths cannot drift apart.
     public class ImportArgs
     {
-        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments;
+        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments, springs;
         public bool humanoid, keepPose;
         public string filter = "bilinear";     // recipes: bilinear | point
         public bool mipmaps = true, compress = true, normalMap = true;
+        public bool hair;                      // -vgacHair on: the hair's own material (Version 13)
+        public string hairShader = "vgac";     // vgac | lit
         public float speedScale = 1f, scale = 1f;
         public string requestId = "";
 
@@ -260,12 +291,15 @@ public static class VgacImport
                 colliders = F("-vgacColliders"),
                 sockets = F("-vgacSockets"),
                 attachments = F("-vgacAttachments"),
+                springs = F("-vgacSprings"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
                 filter = (A("-vgacFilter") ?? "bilinear").ToLowerInvariant() == "point" ? "point" : "bilinear",
                 mipmaps = (A("-vgacMipmaps") ?? "on").ToLowerInvariant() != "off",
                 compress = (A("-vgacCompress") ?? "on").ToLowerInvariant() != "off",
                 normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
+                hair = (A("-vgacHair") ?? "off").ToLowerInvariant() == "on",
+                hairShader = (A("-vgacHairShader") ?? "vgac").ToLowerInvariant() == "lit" ? "lit" : "vgac",
             };
             if (a.speedScale <= 0.01f) a.speedScale = 1f;
             return a;
@@ -314,6 +348,14 @@ public static class VgacImport
             var msSrc = Path.Combine(input, msName);
             if (!File.Exists(msSrc)) msSrc = Path.Combine(input, "metallic_smoothness.png");
             if (File.Exists(msSrc)) File.Copy(msSrc, Path.Combine(assetDir, msName), true);
+            // Version 13: the hair's own textures; none left over from an earlier import when this one has no hair material
+            foreach (var f in HairTextures(name))
+            {
+                var src = Path.Combine(input, f);
+                var dst = assetDir + "/" + f;
+                if (a.hair && File.Exists(src) && (f != "hair_normal.png" || a.normalMap)) File.Copy(src, dst, true);
+                else if (File.Exists(dst)) AssetDatabase.DeleteAsset(dst);
+            }
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
 
             ConfigureTextures(assetDir, msName, report, a);
@@ -360,12 +402,39 @@ public static class VgacImport
 
             var mat = BuildMaterial(assetDir, msName, report);
             AssetDatabase.CreateAsset(mat, assetDir + "/" + name + ".mat");
+            Material hairMat = null;
+            var staleHair = assetDir + "/" + name + "_Hair.mat";
+            if (a.hair && File.Exists(assetDir + "/hair_base_color.png"))
+            {
+                hairMat = BuildHairMaterial(assetDir, name, report, a);
+                AssetDatabase.CreateAsset(hairMat, staleHair);
+                report.hairMaterial = staleHair;
+            }
+            else if (File.Exists(staleHair)) AssetDatabase.DeleteAsset(staleHair);
 
             var instance = (GameObject)PrefabUtility.InstantiatePrefab(model);
             built = instance;  // removed below even when a later step throws (an open Editor keeps its scene)
             instance.name = name;
             var renderers = instance.GetComponentsInChildren<Renderer>(true);
-            foreach (var r in renderers) r.sharedMaterial = mat;
+            void AssignMaterials(bool count)
+            {
+                foreach (var r in instance.GetComponentsInChildren<Renderer>(true))
+                {
+                    var sm = r is SkinnedMeshRenderer sk ? sk.sharedMesh : r.GetComponent<MeshFilter>()?.sharedMesh;
+                    if (hairMat != null && sm != null && sm.subMeshCount >= 2 && !IsColliderName(r.name))
+                    {
+                        // the FBX's slot order: <name>_Body, then <name>_Hair
+                        r.sharedMaterials = new[] { mat, hairMat };
+                        if (!count) continue;
+                        report.hairSubmeshes++;
+                        if (r.name.EndsWith("_LOD0")) report.hairTriangles = (int)(sm.GetIndexCount(1) / 3);
+                    }
+                    else if (sm != null && sm.subMeshCount >= 2) r.sharedMaterials = Enumerable.Repeat(mat, sm.subMeshCount).ToArray();
+                    else r.sharedMaterial = mat;
+                }
+            }
+            AssignMaterials(true);
+            if (hairMat != null && report.hairSubmeshes == 0) report.warnings.Add("hair material built but no mesh has a second sub-mesh");
             if (report.secondaryUV)
             {
                 var r0 = renderers.FirstOrDefault(r => r.name.EndsWith("_LOD0")) ?? renderers.FirstOrDefault();
@@ -388,6 +457,8 @@ public static class VgacImport
                 bodyShape = AddHitboxes(instance, hitPath, a.movementShape ?? "auto", a.scale, report);
             // Sockets: child transforms of the bones from the FBX, checked and placed from sockets.json.
             if (rigged) PlaceSockets(instance, a.sockets, a.scale, report);
+            // Spring bones (Version 15): set up in the bind pose, like the hit boxes and sockets.
+            if (rigged && a.springs != null && File.Exists(a.springs)) AddSprings(instance, a.springs, a.scale, report);
 
             // Collision (G16): one component per collision mesh under a Colliders child of the root, of the kind
             // colliders.json names: box, sphere and capsule become primitive colliders fitted to the mesh's bounds; hull
@@ -516,11 +587,22 @@ public static class VgacImport
             report.controller.applyRootMotion = animator.applyRootMotion;
 
             var prefabPath = assetDir + "/" + name + ".prefab";
+            // An FBX with material slots (the hair's own material) is imported again by the clip settings above, which
+            // puts the import's default materials back on the instance: the materials are assigned once more here.
+            AssignMaterials(false);
             PrefabUtility.SaveAsPrefabAsset(instance, prefabPath);
             UnityEngine.Object.DestroyImmediate(instance);
             built = null;
             // What the game gets: the sockets as saved in the prefab.
             var saved = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            // What the game gets: LOD0's materials as saved in the prefab
+            var savedR0 = saved != null ? saved.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r.name.EndsWith("_LOD0")) : null;
+            if (savedR0 != null) report.lod0Materials = savedR0.sharedMaterials.Select(m => m != null ? m.name : "none").ToList();
+            if (hairMat != null && !report.lod0Materials.Contains(hairMat.name))
+            {
+                report.warnings.Add("the saved prefab does not carry the hair material");
+                report.hairMaterial = "";
+            }
             if (saved != null)
                 foreach (var t in saved.GetComponentsInChildren<Transform>(true).Where(t => IsSocketName(t.name)).OrderBy(t => t.name))
                 {
@@ -815,6 +897,37 @@ public static class VgacImport
     }
 
     // ---------------------------------------------------------------------------------------------------------------
+    // Spring bones (Version 15)
+
+    public static Type SpringType() =>
+        AppDomain.CurrentDomain.GetAssemblies().Select(asm => asm.GetType("VgacSpringBones", false)).FirstOrDefault(t => t != null);
+
+    static void AddSprings(GameObject root, string path, float scale, Report report)
+    {
+        var type = SpringType();
+        if (type == null)
+        {
+            report.springWarning = "the spring script Assets/VgacScripts/VgacSpringBones.cs is not in the project; the chains sway only in the character's own clips";
+            report.warnings.Add(report.springWarning);
+            return;
+        }
+        try
+        {
+            var comp = root.GetComponent(type) ?? root.AddComponent(type);
+            var summary = (string)type.GetMethod("Setup").Invoke(comp, new object[] { File.ReadAllText(path), scale });
+            var chains = (Array)type.GetField("chains").GetValue(comp);
+            report.springChains = chains.Length;
+            foreach (var c in chains) report.springBones += ((Array)c.GetType().GetField("bones").GetValue(c)).Length;
+            if (summary.Contains("not found")) { report.springWarning = summary; report.warnings.Add("spring bones: " + summary); }
+        }
+        catch (Exception e)
+        {
+            report.springWarning = "spring script setup failed: " + (e.InnerException ?? e).Message;
+            report.warnings.Add(report.springWarning);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
     // Sockets (Version 8)
 
     // Stand a rigged instance in its bind pose (the rest pose the mesh was skinned in). Returns how far the bone
@@ -969,6 +1082,67 @@ public static class VgacImport
     // ---------------------------------------------------------------------------------------------------------------
     // Textures and material (G01, G02)
 
+    static string[] HairTextures(string name) =>
+        new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", "T_" + name + "_Hair_MetallicSmoothness.png" };
+
+    // Version 13: the hair's own material. The VGAC/Hair shader on the built-in pipeline (unless -vgacHairShader lit);
+    // the body's shader otherwise, with the hair's textures.
+    static Material BuildHairMaterial(string assetDir, string name, Report report, ImportArgs a)
+    {
+        var hairShader = Shader.Find(HairShaderName);
+        bool builtin = GraphicsSettings.currentRenderPipeline == null;
+        Material mat;
+        var hs = "T_" + name + "_Hair_MetallicSmoothness.png";
+        if (a.hairShader == "vgac" && builtin && hairShader != null)
+        {
+            mat = new Material(hairShader);
+            var b = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/hair_base_color.png");
+            var n = report.normalMap ? AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/hair_normal.png") : null;
+            var o = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/hair_ao.png");
+            var m = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + hs);
+            var f = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/hair_flow.png");
+            if (b) { mat.SetTexture("_MainTex", b); report.hairTexturesAssigned.Add("base_color"); }
+            if (n) { mat.SetTexture("_BumpMap", n); report.hairTexturesAssigned.Add("normal"); }
+            if (o) { mat.SetTexture("_OcclusionMap", o); report.hairTexturesAssigned.Add("ao"); }
+            if (m) { mat.SetTexture("_MetallicGlossMap", m); report.hairTexturesAssigned.Add("metallic_smoothness"); }
+            if (f) { mat.SetTexture("_FlowMap", f); report.hairTexturesAssigned.Add("flow"); }
+            // the strand highlight in the hair's own colour family: a warm white for the primary band
+            if (b) mat.SetColor("_SpecColor1", Color.Lerp(Color.white, AverageColour(b), 0.5f));
+        }
+        else
+        {
+            if (a.hairShader == "vgac" && builtin && hairShader == null)
+                report.warnings.Add("VGAC/Hair shader not found (Assets/VgacShaders/VgacHair.shader); the hair uses the body's shader");
+            var tmp = new Report { normalMap = report.normalMap };
+            mat = BuildMaterialFrom(assetDir, "hair_base_color.png", "hair_normal.png", "hair_ao.png", hs, tmp);
+            report.hairTexturesAssigned.AddRange(tmp.texturesAssigned);
+        }
+        mat.name = name + "_Hair";
+        report.hairShader = mat.shader.name;
+        return mat;
+    }
+
+    static Color AverageColour(Texture2D t)
+    {
+        try
+        {
+            var path = AssetDatabase.GetAssetPath(t);
+            var bytes = File.ReadAllBytes(path);
+            var tex = new Texture2D(2, 2);
+            tex.LoadImage(bytes);
+            var px = tex.GetPixels32();
+            double r = 0, g = 0, bl = 0; int n = 0;
+            for (int i = 0; i < px.Length; i += 17)
+            {
+                if (px[i].r + px[i].g + px[i].b < 12) continue;  // the empty space between the pieces
+                r += px[i].r; g += px[i].g; bl += px[i].b; n++;
+            }
+            UnityEngine.Object.DestroyImmediate(tex);
+            return n == 0 ? Color.white : new Color((float)(r / n / 255.0), (float)(g / n / 255.0), (float)(bl / n / 255.0));
+        }
+        catch { return Color.white; }
+    }
+
     static void ConfigureTextures(string assetDir, string msName, Report report, ImportArgs a)
     {
         var point = a != null && a.filter == "point";
@@ -978,16 +1152,19 @@ public static class VgacImport
         report.textureFilter = point ? "Point" : "Bilinear";
         report.textureMipmaps = mips;
         report.textureCompression = compress ? "Compressed" : "Uncompressed";
-        foreach (var t in new[] { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", msName })
+        var names = new List<string> { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", msName };
+        var hairMs = "T_" + msName.Substring(2, msName.Length - 2 - "_MetallicSmoothness.png".Length) + "_Hair_MetallicSmoothness.png";
+        names.AddRange(new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", hairMs });
+        foreach (var t in names)
         {
             var ti = AssetImporter.GetAtPath(assetDir + "/" + t) as TextureImporter;
             if (ti == null) continue;
-            if (t == "base_color.png")
+            if (t == "base_color.png" || t == "hair_base_color.png")
             {
                 ti.textureType = TextureImporterType.Default;
                 ti.sRGBTexture = true;
             }
-            else if (t == "normal.png")
+            else if (t == "normal.png" || t == "hair_normal.png")
             {
                 ti.textureType = TextureImporterType.NormalMap;
                 ti.sRGBTexture = false;
@@ -1014,7 +1191,7 @@ public static class VgacImport
             if (need > ti.maxTextureSize) ti.maxTextureSize = need;
             ti.SaveAndReimport();
             report.textureSizes.Add(t + ":" + Mathf.Max(sw, sh) + ":" + ti.maxTextureSize);
-            report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName ? ", alpha " + ti.alphaSource : "")
+            report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName || t == hairMs ? ", alpha " + ti.alphaSource : "")
                 + ", " + ti.filterMode + (ti.mipmapEnabled ? ", mipmaps" : ", no mipmaps") + ", " + ti.textureCompression);
         }
     }
@@ -1033,15 +1210,18 @@ public static class VgacImport
         return Shader.Find("Standard");
     }
 
-    static Material BuildMaterial(string assetDir, string msName, Report report)
+    static Material BuildMaterial(string assetDir, string msName, Report report) =>
+        BuildMaterialFrom(assetDir, "base_color.png", "normal.png", "ao.png", msName, report);
+
+    static Material BuildMaterialFrom(string assetDir, string baseName, string normalName, string aoName, string msName, Report report)
     {
         var shader = PickShader();
         var mat = new Material(shader);
         report.shader = shader.name;
         bool urp = shader.name.StartsWith("Universal Render Pipeline");
-        var baseTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/base_color.png");
-        var normalTex = report.normalMap ? AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/normal.png") : null;
-        var aoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/ao.png");
+        var baseTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + baseName);
+        var normalTex = report.normalMap ? AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + normalName) : null;
+        var aoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + aoName);
         var msTex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + msName);
         if (baseTex)
         {
@@ -1364,6 +1544,8 @@ public static class VgacImport
                 foreach (var b in bones.ToList()) foreach (var d in b.GetComponentsInChildren<Transform>(true)) if (d.GetComponent<Renderer>() == null) bones.Add(d);
                 // Attachment sockets hang under bones but are not bones: they must not change the shape-based mapping.
                 bones.RemoveWhere(t => IsSocketName(t.name));
+                // Spring chains (Version 15) hang from the head, chest or hips: never a neck, an arm or a leg.
+                bones.RemoveWhere(t => IsSpringName(t.name));
                 var hips = bones.Where(b => b.parent == null || !bones.Contains(b.parent)).OrderByDescending(b => Subtree(b, bones).Count()).FirstOrDefault();
                 if (hips != null)
                 {
@@ -2097,6 +2279,10 @@ public static class VgacImport
                            + (strides.Count > 0 ? " feet_apart_m=" + string.Join("/", strides) : ""));
                 graph.Destroy();
             }
+            // Version 15: walk and run from the side with the spring script stepping, and the same frames without it
+            SpringShots(go, cam, outDir, log, probes, clips);
+            // Version 13: the hair close up, with its own shader and with the body's, under two light directions
+            HairShots(go, name, cam, outDir, log, probes);
             // Leave the showcase as it was, with this asset standing in its slot, and save it.
             UnityEngine.Object.DestroyImmediate(go);
             UnityEngine.Object.DestroyImmediate(camGo);
@@ -2113,6 +2299,148 @@ public static class VgacImport
             Debug.Log("VGAC_SNAPSHOT fail " + e);
             EditorApplication.Exit(1);
         }
+    }
+
+    // Spring bones (Version 15): for each of walk and run, the clip is played twice through at 30 frames a second with
+    // the spring script stepped after each pose; the second pass is shot at 6 frames from the character's side, then
+    // the same frames again with the script off (the chains at rest). In loopProbes: per clip, the most a chain tip
+    // trailed from where its rest pose would put it, with the script on.
+    static void SpringShots(GameObject go, Camera cam, string outDir, List<string> log, List<string> notes, AnimationClip[] clips)
+    {
+        var type = SpringType();
+        var comp = type != null ? go.GetComponent(type) : null;
+        var animator = go.GetComponent<Animator>();
+        if (comp == null || animator == null) return;
+        var step = type.GetMethod("Step");
+        var tips = type.GetMethod("TipOffsets");
+        var simField = type.GetField("simulate");
+        var oldPos = cam.transform.position; var oldRot = cam.transform.rotation;
+        var r0 = go.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r.name.EndsWith("_LOD0")) ?? go.GetComponentInChildren<Renderer>();
+        var b = r0 != null ? r0.bounds : new Bounds(go.transform.position + Vector3.up, Vector3.one * 2);
+        float h = Mathf.Max(b.size.y, 0.5f);
+        var centre = b.center;
+        var side = go.transform.right;
+        cam.transform.position = centre + side * (h * 0.6f / Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad));
+        cam.transform.LookAt(centre);
+        int size = cam.targetTexture != null ? cam.targetTexture.width : 384;
+        foreach (var want in new[] { "walk", "run" })
+        {
+            var clip = clips.Where(c => (Words(c.name).Contains(want) || (want == "run" && Words(c.name).Contains("jog"))) && !c.name.ToLowerInvariant().Contains("crouch"))
+                .OrderBy(c => c.name.Length).FirstOrDefault();
+            if (clip == null) continue;
+            var graph = PlayableGraph.Create("vgac_springs");
+            graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+            var output = AnimationPlayableOutput.Create(graph, "anim", animator);
+            var playable = AnimationClipPlayable.Create(graph, clip);
+            output.SetSourcePlayable(playable);
+            graph.Play();
+            float fps = 30f;
+            int n = Mathf.Max(6, Mathf.RoundToInt(clip.length * fps));
+            int every = Math.Max(1, n / 6);
+            float most = 0f;
+            foreach (var on in new[] { true, false })
+            {
+                simField.SetValue(comp, on);
+                ((MonoBehaviour)comp).enabled = false; ((MonoBehaviour)comp).enabled = true;  // fresh start
+                for (int pass = 0; pass < 2; pass++)
+                    for (int i = 0; i <= n; i++)
+                    {
+                        double t = clip.length * i / n;
+                        playable.SetTime(t); graph.Evaluate(0f); playable.SetTime(t); graph.Evaluate(0f);
+                        if (on) step.Invoke(comp, new object[] { 1f / fps });
+                        else
+                        {
+                            // off: the chains at their rest under the animated parent
+                            foreach (var ch in (Array)type.GetField("chains").GetValue(comp))
+                            {
+                                var bones = (Transform[])ch.GetType().GetField("bones").GetValue(ch);
+                                var rest = (Quaternion[])ch.GetType().GetField("restLocal").GetValue(ch);
+                                for (int k = 0; k < bones.Length; k++) bones[k].localRotation = rest[k];
+                            }
+                        }
+                        if (on && pass == 1) foreach (var f in (float[])tips.Invoke(comp, null)) most = Mathf.Max(most, f);
+                        if (pass == 1 && i % every == 0 && i / every < 6)
+                        {
+                            cam.Render();
+                            RenderTexture.active = cam.targetTexture;
+                            var tex = new Texture2D(size, size, TextureFormat.RGB24, false);
+                            tex.ReadPixels(new Rect(0, 0, size, size), 0, 0);
+                            tex.Apply();
+                            RenderTexture.active = null;
+                            var file = Path.Combine(outDir, "springs_" + (on ? "on" : "off") + "_" + want + "_" + (i / every).ToString("00") + ".png");
+                            File.WriteAllBytes(file, tex.EncodeToPNG());
+                            UnityEngine.Object.DestroyImmediate(tex);
+                            log.Add(file);
+                        }
+                    }
+            }
+            simField.SetValue(comp, true);
+            notes.Add("springs " + clip.name + " tip_trail_m=" + most.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+            graph.Destroy();
+        }
+        cam.transform.SetPositionAndRotation(oldPos, oldRot);
+    }
+
+    // The head close up for the hair (Version 13): hair_<shader>_<light>.png, 768 px, the instance in its bind pose. The
+    // shader is the hair material's own (vgac when it is VGAC/Hair) and the body's shader with the hair textures (lit).
+    static void HairShots(GameObject go, string name, Camera cam, string outDir, List<string> log, List<string> notes)
+    {
+        var r0 = go.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r.name.EndsWith("_LOD0") && r.sharedMaterials.Length > 1);
+        if (r0 == null) return;
+        var hairMat = r0.sharedMaterials[1];
+        var assetDir = "Assets/VGAC/" + name;
+        ResetToBindPose(go);
+        var b = r0.bounds;
+        float h = b.size.y;
+        var centre = new Vector3(b.center.x, b.max.y - 0.075f * h, b.center.z);
+        var anim = go.GetComponent<Animator>();
+        var headBone = anim != null && anim.isHuman ? anim.GetBoneTransform(HumanBodyBones.Head) : null;
+        if (headBone != null) centre = headBone.position + Vector3.up * 0.045f * h;
+        int size = 768;
+        var rt = new RenderTexture(size, size, 24);
+        var oldTarget = cam.targetTexture;
+        var oldFov = cam.fieldOfView;
+        cam.targetTexture = rt;
+        cam.fieldOfView = 20f;
+        var dist = 0.2f * h / (2f * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad));
+        // Unity's model faces +Z after import (forward -Z in the FBX, turned): the camera sits at the front-left
+        var fwd = go.transform.forward;
+        var view = (Quaternion.AngleAxis(-35f, Vector3.up) * fwd + Vector3.up * 0.15f).normalized;
+        cam.transform.position = centre + view * dist;
+        cam.transform.LookAt(centre);
+        var suns = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None).Where(l => l.type == LightType.Directional && l.enabled).ToList();
+        var kept = suns.Select(l => l.transform.rotation).ToList();
+        var lights = new[] { ("l1", (Quaternion.AngleAxis(-40f, Vector3.up) * fwd + Vector3.up * 1.0f).normalized),
+                             ("l2", (Quaternion.AngleAxis(100f, Vector3.up) * fwd + Vector3.up * 0.6f).normalized) };
+        var lit = BuildMaterialFrom(assetDir, "hair_base_color.png", "hair_normal.png", "hair_ao.png",
+                                    "T_" + name + "_Hair_MetallicSmoothness.png", new Report());
+        var mats = r0.sharedMaterials;
+        foreach (var (tag, mat) in new[] { (hairMat.shader.name == HairShaderName ? "vgac" : "own", hairMat), ("lit", lit) })
+        {
+            mats[1] = mat;
+            r0.sharedMaterials = mats;
+            foreach (var (ltag, dir) in lights)
+            {
+                foreach (var s in suns) s.transform.rotation = Quaternion.LookRotation(-dir);
+                cam.Render();
+                RenderTexture.active = rt;
+                var tex = new Texture2D(size, size, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, size, size), 0, 0);
+                tex.Apply();
+                RenderTexture.active = null;
+                var file = Path.Combine(outDir, "hair_" + tag + "_" + ltag + ".png");
+                File.WriteAllBytes(file, tex.EncodeToPNG());
+                UnityEngine.Object.DestroyImmediate(tex);
+                log.Add(file);
+            }
+        }
+        mats[1] = hairMat;
+        r0.sharedMaterials = mats;
+        for (int i = 0; i < suns.Count; i++) suns[i].transform.rotation = kept[i];
+        cam.targetTexture = oldTarget;
+        cam.fieldOfView = oldFov;
+        UnityEngine.Object.DestroyImmediate(lit);
+        Debug.Log("VGAC hair shots: " + hairMat.shader.name + " and " + PickShader().name + ", suns " + suns.Count);
     }
 
     [Serializable] class SnapReport { public bool ok; public string error = ""; public List<string> files = new List<string>(); public List<string> loopProbes = new List<string>(); public string showcase = ""; public List<string> warnings = new List<string>(); }

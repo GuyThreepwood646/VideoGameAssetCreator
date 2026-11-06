@@ -196,7 +196,12 @@ def test_the_face_texels_are_never_written():
     r = paint(protect=protect, mp=mp)
     for key in ("base_color", "normal"):
         assert np.array_equal(r["maps"][key][40:70, 40:70], mp[key][40:70, 40:70])
-    assert np.array_equal(r["maps"]["roughness"][40:70, 40:70], mp["roughness"][40:70, 40:70])
+    # metal and shine are a hair's everywhere, the face's region included: a fringe lock over the brow that kept the
+    # 3D step's metal rendered as a dark blotch in Unity
+    painted = r["mask"][40:70, 40:70]
+    assert painted.any()
+    assert (r["maps"]["metallic"][40:70, 40:70][painted] < 0.01).all()
+    assert (r["maps"]["roughness"][40:70, 40:70][painted] > 0.3).all()
 
 
 def test_photoreal_gets_no_painted_highlight_and_a_look_without_bumps_no_normal_map():
