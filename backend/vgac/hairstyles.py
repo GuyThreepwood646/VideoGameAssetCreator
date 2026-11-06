@@ -55,7 +55,36 @@ def _load(d: str) -> dict[str, Any]:
     p = Path(d) / "catalogue.json"
     if not p.is_file():
         return {"styles": {}, "refused": [], "left_out": {}, "version": 0}
-    return json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if Path(d) == DATA_DIR:
+        data = _only_chosen(data)
+    return data
+
+
+def chosen_packs() -> set[tuple[str, str]] | None:
+    """The (pack, author) pairs the person kept in setup (<library>/hair-packs.json, written by
+    setup/Setup-Extras.ps1 -Packs). None = no file or unreadable = every style, as before. Read once per start."""
+    try:
+        from .config import get_settings
+
+        f = get_settings().library_path / "hair-packs.json"
+        if not f.is_file():
+            return None
+        packs = json.loads(f.read_text(encoding="utf-8-sig")).get("packs")
+        if not isinstance(packs, list):
+            return None
+        return {(str(x.get("catalogue_pack", "")), str(x.get("catalogue_author", ""))) for x in packs if isinstance(x, dict)}
+    except Exception:  # a bad picks file must never take the hair library away
+        return None
+
+
+def _only_chosen(data: dict[str, Any]) -> dict[str, Any]:
+    keep = chosen_packs()
+    if keep is None:
+        return data
+    out = dict(data)
+    out["styles"] = {k: v for k, v in data.get("styles", {}).items() if (v.get("pack", ""), v.get("author", "")) in keep}
+    return out
 
 
 def catalogue() -> dict[str, Any]:
