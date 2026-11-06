@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { libraryUrl, type Version } from '../../api'
 import { Info } from '../../components/Info'
+import { PictureViewer, Zoomable } from '../../components/PictureViewer'
 import { modelLabel } from '../../help'
 import { useRefData } from '../../refdata'
 import { addonsNotUsed } from '../Addons'
 
 export function ConceptView({ version }: { version: Version }) {
   const [cutout, setCutout] = useState(false)
+  const [full, setFull] = useState(false)
   const image = libraryUrl(version.files.image)
   const cut = libraryUrl(version.files.cutout)
   const src = cutout && cut ? cut : image
@@ -46,8 +48,17 @@ export function ConceptView({ version }: { version: Version }) {
         </span>
       </div>
       <div className="concept-body single">
-        <div className={'concept-image' + (cutout ? ' checker' : '')}>{src ? <img src={src} alt="concept" /> : <span className="muted">no image</span>}</div>
+        {src ? (
+          <Zoomable className={'concept-image' + (cutout ? ' checker' : '')} label={cutout ? 'the cutout' : 'the picture'} onOpen={() => setFull(true)}>
+            <img src={src} alt="concept" />
+          </Zoomable>
+        ) : (
+          <div className="concept-image">
+            <span className="muted">no image</span>
+          </div>
+        )}
       </div>
+      {full && src && <PictureViewer items={[{ src, label: cutout ? 'Cutout' : 'Picture' }]} checker={cutout} onClose={() => setFull(false)} />}
       {notUsed && (
         <div className="muted small">
           {notUsed}

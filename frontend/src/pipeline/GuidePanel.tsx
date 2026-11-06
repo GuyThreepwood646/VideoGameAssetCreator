@@ -39,6 +39,8 @@ type Props = {
   onOpenTool?: (fix: FixRequest) => void
   // Reload the asset (the finish card's Unity hand-off after "Check again").
   onChanged?: () => void
+  // Settings chosen for this step's first build: Make it hands them to Autopilot for this step.
+  firstParams?: Record<string, unknown> | null
 }
 
 // Whether the finishing card (turntable, downloads, what next) shows for this stage. Only on the last step: there the
@@ -124,7 +126,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -150,7 +152,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
     apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
-      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(body)} />
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
     ) : null
   const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' ? <span className="or-just">{node}</span> : node)
 

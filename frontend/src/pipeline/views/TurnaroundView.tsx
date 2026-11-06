@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { libraryUrl, TURNAROUND_VIEWS, type Check, type Version } from '../../api'
 import { Info } from '../../components/Info'
+import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { Disclosure, fmtNum, isCheckList, PlainChecks, TrafficDot } from '../../components/ui'
 import { metricPlain } from '../../help'
 
@@ -10,11 +11,19 @@ type ViewMetrics = Record<string, unknown> & { passed?: boolean; checks?: Check[
 const BALD_VIEWS = ['front', 'quarter', 'left', 'right'] as const
 
 function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
+  const [open, setOpen] = useState<number | null>(null)
   const shown = BALD_VIEWS.filter((v) => `bald_${v}` in version.files)
   if (!shown.length) return null
   const bald = (version.metrics.bald ?? null) as { kept_share?: number; rerolled?: boolean; reason?: string | null } | null
   const sheet = libraryUrl(version.files.bald_sheet)
   const pick = (key: string) => (cutout ? (version.files[`${key}_cutout`] ?? version.files[key]) : version.files[key])
+  // Each pair as two pictures in the viewer: with hair, then bald.
+  const items: PictureItem[] = shown.flatMap((view) => {
+    const name = VIEW_NAMES[view] ?? view
+    const haired = pick(view)
+    return [...(haired ? [{ src: libraryUrl(haired)!, label: `${name}, with hair` }] : []), { src: libraryUrl(pick(`bald_${view}`))!, label: `${name}, bald` }]
+  })
+  const at = (label: string) => setOpen(Math.max(0, items.findIndex((i) => i.label === label)))
   return (
     <div className="bald-row">
       <div className="view-intro muted small" style={{ paddingBottom: 0 }}>
@@ -39,12 +48,18 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
           return (
             <div key={view} className="view-cell" style={{ minWidth: 300 }}>
               <div className="row-gap" style={{ gap: 'var(--s1)' }}>
-                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
-                  {haired ? <img src={libraryUrl(haired)} alt={`${view} with hair`} /> : <span className="muted small">the first picture</span>}
-                </div>
-                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
+                {haired ? (
+                  <Zoomable className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }} label={`the ${view} view with hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, with hair`)}>
+                    <img src={libraryUrl(haired)} alt={`${view} with hair`} />
+                  </Zoomable>
+                ) : (
+                  <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
+                    <span className="muted small">the first picture</span>
+                  </div>
+                )}
+                <Zoomable className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }} label={`the ${view} view without hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, bald`)}>
                   <img src={libraryUrl(pick(`bald_${view}`))} alt={`${view} without hair`} />
-                </div>
+                </Zoomable>
               </div>
               <div className="row-between small">
                 <strong>{VIEW_NAMES[view] ?? view}</strong>
@@ -54,6 +69,7 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
           )
         })}
       </div>
+      {open !== null && <PictureViewer items={items} start={open} checker={cutout} onClose={() => setOpen(null)} />}
     </div>
   )
 }
@@ -80,7 +96,10 @@ type Props = {
 export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
   const [cutout, setCutout] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
+  const [open, setOpen] = useState<number | null>(null)
   const views = TURNAROUND_VIEWS.filter((v) => v in version.files)
+  const pathOf = (view: string) => (cutout ? (version.files[`${view}_cutout`] ?? version.files[view]) : version.files[view])
+  const items: PictureItem[] = views.map((v) => ({ src: libraryUrl(pathOf(v))!, label: VIEW_NAMES[v] ?? v }))
   const perView = (version.metrics.views ?? {}) as Record<string, ViewMetrics>
   const passed = typeof version.metrics.views_passed === 'number' ? version.metrics.views_passed : null
   const total = typeof version.metrics.views_total === 'number' ? version.metrics.views_total : views.length
@@ -121,7 +140,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
       </div>
       <div className="views-row">
         {views.map((view) => {
-          const path = cutout ? (version.files[`${view}_cutout`] ?? version.files[view]) : version.files[view]
+          const path = pathOf(view)
           const m = perView[view]
           const failed = m?.passed === false
           const checks = m && isCheckList(m.checks) ? m.checks : null
@@ -129,9 +148,9 @@ export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
           const on = ticked.includes(view)
           return (
             <div key={view} className={'view-cell' + (failed ? ' failed' : '') + (on ? ' picked' : '')}>
-              <div className={'view-image' + (cutout ? ' checker' : '')}>
+              <Zoomable className={'view-image' + (cutout ? ' checker' : '')} label={`the ${(VIEW_NAMES[view] ?? view).toLowerCase()} view`} onOpen={() => setOpen(views.indexOf(view))}>
                 <img src={libraryUrl(path)} alt={view} />
-              </div>
+              </Zoomable>
               <div className="row-between">
                 <strong>
                   {VIEW_NAMES[view] ?? view}
@@ -211,6 +230,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
         </div>
       )}
       <BaldRow version={version} cutout={cutout} />
+      {open !== null && <PictureViewer items={items} start={open} checker={cutout} onClose={() => setOpen(null)} />}
     </div>
   )
 }
