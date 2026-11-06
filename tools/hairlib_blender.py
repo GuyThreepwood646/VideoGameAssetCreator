@@ -328,4 +328,5 @@ def main():
         json.dump(measures, open(os.path.join(out, "build_measures.json"), "w"), indent=1)
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,19 @@
+{
+ "target": {
+  "H_px": 928,
+  "top_px": 36,
+  "neck_px": 180,
+  "head_cx_px": 91.0,
+  "head_w": 0.1314655172413793,
+  "head_h": 0.15517241379310345,
+  "img_w": 1024,
+  "img_h": 1024
+ },
+ "bearded": true,
+ "measured": {
+  "beard_change": 0.1098,
+  "face_change": 3.6,
+  "kept_share": 0.9944,
+  "reason": null
+ }
+}

@@ -31,6 +31,19 @@ export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'pixel', 'chro
 export type StyleModel = (typeof STYLE_MODELS)[number]
 
 // One concept model (GET /api/models), from the backend's data/models.yaml.
+export type CreditEntry = {
+  name: string; does: string; author: string; licence: string; link: string
+  attribution_required: boolean; in_your_assets: boolean; note: string; confirmed: 'lookup' | 'records' | 'not confirmed'
+}
+export type CreditsAnswer = {
+  summary: {
+    not_legal_advice: string
+    game_credit: { title: string; points: string[] }
+    passing_on: { title: string; points: string[] }
+    before_sharing: { title: string; points: string[] }
+  }
+  groups: { id: string; title: string; intro: string; entries: CreditEntry[] }[]
+}
 export type ModelInfo = {
   id: string
   label: string
@@ -572,6 +585,7 @@ export const api = {
   platforms: () => get<Platform[]>('/api/platforms'),
   stages: () => get<StageInfo[]>('/api/stages'),
   models: () => get<ModelInfo[]>('/api/models'),
+  credits: () => get<CreditsAnswer>('/api/credits'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),
   recipe: (params: { style: string; category: string; platform: string }) => get<Recipe>('/api/recipe' + q(params)),
   stylePresets: () => get<LookPreset[]>('/api/style-presets'),
@@ -970,11 +984,24 @@ export const itemsApi = {
 // --- Hair from the library (docs/HAIR-LIBRARY-PLAN.md sections 1 and 5; backend vgac/hairlib.py) -------------------
 
 export type HairSource = 'model' | 'library'
+export type BaldState = 'none' | 'missing' | 'drawing' | 'stopped' | 'failed' | 'ready'
 // Asset.hair (absent or null means today's hair, built with the 3D model).
 export type HairChoice = { source: HairSource; pick?: string | null; picked_at?: string | null; changed_by?: 'form' | 'page' | 'fix' | string }
 export type HairKind = 'shell' | 'cards'
 // One hairstyle tried on the character at the 3D step: its picture on the character and its plain fit words.
-export type HairCandidate = { style: string; name: string; score: number; fit_words?: string | null; picture_url?: string | null; triangles: number; kind: HairKind | string; credit?: string | null }
+// A style's credit as the backend sends it (prep metrics hair_library.credit, the panel's candidates, the catalogue):
+// {id, name, author, licence, source_url}. Plain text is still accepted. creditText gives the line shown after "Credit:",
+// for example "MakeHuman team (Data Collection AB), makehumancommunity.org, CC0".
+export type HairCreditInfo = { id?: string; name?: string; author?: string | null; licence?: string | null; source_url?: string | null }
+export type HairCredit = string | HairCreditInfo | null | undefined
+export function creditText(c: HairCredit): string {
+  if (!c) return ''
+  if (typeof c === 'string') return c.replace(/\.\s*$/, '')
+  const licence = c.licence === 'CC0-1.0' ? 'CC0' : (c.licence ?? '')
+  const host = (c.source_url ?? '').replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '')
+  return [c.author, host, licence].filter((x) => !!x).join(', ')
+}
+export type HairCandidate = { style: string; name: string; score: number; fit_words?: string | null; picture_url?: string | null; triangles: number; kind: HairKind | string; credit?: HairCredit }
 export type HairPanel = {
   source: HairSource
   available: boolean
@@ -992,6 +1019,8 @@ export type HairPanel = {
   rebuild?: { from_stage: StageId | string; minutes?: number | null } | null
   // Triangles kept for hair on the kept body (the backend's hair allowance), when it says.
   allowance?: number | null
+  // Where the bald pictures of the kept Check all sides version stand; "Rebuild from the 3D model" only when ready.
+  bald_state?: BaldState
   sentence?: string | null
 }
 // One catalogue entry (backend/vgac/data/hairlib/catalogue.json), as GET /api/hair-library lists it.
@@ -1006,8 +1035,37 @@ export type HairStyleEntry = {
   source_url?: string | null
   pack?: string | null
   phone_ok?: boolean
-  // Thumbnail paths inside the library (served by GET /api/hair-library/files/{path}): an object by view or a list.
+  // With ?platform= or ?asset_id=: the count really used there, and whether that is the lighter version.
+  triangles_used?: number
+  lite_used?: boolean
+  alpha?: 'opaque' | 'cutout' | string
+  fringe?: boolean
+  parting?: string | null
+  // Thumbnails by view ({front, quarter}): full URLs from the backend, or paths inside the library.
   thumbs?: Record<string, string> | string[] | null
+  credit?: HairCredit
+}
+// GET /api/hair-library: {styles, families, installed}.
+export type HairLibrary = { styles: HairStyleEntry[]; families: string[]; installed: boolean; platform?: string | null }
+// The prep version's metrics.hair_library once a library hairstyle is attached (the fields the screens read).
+export type HairSkinThrough = { all?: number; crown?: number; sides?: number }
+export type LibraryHairMetrics = {
+  attached?: boolean
+  style?: string
+  name?: string
+  family?: string
+  score?: number | null
+  triangles?: number
+  cap_triangles?: number
+  kind?: HairKind | string
+  alpha?: string
+  two_sided?: boolean
+  skin_through?: HairSkinThrough | number | null
+  credit?: HairCredit
+  extra_height_m?: number
+  allowance?: number
+  reused_body_of?: string | null
+  error?: string | null
 }
 export type HairSetResult = { panel: HairPanel; started?: RunResult[]; rebuild_from?: StageId | string | null }
 export type HairPickResult = { panel: HairPanel; autopilot?: AutopilotState | null }
@@ -1025,9 +1083,24 @@ function hairStyles(x: unknown): HairStyleEntry[] {
   return Array.isArray(list) ? (list as HairStyleEntry[]).filter((s) => s && typeof s.id === 'string') : []
 }
 
+const hairLibraryRequests = new Map<string, Promise<HairStyleEntry[]>>()
+
 export const hairApi = {
   panel: (aid: string) => get<HairPanel>(`/api/assets/${aid}/hair`),
   setSource: (aid: string, source: HairSource) => put<HairSetResult>(`/api/assets/${aid}/hair`, { source }),
   pick: (aid: string, style: string, rebuild: boolean) => post<HairPickResult>(`/api/assets/${aid}/hair/pick`, { style, rebuild }),
-  library: () => get<unknown>('/api/hair-library').then(hairStyles),
+  // The catalogue changes only with a backend restart, so one answer per page load (and per asset) is enough. With an
+  // asset id the list holds only the styles offered on its platform, with the triangle count used there.
+  library: (assetId?: string): Promise<HairStyleEntry[]> => {
+    const key = assetId ?? ''
+    let req = hairLibraryRequests.get(key)
+    if (!req) {
+      req = get<unknown>('/api/hair-library' + (assetId ? '?asset_id=' + encodeURIComponent(assetId) : '')).then(hairStyles, (e) => {
+        hairLibraryRequests.delete(key)
+        throw e
+      })
+      hairLibraryRequests.set(key, req)
+    }
+    return req
+  },
 }

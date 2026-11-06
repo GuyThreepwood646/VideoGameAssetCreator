@@ -7,6 +7,7 @@ import { categories, fabricate, files, lookPresets, newVersion, nowIso, platform
 import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
 import { hairCatalogue, hairPanel } from './hair'
+import { mockCredits } from './credits'
 import { addedOf, changeMoves, characterMoves, moveLibrary, mockReadMoveFile, myMoveFiles, removedOf } from './moves'
 
 type Handler = (m: RegExpMatchArray, body: Record<string, unknown>, query: URLSearchParams) => unknown
@@ -423,6 +424,7 @@ on('GET', '/api/models', () => [
   { id: 'chroma', label: 'Chroma1-HD', description: 'loose painterly', default_steps: 30, licence: 'Apache-2.0' },
 ])
 on('GET', '/api/style-presets', () => lookPresets)
+on('GET', '/api/credits', () => mockCredits)
 on('GET', '/api/suggest', (_m, _b, query) => {
   const category = query.get('category') ?? 'humanoid'
   const style = query.get('style') ?? styles[0].id
@@ -1301,7 +1303,11 @@ on('DELETE', '/api/my-moves/:id', (m) => {
 })
 
 // Hair from the library (mock/hair.ts; backend vgac/hairlib.py)
-on('GET', '/api/hair-library', () => hairCatalogue())
+on('GET', '/api/hair-library', (_m, _b, query) => {
+  const aid = query.get('asset_id')
+  const platform = query.get('platform') ?? (aid ? findAsset(aid).platform_target : null)
+  return hairCatalogue(platform)
+})
 on('GET', '/api/assets/:id/hair', (m) => hairPanel(findAsset(m.groups!.id)))
 on('PUT', '/api/assets/:id/hair', (m, body) => {
   const a = findAsset(m.groups!.id)
@@ -1321,7 +1327,7 @@ on('PUT', '/api/assets/:id/hair', (m, body) => {
 on('POST', '/api/assets/:id/hair/pick', (m, body) => {
   const a = findAsset(m.groups!.id)
   const style = String(body.style ?? '')
-  if (!hairCatalogue().some((s) => s.id === style)) throw new HttpError(404, `unknown hairstyle '${style}'`)
+  if (!hairCatalogue().styles.some((s) => s.id === style)) throw new HttpError(404, `unknown hairstyle '${style}'`)
   a.hair = { source: 'library', pick: style, picked_at: nowIso(), changed_by: 'page' }
   const panel = hairPanel(a)
   if (body.rebuild && panel.applied && panel.applied.style !== style) {

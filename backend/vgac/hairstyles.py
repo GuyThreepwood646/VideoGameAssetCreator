@@ -8,7 +8,8 @@ backend restart. Tests point it at another folder with `use_dir(path)`.
     styles_for(family, platform, look)   -> entries offered for that family (None: every family), platform and look
     family_of(prompt)                    -> (family | None, [the words that decided it])
     paths(id)                            -> {npz, lite, grey, normal, thumb_front, thumb_quarter} absolute Paths (missing keys: None)
-    credit(id)                           -> {id, name, author, licence, source_url}
+    credit(id)                           -> {id, name (the pack's own name), author, licence, source_url}
+Catalogue entries carry `name` (the display name the owner sees) and `pack_name` (the pack's own name).
 """
 from __future__ import annotations
 
@@ -127,7 +128,7 @@ def paths(style_id: str) -> dict[str, Path | None]:
 
 def credit(style_id: str) -> dict[str, Any]:
     e = style(style_id)
-    return dict(id=style_id, name=e["name"], author=e["author"], licence=e["licence"], source_url=e["source_url"])
+    return dict(id=style_id, name=e.get("pack_name") or e["name"], author=e["author"], licence=e["licence"], source_url=e["source_url"])
 
 
 def file_path(rel: str) -> Path:

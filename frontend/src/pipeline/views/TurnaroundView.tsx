@@ -12,7 +12,7 @@ const BALD_VIEWS = ['front', 'quarter', 'left', 'right'] as const
 function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
   const shown = BALD_VIEWS.filter((v) => `bald_${v}` in version.files)
   if (!shown.length) return null
-  const bald = (version.metrics.bald ?? null) as { kept_share?: number; rerolled?: boolean } | null
+  const bald = (version.metrics.bald ?? null) as { kept_share?: number; rerolled?: boolean; reason?: string | null } | null
   const sheet = libraryUrl(version.files.bald_sheet)
   const pick = (key: string) => (cutout ? (version.files[`${key}_cutout`] ?? version.files[key]) : version.files[key])
   return (
@@ -22,6 +22,8 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
         <Info term="term.bald_picture" /> Check that only the hair is gone: the face and the clothes should look the same in both pictures of each pair.
         {typeof bald?.kept_share === 'number' ? ` ${Math.round(bald.kept_share * 100)}% of the picture outside the hair is unchanged.` : ''}
         {bald?.rerolled ? ' The first try changed too much, so it was drawn a second time.' : ''}
+        {bald?.reason === 'face_changed' ? ' The face looks different in the bald picture: compare the faces closely in the side-by-side picture.' : ''}
+        {bald?.reason === 'clothes_changed' ? ' The clothes look different in the bald picture: compare them closely.' : ''}
         {sheet && (
           <>
             {' '}
@@ -35,12 +37,12 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
         {shown.map((view) => {
           const haired = pick(view)
           return (
-            <div key={view} className="view-cell" style={{ minWidth: 220 }}>
+            <div key={view} className="view-cell" style={{ minWidth: 300 }}>
               <div className="row-gap" style={{ gap: 'var(--s1)' }}>
-                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 180 }}>
+                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
                   {haired ? <img src={libraryUrl(haired)} alt={`${view} with hair`} /> : <span className="muted small">the first picture</span>}
                 </div>
-                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 180 }}>
+                <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
                   <img src={libraryUrl(pick(`bald_${view}`))} alt={`${view} without hair`} />
                 </div>
               </div>

@@ -244,12 +244,19 @@ def main() -> int:
     for sid, k in kept.items():
         c, m = k["c"], meas[sid]
         cards = c["kind"] == "cards"
-        name = c.get("name") or sid.split("_", 1)[1].replace("_", " ").capitalize()
+        # display name from curation; the pack's own name is kept as pack_name (and in the credit)
         if c["pack"] == "rule":
             import importlib.util
             spec = importlib.util.spec_from_file_location("rb", ROOT / "tools" / "hairlib_rulebuilt.py")
             rb = importlib.util.module_from_spec(spec); spec.loader.exec_module(rb)
-            name = rb.RULE_STYLES[sid]["name"]
+            pack_name = rb.RULE_STYLES[sid]["name"]
+        elif c["pack"] == "quaternius":
+            pack_name = Path(c["src"]).stem
+        else:
+            clo = next(iter(sorted((pack_path(packs, PACK_DIRS[c["pack"]]) / c["src"]).glob("*.mhclo"))))
+            mm = re.search(r"^name\s+(.+)$", clo.read_text(encoding="utf-8", errors="replace"), re.M)
+            pack_name = mm.group(1).strip() if mm else c["src"]
+        name = c.get("name") or pack_name
         files = {"npz": f"styles/{sid}.npz"}
         if m.get("lite_triangles"):
             files["lite"] = f"styles/{sid}_lite.npz"
@@ -259,7 +266,7 @@ def main() -> int:
             files["normal"] = f"tex/{k['normal']}"
         lite_ok = bool(m.get("lite_triangles") and m["lite_triangles"] <= 750)
         catalogue["styles"][sid] = dict(
-            id=sid, name=name, pack=SOURCES[c["pack"]]["pack"], source_url=SOURCES[c["pack"]]["url"], author=k["author"],
+            id=sid, name=name, pack_name=pack_name, pack=SOURCES[c["pack"]]["pack"], source_url=SOURCES[c["pack"]]["url"], author=k["author"],
             licence="CC0-1.0", licence_line=k["line"], source_file=k["src_files"].get("obj"),
             family=c["family"], fringe=bool(c["fringe"]), curly=bool(c.get("curly", False)), parting=c["parting"], length_rel_head=m["length_rel_head"],
             kind=c["kind"], alpha="cutout" if cards else "opaque", two_sided=bool(cards or c.get("two_sided", False)),
@@ -278,7 +285,7 @@ def main() -> int:
     lines = ["Hair library credits (backend/vgac/data/hairlib)", "",
              "Every style below is CC0 1.0 (public domain dedication) by its own file. No attribution is required; it is given anyway.", ""]
     for sid, e in sorted(catalogue["styles"].items()):
-        lines.append(f"{sid}: \"{e['name']}\" by {e['author']}, from {e['pack']} ({e['source_url'] or 'generated in VGAC'}). Licence line: {e['licence_line']}")
+        lines.append(f"{sid}: \"{e['pack_name']}\" (shown as \"{e['name']}\") by {e['author']}, from {e['pack']} ({e['source_url'] or 'generated in VGAC'}). Licence line: {e['licence_line']}")
     lines += ["", "Left out", ""]
     for r in refused:
         lines.append(f"{r['style']}: licence line found: {r['licence_line']}")

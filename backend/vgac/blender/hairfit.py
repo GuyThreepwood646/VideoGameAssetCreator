@@ -37,8 +37,9 @@ except ImportError:  # pragma: no cover - outside Blender
     HAVE_BPY = False
 
 HEIGHT = 1.7
-PUSH_EPS = 0.0015
-CAP_OFFSET = 0.0025
+CAP_OFFSET = 0.001          # the scalp cap sits 1 mm off the skin
+PUSH_EPS = 0.0025           # and every hair vertex at least 2.5 mm off it, so the hair clears the cap by 1.5 mm
+CAP_CLEAR = 0.003           # cap faces with hair closer than this above them (or any hair under them) are removed
 VOLUME = (0.7, 1.7)
 DZ = (-0.17, 0.17)          # head heights (about +-3 cm)
 LENGTH = (0.45, 1.6)
@@ -194,7 +195,7 @@ def radius_grid(S, cast):
     return smooth_grid(G)
 
 
-def smooth_grid(G):
+def smooth_grid(G, empty=1.0):
     G = G.copy()
     for _ in range(4):
         m = np.isnan(G)
@@ -204,7 +205,7 @@ def smooth_grid(G):
         with np.errstate(all="ignore"):
             nb = np.nanmean(np.stack([np.roll(G, 1, 1), np.roll(G, -1, 1), Gp[:-2], Gp[2:]]), 0)
         G[m] = nb[m]
-    G = np.where(np.isnan(G), 1.0, G)
+    G = np.where(np.isnan(G), empty, G)
     for _ in range(2):
         Gp = np.pad(G, ((1, 1), (0, 0)), mode="edge")
         G = 0.4 * G + 0.15 * (np.roll(G, 1, 1) + np.roll(G, -1, 1) + Gp[:-2] + Gp[2:])
@@ -233,13 +234,32 @@ def place(q, rho_r, G_b, S_b, volume=1.0, dz_head=0.0, length=1.0, mirror=False)
     rho_b = sample_grid(G_b, u)
     delta = np.clip(rho_b - rho_r, -0.2, 0.2)
     off = r - rho_r
-    r_new = rho_r + delta + np.where(off > 0, off * volume, off)
+    # volume scales the large forms of the hair, not its small ridges: the stand-off is averaged over 10 degree cells
+    # round the skull (smoothed) and that broad stand-off is scaled; the ridges between locks keep their own height.
+    # Scaling each vertex's own stand-off exaggerated the ridges into spikes on low shells (the live phone villager).
+    r_new = rho_r + delta + off + (volume - 1.0) * broad_offset(u, off)
     Q = u * r_new[:, None]
     z = Q[:, 2]
     Q[:, 2] = np.where(z < -0.2, -0.2 + (z + 0.2) * length, z)
     W = to_world(S_b, Q)
     W[:, 2] += dz_head * S_b["HH"]
     return W
+
+
+def broad_offset(u, off):
+    """Per vertex, the smoothed average stand-off (above the scalp only) of the 10 degree cell it falls in."""
+    pos = np.clip(off, 0, None)
+    p = np.degrees(np.arcsin(np.clip(u[:, 2], -1, 1)))
+    t = np.degrees(np.arctan2(u[:, 0], -u[:, 1]))
+    i = np.clip(((np.clip(p, GRID_PH[0], GRID_PH[-1]) - GRID_PH[0]) / 10).round().astype(int), 0, len(GRID_PH) - 1)
+    j = (((t - GRID_TH[0]) / 10).round().astype(int)) % len(GRID_TH)
+    S = np.zeros((len(GRID_PH), len(GRID_TH))); N = np.zeros_like(S)
+    np.add.at(S, (i, j), pos); np.add.at(N, (i, j), 1)
+    G = np.where(N > 0, S / np.maximum(N, 1), np.nan)
+    G = smooth_grid(G, empty=0.0) if np.isfinite(G).any() else np.zeros_like(S)
+    G = np.where(np.isfinite(G), G, 0.0)
+    b = sample_grid(G, u)
+    return np.minimum(b, pos * 1.5 + 0.02)     # never lift a vertex that sits on the scalp far off it
 
 
 def mirror_tris(tris, mirror):
@@ -302,6 +322,8 @@ def score_vis(vis, hair, reg, eye_boxes, pic_eye_cover):
     s = iou(vis, hair, reg)
     pen = 0.0
     for b, pc in zip(eye_boxes, pic_eye_cover):
+        if pc >= 0.5:              # the picture itself has hair over this eye: covering it is what the picture shows
+            continue
         b = [int(round(v)) for v in b]
         box = vis[max(0, b[1]):b[3], max(0, b[0]):b[2]]
         if box.size:
@@ -405,7 +427,20 @@ def load_body(path):
     return np.vstack(Vs), np.vstack(Ts)
 
 
-def push_out(W, bvh, eps=PUSH_EPS, reach=0.05):
+def inside_share(W, bvh, sel, reach=0.15):
+    """Share of the selected vertices that are inside the body (before push-out)."""
+    idx = np.nonzero(sel)[0]
+    if not len(idx):
+        return 0.0
+    n = 0
+    for i in idx[::2]:
+        hn = bvh.find_nearest(Vector(W[i]), reach)
+        if hn[0] is not None and float(np.dot(W[i] - np.array(hn[0]), np.array(hn[1]))) < 0:
+            n += 1
+    return n / max(1, len(idx[::2]))
+
+
+def push_out(W, bvh, eps=PUSH_EPS, reach=0.15):
     moved = 0
     for i in range(len(W)):
         hn = bvh.find_nearest(Vector(W[i]), reach)
@@ -446,6 +481,39 @@ def push_out_faces(W, T, bvh, eps=PUSH_EPS, rounds=2):
         W[sel] += dirn[sel] * np.minimum(need[sel], 0.006)[:, None]
         moved += int(sel.sum())
     return moved
+
+
+def clear_cap(cV, cF, bvh_hair, centre, clear=CAP_CLEAR):
+    """Remove the cap faces the hair lies close over (within `clear` above) or that any hair passes under: there the
+    cap cannot be seen and would only fight the hair for the same depth (the speckled crown on the live mage). The
+    cap stays where the scalp would otherwise show between locks or cards."""
+    keep = []
+    for f in cF:
+        P = cV[list(f)]
+        n = np.cross(P[1] - P[0], P[2] - P[0])
+        n = n / max(1e-12, np.linalg.norm(n))
+        c = P.mean(0)
+        if np.dot(n, c - centre) < 0:
+            n = -n
+        under = False
+        covered = 0
+        for p in (c, *P):
+            if bvh_hair.ray_cast(Vector(p + n * 1e-5), Vector(-n), 0.004)[0] is not None:
+                under = True; break
+            if bvh_hair.ray_cast(Vector(p + n * 1e-5), Vector(n), clear)[0] is not None:
+                covered += 1
+        # hair under the cap: the cap must go; hair close over the whole face: hidden, it goes; a face only partly
+        # under close hair (a parting, a gap between cards) stays, so no skin shows through the gap
+        if not under and covered < 4:
+            keep.append(f)
+    keep = np.array(keep, int).reshape(-1, 3)
+    # the kept faces' corners that still have hair within 2 mm above sink towards the skin (to 0.3 mm off it)
+    for v in np.unique(keep):
+        n = nrm(cV[v] - centre)
+        h = bvh_hair.ray_cast(Vector(cV[v] + n * 1e-5), Vector(n), 0.002)
+        if h[0] is not None:
+            cV[v] = cV[v] - n * min(0.002 - h[3], CAP_OFFSET - 0.0003)
+    return keep
 
 
 def cap_grid(front, ear, cols=24, rows=6):
@@ -586,6 +654,11 @@ def _picture(job, body):
     BT = Tr[keep[Tr].all(1)]
     rows = (max(0, int(T["top_px"] - 20)), min(H, int(T["neck_px"] + 1.2 * (T["neck_px"] - T["top_px"]))))
     reg = np.zeros((H, W), bool); reg[rows[0]:rows[1]] = True
+    # only the head's columns: shoulders, a fur mantle or a high collar differ between the picture and the model
+    # more than the head does, and pulled the alignment's scale (the live viking: x1.16)
+    hw_px = T["head_w"] * T["H_px"]
+    reg[:, :max(0, int(T["head_cx_px"] - 0.9 * hw_px))] = False
+    reg[:, int(T["head_cx_px"] + 0.9 * hw_px):] = False
 
     def sil(pm):
         return np.isfinite(raster_depth(pm(V), V[:, 1], BT, W, H))
@@ -675,6 +748,12 @@ def build(body, st, params, front, cover="normal"):
     W = place(st["q"], st["rho_r"], body["G"], body["S"], **params)
     tris = mirror_tris(st["tris"], mir)
     uv = mirror_uv(st["uv"], mir)
+    # hair that hangs (hang groups, or below the jaw) and starts inside the body: a fur mantle or a high collar
+    # rising round the head. It is pushed out (it then lies over the collar); the share is reported so the owner can
+    # be told that long hair cannot hang freely on this body.
+    S = body["S"]
+    below = (to_local(S, W)[:, 2] < -1.0) | (np.asarray(st["role"]) >= 2)
+    hang_inside = inside_share(W, body["bvh"], below)
     moved = push_out(W, body["bvh"])
     big = np.linalg.norm(W[tris[:, 0]] - W[tris[:, 1]], axis=1) > 0.012       # only shells with large triangles need it
     if big.any():
@@ -683,11 +762,13 @@ def build(body, st, params, front, cover="normal"):
     cV, cF, cUV = scalp_cap(body["S"], body["bvh"], hb, front=front, extra_rows=1 if cover == "more" else 0)
     if len(cF):
         push_out_faces(cV, cF, body["bvh"], eps=CAP_OFFSET)
+        cF = clear_cap(cV, cF, hb, np.asarray(body["S"]["c"]))
     flow = st["flow"].astype(float) * (np.array([-1.0, 1, 1]) if mir else 1)
     # flow to the world frame (rotate with the skull's tilt; radii scale is close to uniform)
     flow = nrm(flow @ rot_x(body["S"]["pitch"]).T)
     role = np.asarray(st["role"]).astype(np.int8)
-    return dict(W=W, tris=tris, uv=uv, cV=cV, cF=cF, cUV=cUV, flow=flow, role=role, pushed_out=int(moved))
+    return dict(W=W, tris=tris, uv=uv, cV=cV, cF=cF, cUV=cUV, flow=flow, role=role, pushed_out=int(moved),
+                hang_inside=round(float(hang_inside), 3), hang_vertices=int(below.sum()))
 
 
 def to_model_space(body, P):
@@ -733,8 +814,8 @@ def _render(path, body, hair_parts, size=384, yaw=0, hair_only=False):
     cd = bpy.data.cameras.new("c"); cd.type = "ORTHO"
     cam = bpy.data.objects.new("c", cd); sc.collection.objects.link(cam); sc.camera = cam
     S = body["S"]
-    cd.ortho_scale = 2.6 * S["HH"]
-    centre = Vector((S["hcx"], S["hcy"], S["ztop"] - 0.9 * S["HH"]))
+    cd.ortho_scale = max(2.6 * S["HH"], 0.5)          # head and shoulders, never tighter than half a metre
+    centre = Vector((S["hcx"], S["hcy"], S["ztop"] - 0.5 * cd.ortho_scale + 0.05))
     a = math.radians(yaw)
     cam.location = centre + Vector((math.sin(a), -math.cos(a), 0)) * 4
     cam.rotation_euler = (centre - cam.location).to_track_quat("-Z", "Y").to_euler()
@@ -814,7 +895,7 @@ def cap_texel(png):
     if not ok.any():
         return (0.5, 0.5)
     vals = lum[ok]
-    target = np.percentile(vals, 20)
+    target = np.percentile(vals, 50)       # the hair's middle tone: a darker cap showed through gaps as blotches
     ys, xs = np.nonzero(ok)
     i = int(np.argmin(np.abs(vals - target)))
     return ((xs[i] + 0.5) / W, 1.0 - (ys[i] + 0.5) / H)
@@ -863,10 +944,11 @@ def rank_mode(job):
         st = load_style(s["npz"])
         b = build(body, st, r["params"], front=s.get("front", 30.0))
         r["triangles"] = int(len(b["tris"]) + len(b["cF"]))
+        r["hang_inside"] = b["hang_inside"]
         files = {}
         try:
             mat = hair_material("h", _recoloured(job, s, out, i + 1), s.get("normal"), s.get("alpha") == "cutout", s.get("two_sided", False))
-            cap = flat_material("cap", np.asarray(job["colour"]["dark"]) * 0.85)
+            cap = flat_material("cap", np.asarray(job["colour"]["median"], float))   # the middle tone, as attach's cap
             parts = [("hair", b["W"], b["tris"], b["uv"], mat), ("cap", b["cV"], b["cF"], None, cap)]
             for view, yaw in (("front", 0), ("quarter", 35)):
                 p = os.path.join(out, f"hair_cand_{i + 1}_{view}.png")
@@ -966,7 +1048,7 @@ def attach_mode(job):
         except Exception as e:
             print("EXPORT_ERROR", e, flush=True)
     rep = dict(style=s["id"], params=params, score=score, eye_cover=eye_cover, triangles=int(len(tris)), cap_triangles=int(len(b["cF"])),
-               hair_triangles=int(len(b["tris"])), pushed_out=b["pushed_out"], skin_through=skin, colour_delta=None if delta is None else round(delta, 2),
+               hair_triangles=int(len(b["tris"])), pushed_out=b["pushed_out"], hang_inside=b["hang_inside"], hang_vertices=b["hang_vertices"], skin_through=skin, colour_delta=None if delta is None else round(delta, 2),
                render_delta=None if render_delta is None else round(render_delta, 2),
                extra_height_m=parts["extra_height_m"], skull=body["S"], renders=files, seconds=round(time.time() - t0, 1),
                scale=body["s"], groups=len(groups))

@@ -4,7 +4,7 @@
 // (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
-import { selectedVersion, type Asset, type Check, type FinishLine, type StageId, type Version } from '../api'
+import { creditText, selectedVersion, type Asset, type Check, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
 import { checkFix, checkPassed, checkSentence, joinAnd, measuredSize, metres, movesPlain, sizeAxisOf, type FixAction } from '../help'
 
 export type UnityClip = { name: string; loop?: boolean }
@@ -234,7 +234,7 @@ export function finishLines(asset: Asset): FinishLine[] {
 
   // Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6): the style, its own material, whether it sways, and
   // the credit to the style's author.
-  const lib = selectedVersion(asset, 'prep')?.metrics.hair_library as { attached?: boolean; style?: string; name?: string; triangles?: number; credit?: string } | undefined
+  const lib = selectedVersion(asset, 'prep')?.metrics.hair_library as LibraryHairMetrics | undefined
   if (lib?.attached) {
     const bound = findCheck(asset, 'hair_bound')
     const sway = num(bound?.vars?.groups_swaying) ?? 0
@@ -243,7 +243,7 @@ export function finishLines(asset: Asset): FinishLine[] {
     else
       lines.push({
         id: 'hair_library',
-        text: `Hair from the library (ready-made hairstyles): "${name}"${num(lib.triangles) !== null ? `, ${num(lib.triangles)!.toLocaleString('en-US')} triangles` : ''}, in its own material${sway > 0 ? ', and it sways with spring bones (small extra bones that sway on their own)' : ', moving with the head'}.${lib.credit ? ` Credit: ${lib.credit.replace(/\.\s*$/, '')}.` : ''}`,
+        text: `Hair from the library (ready-made hairstyles): "${name}"${num(lib.triangles) !== null ? `, ${num(lib.triangles)!.toLocaleString('en-US')} triangles` : ''}, in its own material${sway > 0 ? ', and it sways with spring bones (small extra bones that sway on their own)' : ', moving with the head'}.${creditText(lib.credit) ? ` Credit: ${creditText(lib.credit)}.` : ''}`,
         state: 'ok',
         term: 'hair_library',
       })
