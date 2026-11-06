@@ -59,7 +59,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, headtris, imaging, quality, reference
+from .. import guidance, hairmat, headtris, imaging, quality, reference
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -238,6 +238,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The hair detail pass (stages/hair_detail.py): the hair is found first, so the face pass's one relayout can give
         # it more texels too; it is painted after the face, on the final layout, and never writes the face's texels.
         sc.set_params(hair_detail=hair_detail.on(params), hair_strength=hair_detail.strength_of(params))
+        if sc.asset.category == "humanoid":
+            sc.set_params(**{hairmat.PARAM: hairmat.option(params)})  # hair as its own material (vgac/hairmat.py)
         hf = await hair_detail.find(sc, out, current, rec, params)
         fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"))
         for key, p in fd["files"].items():

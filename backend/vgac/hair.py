@@ -715,21 +715,22 @@ def _lattice(seed: int) -> np.ndarray:
 def value_noise(p: np.ndarray, cell: float, seed: int) -> np.ndarray:
     """Smooth 3D value noise (-1..1) with features about `cell` metres apart; the same at the same point and seed."""
     lat = _lattice(seed)
-    q = p / cell
-    i0 = np.floor(q).astype(np.int64)
-    t = q - i0
+    q = (p / cell).astype(np.float32)  # float32: a quarter faster on the hair's own texture's 600,000 texels
+    f0 = np.floor(q)
+    t = q - f0
+    i0 = f0.astype(np.int64)
     t = t * t * (3 - 2 * t)
     L = LATTICE
     ix, iy, iz = i0[:, 0] % L, i0[:, 1] % L, i0[:, 2] % L
     jx, jy, jz = (ix + 1) % L, (iy + 1) % L, (iz + 1) % L
     tx, ty, tz = t[:, 0], t[:, 1], t[:, 2]
-    out = np.zeros(len(p))
+    out = np.zeros(len(p), dtype=np.float32)
     for ax, wx in ((ix, 1 - tx), (jx, tx)):
         for ay, wy in ((iy, 1 - ty), (jy, ty)):
             base = (ax * L + ay) * L
             wxy = wx * wy
             out += wxy * ((1 - tz) * lat[base + iz] + tz * lat[base + jz])
-    return out
+    return out.astype(np.float64)
 
 
 def trilinear(grid: np.ndarray, f: np.ndarray) -> np.ndarray:
@@ -762,6 +763,35 @@ def streamlines(pos: np.ndarray, grid: Grid, F: np.ndarray, step: float, n: int)
             path.append(p)
         out.append(path)
     return out[0], out[1]
+
+
+FIELD_CELL = 0.0025  # metres: the roots and tips carried from one texture of the hair to the other
+
+
+def read_field(f: tuple[Any, np.ndarray, np.ndarray], p: np.ndarray) -> np.ndarray:
+    """A value splatted into a 3D grid (Grid, sums, counts), read back at p as a weighted mean: cells with no
+    samples do not pull the value toward 0."""
+    g, vs, vn = f
+    w = g.read(vn, p)
+    return np.clip(g.read(vs, p) / np.maximum(w, 1e-9), 0.0, 1.0) * (w > 1e-6)
+
+
+FAST_PATHS_MIN = 200_000  # texels; above this streamlines are traced from 3 mm cells (streamlines_cells)
+PATH_CELL = 0.003
+
+
+def streamlines_cells(pos: np.ndarray, grid: Grid, F: np.ndarray, step: float, n: int,
+                      cell: float = PATH_CELL) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """streamlines() for many texels (the hair's own texture holds about 600,000): traced once from the centre of
+    every occupied `cell`-metre cell and carried to each texel as an offset (the flow is smooth over 6 mm, so the
+    offsets hardly change inside a 3 mm cell). About ten times faster; the paths differ by well under a strand."""
+    lo = pos.min(axis=0) - cell
+    ijk = np.floor((pos - lo) / cell).astype(np.int64)
+    keys, inv = np.unique(ijk, axis=0, return_inverse=True)
+    inv = np.asarray(inv).reshape(-1)
+    centres = lo + (keys + 0.5) * cell
+    fwd, back = streamlines(centres, grid, F, step, n)
+    return [pos + (p - centres)[inv] for p in fwd], [pos + (p - centres)[inv] for p in back]
 
 
 def lic_paths(pos: np.ndarray, paths: tuple[list[np.ndarray], list[np.ndarray]], cell: float, seed: int, n: int,
@@ -870,11 +900,21 @@ def decode_normal(c: np.ndarray) -> np.ndarray:
 def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], hair_tris: np.ndarray, centres: np.ndarray,
                hair_i: int, skin_i: int, *, strength: float = 1.0, seed: int = 0, highlight: bool = True,
                photoreal: bool = False, protect: np.ndarray | None = None, flow_pictures: list[dict[str, Any]] | None = None,
-               stats: dict[str, Any] | None = None, flow_fn: Callable[..., np.ndarray] | None = None) -> dict[str, Any]:
+               stats: dict[str, Any] | None = None, flow_fn: Callable[..., np.ndarray] | None = None,
+               view_mesh: dict[str, np.ndarray] | None = None, paint_tris: np.ndarray | None = None,
+               fields: dict[str, Any] | None = None, strand_cell: float | None = None) -> dict[str, Any]:
     """Paint the hair. maps: {base_color (T,T,3), normal, roughness, metallic, ao (T,T) or (T,T,3), each optional but
     the base colour}. protect (T,T) 0..1: texels the pass must not change (the face's features). flow_pictures:
-    [{picture (S,S,3), hair_px (S,S) bool, cam}] painted pictures framed like their camera. Returns {maps (the changed
-    ones, same shapes), mask (T,T) bool, measures}. With strength 0 every map comes back unchanged."""
+    [{picture (S,S,3), hair_px (S,S) bool, cam}] painted pictures framed like their camera. view_mesh: the whole model,
+    for what each picture's camera can see, when `mesh` is only the hair (its own texture: vgac/hairmat.py).
+    Hair as its own material (vgac/hairmat.py) paints the hair once per texture from the same 3D fields:
+    paint_tris (m,) bool: only the hair texels on these triangles are written (the hairline band the body keeps); the
+    flow, the under-layers, roots and tips are still worked out over all of the hair. fields: the "fields" another call
+    returned (the flow grid, and the occlusion, root and tip values in 3D grids): the hair alone has no surroundings to
+    find its roots and tips, so they are read from the whole model's. strand_cell: the strands' width in metres (the
+    same on both textures). Returns {maps (the changed ones, same shapes), mask (T,T) bool (the hair texels), measures,
+    fields}. With strength 0 every map comes back unchanged. Metal is removed and roughness set on every hair texel,
+    the face's included (the protection is for the face's colours: a lock over the brow kept the 3D step's metal)."""
     base = maps["base_color"]
     T = base.shape[0]
     out_maps: dict[str, np.ndarray] = {}
@@ -896,8 +936,8 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
     flow = base_flow.copy()
     pic_w_total = np.zeros(len(pos))
     used_pictures = []
-    for fp in flow_pictures or []:
-        d, w = picture_flow(pos, nrm, base_flow, fp["picture"], fp["hair_px"], fp["cam"], mesh)
+    for fp in (flow_pictures or []) if fields is None else []:
+        d, w = picture_flow(pos, nrm, base_flow, fp["picture"], fp["hair_px"], fp["cam"], view_mesh or mesh)
         share = float((w > 0.5).mean())
         if share < FLOW_USE_MIN:
             used_pictures.append({"name": fp.get("name"), "used": False, "confident_share": round(share, 3)})
@@ -906,43 +946,75 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         flow = np.where(new[:, None], tangent(base_flow * (1 - w[:, None]) + d * w[:, None], nrm), flow)
         pic_w_total = np.maximum(pic_w_total, w)
         used_pictures.append({"name": fp.get("name"), "used": True, "confident_share": round(share, 3)})
-    grid, F = smooth_flow(pos, flow)
+    grid, F = smooth_flow(pos, flow) if fields is None else (fields["grid"], fields["F"])
     flow = tangent(grid.read(F, pos), nrm)
     measures.update(flow_from_picture=round(float((pic_w_total > 0.5).mean()), 3), flow_pictures=used_pictures,
                     flow_turn_deg=round(float(np.degrees(np.arccos(np.clip((flow * base_flow).sum(axis=1), -1, 1))).mean()), 1))
     # 3. the pattern
     texel_m = texel_size(mesh, reg, hair)
-    s_cell = max(STRAND_CELL, STRAND_TEXELS * texel_size(mesh, reg, hair, 85))
+    s_cell = float(strand_cell) if strand_cell else max(STRAND_CELL, STRAND_TEXELS * texel_size(mesh, reg, hair, 85))
     measures.update(texel_mm=round(1000 * texel_m, 3), texels_per_cm=round(0.01 / max(texel_m, 1e-9), 2), strand_mm=round(1000 * s_cell, 2))
     step = STRAND_LEN / PATH_STEPS
-    paths = streamlines(pos, grid, F, step, int(round(CLUMP_LEN / step)))
-    strand = normalise(lic_paths(pos, paths, s_cell, seed, PATH_STEPS, halves=True))
-    clump = normalise(lic_paths(pos, paths, CLUMP_CELL, seed + 1, int(round(CLUMP_LEN / step)), every=2))
+    # the texels written: all of the hair, or those on paint_tris; the 3D fields always come from all of it
+    W = np.ones(len(pos), dtype=bool) if paint_tris is None else np.asarray(paint_tris, dtype=bool)[reg["tri"][hair]]
+    trace = streamlines_cells if len(pos) > FAST_PATHS_MIN else streamlines
+    if fields is None:
+        paths = trace(pos, grid, F, step, int(round(CLUMP_LEN / step)))
+        paths_w = paths if W.all() else ([q[W] for q in paths[0]], [q[W] for q in paths[1]])
+    else:
+        paths = None
+        paths_w = trace(pos[W], grid, F, step, int(round(CLUMP_LEN / step)))
+    strand = normalise(lic_paths(pos[W], paths_w, s_cell, seed, PATH_STEPS, halves=True)) if W.any() else np.zeros(0)
+    clump = normalise(lic_paths(pos[W], paths_w, CLUMP_CELL, seed + 1, int(round(CLUMP_LEN / step)), every=2)) if W.any() else np.zeros(0)
     st = stats or {}
     amp = float(np.clip(1.6 * float(st.get("strand_contrast") or 0.0), *STREAK_AMP)) if st else STREAK_AMP[0] + 0.03
     height = 0.6 * strand + 0.4 * clump
     lmul = 1.0 + amp * np.clip(0.6 * strand + 0.45 * clump, -2.5, 2.5)
     lmul -= CLUMP_GROOVE * face.smoothstep(0.4, 1.6, -clump)
-    # under-layers and roots, tips
-    ao_map = maps.get("ao")
-    if ao_map is not None:
-        aa = ao_map if ao_map.ndim == 2 else ao_map[..., 0]
-        if aa.shape[0] != T:
-            aa = face.resize(aa, T, Image.BILINEAR)
-        ao = np.clip(aa[ys, xs], 0.0, 1.0)
-        # averaged on the surface over about a centimetre: under-layers are broad, and the occlusion map's own edges
-        # (seams, its gutter) must not print as dark dashes
-        ag = Grid(pos, 0.004)
-        a_s, a_n = ag.splat(pos, ao, blur=1)
-        ao = np.clip(ag.read(a_s[..., 0] / np.maximum(a_n, 1e-9), pos), 0.0, 1.0)
-        lmul *= 1.0 - AO_DARK * (1.0 - ao)
-    all_lbl = reg["pos"]
-    hair_frac = Grid(all_lbl, 0.004)
-    s, n = hair_frac.splat(all_lbl, np.stack([hair.astype(np.float64), np.ones(len(hair))], axis=1), blur=1)
-    Hf = np.stack([s[..., 0] / np.maximum(n, 1e-9), np.clip(n / max(float(np.percentile(n[n > 0], 50)), 1e-9), 0, 1)], axis=-1)
-    tip = edge_along_flow(paths[0], step, hair_frac, Hf)
-    root = edge_along_flow(paths[1], step, hair_frac, Hf)
+    # under-layers and roots, tips: worked out on all of the hair (or read from the whole model's fields)
+    out_fields: dict[str, Any] = {"grid": grid, "F": F, "s_cell": s_cell}
+    ao = None
+    if fields is not None:
+        if fields.get("ao") is not None:
+            ao = np.clip(fields["ao"][0].read(fields["ao"][1], pos), 0.0, 1.0)
+        tip = read_field(fields["tip"], pos)
+        root = read_field(fields["root"], pos)
+        crown = np.asarray(fields["crown"])
+    else:
+        ao_map = maps.get("ao")
+        if ao_map is not None:
+            aa = ao_map if ao_map.ndim == 2 else ao_map[..., 0]
+            if aa.shape[0] != T:
+                aa = face.resize(aa, T, Image.BILINEAR)
+            ao = np.clip(aa[ys, xs], 0.0, 1.0)
+            # averaged on the surface over about a centimetre: under-layers are broad, and the occlusion map's own
+            # edges (seams, its gutter) must not print as dark dashes
+            ag = Grid(pos, 0.004)
+            a_s, a_n = ag.splat(pos, ao, blur=1)
+            ao_grid = a_s[..., 0] / np.maximum(a_n, 1e-9)
+            ao = np.clip(ag.read(ao_grid, pos), 0.0, 1.0)
+            out_fields["ao"] = (ag, ao_grid)
+        all_lbl = reg["pos"]
+        hair_frac = Grid(all_lbl, 0.004)
+        s, n = hair_frac.splat(all_lbl, np.stack([hair.astype(np.float64), np.ones(len(hair))], axis=1), blur=1)
+        Hf = np.stack([s[..., 0] / np.maximum(n, 1e-9), np.clip(n / max(float(np.percentile(n[n > 0], 50)), 1e-9), 0, 1)], axis=-1)
+        tip = edge_along_flow(paths[0], step, hair_frac, Hf)
+        root = edge_along_flow(paths[1], step, hair_frac, Hf)
+        crown = crown_point(pos)
+        # the roots and tips as 3D fields (2.5 mm cells, no blur): another texture of the same hair reads them there
+        for key, val in (("tip", tip), ("root", root)):
+            g = Grid(pos, FIELD_CELL)
+            vs, vn = g.splat(pos, val, blur=0)
+            out_fields[key] = (g, vs[..., 0], vn)
+    out_fields["crown"] = crown
+    # from here on only the texels written
+    ys, xs, pos, nrm, flow = ys[W], xs[W], pos[W], nrm[W], flow[W]
+    tip, root = tip[W], root[W]
+    if ao is not None:
+        lmul *= 1.0 - AO_DARK * (1.0 - ao[W])
     lmul *= (1.0 - ROOT_DARK * root ** 1.5) * (1.0 + TIP_LIGHT * tip)
+    written = np.zeros((T, T), dtype=bool)
+    written[ys, xs] = True
     col = base[ys, xs]
     new = np.clip(col * lmul[:, None], 0.0, 1.0)
     # the painted highlight band, across the flow where the surface faces up and outward
@@ -952,7 +1024,7 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         # never darker or greyer than the hair itself: the lightest strands' colour, kept at least 25 percent lighter
         hl = np.maximum(hl, np.clip(col.mean(axis=0) * 1.25, 0, 1))
         up = nrm[:, 1]
-        centre_xz = crown_point(pos)[[0, 2]]
+        centre_xz = crown[[0, 2]]
         outward = (nrm[:, [0, 2]] * (pos[:, [0, 2]] - centre_xz)).sum(axis=1) >= -0.002
         band = np.exp(-((up - HIGHLIGHT_UP[0]) / HIGHLIGHT_UP[1]) ** 2) * outward
         band *= np.clip(0.55 + 0.45 * strand, 0.0, 1.0)  # broken by the strands
@@ -960,7 +1032,8 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
     # 5. the hairline: hair texels next to skin lean toward the skin there, thinning out between strands
     skin = tm["skin"]
     soft = np.zeros(len(pos))
-    if skin.any():
+    # the hairline: not on the hair's own texture (fields given): the triangles at the hairline stay in the body's
+    if skin.any() and fields is None:
         sg = Grid(reg["pos"], HAIRLINE_M / 2)
         ss, sn = sg.splat(reg["pos"][skin], reg["pos"][skin][:, :1] * 0 + 1.0, blur=0)
         cs, _ = sg.splat(reg["pos"][skin], base[reg["ys"][skin], reg["xs"][skin]], blur=0)
@@ -997,12 +1070,12 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         V[ys, xs] = True
         du = texture_slope(Himg, V, 1)[ys, xs]
         dv = -texture_slope(Himg, V, 0)[ys, xs]  # rows run down the image, v up
-        su = du / np.maximum(np.linalg.norm(reg["tu"][hair], axis=1), 1e-9) * s_cell  # height change per strand width
-        sv = dv / np.maximum(np.linalg.norm(reg["tv"][hair], axis=1), 1e-9) * s_cell
+        su = du / np.maximum(np.linalg.norm(reg["tu"][hair][W], axis=1), 1e-9) * s_cell  # height change per strand width
+        sv = dv / np.maximum(np.linalg.norm(reg["tv"][hair][W], axis=1), 1e-9) * s_cell
         slope = np.hypot(su, sv)
         nm = maps["normal"]
         old = decode_normal(nm[ys, xs])
-        k = BUMP_TILT / max(float(np.median(slope)), 1e-6)  # the same relief at any texel density
+        k = BUMP_TILT / max(float(np.median(slope)) if len(slope) else 0.0, 1e-6)  # the same relief at any texel density
         bent = old + np.stack([-k * su, -k * sv, np.zeros(len(su))], axis=1) * w[:, None]
         bent /= np.maximum(np.linalg.norm(bent, axis=1, keepdims=True), 1e-9)
         nn = nm.copy()
@@ -1016,7 +1089,7 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         r2 = r if r.ndim == 2 else r[..., 0]
         rn = r2.copy()
         want = np.clip(target - ROUGH_SWING * np.clip(strand, -2, 2) * 0.5, 0.3, 0.75)
-        rn[ys, xs] = r2[ys, xs] + (want - r2[ys, xs]) * w
+        rn[ys, xs] = r2[ys, xs] + (want - r2[ys, xs]) * strength
         out_maps["roughness"] = rn
         measures["roughness_before"] = round(float(r2[ys, xs].mean()), 3)
         measures["roughness_after"] = round(float(rn[ys, xs].mean()), 3)
@@ -1024,24 +1097,65 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         m = maps["metallic"]
         m2 = m if m.ndim == 2 else m[..., 0]
         mn = m2.copy()
-        mn[ys, xs] = m2[ys, xs] * (1 - w)
+        mn[ys, xs] = m2[ys, xs] * (1 - strength)
         out_maps["metallic"] = mn
         measures["metallic_before"] = round(float(m2[ys, xs].mean()), 3)
     # texels at a piece's edge whose centres fall outside every triangle are still read by texture filtering: they
     # take the painted neighbour's value, so no line of the old colour shows along the seams
     # (texels whose centre misses every triangle, and the gutter); the region's own other texels (skin, clothes) are
     # never overwritten
-    blocked = reg["covered"] & ~mask
+    blocked = reg["covered"] & ~written
     for k in list(out_maps):
-        out_maps[k] = spill(out_maps[k], mask, blocked)
+        out_maps[k] = spill(out_maps[k], written, blocked)
     lum0 = face.luminance(col)
     lum1 = face.luminance(nb_[ys, xs])
     measures.update(painted=True, streak_amplitude=round(amp, 3), highlight_share=round(float((band > 0.3).mean()), 3),
                     hairline_texels=int((soft > 0.05).sum()), protected_texels=int((keep < 0.5).sum()),
                     lightness_spread_before=round(float(lum0.std() / max(lum0.mean(), 1e-3)), 4),
                     lightness_spread_after=round(float(lum1.std() / max(lum1.mean(), 1e-3)), 4),
-                    tip_share=round(float((tip > 0.3).mean()), 3), root_share=round(float((root > 0.3).mean()), 3))
-    return {"maps": out_maps, "mask": mask, "measures": measures, "flow": flow, "pos": pos, "ys": ys, "xs": xs}
+                    tip_share=round(float((tip > 0.3).mean()), 3) if len(tip) else 0.0,
+                    root_share=round(float((root > 0.3).mean()), 3) if len(root) else 0.0, texels_written=int(W.sum()))
+    return {"maps": out_maps, "mask": mask, "measures": measures, "flow": flow, "pos": pos, "ys": ys, "xs": xs, "fields": out_fields}
+
+
+STRAY_METAL_RING = 8  # triangles this many steps from the hair are looked at for hair-coloured metal
+STRAY_METAL_MIN = 0.5
+STRAY_METAL_LAB = 30.0
+
+
+def clear_hair_metal(mesh: dict[str, np.ndarray], metallic: np.ndarray, base: np.ndarray, hair_tris: np.ndarray,
+                     centres: np.ndarray, hair_i: int, skin_i: int | None = None) -> tuple[np.ndarray, int]:
+    """The 3D step marks hair as metal (the knight's red hair was 0.83 to 0.97), and a lock of hair it modelled onto
+    the forehead lies outside the hair the pass finds (on the face's own triangles), so it kept that metal and
+    rendered as a dark blotch in Unity. Every texel on the head near the hair (STRAY_METAL_RING triangles) that is
+    hair-coloured (or skin-coloured, with skin_i) and metal loses the metal; armour and other colours keep theirs.
+    -> (the metallic map, texels changed)."""
+    nb = triangle_neighbours(mesh["faces"], mesh["verts"])
+    near = ring(hair_tris, nb, STRAY_METAL_RING)
+    head = face.find_head(mesh["verts"])
+    if head is not None:
+        c = mesh["verts"][mesh["faces"]].mean(axis=1)[:, 1]
+        near &= c >= head.top - 0.18 * head.height
+    T = metallic.shape[0]
+    reg = texel_region(mesh, T, near)
+    m2 = metallic if metallic.ndim == 2 else metallic[..., 0]
+    b = base if base.shape[0] == T else face.resize(base, T, Image.BOX)
+    col = b[reg["ys"], reg["xs"]]
+    lab = face.to_lab(np.clip(col, 0, 1))
+    lbl, _ = nearest_centre(lab, centres)
+    # hair colour, or close to it (the lock's own shadow side groups with the darker clothes)
+    hairish = (lbl == hair_i) | (lab_dist(lab, centres[hair_i]) < STRAY_METAL_LAB)
+    if skin_i is not None:
+        hairish |= lbl == skin_i
+    hit = hairish & (m2[reg["ys"], reg["xs"]] > STRAY_METAL_MIN)
+    if not hit.any():
+        return metallic, 0
+    out = m2.copy()
+    out[reg["ys"][hit], reg["xs"][hit]] = 0.0
+    written = np.zeros((T, T), dtype=bool)
+    written[reg["ys"][hit], reg["xs"][hit]] = True
+    out = spill(out, written, reg["covered"] & ~written)
+    return out, int(hit.sum())
 
 
 def texel_size(mesh: dict[str, np.ndarray], reg: dict[str, Any], sel: np.ndarray, percentile: float | None = None) -> float:

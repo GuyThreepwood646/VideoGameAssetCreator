@@ -218,13 +218,14 @@ def stubbed(tmp_path, monkeypatch):
 
     async def redraw(sc, instance, crop, seed, dest, prompt=fd.REDRAW_PROMPT, key="face_redraw", message=""):
         calls["redraw"].append((key, seed))
+        calls.setdefault("prompts", []).append(prompt)
         Image.new("RGB", (64, 64)).save(dest)
         return dest
 
     def fit_and_paint(work_glb, base_c, picture, before_glb, before_tex, crop, out_dir, strength, sides=None, colour_source=None,
-                      require_landmarks=False):
+                      require_landmarks=False, fit_from_crop=False):
         calls["paint"].append({"picture": Path(picture).name, "colour": None if colour_source is None else Path(colour_source).name,
-                               "require": require_landmarks})
+                               "require": require_landmarks, "fit_from_crop": fit_from_crop})
         out = out_dir / "base_color_face.png"
         Image.new("RGB", (8, 8)).save(out)
         sheet = out_dir / "face_before_after.png"
@@ -266,47 +267,63 @@ def test_a_close_up_that_passes_is_the_source_and_the_sharpening_redraw_is_not_r
     r = res["metrics"]["face_detail"]
     assert r["source"] == "closeup" and r["closeup"]["used"] and r["method"] == fd.METHOD_CLOSEUP
     assert calls["redraw"] == [("face_closeup", 77)]  # the seed given (a Resume) is used, no sharpening job
-    assert calls["paint"][0]["colour"] == "painted_head_closeup_merged.png" and calls["paint"][0]["require"] is True
+    assert calls["paint"][0]["colour"] == "painted_head_closeup_merged.png"
+    # the close-up's features sit where the painting's do (facecloseup), so it is painted through the painting's own fit
+    assert calls["paint"][0]["fit_from_crop"] is True and calls["paint"][0]["require"] is False
     assert res["files"]["face_closeup"].name == "painted_head_closeup.png"
 
 
-def test_a_large_painting_is_its_own_source(tmp_path, stubbed, monkeypatch):
+def test_the_corrected_close_up_is_the_one_painted_from(tmp_path, stubbed, monkeypatch):
     calls, glb, maps = stubbed
-
-    def inspect(glb_, base_, cutout, out_dir):
-        Image.new("RGB", (64, 64)).save(out_dir / "painted_head.png")
-        return {"found": True, "texture_size": 2048, "face_width_px": 459.0, "painted_head_px": 1600.0, "face_width_texels": 300,
-                "face_triangles": []}
-
-    monkeypatch.setattr(fd, "inspect", inspect)
-    res = asyncio.run(fd.run(_SC(tmp_path, 2048), glb, maps, REC, {"face_density": "standard"}))
-    r = res["metrics"]["face_detail"]
-    assert r["closeup"]["wanted"] is False and r["source"] == "painting"
-    assert [k for k, _ in calls["redraw"]] == ["face_redraw"]
+    fixed = tmp_path / "painted_head_closeup_fixed.png"
+    Image.new("RGB", (8, 8)).save(fixed)
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: {"ok": True, "reason": None, "likeness": 0.98, "source_face_px": 459.0,
+                                                         "registered": str(fixed)})
+    used = {}
+    monkeypatch.setattr(fd, "closeup_source", lambda crop, cu, px, dest: (used.setdefault("cu", Path(cu).name), Image.new("RGB", (8, 8)).save(dest), dest)[2])
+    asyncio.run(fd.run(_SC(tmp_path, 2048), glb, maps, REC, {"face_density": "standard"}))
+    assert used["cu"] == "painted_head_closeup_fixed.png"
 
 
-def test_high_on_a_4096_budget_ships_a_4096_base_colour(tmp_path, stubbed, monkeypatch):
+def test_a_close_up_off_the_paintings_look_is_drawn_once_more_in_the_looks_own_words(tmp_path, stubbed, monkeypatch):
     calls, glb, maps = stubbed
-    monkeypatch.setattr(fd, "closeup_guard", lambda *a: {"ok": True, "reason": None, "likeness": 0.98, "source_face_px": 459.0})
+    verdicts = iter([{"ok": False, "reason": "style", "likeness": 0.95, "source_face_px": 459.0},
+                     {"ok": True, "reason": None, "likeness": 0.98, "source_face_px": 459.0}])
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: next(verdicts))
     monkeypatch.setattr(fd, "closeup_source", lambda crop, cu, px, dest: (Image.new("RGB", (8, 8)).save(dest), dest)[1])
-    seen = {}
-    real = fd.fit_and_paint
+    sc = _SC(tmp_path, 2048)
+    sc.style = {"id": "painted"}
+    res = asyncio.run(fd.run(sc, glb, maps, REC, {"face_density": "standard"}))
+    r = res["metrics"]["face_detail"]
+    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_closeup_2"]  # no sharpening job: the second is used
+    assert calls["prompts"][0] == fd.CLOSEUP_PROMPT and "smooth painterly shading" in calls["prompts"][1]
+    assert r["source"] == "closeup" and [t["prompt"] for t in r["closeup"]["tries"]] == ["plain", "look"]
+    assert {"face_closeup_seed", "face_closeup_seed_2"} <= set(sc.params)  # both seeds kept for a Resume
 
-    def paint(work_glb, base_c, *a, **k):
-        seen["size"] = Image.open(base_c).size
-        return real(work_glb, base_c, *a, **k)
 
-    monkeypatch.setattr(fd, "fit_and_paint", paint)
-    res = asyncio.run(fd.run(_SC(tmp_path, 4096), glb, maps, REC, {"face_density": "high"}))
-    assert seen["size"] == (4096, 4096) and res["base_color_size"] == 4096
-    assert res["metrics"]["face_detail"]["density"]["ship"] == 4096
+def test_no_second_close_up_for_moved_features_colours_or_a_look_without_words(tmp_path, stubbed, monkeypatch):
+    calls, glb, maps = stubbed
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: {"ok": False, "reason": "eye_colour", "likeness": 0.97, "source_face_px": 459.0})
+    sc = _SC(tmp_path, 2048)
+    sc.style = {"id": "painted"}
+    asyncio.run(fd.run(sc, glb, maps, REC, {"face_density": "standard"}))
+    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_redraw"]
+    calls["redraw"].clear()
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: {"ok": False, "reason": "style", "likeness": 0.95, "source_face_px": 459.0})
+    sc = _SC(tmp_path, 2048)
+    sc.style = {"id": "cel"}
+    res = asyncio.run(fd.run(sc, glb, maps, REC, {"face_density": "standard"}))
+    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_redraw"]
+    c = guidance.describe_check(fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.3, "feature_match_after": 0.8,
+                                                                **res["metrics"]["face_detail"], "source": "painting"}})[0])
+    assert "A close-up was drawn but not used: it was drawn in a different style, more like a photograph than the painting." in c["help"]
 
 
 # --- Resume carries both picture jobs' seeds ------------------------------------------------------------------------
 
 
 def test_resume_carries_both_picture_seeds():
-    assert {"seed", "face_seed", "face_closeup_seed"} <= set(jobs.RESUME_SEEDS)
+    assert {"seed", "face_seed", "face_closeup_seed", "face_closeup_seed_2"} <= set(jobs.RESUME_SEEDS)
 
 
 # --- downstream: packs at the data maps' size, Unity imports at full size ------------------------------------------
@@ -346,7 +363,7 @@ def test_resume_puts_both_picture_seeds_back_in_the_job(client, monkeypatch):  #
     async def execute(ctx, kind, payload):
         with session_factory()() as db:  # like the face pass: both seeds written on the version as soon as picked
             v = db.get(Version, payload["version_id"])
-            v.params = {**v.params, "face_seed": 111, "face_closeup_seed": 222}
+            v.params = {**v.params, "face_seed": 111, "face_closeup_seed": 222, "face_closeup_seed_2": 333}
             db.commit()
         while state["hold"]:
             ctx.check_cancelled()
@@ -373,7 +390,7 @@ def test_resume_puts_both_picture_seeds_back_in_the_job(client, monkeypatch):  #
     assert wait_job(client, out["job"]["id"])["status"] == "done"
     with session_factory()() as db:
         params = db.get(Job, out["job"]["id"]).payload["params"]
-    assert params["face_seed"] == 111 and params["face_closeup_seed"] == 222
+    assert params["face_seed"] == 111 and params["face_closeup_seed"] == 222 and params["face_closeup_seed_2"] == 333
 
 
 def test_the_unity_metrics_carry_the_texture_sizes():

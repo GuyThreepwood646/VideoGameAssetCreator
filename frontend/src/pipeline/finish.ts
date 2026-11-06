@@ -226,6 +226,12 @@ export function finishLines(asset: Asset): FinishLine[] {
     }
   }
 
+  // Hair as its own material (vgac/hairmat.py): its texels per cm and the one more draw call.
+  const hm = selectedVersion(asset, 'prep')?.metrics.hair_material as { use?: boolean; tex?: number; texels_per_cm?: number } | undefined
+  if (hm?.use && exp.metrics.hair_material) {
+    lines.push({ id: 'hair_material', text: `Hair material (its own texture and shader): ${num(hm.texels_per_cm)?.toFixed(1) ?? 'more'} texels per cm on the hair, one more draw call per character.`, state: 'ok', term: 'hair_material' })
+  }
+
   // 6. Engine files.
   const files: string[] = []
   if (exp.files.fbx) files.push('FBX (Unity, Unreal, Godot)')
@@ -235,7 +241,8 @@ export function finishLines(asset: Asset): FinishLine[] {
   if (files.length) lines.push({ id: 'files', text: `Files: ${joinAnd(files)}.`, state: 'ok', term: 'formats' })
 
   // Six lines as the backend writes them, seven when the lighting line is there too.
-  return lines.slice(0, 6 + (lines.some((l) => l.id === 'lighting') ? 1 : 0) + (lines.some((l) => l.id === 'sockets') ? 1 : 0))
+  return lines.slice(0, 6 + (lines.some((l) => l.id === 'lighting') ? 1 : 0) + (lines.some((l) => l.id === 'sockets') ? 1 : 0)
+    + (lines.some((l) => l.id === 'hair_material') ? 1 : 0))
 }
 
 const PRIMITIVE_WORD: Record<string, string> = { box: 'one box', sphere: 'one ball', capsule: 'one capsule', hull: 'one wrapped shape' }

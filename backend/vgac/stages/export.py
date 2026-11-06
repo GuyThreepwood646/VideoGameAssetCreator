@@ -16,6 +16,14 @@ places them as empties parented to the bones in the FBX and every GLB and writes
 socket's joint-local transform from the clean GLB (and checks the GLB node sits where the file says), registers
 sockets.json, sets metrics.sockets = {count, names}, passes -vgacSockets to the Unity importer and writes a `sockets`
 block with one plain sentence per socket into the manifest.
+
+Hair as its own material (vgac/hairmat.py): when the clean-up step gave the hair its own texture (metrics
+hair_material.use), its maps (hair_base_color, hair_normal, hair_roughness, hair_ao, hair_flow) and hair_layout.json
+come in from the prep version; the hair packs T_<name>_Hair_MetallicSmoothness and T_<name>_Hair_ORM are written;
+pack.py gives the hair triangles the second material slot (FBX slots <name>_Body and <name>_Hair, two textured
+materials in every GLB); every GLB's hair material gets KHR_materials_anisotropy with the flow map; the Unity importer
+gets -vgacHair on and builds the second material; the manifest gets a hair_material block and README.txt the plain
+lines for Unreal and Godot. The check hair_material_shipped says whether the files carry it.
 """
 
 from __future__ import annotations
@@ -30,7 +38,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, items, library, quality, reference, sockets
+from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets
+from .. import springs as springs_mod
 from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
 from ..imaging import contact_sheet, image_size
@@ -191,6 +200,63 @@ def sync_importer(src: Path | str, editor_dir: Path | str) -> dict[str, Any]:
     return {"action": "current" if old == new else "kept_newer", "version": old, "previous": old}
 
 
+SHADER_REL = Path("Assets") / "VgacShaders" / "VgacHair.shader"
+_SHADER_VERSION_RE = re.compile(r"VgacHair\s+Version\s+(\d+)")
+
+
+def shader_version(path: Path | str) -> int | None:
+    """The "// VgacHair Version N" line of VgacHair.shader; None when the file or the line is missing."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    m = _SHADER_VERSION_RE.search(p.read_text(encoding="utf-8", errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def sync_shader(src: Path | str, dest: Path | str) -> dict[str, Any]:
+    """Copy the sandbox's VgacHair.shader to the same place in a user's project when the copy there is missing or
+    older, as sync_importer does for VgacImport.cs. -> {action, version, previous}."""
+    src_p, dest_p = Path(src), Path(dest)
+    if not src_p.is_file():
+        return {"action": "no_source", "version": None, "previous": shader_version(dest_p)}
+    new, old = shader_version(src_p), shader_version(dest_p)
+    existed = dest_p.is_file()
+    if not existed or old is None or (new is not None and old < new):
+        dest_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_p, dest_p)
+        return {"action": "updated" if existed else "copied", "version": new, "previous": old}
+    return {"action": "current" if old == new else "kept_newer", "version": old, "previous": old}
+
+
+# Spring bones: the runtime script the importer adds to the prefab travels with it the same way.
+SPRING_SCRIPT_REL = Path("Assets") / "VgacScripts" / "VgacSpringBones.cs"
+_SPRING_VERSION_RE = re.compile(r"VgacSpringBones\s+Version\s+(\d+)")
+
+
+def spring_script_version(path: Path | str) -> int | None:
+    """The "// VgacSpringBones Version N" line of VgacSpringBones.cs; None when the file or the line is missing."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    m = _SPRING_VERSION_RE.search(p.read_text(encoding="utf-8", errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def sync_spring_script(src: Path | str, dest: Path | str) -> dict[str, Any]:
+    """Copy the sandbox's VgacSpringBones.cs to the same place in a user's project when the copy there is missing or
+    older, as sync_shader does for the hair shader. -> {action, version, previous}."""
+    src_p, dest_p = Path(src), Path(dest)
+    if not src_p.is_file():
+        return {"action": "no_source", "version": None, "previous": spring_script_version(dest_p)}
+    new, old = spring_script_version(src_p), spring_script_version(dest_p)
+    existed = dest_p.is_file()
+    if not existed or old is None or (new is not None and old < new):
+        dest_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_p, dest_p)
+        return {"action": "updated" if existed else "copied", "version": new, "previous": old}
+    return {"action": "current" if old == new else "kept_newer", "version": old, "previous": old}
+
+
 # --- Hand-off to an open Unity Editor ---------------------------------------------------------------------------------
 # Unity refuses to open a project in batch mode while the Editor has it open, which is the usual case for a game
 # maker's own project. Then the export leaves the importer's inputs and a request file in the project and the Editor
@@ -201,7 +267,8 @@ HANDOFF_REQUEST = "vgac_import.json"
 HANDOFF_DONE = "vgac_import.done.json"
 HANDOFF_NOTE = "Sent to your open Unity project. It finishes importing when you switch to Unity."
 # The importer's own texture inputs (VgacImport.Import copies these from its input folder).
-HANDOFF_TEXTURES = ("base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png")
+HANDOFF_TEXTURES = ("base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png",
+                    "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png")
 
 
 def _open_exclusive(path: Path):
@@ -285,7 +352,7 @@ def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args:
     if not fbx.is_file():
         raise FileNotFoundError(f"no FBX to hand off: {fbx}")
     put(fbx)
-    for t in (*HANDOFF_TEXTURES, f"T_{name}_MetallicSmoothness.png", f"T_{name}_ORM.png"):
+    for t in (*HANDOFF_TEXTURES, f"T_{name}_MetallicSmoothness.png", f"T_{name}_ORM.png", f"T_{name}_Hair_MetallicSmoothness.png"):
         if (src / t).is_file():
             put(src / t)
         else:
@@ -296,7 +363,7 @@ def handoff_to_editor(src_dir: Path | str, project: Path | str, name: str, args:
     for k, v in args.items():
         if k == "-vgacInput":
             value = rel_folder  # the Editor reads its inputs from the request's own folder
-        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips", "-vgacSockets", "-vgacAttachments")):
+        elif isinstance(v, Path) or (isinstance(v, str) and k in ("-vgacHitboxes", "-vgacColliders", "-vgacClipInfo", "-vgacClips", "-vgacSockets", "-vgacAttachments", "-vgacSprings")):
             p = Path(v)
             # Inputs from this export's folder travel with the request; anything else (the shared clip library)
             # is read where it is.
@@ -441,9 +508,10 @@ def socket_category(sc: Any) -> str | None:
 
 def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: str, formats: list[str], look: dict[str, str],
               collider_obj: Any = None, base_color: Any = None, normal: Any = None, orm: Any = None, uv_source: Any = None,
-              socket_cat: str | None = None) -> list[Any]:
+              socket_cat: str | None = None, hair: dict[str, Any] | None = None) -> list[Any]:
     """pack.py's command line. "none" for --lods asks for LOD0 only (leaving it out would fall back to pack.py's own
-    default chain); --sockets only for a rigged character."""
+    default chain); --sockets only for a rigged character; the hair's own material when `hair` has its layout and
+    base colour ({layout, base_color, normal, orm})."""
     args: list[Any] = [src, out_dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode,
                        "--formats", ",".join(formats), "--shading", look["shading"], "--texture-filter", look["texture_filter"]]
     if pack_mode == "parts" and collider_obj:
@@ -453,7 +521,58 @@ def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: s
             args += [flag, p]
     if socket_cat:
         args += ["--sockets", socket_cat]
+    if hair and hair.get("layout") and hair.get("base_color"):
+        args += ["--hair-layout", hair["layout"], "--hair-base-color", hair["base_color"]]
+        for flag, key in (("--hair-normal", "normal"), ("--hair-orm", "orm")):
+            if hair.get(key) is not None:
+                args += [flag, hair[key]]
     return args
+
+
+HAIR_KEYS = ("hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow")
+HAIR_PACK_KEYS = ("hair_metallic_smoothness", "hair_orm")
+
+
+def hair_inputs(sc: Any, keep_normal: bool = True) -> dict[str, Path]:
+    """The hair's own maps and layout from the clean-up step, copied in, when it gave the hair its own material
+    (metrics hair_material.use); {} otherwise. Keys: HAIR_KEYS that exist, plus hair_layout."""
+    prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
+    hm = ((getattr(prep_v, "metrics", None) or {}).get("hair_material") or {})
+    if not hm.get("use"):
+        return {}
+    layout = sc.lineage_file("hair_layout", ("prep",))
+    base = sc.lineage_file("hair_base_color", ("prep",))
+    if layout is None or base is None:
+        return {}
+    out: dict[str, Path] = {"hair_layout": sc.copy_in(layout, "hair_layout.json")}
+    for key in HAIR_KEYS:
+        if key == "hair_normal" and not keep_normal:
+            continue
+        p = sc.lineage_file(key, ("prep",))
+        if p is not None:
+            out[key] = sc.copy_in(p, f"{key}.png")
+    return out
+
+
+def hair_glb_finish(glb_paths: list[Path], flow_png: Path | None, work_dir: Path) -> list[str]:
+    """KHR_materials_anisotropy on the hair material of each GLB, with the flow map in glTF's direction convention.
+    -> the GLB names it was added to."""
+    if flow_png is None or not Path(flow_png).is_file():
+        return []
+    rgba = np.asarray(Image.open(flow_png).convert("RGBA"))
+    gl = work_dir / "hair_anisotropy_gltf.png"
+    Image.fromarray(hairmat.gl_flow(rgba), "RGB").save(gl)
+    done = []
+    for g in glb_paths:
+        if Path(g).is_file() and hairmat.glb_add_anisotropy(g, gl, rotation=hairmat.anisotropy_rotation()):
+            done.append(Path(g).name)
+    return done
+
+
+def hair_readme(name: str, hm: dict[str, Any], files: dict[str, str]) -> str:
+    """README.txt for the hand-off: the hair material lines (hairmat.readme_lines)."""
+    lines = [f"{name}", ""] + hairmat.readme_lines(name, int(hm.get("tex") or 1024), files.get("hair_flow", "hair_flow.png"), files)
+    return "\n".join(lines) + "\n"
 
 
 def _write_sockets(sc: StageContext, name: str, report: dict[str, Any]) -> dict[str, Any] | None:
@@ -512,9 +631,27 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     ci = sc.lineage_file("anim_clips", ("rig",)) if src_key == "rig.anim_glb" else None
     if ci is not None:
         sc.register("anim_clips", sc.copy_in(ci, "anim_clips.json"))
+    # Spring bones: the chains are in the animated GLB already; springs.json goes with the files.
+    sp = sc.lineage_file("springs", ("rig",)) if src_key == "rig.anim_glb" else None
+    if sp is not None:
+        sc.register("springs", sc.copy_in(sp, "springs.json"))
+    elif (sc.dir / "springs.json").is_file():
+        (sc.dir / "springs.json").unlink()
     packs = pack_texture_maps(textures, sc.dir, name)
     for key, p in packs.items():
         sc.register(key, p)
+    # Hair as its own material: its maps and layout from the clean-up step, and its own packs.
+    for stale in sc.dir.glob("hair_*.png"):
+        stale.unlink()
+    hair_in = hair_inputs(sc, keep_normal)
+    hair_packs: dict[str, Path] = {}
+    if hair_in:
+        for key, p in hair_in.items():
+            sc.register(key, p)
+        hp = pack_texture_maps({k[5:]: hair_in.get(k) for k in ("hair_roughness", "hair_ao")}, sc.dir, name + "_Hair")
+        hair_packs = {f"hair_{k}": p for k, p in hp.items()}
+        for key, p in hair_packs.items():
+            sc.register(key, p)
     sc.progress(0.05, "Blender pack")
     # The rig stage's GLB has no UVs; pack.py copies them from the prep GLB (same faces) when the input lacks them.
     uv_src = sc.lineage_file("glb", ("prep",)) if src_key.startswith("rig.") else None
@@ -523,9 +660,21 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     if stale.is_file():
         stale.unlink()
     args = pack_args(src, sc.dir, name, lods, pack_mode, formats, look, col_plan.get("obj") if pack_mode == "parts" else None,
-                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat)
+                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat,
+                     {"layout": hair_in.get("hair_layout"), "base_color": hair_in.get("hair_base_color"),
+                      "normal": hair_in.get("hair_normal"), "orm": hair_packs.get("hair_orm")} if hair_in else None)
     await sc.blender("pack.py", args, log_name="pack.log")
     report = json.loads((sc.dir / "report.json").read_text())
+    hr = report.get("hair_material") or None
+    if hair_in:
+        glbs = [sc.dir / f"{name}.glb", sc.dir / f"{name}_godot.glb"] + [Path(p) for p in (report.get("glb_lods") or {}).values()]
+        aniso = hair_glb_finish(glbs, hair_in.get("hair_flow"), sc.dir) if hr and hr.get("ok") else []
+        sc.set_metrics(hair_material={"planned": True, "ok": bool(hr and hr.get("ok")), "faces": (hr or {}).get("faces"),
+                                      "lod_triangles": (hr or {}).get("lod_triangles"), "slots": (hr or {}).get("slots"),
+                                      "anisotropy_glbs": aniso, "draws_added": hairmat.DRAWS_ADDED,
+                                      "error": None if hr and hr.get("ok") else ((hr or {}).get("reason") or "pack.py did not split the hair")})
+    else:
+        sc.set_metrics(hair_material=None)
     sc.register("pack_report", sc.dir / "report.json")
     if (sc.dir / f"{name}.fbx").is_file():
         sc.register("fbx", sc.dir / f"{name}.fbx")
@@ -600,6 +749,11 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     sj = Path(sc.dir) / "sockets.json"
     if sj.is_file():
         args["-vgacSockets"] = sj
+    if (Path(sc.dir) / "hair_base_color.png").is_file() and (sc.version.metrics.get("hair_material") or {}).get("ok"):
+        args["-vgacHair"] = "on"  # the second material from the hair's own textures (VgacImport.cs Version 13)
+    spj = Path(sc.dir) / "springs.json"
+    if spj.is_file() and sc.version.files.get("springs"):
+        args["-vgacSprings"] = spj  # spring bones: the importer adds VgacSpringBones to the prefab (Version 15)
     aj = Path(sc.dir) / "attachments.json"
     if aj.is_file() and sc.version.files.get("attachments"):
         args["-vgacAttachments"] = aj  # items: the second prefab "<Name> (equipped)"
@@ -639,7 +793,11 @@ def unity_metrics(report: dict[str, Any]) -> dict[str, Any]:
             "sockets": report.get("sockets"), "socketBones": report.get("socketBones"),
             "socketMaxError": report.get("socketMaxError"), "socketMaxAngle": report.get("socketMaxAngle"),
             "equippedPrefab": report.get("equippedPrefab"), "equippedItems": report.get("equippedItems"),
-            "showcase": report.get("showcase")}
+            "showcase": report.get("showcase"), "hairMaterial": report.get("hairMaterial"), "hairShader": report.get("hairShader"),
+            "hairSubmeshes": report.get("hairSubmeshes"), "hairTriangles": report.get("hairTriangles"),
+            "hairTexturesAssigned": report.get("hairTexturesAssigned"),
+            "springChains": report.get("springChains"), "springBones": report.get("springBones"),
+            "springWarning": report.get("springWarning")}
 
 
 async def _unity(sc: StageContext, params: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -774,6 +932,28 @@ def _lighting_manifest(sc: StageContext, unity_report: dict[str, Any] | None) ->
     return out or None
 
 
+HAIR_FLOW_LAYOUT = ("RGBA; linear; R the strand direction along the texture's width, G along its height (up, OpenGL convention), "
+                    "each 0.5 + 0.5 x; B 1 (strength); A strand noise for the highlight's shift (0.5 none)")
+
+
+def _hair_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What the manifest says about the hair's own material, or None when the hair stays in the body material."""
+    m = sc.version.metrics.get("hair_material") or {}
+    if not m.get("ok"):
+        return None
+    prep_m = (getattr(sc.stage_version("prep"), "metrics", None) or {}).get("hair_material") or {}
+    files = {k: Path(p).name for k in HAIR_KEYS + HAIR_PACK_KEYS if (p := sc.file(k)) is not None}
+    u = unity_report or {}
+    return {"materials": m.get("slots"), "texture_size": prep_m.get("tex"), "texels_per_cm": prep_m.get("texels_per_cm"),
+            "texels_per_cm_in_body_texture": prep_m.get("texels_per_cm_body_texture"), "triangles": m.get("faces"),
+            "lod_triangles": m.get("lod_triangles"), "draw_calls_added": m.get("draws_added"), "files": files,
+            "flow_map": files.get("hair_flow"), "glb_anisotropy": {"extension": "KHR_materials_anisotropy", "files": m.get("anisotropy_glbs"),
+                                                                   "strength": hairmat.ANISOTROPY_STRENGTH},
+            "unity": {"material": u.get("hairMaterial"), "shader": u.get("hairShader")} if u else None,
+            "readme": "README.txt", "unreal": "by hand: Shading Model Hair (README.txt); not verified",
+            "godot": "by hand: Anisotropy on, Flowmap set to the flow map (README.txt); not verified"}
+
+
 def _read_json(p: Path | str | None) -> dict[str, Any]:
     if p is None or not Path(p).is_file():
         return {}
@@ -788,12 +968,14 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
     models, seeds, lineage = prov["models"], prov["seeds"], prov["lineage"]
     rig_v = sc.stage_version("rig")
     textures = {}
-    for key in TEXTURE_KEYS + PACK_KEYS:
+    for key in TEXTURE_KEYS + PACK_KEYS + HAIR_KEYS + HAIR_PACK_KEYS:
         p = sc.file(key)
         if p is not None:
             textures[key] = {"file": p.name, "size": list(image_size(p))}
-            if key in PACK_LAYOUTS:
-                textures[key]["layout"] = PACK_LAYOUTS[key]
+            if key in PACK_LAYOUTS or key[5:] in PACK_LAYOUTS:
+                textures[key]["layout"] = PACK_LAYOUTS.get(key) or PACK_LAYOUTS[key[5:]]
+            if key == "hair_flow":
+                textures[key]["layout"] = HAIR_FLOW_LAYOUT
     return {
         "name": sc.asset.name,
         "export_name": name,
@@ -816,6 +998,8 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "lighting": _lighting_manifest(sc, unity_report),
         "lods": lod_list((pack_report or {}).get("lods") or {}),
         "textures": textures,
+        "hair_material": _hair_manifest(sc, unity_report),
+        "springs": springs_mod.manifest_block(springs_mod.read_doc(sc.file("springs")), unity_report),
         "glb_files": _glb_files(sc),
         "hitboxes": _hitbox_manifest(sc, unity_report),
         "sockets": sockets.manifest_block(_read_json(sc.file("sockets")), unity_report),
@@ -988,6 +1172,72 @@ def collider_checks(report: dict[str, Any], plan: dict[str, Any], category: str 
     return checks
 
 
+def hair_shipped_checks(m: dict[str, Any], glb: Path | str | None) -> list[dict[str, Any]]:
+    """hair_material_shipped (warn) when the clean-up step gave the hair its own material: the clean GLB has two
+    materials, the FBX the two named slots, and (when Unity ran) Unity built the hair material. Nothing otherwise."""
+    hm = (m or {}).get("hair_material") or {}
+    if not hm.get("planned"):
+        return []
+    n = 0
+    try:
+        n = len(hairmat.glb_materials(glb)) if glb is not None and Path(glb).is_file() else 0
+    except Exception:  # noqa: BLE001
+        n = 0
+    u = (m or {}).get("unity_report") or {}
+    problem = ""
+    if not hm.get("ok"):
+        problem = str(hm.get("error") or "the hair triangles were not matched")
+    elif u.get("ok") and not u.get("hairMaterial"):
+        problem = "Unity did not build the hair material"
+    ok = hm.get("ok") and n >= 2 and not problem
+    return [quality.check("hair_material_shipped", bool(ok), n, 2,
+                          vars={"slots": ", ".join(hm.get("slots") or []), "shader": u.get("hairShader") or "", "problem": problem})]
+
+
+def glb_node_names(glb: Path | str | None) -> list[str]:
+    """Node names in a GLB's JSON chunk (bones are nodes); [] when the file is missing or unreadable."""
+    try:
+        data = Path(glb).read_bytes() if glb is not None and Path(glb).is_file() else b""
+        if len(data) < 20:
+            return []
+        n = int.from_bytes(data[12:16], "little")
+        doc = json.loads(data[20:20 + n].decode("utf-8"))
+        return [str(x.get("name") or "") for x in doc.get("nodes") or []]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def springs_shipped_checks(sc: Any) -> list[dict[str, Any]]:
+    """springs_shipped (warn) when the rig step made spring bones: every chain's bones are in the clean GLB and the FBX,
+    springs.json is in the files, and (when Unity ran) the prefab has the spring script on its chains. Nothing
+    otherwise."""
+    rig_v = sc.stage_version("rig") if hasattr(sc, "stage_version") else None
+    sm = ((getattr(rig_v, "metrics", None) or {}).get("springs") or {})
+    if not sm.get("made"):
+        return []
+    doc = springs_mod.read_doc(sc.file("springs"))
+    chains = doc.get("chains") or []
+    want = [b for c in chains for b in c.get("bones") or []]
+    names = set(glb_node_names(sc.file("glb")))
+    fbx = sc.file("fbx")
+    fbx_bytes = Path(fbx).read_bytes() if fbx is not None and Path(fbx).is_file() else b""
+    problem = ""
+    if not chains:
+        problem = "springs.json is missing"
+    elif any(b not in names for b in want):
+        problem = "the GLB lacks some of the chain bones"
+    elif fbx_bytes and any(b.encode() not in fbx_bytes for b in want):
+        problem = "the FBX lacks some of the chain bones"
+    u = sc.version.metrics.get("unity_report") or {}
+    unity_ok = None
+    if u.get("ok"):
+        unity_ok = int(u.get("springChains") or 0) == len(chains)
+        if not unity_ok and not problem:
+            problem = "Unity did not put the spring script on the prefab" + (f": {u['springWarning']}" if u.get("springWarning") else "")
+    n = len(chains) if not problem else 0
+    return [quality.check("springs_shipped", not problem, n, len(chains) or 1, vars={"unity": bool(unity_ok), "problem": problem})]
+
+
 async def judge(sc: StageContext) -> None:
     rp = sc.file("pack_report")
     report = json.loads(Path(rp).read_text()) if rp else {}
@@ -1027,6 +1277,8 @@ async def judge(sc: StageContext) -> None:
                 worst = max(off)
                 checks.append(quality.check("placement_exact", worst <= PLACEMENT_MAX_M, round(worst, 4), PLACEMENT_MAX_M,
                                             vars={"cm": round(worst * 100, 1)}))
+    checks += hair_shipped_checks(sc.version.metrics, sc.file("glb"))
+    checks += springs_shipped_checks(sc)
     checks += items.export_checks(sc)  # grip_found, item_clear_of_body
     sc.set_metrics(**quality.summarise(checks))
     # A hand-off to an open Unity Editor finishes later; POST /api/versions/{id}/judge (mode metrics) picks it up.
@@ -1064,6 +1316,15 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     finish = getattr(guidance, "finish_lines", None)  # plan 2.4, guidance lane
     if callable(finish):
         sc.set_metrics(finish_lines=finish(sc.asset.category, sc.version.metrics))
+    hm_block = _hair_manifest(sc, unity_report)
+    readme = sc.dir / "README.txt"
+    spring_lines = springs_mod.readme_lines(name, springs_mod.read_doc(sc.file("springs")))
+    if hm_block or spring_lines:
+        text = hair_readme(name, {"tex": hm_block.get("texture_size")}, hm_block["files"]) if hm_block else f"{name}\n\n"
+        readme.write_text(text + ("\n" if hm_block and spring_lines else "") + "\n".join(spring_lines), encoding="utf-8")
+        sc.register("readme", readme)
+    elif readme.is_file():
+        readme.unlink()
     manifest = build_manifest(sc, name, pack_report, unity_report)
     if getattr(sc.asset, "base_asset_id", None):
         manifest["variant_of"] = {"asset_id": sc.asset.base_asset_id, "change": sc.asset.variant_change}
@@ -1082,7 +1343,8 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
     return dest
 
 
-DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+                "hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow", "hair_metallic_smoothness", "hair_orm", "readme",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
 
@@ -1128,6 +1390,12 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
         editor_dir.mkdir(parents=True, exist_ok=True)
         script_src = Path(sc.settings.unity_project) / "Assets" / "Editor" / "VgacImport.cs" if sc.settings.unity_project else None
         importer = sync_importer(script_src, editor_dir) if script_src else {"action": "no_source", "version": None, "previous": None}
+        if script_src is not None and (sc.version.metrics.get("hair_material") or {}).get("ok"):
+            # the hair shader travels with the importer (Assets/VgacShaders/VgacHair.shader), when the hair needs it
+            importer["hair_shader"] = sync_shader(Path(sc.settings.unity_project) / SHADER_REL, proj / SHADER_REL)
+        if script_src is not None and sc.version.files.get("springs"):
+            # the spring script travels with the importer (Assets/VgacScripts/VgacSpringBones.cs), when there are chains
+            importer["spring_script"] = sync_spring_script(Path(sc.settings.unity_project) / SPRING_SCRIPT_REL, proj / SPRING_SCRIPT_REL)
         args, flags, _ = _unity_args(sc, params, name)  # the sandbox import already recorded any clips warning
         unity_ok = bool(sc.settings.unity_exe) and Path(sc.settings.unity_exe).is_file()
         if unity_ok and unity_project_open(proj):
