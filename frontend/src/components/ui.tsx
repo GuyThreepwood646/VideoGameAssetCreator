@@ -23,7 +23,14 @@ const STATUS_WORDS: Record<string, string> = {
   cancelled: 'stopped',
 }
 
-export function StatusBadge({ status, stopped }: { status: VersionStatus | JobStatus; stopped?: boolean }) {
+export function StatusBadge({ status, stopped, setAside }: { status: VersionStatus | JobStatus; stopped?: boolean; setAside?: boolean }) {
+  if (setAside) {
+    return (
+      <Chip tone="muted" title="You stopped this before it finished and chose to leave it stopped. It is not complete.">
+        stopped, set aside
+      </Chip>
+    )
+  }
   if (stopped) {
     return (
       <Chip tone="warn" title="You stopped this before it finished. Resume runs it again with the same settings.">

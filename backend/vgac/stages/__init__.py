@@ -77,7 +77,11 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             await mod.run(sc, params)
         elif op == "refine":
             mask = _write_mask(sc, payload.get("mask_png"))
-            await mod.refine(sc, payload.get("instruction") or "", payload.get("view"), mask, params)
+            if payload.get("views"):
+                # Several views of a turnaround redrawn together (the API only accepts `views` for that step).
+                await mod.refine(sc, payload.get("instruction") or "", payload.get("view"), mask, params, views=list(payload["views"]))
+            else:
+                await mod.refine(sc, payload.get("instruction") or "", payload.get("view"), mask, params)
         elif op == "adjust":
             await mod.adjust(sc, params)
         elif op == "upload":

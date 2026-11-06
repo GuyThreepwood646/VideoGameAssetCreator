@@ -21,7 +21,7 @@ import {
   type Version,
 } from '../api'
 import { Info } from '../components/Info'
-import { firstStaleStage, isStopped, STAGES as STAGE_LIST } from '../api'
+import { firstStaleStage, isRemovable, isSetAside, isStopped, STAGES as STAGE_LIST } from '../api'
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
@@ -144,6 +144,34 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key, stage])
 
+  // "Leave it stopped" while looking at the stopped version: go back to the version it was made from (else the kept
+  // one), so the page is on a finished result again and not on the unfinished one that was just set aside.
+  const dismissStopped = () => {
+    if (active && isStopped(active)) {
+      const from = versions.find((v) => v.id === active.parent_version_id && v.status === 'done')
+      setActiveId(from ? from.id : null)
+    }
+    onDismissStopped()
+  }
+
+  // Check all sides: the ticked views are redrawn together as one new version, and the page follows it.
+  const redrawViews = (from: Version, views: string[]) =>
+    act(async () => {
+      const out = await api.refine(from.id, { instruction: 'Redraw this view', views })
+      setActiveId(out.version.id)
+    })
+
+  // Remove versions that failed, were stopped or were rejected (their files go too; this cannot be undone).
+  const removable = versions.filter((v) => isRemovable(asset, v))
+  const failedRemovable = removable.filter((v) => v.status === 'error')
+  const removeVersions = (list: Version[], question: string) => {
+    if (!list.length || !window.confirm(question)) return
+    void act(async () => {
+      if (active && list.some((v) => v.id === active.id)) setActiveId(null)
+      for (const v of list) await api.deleteVersion(v.id)
+    })
+  }
+
   const fix = (f: FixRequest) => {
     if (f.ui) {
       openTool(f)
@@ -188,7 +216,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onRetry={retry}
         onStop={onStop}
         onResume={onResume}
-        onDismissStopped={onDismissStopped}
+        onDismissStopped={dismissStopped}
         onFix={fix}
         onOpenTool={openTool}
         onChanged={onChanged}
@@ -223,6 +251,19 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         </div>
         <OwnPictures asset={asset} stage={stage} active={active} canRun={canRun} busy={busy} act={act} onCreated={(id) => setActiveId(id)} />
         <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
+        {failedRemovable.length > 1 && (
+          <div className="strip-tools muted small">
+            {failedRemovable.length} versions failed.{' '}
+            <button
+              type="button"
+              className="link small"
+              disabled={busy}
+              onClick={() => removeVersions(failedRemovable, `Remove the ${failedRemovable.length} failed versions? They made no result. This cannot be undone.`)}
+            >
+              Remove the {failedRemovable.length} failed versions
+            </button>
+          </div>
+        )}
         {versions.length === 0 && <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>}
         {active && (
           <div className="active-version">
@@ -230,11 +271,27 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
               <div className="row-gap">
                 <strong>Version {versions.indexOf(active) + 1}</strong>
                 <span className="muted small mono">{shortId(active.id)}</span>
-                <StatusBadge status={active.status} stopped={isStopped(active)} />
+                <StatusBadge status={active.status} stopped={isStopped(active)} setAside={isSetAside(active)} />
                 {selected?.id === active.id && <span className="chip chip-ok">kept</span>}
                 {active.parent_version_id && <span className="muted small">changed from {shortId(active.parent_version_id)}</span>}
                 <span className="muted small">{timeAgo(active.created_at)}</span>
               </div>
+              {removable.some((v) => v.id === active.id) && (
+                <button
+                  type="button"
+                  className="link small"
+                  disabled={busy}
+                  title="Takes this version out of the list and deletes its files"
+                  onClick={() =>
+                    removeVersions(
+                      [active],
+                      `Remove version ${versions.indexOf(active) + 1}? ${active.status === 'error' ? 'It failed and made no result.' : 'Its pictures and files are deleted.'} This cannot be undone.`,
+                    )
+                  }
+                >
+                  Remove this version
+                </button>
+              )}
             </div>
             {active.status === 'error' && (
               <div className="error-box">
@@ -253,7 +310,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} asset={asset} viewTool={viewTool} onFix={fix} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} onRefineView={(view) => act(() => api.refine(active.id, { instruction: `Regenerate the ${view} view`, view }))} />
+            <StageViewer stage={stage} version={active} asset={asset} viewTool={viewTool} onFix={fix} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} busy={busy} onRedrawViews={(views) => redrawViews(active, views)} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -324,7 +381,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
-function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, onRefineView }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; onRefineView: (view: string) => void }) {
+function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
     return <div className="placeholder-box">You stopped this version before it finished. Resume (above) runs it again with the same settings.</div>
@@ -339,7 +396,22 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     case 'concept':
       return <ConceptView version={version} />
     case 'turnaround':
-      return <TurnaroundView version={version} onRegenerateView={onRefineView} />
+      // Only a finished version can be redrawn from; a stopped or rejected one says why instead of offering it.
+      return (
+        <TurnaroundView
+          key={version.id}
+          version={version}
+          busy={busy}
+          onRedraw={onRedrawViews}
+          locked={
+            version.status === 'done'
+              ? null
+              : isSetAside(version)
+                ? 'You stopped this version before it finished, so it is not complete and cannot be redrawn from. Choose a finished version above to carry on.'
+                : 'You rejected this version, so it cannot be redrawn from. Choose another version above to carry on.'
+          }
+        />
+      )
     case 'mesh':
     case 'prep':
       return <MeshView version={version} category={category} asset={asset} hairFocus={stage === 'mesh' ? viewTool : null} onFix={onFix} onChanged={onChanged} />

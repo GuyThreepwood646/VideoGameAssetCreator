@@ -505,7 +505,8 @@ export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_afte
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 // reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
-export type RefineBody = { instruction: string; view?: string; mask_png?: string; params?: Record<string, unknown>; reference_image?: string }
+// `views` (Check all sides): several views redrawn together in one new version.
+export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
 export type VariantResult = { asset: Asset; job: Job; version: Version }
@@ -640,6 +641,8 @@ export const api = {
   adjust: (vid: string, params: Record<string, unknown>) => post<RunResult>(`/api/versions/${vid}/adjust`, { params }),
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
+  // Removes a version that failed, was stopped or was rejected, with its files (409 for any other).
+  deleteVersion: (vid: string) => del<DeleteResult>(`/api/versions/${vid}`),
   getVersion: (vid: string) => get<Version>(`/api/versions/${vid}`),
   // In local mode the judging runs as a queued job, returned as judge_job.
   judge: (vid: string, mode: 'metrics' | 'local') => post<Version & { judge_job?: Job }>(`/api/versions/${vid}/judge`, { mode }),
@@ -776,6 +779,17 @@ export function firstStaleStage(asset: AssetSummary): StageId | null {
 
 export function isStopped(v: Version): boolean {
   return v.stopped === true || (v.status === 'rejected' && v.error === 'cancelled')
+}
+
+// Stopped, then "Leave it stopped": it stays in the history, unfinished, and Resume is no longer offered.
+export function isSetAside(v: Version): boolean {
+  return v.status === 'rejected' && v.error === 'stopped and set aside'
+}
+
+// A version the person may remove: it failed, was stopped or was rejected, and no other version was made from it.
+export function isRemovable(asset: AssetSummary, v: Version): boolean {
+  if (v.status !== 'error' && v.status !== 'rejected') return false
+  return !STAGES.some((s) => versionsOf(asset, s).some((x) => x.parent_version_id === v.id))
 }
 
 // The versions a Resume would bring back: the stopped ones at the end of the step's list. A stop that was

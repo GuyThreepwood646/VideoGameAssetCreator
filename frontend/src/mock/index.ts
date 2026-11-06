@@ -607,12 +607,31 @@ on('POST', '/api/assets/:id/stages/:stage/run', (m, body) => {
   }
   return count === 1 ? results[0] : results
 })
+on('DELETE', '/api/versions/:vid', (m) => {
+  const { asset, version } = findVersion(m.groups!.vid)
+  if (version.status !== 'error' && version.status !== 'rejected') throw new HttpError(409, 'only a version that failed, was stopped or was rejected can be removed')
+  if (Object.values(asset.stages).some((list) => list?.some((v) => v.parent_version_id === version.id))) throw new HttpError(409, 'other versions were made from this one, so it stays')
+  for (const [stage, list] of Object.entries(asset.stages)) {
+    if (list?.includes(version)) asset.stages[stage as StageId] = list.filter((v) => v !== version)
+  }
+  store.jobs = store.jobs.filter((j) => j.version_id !== version.id)
+  return { ok: true, deleted: version.id }
+})
 on('POST', '/api/versions/:vid/refine', (m, body) => {
   const { asset, version } = findVersion(m.groups!.vid)
   const instruction = String(body.instruction ?? '').trim()
   if (!instruction) throw new HttpError(422, 'instruction is required')
   const params: Record<string, unknown> = { ...version.params, ...((body.params as Record<string, unknown>) ?? {}), instruction, seed: Math.floor(Math.random() * 100000) }
   if (body.view) params.view = body.view
+  if (Array.isArray(body.views)) {
+    // Several views of a turnaround redrawn together (the mock draws every view again).
+    const views = [...new Set(body.views.map(String))]
+    if (version.stage !== 'turnaround') throw new HttpError(400, 'only the turnaround step redraws views')
+    if (!views.length) throw new HttpError(400, 'no views were chosen to redraw')
+    if (version.status !== 'done') throw new HttpError(409, `version is ${version.status}, not done`)
+    params.refined_views = views
+    params.refined_view = views[0]
+  }
   delete params.reference_experimental
   if (params.source === 'upload') params.source = 'upload_edit'
   const reference = typeof body.reference_image === 'string' ? body.reference_image : null
