@@ -5,7 +5,6 @@ add-ons from addons.yaml and hairstyles from the hair library catalogue, so a ne
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import yaml
@@ -61,8 +60,9 @@ def _addons(hand: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _hair() -> list[dict[str, Any]]:
-    with open(DATA_DIR / "hairlib" / "catalogue.json", "r", encoding="utf-8") as f:
-        styles = json.load(f).get("styles", {})
+    from . import hairstyles  # the catalogue after the person's pack picks (setup writes library/hair-packs.json)
+
+    styles = hairstyles.catalogue().get("styles", {})
     out = []
     for s in styles.values():
         out.append(_entry("Hairstyle: " + s.get("name", s["id"]), HAIR_DOES, s.get("author", ""), s.get("licence", ""), s.get("source_url", ""),
