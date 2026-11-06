@@ -199,6 +199,10 @@ input[type='checkbox'] {
   grid-template-rows: auto 1fr;
   height: 100%;
 }
+/* The demo banner adds a row above the top bar. */
+.app:has(> .demo-banner) {
+  grid-template-rows: auto auto 1fr;
+}
 .topbar {
   display: flex;
   align-items: center;
@@ -549,12 +553,14 @@ input[type='checkbox'] {
   transition: width 0.3s;
 }
 
-/* Projects page */
-.projects-layout {
-  display: grid;
-  grid-template-columns: 420px 1fr;
-  gap: var(--s4);
-  padding: var(--s3) var(--s4);
+/* Projects page (docs/PROJECTS-PAGE-SPEC.md) */
+:root {
+  --control-h: 32px;
+  --radius-card: 8px;
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --dur-fast: 120ms;
+  --dur-panel: 180ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .col {
   display: flex;
@@ -562,40 +568,445 @@ input[type='checkbox'] {
   gap: var(--s3);
   min-width: 0;
 }
-.project-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.col-tight {
   display: flex;
   flex-direction: column;
-  gap: var(--s2);
+  gap: var(--s1);
+  min-width: 0;
 }
-.project-row {
+.projects-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5) var(--s5);
+}
+.projects-head {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-  padding: var(--s2);
 }
-.project-row.active {
-  border-color: var(--accent);
+.projects-head .page-title {
+  font-size: 22px;
 }
-.project-main {
+.projects-search {
+  width: 240px;
+  height: var(--control-h);
+}
+.projects-sort {
+  height: var(--control-h);
+}
+button.btn-lg {
+  height: var(--control-h);
+  padding: 0 var(--s3);
+  gap: 6px;
+}
+.icon {
+  flex: none;
+}
+.project-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s3);
+}
+.project-grid > li {
+  display: flex;
+  min-width: 0;
+}
+
+/* One project card: the whole card opens the project; the settings button sits over the cover. */
+.pcard {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  background: none;
-  border: none;
-  padding: var(--s1);
-  text-align: left;
+  min-height: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  transition: border-color var(--dur-fast), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast);
 }
-.project-name {
+.pcard:hover,
+.pcard:focus-within {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-pop);
+}
+.pcard.active {
+  border-color: var(--accent);
+}
+.pcard-link {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+.pcard-link:hover {
+  text-decoration: none;
+}
+.pcard-link:focus-visible,
+.pcard-new:focus-visible,
+.pcard-settings:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pcover {
+  position: relative;
+  height: 150px;
+  flex: none;
+  display: grid;
+  gap: 2px;
+  background-color: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.pcover img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
+  object-position: center 20%;
+  transition: transform var(--dur-panel) var(--ease-out);
+}
+.pcard:hover .pcover img {
+  transform: scale(1.04);
+}
+.pcover-n1 img {
+  object-fit: contain;
+}
+.pcover-n2 {
+  grid-template-columns: 1fr 1fr;
+}
+.pcover-n3 {
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.pcover-n3 img:first-child {
+  grid-row: span 2;
+}
+.pcover-n4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.pcover-palette {
+  place-items: center;
+}
+.pcover-palette::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 18, 22, 0.15), rgba(15, 18, 22, 0.55));
+}
+.pcover-initials {
+  position: relative;
+  z-index: 1;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  background: rgba(15, 18, 22, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.pcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s3);
+  flex: 1;
+}
+.pcard-name {
+  font-size: 15px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcard-foot {
+  margin-top: auto;
+  padding-top: var(--s2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.pcard-foot .swatches {
+  margin-top: 0;
+}
+.pcard-foot .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.pcard-settings {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  width: var(--control-h);
+  height: var(--control-h);
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(15, 18, 22, 0.78);
+  border-color: rgba(255, 255, 255, 0.16);
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+.pcard:hover .pcard-settings,
+.pcard:focus-within .pcard-settings,
+.pcard.active .pcard-settings {
+  opacity: 1;
+}
+@media (hover: none) {
+  .pcard-settings {
+    opacity: 1;
+  }
+}
+
+/* The New project tile: always the first card. */
+.pcard-new {
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  white-space: normal;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text);
+}
+.pcard-new:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(110, 164, 232, 0.06);
+}
+.pcard-new-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(110, 164, 232, 0.14);
+  color: var(--accent);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.pcard-new:hover .pcard-new-icon {
+  transform: scale(1.08);
+}
+.pcard-new-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Loading placeholders */
+.pcard-skeleton {
+  background: linear-gradient(100deg, var(--panel) 30%, #2b2f36 50%, var(--panel) 70%);
+  background-size: 300% 100%;
+  animation: pcard-shimmer 1.4s linear infinite;
+}
+@keyframes pcard-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+.projects-nomatch {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  color: var(--muted);
+}
+
+/* First visit */
+.welcome {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: radial-gradient(120% 140% at 0% 0%, rgba(110, 164, 232, 0.12), transparent 55%), var(--panel);
+}
+.welcome-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s5);
+}
+.welcome-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.welcome-title {
+  font-size: 26px;
+  line-height: 1.2;
+}
+.welcome-lead {
+  margin: 0;
   font-size: 14px;
+  line-height: 1.5;
+  max-width: 60ch;
+}
+.welcome-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s5) var(--s4);
+  background: var(--panel-2);
+  border-left: 1px solid var(--border);
+}
+.welcome-side-title {
+  font-size: 14px;
+}
+.three-words p {
+  margin: 0 0 var(--s2);
+  line-height: 1.5;
+}
+
+/* New project form (dialog and welcome panel) */
+.create-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.create-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--s3);
+}
+.create-fields input,
+.create-fields select {
+  height: var(--control-h);
+}
+.create-form.roomy .create-fields input {
+  font-size: 15px;
+}
+
+.modal-card .preset-row.compact,
+.create-form.roomy .preset-row {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+/* Dialog and side drawer */
+.modal-card {
+  width: 720px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  animation: modal-in var(--dur-panel) var(--ease-out);
+}
+.modal-card:focus,
+.drawer:focus {
+  outline: none;
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.icon-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: #2f333b;
+  border-color: var(--border);
+}
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  animation: fade-in var(--dur-panel) ease-out;
+}
+.drawer {
+  width: min(680px, 92vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+  animation: drawer-in var(--dur-panel) var(--ease-out);
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border);
+}
+.drawer-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--s4);
+}
+.drawer-project {
+  font-size: 16px;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcard,
+  .pcover img,
+  .pcard-new-icon {
+    transition: none;
+  }
+  .pcard:hover,
+  .pcard:focus-within,
+  .pcard:hover .pcover img,
+  .pcard-new:hover .pcard-new-icon {
+    transform: none;
+  }
+  .pcard-skeleton {
+    animation: none;
+  }
+  .modal-card,
+  .drawer {
+    animation: fade-in var(--dur-panel) ease-out;
+  }
 }
 .swatches {
   display: flex;
@@ -2948,4 +3359,91 @@ button.small-btn .resume-icon {
 .credits-unsure {
   color: var(--warn, #b26a00);
   font-weight: 600;
+}
+
+/* Projects page: Jump back in */
+.jump {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.jump-title {
+  font-size: 14px;
+}
+.jump-title .muted {
+  font-weight: 400;
+}
+.jump-row {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.jump-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text);
+  transition: border-color var(--dur-fast);
+}
+.jump-card:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+.jump-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.jump-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.jump-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.jump-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.jump-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jump-working {
+  color: var(--accent);
+}
+.jump-error {
+  color: var(--warn);
+}
+.jump-done {
+  color: var(--ok);
+}
+.jump-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--input);
+  overflow: hidden;
+}
+.jump-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+  border-radius: 2px;
 }

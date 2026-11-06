@@ -118,6 +118,11 @@ export type Project = {
   platform_target: PlatformId
   // Decision D12: the Unity project every export is imported into (absolute folder), or null.
   unity_project_path?: string | null
+  // Summary for the Projects page (GET /api/projects only; absent on older backends): asset count, up to
+  // four library paths of the newest assets' kept concept pictures, and the newest asset or version time.
+  asset_count?: number
+  covers?: string[]
+  last_activity?: string
 }
 
 export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'

@@ -49,6 +49,7 @@ Health and reference data
 
 Projects
 - GET /api/projects ; POST /api/projects {name, style_lock?, platform_target?}
+  - The GET list also carries a summary per project for the Projects page: asset_count, covers (up to four library paths, the kept concept picture of the newest assets) and last_activity (newest asset or version time, else created_at).
 - GET /api/projects/{id} ; PUT /api/projects/{id} (partial) ; DELETE /api/projects/{id}
 
 Assets

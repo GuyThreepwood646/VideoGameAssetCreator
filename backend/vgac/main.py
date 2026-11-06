@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from . import __version__, autopilot, library, own_images, pipeline, reference
@@ -383,7 +383,29 @@ def suggest_(category: str = "humanoid", style: str = "painted", platform: str =
 
 @app.get("/api/projects")
 def list_projects(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    return [project_to_dict(p) for p in db.scalars(select(Project).order_by(Project.created_at.desc())).all()]
+    """Every project, newest first, with a summary for the Projects page: asset_count, up to four cover
+    pictures (the kept concept of the newest assets) and last_activity (newest asset or version)."""
+    projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
+    assets = db.execute(select(Asset.id, Asset.project_id, Asset.created_at).order_by(Asset.created_at.desc())).all()
+    covers: dict[str, str] = {}
+    for v in db.scalars(select(Version).where(Version.stage == "concept", Version.selected == True)).all():  # noqa: E712
+        pic = v.files.get("cutout") or v.files.get("image")
+        if pic:
+            covers[v.asset_id] = pic
+    latest = dict(db.execute(select(Version.asset_id, func.max(Version.created_at)).group_by(Version.asset_id)).all())
+    by_project: dict[str, list[Any]] = {}
+    for row in assets:
+        by_project.setdefault(row.project_id, []).append(row)
+    out: list[dict[str, Any]] = []
+    for p in projects:
+        rows = by_project.get(p.id, [])
+        times = [t for r in rows for t in (r.created_at, latest.get(r.id)) if t is not None]
+        d = project_to_dict(p)
+        d["asset_count"] = len(rows)
+        d["covers"] = [covers[r.id] for r in rows if r.id in covers][:4]
+        d["last_activity"] = _iso(max(times)) if times else d["created_at"]
+        out.append(d)
+    return out
 
 
 @app.post("/api/projects", status_code=201)
