@@ -1,6 +1,6 @@
 # Head build plan: a head built on its own, put on the body
 
-Status: plan, 2026-11-06. Evidence: `docs/PHOTOREAL-TEXTURE-RESEARCH.md` section 7 (bake-off prototypes
+Status: stage 1 built in the app and run live, 2026-11-06 (step 3; see STATUS.md: three live builds, the join is now cut by the collar's shape and stitched into one closed surface). Stage 2 (hair from the haired build) and section 3 not started. The join happens in step 3, not step 4: blender/headjoin.py bakes one texture there, so every later step sees one mesh and one texture as before. Evidence: `docs/PHOTOREAL-TEXTURE-RESEARCH.md` section 7 (bake-off prototypes
 `bakeoff/head_build.py`, `head_graft.py`, `face_reshape.py`, `face_proportions.py`). Nothing here is built in the app yet.
 
 ## Key decisions
