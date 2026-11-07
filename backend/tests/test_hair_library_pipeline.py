@@ -397,8 +397,8 @@ BALD_FILES = {f"bald_{v}{s}" for v in ("front", "quarter", "left", "right") for 
 ADDED_ON = {
     "turnaround": {"params": {"bald_views", "bald_seed"}, "files": BALD_FILES | {"hair_outline_front", "hair_picture", "bald_sheet"},
                    "metrics": {"bald", "checks", "checks_passed", "checks_failed", "gate_ok"}, "checks": {"bald_picture"}},
-    "mesh": {"params": {"hair_source"}, "files": {"hair_candidates", "hair_cand_1", "hair_cand_2"}, "metrics": {"hair_library"},
-             "checks": {"hair_fit"}},
+    "mesh": {"params": {"hair_source", "head_build", "head_crop"}, "files": {"hair_candidates", "hair_cand_1", "hair_cand_2"},
+             "metrics": {"hair_library", "head_build"}, "checks": {"hair_fit", "head_build"}},
     "prep": {"params": {"hair_source", "hair_style", "hair_style_source", "hair_allowance", "hair_cover"},
              "files": {"hair_mesh", "hair_parts", "hair_glb", "with_hair_glb", "hair_base_color", "hair_fit_sheet"},
              "metrics": {"hair_library", "body_glb_hash"}, "checks": {"hair_fit", "hair_skin_through", "hair_triangles"}},

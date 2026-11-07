@@ -89,6 +89,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
         _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
         _param("upsample", "select", 1024, options=[1024, 1536]),
+        # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
+        _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
+               description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),
+        _param("head_crop", "number", None, min=0.18, max=0.4, step=0.02, categories=["humanoid"], label="Head crop (share of the height)",
+               description="How much of the figure, from the top, the head build sees; 0.26 when empty"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
         # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.

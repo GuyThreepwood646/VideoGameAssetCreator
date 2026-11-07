@@ -44,10 +44,11 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
-from .. import guidance, hairlib, headtris, imaging, library, normalfix, quality, reference, texcolour
+from .. import guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.qwen_edit import edit_graph
@@ -224,6 +225,105 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
                    elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
+    if headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
+        await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, crisp)
+
+
+# --- The head built on its own (vgac/headgraft.py, docs/HEAD-BUILD-PLAN.md) -------------------------------------
+# On the bald route for people, a second build from a head-and-shoulders crop of the bald picture gives the face real
+# brows, eyes, nose and lips; it is joined to the body at the neck and the two textures are baked into one
+# (blender/headjoin.py), so the model that leaves this step is one mesh with one texture, as before. Any failure keeps
+# the body's own head (files as built) and records why; the body build is kept in body/ when the join is used.
+HEAD_DIR = "head"
+BODY_DIR = "body"
+
+
+async def _head_build(sc: StageContext, params: dict[str, Any], src: Path, seed: int, target_faces: int, tex: int, upsample: int,
+                      remesh: bool, padding: int, keep_normal: bool, crisp: bool) -> None:
+    from ..jobs import JobCancelled
+
+    t0 = time.time()
+    share = headgraft.crop_share(params)
+    sc.set_params(head_build=True, head_crop=share)
+    rec: dict[str, Any] = {"wanted": True, "used": False, "reason": None}
+    hdir = sc.dir / HEAD_DIR
+    shutil.rmtree(hdir, ignore_errors=True)
+    hdir.mkdir(parents=True, exist_ok=True)
+    try:
+        sc.progress(0.76, "Building the head on its own")
+        try:
+            rec["crop"] = await asyncio.to_thread(headgraft.crop, src, hdir / "head_input.png", share)
+        except ValueError:
+            rec["reason"] = "no_picture"
+            return
+        name = await sc.stage_input(hdir / "head_input.png", f"vgac_{sc.version.id[:8]}_head_in.png")
+        head_faces = max(2000, int(target_faces * headgraft.HEAD_FACES_SHARE))
+        built = None
+        tries: list[dict[str, Any]] = []
+        for n, s in enumerate((seed, texcolour.try_seed(seed, 1))):
+            res = await _trellis_build(sc, name, n, s, head_faces, tex, upsample, remesh, padding, keep_normal, crisp, None,
+                                       dest=hdir, tag="head")
+            ratio = await asyncio.to_thread(headgraft.depth_ratio, hdir / "model.glb")
+            tries.append({"seed": s, "depth_ratio": ratio, "elapsed": res.get("elapsed")})
+            if ratio is not None and ratio >= headgraft.FLAT_RATIO:
+                built = res
+                rec["seed"] = s
+                break
+        rec["tries"] = tries
+        if built is None:
+            rec["reason"] = "flat"
+            return
+        sc.progress(0.79, "Joining the head to the body")
+        body_maps = {k: sc.dir / f"{k}.png" for k in TEXTURE_KEYS if (sc.dir / f"{k}.png").is_file()}
+        g = await asyncio.to_thread(headgraft.graft, sc.dir / "model.glb", body_maps, hdir / "model.glb", built["maps"], hdir / "graft")
+        rec.update({k: v for k, v in g["metrics"].items() if not k.endswith("_rows")})
+        if not g["ok"]:
+            rec["reason"] = g["reason"]
+            return
+        mj = hdir / "graft" / "graft_maps.json"
+        mj.write_text(json.dumps({k: str(Path(p).resolve()) for k, p in g["maps"].items()}), encoding="utf-8")
+        joined = hdir / "joined"
+        joined.mkdir(parents=True, exist_ok=True)
+        await sc.blender("headjoin.py", [g["glb"], joined / "model.glb", "--maps", mj, "--tex", tex, "--padding", unwrap_padding(tex),
+                                         "--margin", dilation_px(tex)], log_name="headjoin.log", timeout=sc.settings.blender_timeout_seconds)
+        if not (joined / "model.glb").is_file() or not (joined / "base_color.png").is_file():
+            rec["reason"] = "join"
+            return
+        # The body build stays beside it (body/), and the joined model takes its place under the same names.
+        bdir = sc.dir / BODY_DIR
+        shutil.rmtree(bdir, ignore_errors=True)
+        bdir.mkdir(parents=True, exist_ok=True)
+        for fname in BUILD_FILES:
+            p = sc.dir / fname
+            if p.is_file():
+                shutil.copy2(p, bdir / fname)
+        shutil.copy2(joined / "model.glb", sc.dir / "model.glb")
+        maps_now: dict[str, Path] = {}
+        for key in body_maps:
+            jp = joined / f"{key}.png"
+            if jp.is_file():
+                shutil.copy2(jp, sc.dir / f"{key}.png")
+                maps_now[key] = sc.dir / f"{key}.png"
+        if not keep_normal or crisp:
+            imaging.glb_replace_images(sc.dir / "model.glb", drop_normal=not keep_normal, nearest=crisp)
+        try:
+            sc.set_metrics(**await asyncio.to_thread(finish_maps, sc.dir / "model.glb", maps_now, tex))
+        except Exception as e:  # noqa: BLE001  (the maps stay as baked)
+            sc.set_metrics(dilate_error=str(e)[:300])
+        for key in ("glb", *maps_now):
+            sc.register(key, sc.dir / ("model.glb" if key == "glb" else f"{key}.png"))
+        sc.register("body_glb", bdir / "model.glb")
+        sc.register("head_glb", hdir / "model.glb")
+        sc.register("head_input", hdir / "head_input.png")
+        rec["used"] = True
+    except JobCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001  (the body's own head stays: the model as built)
+        rec["reason"] = "error"
+        rec["error"] = str(e)[:300]
+    finally:
+        rec["seconds"] = round(time.time() - t0, 1)
+        sc.set_metrics(head_build=rec)
 
 
 # Where the 3D step keeps an earlier build while it builds again (texcolour.build_with_rerolls); removed afterwards.
@@ -249,13 +349,23 @@ def _bring_back(src: Path, dest_dir: Path) -> None:
 
 
 async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_faces: int, tex: int, upsample: int, remesh: bool,
-                         padding: int, keep_normal: bool, crisp: bool, picture: dict[str, Any] | None) -> dict[str, Any]:
-    """One TRELLIS.2 build into the version folder: model.glb and the maps, normal map flipped, maps grown into the
-    seams, and the base colour measured against the picture. Returns {seed, elapsed, maps, other, metrics, match}."""
-    prefix = sc.prefix() if n == 0 else sc.prefix(f"try{n + 1}")
+                         padding: int, keep_normal: bool, crisp: bool, picture: dict[str, Any] | None,
+                         dest: Path | None = None, tag: str = "") -> dict[str, Any]:
+    """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
+    into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
+    (the head built on its own). Returns {seed, elapsed, maps, other, metrics, match}."""
+    out = Path(dest) if dest is not None else sc.dir
+    if tag:
+        prefix = sc.prefix(tag if n == 0 else f"{tag}{n + 1}")
+        message = "TRELLIS.2 convert, the head on its own" + ("" if n == 0 else f", build {n + 1}")
+        base, span = 0.76, 0.02
+    else:
+        prefix = sc.prefix() if n == 0 else sc.prefix(f"try{n + 1}")
+        message = "TRELLIS.2 convert" if n == 0 else f"TRELLIS.2 convert, build {n + 1}"
+        base, span = 0.05, 0.7
     entry = await sc.comfy(convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding),
-                           poll=5.0, message="TRELLIS.2 convert" if n == 0 else f"TRELLIS.2 convert, build {n + 1}", base=0.05, span=0.7)
-    glb = await sc.download_mesh(entry, sc.dir / "model.glb")
+                           poll=5.0, message=message, base=base, span=span)
+    glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal or crisp:
         # The recipe's look: no bump map (the GLB's own copy goes too); crisp textures sampled nearest-neighbour.
         imaging.glb_replace_images(glb, drop_normal=not keep_normal, nearest=crisp)
@@ -266,7 +376,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             continue  # the builder always bakes one; a look without surface bumps never registers or ships it
         imgs = ComfyClient.images_of(entry, node)
         if imgs:
-            p = await sc.client().download_output(imgs[0], sc.dir / f"{key}.png")
+            p = await sc.client().download_output(imgs[0], out / f"{key}.png")
             if key in TEXTURE_KEYS:
                 maps[key] = Path(p)
             else:
@@ -462,7 +572,22 @@ async def judge(sc: StageContext) -> None:
         hc = hairlib.fit_check(sc.version.metrics, "mesh")
         if hc:
             checks.append(hc)
+    hb = head_build_check(sc.version.metrics)
+    if hb:
+        checks.append(hb)
     sc.set_metrics(**quality.summarise(checks))
+
+
+def head_build_check(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """The head_build check (warn): passes when the head built on its own was joined; fails with the reason the body's
+    own head was kept. None when the head was not built on its own."""
+    hb = (metrics or {}).get("head_build")
+    if not hb or not hb.get("wanted"):
+        return None
+    used = bool(hb.get("used"))
+    reason = hb.get("reason")
+    return quality.check("head_build", used, "joined" if used else (reason or "error"), "joined",
+                         vars={"reason": reason, "reason_words": headgraft.REASONS.get(reason or "error", headgraft.REASONS["error"])})
 
 
 async def colour_check(sc: StageContext) -> dict[str, Any] | None:

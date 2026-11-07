@@ -271,6 +271,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   texture: H('Texture', 'The painted image wrapped around the model.', 'It is what gives the model its colours and surface detail.', 'texture'),
   normal_map: H('Normal map', 'A special texture that fakes small bumps and dents, such as rivets or wood grain, without adding triangles.', 'The model looks detailed up close while staying light enough for the game.', 'normal map'),
   triangle_budget: H('Triangle budget', 'The most triangles a model may have on the chosen platform.', 'Staying inside it keeps the game running smoothly; the clean-up step shrinks the model to fit.', 'triangle budget (triangles per asset)'),
+  head_build: H('Build the head on its own', 'With hair from the library, the head is built a second time from a close crop of the bald picture and joined to the body at the neck.', 'Built with the whole body, the face gets only a few pixels of the builder\'s attention and comes out smudged; built on its own it gets real brows, eyes, nose and lips. It adds about 5 minutes. If the head does not fit, the body\'s own head is kept.', 'Second TRELLIS.2 build from the top 26 percent of the bald figure; joined by colour at the neck; both textures baked into one atlas (head at most 30 percent of it)'),
+  head_crop: H('Head crop (share of the height)', 'How much of the figure, from the top, the head build sees.', 'Smaller crops give the face more detail; a crop that is too tight can come out flat, so it is built again once and otherwise the body\'s own head is kept.', 'Share of the figure\'s height, 0.18 to 0.4 (default 0.26)'),
   upsample: H('Finer colour and shape (slower)', 'Builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.', 'It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.', 'TRELLIS.2 upsample resolution'),
   remesh: H('Remesh (close holes)', 'Rebuild the surface so it is one closed shell.', 'Closed shells clean up and rig reliably.', 'remesh (watertight)'),
   silhouette_iou: H('Silhouette IoU (outline match)', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),
@@ -672,6 +674,10 @@ const CHECK_TEXT: Record<string, CheckText> = {
     ok
       ? `Bald picture (the character without hair, used to build the 3D model): only the hair was taken away, and ${pct(v)} of the rest of the picture is unchanged.${vars.rerolled ? ' The first try changed too much, so it was drawn a second time.' : ''}`
       : `Bald picture (the character without hair, used to build the 3D model): more than the hair changed (${pct(v)} of the rest of the picture is unchanged, it needs ${pct(l)}).`,
+  head_build: (_v, _l, ok, _ctx, vars) =>
+    ok
+      ? 'The head was built on its own and joined to the body at the neck, so the face is much sharper.'
+      : `The head built on its own did not fit, so the body's own head is used: ${str(vars.reason_words) || 'building it failed'}.`,
   hair_fit: (v, l, ok, _ctx, vars) => {
     const score = num(v) !== null ? num(v)!.toFixed(2) : '?'
     const good = num(l) !== null ? num(l)!.toFixed(2) : '0.60'
@@ -1120,7 +1126,7 @@ export function metricPlain(name: string): string {
 export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views'],
-  mesh: ['engine', 'target_faces'],
+  mesh: ['engine', 'target_faces', 'head_build'],
   prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight', 'face_detail', 'hair_detail'],
   rig: ['template', 'motion', 'moves', 'clips_source', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
