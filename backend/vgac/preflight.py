@@ -96,6 +96,8 @@ MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
     "qwen_edit": ("UNETLoader", "unet_name", "turnaround", True),
     "qwen_angles_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", True),
     "qwen_lightning_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", True),
+    "qwen_sheet_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", False),
+    "qwen_camera_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", False),
     "birefnet": ("LoadBackgroundRemovalModel", "bg_removal_name", "concept", True),
     "trellis2": ("UNETLoader", "unet_name", "mesh", True),
     "hy3d_mv": ("ImageOnlyCheckpointLoader", "ckpt_name", "mesh", False),

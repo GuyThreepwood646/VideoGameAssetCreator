@@ -607,6 +607,8 @@ None of these goes into a recipe's default `addons` list: every verdict is optio
     default_strength: normal
     licence: Apache-2.0
     source: https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO
+# Done 2026-11-06: both are listed (addons.yaml turnaround_sheet and turnaround_white) and picked with the
+# turnaround's turn_method (stages/turnaround.py). The proposal as written:
 # The two turnaround LoRAs below need code before they can be listed: each REPLACES qwen_angles (never stack two
 # view LoRAs) and uses its own prompts. The sheet makes one 2592x1088 image from a 600x1080 padded cutout, split
 # into five figures. The camera LoRA uses relative "Move the camera N degrees ..." prompts on a white composite.
