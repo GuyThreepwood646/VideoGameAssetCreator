@@ -47,6 +47,46 @@ def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_stren
     }
 
 
+# The two other ways to turn the views (docs/RECIPES-BAKEOFF.md sections 5.1 and 5.2, bakeoff/recipes/turn_ab.py).
+# Each REPLACES the angles LoRA in slot l2; two view LoRAs are never stacked.
+VGAC = "VGAC" + BS
+SHEET_LORA = VGAC + "qie2511_turnaround_sheet_tarn59.safetensors"
+CAMERA_LORA = VGAC + "qie2511_camera_angle_berkerdooo.safetensors"
+SHEET_PROMPT = "Character turnaround sheet"
+SHEET_SIZE = (2592, 1088)  # one wide picture: front, right, back, left, quarter (subject-relative), left to right
+SHEET_INPUT = (600, 1080)  # the LoRA was trained on a 600 x 1080 portrait input
+SHEET_ORDER = ("front", "right", "back", "left", "quarter")
+# The camera LoRA turns the camera relative to the source (taken as the front). +90 shows the subject's left side
+# and +45 a front-LEFT quarter in the bake-off, so the app's front-right quarter is -45 (not run in the bake-off).
+CAMERA_TURNS = {"left": (90, "right"), "back": (180, "right"), "right": (90, "left"), "quarter": (45, "left")}
+
+
+def camera_prompt(view: str, extra: str = "") -> str:
+    if view not in CAMERA_TURNS:
+        raise ValueError(f"the shadow-free turn has no {view!r} view; known: {sorted(CAMERA_TURNS)}")
+    deg, side = CAMERA_TURNS[view]
+    p = (f"Move the camera {deg} degrees to the {side} around the object. Target camera elevation: 0 degrees. "
+         "Keep the object, its colors, and the white background the same.")
+    return (p + " " + extra.strip()) if extra and extra.strip() else p
+
+
+def sheet_graph(image_name: str, seed: int, prefix: str, strength: float = 1.0) -> dict[str, Any]:
+    """All five views in one picture with the character turnaround sheet LoRA (run_sheet in turn_ab.py): the input
+    is kept near its own size (0.65 MP), the output is SHEET_SIZE."""
+    g = angle_graph(image_name, SHEET_PROMPT, seed, prefix, lora_strength=strength)
+    g["l2"]["inputs"]["lora_name"] = SHEET_LORA
+    g["lat"]["inputs"]["width"], g["lat"]["inputs"]["height"] = SHEET_SIZE
+    g["sc"]["inputs"]["megapixels"] = 0.65
+    return g
+
+
+def camera_graph(image_name: str, view: str, seed: int, prefix: str, strength: float = 1.0, extra: str = "") -> dict[str, Any]:
+    """One view with the camera-angle LoRA (run_cam in turn_ab.py), from the source composited on white."""
+    g = angle_graph(image_name, camera_prompt(view, extra), seed, prefix, lora_strength=strength)
+    g["l2"]["inputs"]["lora_name"] = CAMERA_LORA
+    return g
+
+
 def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
                reference_name: str | None = None) -> dict[str, Any]:
     """Instruction edit of one image: the angle graph without the angles LoRA.

@@ -17,6 +17,8 @@
 #   built_in         model ids whose graph already loads this add-on (data/models.yaml builder); for those the
 #                    strength is passed to the graph instead of adding a second loader, and no trigger is appended
 #   required_for     model ids for which the LoRA is part of the model itself (shown locked for those)
+#   turn_method      turnaround only: the way of turning the views (stages/turnaround.py TURN_METHODS) that loads
+#                    it; absent means every way. The person picks the way, not the add-on ("How to turn the views").
 #   licence, source  recorded in the export manifest
 addons:
   - id: pixel_art
@@ -53,16 +55,47 @@ addons:
     label: Multiple-angles LoRA (camera angles)
     help:
       meaning: Teaches the side-view model (Qwen-Image-Edit) to turn the camera around your asset for the side and back views.
-      why: Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. It is part of the turnaround and cannot be switched off.
+      why: Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. The standard way of turning the views always loads it.
       technical: Qwen-Image-Edit-2511 multiple-angles LoRA (lora_strength)
     file: Qwen/qwen-image-edit-2511-multiple-angles-lora.safetensors
     base_models: [qwen_edit]
     stage: turnaround
+    turn_method: standard
     strengths: {subtle: 0.75, normal: 0.9, strong: 1.05}
     default_strength: normal
     required: true
     licence: Apache-2.0
     source: models.yaml entry "qwen_angles_lora"
+  # The two other ways of turning the views (bake-off sections 5.1 and 5.2). Each REPLACES qwen_angles; two view
+  # LoRAs are never stacked. Picked with the turnaround's turn_method, never switched on by themselves.
+  - id: turnaround_sheet
+    label: Character turnaround sheet LoRA (all sides in one picture)
+    help:
+      meaning: Draws all five sides of a character in one picture, so the clothes and details match from side to side.
+      why: The closest match between the views for people, in a third of the time. Characters only, and it makes the look more photographic, so it suits the Photoreal look best.
+      technical: Qwen-Image-Edit-2511 character turnaround sheet LoRA (tarn59) at 1.0 instead of the angles LoRA, prompt "Character turnaround sheet", 600 x 1080 input, 2592 x 1088 output split into five figures. Bake-off 5.1.
+    file: VGAC/qie2511_turnaround_sheet_tarn59.safetensors
+    base_models: [qwen_edit]
+    stage: turnaround
+    turn_method: sheet
+    strengths: {subtle: 1.0, normal: 1.0, strong: 1.0}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511
+  - id: turnaround_white
+    label: Camera-angle LoRA (shadow-free prop views)
+    help:
+      meaning: Turns the camera around a prop on a clean white background, with no shadows.
+      why: Shadow-free views give the 3D model cleaner colours. The colours match the concept a little less well than the standard way. Rigid props only.
+      technical: Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo) at 1.0 instead of the angles LoRA, relative "Move the camera N degrees" prompts from the concept on white. Bake-off 5.2.
+    file: VGAC/qie2511_camera_angle_berkerdooo.safetensors
+    base_models: [qwen_edit]
+    stage: turnaround
+    turn_method: shadow_free
+    strengths: {subtle: 1.0, normal: 1.0, strong: 1.0}
+    default_strength: normal
+    licence: Apache-2.0
+    source: https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora
   # Optional looks from the add-on bake-off (docs/RECIPES-BAKEOFF.md). None is a recipe default: each is offered
   # for the models in base_models and switched on by the person.
   - id: stylised_3d

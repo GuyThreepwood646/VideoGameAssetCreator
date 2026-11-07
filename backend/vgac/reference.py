@@ -79,6 +79,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "turnaround": [
         _param("views", "multiselect", ["front", "left", "back", "right", "quarter"], options=list(TURNAROUND_VIEWS)),
+        # stages/turnaround.py TURN_METHODS: the standard way for every category, one more way for characters and
+        # rigid props (options_by_category); the categories without a second way do not show the knob.
+        _param("turn_method", "select", "standard", label="How to turn the views", options=["standard", "sheet", "shadow_free"],
+               categories=["humanoid", "prop_rigid"],
+               options_by_category={"humanoid": ["standard", "sheet"], "prop_rigid": ["standard", "shadow_free"]}),
         _param("lora_strength", "number", 0.9, min=0.0, max=1.5, step=0.05),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
@@ -235,6 +240,9 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 raise ValueError(f"{key} must be true or false")
         elif t == "select":
             opts = p.get("options")
+            # A knob whose choices depend on the kind of asset (turn_method) offers only that category's.
+            if category and (p.get("options_by_category") or {}).get(category):
+                opts = p["options_by_category"][category]
             if opts:
                 value = _match_option(value, opts)
                 if isinstance(value, bool) or value not in opts:
@@ -496,7 +504,8 @@ def addon_public(a: dict[str, Any], model: str | None = None) -> dict[str, Any]:
             "base_models": list(a.get("base_models") or []), "strengths": dict(a.get("strengths") or {}),
             "default_strength": a.get("default_strength") or "normal", "required": addon_required(a, model),
             "required_for": list(a.get("required_for") or []), "trigger": a.get("trigger") or "",
-            "licence": a.get("licence") or "unknown", "source": a.get("source") or "", "mine": bool(a.get("mine"))}
+            "licence": a.get("licence") or "unknown", "source": a.get("source") or "", "mine": bool(a.get("mine")),
+            "turn_method": a.get("turn_method")}
 
 
 def addon_record(aid: str) -> dict[str, Any]:
@@ -758,6 +767,12 @@ def recipe_record(r: dict[str, Any], *sections: str) -> dict[str, Any]:
     return out
 
 
+def turn_methods_for(category_id: str | None) -> list[str]:
+    """The ways of turning the views (turnaround turn_method) offered for a category: standard for every one."""
+    p = next(x for x in STAGE_SCHEMAS["turnaround"] if x["name"] == "turn_method")
+    return list((p.get("options_by_category") or {}).get(category_id or "") or ["standard"])
+
+
 def recipe_public(style_id: str, category_id: str, platform_id: str) -> dict[str, Any]:
     """GET /api/recipe: the recipe plus `addon_entries`, every add-on that works with the recipe's painter or the
     turnaround (addon_public, with `on` and `strength` from the recipe defaults)."""
@@ -765,9 +780,11 @@ def recipe_public(style_id: str, category_id: str, platform_id: str) -> dict[str
     model = r["concept"]["model"]
     chosen = {d["id"]: d["strength"] for d in r["addons"]}
     entries = []
+    turns = turn_methods_for(category_id)
     for a in addons():
         stage = a.get("stage", "concept")
-        works = model in (a.get("base_models") or []) if stage == "concept" else True
+        # A turnaround add-on tied to a way of turning the views is listed only where that way is offered.
+        works = model in (a.get("base_models") or []) if stage == "concept" else (a.get("turn_method") or "standard") in turns
         if not works:
             continue
         e = addon_public(a, model if stage == "concept" else None)

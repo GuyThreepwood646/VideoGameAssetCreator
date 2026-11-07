@@ -42,7 +42,7 @@ Lineage: a stage finds its inputs with `sc.lineage_file(key, stages)`, which wal
 | Stage | Instance | Engine | Files | Metrics |
 |---|---|---|---|---|
 | concept | b | Z-Image Turbo default; zbase, klein, anima, pixel, chroma by style or style lock; BiRefNet cutout. Refine: Qwen-Image-Edit-2511 instruction edit, optional mask | `image`, `cutout`, `cutout_white` | seed, model, cutout bbox stats |
-| turnaround | b | Qwen-Image-Edit-2511 + angles LoRA, cutout per view | `<view>` (raw), `<view>_cutout`, `<view>_white` | `views{view: {height_ratio, hist_dist, mirror_iou, rerolls, passed, checks}}`, `views_passed`, `views_total` |
+| turnaround | b | Qwen-Image-Edit-2511 + angles LoRA (turn_method standard), the turnaround sheet LoRA (sheet) or the camera-angle LoRA (shadow_free), cutout per view | `<view>` (raw), `<view>_cutout`, `<view>_white`, `sheet` (sheet only) | `views{view: {height_ratio, hist_dist, mirror_iou, rerolls, passed, checks, method}}`, `views_passed`, `views_total`, `turn_method`, `sheet{seed, figures, split}` |
 | mesh | a (+host) | TRELLIS.2 full chain to the budget; hy3d alternative; silhouette audit | `glb`, `base_color`, `metallic`, `roughness`, `normal`, `ao`, `input`, `preview`, `sheet` | triangles, `silhouette_iou`, `views{view: {silhouette_iou}}`, checks |
 | prep | host | Blender prep | `glb`, `report`, texture references | triangles, manifold counts, dims, checks |
 | rig | b (+host) | SkinToken Mixamo or model names; skip for `rig_engine: none` and for SkinToken's empty prediction (`rigid: true`); rig_info; procanim; strips | `glb`, `rig_info`, `rest`, `bend_35`, `bend_90`, `bones`, `bend_strip`, `anim_glb`, `anim_report`, `anim_strip`, texture references | bones, bone_names, weight_coverage, clips, rigid, checks |

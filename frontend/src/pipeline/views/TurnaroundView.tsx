@@ -169,6 +169,10 @@ export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
                   </span>
                 )}
               </div>
+              {/* A view drawn another way than the version asked for: a sheet side redrawn, or a side the way cannot draw. */}
+              {typeof m?.method === 'string' && m.method !== 'supplied' && m.method !== (version.params?.turn_method ?? 'standard') && (
+                <div className="muted small">Drawn the {m.method === 'standard' ? 'standard' : m.method === 'sheet' ? 'all-sides-in-one-picture' : 'shadow-free'} way.</div>
+              )}
               {checks && checks.length > 0 && <PlainChecks checks={checks} compact />}
               {numbers.length > 0 && (
                 <Disclosure label="Details">
