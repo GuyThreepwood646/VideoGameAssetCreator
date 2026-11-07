@@ -89,6 +89,7 @@ SAMPLES = {
     # Hair from the library: the bald picture, the fit, skin through, triangles with the hair, the hair on the skeleton.
     "bald_picture": ((0.97, 0.9), (0.7, 0.9)),
     "hair_fit": ((0.77, 0.6), (0.55, 0.6)),
+    "head_build": (("joined", "joined"), ("flat", "joined")),
     "hair_skin_through": ((0.0, 0.02), (0.06, 0.02)),
     "hair_triangles": ((19800, 20000), (21500, 20000)),
     "hair_bound": ((1.0, 1.0), (0.8, 1.0)),
