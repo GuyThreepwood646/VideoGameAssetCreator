@@ -295,3 +295,64 @@ def test_prefs_file_tolerates_garbage(settings):
     assert prefs.load(settings) == prefs.defaults()
     prefs.update(settings, allowed_kinds={"a": ["model"]})
     assert prefs.load(settings)["allowed_kinds"] == {"a": ["model"]} and prefs.load(settings)["disabled_instances"] == []
+
+
+# --- default card and sharing work when a card is busy -----------------------------------------------------------
+
+
+def test_route_tries_the_default_card_first(settings):
+    assert jobs.route("concept", "humanoid", settings) == "b"
+    assert jobs.route("concept", "humanoid", settings, default="a") == "a"
+    assert jobs.route("mesh", "humanoid", settings, default="b") == "b"
+    assert jobs.route("rig", "humanoid", settings, default="a") == "b"  # only b can rig
+    assert jobs.route("prep", "humanoid", settings, default="a") == jobs.HOST
+    assert jobs.route("concept", "humanoid", settings, {"a"}, default="a") == "b"  # the default is off
+    assert jobs.route("concept", "humanoid", settings, (), {"a": ["model"]}, default="a") == "b"  # not allowed pictures
+    assert jobs.route("concept", "humanoid", settings, default="zz") == "b"
+
+
+def test_default_card_takes_new_and_queued_work_and_persists(client, settings):
+    a = _asset(client)
+    client.post("/api/queue/b/pause", params={"paused": True})
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"count": 2}).json()
+    assert [o["job"]["instance"] for o in out] == ["b", "b"]
+    rows = client.put("/api/gpus", json={"default_instance": "a"}).json()
+    assert _gpu(rows, "a")["is_default"] is True and _gpu(rows, "b")["is_default"] is False
+    for o in out:
+        j = wait_job(client, o["job"]["id"])
+        assert j["status"] == "done" and j["instance"] == "a"
+    nxt = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    assert nxt["job"]["instance"] == "a"
+    wait_job(client, nxt["job"]["id"])
+    assert prefs.load(settings)["default_instance"] == "a"
+    # Back to each step's usual card.
+    client.post("/api/queue/b/pause", params={"paused": False})
+    rows = client.put("/api/gpus", json={"default_instance": None}).json()
+    assert not any(r["is_default"] for r in rows)
+    again = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    assert again["job"]["instance"] == "b"
+    wait_job(client, again["job"]["id"])
+    assert prefs.load(settings)["default_instance"] is None
+    assert client.put("/api/gpus", json={"default_instance": "zz"}).status_code == 404
+
+
+def test_idle_card_takes_work_from_a_busy_one_only_when_sharing_is_on(client, fake_execute, settings):
+    a = _asset(client)
+    # Off (the default): both pictures wait for b in turn.
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"count": 2, "params": {"slow": True}}).json()
+    done = [wait_job(client, o["job"]["id"], timeout=30) for o in out]
+    assert [j["instance"] for j in done] == ["b", "b"]
+    # On: while b runs the first, a takes the second.
+    rows = client.put("/api/gpus", json={"share_when_busy": True}).json()
+    assert all(r["share_when_busy"] for r in rows)
+    fake_execute.clear()
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={"count": 2, "params": {"slow": True}}).json()
+    done = [wait_job(client, o["job"]["id"], timeout=30) for o in out]
+    assert sorted(j["instance"] for j in done) == ["a", "b"]
+    moved = next(j for j in done if j["instance"] == "a")
+    assert all(j["status"] == "done" for j in done)
+    assert prefs.load(settings)["share_when_busy"] is True
+    # A rig job is never taken by a: only b can rig.
+    q = jobs.active_queue()
+    assert q._can_take("a", "rig.run") is False and q._can_take("a", "concept.run") is True
+    assert moved["id"] in {c["job_id"] for c in fake_execute if c["instance"] == "a"}

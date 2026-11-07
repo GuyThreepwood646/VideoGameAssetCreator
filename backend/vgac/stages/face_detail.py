@@ -774,7 +774,8 @@ def image_instance(sc: StageContext) -> str | None:
 
     try:
         p = prefs.load(sc.settings)
-        inst = jobs.route("turnaround", sc.asset.category, sc.settings, prefs.disabled_instances(sc.settings), p.get("allowed_kinds"))
+        inst = jobs.route("turnaround", sc.asset.category, sc.settings, prefs.disabled_instances(sc.settings),
+                          p.get("allowed_kinds"), p.get("default_instance"))
     except Exception:  # noqa: BLE001
         inst = sc.settings.stage_instances.get("turnaround")
     if not inst or inst == jobs.HOST or inst not in sc.ctx.clients:

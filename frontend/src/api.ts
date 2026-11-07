@@ -488,6 +488,10 @@ export type Gpu = {
   found_by_card?: boolean
   // A plain setup problem, for example another ComfyUI on the other card holding this card's port.
   setup_problem?: string
+  // The default card: new work goes here first for every step it can run (PUT /api/gpus).
+  is_default?: boolean
+  // Shared by every card: a card with nothing to do takes waiting work from a busy card it can run.
+  share_when_busy?: boolean
 }
 
 // GET /api/setup: "Is everything ready?" (backend/vgac/preflight.py).
@@ -511,6 +515,8 @@ export type SetupReport = {
 }
 export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'off'
 export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
+// default_instance null: each step's usual card.
+export type GpuSharingPatch = { default_instance?: string | null; share_when_busy?: boolean }
 
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 // reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
@@ -592,6 +598,7 @@ export const api = {
   health: () => get<Health>('/api/health'),
   gpus: () => get<Gpu[]>('/api/gpus'),
   setGpu: (instance: string, body: GpuPatch) => put<Gpu[]>(`/api/gpus/${instance}`, body),
+  setGpuSharing: (body: GpuSharingPatch) => put<Gpu[]>('/api/gpus', body),
   startGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/start`),
   stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
   setup: (refresh = false) => get<SetupReport>('/api/setup' + (refresh ? '?refresh=1' : '')),

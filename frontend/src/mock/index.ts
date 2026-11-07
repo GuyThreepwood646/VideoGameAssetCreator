@@ -125,6 +125,8 @@ const gpuState: Record<'a' | 'b', MockGpu> = {
   a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'running', owned: false, idle: 0, last_error: '' },
   b: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'stopped', owned: false, idle: 0, last_error: '' },
 }
+// Shared card settings (PUT /api/gpus): the default card (null: each step's usual card) and sharing when busy.
+const gpuSharing: { default_instance: 'a' | 'b' | null; share_when_busy: boolean } = { default_instance: null, share_when_busy: false }
 
 // On-demand start, as the backend's instances.py: "starting" for a few seconds, then running and owned by the app.
 // A prompt containing "nostart" makes the start fail, to show the Try again path.
@@ -212,6 +214,8 @@ function gpuList(): Gpu[] {
       can_start: true,
       stop_when_idle_minutes: st.idle,
       last_error: state === 'failed' ? st.last_error : '',
+      is_default: gpuSharing.default_instance === name,
+      share_when_busy: gpuSharing.share_when_busy,
     }
   })
 }
@@ -360,6 +364,17 @@ on('GET', '/api/health', () => ({
 }))
 on('GET', '/api/gpus', () => gpuList())
 on('GET', '/api/setup', () => setupReport())
+on('PUT', '/api/gpus', (_m, body) => {
+  if ('default_instance' in body) {
+    const d = body.default_instance
+    if (d !== null && d !== 'a' && d !== 'b') throw new HttpError(404, `unknown graphics card '${String(d)}'`)
+    gpuSharing.default_instance = d as 'a' | 'b' | null
+  }
+  if (typeof body.share_when_busy === 'boolean') gpuSharing.share_when_busy = body.share_when_busy
+  const list = gpuList()
+  broadcast({ type: 'gpus', gpus: list })
+  return list
+})
 on('PUT', '/api/gpus/:instance', (m, body) => {
   const name = m.groups!.instance
   if (name !== 'a' && name !== 'b') throw new HttpError(404, `unknown graphics card '${name}'`)
