@@ -3,7 +3,7 @@
 // each step, shut down when idle, Start and Stop). Live through the "gpus" WebSocket event, a re-read after job
 // events, and a slow poll.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, GPU_KINDS, type Gpu, type GpuCurrentJob, type GpuEngineState, type GpuKind, type GpuPatch } from './api'
+import { api, GPU_KINDS, type Gpu, type GpuCurrentJob, type GpuEngineState, type GpuKind, type GpuPatch, type GpuSharingPatch } from './api'
 import { Info, Term } from './components/Info'
 import { useEvents } from './events'
 import { humanError } from './help'
@@ -129,6 +129,9 @@ export default function GpuCards() {
     }
   }
   const change = (instance: string, patch: GpuPatch) => run(instance, () => api.setGpu(instance, patch))
+  const changeSharing = (patch: GpuSharingPatch) => run('sharing', () => api.setGpuSharing(patch))
+  const defaultCard = gpus?.find((g) => g.is_default)?.instance ?? ''
+  const sharing = !!gpus?.some((g) => g.share_when_busy)
 
   const offCount = gpus?.filter((g) => !g.enabled).length ?? 0
   return (
@@ -151,6 +154,48 @@ export default function GpuCards() {
           onStop={() => void run(g.instance, () => api.stopGpu(g.instance))}
         />
       ))}
+      {gpus && gpus.length > 1 && (
+        <div className="gpu-sharing">
+          <label className="gpu-kind">
+            <span>
+              <Term term="gpu_default">Default card</Term>
+            </span>
+            <select
+              value={defaultCard}
+              disabled={busy === 'sharing'}
+              onChange={(e) => void changeSharing({ default_instance: e.target.value || null })}
+            >
+              <option value="">Each step's usual card</option>
+              {gpus.map((g) => (
+                <option key={g.instance} value={g.instance}>
+                  {g.gpu || `Card ${g.instance}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="muted small">
+            {defaultCard
+              ? `New work starts on the ${gpus.find((g) => g.instance === defaultCard)?.gpu ?? 'default card'} for every step it can do. Rigging stays on the card that can rig.`
+              : 'Pictures and rigging start on one card and 3D models on the other, as set up.'}
+          </div>
+          <label className="gpu-kind">
+            <input
+              type="checkbox"
+              checked={sharing}
+              disabled={busy === 'sharing'}
+              onChange={(e) => void changeSharing({ share_when_busy: e.target.checked })}
+            />
+            <span>
+              <Term term="gpu_share">Use the other card when one is busy</Term>
+            </span>
+          </label>
+          <div className="muted small">
+            {sharing
+              ? 'When a card is busy and the other has nothing to do, the waiting step moves over. The first step of a new kind on a card takes a minute or two longer while it loads.'
+              : 'Each step waits for its card, even when the other card has nothing to do.'}
+          </div>
+        </div>
+      )}
       {saveError && <div className="error">{saveError}</div>}
     </div>
   )
