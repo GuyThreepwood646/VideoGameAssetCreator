@@ -962,6 +962,30 @@ async def list_gpus() -> list[dict[str, Any]]:
     return await _gpu_list(_queue())
 
 
+class GpuSharingIn(BaseModel):
+    # The card work goes to first, for every step it can run; null: each step's usual card. Left out: unchanged.
+    default_instance: str | None = None
+    # A card with nothing to do takes waiting work from a busy card it can run.
+    share_when_busy: bool | None = None
+
+
+@app.put("/api/gpus")
+async def set_gpu_sharing(body: GpuSharingIn) -> list[dict[str, Any]]:
+    """The settings shared by the cards (saved in prefs.json): the default card and sharing work when one is busy.
+    Each card entry of the answer carries `is_default` and `share_when_busy`."""
+    q = _queue()
+    kwargs: dict[str, Any] = {}
+    if "default_instance" in body.model_fields_set:
+        kwargs["default_instance"] = body.default_instance or None
+    if body.share_when_busy is not None:
+        kwargs["share_when_busy"] = body.share_when_busy
+    try:
+        q.set_sharing(**kwargs)
+    except KeyError:
+        raise HTTPException(404, f"unknown graphics card {body.default_instance!r}; known: {list(q.settings.instances)}")
+    return await _gpu_list(q)
+
+
 @app.put("/api/gpus/{instance}")
 async def set_gpu(instance: str, body: GpuIn) -> list[dict[str, Any]]:
     """Turn a card on or off, set what it may do and whether it frees its memory after each job (saved in

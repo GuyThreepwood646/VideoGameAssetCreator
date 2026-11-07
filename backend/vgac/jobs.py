@@ -12,6 +12,12 @@ that kind of work, else the first card that is on, allowed, and capable (Setting
 nothing, in which case the job waits on the preferred card with a "Waiting for ..." message. JobQueue.configure
 moves queued jobs (and, when a card is turned off, its running job) to where route() sends them.
 
+Default card and sharing (prefs.json default_instance, share_when_busy; Health page, "Graphics cards"): with a default
+card, every new job whose step that card can run goes there first, instead of the step's usual card (rig stays on b,
+the only card that can rig). With sharing on, a card with nothing to do takes the oldest waiting job from a card that
+is busy, when it can run that step and is allowed to (JobQueue.take_shared). A job is never split across cards, and a
+running job never moves for sharing.
+
 On-demand start (instances.py): before a job runs on a card whose instance has a start script, the worker calls
 Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
 <gpu> (about a minute)"; if the start fails the card counts as unavailable (like a card that is off) until Try again
@@ -141,17 +147,21 @@ def effective_capabilities(instance: str, settings: Settings | None = None, allo
 
 
 def route(stage: str, category: str, settings: Settings | None = None, disabled: Any = (),
-          allowed_kinds: dict[str, Any] | None = None) -> str | None:
+          allowed_kinds: dict[str, Any] | None = None, default: str | None = None) -> str | None:
     """Where a job for `stage` (or "judge") goes while the cards in `disabled` are turned off and each card may do
     only its `allowed_kinds`: the preferred instance unless it is off or not allowed that kind of work, else the
     first card that is on, allowed, and can run it (instance_capabilities), else None (nothing can take it now).
-    Host stages always run on the host."""
+    Host stages always run on the host. `default`: the person's default card, tried first for every step it can run.
+    """
     settings = settings or get_settings()
     preferred = preferred_instance(stage, category, settings)
     if preferred == HOST:
         return HOST
     off = set(disabled or ())
     need = capability_for(stage, category)
+    if (default and default in settings.instances and default not in off and need in capabilities(default, settings)
+            and kind_allowed(default, need, allowed_kinds)):
+        return default
     if preferred not in off and kind_allowed(preferred, need, allowed_kinds):
         return preferred
     for name in settings.instances:
@@ -170,10 +180,11 @@ def kind_capability(kind: str) -> tuple[str, str]:
 
 
 def route_kind(kind: str, settings: Settings | None = None, disabled: Any = (),
-               allowed_kinds: dict[str, Any] | None = None) -> str | None:
+               allowed_kinds: dict[str, Any] | None = None, default: str | None = None) -> str | None:
     """route() for an existing job, from its kind."""
     stage, op, is_material = parse_kind(kind)
-    return route(JUDGE if op == "judge" else stage, "material" if is_material else "", settings, disabled, allowed_kinds)
+    return route(JUDGE if op == "judge" else stage, "material" if is_material else "", settings, disabled, allowed_kinds,
+                 default)
 
 
 def gpu_name(instance: str, settings: Settings | None = None) -> str:
@@ -190,6 +201,14 @@ def waiting_message(instance: str, settings: Settings | None = None) -> str:
 def not_allowed_message(capability: str) -> str:
     group = kind_group(capability)
     return f"Waiting for a graphics card that is allowed to do {KIND_PLAIN.get(group or '', capability)}"
+
+
+def shared_message(source: str, target: str, settings: Settings | None = None) -> str:
+    return f"Moved to {gpu_name(target, settings)} while {gpu_name(source, settings)} is busy"
+
+
+def default_moved_message(target: str, settings: Settings | None = None) -> str:
+    return f"Moved to {gpu_name(target, settings)}, the default card"
 
 
 def moved_message(source: str, target: str, settings: Settings | None = None) -> str:
@@ -393,6 +412,9 @@ class InstanceWorker:
     prepare: Callable[[str], Awaitable[bool]] | None = None
     # True while this card's engine could not be started: the worker picks nothing until Try again.
     blocked: Callable[[], bool] | None = None
+    # Sharing (prefs share_when_busy): with nothing queued here, called to take a waiting job from a busy card;
+    # returns the job id now on this card, or None.
+    share: Callable[[], str | None] | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task | None = None
     _job_task: asyncio.Task | None = None
@@ -433,6 +455,8 @@ class InstanceWorker:
                     await self._sleep(2.0)
                     continue
                 job_id = self._next_queued()
+                if job_id is None and self.share is not None:
+                    job_id = self.share()
                 if job_id is None:
                     await self._sleep(2.0)
                     continue
@@ -730,6 +754,10 @@ class JobQueue:
         self.free_after_job: dict[str, bool] = {n: False for n in self.settings.instances}
         # Per card, minutes without work before an engine the app started is shut down (prefs.json; 0 = never).
         self.stop_when_idle_minutes: dict[str, int] = {n: 0 for n in self.settings.instances}
+        # The card work goes to first (prefs.json default_instance; None: each step's usual card), and whether an idle
+        # card takes waiting work from a busy one (share_when_busy).
+        self.default_instance: str | None = None
+        self.share_when_busy: bool = False
         self.supervisor: Supervisor | None = None
         self._idle_task: asyncio.Task | None = None
         self._locate_task: asyncio.Task | None = None
@@ -766,7 +794,8 @@ class JobQueue:
                 on_rerouted=self._after_reroute, allows=(lambda kind, n=name: self.kind_allowed_here(n, kind)) if gpu else None,
                 free_after_job=self.free_after_job.get(name, False),
                 prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
-                blocked=(lambda n=name: self._start_failed(n)) if gpu else None)
+                blocked=(lambda n=name: self._start_failed(n)) if gpu else None,
+                share=(lambda n=name: self.take_shared(n)) if gpu else None)
         if self.disabled or any(k != set(KIND_GROUPS) for k in self.allowed_kinds.values()):
             log.info("graphics cards turned off in the app: %s; allowed kinds: %s", sorted(self.disabled),
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
@@ -824,7 +853,7 @@ class JobQueue:
     def place(self, stage: str, category: str) -> tuple[str, str | None]:
         """Where a new job for `stage` (or "judge") goes now: (instance, None) from route(), or, when no card that is
         on can run it, (the preferred instance, the waiting message): the job waits there until that card is back."""
-        target = route(stage, category, self.settings, self.unavailable(), self.allowed_kinds)
+        target = route(stage, category, self.settings, self.unavailable(), self.allowed_kinds, self.default_instance)
         if target is not None:
             return target, None
         preferred = preferred_instance(stage, category, self.settings)
@@ -1058,7 +1087,8 @@ class JobQueue:
                 job = db.get(Job, running)
                 kind = job.kind if job is not None else None
             try:
-                target = route_kind(kind, self.settings, self.unavailable(), self.allowed_kinds) if kind else None
+                target = route_kind(kind, self.settings, self.unavailable(), self.allowed_kinds,
+                                    self.default_instance) if kind else None
             except (KeyError, ValueError):
                 target = None
             message = moved_message(instance, target, self.settings) if target else waiting_message(instance, self.settings)
@@ -1086,13 +1116,17 @@ class JobQueue:
         for n, minutes in p["stop_when_idle_minutes"].items():
             if n in self.settings.instances:
                 self.stop_when_idle_minutes[n] = int(minutes)
+        d = p.get("default_instance")
+        self.default_instance = d if d in self.settings.instances else None
+        self.share_when_busy = bool(p.get("share_when_busy", False))
 
     def _save_prefs(self) -> None:
         try:
             prefs.update(self.settings, disabled_instances=sorted(self.disabled),
                          allowed_kinds={n: [k for k in KIND_GROUPS if k in ks] for n, ks in self.allowed_kinds.items()},
                          free_after_job=dict(self.free_after_job),
-                         stop_when_idle_minutes=dict(self.stop_when_idle_minutes))
+                         stop_when_idle_minutes=dict(self.stop_when_idle_minutes),
+                         default_instance=self.default_instance, share_when_busy=self.share_when_busy)
         except OSError as e:
             log.error("could not save the graphics card settings to %s: %s", prefs.prefs_path(self.settings), e)
 
@@ -1111,7 +1145,8 @@ class JobQueue:
                 try:
                     runnable = self._runnable_here(j.instance, j.kind)
                     _, cap = kind_capability(j.kind)
-                    target = None if runnable else route_kind(j.kind, self.settings, unavailable, self.allowed_kinds)
+                    target = None if runnable else route_kind(j.kind, self.settings, unavailable, self.allowed_kinds,
+                                                              self.default_instance)
                 except (KeyError, ValueError):
                     continue  # a bad kind fails in the worker with its own error
                 if runnable:
@@ -1142,6 +1177,87 @@ class JobQueue:
                 _publish_job(j)
         for t in wake:
             self.wake(t)
+
+    def set_sharing(self, default_instance: Any = ..., share_when_busy: bool | None = None) -> None:
+        """The cards' shared settings (PUT /api/gpus): the default card (a card name, or None for each step's usual
+        card) and whether an idle card takes waiting work from a busy one. Arguments left out stay. A new default
+        moves the queued jobs it can run to it (running jobs finish where they are). Raises KeyError for an unknown
+        card. Call it on the queue's loop."""
+        if default_instance is not ...:
+            if default_instance is not None and default_instance not in self.settings.instances:
+                raise KeyError(default_instance)
+            changed = default_instance != self.default_instance
+            self.default_instance = default_instance
+            if changed and default_instance is not None:
+                self._move_to_default()
+        if share_when_busy is not None:
+            self.share_when_busy = bool(share_when_busy)
+        self._save_prefs()
+        self._rebalance()
+        for n in self.settings.instances:
+            self.wake(n)
+        log.info("graphics cards: default %s, share when busy %s", self.default_instance or "each step's usual card",
+                 self.share_when_busy)
+        self.publish_gpus()
+
+    def _move_to_default(self) -> None:
+        """Queued jobs the default card can run move to it."""
+        target = self.default_instance
+        if target is None or not self._card_takes(target):
+            return
+        changed: list[Job] = []
+        with session_factory()() as db:
+            rows = db.scalars(select(Job).where(Job.status == "queued", Job.instance.in_(sorted(self.settings.instances)),
+                                                Job.instance != target)).all()
+            for j in rows:
+                if self._can_take(target, j.kind):
+                    j.instance = target
+                    j.message = default_moved_message(target, self.settings)
+                    changed.append(j)
+            db.commit()
+            for j in changed:
+                db.refresh(j)
+                _publish_job(j)
+
+    def _card_takes(self, instance: str) -> bool:
+        """Whether a card may be given work now: on, its engine not failed, its queue not paused."""
+        w = self.workers.get(instance)
+        return (instance not in self.disabled and not self._start_failed(instance)
+                and not (w is not None and w.paused))
+
+    def _can_take(self, instance: str, kind: str) -> bool:
+        """Whether `instance` can run a job of `kind` and is allowed to (capabilities and the person's kinds)."""
+        try:
+            _, cap = kind_capability(kind)
+        except (KeyError, ValueError):
+            return False
+        return cap in capabilities(instance, self.settings) and self.kind_allowed_here(instance, kind)
+
+    def take_shared(self, instance: str) -> str | None:
+        """Sharing: `instance` has nothing queued. The oldest queued job on a card that is busy now (running a job),
+        which `instance` can run and may do, moves here. Returns its id, or None (sharing off, nothing to take)."""
+        if not self.share_when_busy or not self._card_takes(instance):
+            return None
+        busy = [n for n, w in self.workers.items() if n in self.settings.instances and n != instance
+                and w.current_job_id is not None]
+        if not busy:
+            return None
+        with session_factory()() as db:
+            rows = db.scalars(select(Job).where(Job.status == "queued", Job.instance.in_(busy))
+                              .order_by(Job.created_at, Job.id).limit(200)).all()
+            for j in rows:
+                if not self._can_take(instance, j.kind):
+                    continue
+                source = j.instance
+                j.instance = instance
+                j.message = shared_message(source, instance, self.settings)
+                db.commit()
+                db.refresh(j)
+                _publish_job(j)
+                log.info("job %s moved from %s to %s while %s is busy", j.id, source, instance, source)
+                self.publish_gpus()
+                return j.id
+        return None
 
     def _after_reroute(self, target: str) -> None:
         self.wake(target)
@@ -1392,6 +1508,8 @@ class JobQueue:
                 "effective_kinds": [k for k in possible if k in allowed],
                 "kind_notes": kind_notes(name, self.settings),
                 "free_after_job": self.free_after_job.get(name, False),
+                "is_default": self.default_instance == name,
+                "share_when_busy": self.share_when_busy,
             }
             state = self.engine_state(name, reachable)
             owned = bool(sup is not None and sup.owned(name))
