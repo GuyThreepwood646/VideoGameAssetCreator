@@ -252,7 +252,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   views: H('Views', 'Which sides to draw: front, left, back, right, a three-quarter view and top.', 'The 3D step uses them to get the back and sides right.', 'views'),
   view: H('View', 'One side of the character.', 'Regenerate a single view when only that one looks wrong.', 'view'),
   turnaround: H('Turnaround (all sides)', 'The same character drawn from several sides.', 'Without it the 3D model has to guess what the back looks like.', 'turnaround'),
-  lora_strength: H('Multiple-angles LoRA strength (side-view strength)', 'How hard the multiple-angles LoRA pushes the side-view model (Qwen-Image-Edit) to keep the character consistent across views.', 'Raise it if the sides drift from the front; lower it if they look stiff.', 'lora_strength (multi-angle LoRA)'),
+  turn_method: H('How to turn the views', 'How the side, back and three-quarter views are drawn from your picture.', 'Standard works for everything and keeps your look. For a character, all sides in one picture makes the clothes and details match best but looks more photographic. For a rigid prop, shadow-free gives clean white views for the 3D model, with colours a little further from the picture.', 'turn_method: standard (multiple-angles LoRA), sheet (turnaround sheet LoRA), shadow_free (camera-angle LoRA)'),
+  lora_strength: H('Multiple-angles LoRA strength (side-view strength)', 'How hard the multiple-angles LoRA pushes the side-view model (Qwen-Image-Edit) to keep the character consistent across views. Used by the standard way of turning the views only.', 'Raise it if the sides drift from the front; lower it if they look stiff.', 'lora_strength (multi-angle LoRA)'),
   auto_reroll: H('Auto re-roll (retry bad views)', 'Automatically redraw a view that fails the consistency check.', 'Saves you a click on most assets.', 'auto_reroll'),
   consistency_ok: H('Sides match', 'Whether every view agrees with the front view in size and colour.', 'Mismatched views make a lopsided model.', 'consistency_ok'),
   views_passed: H('Views that match', 'How many views passed the consistency check.', 'All views should pass before building the model.', 'views_passed'),
@@ -1125,7 +1126,7 @@ export function metricPlain(name: string): string {
 
 export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
-  turnaround: ['views'],
+  turnaround: ['views', 'turn_method'],
   mesh: ['engine', 'target_faces', 'head_build'],
   prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight', 'face_detail', 'hair_detail'],
   rig: ['template', 'motion', 'moves', 'clips_source', 'hitboxes', 'hitbox_fit'],
@@ -1147,6 +1148,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   formats: { fbx: 'FBX (Unity, Unreal, Godot)', glb: 'GLB (web, Godot, Blender)' },
   clips_library: { ual1: 'Standard human moves (46 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
+  turn_method: { standard: 'Standard', sheet: 'All sides in one picture', shadow_free: 'Shadow-free on white' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
   delight: { auto: 'Automatic (by look)', remove: 'Remove them', keep: 'Keep them (part of the look)' },
   face_density: { auto: 'Automatic (by platform and picture)', standard: 'Standard', high: 'High' },

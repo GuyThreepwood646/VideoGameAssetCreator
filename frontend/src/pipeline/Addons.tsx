@@ -3,7 +3,7 @@
 // For the chosen painter the list shows the tested add-ons, then "Yours" (the person's own, each with Remove), then
 // "Add your own add-on" (AddMyAddon.tsx). The turnaround's own helpers are listed read-only.
 import { useState } from 'react'
-import { api, type AddonChoice, type AddonEntry, type Recipe, type StrengthName, type Version } from '../api'
+import { api, type AddonChoice, type AddonEntry, type Recipe, type StrengthName, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
 import { joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
@@ -158,7 +158,7 @@ function AddonRowView({
 }) {
   const { entry: a, locked, on, strength } = row
   const fixedStrength = strengthsEqual(a)
-  const reason = a.stage === 'turnaround' ? 'Part of the turnaround, cannot be switched off' : 'Part of this model, cannot be switched off'
+  const reason = a.stage === 'turnaround' ? 'Set by How to turn the views' : 'Part of this model, cannot be switched off'
   const label = a.label || a.id
   return (
     <li className={'addon-row' + (on ? '' : ' addon-off')}>
@@ -253,9 +253,10 @@ function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean 
   )
 }
 
-// The turnaround's helpers, read-only (turnaround Fine-tune, Advanced).
-export function TurnaroundAddons({ entries }: { entries: AddonEntry[] }) {
-  const rows = entries.filter((e) => e.stage === 'turnaround')
+// The turnaround's helpers, read-only (turnaround Fine-tune, Advanced): the LoRAs the chosen way of turning the views
+// loads. They change with "How to turn the views", not one by one: two view LoRAs are never loaded together.
+export function TurnaroundAddons({ entries, method = 'standard' }: { entries: AddonEntry[]; method?: TurnMethod }) {
+  const rows = entries.filter((e) => e.stage === 'turnaround' && (!e.turn_method || e.turn_method === method))
   if (!rows.length) return null
   return (
     <div className="addons">
@@ -265,7 +266,7 @@ export function TurnaroundAddons({ entries }: { entries: AddonEntry[] }) {
       </div>
       <ul className="addon-list">
         {rows.map((e) => (
-          <AddonRowView key={e.id} readOnly disabled row={{ entry: e, locked: e.required, on: e.on ?? e.required, strength: e.strength ?? e.default_strength }} />
+          <AddonRowView key={e.id} readOnly disabled row={{ entry: e, locked: true, on: true, strength: e.strength ?? e.default_strength }} />
         ))}
       </ul>
     </div>

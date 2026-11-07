@@ -387,10 +387,11 @@ GOLDEN_OFF = {
                    "files": ["back", "back_cutout", "back_white", "front", "front_cutout", "front_white", "left",
                              "left_cutout", "left_white", "quarter", "quarter_cutout", "quarter_white", "right",
                              "right_cutout", "right_white"],
+                   # turn_method (how the views were turned) was added later, on 2026-11-06, for every turnaround.
                    "metrics": ["addons", "consistency_ok", "flagged_views", "models", "recipe", "supplied_views",
-                               "views", "views_passed", "views_total"],
+                               "turn_method", "views", "views_passed", "views_total"],
                    "params": ["auto_reroll", "lora_strength", "lora_strength_source", "seed", "supplied_views",
-                              "views"]}}
+                              "turn_method", "views"]}}
 
 # What library hair adds, step by step (docs/HAIR-LIBRARY-PLAN.md sections 1, 2, 5, 6 and 7).
 BALD_FILES = {f"bald_{v}{s}" for v in ("front", "quarter", "left", "right") for s in ("", "_cutout", "_white")}

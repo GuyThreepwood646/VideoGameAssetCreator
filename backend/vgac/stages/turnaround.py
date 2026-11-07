@@ -20,14 +20,52 @@ from PIL import Image
 
 from .. import hairlib, library, quality, reference
 from ..db import Version
-from ..graphs.qwen_edit import angle_graph, edit_graph, view_prompt
-from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, mirror_iou
+from ..graphs.qwen_edit import CAMERA_TURNS, SHEET_INPUT, SHEET_ORDER, angle_graph, camera_graph, edit_graph, sheet_graph, view_prompt
+from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, mirror_iou, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
 MAX_REROLLS = 2
 LIMITS = {"height_ratio": (0.75, 1.3), "hist_distance": 0.35, "mirror_iou": 0.55, "min_coverage": 0.02}
+
+# How the views are turned (turn_method). standard: the multiple-angles LoRA, one view at a time, every category.
+# sheet: the character turnaround sheet LoRA draws front, right, back, left and quarter in one picture; characters
+# only, it makes the look more photographic (bake-off 5.1). shadow_free: the camera-angle LoRA turns the camera
+# around the concept on white, no cast shadows; rigid props only, colours match a little less (bake-off 5.2).
+# A view a method cannot draw (top), a failing view's redraws with the sheet and any redraw of a sheet view with a
+# described change use the standard method; metrics.views[view].method says which one drew each view.
+TURN_METHODS: dict[str, list[str] | None] = {"standard": None, "sheet": ["humanoid"], "shadow_free": ["prop_rigid"]}
+METHOD_ADDON = {"standard": ("qwen_angles", "qwen_angles_lora"), "sheet": ("turnaround_sheet", "qwen_sheet_lora"),
+                "shadow_free": ("turnaround_white", "qwen_camera_lora")}
+METHOD_STRENGTH = 1.0  # the sheet and the camera LoRA ran at 1.0 in the bake-off; lora_strength is the standard one's
+SHEET_MIN_WIDTH = 20  # a run of figure columns narrower than this is a speck, not a figure
+VIEW_SIZE = 1024  # each figure cut from the sheet is padded to a square and scaled to this, like a standard view
+
+
+def turn_method(category: str | None, params: dict[str, Any]) -> str:
+    """The version's turn_method, checked against the asset's category (standard when not set)."""
+    m = str(params.get("turn_method") or "standard")
+    if m not in TURN_METHODS:
+        raise ValueError(f"turn_method must be one of {sorted(TURN_METHODS)}")
+    allowed = TURN_METHODS[m]
+    if allowed is not None and category not in allowed:
+        what = {"sheet": "characters", "shadow_free": "rigid props"}[m]
+        raise ValueError(f"the {m} turn is for {what} only")
+    return m
+
+
+def _category(sc: StageContext) -> str | None:
+    return getattr(getattr(sc, "asset", None), "category", None)
+
+
+def method_draws(method: str, view: str) -> bool:
+    """Whether `method` itself can draw `view` (else the standard method draws it)."""
+    if method == "sheet":
+        return view in SHEET_ORDER
+    if method == "shadow_free":
+        return view == "front" or view in CAMERA_TURNS
+    return True
 
 
 def _source_image(sc: StageContext, source: Version | None) -> Path:
@@ -98,6 +136,114 @@ def _measure(cutout: Path, stats: dict[str, Any] | None, other_cutout: Path | No
     return stats, mirror, hists
 
 
+def sheet_input(cutout: Path, dest: Path) -> Path:
+    """The sheet LoRA's input: the concept cut-out on white, cropped to the subject and padded to SHEET_INPUT
+    (turn_ab.py sheet_input)."""
+    with Image.open(cutout) as im:
+        im = im.convert("RGBA")
+    a = np.asarray(im.getchannel("A")) > 127
+    ys, xs = np.where(a)
+    if not len(ys):
+        raise ValueError("the concept cut-out has no subject in it")
+    crop = im.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+    W, H = SHEET_INPUT
+    s = min(W * 0.9 / crop.width, H * 0.92 / crop.height)
+    crop = crop.resize((max(1, int(crop.width * s)), max(1, int(crop.height * s))), Image.LANCZOS)
+    bg = Image.new("RGBA", (W, H), (255, 255, 255, 255))
+    bg.alpha_composite(crop, ((W - crop.width) // 2, (H - crop.height) // 2))
+    bg.convert("RGB").save(dest)
+    return dest
+
+
+def sheet_figures(cutout: Path) -> list[tuple[int, int]]:
+    """The column ranges [x0, x1) of the figures in a sheet cut-out: runs of columns with subject in them, wider than
+    SHEET_MIN_WIDTH (turn_ab.py split_sheet)."""
+    with Image.open(cutout) as im:
+        a = np.asarray(im.convert("RGBA").getchannel("A")) > 127
+    col = a.sum(axis=0) > 2
+    figs, x, n = [], 0, len(col)
+    while x < n:
+        if col[x]:
+            x0 = x
+            while x < n and col[x]:
+                x += 1
+            if x - x0 > SHEET_MIN_WIDTH:
+                figs.append((x0, x))
+        x += 1
+    return figs
+
+
+def _square(im: Image.Image, fill: tuple[int, ...]) -> Image.Image:
+    side = max(im.width, im.height)
+    bg = Image.new(im.mode, (side, side), fill)
+    bg.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+    return bg.resize((VIEW_SIZE, VIEW_SIZE), Image.LANCZOS)
+
+
+def split_sheet(raw: Path, cutout: Path, out_dir: Path) -> dict[str, dict[str, Path]] | None:
+    """The sheet cut into one picture per view, in SHEET_ORDER: {view: {raw, cutout, white}}, each padded to a square
+    of VIEW_SIZE like a standard view. None when the sheet does not hold exactly five figures."""
+    figs = sheet_figures(cutout)
+    if len(figs) != len(SHEET_ORDER):
+        return None
+    with Image.open(raw) as im:
+        rgb = im.convert("RGB")
+    with Image.open(cutout) as im:
+        rgba = im.convert("RGBA").resize(rgb.size)
+    out: dict[str, dict[str, Path]] = {}
+    for view, (x0, x1) in zip(SHEET_ORDER, figs):
+        box = (max(0, x0 - 10), 0, min(rgb.width, x1 + 10), rgb.height)
+        r = out_dir / f"{view}_raw.png"
+        c = out_dir / f"{view}.png"
+        _square(rgb.crop(box), (255, 255, 255)).save(r)
+        _square(rgba.crop(box), (0, 0, 0, 0)).save(c)
+        out[view] = {"raw": r, "cutout": c, "white": white_composite(c, out_dir / f"{view}_white.png")}
+    return out
+
+
+async def _concept_cutout(sc: StageContext, source: Version | None, src: Path) -> Path:
+    """The concept's own cut-out, or a fresh one of its picture when the version has none."""
+    p = library.version_file(source, "cutout", sc.settings) if source is not None else None
+    if p is not None:
+        return Path(p)
+    res = await sc.cutout(src, "concept_cut", base=0.02, span=0.03)
+    return Path(res["cutout"])
+
+
+async def _draw_sheet(sc: StageContext, source: Version | None, src: Path, seed: int) -> dict[str, dict[str, Path]] | None:
+    """One sheet job and its split; None (and metrics.sheet says why) when it does not split into five figures."""
+    cut = await _concept_cutout(sc, source, src)
+    inp = await asyncio.to_thread(sheet_input, cut, sc.dir / "sheet_input.png")
+    name = await sc.stage_input(inp, f"vgac_{sc.version.id[:8]}_sheet_input.png")
+    sc.progress(0.05, "drawing every side in one picture")
+    entry = await sc.comfy(sheet_graph(name, seed, sc.prefix(f"sheet_{seed}"), strength=METHOD_STRENGTH),
+                           message="every side in one picture", base=0.05, span=0.5)
+    raw = await sc.download_image(entry, "save", sc.dir / "sheet_raw.png")
+    res = await sc.cutout(raw, "sheet", base=0.55, span=0.05)
+    sc.register("sheet", raw)
+    views = await asyncio.to_thread(split_sheet, Path(raw), Path(res["cutout"]), sc.dir)
+    figs = len(await asyncio.to_thread(sheet_figures, Path(res["cutout"])))
+    sc.set_metrics(sheet={"seed": seed, "figures": figs, "split": views is not None})
+    return views
+
+
+async def _camera_source(sc: StageContext, source: Version | None, src: Path) -> dict[str, Path]:
+    """The shadow-free turn's input and front view: the concept's cut-out on white (the concept is the front)."""
+    cut = await _concept_cutout(sc, source, src)
+    c = sc.copy_in(cut, "front.png")
+    w = await asyncio.to_thread(white_composite, c, sc.dir / "front_white.png")
+    raw = sc.copy_in(w, "front_raw.png")
+    return {"raw": raw, "cutout": c, "white": w}
+
+
+async def _camera_view(sc: StageContext, src_name: str, view: str, seed: int, extra: str, base: float, span: float) -> dict[str, Path]:
+    graph = camera_graph(src_name, view, seed, sc.prefix(f"{view}_{seed}"), strength=METHOD_STRENGTH, extra=extra)
+    entry = await sc.comfy(graph, message=f"view {view}", base=base, span=span * 0.7)
+    raw = await sc.download_image(entry, "save", sc.dir / f"{view}_raw.png")
+    res = await sc.cutout(raw, view, base=base + span * 0.7, span=span * 0.3)
+    return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
+
+
 def supplied_files(sc: StageContext, views: list[str] | None = None) -> dict[str, Path]:
     """The person's own pictures on this version (files supplied_<view>, written by the API)."""
     out: dict[str, Path] = {}
@@ -117,10 +263,13 @@ async def _supplied_view(sc: StageContext, view: str, path: Path, base: float, s
 
 async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
                      keep: dict[str, dict[str, Any]] | None = None, extra: str = "",
-                     supplied: dict[str, Path] | None = None) -> None:
+                     supplied: dict[str, Path] | None = None, method: str | None = None) -> None:
     """Generate and check `views` from the concept image of `source`. Views in `supplied` are the person's own
-    pictures: cut out and checked like the rest, never redrawn; one that fails a check warns and is kept."""
+    pictures: cut out and checked like the rest, never redrawn; one that fails a check warns and is kept. `method`
+    (default: the params' turn_method) says how the views are turned (TURN_METHODS)."""
     supplied = dict(supplied or {})
+    chosen_method = turn_method(_category(sc), params)
+    method = method or chosen_method
     src = _source_image(sc, source)
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
     rec = stage_recipe(sc)
@@ -129,29 +278,61 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     chosen = params.get("lora_strength")
     lora_strength = float(chosen) if chosen is not None else float(rec["turnaround"]["lora_strength"])
     suffix = rec["turnaround"].get("prompt_suffix") or ""
+    instruction = (extra or "").strip()  # a described change; the camera turn gets it without the look's words
     extra = " ".join(p for p in (suffix, extra) if p and p.strip())
     auto_reroll = bool(params.get("auto_reroll", True))
     base_seed = params.get("seed")
     sc.use_model("qwen_edit")
     sc.use_model("qwen_lightning_lora")
-    sc.use_model("qwen_angles_lora")
 
     results: dict[str, dict[str, Any]] = dict(keep or {})
     order = ["front"] + [v for v in views if v != "front"] if "front" in views or "front" in results else list(views)
     todo = [v for v in order if v in views]
     n = max(1, len(todo))
     hist_cache: dict[str, Any] = {}
+    drawn = [v for v in todo if v not in supplied]
+    used: set[str] = set()
+
+    # The sheet draws every view it can in one job before the loop; the shadow-free turn starts from the concept on
+    # white, which is also its front view. The recipe's prompt words are for the standard method's view prompts.
+    sheet: dict[str, dict[str, Path]] | None = None
+    cam: dict[str, Any] | None = None
+    if method == "sheet" and any(method_draws("sheet", v) for v in drawn):
+        sheet_seed = int(base_seed) if base_seed else random_seed()
+        sc.use_model("qwen_sheet_lora")
+        used.add("sheet")
+        sheet = await _draw_sheet(sc, source, src, sheet_seed)
+    elif method == "shadow_free" and any(method_draws("shadow_free", v) for v in drawn):
+        sc.use_model("qwen_camera_lora")
+        used.add("shadow_free")
+        front = await _camera_source(sc, source, src)
+        cam = {"front": front, "name": await sc.stage_input(front["white"], f"vgac_{sc.version.id[:8]}_concept_white.png")}
+    # The sheet's figures fill the rest of the bar quickly; the per-view jobs share it otherwise.
+    lo, width = (0.6, 0.35) if sheet else (0.05, 0.9)
+
+    async def draw(view: str, seed: int, attempts: int, at: float) -> tuple[dict[str, Any], str]:
+        if sheet is not None and attempts == 0 and view in sheet:
+            return dict(sheet[view]), "sheet"
+        if cam is not None and method_draws("shadow_free", view):
+            if view == "front":
+                return dict(cam["front"]), "shadow_free"
+            return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n), "shadow_free"
+        sc.use_model("qwen_angles_lora")
+        used.add("standard")
+        return await _generate_view(sc, src_name, view, seed, lora_strength, extra, at, width / n), "standard"
 
     for i, view in enumerate(todo):
         attempts = 0
         seed = int(base_seed) + i if base_seed else random_seed()
         while True:
+            at = lo + width * i / n
+            drew = "supplied"
             if view in supplied:
-                sc.progress(0.05 + 0.9 * i / n, f"your {view} view")
-                files = await _supplied_view(sc, view, supplied[view], 0.05 + 0.9 * i / n, 0.9 / n)
+                sc.progress(at, f"your {view} view")
+                files = await _supplied_view(sc, view, supplied[view], at, width / n)
             else:
-                sc.progress(0.05 + 0.9 * i / n, f"view {view} attempt {attempts + 1}")
-                files = await _generate_view(sc, src_name, view, seed, lora_strength, extra, 0.05 + 0.9 * i / n, 0.9 / n)
+                sc.progress(at, f"view {view} attempt {attempts + 1}")
+                files, drew = await draw(view, seed, attempts, at)
             sc.register(view, files["raw"])
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
@@ -167,8 +348,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             stats, mirror, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
             hist_cache.update(new_hists)
             info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror)
-            info["seed"] = None if view in supplied else seed
+            info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
+            info["method"] = drew
             if view in supplied:
                 info["supplied"] = True
             results[view] = info
@@ -181,11 +363,18 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             seed = random_seed()
         _publish_views(sc, results)
     sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed,
-                  lora_strength_source="chosen" if chosen is not None else "recipe",
+                  lora_strength_source="chosen" if chosen is not None else "recipe", turn_method=chosen_method,
                   supplied_views=sorted({*(params.get("supplied_views") or []), *supplied}))
-    sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"),
-                   addons=[{"id": "qwen_lightning", "value": 1.0, "required": True},
-                           {"id": "qwen_angles", "value": lora_strength, "required": True}])
+    # The LoRAs behind every view this version holds, the ones copied from the parent included (a view from before
+    # turn_method was drawn the standard way).
+    behind = {r.get("method") or "standard" for r in results.values() if not r.get("supplied")} | used
+    addons = [{"id": "qwen_lightning", "value": 1.0, "required": True}]
+    for m in ("standard", "sheet", "shadow_free"):
+        if m in behind:
+            sc.use_model(METHOD_ADDON[m][1])
+            addons.append({"id": METHOD_ADDON[m][0], "value": lora_strength if m == "standard" else METHOD_STRENGTH,
+                           "required": m == "standard"})
+    sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method)
     _publish_views(sc, results)
 
 
@@ -287,7 +476,9 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     grand = concept_of(sc, parent)
     if grand is None:
         raise ValueError("turnaround parent has no concept parent")
-    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction)
+    # The sheet draws all five sides at once, so a redraw of some of them uses the standard turn.
+    method = "standard" if turn_method(_category(sc), merged) == "sheet" else None
+    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction, method=method)
     # _run_views records the views it drew; the version holds all of them (as upload does).
     sc.set_params(views=all_views)
 

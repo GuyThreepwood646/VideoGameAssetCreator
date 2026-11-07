@@ -43,7 +43,7 @@ export const ADDONS: AddonEntry[] = [
     label: 'Multiple-angles LoRA (camera angles)',
     help: {
       meaning: 'Teaches the side-view model (Qwen-Image-Edit) to turn the camera around your asset for the side and back views.',
-      why: 'Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. It is part of the turnaround and cannot be switched off.',
+      why: 'Without it the views do not turn. Subtle keeps more of the original look; strong turns more reliably. The standard way of turning the views always loads it.',
       technical: 'Qwen-Image-Edit-2511 multiple-angles LoRA (lora_strength)',
     },
     stage: 'turnaround',
@@ -55,8 +55,50 @@ export const ADDONS: AddonEntry[] = [
     trigger: '',
     licence: 'Apache-2.0',
     source: 'models.yaml entry "qwen_angles_lora"',
+    turn_method: 'standard',
+  },
+  {
+    id: 'turnaround_sheet',
+    label: 'Character turnaround sheet LoRA (all sides in one picture)',
+    help: {
+      meaning: 'Draws all five sides of a character in one picture, so the clothes and details match from side to side.',
+      why: 'The closest match between the views for people, in a third of the time. Characters only, and it makes the look more photographic, so it suits the Photoreal look best.',
+      technical: 'Qwen-Image-Edit-2511 character turnaround sheet LoRA (tarn59) at 1.0 instead of the angles LoRA. Bake-off 5.1.',
+    },
+    stage: 'turnaround',
+    base_models: ['qwen_edit'],
+    strengths: { subtle: 1.0, normal: 1.0, strong: 1.0 },
+    default_strength: 'normal',
+    required: false,
+    required_for: [],
+    trigger: '',
+    licence: 'Apache-2.0',
+    source: 'https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511',
+    turn_method: 'sheet',
+  },
+  {
+    id: 'turnaround_white',
+    label: 'Camera-angle LoRA (shadow-free prop views)',
+    help: {
+      meaning: 'Turns the camera around a prop on a clean white background, with no shadows.',
+      why: 'Shadow-free views give the 3D model cleaner colours. The colours match the concept a little less well than the standard way. Rigid props only.',
+      technical: 'Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo) at 1.0 instead of the angles LoRA. Bake-off 5.2.',
+    },
+    stage: 'turnaround',
+    base_models: ['qwen_edit'],
+    strengths: { subtle: 1.0, normal: 1.0, strong: 1.0 },
+    default_strength: 'normal',
+    required: false,
+    required_for: [],
+    trigger: '',
+    licence: 'Apache-2.0',
+    source: 'https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora',
+    turn_method: 'shadow_free',
   },
 ]
+
+// The ways of turning the views per category (backend reference.turn_methods_for).
+export const TURN_METHODS_BY_CATEGORY: Record<string, string[]> = { humanoid: ['standard', 'sheet'], prop_rigid: ['standard', 'shadow_free'] }
 
 export const CONCEPT_CATALOG = ADDONS.filter((a) => a.stage === 'concept')
 
@@ -127,7 +169,8 @@ export function mockRecipe(style: string, category: string, platform: string, bu
     if ((conceptLocked || (a.required && a.stage === 'turnaround')) && !addons.some((d) => d.id === a.id)) addons.push({ id: a.id, strength: a.default_strength })
   }
   const chosen = new Map(addons.map((d) => [d.id, d.strength]))
-  const entries: AddonEntry[] = ADDONS.filter((a) => (a.stage === 'concept' ? a.base_models.includes(s.model) : true)).map((a) => ({
+  const turns = TURN_METHODS_BY_CATEGORY[category] ?? ['standard']
+  const entries: AddonEntry[] = ADDONS.filter((a) => (a.stage === 'concept' ? a.base_models.includes(s.model) : turns.includes(a.turn_method ?? 'standard'))).map((a) => ({
     ...a,
     required: a.required || (a.stage === 'concept' && a.required_for.includes(s.model)),
     on: chosen.has(a.id),

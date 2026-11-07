@@ -79,7 +79,7 @@ Library
 ## Stage params (the "Adjust" knobs; also accepted by run)
 
 concept: model, seed, width, height, steps, readiness_block (bool), prompt_override
-turnaround: views [front,left,back,right,quarter,top], lora_strength, seed, auto_reroll (bool)
+turnaround: views [front,left,back,right,quarter,top], turn_method "standard|sheet|shadow_free" (sheet: humanoid only, shadow_free: prop_rigid only; the knob's options_by_category lists them; another category drops the knob), lora_strength (standard only), seed, auto_reroll (bool)
 mesh: engine "trellis|hy3d", input_view "concept|front|quarter", target_faces, texture_size, upsample (1024|1536), seed, remesh (bool), head_build (bool, humanoid; empty means on where it applies), head_crop (0.18 to 0.4, empty means 0.26)
 prep: height_m, symmetric (bool), pivot "base|center", smooth_angle
 rig: template "auto|mixamo|generic|none", target_faces, group_per_vertex, bottom_center_origin, bend_test (bool)

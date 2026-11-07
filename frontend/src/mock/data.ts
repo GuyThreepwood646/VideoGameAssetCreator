@@ -244,6 +244,15 @@ export const stages: StageInfo[] = [
     estimate_seconds: 110,
     adjust_schema: [
       { name: 'views', label: 'Views', type: 'multiselect', options: ['front', 'left', 'back', 'right', 'quarter', 'top'], default: ['front', 'left', 'back', 'right', 'quarter'] },
+      {
+        name: 'turn_method',
+        label: 'How to turn the views',
+        type: 'select',
+        options: ['standard', 'sheet', 'shadow_free'],
+        default: 'standard',
+        categories: ['humanoid', 'prop_rigid'],
+        options_by_category: { humanoid: ['standard', 'sheet'], prop_rigid: ['standard', 'shadow_free'] },
+      },
       { name: 'lora_strength', label: 'Multi-angle LoRA strength', type: 'number', min: 0, max: 1.5, step: 0.05, default: 0.9 },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 77 },
       { name: 'auto_reroll', label: 'Re-roll failing views (twice)', type: 'boolean', default: true },

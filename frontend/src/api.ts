@@ -285,6 +285,8 @@ export type AdjustParam = {
   option_labels?: Record<string, string>
   // The categories this knob applies to; absent means every category (2.3).
   categories?: string[]
+  // A select whose choices depend on the kind of asset (turnaround turn_method): {category: the options offered}.
+  options_by_category?: Record<string, (string | number)[]>
   // A one-line hint shown under the control, when the backend has one.
   hint?: string
   // Per-category settings of a knob (prep size_m, 3.2): the axis it measures, its default, the axis word and the
@@ -321,6 +323,9 @@ export type Suggestion = {
 // Recipes (GET /api/recipe, backend reference.recipe_public): how the chosen look carries through every step.
 export type StrengthName = 'subtle' | 'normal' | 'strong'
 export type AddonChoice = 'off' | StrengthName
+// How the turnaround's views are drawn (backend stages/turnaround.py TURN_METHODS).
+export type TurnMethod = 'standard' | 'sheet' | 'shadow_free'
+
 export type AddonEntry = {
   id: string
   label: string
@@ -334,6 +339,8 @@ export type AddonEntry = {
   trigger: string
   licence: string
   source: string
+  // Turnaround only: the way of turning the views that loads it (turn_method); absent means every way.
+  turn_method?: TurnMethod | null
   // Only on GET /api/recipe addon_entries: whether the recipe switches it on, and at which step.
   on?: boolean
   strength?: StrengthName

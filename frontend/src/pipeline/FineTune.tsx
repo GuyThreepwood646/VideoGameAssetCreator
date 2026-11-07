@@ -1,7 +1,7 @@
 // Fine-tune (the Adjust form) with a simple layer and an Advanced disclosure.
 // Applying it posts /api/versions/{vid}/adjust: a new version with these settings.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type Version } from '../api'
+import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
 import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
@@ -103,10 +103,17 @@ export function FineTune({
     set(addonsParam.name, next)
   }
   const turnaroundAddons = stage === 'turnaround' ? (recipe?.addon_entries ?? []).filter((e) => e.stage === 'turnaround') : []
+  // How the views are turned (turn_method): the LoRA list and the angle strength follow the choice on screen.
+  const turnMethod = (String(values.turn_method ?? target.params?.turn_method ?? 'standard') || 'standard') as TurnMethod
 
   const schemaHasFlag = visible.some((p) => p.simple !== undefined)
   // The concept step always shows its add-ons section (it says when nothing is tested and offers your own).
-  const shown = visible.filter((p) => p.type !== 'addons' || rows.length > 0 || (stage === 'concept' && !!painter))
+  const shown = visible.filter(
+    (p) =>
+      (p.type !== 'addons' || rows.length > 0 || (stage === 'concept' && !!painter)) &&
+      // The angle strength belongs to the standard way of turning the views; the other two load their own LoRA at 1.0.
+      !(stage === 'turnaround' && p.name === 'lora_strength' && turnMethod !== 'standard'),
+  )
   const simple = shown.filter((p) => p.type !== 'addons' && isSimpleParam(stage, p, schemaHasFlag))
   const advanced = shown.filter((p) => !simple.includes(p))
 
@@ -309,6 +316,17 @@ export function FineTune({
         />
       )
     }
+    if (stage === 'turnaround' && p.name === 'turn_method') {
+      return (
+        <AdjustField
+          param={{ ...p, options: shownOptions(p, values.motion, values[p.name]) }}
+          value={values[p.name]}
+          onChange={(v) => set(p.name, v)}
+          disabled={disabled}
+          hintText={turnMethodHint(turnMethod)}
+        />
+      )
+    }
     return <AdjustField param={p.name === 'moves' || p.name === 'hitbox_regions' ? { ...p, options: shownOptions(p, values.motion, values[p.name]) } : p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
   }
 
@@ -317,7 +335,9 @@ export function FineTune({
   function shownOptions(p: AdjustParam, motion: unknown, chosen?: unknown): NonNullable<AdjustParam['options']> {
     const all = p.options ?? []
     let keep: string[] | null = null
-    if (p.name === 'moves') {
+    if (p.options_by_category?.[asset.category]) {
+      keep = p.options_by_category[asset.category].map(String)
+    } else if (p.name === 'moves') {
       const mo = typeof motion === 'string' && motion ? motion : (MOTION_BY_CATEGORY[asset.category] ?? '')
       keep = (asset.category === 'humanoid' && mo === 'legs' ? MOVES_BY_MOTION.human : MOVES_BY_MOTION[mo]) ?? null
     } else if (p.name === 'hitbox_regions') {
@@ -358,7 +378,7 @@ export function FineTune({
       {(advanced.length > 0 || turnaroundAddons.length > 0) && (
         <Disclosure label={advanced.length ? `Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})` : 'Advanced'} open={advOpen} onToggle={setAdvOpen}>
           {advanced.length > 0 && <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>}
-          <TurnaroundAddons entries={turnaroundAddons} />
+          <TurnaroundAddons entries={turnaroundAddons} method={turnMethod} />
         </Disclosure>
       )}
       <div className="row-gap">
@@ -539,4 +559,11 @@ function AdjustField({
 function coerceOption(p: AdjustParam, raw: string): unknown {
   const match = (p.options ?? []).find((o) => String(o) === raw)
   return match !== undefined ? match : raw
+}
+
+// What the chosen way of turning the views means for this asset, under the choice.
+function turnMethodHint(method: TurnMethod): string {
+  if (method === 'sheet') return 'Draws all five sides in one picture so the clothes match. It looks more photographic, so it suits the Photoreal look best. Redrawing one side later uses the standard way.'
+  if (method === 'shadow_free') return 'Turns the camera around your picture on a clean white background, with no shadows. Colours match the picture a little less closely.'
+  return 'Draws one side at a time and keeps your look. Works for everything.'
 }

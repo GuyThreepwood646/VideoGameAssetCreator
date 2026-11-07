@@ -98,14 +98,25 @@ def test_recipe_digest_changes_with_the_settings():
 def test_recipe_public_lists_the_addons_for_the_painter():
     r = reference.recipe_public("pixel", "humanoid", "pc_mid")
     by = {e["id"]: e for e in r["addon_entries"]}
-    assert set(by) == {"pixel_art", "qwen_lightning", "qwen_angles"}
+    # turnaround_sheet: the character turnaround sheet, a second way of turning the views offered for characters.
+    assert set(by) == {"pixel_art", "qwen_lightning", "qwen_angles", "turnaround_sheet"}
+    assert not by["turnaround_sheet"]["on"] and by["turnaround_sheet"]["turn_method"] == "sheet"
     assert by["pixel_art"]["required"] and by["pixel_art"]["on"] and by["pixel_art"]["strength"] == "normal"
     assert by["qwen_angles"]["required"] and by["qwen_lightning"]["required"]
     assert "file" not in by["pixel_art"] and set(by["pixel_art"]["help"]) == {"meaning", "why", "technical"}
     painted = {e["id"]: e for e in reference.recipe_public("painted", "humanoid", "pc_mid")["addon_entries"]}
     assert not painted["pixel_art"]["on"] and not painted["pixel_art"]["required"]  # works with Z-Image Turbo, off by default
     cel = {e["id"] for e in reference.recipe_public("cel", "humanoid", "pc_mid")["addon_entries"]}
-    assert cel == {"qwen_lightning", "qwen_angles"}  # nothing in the registry works with Anima
+    assert cel == {"qwen_lightning", "qwen_angles", "turnaround_sheet"}  # no concept add-on works with Anima
+
+
+def test_recipe_public_lists_the_turn_loras_where_the_way_is_offered():
+    turn = lambda cat: {e["id"] for e in reference.recipe_public("painted", cat, "pc_mid")["addon_entries"] if e["stage"] == "turnaround"}
+    assert turn("humanoid") == {"qwen_lightning", "qwen_angles", "turnaround_sheet"}
+    assert turn("prop_rigid") == {"qwen_lightning", "qwen_angles", "turnaround_white"}
+    assert turn("quadruped") == {"qwen_lightning", "qwen_angles"}
+    assert reference.turn_methods_for("humanoid") == ["standard", "sheet"]
+    assert reference.turn_methods_for("vehicle") == ["standard"]
 
 
 # --- the add-on registry ---------------------------------------------------------------------------------------------
