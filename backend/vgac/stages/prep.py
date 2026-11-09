@@ -262,7 +262,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if sc.asset.category == "humanoid":
             sc.set_params(**{hairmat.PARAM: hairmat.option(params)})  # hair as its own material (vgac/hairmat.py)
         hf = await hair_detail.find(sc, out, current, rec, params)
-        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"))
+        face_detail_seed = params.get("face_detail_seed")
+        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed)
         for key, p in fd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**fd["metrics"])

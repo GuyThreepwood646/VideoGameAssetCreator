@@ -1,0 +1,13 @@
+# Execution & Accuracy Guardrails
+
+1. **Read Before Write:** Never propose changes to a Python route or React component without first reading the target file and any imported type/schema definitions.
+2. **Small, Atomic Diffs:** Modify one logical component or endpoint at a time. Never rewrite an entire file if a targeted `replace_in_file` diff will work.
+3. **Mandatory Verification Loop:** After making ANY code edit, you MUST run verification before concluding the task:
+   - For Backend (Python): Run `pytest` (or `python -m py_compile <file>`) and typecheck with `mypy` / `ruff` via the terminal tool.
+   - For Frontend (React): Run `npm run build` or `npx tsc --noEmit` to verify zero TypeScript/JSX compilation errors.
+4. **Self-Correction:** If the terminal output shows a linter, type, or test error, analyze the traceback and fix the code immediately. Do not finish the task until the terminal exits with code 0.
+
+# Tool Schema Constraint
+- You are running inside Cline, NOT Claude Code or OpenCode.
+- ONLY call tools from this exact list: `read_files`, `search_codebase`, `editor`, `run_commands`, `ask_question`, `fetch_web_content`, `skills`.
+- NEVER attempt to call `glob_files`, `write_file`, `grep`, or `bash`. To find or list files, use `search_codebase` or `read_files`.
