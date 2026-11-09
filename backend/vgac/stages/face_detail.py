@@ -1,4 +1,4 @@
-"""Face detail pass, run at the end of the clean-up step (stages/prep.py) for characters with a face.
+﻿"""Face detail pass, run at the end of the clean-up step (stages/prep.py) for characters with a face.
 
 The 3D builder invents the face from one picture and gives it few, blurry texels: the eyes come out as smudges and the
 mouth as a smear. This pass makes the face match the painted picture (vgac/face.py has the maths):
@@ -818,6 +818,23 @@ def picked_seed(sc: StageContext, params: dict[str, Any], key: str) -> int:
         sc.set_params(**{key: seed})
     return int(seed)
 
+def pin_pass_seed(sc: StageContext, params: dict[str, Any], face_detail_seed: int | None) -> None:
+    """One master seed (face_detail_seed) pins the whole pass so a close-up and its sharpen are deterministic: the
+    close-up base is S, a second close-up try is S + 1, the sharpen is S. Each key only when not already given (an API
+    per-try seed or a Resume seed wins), and written on the version at once so a Stop and Resume redraw the same
+    pictures, like picked_seed."""
+    if face_detail_seed is None:
+        return
+    master = int(face_detail_seed)
+    pinned: dict[str, int] = {}
+    for key, value in (("face_closeup_seed", master), ("face_closeup_seed_2", master + 1), ("face_seed", master)):
+        if params.get(key) is None:
+            params[key] = value
+            pinned[key] = value
+    if pinned:
+        sc.set_params(**pinned)
+
+
 
 async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
     try:
@@ -832,7 +849,7 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
 
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
-              hair_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+              hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None) -> dict[str, Any]:
     """The pass on the prepared model `glb` (changed in place) with the current maps. Returns {files: {key: path},
     metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int, layout: the relayout report or None}. Never
     raises for a reason that should not fail the clean-up step (those are recorded as skipped); Stop still stops it.
@@ -861,6 +878,9 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     crop_px = source_face_px(found["face_width_px"], found["painted_head_px"])
     record: dict[str, Any] = {"ran": False, "face_texels_before": found["face_width_texels"], "texture_size": atlas,
                               "painted_head_px": found["painted_head_px"], "painting_face_px": crop_px, "strength": strength}
+
+    master_seed = face_detail_seed if face_detail_seed is not None else params.get("face_detail_seed")
+    pin_pass_seed(sc, params, master_seed)
 
     instance = image_instance(sc)
     reachable = False
