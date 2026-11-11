@@ -38,7 +38,9 @@ chest (bakeoff/source_project_trial.py, bakeoff/out/source_project/results.md).
 from __future__ import annotations
 
 import math
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -74,6 +76,7 @@ TURN_YAWS = {
 }
 PICTURE_YAWS = list(range(0, 360, 10))
 FRONT_YAWS = [-20, -10, 0, 10, 20]
+WORKERS = max(1, min(6, (os.cpu_count() or 2) - 1))   # views fitted at the same time
 TURN_VIEWS = ("quarter", "left", "right", "back")
 
 
@@ -182,6 +185,60 @@ def render_colour(ras: Raster, tex: np.ndarray, bg: float = BG) -> np.ndarray:
 # --- fit: similarity transform of the picture onto the drawing -------------------------------------------------
 
 
+def outline(mesh: dict[str, np.ndarray], cam: face.Camera) -> np.ndarray:
+    """The model's outline from a camera: exactly the pixels face.view_raster covers (the same inside test on the same
+    pixel centres), without the depth buffer the turn search has no use for, and with the triangles tested many at a
+    time instead of one by one."""
+    s = cam.size
+    pts, _ = cam.project(mesh["verts"])
+    P = pts[mesh["faces"]]
+    P = P[(P[:, :, 0].max(1) >= 0) & (P[:, :, 0].min(1) <= s) & (P[:, :, 1].max(1) >= 0) & (P[:, :, 1].min(1) <= s)]
+    mask = np.zeros((s, s), dtype=bool)
+    if len(P) == 0:
+        return mask
+    x0 = np.clip(np.floor(P[:, :, 0].min(1) - 0.5).astype(int), 0, s)
+    x1 = np.clip(np.ceil(P[:, :, 0].max(1) - 0.5).astype(int) + 1, 0, s)
+    y0 = np.clip(np.floor(P[:, :, 1].min(1) - 0.5).astype(int), 0, s)
+    y1 = np.clip(np.ceil(P[:, :, 1].max(1) - 0.5).astype(int) + 1, 0, s)
+    ax, ay, bx, by, cx, cy = P[:, 0, 0], P[:, 0, 1], P[:, 1, 0], P[:, 1, 1], P[:, 2, 0], P[:, 2, 1]
+    area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    span = np.maximum(x1 - x0, y1 - y0)
+    live = (x1 > x0) & (y1 > y0) & (np.abs(area) >= 1e-12)
+    lo = 0
+    while lo < s:
+        hi = max(4, lo * 2)   # triangles whose box is at most hi pixels wide and tall, tested on a hi x hi grid each
+        pick = np.flatnonzero(live & (span > lo) & (span <= hi))
+        lo = hi
+        step = max(1, 2_000_000 // (hi * hi))
+        for c in range(0, len(pick), step):
+            k = pick[c:c + step]
+            off = np.arange(hi)
+            xi = x0[k][:, None, None] + off[None, None, :]
+            yi = y0[k][:, None, None] + off[None, :, None]
+            X, Y = xi + 0.5, yi + 0.5
+            a_ = area[k][:, None, None]
+            AX, AY, BX, BY, CX, CY = (v[k][:, None, None] for v in (ax, ay, bx, by, cx, cy))
+            w0 = ((BX - X) * (CY - Y) - (BY - Y) * (CX - X)) / a_
+            w1 = ((CX - X) * (AY - Y) - (CY - Y) * (AX - X)) / a_
+            w2 = 1.0 - w0 - w1
+            inside = (w0 >= -1e-9) & (w1 >= -1e-9) & (w2 >= -1e-9) & (xi < x1[k][:, None, None]) & (yi < y1[k][:, None, None])
+            xi_b, yi_b = np.broadcast_to(xi, inside.shape), np.broadcast_to(yi, inside.shape)
+            mask[yi_b[inside], xi_b[inside]] = True
+    return mask
+
+
+_GRIDS: dict[int, np.ndarray] = {}
+
+
+def _grid(n: int) -> np.ndarray:
+    """The pixel centres of an n x n frame as rows (x, y, 1), made once per size."""
+    g = _GRIDS.get(n)
+    if g is None:
+        ys, xs = np.mgrid[0:n, 0:n] + 0.5
+        g = _GRIDS[n] = np.stack([xs.ravel(), ys.ravel(), np.ones(n * n)])
+    return g
+
+
 def sim_matrix(s: float, rot: float, tx: float, ty: float, n: int) -> np.ndarray:
     """3x3 map from a drawing pixel p to a picture pixel q = c + R(rot)/s (p - c - t), c the frame centre."""
     c = n / 2.0
@@ -194,8 +251,7 @@ def sim_matrix(s: float, rot: float, tx: float, ty: float, n: int) -> np.ndarray
 
 
 def warp_mask(pic: np.ndarray, M: np.ndarray, n: int) -> np.ndarray:
-    ys, xs = np.mgrid[0:n, 0:n] + 0.5
-    q = M @ np.stack([xs.ravel(), ys.ravel(), np.ones(n * n)])
+    q = M @ _grid(n)
     return face.sample(pic[..., None], q[0].reshape(n, n), q[1].reshape(n, n))[..., 0]
 
 
@@ -333,8 +389,11 @@ class View:
 
 def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alpha: np.ndarray, name: str,
              yaws: list[float], centre: np.ndarray, scale: float, size: int = SIZE, min_iou: float = MIN_IOU,
-             use_flow: bool = True, log: Callable[[str], None] | None = None) -> View:
-    """Find the camera turn (among yaws), the picture's similarity fit and its flow warp; refuse what does not fit."""
+             use_flow: bool = True, log: Callable[[str], None] | None = None,
+             outlines: dict[tuple[float, int], np.ndarray] | None = None) -> View:
+    """Find the camera turn (among yaws), the picture's similarity fit and its flow warp; refuse what does not fit.
+    `outlines` is a store of the model's outline per (turn, size) shared by the views of one paint() call: two pictures
+    searching the same turns draw the model once."""
     v = View(name, VIEW_WEIGHT.get(name, 0.5))
     n = min(FIT_N, size)
     pm = alpha > 0.5
@@ -343,7 +402,12 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
 
     def try_yaw(yaw: float, nn: int = n) -> dict[str, Any]:
         if yaw not in fits or fits[yaw]["n"] != nn:
-            rm = face.view_raster(mesh, face.Camera(target=centre, yaw_deg=float(yaw), scale=scale, size=nn))["tri"] >= 0
+            key = (float(yaw), nn)
+            rm = outlines.get(key) if outlines is not None else None
+            if rm is None:
+                rm = outline(mesh, face.Camera(target=centre, yaw_deg=float(yaw), scale=scale, size=nn))
+                if outlines is not None:
+                    outlines[key] = rm
             f = fit_similarity(pm, rm, n=nn)
             f["rm"] = rm
             fits[yaw] = f
@@ -733,52 +797,66 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     t0 = time.time()
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     centre, scale = model_frame(mesh)
-    pic, alpha = prepare_picture(picture)
-    front = fit_view(mesh, tex, pic, alpha, "picture", picture_yaws or PICTURE_YAWS, centre, scale, size, min_iou, log=log)
-    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None:
-        # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
-        hint = yaw_hint()
-        if hint is not None:
-            front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
-            front.info["turn_source"] = "texfidelity"
-    front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
-    infos = {"picture": front.info}
-    views: list[View] = []
-    for name, src, yaws in (("source", source, PICTURE_YAWS), ("front", front_view, FRONT_YAWS)):
-        if src is None or views:  # the drawn front view only when the original did not fit
-            continue
-        sp_, sa_ = prepare_picture(src)
-        vw = fit_view(mesh, tex, sp_, sa_, name, yaws, centre, scale, size, min_iou, log=log)
-        infos[name] = vw.info
-        if vw.ok:
-            views.append(vw)
-    if front.ok:
-        views.append(front)
-    n_primary = len(views)
-    if not views:
-        res["reason"] = front.info.get("refused", "the picture was refused")
-        res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
-        return res
+    outlines: dict[tuple[float, int], np.ndarray] = {}
+
+    def fit(name: str, src: Any, yaws: list[float]) -> View:
+        p_, a_ = prepare_picture(src)
+        return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, min_iou, log=log, outlines=outlines)
+
+    # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were
+    # measured and are no faster, the large images saturate memory either way); which ones are used, and in which
+    # order, is decided afterwards exactly as if they had been fitted one after another.
+    wanted: list[tuple[str, Any, list[float]]] = [("picture", picture, picture_yaws or PICTURE_YAWS)]
+    wanted += [(n, s, y) for n, s, y in (("source", source, PICTURE_YAWS), ("front", front_view, FRONT_YAWS)) if s is not None]
     if mode != "off":
-        for name in TURN_VIEWS:
-            src = (turnaround or {}).get(name)
-            if src is None:
+        wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
+        jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
+        fitted = {n: j.result() for n, j in jobs.items()}
+        front = fitted["picture"]
+        if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None:
+            # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
+            hint = yaw_hint()
+            if hint is not None:
+                pic, alpha = prepare_picture(picture)
+                front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
+                front.info["turn_source"] = "texfidelity"
+        front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
+        infos = {"picture": front.info}
+        views: list[View] = []
+        for name in ("source", "front"):
+            if name not in fitted or views:  # the drawn front view only when the original did not fit
                 continue
-            tp, ta = prepare_picture(src)
-            vw = fit_view(mesh, tex, tp, ta, name, TURN_YAWS[name], centre, scale, size, min_iou, log=log)
-            infos[name] = vw.info
-            if vw.ok:
-                views.append(vw)
-    atlas = Atlas(mesh, tex.shape[0])
-    for v in views:
-        prepare_gates(v)
-    projs = [project_view(atlas, v, size) for v in views]
+            infos[name] = fitted[name].info
+            if fitted[name].ok:
+                views.append(fitted[name])
+        if front.ok:
+            views.append(front)
+        n_primary = len(views)
+        if not views:
+            res["reason"] = front.info.get("refused", "the picture was refused")
+            res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
+            return res
+        for name in TURN_VIEWS:
+            if name in fitted:
+                infos[name] = fitted[name].info
+                if fitted[name].ok:
+                    views.append(fitted[name])
+        atlas = atlas_job.result()
+        pitch_px = atlas.pitch_m * size / scale
+
+        def ready(i: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
+            v = views[i]
+            prepare_gates(v)
+            proj = project_view(atlas, v, size)
+            full = i < n_primary or mode == "full"
+            return proj, (v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px))
+
+        done = list(pool.map(ready, range(len(views))))
+    projs, images = [d[0] for d in done], [d[1] for d in done]
     for v in views:
         infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
-    pitch_px = atlas.pitch_m * size / scale
-    images = [v.pic_aligned for v in views[:n_primary]]
-    for v in views[n_primary:]:
-        images.append(v.pic_aligned if mode == "full" else detail_only(v, DETAIL_TEXELS * pitch_px))
     paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
     new = finish(atlas, tex, paint_, alpha_)
     before, after = front_measures(views[0], tex), front_measures(views[0], new)  # against the first source that fitted

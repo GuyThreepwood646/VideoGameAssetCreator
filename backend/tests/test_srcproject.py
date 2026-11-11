@@ -242,3 +242,24 @@ def test_on_by_itself_only_for_characters_on_a_smooth_look():
     assert sp.on({}, "prop_rigid", {}) is False                      # other models only when asked
     assert sp.on({"source_project": True}, "prop_rigid", {"crisp": True}) is True
     assert sp.on({"source_project": False}, "humanoid", {}) is False
+
+
+def test_fast_outline_is_the_rasterisers_outline() -> None:
+    """The turn search's outline (many triangles tested at once) covers exactly the pixels the rasteriser covers."""
+    mesh = model(with_back=True)
+    centre, scale = srcproject.model_frame(mesh)
+    for n in (64, 128, 256):
+        for yaw in (0.0, 12.5, 45.0, 90.0, -77.5, 185.0):
+            cam = face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=n)
+            assert np.array_equal(srcproject.outline(mesh, cam), face.view_raster(mesh, cam)["tri"] >= 0), (n, yaw)
+
+
+def test_the_original_picture_paints_first() -> None:
+    """With the original picture given as well, it is fitted, it is what the result is measured against, and the picture
+    the model was built from still comes after it."""
+    mesh = model()
+    r = srcproject.paint(mesh, soft_base(), picture(), source=picture(), size=256, picture_yaws=[0.0])
+    assert r["applied"]
+    m = r["metrics"]
+    assert m["srcproject_measured_against"] == "source"
+    assert list(m["srcproject_share_by_view"]) == ["source", "picture"]
