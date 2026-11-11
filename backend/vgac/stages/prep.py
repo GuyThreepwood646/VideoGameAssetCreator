@@ -254,8 +254,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
         # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
-        # Paint the picture's own pixels into the base colour (vgac/srcproject.py): by itself for a character whose
-        # picture shows the front, on a smooth look; any model when the version asks for it.
+        # Paint the picture's own pixels into the base colour (vgac/srcproject.py): by itself for a character on a
+        # smooth look; any model when the version asks for it.
         if srcproject.on(params, sc.asset.category, look):
             current = await srcproject.run_stage(sc, out, current, params)
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
