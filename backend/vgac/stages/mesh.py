@@ -48,7 +48,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour
+from .. import colourmatch, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.qwen_edit import edit_graph
@@ -169,6 +169,9 @@ def finish_maps(glb: Path, maps: dict[str, Path], tex: int) -> dict[str, Any]:
             "dilated_px": grown, "bake_mesh_hash": uv_hash(uvm)}
 
 
+DEFAULT_TEX_STEPS = 24  # the texture sampler's steps (graphs/trellis.py); 12 on request (Adjust)
+
+
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     input_view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
     rec = stage_recipe(sc)
@@ -178,13 +181,16 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     keep_normal = bool(rec["mesh"]["normal_map"])
     crisp = rec["surface"]["texture_filter"] == "crisp"
     upsample = int(params.get("upsample") or rec["mesh"].get("upsample") or 1024)
+    # Looks that change colour on purpose (crisp, a palette) keep the colours as built; every other look is matched to the picture
+    match_look = rec["surface"]["texture_filter"] != "crisp" and not rec["surface"].get("palette_colors")
+    tex_steps = int(params.get("tex_steps") or DEFAULT_TEX_STEPS)
     # The first build's seed: the one given (the person's, or a Resume's), else a new one. Builds again after a too-dark
     # base colour take the seeds that follow from it (texcolour.try_seed); the kept build's seed replaces it at the end.
     first_seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)
     src = _input_image(sc, input_view)
-    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, seed=first_seed, remesh=remesh,
+    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                   head_room=targets.get("head_room"), first_seed=None)
     sc.use_model("trellis2")
@@ -200,7 +206,8 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     shutil.rmtree(tries_dir, ignore_errors=True)  # a Resume starts the tries again from the first
 
     async def build_once(seed: int, n: int) -> dict[str, Any]:
-        return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, crisp, picture)
+        return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, crisp, picture,
+                                    tex_steps=tex_steps, match_to=src if match_look else None)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
@@ -226,7 +233,7 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
     if headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
-        await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, crisp)
+        await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, crisp, tex_steps)
 
 
 # --- The head built on its own (vgac/headgraft.py, docs/HEAD-BUILD-PLAN.md) -------------------------------------
@@ -239,7 +246,7 @@ BODY_DIR = "body"
 
 
 async def _head_build(sc: StageContext, params: dict[str, Any], src: Path, seed: int, target_faces: int, tex: int, upsample: int,
-                      remesh: bool, padding: int, keep_normal: bool, crisp: bool) -> None:
+                      remesh: bool, padding: int, keep_normal: bool, crisp: bool, tex_steps: int = DEFAULT_TEX_STEPS) -> None:
     from ..jobs import JobCancelled
 
     t0 = time.time()
@@ -262,7 +269,7 @@ async def _head_build(sc: StageContext, params: dict[str, Any], src: Path, seed:
         tries: list[dict[str, Any]] = []
         for n, s in enumerate((seed, texcolour.try_seed(seed, 1))):
             res = await _trellis_build(sc, name, n, s, head_faces, tex, upsample, remesh, padding, keep_normal, crisp, None,
-                                       dest=hdir, tag="head")
+                                       dest=hdir, tag="head", tex_steps=tex_steps)
             ratio = await asyncio.to_thread(headgraft.depth_ratio, hdir / "model.glb")
             tries.append({"seed": s, "depth_ratio": ratio, "elapsed": res.get("elapsed")})
             if ratio is not None and ratio >= headgraft.FLAT_RATIO:
@@ -350,10 +357,12 @@ def _bring_back(src: Path, dest_dir: Path) -> None:
 
 async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_faces: int, tex: int, upsample: int, remesh: bool,
                          padding: int, keep_normal: bool, crisp: bool, picture: dict[str, Any] | None,
-                         dest: Path | None = None, tag: str = "") -> dict[str, Any]:
+                         dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
+                         match_to: Path | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
-    (the head built on its own). Returns {seed, elapsed, maps, other, metrics, match}."""
+    (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
+    (colourmatch.py; None for the head build, looks that change colour on purpose and anything without a picture). Returns {seed, elapsed, maps, other, metrics, match}."""
     out = Path(dest) if dest is not None else sc.dir
     if tag:
         prefix = sc.prefix(tag if n == 0 else f"{tag}{n + 1}")
@@ -363,7 +372,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         prefix = sc.prefix() if n == 0 else sc.prefix(f"try{n + 1}")
         message = "TRELLIS.2 convert" if n == 0 else f"TRELLIS.2 convert, build {n + 1}"
         base, span = 0.05, 0.7
-    entry = await sc.comfy(convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding),
+    entry = await sc.comfy(convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps),
                            poll=5.0, message=message, base=base, span=span)
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal or crisp:
@@ -391,6 +400,12 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         metrics.update(await asyncio.to_thread(finish_maps, Path(glb), maps, tex))
     except Exception as e:  # the maps stay as baked; the prep checks still measure the layout
         metrics["dilate_error"] = str(e)[:300]
+    if match_to is not None and maps.get("base_color") is not None:
+        try:
+            sc.progress(0.77, "Matching the colours to the picture")
+            metrics["colour_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to), Path(maps["base_color"]))
+        except Exception as e:  # noqa: BLE001  (not matched: the base colour stays as built)
+            metrics["colour_match"] = {"applied": False, "reason": "error", "error": str(e)[:300]}
     match = None
     if picture is not None:
         try:

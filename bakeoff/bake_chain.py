@@ -33,6 +33,9 @@ SUBJECTS = {
     # a second generation: the prepared knight (variant "adj") put through the same re-bake again with its layout
     # unchanged, which is what the face relayout and the head graft do to it
     "knight_gen2": {"src": "bake_chain/knight__adj", "tex": 2048, "args": ["--size", "1.8"], "named": True},
+    # the sampler-step builds (bakeoff/convert.py --tex-steps), same recipe as the knight
+    "knightS12": {"src": "knightS12_20000", "tex": 2048, "args": ["--symmetric", "--budget", "15000", "--protect-head", "0.13", "--head-gain", "2"]},
+    "knightS24": {"src": "knightS24_20000", "tex": 2048, "args": ["--symmetric", "--budget", "15000", "--protect-head", "0.13", "--head-gain", "2"]},
     "chest": {"src": "prop_5000", "tex": 1024, "args": ["--size", "1.0", "--size-axis", "longest", "--shading", "smooth"]},
 }
 KEYMAP = {"base_color": "base.png", "metallic": "metallic.png", "roughness": "roughness.png", "normal": "normal.png", "ao": "ao.png"}

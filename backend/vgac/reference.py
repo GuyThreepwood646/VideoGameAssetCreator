@@ -94,6 +94,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
         _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
         _param("upsample", "select", 1024, options=[1024, 1536]),
+        _param("tex_steps", "select", 24, options=[12, 24]),
         # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
         _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
                description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),

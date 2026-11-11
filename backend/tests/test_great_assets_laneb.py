@@ -199,7 +199,7 @@ def test_quality_check_carries_outcome_sentence():
 
 def test_select_knobs_carry_plain_option_labels():
     stages = {s["id"]: {p["name"]: p for p in s["adjust_schema"]} for s in reference.stages()}
-    expect = {("mesh", "engine"), ("mesh", "input_view"), ("mesh", "texture_size"), ("mesh", "upsample"), ("prep", "pivot"),
+    expect = {("mesh", "engine"), ("mesh", "input_view"), ("mesh", "texture_size"), ("mesh", "upsample"), ("mesh", "tex_steps"), ("prep", "pivot"),
               ("prep", "face_yaw"), ("rig", "template"), ("export", "formats"), ("export", "clips_library"),
               ("turnaround", "views"), ("export", "collider")}
     for stage, name in expect:
