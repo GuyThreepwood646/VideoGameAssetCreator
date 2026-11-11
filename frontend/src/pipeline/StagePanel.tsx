@@ -21,7 +21,7 @@ import {
   type Version,
 } from '../api'
 import { Info } from '../components/Info'
-import { firstStaleStage, isRemovable, isSetAside, isStopped, STAGES as STAGE_LIST } from '../api'
+import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STAGES as STAGE_LIST } from '../api'
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { preferredConceptModel } from '../guide'
@@ -180,8 +180,19 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     if (!list.length || !window.confirm(question)) return
     void act(async () => {
       if (active && list.some((v) => v.id === active.id)) setActiveId(null)
-      for (const v of list) await api.deleteVersion(v.id)
+      for (const v of list) await api.deleteVersion(v.id, true)
     })
+  }
+  // The question for removing one version: what goes with it (later steps built on it, changes of it).
+  const removeQuestion = (v: Version) => {
+    const later = laterVersions(asset, v)
+    const keptLater = later.filter((x) => x.selected || asset.selected?.[x.stage as StageId] === x.id)
+    const what = v.status === 'error' ? 'It failed and made no result.' : 'Its pictures and files are deleted.'
+    const steps = [...new Set(later.map((x) => `"${stagePlain(x.stage as StageId, ref?.stages.find((s) => s.id === x.stage) ?? null)}"`))]
+    const alsoLine = later.length
+      ? ` ${later.length} version${later.length > 1 ? 's' : ''} made from it (in ${steps.join(', ')}) ${later.length > 1 ? 'are' : 'is'} deleted too${keptLater.length ? `, including ${keptLater.length > 1 ? 'versions' : 'a version'} you kept` : ''}.`
+      : ''
+    return `Delete version ${versions.indexOf(v) + 1}? ${what}${alsoLine} This cannot be undone.`
   }
 
   const fix = (f: FixRequest) => {
@@ -190,6 +201,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
       return
     }
     return act(async () => {
+      if (f.op === 'upscale' && stage === 'concept' && active) {
+        const out = await api.upscale(active.id)
+        setActiveId(out.version.id)
+        return
+      }
       if (f.op === 'refine' && f.instruction && f.stage === stage && active) {
         // "Redraw it ready for 3D": the refine on this version with the fixed instruction.
         await api.refine(active.id, { instruction: f.instruction, params: f.params })
@@ -314,15 +330,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                   type="button"
                   className="link small"
                   disabled={busy}
-                  title="Takes this version out of the list and deletes its files"
-                  onClick={() =>
-                    removeVersions(
-                      [active],
-                      `Remove version ${versions.indexOf(active) + 1}? ${active.status === 'error' ? 'It failed and made no result.' : 'Its pictures and files are deleted.'} This cannot be undone.`,
-                    )
-                  }
+                  title="Takes this version out of the list and deletes its files, with anything made from it"
+                  onClick={() => removeVersions([active], removeQuestion(active))}
                 >
-                  Remove this version
+                  Delete this version
                 </button>
               )}
             </div>

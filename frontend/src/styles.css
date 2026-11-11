@@ -3685,3 +3685,19 @@ button.small-btn .resume-icon {
 .first-build-intro {
   max-width: 80ch;
 }
+
+/* Step 0.5: a character from several of your own pictures (pipeline/ComposePanel.tsx). */
+.compose-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.compose-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rail-stage-half .rail-index {
+  font-size: 0.85em;
+}

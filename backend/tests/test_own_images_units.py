@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from own_images_helpers import GREY, b64, cut, data_url, figure
+from own_images_helpers import BIG, GREY, b64, cut, data_url, figure
 from vgac import guidance, reference, readiness, uploads
 from vgac.graphs.qwen_edit import edit_graph
 from vgac.stages.style import clean_description
@@ -112,9 +112,9 @@ def _checks(im, category=HUMANOID):
 
 
 def test_a_pose_figure_is_ready():
-    c = _checks(figure("a"))
+    c = _checks(figure("a", **BIG))
     assert all(x["passed"] for x in c.values()), c
-    assert set(c) == {"one_subject", "in_frame", "big_enough", "arms_away"}
+    assert set(c) == {"one_subject", "in_frame", "big_enough", "detail_size", "arms_away"}
     assert all(x["severity"] == "warn" for x in c.values())
 
 
@@ -224,6 +224,29 @@ def test_style_description_is_one_short_paragraph():
 
 
 def test_guide_sentences_for_the_new_checks_have_no_placeholders_left():
-    for name in ("one_subject", "in_frame", "big_enough", "arms_away", "even_lighting", "straight_on"):
+    for name in ("one_subject", "in_frame", "big_enough", "detail_size", "arms_away", "even_lighting", "straight_on"):
         g = guidance.CHECK_GUIDE[name]
         assert g["severity"] == "warn"
+
+
+def test_a_small_picture_offers_upscale_it():
+    """Under readiness.DETAIL_SUBJECT_PX the detail_size check warns and offers "Upscale it" (op upscale)."""
+    small = _checks(figure("a"))["detail_size"]  # 512 x 768: the figure is well under 860 px tall
+    assert not small["passed"] and small["severity"] == "warn"
+    assert small["fix"] == {"stage": "concept", "op": "upscale", "params": {}, "label": "Upscale it"}
+    assert "1 megapixel" in small["help"] and "{" not in small["help"]
+    assert _checks(figure("a", **BIG))["detail_size"]["passed"]
+
+
+def test_upscale_plan_reaches_the_target_within_limits():
+    from vgac.readiness import UPSCALE_TARGET_PX
+    from vgac.stages.concept import UPSCALE_ART_MODEL, UPSCALE_MAX_SIDE, UPSCALE_PHOTO_MODEL, upscale_plan
+
+    p = upscale_plan((768, 1344), 782, photo=True)
+    assert p["model"] == UPSCALE_PHOTO_MODEL and 782 * p["factor"] >= UPSCALE_TARGET_PX
+    assert upscale_plan((768, 1344), 500, photo=True)["factor"] == round(UPSCALE_TARGET_PX / 500, 3)
+    assert (p["width"], p["height"]) == (round(768 * p["factor"]), round(1344 * p["factor"]))
+    assert upscale_plan((300, 400), 200, photo=False) == {"factor": 4.0, "width": 1200, "height": 1600, "model": UPSCALE_ART_MODEL}
+    assert upscale_plan((1000, 1000), 900, photo=True)["factor"] == 1.25  # always a real step up
+    big = upscale_plan((3000, 2000), 100, photo=True)
+    assert max(big["width"], big["height"]) <= UPSCALE_MAX_SIDE

@@ -2,7 +2,7 @@
 // guide while the autopilot owns the asset, and the finishing moment card.
 import { Fragment, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
+import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
@@ -182,8 +182,9 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   const checks = version && Array.isArray(version.metrics.checks) ? (version.metrics.checks as Check[]) : []
   const failing = checks.filter((c) => !checkPassed(c))
   // "Fix and continue" only takes a re-run fix; a fix that opens a tool waits for the person.
-  const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui) ?? null
-  const onFix = (f: FixRequest) => (f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
+  // An upscale makes a new step 1 picture to keep, so it is never the autopilot's own "Fix and continue".
+  const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui && f.op !== 'upscale') ?? null
+  const onFix = (f: FixRequest) => (f.op === 'upscale' ? version && void api.upscale(version.id) : f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
   const versionFailed = version?.status === 'error'
   const paused = ap.status === 'paused'
   const idx = version && apStage ? versionsOf(asset, apStage).indexOf(version) + 1 : 0

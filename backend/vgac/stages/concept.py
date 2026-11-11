@@ -268,6 +268,70 @@ async def upload(sc: StageContext, params: dict[str, Any], view: str | None = No
     await _cutout(sc, image)
 
 
+# "Upscale it" (the detail_size check): the picture made bigger with a learned upscaler so the subject is about
+# readiness.UPSCALE_TARGET_PX tall. Photos and the Realistic look use 4xRealWebPhoto v4 (Phhofm, CC BY 4.0, made for
+# real phone and web photos with their noise and compression); painted and drawn looks use Real-ESRGAN x2plus (BSD).
+UPSCALE_PHOTO_MODEL = "4xRealWebPhoto_v4_dat2.pth"
+UPSCALE_ART_MODEL = "RealESRGAN_x2plus.pth"
+UPSCALE_MAX_FACTOR = 4.0
+UPSCALE_MAX_SIDE = 4096
+
+
+def upscale_plan(size: tuple[int, int], subject_px: float | None, photo: bool) -> dict[str, Any]:
+    """The factor and output size for an upscale: enough for the subject to reach the target, at least 1.25 times,
+    at most UPSCALE_MAX_FACTOR and UPSCALE_MAX_SIDE on the longer side."""
+    from ..readiness import UPSCALE_TARGET_PX
+
+    w, h = size
+    want = UPSCALE_TARGET_PX / float(subject_px) if subject_px else UPSCALE_TARGET_PX / float(max(w, h))
+    factor = max(1.25, min(UPSCALE_MAX_FACTOR, want))
+    factor = min(factor, UPSCALE_MAX_SIDE / float(max(w, h)))
+    return {"factor": round(factor, 3), "width": int(round(w * factor)), "height": int(round(h * factor)),
+            "model": UPSCALE_PHOTO_MODEL if photo else UPSCALE_ART_MODEL}
+
+
+def upscale_graph(image_name: str, model: str, width: int, height: int, prefix: str) -> dict[str, Any]:
+    return {
+        "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "um": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": model}},
+        "up": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["um", 0], "image": ["img", 0]}},
+        "fit": {"class_type": "ImageScale", "inputs": {"image": ["up", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "disabled"}},
+        "save": {"class_type": "SaveImage", "inputs": {"images": ["fit", 0], "filename_prefix": prefix}},
+    }
+
+
+async def upscale(sc: StageContext, params: dict[str, Any]) -> None:
+    """A bigger copy of the parent concept's picture, then the same cutout and checks as an uploaded picture."""
+    from PIL import Image
+
+    from .. import library
+
+    parent = sc.parent
+    if parent is None:
+        raise ValueError("upscaling needs the picture to upscale")
+    src = library.version_file(parent, "image", sc.settings)
+    if src is None:
+        raise FileNotFoundError("the picture to upscale is missing")
+    checks = {c.get("name"): c for c in (parent.metrics or {}).get("checks") or []}
+    subject = (checks.get("detail_size") or checks.get("big_enough") or {}).get("value")
+    with Image.open(src) as im:
+        size = im.size
+    photo = sc.asset.style_preset == "realistic_pbr" or parent.params.get("source") in ("upload", "upload_edit")
+    plan = upscale_plan(size, float(subject) if subject else None, photo)
+    source = "upload_edit" if parent.params.get("source") in ("upload", "upload_edit", None) else parent.params.get("source")
+    sc.set_params(**{**parent.params, "source": source, "upscaled_from": parent.id, "upscale_model": plan["model"],
+                     "upscale_factor": plan["factor"], "upload_size": [plan["width"], plan["height"]]})
+    sc.use_model("upscale_photo" if photo else "upscale_art")
+    name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_upscale_src.png")
+    entry = await sc.comfy(upscale_graph(name, plan["model"], plan["width"], plan["height"], sc.prefix("upscale")),
+                           message=f"upscaling {plan['factor']:.2f} times", base=0.05, span=0.6)
+    image = await sc.download_image(entry, "save", sc.dir / "image.png")
+    sc.register("image", image)
+    sc.set_metrics(source=source, upscale={**plan, "from_size": list(size), "subject_before": subject},
+                   elapsed_seconds=entry.get("elapsed_seconds"))
+    await _cutout(sc, Path(image))
+
+
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
     await _generate(sc, params)
 
@@ -284,6 +348,8 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     seed = int(params.get("seed") or random_seed())
     # An edit of the person's own picture is no longer their picture as it came, but still not a painted one.
     source = "upload_edit" if parent.params.get("source") in ("upload", "upload_edit") else parent.params.get("source")
+    if source == "compose":
+        source = "compose_edit"  # its folder has no source pictures, so a fine-tune of it paints afresh
     sc.set_params(**{**parent.params, **params, "seed": seed, "instruction": instruction, "refine_of": parent.id, "source": source})
     sc.use_model("qwen_edit")
     sc.use_model("qwen_lightning_lora")
@@ -306,6 +372,12 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
+    if parent is not None and parent.params.get("source") == "compose" and not params.get("prompt_override"):
+        # Fine-tune of a picture combined from the person's pictures (step 0.5): combine the same pictures again.
+        from .. import compose
+
+        await compose.adjust(sc, params)
+        return
     if parent is not None and parent.params.get("source") in ("upload", "upload_edit") and not params.get("prompt_override"):
         # Fine-tune on the person's own picture keeps the picture: copy it and cut it out again, never paint over it.
         from .. import library

@@ -140,6 +140,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Automatic picks High where the platform's texture allows it and the picture has the detail, else Standard"),
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
+        _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
+               description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
+        _param("face_sides", "boolean", True, categories=["humanoid"], label="Paint the cheeks from the side views (optional)",
+               description="Hides the seam where the front painting ends on the cheek; turn off if it leaves smudges by the ears or neck"),
         # The hair detail pass (stages/hair_detail.py): humanoids; skipped by itself for crisp and flat looks.
         _param("hair_detail", "boolean", True, categories=["humanoid"], label="Hair detail (strands and shading painted on)",
                description="Paints strands, clumps and shading along the hair; skipped when the hair cannot be told from skin or clothes"),
@@ -176,8 +180,13 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                         "thigh_r", "shin_r", "leg_fl", "leg_fr", "leg_bl", "leg_br", "leg_l", "leg_r", "wing_l", "wing_r", "wings"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every region found when empty"),
         # Spring bones (vgac/springs.py): humanoids; parts that hang clear of the body sway in every move.
+        _param("part_legs", "boolean", True, categories=["humanoid"], label="Part legs joined near the feet",
+               description="Where the 3D build joined the legs low down (a strand between the shoes), split them so they move apart; a tabard or cape between the legs is left whole"),
         _param("springs", "boolean", True, categories=["humanoid"], label="Spring bones (small extra bones that sway on their own)",
                description="A ponytail, braid, cape or tail that hangs clear of the body gets a short chain of bones and sways in every move; hair resting on the shoulders and rigid things like a scabbard are left alone"),
+        _param("head_sway", "select", "auto", options=["auto", "hair", "all"], categories=["humanoid"],
+               label="What may sway on the head",
+               description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before)"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
