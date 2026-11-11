@@ -25,7 +25,7 @@ from PIL import Image
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "backend"))
 sys.path.insert(0, HERE)
-from vgac import face  # noqa: E402
+from vgac import face, texfidelity  # noqa: E402
 
 from repaint_trial import real_detail_db, uv_cover  # noqa: E402
 
@@ -35,15 +35,7 @@ S = 1024
 
 
 def views(mesh: dict, tex: np.ndarray) -> list[dict]:
-    v = mesh["verts"]
-    lo, hi = v.min(0), v.max(0)
-    centre = (lo + hi) / 2
-    scale = float(max(hi[1] - lo[1], np.hypot(hi[0] - lo[0], hi[2] - lo[2]))) * 1.06
-    out = []
-    for yaw in YAWS:
-        r = face.render_view(mesh, tex, face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=S), background=0.5)
-        out.append({"yaw": yaw, "image": r["image"], "sharpness": face.sharpness(r["image"], r["mask"])})
-    return out
+    return texfidelity.view_sharpness(mesh, tex, S)
 
 
 def measure(build: str, timings: dict[str, float]) -> dict:

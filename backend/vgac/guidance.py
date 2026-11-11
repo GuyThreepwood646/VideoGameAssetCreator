@@ -689,6 +689,23 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "mesh", "params": {"seed": None}},
         "fix_label": "Build it again",
     },
+    # Report-only (vgac/texfidelity.py): the model drawn flat from the picture's side against the picture. Severity warn,
+    # so they show on the card and never block a run. No fix yet: sharper colour needs the picture projected onto the
+    # model (docs/TEXTURE-FIDELITY-PLAN.md lane B).
+    "texture_sharp": {
+        "severity": "warn",
+        "ok": "The model's colour texture is about as sharp as the picture ({value:x} of the picture's fine detail).",
+        "fail": "The model's colour texture is softer than the picture: it keeps {value:x} of the picture's fine detail, "
+                "it should keep at least {limit:x}.",
+    },
+    "texture_colour_matches_picture": {
+        "severity": "warn",
+        "ok": "Seen from the picture's side, the model's colours match the picture (colour difference {value:x}).",
+        "fail": "Seen from the picture's side, the model's colours differ from the picture (colour difference {value:x}, "
+                "it should stay under {limit:x}). The model looks "
+                "{tone} than the picture.",
+        "vars": lambda c: {"tone": "lighter" if float((c.get("vars") or {}).get("delta_l") or 0) > 0 else "darker"},
+    },
     "texture_padding": {
         "severity": "warn",
         "ok": "Texture pieces have {value:n} px of space around them, enough for distant views.",

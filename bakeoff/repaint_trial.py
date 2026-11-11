@@ -33,6 +33,7 @@ from comfy import B, download, images_of, run, stage_input  # noqa: E402
 
 from vgac import face, imaging  # noqa: E402
 from vgac.graphs.qwen_edit import edit_graph  # noqa: E402
+from vgac.texfidelity import real_detail_db, uv_cover  # noqa: E402,F401  (moved to the backend; kept importable here)
 
 PROMPT = ("Redraw this picture at high quality with crisp, sharp, fine surface detail: clear texture in the cloth, "
           "leather, metal, fur, wood and stone, sharp edges, seams and small parts. Keep everything else exactly the same: "
@@ -43,21 +44,6 @@ FACING = (0.45, 0.95)       # cosine range: surfaces under about 63 degrees off 
 MIN_SCORE = 0.35            # face.align correlation below this: the redraw is not the same picture
 MAX_SHIFT = 0.012           # of the picture size
 MAX_SCALE = 0.03            # off 1.0
-
-
-def real_detail_db(tex: np.ndarray, cover: np.ndarray) -> float:
-    """PSNR of tex against itself shrunk to half and blown back up (bicubic), inside cover; lower = more real detail."""
-    T = tex.shape[0]
-    im = Image.fromarray(face.to_uint8(tex))
-    back = np.asarray(im.resize((T // 2, T // 2), Image.BICUBIC).resize((T, T), Image.BICUBIC), dtype=np.float64) / 255.0
-    m = face.erode(cover, 3)
-    err = ((tex - back) ** 2)[m].mean()
-    return round(float(10 * math.log10(1.0 / max(err, 1e-12))), 2)
-
-
-def uv_cover(mesh: dict, T: int) -> np.ndarray:
-    ras = face.rasterise(face.uv_pixels(mesh["uv"], T), np.zeros(len(mesh["uv"])), mesh["faces"], T)
-    return ras["tri"] >= 0
 
 
 def redraw(render_png: str, seed: int, prefix: str, size: int, dest: str) -> tuple[str, float]:
