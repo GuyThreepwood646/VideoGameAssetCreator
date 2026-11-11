@@ -80,6 +80,12 @@
 // stays the hair shader and VgacHair.shader is not touched. Snapshot with -vgacHeadPitch on (diagnostics, never passed by
 // the export) also lists in loopProbes how far idle, walk and run bow the head from its bind pose.
 //
+// Version 18: sharper base colour on smooth looks. Base colour (and hair base colour) imports with the best compression
+// quality (BC7 on standalone; ASTC 4x4 on Android and iOS, the platform overrides ship with the texture) and anisotropic
+// filtering 8, so a surface seen at a slant keeps its detail. Normal maps keep the normal-map type; data maps are
+// unchanged. Crisp looks (-vgacFilter point), uncompressed imports and imports without mipmaps are left as they were
+// (no override, no anisotropy). The report's textureSettings lines for the base colour end with the new settings.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -95,7 +101,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "17";
+    public const string Version = "18";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -1323,10 +1329,40 @@ public static class VgacImport
             ti.GetSourceTextureWidthAndHeight(out sw, out sh);
             var need = Mathf.Min(16384, Mathf.NextPowerOfTwo(Mathf.Max(sw, sh)));
             if (need > ti.maxTextureSize) ti.maxTextureSize = need;
+            var sharpColour = (t == "base_color.png" || t == "hair_base_color.png") && !point && compress;
+            var quality = "";
+            if (sharpColour)
+            {
+                // Version 18: smooth looks get the best block compression for the colour and anisotropic filtering.
+                ti.compressionQuality = (int)TextureCompressionQuality.Best;
+                if (mips) ti.anisoLevel = 8;
+                foreach (var plat in new[] { "Standalone", "Android", "iPhone" })
+                {
+                    var ps = ti.GetPlatformTextureSettings(plat);
+                    ps.overridden = true;
+                    ps.maxTextureSize = ti.maxTextureSize;
+                    ps.format = plat == "Standalone" ? TextureImporterFormat.BC7 : TextureImporterFormat.ASTC_4x4;
+                    ps.compressionQuality = (int)TextureCompressionQuality.Best;
+                    ti.SetPlatformTextureSettings(ps);
+                }
+                quality = ", quality Best, BC7 standalone / ASTC 4x4 mobile";
+            }            else if (t == "base_color.png" || t == "hair_base_color.png")
+            {
+                // A re-import of the same folder with a crisp look must not keep the overrides of an earlier smooth one.
+                ti.anisoLevel = 1;
+                foreach (var plat in new[] { "Standalone", "Android", "iPhone" })
+                {
+                    var ps = ti.GetPlatformTextureSettings(plat);
+                    if (!ps.overridden) continue;
+                    ps.overridden = false;
+                    ti.SetPlatformTextureSettings(ps);
+                }
+            }
             ti.SaveAndReimport();
             report.textureSizes.Add(t + ":" + Mathf.Max(sw, sh) + ":" + ti.maxTextureSize);
             report.textureSettings.Add(t + ": " + ti.textureType + (ti.sRGBTexture ? ", sRGB" : ", linear") + (t == msName || t == hairMs ? ", alpha " + ti.alphaSource : "")
-                + ", " + ti.filterMode + (ti.mipmapEnabled ? ", mipmaps" : ", no mipmaps") + ", " + ti.textureCompression);
+                + ", " + ti.filterMode + (ti.mipmapEnabled ? ", mipmaps" : ", no mipmaps") + ", " + ti.textureCompression
+                + (sharpColour ? quality + ", aniso " + ti.anisoLevel : ""));
         }
     }
 
