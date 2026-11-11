@@ -48,7 +48,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import colourmatch, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour
+from .. import colourmatch, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.qwen_edit import edit_graph
@@ -583,6 +583,7 @@ async def judge(sc: StageContext) -> None:
     tc = await colour_check(sc)
     if tc:
         checks.append(tc)
+    checks += await fidelity_checks(sc, rec, (sc.version.params or {}).get("input_view"))
     if hairlib.is_library(sc):
         hc = hairlib.fit_check(sc.version.metrics, "mesh")
         if hc:
@@ -603,6 +604,27 @@ def head_build_check(metrics: dict[str, Any]) -> dict[str, Any] | None:
     reason = hb.get("reason")
     return quality.check("head_build", used, "joined" if used else (reason or "error"), "joined",
                          vars={"reason": reason, "reason_words": headgraft.REASONS.get(reason or "error", headgraft.REASONS["error"])})
+
+
+async def fidelity_checks(sc: StageContext, rec: dict[str, Any], input_view: str | None) -> list[dict[str, Any]]:
+    """texture_sharp and texture_colour_matches_picture (vgac/texfidelity.py), report-only: the model's flat colour from
+    the picture's side against the picture, measured once and kept in the metrics (texture_fidelity). Nothing for
+    materials, models without a base colour, and looks that change the colours or their sharpness on purpose (crisp,
+    limited palette). Used by the 3D step and by prep. Never fails the job."""
+    srf = rec.get("surface") or {}
+    if sc.asset.category == "material" or srf.get("texture_filter") == "crisp" or srf.get("palette_colors"):
+        return []
+    glb, base = sc.file("glb"), sc.file("base_color")
+    if glb is None or base is None:
+        return []
+    if "texture_fidelity" not in (sc.version.metrics or {}):
+        try:
+            pic = _input_image(sc, input_view or sc.category.get("input_view_default") or "concept")
+            fid = await asyncio.to_thread(texfidelity.measure_for_stage, glb, pic, base)
+        except Exception as e:  # noqa: BLE001  (no picture to compare with)
+            fid = {"error": str(e)[:200]}
+        sc.set_metrics(texture_fidelity=fid)
+    return texfidelity.fidelity_checks(sc.version.metrics.get("texture_fidelity") or {})
 
 
 async def colour_check(sc: StageContext) -> dict[str, Any] | None:

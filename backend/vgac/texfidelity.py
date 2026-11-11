@@ -389,3 +389,18 @@ def texture_checks_for(glb: Path | str, picture: Path | str | np.ndarray | Image
         return fidelity_checks(score(glb, picture, base_color, views=False))
     except Exception:  # noqa: BLE001
         return []
+
+
+STAGE_KEYS = ("yaw", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
+
+
+def measure_for_stage(glb: Path | str, picture: Path | str, base_color: Path | str | None = None) -> dict[str, Any]:
+    """The few numbers a stage keeps in its metrics (texture_fidelity) and builds the two report-only checks from;
+    {"error": ...} when nothing could be measured. Never raises."""
+    try:
+        r = score(glb, picture, base_color, views=False)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    if r.get("error"):
+        return {"error": r["error"]}
+    return {k: r.get(k) for k in STAGE_KEYS}

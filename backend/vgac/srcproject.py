@@ -713,16 +713,18 @@ def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
 
 def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround: dict[str, Any] | None = None, *,
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
-          yaw_hint: Callable[[], float | None] | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
+          yaw_hint: Callable[[], float | None] | None = None, front_only: bool = False,
+          log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
-    fit the model, or when the result is no closer to the picture than what the model had."""
+    fit the model, or when the result is no closer to the picture than what the model had. front_only (the pass running
+    by itself, not asked for): a picture that does not show the front is refused, and no turn is guessed for it."""
     t0 = time.time()
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     centre, scale = model_frame(mesh)
     pic, alpha = prepare_picture(picture)
     front = fit_view(mesh, tex, pic, alpha, "picture", picture_yaws or PICTURE_YAWS, centre, scale, size, min_iou, log=log)
-    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None:
+    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None and not front_only:
         # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
         hint = yaw_hint()
         if hint is not None:
@@ -731,6 +733,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
     views = [front]
     infos = {"picture": front.info}
+    if front.ok and front_only and not front.info["front_view"]:
+        res["reason"] = "the picture does not show the front"
+        res["metrics"] = {"srcproject_picture_is_front_view": False, "srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
+        return res
     if not front.ok:
         res["reason"] = front.info.get("refused", "the picture was refused")
         res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
@@ -773,7 +779,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
 
 def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, turnaround: dict[str, Path | None] | None,
-                out_png: Path | str, *, mode: str = "detail", size: int = SIZE, log: Callable[[str], None] | None = None) -> dict[str, Any]:
+                out_png: Path | str, *, mode: str = "detail", size: int = SIZE, front_only: bool = False,
+                log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -789,7 +796,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
             return None
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
-              mode=mode, size=size, yaw_hint=hint, log=log)
+              mode=mode, size=size, yaw_hint=hint, front_only=front_only, log=log)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -802,9 +809,22 @@ PARAM = "source_project"
 MODES = ("detail", "full", "off")
 
 
-def on(params: dict[str, Any]) -> bool:
-    """The pass is off unless the version asks for it (it has not been turned on by default)."""
-    return bool(params.get(PARAM))
+AUTO_CATEGORIES = ("humanoid",)
+
+
+def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character
+    on a smooth look (never a crisp or limited-palette one, which it would undo), and then only paints when the picture
+    shows the front (asked())."""
+    if params.get(PARAM) is not None:
+        return bool(params.get(PARAM))
+    lk = look or {}
+    return category in AUTO_CATEGORIES and not lk.get("crisp") and not lk.get("palette")
+
+
+def asked(params: dict[str, Any]) -> bool:
+    """True when the version itself turned the pass on: then a three-quarter picture is painted too."""
+    return params.get(PARAM) is True
 
 
 def mode_of(params: dict[str, Any]) -> str:
@@ -819,7 +839,9 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     import asyncio
 
     mode = mode_of(params)
-    sc.set_params(**{PARAM: True, "source_project_mode": mode})
+    front_only = not asked(params)
+    sc.set_params(**{"source_project_mode": mode})
+    sc.set_metrics(srcproject_front_only=front_only)
     base = current.get("base_color")
     picture = sc.lineage_file("input", ("mesh",)) or sc.lineage_file("cutout", ("concept",))
     if base is None or picture is None:
@@ -829,7 +851,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     work = sc.dir / "srcproject"
     work.mkdir(parents=True, exist_ok=True)
     try:
-        r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode)
+        r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, front_only=front_only)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
