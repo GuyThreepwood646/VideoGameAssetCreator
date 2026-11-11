@@ -231,3 +231,15 @@ def test_texture_that_merely_differs_is_not_gated() -> None:
     r = srcproject.paint(mesh, base, pic, mode="off", size=SIZE, picture_yaws=[0.0])
     assert r["metrics"]["srcproject_views"]["picture"]["gates"]["removed_by_agreement"] < 0.05
     assert rng is not None
+
+
+def test_on_by_itself_only_for_characters_on_a_smooth_look():
+    from vgac import srcproject as sp
+
+    assert sp.on({}, "humanoid", {"crisp": False, "palette": None}) is True
+    assert sp.on({}, "humanoid", {"crisp": True}) is False          # a crisp look would be undone
+    assert sp.on({}, "humanoid", {"palette": [[0, 0, 0]]}) is False
+    assert sp.on({}, "prop_rigid", {}) is False                      # other models only when asked
+    assert sp.on({"source_project": True}, "prop_rigid", {"crisp": True}) is True
+    assert sp.on({"source_project": False}, "humanoid", {}) is False
+    assert sp.asked({}) is False and sp.asked({"source_project": True}) is True
