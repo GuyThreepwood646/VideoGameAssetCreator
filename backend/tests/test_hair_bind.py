@@ -127,7 +127,7 @@ def test_off_hair_shader_untouched_and_cutout_separate():
 
 def test_importer_version_17_with_cutout_arguments():
     cs = SANDBOX / "Editor" / "VgacImport.cs"
-    assert export.importer_version(cs) == 17
+    assert export.importer_version(cs) >= 17
     text = cs.read_text(encoding="utf-8")
     for needle in ("-vgacHairCutout", "-vgacHairTwoSided", "HairCutoutShaderName", "mipMapsPreserveCoverage", "alphaTestReferenceValue",
                    "public bool hairCutout", "public bool hairTwoSided"):

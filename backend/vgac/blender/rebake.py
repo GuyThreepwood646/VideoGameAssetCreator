@@ -17,6 +17,7 @@ turned, scaled and moved like the target) onto the final mesh with Cycles "selec
 When the target was symmetrized, its texture layout is first re-packed with the stacked mirrored halves kept together,
 so the space the removed half used is reclaimed and the whole atlas is used (repack_mirrored).
 """
+import json
 import os
 import time
 
@@ -31,6 +32,22 @@ MAPS = {
     "ao": ("Non-Color", "EMIT"),
     "normal": ("Non-Color", "NORMAL"),
 }
+
+
+# Bake settings. Trials override them with the VGAC_REBAKE_OPTS environment variable (a JSON object with any of these
+# keys); the pipeline uses the defaults.
+OPTIONS = {"interpolation": "Linear", "samples": 4, "margin_type": "ADJACENT_FACES", "oversample": 1}
+
+
+def options():
+    opts = dict(OPTIONS)
+    raw = os.environ.get("VGAC_REBAKE_OPTS")
+    if raw:
+        try:
+            opts.update(json.loads(raw))
+        except ValueError:
+            print("REBAKE ignoring bad VGAC_REBAKE_OPTS")
+    return opts
 
 
 def copy_object(obj, name):
@@ -94,7 +111,7 @@ def _load(path, colorspace):
     return img
 
 
-def _source_material(images):
+def _source_material(images, interpolation="Linear"):
     """One material on the source whose output is rewired per bake (emission of one map, or a Principled BSDF with the
     normal map for the normal bake)."""
     mat = bpy.data.materials.new("vgac_bake_source")
@@ -109,7 +126,7 @@ def _source_material(images):
     for key, img in images.items():
         n = nt.nodes.new("ShaderNodeTexImage")
         n.image = img
-        n.interpolation = "Linear"
+        n.interpolation = interpolation
         tex_nodes[key] = n
     if "normal" in tex_nodes:
         nm = nt.nodes.new("ShaderNodeNormalMap")
@@ -170,10 +187,15 @@ def _final_material(images):
     return mat
 
 
-def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=False, samples=4):
+def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=False, samples=None):
     """Bake every map in `maps` ({key: png path}) from `source` onto `target`, write <out_dir>/<key>.png, and give the
     target a material using the new images. Returns a report dict."""
     t0 = time.time()
+    opts = options()
+    if samples is not None:
+        opts["samples"] = samples
+    samples = int(opts["samples"])
+    over = max(1, int(opts["oversample"]))
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
     try:
@@ -190,7 +212,7 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
     for key, path in maps.items():
         if key in MAPS and path and os.path.isfile(path):
             src_images[key] = _load(path, MAPS[key][0])
-    mat, out, emit, bsdf, tex_nodes = _source_material(src_images)
+    mat, out, emit, bsdf, tex_nodes = _source_material(src_images, opts["interpolation"])
     source.data.materials.clear()
     source.data.materials.append(mat)
 
@@ -206,11 +228,11 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
     bake.use_cage = False
     bake.cage_extrusion = 0.01 * diag
     bake.max_ray_distance = 0.02 * diag
-    bake.margin = int(margin_px)
+    bake.margin = int(margin_px) * over
     try:
-        bake.margin_type = "EXTEND"
-    except Exception:
-        pass
+        bake.margin_type = opts["margin_type"]
+    except Exception as e:
+        print("REBAKE margin type not set:", e)
     bake.target = "IMAGE_TEXTURES"
     bake.use_clear = True
 
@@ -220,7 +242,7 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
             continue
         colorspace, kind = MAPS[key]
         w, h = src_images[key].size[:]
-        size = int(tex) if key != "ao" else int(max(w, h))
+        size = int(tex) * over if key != "ao" else int(max(w, h))
         img = bpy.data.images.new(f"baked_{key}", size, size, alpha=False, float_buffer=False)
         img.colorspace_settings.name = colorspace
         if key == "normal":
@@ -254,5 +276,5 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
     bpy.data.objects.remove(source, do_unlink=True)
     return {"rebaked": True, "rebake_seconds": round(time.time() - t0, 2), "rebake_map_seconds": timings,
             "rebake_maps": written, "repacked": bool(repacked),
-            "rebake_margin_px": int(margin_px), "rebake_padding_px": int(padding_px),
+            "rebake_margin_px": int(margin_px), "rebake_options": opts, "rebake_padding_px": int(padding_px),
             "cage_extrusion_m": round(0.01 * diag, 5), "max_ray_distance_m": round(0.02 * diag, 5)}

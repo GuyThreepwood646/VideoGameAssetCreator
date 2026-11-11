@@ -18,7 +18,7 @@ from comfy import A, run, download, files_of, images_of, stage_input
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", "convert")
 
 
-def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=1024, seed=42, remesh=True):
+def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=1024, seed=42, remesh=True, tex_steps=12, segmenter="pec"):
     g = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
@@ -46,7 +46,7 @@ def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=102
         "dshape": {"class_type": "VaeDecodeShapeTrellis", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
         "tex": {"class_type": "Trellis2TextureStage", "inputs": {"positive": ["upst", 0], "negative": ["upst", 1], "shape_latent": ["k3", 0]}},
         "k4": {"class_type": "KSampler", "inputs": {"model": ["unet", 0], "positive": ["tex", 0], "negative": ["tex", 1], "latent_image": ["tex", 2],
-                                                   "seed": seed + 1, "steps": 12, "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+                                                   "seed": seed + 1, "steps": tex_steps, "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
         "dtex": {"class_type": "VaeDecodeTextureTrellis", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
         "info": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["dshape", 0]}},
     }
@@ -58,7 +58,7 @@ def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=102
     g.update({
         "dec": {"class_type": "DecimateMesh", "inputs": {"mesh": [high, 0], "target_face_count": target_faces, "placement_mode": "midpoint"}},
         "sm": {"class_type": "MeshSmoothNormals", "inputs": {"mesh": ["dec", 0], "crease_angle": 180.0}},
-        "unwrap": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["sm", 0], "segmenter": "pec", "resolution": tex, "padding": 1, "weld_distance": 0.0002}},
+        "unwrap": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["sm", 0], "segmenter": segmenter, "resolution": tex, "padding": 1, "weld_distance": 0.0002}},
         "bake": {"class_type": "BakeTextureFromVoxel", "inputs": {"mesh": ["unwrap", 0], "voxel_colors": ["dtex", 0], "reference_mesh": ["dshape", 0], "texture_size": tex}},
         "nrm": {"class_type": "BakeNormalMapFromMesh", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": tex, "cage_distance": 0.05, "ignore_backfaces": True}},
         "ao": {"class_type": "BakeAmbientOcclusion", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": max(512, tex // 2), "samples": 64, "max_distance": 0.71, "strength": 1.0, "bias": 0.01}},
@@ -76,16 +76,18 @@ def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=102
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    args = [a for i, a in enumerate(sys.argv[1:], 1) if not a.startswith("--") and sys.argv[i - 1] not in ("--tex-steps", "--segmenter")]
     subject, src = args[0], args[1]
     faces = int(args[2]) if len(args) > 2 else 20000
     tex = int(args[3]) if len(args) > 3 else 2048
     ups = int(args[4]) if len(args) > 4 else 1024
     remesh = "--no-remesh" not in sys.argv
+    tex_steps = next((int(sys.argv[i + 1]) for i, a in enumerate(sys.argv) if a == "--tex-steps"), 12)  # texture sampler steps (trial: 12 against 24)
+    segmenter = next((sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--segmenter"), "pec")  # UnwrapMesh segmenter (trial: pec or adaptive)
     prefix = f"{subject}_{faces}"
     name = stage_input(src, f"bakeoff_{subject}_convert_in.png")
     t0 = time.time()
-    outputs, secs = run(A, convert_graph(name, prefix, faces, tex, ups, remesh=remesh), poll=5.0)
+    outputs, secs = run(A, convert_graph(name, prefix, faces, tex, ups, remesh=remesh, tex_steps=tex_steps, segmenter=segmenter), poll=5.0)
     d = os.path.join(OUT, prefix)
     os.makedirs(d, exist_ok=True)
     saved = []

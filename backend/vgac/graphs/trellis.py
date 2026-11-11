@@ -5,6 +5,10 @@ Output nodes: glb (SaveGLB) and SaveImage nodes s_base, s_met, s_rough, s_nrm, s
 
 padding (G03) is UnwrapMesh's texel gap between charts; the node accepts 0 to 16. The bake nodes have no margin input;
 the mesh stage dilates the downloaded maps instead (imaging.dilate).
+
+tex_steps is the texture sampler's step count (12 by default). On the bake-off knight 24 steps gave a much richer, more
+contrasted texture but with a colour shift (bakeoff/out/bake_chain/results.md), so the default stays 12 until the owner
+has looked at the contact sheet.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
 
 
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
-                  remesh: bool = True, padding: int = 1) -> dict[str, Any]:
+                  remesh: bool = True, padding: int = 1, tex_steps: int = 12) -> dict[str, Any]:
     g: dict[str, Any] = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
@@ -46,7 +50,7 @@ def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: 
         "dshape": {"class_type": "VaeDecodeShapeTrellis", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
         "tex": {"class_type": "Trellis2TextureStage", "inputs": {"positive": ["upst", 0], "negative": ["upst", 1], "shape_latent": ["k3", 0]}},
         "k4": {"class_type": "KSampler", "inputs": {"model": ["unet", 0], "positive": ["tex", 0], "negative": ["tex", 1], "latent_image": ["tex", 2],
-                                                   "seed": seed + 1, "steps": 12, "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+                                                   "seed": seed + 1, "steps": int(tex_steps), "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
         "dtex": {"class_type": "VaeDecodeTextureTrellis", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
         "info": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["dshape", 0]}},
     }

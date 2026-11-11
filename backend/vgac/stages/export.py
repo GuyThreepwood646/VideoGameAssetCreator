@@ -132,7 +132,7 @@ def _channel(path: Path | str | None, size: tuple[int, int]) -> np.ndarray | Non
         else:
             g = im.convert("L")
         if g.size != size:
-            g = g.resize(size, Image.BILINEAR)
+            g = g.resize(size, Image.LANCZOS)  # about 1 dB closer to the original than bilinear (tests/test_resampling.py)
         return np.asarray(g, dtype=np.uint8).copy()
 
 
