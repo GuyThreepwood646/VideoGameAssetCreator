@@ -27,6 +27,12 @@ def asset_dir(project_id: str, asset_id: str, settings: Settings | None = None) 
     return project_dir(project_id, settings) / "assets" / asset_id
 
 
+def own_face_closeup(project_id: str, asset_id: str, settings: Settings | None = None) -> Path:
+    """Where the person's own close-up of the character's face is kept (own_images: POST /api/assets/{aid}/face-closeup).
+    The clean-up step's face pass paints from it instead of drawing a close-up (stages/face_detail.py)."""
+    return asset_dir(project_id, asset_id, settings) / "own" / "face_closeup.png"
+
+
 def version_dir(asset: Asset, version: Version, settings: Settings | None = None, create: bool = True) -> Path:
     d = asset_dir(asset.project_id, asset.id, settings) / version.stage / version.id
     if create:

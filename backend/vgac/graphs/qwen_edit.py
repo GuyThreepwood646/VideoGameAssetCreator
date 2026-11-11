@@ -108,6 +108,25 @@ def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width:
     return g
 
 
+COMPOSE_MAX = 3  # TextEncodeQwenImageEditPlus takes image1 to image3
+
+
+def compose_graph(image_names: list[str], prompt: str, seed: int, prefix: str, width: int = 1024,
+                  height: int = 1024) -> dict[str, Any]:
+    """One new picture from up to three source pictures (step 0.5, stages/compose.py): the edit graph with each
+    picture wired into image1..image3 of both TextEncodeQwenImageEditPlus nodes, so the prompt can name them as
+    Picture 1 to Picture 3. The output size is the latent's, not the first picture's."""
+    if not 1 <= len(image_names) <= COMPOSE_MAX:
+        raise ValueError(f"compose takes 1 to {COMPOSE_MAX} pictures, got {len(image_names)}")
+    g = edit_graph(image_names[0], prompt, seed, prefix, width=width, height=height)
+    for i, name in enumerate(image_names[1:], start=2):
+        g[f"img{i}"] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        g[f"sc{i}"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": [f"img{i}", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}}
+        g["pos"]["inputs"][f"image{i}"] = [f"sc{i}", 0]
+        g["neg"]["inputs"][f"image{i}"] = [f"sc{i}", 0]
+    return g
+
+
 def reference_prompt(instruction: str) -> str:
     """The edit prompt when a reference picture rides along as Picture 2."""
     return (f"Edit Picture 1. {instruction.strip()} Use Picture 2 only as a reference for what is asked; keep the "

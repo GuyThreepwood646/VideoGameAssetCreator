@@ -156,8 +156,7 @@ def guard(view: dict[str, Any], info: dict[str, Any], crop: np.ndarray, closeup:
     a, b = crop, closeup
     out: dict[str, Any] = {"source_face_px": round(w, 1), "correction": None, "registered": None}
     seg = face.hair_and_skin(view["image"], a, info, view["mask"])
-    lm = face.landmarks(view["image"], info)
-    la = face.landmarks(a, info)
+    la, lm = face.landmark_pair(a, view["image"], info)
     direct = face.fit_landmarks(la, lm, info["nose"]) if la and lm else None
     pre = None
     if direct is None or direct["residual_px"] > landmark_residual_max * w:
@@ -167,7 +166,9 @@ def guard(view: dict[str, Any], info: dict[str, Any], crop: np.ndarray, closeup:
             out["lined_up_first"] = True
     a_m = face.apply_alignment(a, pre) if pre else a
     b_m = face.apply_alignment(b, pre) if pre else b
-    la, lb = face.landmarks(a_m, info), face.landmarks(b_m, info)
+    la, lb = face.landmark_pair(a_m, b_m, info)
+    if pre and la and lm and la.get("how") != lm.get("how"):  # the fit below pairs the painting's with the model's
+        la, lm = face.darkest_landmarks(a_m, info), face.darkest_landmarks(view["image"], info)
     if not la:  # the painting's own eyes and mouth are needed to know where to look
         out["likeness"] = face.likeness(a, b, inner, painted_head_px)
         return out

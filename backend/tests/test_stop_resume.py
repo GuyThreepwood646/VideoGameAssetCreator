@@ -137,6 +137,26 @@ def test_autopilot_stop_and_resume(client, gate):  # noqa: F811
     assert all(len(full["stages"][s]) == 1 for s in ("turnaround", "mesh", "prep", "export"))
 
 
+def test_steer_by_hand_after_a_stop_is_remembered(client, gate):  # noqa: F811
+    """Stop the autopilot, then "Steer by hand instead": the autopilot goes idle (stored on the asset, so a fresh page
+    shows no card) and the stopped step no longer offers Resume."""
+    p, a = _project_asset(client, category="prop_rigid")
+    aid = a["id"]
+    client.post(f"/api/assets/{aid}/autopilot", json={"stop_on": "never"})
+    _until(lambda: any(v["status"] == "running" for v in _versions(client, aid, "concept")))
+    client.post(f"/api/assets/{aid}/stop", json={})
+    _until(lambda: all(v["stopped"] for v in _versions(client, aid, "concept")))
+
+    st = client.post(f"/api/assets/{aid}/autopilot/dismiss").json()
+    assert st["status"] == "idle" and st["stopped_by_user"] is False and st["by_hand"] is True
+    again = client.get(f"/api/assets/{aid}").json()
+    assert again["autopilot"]["status"] == "idle"
+    assert not any(v["stopped"] for v in again["stages"]["concept"])
+    # Resume no longer starts the autopilot.
+    out = client.post(f"/api/assets/{aid}/resume", json={}).json()
+    assert out["autopilot"]["status"] == "idle"
+
+
 def test_stopping_from_the_job_log_pauses_the_autopilot(client, gate):  # noqa: F811
     p, a = _project_asset(client, category="prop_rigid")
     aid = a["id"]

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
+import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
@@ -159,6 +160,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [itemChoice, setItemChoice] = useState<'separate' | 'keep'>('separate')
   // Hair from the library (ready-made hairstyles): offered only where the app can use it; off unless chosen.
   const [hairChoice, setHairChoice] = useState<'model' | 'library'>('model')
+  // "The face matters": on unless the person says the face is hidden or too simple to gain from the face pass.
+  const [faceMatters, setFaceMatters] = useState(true)
   const { presets } = usePresets()
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -248,6 +251,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
         ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
+        ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       rememberAutopilotDefault(autopilot)
@@ -292,9 +296,10 @@ function CreateAssetForm({ project }: { project: Project }) {
           value={picture}
           onChange={setPicture}
           label="Your picture"
-          hint="Best: one subject on a plain background, all of it in the picture. The app cuts it out and checks it is ready for 3D."
+          hint={`Best: one subject on a plain background, all of it in the picture. The app cuts it out and checks it is ready for 3D. ${SIZE_ADVICE}`}
         />
       )}
+      {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
       {fromPicture ? (
         <Field label="What is it? (optional, helps the later steps)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
           <SubmitTextarea rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" />
@@ -316,6 +321,15 @@ function CreateAssetForm({ project }: { project: Project }) {
         </div>
       ))}
       {hairOffered && <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />}
+      {category === 'humanoid' && (
+        <label className="check-item" title="Off for a hidden or very simple face: the clean-up step then skips the face pass">
+          <input type="checkbox" checked={faceMatters} onChange={(e) => setFaceMatters(e.target.checked)} />
+          <span>
+            The face matters <span className="muted small">(sharpen it and match it to the picture; turn off for a hood, mask, helmet or a very simple face)</span>
+          </span>
+          <Info term="term.face_matters" />
+        </label>
+      )}
       {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
       {!fromPicture && (
         <div className="examples">

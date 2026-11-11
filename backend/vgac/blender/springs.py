@@ -59,6 +59,7 @@ CONFIDENCE_MIN = 0.5
 MAX_BONES = 12
 CHAIN_FULL = 0.4  # the chain holds the surface fully from this share of its length on
 PREFIX = "Spring_"
+HAIR_SHARE_HEADWEAR = 0.8  # with headwear named, the share of a head part's surface that must be hair for it to sway as hair
 KINDS = ("Hair", "Cape", "Tail", "Cloth")
 
 # Settings per kind: stiffness as the natural frequency in Hz, damping as a ratio of critical damping, drag as air
@@ -108,6 +109,7 @@ REASONS = {
     "metal": "It looks like metal, so it was taken as a rigid thing.",
     "not_tapered": "It is as thick at the end as at the top, like a sheath; a tail tapers.",
     "low_confidence": "It was not clear enough that it hangs free.",
+    "headwear": "It hangs from the head and is not hair, like a hat's brim, a hood or a helmet; it moves with the head.",
 }
 
 
@@ -224,7 +226,8 @@ def segment_points(heads, tails, step):
 # --- finding the hanging parts ---------------------------------------------------------------------------------------
 
 
-def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="humanoid", max_bones=MAX_BONES, counter=None):
+def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="humanoid", max_bones=MAX_BONES, counter=None,
+               head_cloth="stiff", headwear=False):
     """The parts that hang free. V (n, 3) vertices and bones in Blender world space (Z up, the character's front -Y,
     its left +X); F (m, 3) triangles; bones: [{name, head, tail, parent}]; weights: (WI (n, 4) bone indices, WW (n, 4))
     or None; hair_v (n,) bool: vertex on a hair triangle; metal_v (n,) metallic 0..1. -> {"parts": accepted,
@@ -284,7 +287,7 @@ def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="h
         if n * cell ** 3 < 2e-6:  # specks under 2 cubic centimetres
             continue
         info = describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, hair_v, metal_v,
-                             centre_x, centre_y, height, min_len)
+                             centre_x, centre_y, height, min_len, head_cloth=head_cloth, headwear=headwear)
         if info is None:
             continue
         (accepted if info["reason"] is None else rejected).append(info)
@@ -325,7 +328,7 @@ def _dominant_bone(V, weights, sel, nbones):
 
 
 def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, hair_v, metal_v, centre_x, centre_y,
-                  height, min_len):
+                  height, min_len, head_cloth="stiff", headwear=False):
     cell = grid["cell"]
     idx = np.argwhere(parts_lab == pid)  # (k, 3) z, y, x
     z0, z1 = int(idx[:, 0].min()), int(idx[:, 0].max())
@@ -447,8 +450,14 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
     # what it is
     kind, parent = None, None
     if parent_role in HEAD_ROLES:
-        kind = "Hair" if hair_share >= 0.5 else "Cloth"
+        # Under a hat, helmet or hood (headwear: named in the description) a part counts as hair only when it is clearly
+        # hair-coloured: a dark brim is not a ponytail.
+        kind = "Hair" if hair_share >= (HAIR_SHARE_HEADWEAR if headwear else 0.5) else "Cloth"
         parent = bones[dom]["name"]
+        if kind == "Cloth" and head_cloth != "sway":
+            # A non-hair part hanging from the head is a hat's brim or back, a hood or an ear flap far more often than
+            # a headscarf's end (Vivi's hat swayed as "a scarf end"): it stays with the head unless asked.
+            out["reason"] = "headwear"
     elif parent_role in CHEST_ROLES or (parent_role or "").startswith("Spine") and parent_role != "Spine":
         kind = "Hair" if hair_share >= 0.5 else ("Cape" if out["width"] >= WIDE else ("Cloth" if behind < 0 else None))
         parent = _spine_top(bones, roles, dom)
@@ -1311,7 +1320,8 @@ def main():  # pragma: no cover - runs inside Blender
                                       "groups": len(groups), "chains": len(lib_parts), "scale": round(s_map, 6)}
         except Exception as e:  # noqa: BLE001
             report["library_hair"] = {"error": str(e)[:300]}
-    found = find_parts(V, Ft, bones, (WI, WW), hair_v, metal_v, category, max_bones=MAX_BONES - lib_bones, counter=lib_counter)
+    found = find_parts(V, Ft, bones, (WI, WW), hair_v, metal_v, category, max_bones=MAX_BONES - lib_bones, counter=lib_counter,
+                       head_cloth=_opt(argv, "--head-cloth", "stiff"), headwear="--headwear" in argv)
     report.update(height=found["height"], cell=found["cell"], find_seconds=found["seconds"],
                   rejected=[_public(r) for r in found["rejected"]], parts_seen=found["part_count"])
     parts = lib_parts + found["parts"]

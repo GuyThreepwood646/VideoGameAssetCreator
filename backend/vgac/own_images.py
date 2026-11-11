@@ -88,6 +88,27 @@ def upload_concept(aid: str, body: ConceptUploadIn, db: Session = Depends(get_se
     return start_concept_from_picture(db, a, img, body.note)
 
 
+# --- "Upscale it" -----------------------------------------------------------------------------------------------------
+
+
+@router.post("/api/versions/{vid}/upscale")
+def upscale_concept(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """A new concept version: the picture of finished concept version vid made bigger (stages/concept.upscale), then
+    cut out and checked again. 400 for another step, 409 while vid is not finished."""
+    v = db.get(Version, vid)
+    if v is None:
+        raise HTTPException(404, "version not found")
+    if v.stage != "concept":
+        raise HTTPException(400, "only a step 1 picture can be upscaled")
+    if v.status != "done" or not (v.files or {}).get("image"):
+        raise HTTPException(409, "the picture is not finished yet")
+    a = db.get(Asset, v.asset_id)
+    nv = pipeline.new_version(db, a, "concept", v, {**(v.params or {})})
+    job = pipeline.submit(db, a, nv, "upscale", {"params": {}})
+    db.refresh(nv)
+    return {"job": job_to_dict(job), "version": version_to_dict(nv)}
+
+
 # --- your own side and back views ----------------------------------------------------------------------------------
 
 
@@ -146,6 +167,66 @@ def upload_view(vid: str, view: str, body: ViewUploadIn, db: Session = Depends(g
     job = pipeline.submit(db, a, v, "upload", {"params": {}, "view": view})
     db.refresh(v)
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+# --- your own close-up of the face (the clean-up step's face pass paints from it) --------------------------------------
+
+
+FACE_CLOSEUP_CATEGORIES = ("humanoid",)
+
+
+def _face_closeup_state(a: Asset) -> dict[str, Any]:
+    p = library.own_face_closeup(a.project_id, a.id, get_settings())
+    if not p.is_file():
+        return {"image": None, "updated": None}
+    st = p.stat()
+    with Image.open(p) as im:
+        size = list(im.size)
+    return {"image": library.rel_path(p, get_settings()), "updated": int(st.st_mtime), "size": size}
+
+
+def _asset_or_404(db: Session, aid: str) -> Asset:
+    a = db.get(Asset, aid)
+    if a is None:
+        raise HTTPException(404, "asset not found")
+    return a
+
+
+@router.get("/api/assets/{aid}/face-closeup")
+def get_face_closeup(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """{image: library path or null, updated, size}: the person's own close-up of the character's face."""
+    return _face_closeup_state(_asset_or_404(db, aid))
+
+
+class FaceCloseupIn(BaseModel):
+    image: str = image_field(min_length=1)
+
+
+@router.post("/api/assets/{aid}/face-closeup")
+def upload_face_closeup(aid: str, body: FaceCloseupIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Keep the person's own close-up of the face for this asset. Every later clean-up step paints the face from it
+    instead of drawing a close-up (it is lined up with the painting first). Nothing is run here; the caller starts the
+    clean-up step or changes the kept one."""
+    a = _asset_or_404(db, aid)
+    if a.category not in FACE_CLOSEUP_CATEGORIES:
+        raise HTTPException(400, "A face close-up is used only for human characters.")
+    img = decode_or_400(body.image, "close-up")
+    if min(img.size) < 128:
+        raise HTTPException(400, "That close-up is too small: use a picture at least 128 pixels on each side.")
+    dest = library.own_face_closeup(a.project_id, a.id, get_settings())
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    uploads.save_png(uploads.flatten(img, (64, 64, 64)), dest.parent, dest.name)  # the painted crop's grey
+    return _face_closeup_state(a)
+
+
+@router.delete("/api/assets/{aid}/face-closeup")
+def delete_face_closeup(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Stop using the person's own close-up (the versions made from it keep their copy)."""
+    a = _asset_or_404(db, aid)
+    p = library.own_face_closeup(a.project_id, a.id, get_settings())
+    if p.is_file():
+        p.unlink()
+    return _face_closeup_state(a)
 
 
 # --- refine with a reference picture (experimental) -------------------------------------------------------------------

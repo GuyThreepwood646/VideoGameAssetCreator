@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from own_images_helpers import b64, cut, figure
+from own_images_helpers import BIG, b64, cut, figure
 from vgac import autopilot, imaging
 from vgac.comfy import ComfyClient
 from vgac.stages import base as stage_base
@@ -43,7 +43,7 @@ def engine(monkeypatch: pytest.MonkeyPatch):
         return {"outputs": {}, "elapsed_seconds": 0.1}
 
     async def download_image(self, entry, node, dest, instance=None):
-        figure("a").save(dest)  # whatever the model was asked for, it draws a ready A-pose figure
+        figure("a", **BIG).save(dest)  # whatever the model was asked for, it draws a ready A-pose figure
         return Path(dest)
 
     async def cutout(self, image_path, name, instance=None, base=0.0, span=0.1):
@@ -93,7 +93,7 @@ def _asset(client, pid, category="humanoid", **extra):
 def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, settings):
     p = _project(client)
     a = _asset(client, p["id"], prompt="a knight")
-    r = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(cut(figure("a")))})
+    r = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(cut(figure("a", **BIG)))})
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["job"]["kind"] == "concept.upload" and out["version"]["params"]["source"] == "upload"
@@ -103,7 +103,7 @@ def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, setti
     assert v["status"] == "done" and v["selected"] is True
     assert {"image", "original", "cutout", "cutout_white"} <= set(v["files"])
     assert v["metrics"]["source"] == "upload" and v["metrics"]["gate_ok"] is True
-    assert {c["name"] for c in v["metrics"]["checks"]} == {"one_subject", "in_frame", "big_enough", "arms_away"}
+    assert {c["name"] for c in v["metrics"]["checks"]} == {"one_subject", "in_frame", "big_enough", "detail_size", "arms_away"}
     # The stored picture is a plain PNG on light grey, no metadata.
     img = Image.open(settings.library_path / v["files"]["image"])
     assert img.format == "PNG" and img.mode == "RGB" and img.getpixel((2, 2)) == (235, 235, 235)
@@ -301,3 +301,31 @@ def test_refine_with_a_reference_picture_is_wired_as_picture_two(client, engine)
     bad = client.post(f"/api/versions/{t['version']['id']}/refine", json={"instruction": "x", "reference_image": b64(figure())})
     assert bad.status_code == 400 and "first picture" in bad.json()["detail"]
     assert m["category"] == "material"
+
+
+def test_upscale_it_makes_a_bigger_checked_copy(client, engine, settings):
+    """POST /api/versions/{vid}/upscale: a new step 1 version from the picture, upscaled with the photo model on the
+    Realistic look, cut out and checked again; another step's version is refused."""
+    p = _project(client)
+    a = _asset(client, p["id"], prompt="a knight", style_preset="realistic_pbr")
+    up = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(cut(figure("a")))}).json()
+    wait_job(client, up["job"]["id"])
+    small = client.get(f"/api/versions/{up['version']['id']}").json()
+    detail = {c["name"]: c for c in small["metrics"]["checks"]}["detail_size"]
+    assert not detail["passed"] and detail["fix"]["op"] == "upscale"
+
+    r = client.post(f"/api/versions/{small['id']}/upscale")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["job"]["kind"] == "concept.upscale" and out["version"]["parent_version_id"] == small["id"]
+    assert wait_job(client, out["job"]["id"])["status"] == "done"
+    v = client.get(f"/api/versions/{out['version']['id']}").json()
+    assert v["status"] == "done" and v["params"]["upscaled_from"] == small["id"]
+    assert v["params"]["upscale_model"] == "4xRealWebPhoto_v4_dat2.pth" and v["params"]["source"] == "upload_edit"
+    graph = engine["comfy"][-1]["graph"]
+    assert graph["um"]["inputs"]["model_name"] == "4xRealWebPhoto_v4_dat2.pth"
+    assert graph["fit"]["inputs"]["width"] > 512 and v["metrics"]["upscale"]["from_size"] == [512, 768]
+    assert {c["name"] for c in v["metrics"]["checks"]} >= {"detail_size", "big_enough"}
+
+    mesh = client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()
+    assert client.post(f"/api/versions/{mesh['version']['id']}/upscale").status_code in (400, 409)

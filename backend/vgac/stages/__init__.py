@@ -90,6 +90,17 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             if upload is None:
                 raise ValueError(f"the {stage} step does not take your own picture")
             await upload(sc, params, payload.get("view"))
+        elif op == "upscale":
+            # "Upscale it": a bigger copy of a concept picture (stages/concept.upscale).
+            fn = getattr(mod, "upscale", None)
+            if fn is None:
+                raise ValueError(f"the {stage} step cannot upscale")
+            await fn(sc, params)
+        elif op == "compose":
+            # Step 0.5: a new concept picture from several of the person's own pictures (vgac/compose.py).
+            from .. import compose
+
+            await compose.run(sc, params)
         elif op == "judge":
             if (payload.get("mode") or "metrics") == "local":
                 from . import judge as judge_mod
