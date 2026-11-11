@@ -366,7 +366,7 @@ GOLDEN_OFF = {
                          "texture_tries", "texture_try_kept", "texture_try_ratios", "texture_try_seeds", "triangles",
                          "unwrap_padding_px", "views"],
              "params": ["engine", "first_seed", "head_room", "input_view", "padding", "remesh", "seed", "target_faces",
-                        "target_faces_source", "texture_size", "texture_source", "upsample"]},
+                        "target_faces_source", "tex_steps", "texture_size", "texture_source", "upsample"]},
     "prep": {"checks": ["albedo_range", "atlas_used", "bake_matches", "baked_light", "degenerate_faces",
                         "face_matches_picture", "hair_matches_picture", "manifold", "metal_mixed", "size_m",
                         "texture_padding", "triangle_budget", "uv_set", "watertight"],

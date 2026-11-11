@@ -314,7 +314,7 @@
     2
    ],
    "seed": 43,
-   "steps": 12,
+   "steps": 24,
    "cfg": 1.0,
    "sampler_name": "euler",
    "scheduler": "normal",

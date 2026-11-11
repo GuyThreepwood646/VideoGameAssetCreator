@@ -18,7 +18,7 @@ from comfy import A, run, download, files_of, images_of, stage_input
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", "convert")
 
 
-def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=1024, seed=42, remesh=True, tex_steps=12, segmenter="pec"):
+def convert_graph(image_name, prefix, target_faces=20000, tex=2048, upsample=1024, seed=42, remesh=True, tex_steps=24, segmenter="pec"):
     g = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     tex = int(args[3]) if len(args) > 3 else 2048
     ups = int(args[4]) if len(args) > 4 else 1024
     remesh = "--no-remesh" not in sys.argv
-    tex_steps = next((int(sys.argv[i + 1]) for i, a in enumerate(sys.argv) if a == "--tex-steps"), 12)  # texture sampler steps (trial: 12 against 24)
+    tex_steps = next((int(sys.argv[i + 1]) for i, a in enumerate(sys.argv) if a == "--tex-steps"), 24)  # texture sampler steps (the app default is 24)
     segmenter = next((sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--segmenter"), "pec")  # UnwrapMesh segmenter (trial: pec or adaptive)
     prefix = f"{subject}_{faces}"
     name = stage_input(src, f"bakeoff_{subject}_convert_in.png")

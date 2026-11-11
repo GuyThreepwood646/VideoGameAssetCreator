@@ -268,6 +268,7 @@ export const stages: StageInfo[] = [
       { name: 'target_faces', label: 'Target faces (dense)', type: 'integer', min: 200, max: 500000, step: 1000, default: 500000 },
       { name: 'texture_size', label: 'Texture size', type: 'select', options: [1024, 2048, 4096], default: 2048 },
       { name: 'upsample', label: 'Finer colour and shape', type: 'select', options: [1024, 1536], default: 1024 },
+      { name: 'tex_steps', label: 'Colour detail', type: 'select', options: [12, 24], default: 24 },
       { name: 'head_build', label: 'Build the head on its own', type: 'boolean', default: null },
       { name: 'head_crop', label: 'Head crop (share of the height)', type: 'number', min: 0.18, max: 0.4, step: 0.02, default: null },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 5 },

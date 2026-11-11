@@ -70,8 +70,8 @@ def test_importer_smooth_colour_is_high_quality_and_anisotropic():
     assert "TextureImporterType.NormalMap" in IMPORTER
 
 
-def test_trellis_texture_steps_is_a_parameter_defaulting_to_12():
+def test_trellis_texture_steps_is_a_parameter_defaulting_to_24():
     from vgac.graphs.trellis import convert_graph
 
-    assert convert_graph("a.png", "p")["k4"]["inputs"]["steps"] == 12
-    assert convert_graph("a.png", "p", tex_steps=24)["k4"]["inputs"]["steps"] == 24
+    assert convert_graph("a.png", "p")["k4"]["inputs"]["steps"] == 24
+    assert convert_graph("a.png", "p", tex_steps=12)["k4"]["inputs"]["steps"] == 12

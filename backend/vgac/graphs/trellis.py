@@ -6,9 +6,10 @@ Output nodes: glb (SaveGLB) and SaveImage nodes s_base, s_met, s_rough, s_nrm, s
 padding (G03) is UnwrapMesh's texel gap between charts; the node accepts 0 to 16. The bake nodes have no margin input;
 the mesh stage dilates the downloaded maps instead (imaging.dilate).
 
-tex_steps is the texture sampler's step count (12 by default). On the bake-off knight 24 steps gave a much richer, more
-contrasted texture but with a colour shift (bakeoff/out/bake_chain/results.md), so the default stays 12 until the owner
-has looked at the contact sheet.
+tex_steps is the texture sampler's step count, 24 by default (12 before). 24 steps gives a much richer texture
+(sharpness ratio against the picture 0.37 to 0.56 on the knight) but its tone drifts (about 7 percent brighter); the mesh
+stage shifts the mean colour back towards the picture afterwards (vgac/colourmatch.py; bakeoff/out/bake_chain/results.md).
+12 stays selectable.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
 
 
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
-                  remesh: bool = True, padding: int = 1, tex_steps: int = 12) -> dict[str, Any]:
+                  remesh: bool = True, padding: int = 1, tex_steps: int = 24) -> dict[str, Any]:
     g: dict[str, Any] = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
