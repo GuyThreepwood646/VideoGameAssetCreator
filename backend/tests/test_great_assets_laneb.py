@@ -83,6 +83,8 @@ SAMPLES = {
     "one_subject": ((1, 1), (3, 1)),
     "in_frame": ((0.05, 0.01), (0.0, 0.01)),
     "big_enough": ((900, 400), (220, 400)),
+    "detail_size": ((930, 860), (640, 860)),
+    "joins": ((0, 20), (144, 20)),
     "arms_away": ((0.4, 0.2), (0.0, 0.2)),
     "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
     "face_drawn": ((1, 1), (0, 1)),  # the vision model sees eyes on the face (1) or not, or the back of the head (0)

@@ -375,3 +375,39 @@ def test_guide_entries_exist():
     assert guidance.PARAM_HELP["springs"]["help"]["meaning"].startswith("Spring bones (small extra bones that sway on their own)")
     q = quality.check("springs_shipped", True, 2, 2, vars={"unity": False})
     assert q["help"].startswith("The files carry the spring bones: 2 chains")
+
+
+# --- what may sway on the head (Vivi's hat swayed as "a scarf end") -----------------------------------------------------
+
+
+def test_a_non_hair_part_hanging_from_the_head_stays_with_the_head():
+    pt = tube(PONYTAIL, 0.03)
+    V, F, bones, W = character(pt)
+    plain = sp.find_parts(V, F, bones, W, None, None)  # no hair found on it: a hat's back, a hood's point
+    assert not plain["parts"] and any(r["reason"] == "headwear" for r in plain["rejected"])
+    assert "moves with the head" in next(r for r in plain["rejected"] if r["reason"] == "headwear")["why"]
+    asked = sp.find_parts(V, F, bones, W, None, None, head_cloth="sway")  # a headscarf's end, when asked
+    assert [p["kind"] for p in asked["parts"]] == ["Cloth"]
+
+
+def test_under_headwear_a_head_part_must_be_clearly_hair():
+    pt = tube(PONYTAIL, 0.03)
+    V, F, bones, W = character(pt)
+    hair = np.zeros(len(V), bool)
+    tail = np.arange(len(V) - len(pt[0]), len(V))
+    hair[tail] = True
+    hair[tail[::3]] = False  # two thirds hair-coloured: a dark brim, say
+    assert [p["kind"] for p in sp.find_parts(V, F, bones, W, hair, None)["parts"]] == ["Hair"]
+    assert not sp.find_parts(V, F, bones, W, hair, None, headwear=True)["parts"]
+
+
+def test_head_options_follow_the_description_and_the_setting():
+    from vgac import springs as sm
+
+    assert sm.head_options({}, "a little black mage in a tall pointed hat") == {"head_sway": "auto", "head_cloth": "stiff", "headwear": True, "why": "default"}
+    assert sm.head_options({}, "a dancer with long red ribbons in her hair")["head_cloth"] == "sway"
+    assert sm.head_options({"head_sway": "all"}, "a knight in a helmet")["head_cloth"] == "sway"
+    assert sm.head_options({"head_sway": "hair"}, "a woman in a headscarf")["head_cloth"] == "stiff"
+    assert not sm.head_options({}, "a chatty villager")["headwear"]
+    args = sm.blender_args(Path("a.glb"), Path("b.glb"), Path("w"), None, None, None, None, head={"head_cloth": "stiff", "headwear": True})
+    assert args[-3:] == ["--head-cloth", "stiff", "--headwear"]

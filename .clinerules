@@ -11,3 +11,8 @@
 - You are running inside Cline, NOT Claude Code or OpenCode.
 - ONLY call tools from this exact list: `read_files`, `search_codebase`, `editor`, `run_commands`, `ask_question`, `fetch_web_content`, `skills`.
 - NEVER attempt to call `glob_files`, `write_file`, `grep`, or `bash`. To find or list files, use `search_codebase` or `read_files`.
+
+# Mandatory Execution Directive
+- You are currently in an active code execution loop. Do NOT write high-level summaries, text-only plans, or conversational disclaimers.
+- When given a task, you MUST immediately invoke your available tools (`read_files`, `search_codebase`, `editor`, `run_commands`) to inspect code and make edits.
+- Never respond with a plan when in Act mode; execute the first concrete step using tool calls immediately.

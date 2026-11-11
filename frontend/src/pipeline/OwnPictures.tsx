@@ -1,8 +1,9 @@
 // Start from your own images on the asset page: "Use my own picture" on the first step, "I have my own side or back
 // views" on the turnaround, and the experimental reference picture in "Change something".
-import { useState } from 'react'
-import { api, type Asset, type StageId, type Version } from '../api'
+import { useEffect, useState } from 'react'
+import { api, ApiError, libraryUrl, type Asset, type FaceCloseup, type StageId, type Version } from '../api'
 import { ImageDrop, type PickedImage } from '../components/ImageDrop'
+import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { Disclosure } from '../components/ui'
 import { useRefData } from '../refdata'
@@ -71,7 +72,129 @@ export function OwnPictures({
 }) {
   if (stage === 'concept') return <ConceptUpload asset={asset} busy={busy} act={act} onCreated={onCreated} />
   if (stage === 'turnaround' && asset.category !== 'material' && canRun) return <OwnViews asset={asset} active={active} busy={busy} act={act} onCreated={onCreated} />
+  if (stage === 'prep' && asset.category === 'humanoid')
+    return (
+      <>
+        <FaceMatters asset={asset} busy={busy} act={act} />
+        {asset.face_matters !== false && <OwnFaceCloseup asset={asset} active={active} busy={busy} act={act} onCreated={onCreated} />}
+      </>
+    )
   return null
+}
+
+// "The face matters": on by default. Off for a character whose face is hidden or too simple to gain from the face pass
+// (a hood with glowing eyes, a mask, a robot): step 4 then skips it, which saves a few minutes per clean-up.
+export function FaceMatters({ asset, busy, act }: { asset: Asset; busy: boolean; act: Act }) {
+  const on = asset.face_matters !== false
+  return (
+    <label className="check-item face-matters" title="Off skips the face pass in this step: for a hidden or very simple face">
+      <input type="checkbox" checked={on} disabled={busy} onChange={(e) => act(() => api.updateAsset(asset.id, { face_matters: e.target.checked }))} />
+      <span>
+        The face matters
+        <span className="muted small">
+          {on
+            ? ' (each clean-up sharpens the face and matches it to the picture, a few minutes more)'
+            : ' (off: the face is left as the 3D step made it; turn on for a character whose face should look like the picture)'}
+        </span>
+      </span>
+      <Info term="term.face_matters" />
+    </label>
+  )
+}
+
+// "Use my own face close-up" on the clean-up step: the face pass paints the face from your close-up (lined up with the
+// painting first) instead of drawing one. The picture belongs to the asset, so every later clean-up uses it, the
+// autopilot's too; "Paint the face from it now" runs the clean-up again on the version shown.
+function OwnFaceCloseup({ asset, active, busy, act, onCreated }: { asset: Asset; active: Version | undefined; busy: boolean; act: Act; onCreated: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [state, setState] = useState<FaceCloseup | null | 'unavailable'>(null)
+  const [picture, setPicture] = useState<PickedImage | null>(null)
+  useEffect(() => {
+    let alive = true
+    api.getFaceCloseup(asset.id).then(
+      (st) => alive && setState(st),
+      (e) => alive && setState(e instanceof ApiError && e.status === 404 ? 'unavailable' : null),
+    )
+    return () => {
+      alive = false
+    }
+  }, [asset.id])
+  if (state === 'unavailable') return null
+  const current = state?.image ? `${libraryUrl(state.image)}?v=${state.updated ?? 0}` : null
+  const onVersion = active?.stage === 'prep' && active.status === 'done' ? active : null
+  const usedOn = (onVersion?.metrics?.face_detail as { closeup?: { own?: boolean; used?: boolean } } | undefined)?.closeup
+  const save = () =>
+    act(async () => {
+      if (!picture) return
+      setState(await api.setFaceCloseup(asset.id, picture.dataUrl))
+      setPicture(null)
+    })
+  const remove = () =>
+    act(async () => {
+      setState(await api.removeFaceCloseup(asset.id))
+    })
+  const paintNow = () =>
+    act(async () => {
+      if (!onVersion) return
+      const r = await api.adjust(onVersion.id, { face_closeup_own: true })
+      onCreated(r.version.id)
+    })
+  return (
+    <div className="own-pictures">
+      <div className="row-gap">
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} title="Paint the face from a close-up you have instead of one the app draws">
+          {current ? 'My own face close-up (added)' : 'Use my own face close-up'}
+        </button>
+        <Info term="term.own_face_closeup" />
+      </div>
+      {open && (
+        <div className="own-pictures-panel">
+          <div className="muted small">
+            A close-up of this character's face, for example a crop of the photo the character was made from. The app draws a sharp close-up of the painted face with this picture's features (the painting's pose, expression and
+            light, your picture's eyes, nose, mouth and skin), and paints the model's face from it; the colours stay the painting's so the face matches the body.
+          </div>
+          <div className="muted small">
+            Best: the face from the front, in soft light, cropped from the top of the hair to the chin. Another expression is fine. If the drawn close-up does not pass the checks, your picture is lined up with the painted face directly instead, which needs the same expression and angle.
+          </div>
+          {current && (
+            <div className="row-gap">
+              <a href={current} target="_blank" rel="noreferrer" title="Open your close-up">
+                <img src={current} alt="Your close-up of the face" className="own-face-closeup-thumb" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 4 }} />
+              </a>
+              <span className="muted small">
+                In use: every clean-up of this asset paints the face from it.
+                {usedOn?.own ? (usedOn.used ? ' The version shown was painted from it.' : ' The version shown could not use it (see the quality checks).') : ''}
+              </span>
+              <button type="button" className="link small" disabled={busy} onClick={remove} title="Stop using your close-up; the app draws one again">
+                Remove
+              </button>
+            </div>
+          )}
+          <ImageDrop
+            value={picture}
+            onChange={setPicture}
+            label={current ? 'Replace it with another close-up' : 'Your close-up of the face'}
+            disabled={busy}
+            hint="Best: the head and shoulders facing straight at you, the whole face in the picture, the same character as the painting."
+          />
+          <div className="row-gap">
+            <button type="button" className="primary" disabled={busy || !picture} onClick={save}>
+              {current ? 'Use this one instead' : 'Use this close-up'}
+            </button>
+            {current && onVersion && (
+              <button type="button" disabled={busy || !!picture} onClick={paintNow} title="Runs the clean-up again on the version shown, with the face painted from your close-up">
+                Paint the face from it now
+              </button>
+            )}
+            {current && !onVersion && <span className="muted small">The next clean-up uses it.</span>}
+            <button type="button" className="link small" onClick={() => setOpen(false)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ConceptUpload({ asset, busy, act, onCreated }: { asset: Asset; busy: boolean; act: Act; onCreated: (id: string) => void }) {
@@ -106,9 +229,10 @@ function ConceptUpload({ asset, busy, act, onCreated }: { asset: Asset; busy: bo
             hint={
               material
                 ? 'Best: taken straight on, in even light, the surface filling the whole photo.'
-                : 'Best: one subject on a plain background, all of it in the picture. It is cut out and checked like a painted one.'
+                : `Best: one subject on a plain background, all of it in the picture. It is cut out and checked like a painted one. ${SIZE_ADVICE}`
             }
           />
+          {!material && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
           {!asset.prompt.trim() && (
             <label className="field">
               <span className="field-label">

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { creditText, hairApi, hairLibraryUrl, libraryUrl, stageEstimateSeconds, type Asset, type HairCandidate, type HairPanel, type HairStyleEntry, type Version } from '../api'
 import { Info } from '../components/Info'
+import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { ErrorText } from '../components/ui'
 import { fmtDuration, joinAnd, stagePlain, type FixAction } from '../help'
 import { useHairPanel } from './HairSetting'
@@ -29,6 +30,19 @@ function creditOf(s: HairStyleEntry): string {
   if (creditText(s.credit)) return creditText(s.credit)
   const lic = !s.licence || /^CC0/i.test(s.licence) ? 'CC0 (free to use)' : s.licence
   return [s.author ? `By ${s.author}` : null, s.pack, lic].filter(Boolean).join(', ')
+}
+
+const VIEW_WORDS: Record<string, string> = { front: 'front', quarter: 'three-quarter', side: 'side', left: 'left side', right: 'right side', back: 'back', top: 'top' }
+
+// Every thumbnail of a style, front and three-quarter first, for the full-size viewer.
+function thumbsOf(s: HairStyleEntry): PictureItem[] {
+  const t = s.thumbs
+  if (!t) return []
+  const entries: [string, string][] = Array.isArray(t) ? t.map((x, i) => [String(i + 1), x]) : Object.entries(t)
+  const order = ['front', 'quarter', 'side', 'left', 'right', 'back', 'top']
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length)
+  entries.sort((a, b) => rank(a[0]) - rank(b[0]))
+  return entries.map(([k, v]) => ({ src: hairLibraryUrl(v) ?? v, label: `${s.name}, ${VIEW_WORDS[k] ?? 'view ' + k}` }))
 }
 
 function thumbOf(s: HairStyleEntry): string | undefined {
@@ -76,6 +90,9 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   const [more, setMore] = useState(false)
   const [lighter, setLighter] = useState(false)
   const [catalogue, setCatalogue] = useState<HairStyleEntry[] | null>(null)
+  // Bigger cards for the whole picker, and one style's pictures at full size.
+  const [large, setLarge] = useState(false)
+  const [viewing, setViewing] = useState<{ items: PictureItem[]; start: number } | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
 
   // "Choose a lighter hairstyle" (the hair_triangles Fix) lands here: show more, lightest first.
@@ -136,22 +153,39 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         : 'Your description does not name a hairstyle, so every style was tried quickly on your character. The order is a rough guide; pick by eye.')
   const notFromThisVersion = panel.mesh_version_id && panel.mesh_version_id !== version.id
 
-  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; fit: string; score?: number | null; lite?: boolean }, tried: boolean) => {
+  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; pictures?: PictureItem[]; fit: string; score?: number | null; lite?: boolean }, tried: boolean) => {
     // Tried styles: the backend renders your character's own head in plain grey with the recoloured hair, front and
     // three-quarter. Catalogue thumbnails: the style itself in grey on a grey reference figure.
     const inUse = panel.applied?.style === c.style
     const isPick = !inUse && panel.pick === c.style
     const isBest = !inUse && !isPick && !panel.pick && !panel.applied && panel.best === c.style
     const cost = confirm === c.style ? changeCost(panel, c.triangles, appliedTriangles) : null
+    const openPictures = () => {
+      const pics = c.pictures?.length ? c.pictures : c.picture ? [{ src: c.picture, label: tried ? `${c.name} on your character` : c.name }] : []
+      if (pics.length) setViewing({ items: pics, start: Math.max(0, pics.findIndex((p) => p.src === c.picture)) })
+    }
     return (
       <div key={c.style} className={'move-card' + (current === c.style ? ' move-card-on' : '')} style={{ cursor: 'default', alignItems: 'stretch' }}>
-        <div className="view-image" style={tried ? { height: 'auto', minHeight: 90, background: 'var(--panel-2)' } : { height: 150, background: 'var(--panel-2)' }}>
-          {c.picture ? (
-            <img src={c.picture} alt={tried ? `${c.name} on your character's head, shown in plain grey` : `${c.name} on a grey reference figure`} style={tried ? { width: '100%', height: 'auto' } : undefined} loading="lazy" />
-          ) : (
+        {c.picture ? (
+          <Zoomable
+            label={c.name}
+            className="view-image"
+            style={tried ? { height: 'auto', minHeight: 90, background: 'var(--panel-2)', cursor: 'zoom-in' } : { height: large ? 300 : 150, background: 'var(--panel-2)', cursor: 'zoom-in' }}
+            onOpen={openPictures}
+          >
+            <img
+              src={c.picture}
+              alt={tried ? `${c.name} on your character's head, shown in plain grey` : `${c.name} on a grey reference figure`}
+              style={tried ? { width: '100%', height: 'auto' } : undefined}
+              loading="lazy"
+              onClick={openPictures}
+            />
+          </Zoomable>
+        ) : (
+          <div className="view-image" style={{ height: tried ? 90 : large ? 300 : 150, background: 'var(--panel-2)' }}>
             <span className="muted small">No picture</span>
-          )}
-        </div>
+          </div>
+        )}
         <div className="move-card-text">
           <span className="move-card-label">
             {c.name}{' '}
@@ -188,13 +222,26 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   }
 
   const tried = panel.candidates.map((c: HairCandidate) =>
-    card({ style: c.style, name: c.name, triangles: c.triangles, kind: c.kind, credit: creditText(c.credit), picture: libraryUrl(c.picture_url), fit: fitWords(c.score), score: c.score }, true),
+    card(
+      {
+        style: c.style,
+        name: c.name,
+        triangles: c.triangles,
+        kind: c.kind,
+        credit: creditText(c.credit),
+        picture: libraryUrl(c.picture_url),
+        pictures: [...(c.picture_url ? [{ src: libraryUrl(c.picture_url)!, label: `${c.name} on your character (front and three-quarter)` }] : []), ...(byId.get(c.style) ? thumbsOf(byId.get(c.style)!) : [])],
+        fit: fitWords(c.score),
+        score: c.score,
+      },
+      true,
+    ),
   )
   // The style in use came from "Show more hairstyles": it leads the row, from the catalogue, with its fit from Clean up.
   const appliedEntry = panel.applied && !panel.candidates.some((c) => c.style === panel.applied!.style) ? byId.get(panel.applied.style) : undefined
   if (appliedEntry)
     tried.unshift(
-      card({ style: appliedEntry.id, name: appliedEntry.name, triangles: typeof appliedEntry.triangles_used === 'number' ? appliedEntry.triangles_used : appliedEntry.triangles, lite: appliedEntry.lite_used, kind: appliedEntry.kind, credit: creditOf(appliedEntry), picture: thumbOf(appliedEntry), fit: fitWords(panel.applied?.score ?? null), score: panel.applied?.score ?? null }, false),
+      card({ style: appliedEntry.id, name: appliedEntry.name, triangles: typeof appliedEntry.triangles_used === 'number' ? appliedEntry.triangles_used : appliedEntry.triangles, lite: appliedEntry.lite_used, kind: appliedEntry.kind, credit: creditOf(appliedEntry), picture: thumbOf(appliedEntry), pictures: thumbsOf(appliedEntry), fit: fitWords(panel.applied?.score ?? null), score: panel.applied?.score ?? null }, false),
     )
   const triedIds = new Set([...panel.candidates.map((c) => c.style), ...(appliedEntry ? [appliedEntry.id] : [])])
   const phone = asset.platform_target === 'mobile_low'
@@ -208,11 +255,17 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
 
   return (
     <div className="hair-picker" ref={boxRef} style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 'var(--s2)' }}>
-      <div className="field-label">
-        Hairstyle (Hair from the library)
-        <Info term="term.hair_library" />
+      <div className="row-between">
+        <div className="field-label">
+          Hairstyle (Hair from the library)
+          <Info term="term.hair_library" />
+        </div>
+        <button type="button" className="small-btn" aria-pressed={large} onClick={() => setLarge((v) => !v)} title="Show the hairstyle pictures bigger. Click any picture to see it full size.">
+          {large ? 'Smaller pictures' : 'Bigger pictures'}
+        </button>
       </div>
-      <div className="small muted">{intro}</div>
+      <div className="small muted">{intro} Click a picture to see it full size{catalogue ? ', with every view of the style' : ''}.</div>
+      {viewing && <PictureViewer items={viewing.items} start={viewing.start} onClose={() => setViewing(null)} />}
       {panel.candidates.length > 0 && <div className="small muted">Each picture shows your character's own head in plain grey, from the front and from three-quarters, with the hairstyle in the hair colour of your picture.</div>}
       {notFromThisVersion && <div className="small muted">These were tried on the 3D model you kept.</div>}
       {panel.nothing_fits && (
@@ -235,7 +288,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         </div>
       )}
       {tried.length > 0 && (
-        <div className="move-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' }}>
+        <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 360 : 190}px, 1fr))` }}>
           {tried}
         </div>
       )}
@@ -261,15 +314,15 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
           {!catalogue && !error && <div className="muted small">Loading the hair library...</div>}
           {catalogue && others.length === 0 && <div className="muted small">Every hairstyle in the library is shown above.</div>}
           {lighter ? (
-            <div className="move-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-              {[...others].sort((a, b) => used(a) - used(b)).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
+            <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 320 : 170}px, 1fr))` }}>
+              {[...others].sort((a, b) => used(a) - used(b)).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
             </div>
           ) : (
             families.map((f) => (
               <div key={f} className="move-group">
                 <div className="field-label">{FAMILY_WORDS[f] ?? f}</div>
-                <div className="move-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-                  {others.filter((s) => s.family === f).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), fit: fitWords(null) }, false))}
+                <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 320 : 170}px, 1fr))` }}>
+                  {others.filter((s) => s.family === f).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
                 </div>
               </div>
             ))

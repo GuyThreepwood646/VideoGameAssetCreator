@@ -29,6 +29,8 @@ models:
   qwen_camera_lora: {name: Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo), file: qie2511_camera_angle_berkerdooo.safetensors, licence: Apache-2.0, version: "1.0"}
   qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0"}
   birefnet: {name: BiRefNet, file: birefnet.safetensors, licence: MIT, version: "1.0"}
+  upscale_photo: {name: 4xRealWebPhoto v4 (DAT2), file: 4xRealWebPhoto_v4_dat2.pth, licence: CC-BY-4.0, version: "4"}
+  upscale_art: {name: Real-ESRGAN x2plus, file: RealESRGAN_x2plus.pth, licence: BSD-3-Clause, version: "0.2.1"}
   trellis2: {name: TRELLIS.2, file: trellis_2_int8_convrot.safetensors, licence: MIT, version: "2"}
   hy3d_mv: {name: Hunyuan3D-2mv, file: Hunyuan3D-2mv.fp16.safetensors, licence: Tencent Hunyuan Community Licence, version: "2.0"}
   skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400}

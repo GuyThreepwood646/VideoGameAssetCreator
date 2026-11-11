@@ -254,8 +254,14 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
         # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
-        sc.set_params(face_detail=params.get("face_detail") is not False, face_strength=face_detail.strength_of(params),
-                      face_density=face_detail.density_choice(params), face_closeup=face_detail.closeup_on(params))
+        # "The face matters" off on the asset: the pass is skipped unless this run turns it on
+        face_matters = getattr(sc.asset, "face_matters", None) is not False
+        if params.get("face_detail") is None and not face_matters:
+            params = {**params, "_face_matters": False}
+        sc.set_params(face_detail=params.get("face_detail") is not False and face_matters if params.get("face_detail") is None
+                      else params.get("face_detail") is not False, face_strength=face_detail.strength_of(params),
+                      face_density=face_detail.density_choice(params), face_closeup=face_detail.closeup_on(params),
+                      face_sides=params.get("face_sides") is not False, face_closeup_guided=params.get("face_closeup_guided") is not False)
         # The hair detail pass (stages/hair_detail.py): the hair is found first, so the face pass's one relayout can give
         # it more texels too; it is painted after the face, on the final layout, and never writes the face's texels.
         sc.set_params(hair_detail=hair_detail.on(params), hair_strength=hair_detail.strength_of(params))

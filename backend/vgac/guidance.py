@@ -436,6 +436,19 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # Spring bones (vgac/springs.py, blender/springs.py), checked in rig: what sways, or why nothing does. Passes when
     # the pass stood back with its reason; fails softly on an error, a looping move that jumps at its seam or a part
     # that passes into the body.
+    # Parts the 3D build joined (stages/rig.py _joins, blender/joins.py).
+    "joins": {
+        "severity": "warn",
+        "ok": lambda c: ("No forearm or hand is grown into the body."
+                         + (" The legs were joined low down (a strand between the feet) and have been parted, so they move apart freely." if _var(c, "legs_parted") else "")
+                         + (" The legs are joined low down; parting them is turned off." if _var(c, "measured_only") and _var(c, "legs_found") else "")),
+        "fail": lambda c: ("The " + ("forearms and hands are" if _var(c, "both") else "{sides} forearm or hand is") + " grown into the body in the 3D model "
+                           "(they touched or nearly touched in the pictures), so the body's surface is pulled along when the arm moves. "
+                           "Making the first picture again with the arms held clear of the body, then building the 3D model again, fixes it."
+                           + (" The legs were joined low down and have been parted." if _var(c, "legs_parted") else "")),
+        "fix": lambda c: {"stage": "concept", "params": {}},
+        "fix_label": lambda c: "Make the first picture again",
+    },
     "springs": {
         "severity": "warn",
         "ok": lambda c: ("No spring bones (small extra bones that sway on their own) were added: {why}"
@@ -697,13 +710,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": lambda c: ("The face was painted from " + (_var(c, "source") or "the picture")
                          + ": its detail went from {before:n} to {value:n} (sharp from {limit:n})."
                          + (" The cheeks were also painted from {sides}." if _var(c, "sides") else "")
-                         + (" A close-up was drawn but not used: {closeup_not_used}." if _var(c, "closeup_not_used") else "")
+                         + ((" Your close-up of the face was not used: {closeup_not_used}." if _var(c, "closeup_own") else
+                             " A close-up was drawn but not used: {closeup_not_used}.") if _var(c, "closeup_not_used") else "")
+                         + (" Your close-up differs from the painting: {closeup_notes}." if _var(c, "closeup_notes") else "")
                          + (" {texels:n} texels (texture pixels) across the face." if _var(c, "texels") else "")
                          + (" {density_note}" if _var(c, "density_note") else "")),
         "fail": lambda c: {
             "no_card": "The face was not painted from the picture: no graphics card that draws pictures was free.",
             "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",
             "error": "The face was not painted from the picture: something went wrong on the way.",
+            "misplaced": ("The face was painted onto the wrong part of the head: the app could not find where the model's eyes are, "
+                          "so the eyes kept the 3D step's blurred look. Painting the face again rarely helps; building the 3D model again usually does."),
             "blurry": "The face is still blurry after painting it from the picture (detail {value:n}, sharp from {limit:n}).",
             "off_picture": "The face was painted, but it follows the picture poorly (match {match:n} of 1).",
             "eye_colour": "The face was painted, but the eyes' colour differs from the picture's (by {eye_shift:n}, fine up to 8).",
@@ -712,9 +729,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                                "Painting the face again cannot change that; building the 3D model again can give hair that leaves the eye free."),
             "eye_blurry": "The face was painted, but {eye_words} came out blurry, much softer than the picture's.",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
-        "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") == "eye_under_hair"
+        "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") in ("eye_under_hair", "misplaced")
                           else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None, "face_closeup_seed_2": None}}),
-        "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") == "eye_under_hair" else "Paint the face again",
+        "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") in ("eye_under_hair", "misplaced") else "Paint the face again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the
@@ -835,6 +852,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The subject is only {value:n} pixels {measure}; at least {limit:n} keeps the detail in the 3D model.",
         "fix": _redraw_fix,
         "fix_label": REDRAW_LABEL,
+    },
+    "detail_size": {
+        "severity": "warn",
+        "ok": "The subject is {value:n} pixels {measure}, the size the later steps are made for.",
+        "fail": "The subject is {value:n} pixels {measure}. The pictures that make good models here are about 1 megapixel with the subject at least {limit:n} pixels {measure}; smaller, the face and small parts come out soft. Upscaling it to about {target:n} pixels adds the detail back.",
+        "fix": lambda c: {"stage": "concept", "op": "upscale", "params": {}},
+        "fix_label": "Upscale it",
     },
     "arms_away": {
         "severity": "warn",

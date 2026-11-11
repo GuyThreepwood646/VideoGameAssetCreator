@@ -561,7 +561,7 @@ def test_remove_a_failed_version(client, fake_execute):
     assert client.delete("/api/versions/nope").status_code == 404
 
     r = client.delete(f"/api/versions/{bad['version']['id']}")
-    assert r.status_code == 200 and r.json() == {"ok": True, "deleted": bad["version"]["id"]}
+    assert r.status_code == 200 and r.json() == {"ok": True, "deleted": bad["version"]["id"], "deleted_ids": [bad["version"]["id"]]}
     ids = [v["id"] for v in client.get(f"/api/assets/{aid}").json()["stages"]["concept"]]
     assert ids == [good["version"]["id"]]
     assert not folder.exists()
@@ -578,6 +578,16 @@ def test_remove_a_failed_version(client, fake_execute):
     assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 409
     assert client.delete(f"/api/versions/{child['version']['id']}").status_code == 200
     assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 200
+
+    # With with_later the version goes together with what was made from it (here a finished change of it).
+    ref2 = client.post(f"/api/versions/{good['version']['id']}/refine", json={"instruction": "blue cloak"}).json()
+    wait_job(client, ref2["job"]["id"])
+    child2 = client.post(f"/api/versions/{ref2['version']['id']}/refine", json={"instruction": "hat"}).json()
+    wait_job(client, child2["job"]["id"])
+    assert client.delete(f"/api/versions/{ref2['version']['id']}").status_code == 409
+    r = client.delete(f"/api/versions/{ref2['version']['id']}?with_later=true")
+    assert r.status_code == 200 and set(r.json()["deleted_ids"]) == {ref2["version"]["id"], child2["version"]["id"]}
+    assert client.get(f"/api/versions/{child2['version']['id']}").status_code == 404
     # The kept version is untouched and the step still runs.
     kept = client.get(f"/api/versions/{good['version']['id']}").json()
     assert kept["status"] == "done" and kept["selected"] is True

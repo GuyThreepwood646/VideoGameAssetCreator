@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 app.include_router(own_images.router)  # start from your own images (own_images.py)
+app.include_router(__import__("vgac.compose", fromlist=["router"]).router)  # step 0.5: a character from several pictures (compose.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
@@ -132,6 +133,8 @@ class AssetIn(BaseModel):
     # Hair from the library (hairlib.py): "library" builds the model bald and fits a ready-made hairstyle; "model" or
     # nothing is today's hair.
     hair: Literal["model", "library"] | None = None
+    # "The face matters": False skips the face detail pass in step 4 (db.Asset.face_matters).
+    face_matters: bool | None = None
 
 
 class AssetPatch(BaseModel):
@@ -141,6 +144,7 @@ class AssetPatch(BaseModel):
     parts: list[str] | None = None
     platform_target: str | None = None
     style_preset: str | None = None
+    face_matters: bool | None = None
 
 
 class RunIn(BaseModel):
@@ -482,6 +486,8 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     picture = own_images.decode_or_400(body.image) if body.image else None  # start from a picture: checked first
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
+    if body.face_matters is False:
+        a.face_matters = False
     a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
     db.add(a)
     db.commit()
@@ -523,6 +529,7 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     a.base_asset_id = base.id
     a.variant_change = change
     a.hair_json = base.hair_json
+    a.face_matters = base.face_matters
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -574,6 +581,8 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
     if body.style_preset is not None:
         _validate_style(body.style_preset)
         a.style_preset = body.style_preset
+    if body.face_matters is not None:
+        a.face_matters = body.face_matters
     db.commit()
     db.refresh(a)
     return asset_to_dict(a)
@@ -659,6 +668,19 @@ async def stop_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[s
     """Stops the autopilot and the step in progress now (the same as POST /api/assets/{aid}/stop)."""
     _asset(db, aid)
     return _stop_asset(aid, None)["autopilot"]
+
+
+@app.post("/api/assets/{aid}/autopilot/dismiss")
+def dismiss_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """"Steer by hand instead": the autopilot goes idle for this asset and the steps it left stopped are set aside, so
+    nothing offers to resume it when the person comes back. Everything made stays."""
+    _asset(db, aid)
+    state = autopilot.steer_by_hand(aid)
+    q = active_queue()
+    if state.get("status") == "idle" and q is not None:
+        for s in STAGES:
+            q.dismiss_stopped(aid, s)
+    return state
 
 
 class StageIn(BaseModel):
@@ -778,25 +800,40 @@ def reject_version(vid: str, db: Session = Depends(get_session)) -> dict[str, An
 
 
 @app.delete("/api/versions/{vid}")
-def delete_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    """Remove a version that failed, was stopped or was rejected, with its files and its job log lines. A finished
-    version, one still in the queue, or one other versions were made from stays (409)."""
+def delete_version(vid: str, with_later: bool = False, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Remove a version with its files and its job log lines. A kept version, or one still in the queue, stays (409).
+    When other versions were made from it (a later step built on it, or a change of it), they go too only with
+    with_later=true; without it the answer is 409 and says how many."""
     v = _version(db, vid)
-    if v.status not in ("error", "rejected"):
-        raise HTTPException(409, "only a version that failed, was stopped or was rejected can be removed")
-    if db.scalar(select(func.count()).select_from(Version).where(Version.parent_version_id == vid)):
-        raise HTTPException(409, "other versions were made from this one, so it stays")
-    jobs = db.scalars(select(Job).where(Job.version_id == vid)).all()
+    if v.selected:
+        raise HTTPException(409, "this version is kept; keep another version first, or reject it")
+    # The version and everything made from it, at any step, children before their parents.
+    tree: list[Version] = []
+    todo = [v]
+    while todo:
+        cur = todo.pop()
+        tree.append(cur)
+        todo.extend(db.scalars(select(Version).where(Version.parent_version_id == cur.id)).all())
+    later = tree[1:]
+    if later and not with_later:
+        raise HTTPException(409, f"{len(later)} other version(s) were made from this one; remove them too to go on")
+    ids = [x.id for x in tree]
+    if any(x.status in ("queued", "running") for x in tree):
+        raise HTTPException(409, "this version or one made from it is still in the queue; stop it first")
+    jobs = db.scalars(select(Job).where(Job.version_id.in_(ids))).all()
     if any(j.status in ("queued", "running") for j in jobs):
-        raise HTTPException(409, "this version still has work in the queue; stop it first")
+        raise HTTPException(409, "this version or one made from it still has work in the queue; stop it first")
     a = _asset(db, v.asset_id)
-    folder = library.version_dir(a, v, create=False)
+    folders = [library.version_dir(a, x, create=False) for x in tree]
     for j in jobs:
         db.delete(j)
-    db.delete(v)
+    for x in reversed(tree):
+        db.delete(x)
+        db.flush()
     db.commit()
-    library.remove_tree(folder)
-    return {"ok": True, "deleted": vid}
+    for f in folders:
+        library.remove_tree(f)
+    return {"ok": True, "deleted": vid, "deleted_ids": ids}
 
 
 @app.get("/api/versions/{vid}")

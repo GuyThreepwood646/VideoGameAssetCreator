@@ -134,7 +134,7 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
-export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine'; instruction?: string }
+export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine' | 'upscale'; instruction?: string }
 
 // A quality check. The backend sends {id, name, passed, ok, value, limit, message}
 // and may add help (plain sentence), fix (how the app can fix it) and severity.
@@ -198,6 +198,8 @@ export type Asset = {
   equipment?: Equipment | null
   // Hair from the library: the choice and the pick (absent or null: the hair is built with the 3D model, as before).
   hair?: HairChoice | null
+  // "The face matters" (true unless turned off): off skips the face detail pass in step 4 (a hidden or very simple face).
+  face_matters?: boolean
   selected: Partial<Record<StageId, string>>
   stages: Partial<Record<StageId, Version[]>>
 }
@@ -227,6 +229,8 @@ export type Job = {
 // Start from your own images (docs/API.md "your own pictures"). Pictures travel as data: URLs in JSON.
 export type Swatch = { hex: string; share: number }
 export type PaletteResult = { palette: string[]; swatches: Swatch[]; background: string | null; pixels: number }
+// GET/POST/DELETE /api/assets/{aid}/face-closeup: image is a library path (null when none was added).
+export type FaceCloseup = { image: string | null; updated: number | null; size?: [number, number] }
 export type StyleResult = { description: string; words: number; palette: string[]; swatches: Swatch[]; model: string; applied: boolean }
 export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_engine: boolean; message?: string }
 
@@ -524,6 +528,8 @@ export type RunStageBody = { parent_version_id?: string; params?: Record<string,
 export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
+export type ComposeRole = 'face' | 'body' | 'outfit' | 'other'
+export type ComposeBody = { pictures: { role: ComposeRole; image: string; note?: string }[]; words?: string; count?: number }
 export type VariantResult = { asset: Asset; job: Job; version: Version }
 
 export class ApiError extends Error {
@@ -626,23 +632,31 @@ export const api = {
   createAsset: (
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean },
   ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
 
   // Your own pictures
   uploadConcept: (aid: string, body: { image: string; note?: string }) => post<RunResult>(`/api/assets/${aid}/stages/concept/upload`, body),
+  // Step 0.5: one or more concept candidates combined from several of your own pictures (backend vgac/compose.py).
+  composeConcept: (aid: string, body: ComposeBody) => post<{ versions: RunResult[] }>(`/api/assets/${aid}/stages/concept/compose`, body),
   uploadView: (vid: string, view: string, image: string) => post<RunResult>(`/api/versions/${vid}/views/${view}/upload`, { image }),
+  // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.
+  getFaceCloseup: (aid: string) => get<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
+  setFaceCloseup: (aid: string, image: string) => post<FaceCloseup>(`/api/assets/${aid}/face-closeup`, { image }),
+  removeFaceCloseup: (aid: string) => del<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
   paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
   styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),
   createVariant: (aid: string, body: { change: string; name?: string }) => post<VariantResult>(`/api/assets/${aid}/variants`, body),
-  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target'>>) =>
+  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target' | 'face_matters'>>) =>
     put<Asset>(`/api/assets/${id}`, body),
   deleteAsset: (id: string) => del<DeleteResult>(`/api/assets/${id}`),
 
   // Autopilot
   startAutopilot: (aid: string, body: AutopilotBody = {}) => post<AutopilotState>(`/api/assets/${aid}/autopilot`, body),
   getAutopilot: (aid: string) => get<AutopilotState>(`/api/assets/${aid}/autopilot`),
+  // "Steer by hand instead": the autopilot goes idle for this asset and its stopped steps are set aside.
+  dismissAutopilot: (aid: string) => post<AutopilotState>(`/api/assets/${aid}/autopilot/dismiss`),
   stopAutopilot: (aid: string) => post<AutopilotState>(`/api/assets/${aid}/autopilot/stop`),
   // Stop and Resume (the buttons on every step). Stop acts now: one step when `stage` is given and the autopilot
   // is not running, else everything for the asset. Resume runs the stopped step again with the same settings.
@@ -654,11 +668,14 @@ export const api = {
   runStage: (assetId: string, stage: StageId, body: RunStageBody = {}) =>
     post<RunResult | RunResult[]>(`/api/assets/${assetId}/stages/${stage}/run`, body),
   refine: (vid: string, body: RefineBody) => post<RunResult>(`/api/versions/${vid}/refine`, body),
+  // "Upscale it": a new step 1 version, the picture made bigger and checked again.
+  upscale: (vid: string) => post<RunResult>(`/api/versions/${vid}/upscale`),
   adjust: (vid: string, params: Record<string, unknown>) => post<RunResult>(`/api/versions/${vid}/adjust`, { params }),
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
   // Removes a version that failed, was stopped or was rejected, with its files (409 for any other).
-  deleteVersion: (vid: string) => del<DeleteResult>(`/api/versions/${vid}`),
+  // withLater: the versions made from it (later steps built on it, changes of it) go too.
+  deleteVersion: (vid: string, withLater = false) => del<DeleteResult & { deleted_ids?: string[] }>(`/api/versions/${vid}${withLater ? '?with_later=true' : ''}`),
   getVersion: (vid: string) => get<Version>(`/api/versions/${vid}`),
   // In local mode the judging runs as a queued job, returned as judge_job.
   judge: (vid: string, mode: 'metrics' | 'local') => post<Version & { judge_job?: Job }>(`/api/versions/${vid}/judge`, { mode }),
@@ -802,10 +819,24 @@ export function isSetAside(v: Version): boolean {
   return v.status === 'rejected' && v.error === 'stopped and set aside'
 }
 
-// A version the person may remove: it failed, was stopped or was rejected, and no other version was made from it.
+// A version the person may remove: not kept and not in the queue. What was made from it goes too (laterVersions).
 export function isRemovable(asset: AssetSummary, v: Version): boolean {
-  if (v.status !== 'error' && v.status !== 'rejected') return false
-  return !STAGES.some((s) => versionsOf(asset, s).some((x) => x.parent_version_id === v.id))
+  if (v.status === 'queued' || v.status === 'running') return false
+  if (v.selected || asset.selected?.[v.stage as StageId] === v.id) return false
+  return !laterVersions(asset, v).some((x) => x.status === 'queued' || x.status === 'running')
+}
+
+// Every version made from v, at any step (later steps built on it, and changes of it), nearest first.
+export function laterVersions(asset: AssetSummary, v: Version): Version[] {
+  const all = STAGES.flatMap((s) => versionsOf(asset, s))
+  const out: Version[] = []
+  let frontier = [v.id]
+  while (frontier.length) {
+    const next = all.filter((x) => x.parent_version_id && frontier.includes(x.parent_version_id) && !out.includes(x))
+    out.push(...next)
+    frontier = next.map((x) => x.id)
+  }
+  return out
 }
 
 // The versions a Resume would bring back: the stopped ones at the end of the step's list. A stop that was

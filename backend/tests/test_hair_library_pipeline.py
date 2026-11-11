@@ -173,7 +173,7 @@ class Engines:
         mp.setattr(hd_stage.hair, "find_hair", lambda *a, **k: {"found": False, "reason": "too_little"})
         eng.face_sides: list[dict[str, Any]] = []
 
-        async def face_run(sc, glb, maps, rec, params, hair_plan=None):
+        async def face_run(sc, glb, maps, rec, params, hair_plan=None, **_kw):
             eng.face_sides.append(fd_stage.side_pictures(sc))
             return {"files": {}, "metrics": {"face_detail": {"ran": True, "skipped": None}}, "relayout": False}
 
@@ -380,7 +380,9 @@ GOLDEN_OFF = {
                          "shading_source", "size_extent_m", "size_source", "skin_metal", "texture_match",
                          "texture_padding_px", "texture_padding_target_px", "texture_size", "triangle_limit",
                          "triangle_limit_source", "triangles", "triangles_before_budget", "uv_layers", "vertices"],
-             "params": ["delight", "face_closeup", "face_density", "face_detail", "face_strength", "face_yaw",
+             # face_closeup_guided and face_sides (the face pass's optional steps) were added later, on 2026-11-10.
+             "params": ["delight", "face_closeup", "face_closeup_guided", "face_density", "face_detail", "face_sides",
+                        "face_strength", "face_yaw",
                         "hair_detail", "hair_material", "hair_strength", "head_triangles", "pbr_fix", "pivot", "rebake",
                         "shading", "size_axis", "size_m", "size_word", "smooth_angle", "symmetric"]},
     "turnaround": {"checks": [],

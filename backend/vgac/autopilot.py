@@ -138,6 +138,16 @@ def stop(aid: str) -> dict[str, Any]:
     return _set(aid, status="paused", reason=STOPPED_REASON, stopped_by_user=True, job_id=None)
 
 
+def steer_by_hand(aid: str) -> dict[str, Any]:
+    """"Steer by hand instead": the autopilot is put away for this asset (idle), so the page stops offering to resume
+    it. A running autopilot is left alone (Stop comes first). Nothing made is touched."""
+    t = _tasks.get(aid)
+    if t is not None and not t.done():
+        return _set(aid)
+    return _set(aid, status="idle", reason=None, stopped_by_user=False, job_id=None, pending_fix=None, pending_from=None,
+                note=None, by_hand=True)
+
+
 def _stopped_among(version_ids: list[str]) -> bool:
     """True when the person stopped one of these versions (the job log's Stop while the autopilot was waiting)."""
     with session_factory()() as db:

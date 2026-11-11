@@ -37,7 +37,8 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const faceSheet = version.stage === 'prep' ? libraryUrl(version.files.face_before_after) : null
   // The close-up of the painted face the pass drew and checked, when it was used; and the face's texels across.
   const faceCloseup = version.stage === 'prep' ? libraryUrl(version.files.face_closeup) : null
-  const faceMetrics = (version.metrics?.face_detail ?? null) as { face_texels_after?: number; density?: { level?: string; note?: string | null } } | null
+  const faceMetrics = (version.metrics?.face_detail ?? null) as { face_texels_after?: number; density?: { level?: string; note?: string | null }; closeup?: { own?: boolean; used?: boolean; notes?: string[] } } | null
+  const ownCloseup = !!faceMetrics?.closeup?.own && !!faceMetrics.closeup.used
   // The hair detail pass's pictures: before and after, and what was taken as hair; or why it stood back.
   const hairSheet = version.stage === 'prep' ? libraryUrl(version.files.hair_before_after) : null
   const hairMask = version.stage === 'prep' ? libraryUrl(version.files.hair_mask) : null
@@ -167,8 +168,9 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             {faceCloseup && (
               <div className="small">
                 <a href={faceCloseup} target="_blank" rel="noreferrer">
-                  The close-up of the face it was painted from
+                  {ownCloseup ? 'Your own close-up of the face, which it was painted from' : 'The close-up of the face it was painted from'}
                 </a>
+                {ownCloseup && faceMetrics?.closeup?.notes?.length ? <span className="muted"> (it differs from the painting: {faceMetrics.closeup.notes.join('; ')})</span> : null}
               </div>
             )}
           </div>

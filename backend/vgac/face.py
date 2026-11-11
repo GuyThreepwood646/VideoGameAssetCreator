@@ -521,6 +521,24 @@ def inner_face(info: dict[str, Any]) -> np.ndarray:
 
 
 def landmarks(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
+    """Eyes and mouth of a front face picture: MediaPipe's when a face pass has set a card and it finds the model's
+    face (vgac/facemarks.py), else darkest_landmarks."""
+    from . import facemarks
+
+    m = facemarks.find(img, info)
+    return m if m is not None else darkest_landmarks(img, info)
+
+
+def landmark_pair(a: np.ndarray, b: np.ndarray, info: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Landmarks of two pictures found the same way (MediaPipe's lips centre and the darkest lip line are not the same
+    point): when only one was found by MediaPipe, both by the darkest spots."""
+    la, lb = landmarks(a, info), landmarks(b, info)
+    if la and lb and la.get("how") != lb.get("how"):
+        la, lb = darkest_landmarks(a, info), darkest_landmarks(b, info)
+    return la, lb
+
+
+def darkest_landmarks(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
     """Eyes and mouth of a front face picture, searched around the model's nose tip (info from find_face; the picture
     is framed like the render, so the same places hold its features within a few percent): each eye the centre of the
     darkest 2 percent of its side of the eye band (pupils, lashes), the mouth the darkest row of the band under the

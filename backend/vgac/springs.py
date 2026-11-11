@@ -59,9 +59,44 @@ def enabled(category: str | None, params: dict[str, Any], anim_report: dict[str,
     return True, None
 
 
+# What hangs from the head (blender/springs.py describe_part). A non-hair part hanging from the head is a hat's brim,
+# a hood or a helmet far more often than a headscarf's end: Vivi's hat swayed as "a scarf end" (his rig versions 1 and
+# 2). head_sway: "auto" keeps such parts with the head unless the description names something that should sway (a
+# headscarf, ribbon, veil); "hair" never sways them; "all" sways them as before. Headwear named in the description (a
+# hat, helmet, hood) also asks more of a head part before it sways as hair (blender HAIR_SHARE_HEADWEAR).
+HEAD_SWAY_CHOICES = ("auto", "hair", "all")
+HEADWEAR_WORDS = ("hat", "hats", "helmet", "helm", "hood", "hooded", "cap", "crown", "turban", "beanie", "bonnet", "tiara",
+                  "headdress", "headpiece", "beret", "fedora", "sombrero", "witch hat", "wizard hat", "cowl", "circlet")
+SWAY_WORDS = ("headscarf", "head scarf", "bandana", "ribbon", "ribbons", "veil", "tassel", "tassels", "streamer", "streamers",
+              "feather", "feathers", "plume", "kerchief")
+
+
+def _has_word(text: str, words: tuple[str, ...]) -> bool:
+    import re
+
+    t = " " + re.sub(r"[^a-z]+", " ", (text or "").lower()) + " "
+    return any(f" {w} " in t for w in words)
+
+
+def head_options(params: dict[str, Any], description: str) -> dict[str, Any]:
+    """{head_sway (the choice), head_cloth ("stiff" or "sway"), headwear (bool), why}: what the hanging-part search does
+    with non-hair parts on the head."""
+    choice = params.get("head_sway") if params.get("head_sway") in HEAD_SWAY_CHOICES else "auto"
+    headwear = _has_word(description, HEADWEAR_WORDS)
+    if choice == "all":
+        cloth, why = "sway", "chosen"
+    elif choice == "hair":
+        cloth, why = "stiff", "chosen"
+    elif _has_word(description, SWAY_WORDS):
+        cloth, why = "sway", "described"
+    else:
+        cloth, why = "stiff", "default"
+    return {"head_sway": choice, "head_cloth": cloth, "headwear": headwear, "why": why}
+
+
 def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, hitboxes: Path | None,
                  hair_points: Path | None, metallic: Path | None, fps: int = 24,
-                 library_hair: tuple[str, Path, Path | None] | None = None) -> list[Any]:
+                 library_hair: tuple[str, Path, Path | None] | None = None, head: dict[str, Any] | None = None) -> list[Any]:
     """springs.py's command line. library_hair (object name, hair_mesh.npz, hair_parts.json) only when the hair comes
     from the library: the hair object is left out of the hanging-part search and its hanging groups get chains."""
     args: list[Any] = [anim_glb, out_glb, "--report", work / "springs_report.json", "--doc", work / "springs.json",
@@ -69,6 +104,10 @@ def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, 
     for flag, p in (("--clips", clips), ("--hitboxes", hitboxes), ("--hair-points", hair_points), ("--metallic", metallic)):
         if p is not None and Path(p).is_file():
             args += [flag, p]
+    if head is not None:
+        args += ["--head-cloth", head.get("head_cloth") or "stiff"]
+        if head.get("headwear"):
+            args += ["--headwear"]
     if library_hair is not None:
         obj, mesh, parts = library_hair
         args += ["--hair-object", obj, "--hair-mesh", mesh]

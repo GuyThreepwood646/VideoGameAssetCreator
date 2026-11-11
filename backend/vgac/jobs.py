@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from sqlalchemy import func, select
 
-from . import prefs
+from . import comfy_inputs, prefs
 from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
@@ -713,6 +713,9 @@ class InstanceWorker:
                                 v.error = error
                             db.commit()
                             _publish_version(v)
+        if not requeued:
+            # The inputs this job copied into ComfyUI's input folder go now (and any left by older runs).
+            await asyncio.to_thread(comfy_inputs.sweep_now, self.settings.comfy_input_dir)
         if rerouted and self.on_rerouted is not None:
             try:
                 self.on_rerouted(target)
@@ -781,6 +784,8 @@ class JobQueue:
             log.warning("%s", e)
         bus.bind()
         self._requeue_orphans()
+        # Leftover inputs from earlier runs and deleted projects (only the app's own "vgac_" files).
+        await asyncio.to_thread(comfy_inputs.sweep_now, self.settings.comfy_input_dir)
         for name, inst in self.settings.instances.items():
             self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=inst.output_dir)
         self.supervisor = Supervisor(self.settings, self.clients, on_change=lambda _n: self.publish_gpus())

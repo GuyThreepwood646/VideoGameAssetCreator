@@ -241,6 +241,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_metrics(rig_fix_error=str(e)[:500])
     if not rig_glb.is_file():
         rig_glb = raw_glb
+    if template == TEMPLATES["mixamo"]:
+        await _joins(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -864,9 +866,12 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
         # With library hair the body is bald: its hair points mean nothing, and the hair object brings its own groups.
         hair_points = None if lib is not None else await asyncio.to_thread(_hair_points, sc, work)
         hb = sc.file("hitboxes")
+        head = springs_mod.head_options(params, _description(sc))
+        sc.set_params(head_sway=head["head_sway"])
         args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
                                         sc.lineage_file("metallic", ("prep", "mesh")),
-                                        library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None)
+                                        library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None,
+                                        head=head)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
         family = ((lib or {}).get("metrics") or {}).get("family")  # library hair: the hairstyle's family words
@@ -880,9 +885,62 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
             doc = sc.dir / "springs.json"
             shutil.copy2(work / "springs.json", doc)
             sc.register("springs", doc)
-        sc.set_metrics(springs=springs_mod.metrics(rep, True, None, round(time.monotonic() - t0, 2), family=family))
+        sc.set_metrics(springs={**springs_mod.metrics(rep, True, None, round(time.monotonic() - t0, 2), family=family),
+                                "head": {k: head[k] for k in ("head_cloth", "headwear", "why")}})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(springs=springs_mod.metrics(None, True, None, round(time.monotonic() - t0, 2), error=str(e)))
+
+
+def _description(sc: StageContext) -> str:
+    """The asset's description and the words given with its first picture (step 0.5), for the spring bones' head words."""
+    words = [getattr(sc.asset, "prompt", "") or ""]
+    try:
+        for v in sc.iter_lineage(include_self=False):
+            if v.stage == "concept":
+                words.append(str((v.params or {}).get("words") or ""))
+                words.append(str((v.params or {}).get("note") or ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return " ".join(w for w in words if w)
+
+
+# Joins the 3D build made between parts that never meet on a body (blender/joins.py): legs joined low down are parted
+# (the strand between Vivi's shoes); forearms grown into the body are only measured and named by the check.
+ARM_JOIN_MIN = 20
+
+
+async def _joins(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Part the legs where the 3D build joined them low down (in place), and measure forearms joined to the body.
+    metrics.joins: {legs_parted (edges split), released, arm_joins {L, R}, measured_only}. Never raises."""
+    part = params.get("part_legs", True) is not False
+    sc.set_params(part_legs=part)
+    out = sc.dir / "rig_joins.glb"
+    report = sc.dir / "joins.json"
+    try:
+        args: list[Any] = [rig_glb, out, "--report", report] + ([] if part else ["--measure-only"])
+        await sc.blender("joins.py", args, log_name="joins.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        parted = int(rep.get("leg_edges") or 0) if part else 0
+        if parted and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_joins.glb")
+            shutil.move(str(out), str(rig_glb))
+        sc.set_metrics(joins={"legs_parted": parted, "legs_found": int(rep.get("leg_edges") or 0), "released": int(rep.get("released") or 0),
+                              "arm_joins": rep.get("arm_joins"), "leg_edge_z": rep.get("leg_edge_z"), "measured_only": not part,
+                              "reason": rep.get("reason")})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(joins={"error": str(e)[:300]})
+
+
+def joins_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The rig check `joins` (warn): fails when a forearm or hand is grown into the body; says when the legs were parted."""
+    if not m or m.get("error") or m.get("arm_joins") is None:
+        return None
+    arm = m.get("arm_joins") or {}
+    sides = [w for s, w in (("L", "left"), ("R", "right")) if int(arm.get(s) or 0) >= ARM_JOIN_MIN]
+    worst = max(int(arm.get("L") or 0), int(arm.get("R") or 0))
+    return quality.check("joins", not sides, worst, ARM_JOIN_MIN,
+                         vars={"sides": " and ".join(sides), "both": len(sides) == 2, "legs_parted": int(m.get("legs_parted") or 0),
+                               "legs_found": int(m.get("legs_found") or 0), "measured_only": bool(m.get("measured_only"))})
 
 
 def springs_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -949,6 +1007,9 @@ async def judge(sc: StageContext) -> None:
         hb = hair_bound_check(m)
         if hb is not None:
             checks.append(hb)
+    jc = joins_check(sc.version.metrics.get("joins"))
+    if jc is not None:
+        checks.append(jc)
     if not sc.version.metrics.get("rigid") and sc.asset.category in HITBOX_CATEGORIES:
         hb_path = sc.file("hitboxes")
         doc = json.loads(Path(hb_path).read_text()) if hb_path is not None else None

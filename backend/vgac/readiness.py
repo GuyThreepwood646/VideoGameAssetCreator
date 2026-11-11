@@ -31,6 +31,11 @@ ANALYSE_SIDE = 256  # the cutout is measured at this size (longest side)
 MIN_PART_SHARE = 0.03  # a separate area smaller than this share of the subject is a speck, not a second subject
 MARGIN_MIN = 0.01  # at least 1 percent of the picture clear on every side
 MIN_SUBJECT_PX = 400  # the 3D builder reads about 500 px; smaller loses detail
+# The size the later steps are tuned for: every character that built well here had a subject 868 to 980 px tall (the
+# painted pictures are 1024 x 1024; uploads 591 to 1832). Under this the face and small parts come out soft, and the
+# check offers "Upscale it" (stages/concept.upscale) to UPSCALE_TARGET_PX.
+DETAIL_SUBJECT_PX = 860
+UPSCALE_TARGET_PX = 930
 ARMS_GAP_SHARE = 0.2  # share of the shoulder-to-hip rows with an arm clear of the body
 TPOSE_RATIO = 2.5  # arm span over waist width that counts as arms held out
 EVEN_LIGHT_MAX = 0.25  # brightness change across a material photo, 0 to 1
@@ -152,6 +157,8 @@ def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | 
     size_px = int(round(subject_h if cid == "humanoid" else max(subject_h, subject_w)))
     out.append(quality.check("big_enough", size_px >= MIN_SUBJECT_PX, size_px, MIN_SUBJECT_PX,
                              vars={**redraw, "measure": "tall" if cid == "humanoid" else "across"}))
+    out.append(quality.check("detail_size", size_px >= DETAIL_SUBJECT_PX, size_px, DETAIL_SUBJECT_PX,
+                             vars={"measure": "tall" if cid == "humanoid" else "across", "target": UPSCALE_TARGET_PX}))
     if cid == "humanoid":
         m = arms_measure(mask)
         ok = m["gap_share"] >= ARMS_GAP_SHARE or m["span_ratio"] >= TPOSE_RATIO

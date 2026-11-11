@@ -8,6 +8,8 @@ import io
 from PIL import Image, ImageDraw
 
 GREY = (235, 235, 235)
+# A figure the size the later steps want (about 945 px tall: readiness.DETAIL_SUBJECT_PX is 860).
+BIG = {"size": (800, 1150), "scale": 1.5}
 
 
 def figure(arms: str = "a", size=(512, 768), bg=GREY, offset=(0, 0), scale: float = 1.0) -> Image.Image:

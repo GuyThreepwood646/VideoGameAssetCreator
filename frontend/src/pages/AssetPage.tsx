@@ -8,6 +8,7 @@ import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
+import { COMPOSE_CATEGORIES, ComposePanel } from '../pipeline/ComposePanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
 import { ViewerLookContext } from '../previewLight'
@@ -26,6 +27,8 @@ export default function AssetPage() {
   const [variantOpen, setVariantOpen] = useState(false)
   // "Add an item" (items): the panel on a character with a skeleton.
   const [itemsOpen, setItemsOpen] = useState(false)
+  // Step 0.5: a character from several of your own pictures (an optional step before step 1).
+  const [composeOpen, setComposeOpen] = useState(false)
   const [baseName, setBaseName] = useState<string | null>(null)
   // Hair from the library: the "Hair" line and its Change panel (characters only; nothing shows on an older backend).
   const [hairOpen, setHairOpen] = useState(false)
@@ -220,7 +223,18 @@ export default function AssetPage() {
         if (vid && s && asset && asset.selected?.[s] !== vid) await api.select(vid)
         return api.startAutopilot(aid, {})
       }),
-    dismiss: () => setApDismissed(autopilot?.updated_at ?? 'dismissed'),
+    // Steer by hand: stored on the asset, so coming back later shows no autopilot card and no old Resume.
+    // An older backend without the call still hides the card for this visit.
+    dismiss: () => {
+      setApDismissed(autopilot?.updated_at ?? 'dismissed')
+      void api.dismissAutopilot(aid).then(
+        (st) => {
+          applyAutopilot(aid, st)
+          reloadSoon()
+        },
+        () => undefined,
+      )
+    },
   }
   // A dismissed paused or stopped card stays hidden until the state changes again.
   const apShown = autopilot && apDismissed !== null && apDismissed === (autopilot.updated_at ?? 'dismissed') && autopilot.status !== 'running' ? null : autopilot
@@ -313,6 +327,17 @@ export default function AssetPage() {
           )}
         </div>
         <nav className="rail-stages" aria-label="Progress">
+          {COMPOSE_CATEGORIES.includes(asset.category) && (
+            <div className={'rail-stage rail-stage-half reached' + (composeOpen ? ' active' : '')}>
+              <button type="button" className="rail-stage-btn" aria-pressed={composeOpen} onClick={() => setComposeOpen((v) => !v)} title="Optional: make the character from several of your own pictures (a face, a body, an outfit). The results arrive in step 1.">
+                <span className="sdot sdot-idle" />
+                <span className="rail-index">0.5</span>
+                <span className="rail-label">From your pictures</span>
+                <span className="rail-meta">optional</span>
+              </button>
+              <Info term="term.compose" />
+            </div>
+          )}
           {STAGES.map((s, i) => {
             const st = stageState(asset, s)
             const list = versionsOf(asset, s)
@@ -386,6 +411,18 @@ export default function AssetPage() {
         </header>
         {variantOpen && <VariantPanel asset={asset} onClose={() => setVariantOpen(false)} onError={setError} />}
         {itemsOpen && <ItemsPanel asset={asset} onClose={() => setItemsOpen(false)} />}
+        {composeOpen && (
+          <ComposePanel
+            asset={asset}
+            onClose={() => setComposeOpen(false)}
+            onCreated={() => {
+              if (stage !== 'concept') navigate(`/assets/${asset.id}/concept`)
+              reloadSoon()
+              api.listJobs({ asset_id: aid }).then(setJobs, () => undefined)
+            }}
+            onError={setError}
+          />
+        )}
         {hairOpen && hair.panel && (
           <HairSettingPanel
             asset={asset}

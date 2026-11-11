@@ -216,8 +216,9 @@ def stubbed(tmp_path, monkeypatch):
         return {"found": True, "texture_size": 2048, "face_width_px": 459.0, "painted_head_px": 152.4, "face_width_texels": 300,
                 "face_triangles": []}
 
-    async def redraw(sc, instance, crop, seed, dest, prompt=fd.REDRAW_PROMPT, key="face_redraw", message=""):
+    async def redraw(sc, instance, crop, seed, dest, prompt=fd.REDRAW_PROMPT, key="face_redraw", message="", reference=None, margin=1.0):
         calls["redraw"].append((key, seed))
+        calls.setdefault("references", []).append(None if reference is None else Path(reference).name)
         calls.setdefault("prompts", []).append(prompt)
         Image.new("RGB", (64, 64)).save(dest)
         return dest
