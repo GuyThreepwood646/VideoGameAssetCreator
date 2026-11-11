@@ -254,7 +254,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
         # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
-        if srcproject.on(params):  # paint the picture's own pixels into the base colour (vgac/srcproject.py), off unless asked
+        # Paint the picture's own pixels into the base colour (vgac/srcproject.py): by itself for a character whose
+        # picture shows the front, on a smooth look; any model when the version asks for it.
+        if srcproject.on(params, sc.asset.category, look):
             current = await srcproject.run_stage(sc, out, current, params)
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
         face_matters = getattr(sc.asset, "face_matters", None) is not False
@@ -864,6 +866,10 @@ async def judge(sc: StageContext) -> None:
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)
+    from .mesh import fidelity_checks
+
+    mv = sc.stage_version("mesh")  # the finished texture against the picture the 3D model was built from (report-only)
+    checks += await fidelity_checks(sc, rec, ((mv.params if mv is not None else None) or {}).get("input_view"))
     if hairlib.is_library(sc):
         hl = m.get("hair_library") or {}
         checks += hairlib.prep_checks(m, hl.get("budget") or sc.budget.get("triangles"),

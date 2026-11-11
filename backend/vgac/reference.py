@@ -131,6 +131,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="On for realistic styles, off for others, when empty"),
         _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Rebake (paint the surface again)",
                description="Prep repaints by itself when mirroring or shrinking changes the shape"),
+        # The picture painted into the base colour (vgac/srcproject.py). Empty: by itself for a character whose picture
+        # shows the front, on a smooth look. On: any model, a three-quarter picture too. Off: never.
+        _param("source_project", "boolean", None, categories=SURFACE_CATEGORIES, label="Paint the picture onto the model",
+               description="Puts the picture's own colours and detail on the side it shows. When empty: on for characters drawn from the front"),
         # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for crisp and flat looks.
         _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
