@@ -65,6 +65,8 @@ SAMPLES = {
     "bake_matches": ((1.0, 0.99), (0.45, 0.99)),
     "normal_map_upright": ((0.57, 1.25), (1.77, 1.25)),  # normal map green channel: seam disagreement as is over flipped
     "texture_matches_picture": ((0.82, 0.5), (0.16, 0.5)),  # 3D step: base colour brightness over the picture's
+    "texture_sharp": ((0.8, 0.5), (0.2, 0.5)),  # report-only (texfidelity): sharpness ratio to the picture
+    "texture_colour_matches_picture": ((6.0, 12.0), (20.0, 12.0)),  # report-only (texfidelity): Lab colour difference
     "texture_padding": ((8, 8), (1, 8)),
     "atlas_used": ((0.57, 0.5), (0.28, 0.5)),
     "baked_light": ((0.1, 0.2), (0.4, 0.2)),
