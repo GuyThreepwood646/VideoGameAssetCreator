@@ -4,7 +4,12 @@ docs/TEXTURE-FIDELITY-PLAN.md lane B. Today no pixel of the concept picture reac
 only features of it and predicts a soft colour field. This pass projects the picture itself into the finished atlas,
 with no new unwrap and no rebake, so a texel the picture sees squarely shows the picture's own pixel.
 
-For each view (the picture first, then the turnaround views):
+The sources, in order of priority: the original picture (the one the asset started from: what the texture should look
+like), or the front view drawn from it when the original does not fit the model; then the picture the 3D model was built
+from (for a character that is the three-quarter view); then the other turnaround views. A view only paints where the
+views before it do not see well.
+
+For each view:
 1. the model is drawn from an orthographic camera (the face pass's rasteriser) and the picture's cut-out is fitted to
    that drawing by silhouette (scale, shift, a few degrees of turn, and the camera's yaw when it is not known); a view
    whose outline matches under MIN_IOU is refused, and so is one whose turn the outline cannot settle (a box fits at any
@@ -50,7 +55,7 @@ COS_CUT = math.cos(math.radians(75.0))
 MAX_FLOW = 0.02          # of the frame
 FLOW_ALPHA = 2.0         # Horn-Schunck smoothness (higher: a stiffer field)
 FLOW_SMOOTH = 8.0        # Gaussian sigma of the field in flow pixels
-VIEW_WEIGHT = {"front": 1.0, "picture": 1.0, "quarter": 0.5, "left": 0.5, "right": 0.5, "back": 0.5}
+VIEW_WEIGHT = {"source": 1.0, "front": 1.0, "picture": 1.0, "quarter": 0.5, "left": 0.5, "right": 0.5, "back": 0.5}
 BLEND_POW = 2.0          # the dominant view of a texel counts as weight squared, so views do not blur each other
 FRONT_PRIORITY = 0.15    # where the picture's own weight reaches this, the turnaround views are switched off
 ALPHA_RAMP = (0.004, 0.06)
@@ -68,6 +73,7 @@ TURN_YAWS = {
     "back": list(range(140, 221, 10)),
 }
 PICTURE_YAWS = list(range(0, 360, 10))
+FRONT_YAWS = [-20, -10, 0, 10, 20]
 TURN_VIEWS = ("quarter", "left", "right", "back")
 
 
@@ -616,18 +622,21 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
     return np.clip(lo_r + v.pic_aligned - lo_p, 0.0, 1.0)
 
 
-def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Weighted blend of the views (the dominant one counts as weight^BLEND_POW; the turnaround views fade out where the
-    picture sees well). Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
+def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
+          n_primary: int = 1) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
+    of priority: each one, and every view after them, fades out where the ones before it see well. Returns (paint (N,3),
+    alpha (N), dominant view per texel, -1 for none)."""
     N = atlas.idx.size
     num, den, wmax, dom = np.zeros((N, 3)), np.zeros(N), np.zeros(N), np.full(N, -1)
-    w0 = np.zeros(N)
-    w0[projs[0]["sel"]] = projs[0]["w"]
-    suppress = 1.0 - np.clip(w0 / FRONT_PRIORITY, 0.0, 1.0)
+    suppress = np.ones(N)
     for i, (p, img) in enumerate(zip(projs, images)):
         sel, w = p["sel"], p["w"]
-        if i > 0:
-            w = w * suppress[sel]
+        w = w * suppress[sel]
+        if i < n_primary:
+            seen = np.zeros(N)
+            seen[sel] = w
+            suppress = suppress * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
         col = catmull(img, p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
         ww = w ** BLEND_POW
         num[sel] += col * ww[:, None]
@@ -713,31 +722,40 @@ def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
 
 def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround: dict[str, Any] | None = None, *,
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
-          yaw_hint: Callable[[], float | None] | None = None, front_only: bool = False,
+          yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
-    fit the model, or when the result is no closer to the picture than what the model had. front_only (the pass running
-    by itself, not asked for): a picture that does not show the front is refused, and no turn is guessed for it."""
+    fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
+    model was built from. `source` is the original picture when that is a different one (a character is built from the
+    three-quarter view drawn from it): it paints first, in full colour, at whatever turn it fits; `front_view` (the
+    front view drawn from the original) stands in for it when the original does not fit the model."""
     t0 = time.time()
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     centre, scale = model_frame(mesh)
     pic, alpha = prepare_picture(picture)
     front = fit_view(mesh, tex, pic, alpha, "picture", picture_yaws or PICTURE_YAWS, centre, scale, size, min_iou, log=log)
-    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None and not front_only:
+    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None:
         # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
         hint = yaw_hint()
         if hint is not None:
             front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
             front.info["turn_source"] = "texfidelity"
     front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
-    views = [front]
     infos = {"picture": front.info}
-    if front.ok and front_only and not front.info["front_view"]:
-        res["reason"] = "the picture does not show the front"
-        res["metrics"] = {"srcproject_picture_is_front_view": False, "srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
-        return res
-    if not front.ok:
+    views: list[View] = []
+    for name, src, yaws in (("source", source, PICTURE_YAWS), ("front", front_view, FRONT_YAWS)):
+        if src is None or views:  # the drawn front view only when the original did not fit
+            continue
+        sp_, sa_ = prepare_picture(src)
+        vw = fit_view(mesh, tex, sp_, sa_, name, yaws, centre, scale, size, min_iou, log=log)
+        infos[name] = vw.info
+        if vw.ok:
+            views.append(vw)
+    if front.ok:
+        views.append(front)
+    n_primary = len(views)
+    if not views:
         res["reason"] = front.info.get("refused", "the picture was refused")
         res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
         return res
@@ -758,14 +776,14 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     for v in views:
         infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
     pitch_px = atlas.pitch_m * size / scale
-    images = [views[0].pic_aligned]
-    for v in views[1:]:
+    images = [v.pic_aligned for v in views[:n_primary]]
+    for v in views[n_primary:]:
         images.append(v.pic_aligned if mode == "full" else detail_only(v, DETAIL_TEXELS * pitch_px))
-    paint_, alpha_, dom = blend(atlas, projs, images)
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
     new = finish(atlas, tex, paint_, alpha_)
-    before, after = front_measures(front, tex), front_measures(front, new)
+    before, after = front_measures(views[0], tex), front_measures(views[0], new)  # against the first source that fitted
     painted = alpha_ > 0.5
-    m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
+    m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_measured_against": views[0].name, "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_seconds": round(time.time() - t0, 1)}
@@ -779,8 +797,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
 
 def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, turnaround: dict[str, Path | None] | None,
-                out_png: Path | str, *, mode: str = "detail", size: int = SIZE, front_only: bool = False,
-                log: Callable[[str], None] | None = None) -> dict[str, Any]:
+                out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
+                front_view: Path | str | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -796,7 +814,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
             return None
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
-              mode=mode, size=size, yaw_hint=hint, front_only=front_only, log=log)
+              mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, log=log)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -814,17 +832,36 @@ AUTO_CATEGORIES = ("humanoid",)
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
     """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character
-    on a smooth look (never a crisp or limited-palette one, which it would undo), and then only paints when the picture
-    shows the front (asked())."""
+    on a smooth look (never a crisp or limited-palette one, which it would undo)."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
     lk = look or {}
     return category in AUTO_CATEGORIES and not lk.get("crisp") and not lk.get("palette")
 
 
-def asked(params: dict[str, Any]) -> bool:
-    """True when the version itself turned the pass on: then a three-quarter picture is painted too."""
-    return params.get(PARAM) is True
+def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]:
+    """(the original picture, the front view drawn from it) to paint before the picture the 3D model was built from; each
+    None when it is that same picture or must not be used. A model built bald for hair from the library takes only the
+    bald front view (the original has the hair on it); a model built from an edited picture takes neither (the original
+    shows what the edit removed)."""
+    from . import hairlib
+
+    def other(p: Any) -> Path | None:
+        if p is None or not Path(p).is_file():
+            return None
+        try:
+            if Path(p).samefile(picture) or Path(p).read_bytes() == Path(picture).read_bytes():
+                return None
+        except OSError:
+            return None
+        return Path(p)
+
+    mv = sc.stage_version("mesh")
+    if mv is not None and (mv.params or {}).get("picture_edit"):
+        return None, None
+    if hairlib.is_library(sc):
+        return None, other(sc.lineage_file("bald_front_cutout", ("turnaround",)))
+    return other(sc.lineage_file("cutout", ("concept",))), other(sc.lineage_file("front_cutout", ("turnaround",)))
 
 
 def mode_of(params: dict[str, Any]) -> str:
@@ -834,24 +871,27 @@ def mode_of(params: dict[str, Any]) -> str:
 
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any]) -> dict[str, Path]:
     """The pass inside the prep stage (stages/prep.py), after the last rebake and before the face pass: paints the picture
-    the 3D step was given, and the turnaround views, into the current base colour; replaces it in the GLB and in
+    the asset started from, the picture the 3D step was given and the turnaround views into the current base colour; replaces it in the GLB and in
     `current` when it applies, and records the before and after numbers in the stage metrics. Returns `current`."""
     import asyncio
 
     mode = mode_of(params)
-    front_only = not asked(params)
     sc.set_params(**{"source_project_mode": mode})
-    sc.set_metrics(srcproject_front_only=front_only)
     base = current.get("base_color")
     picture = sc.lineage_file("input", ("mesh",)) or sc.lineage_file("cutout", ("concept",))
     if base is None or picture is None:
         sc.set_metrics(srcproject_applied=False, srcproject_reason="no base colour or no picture to paint from")
         return current
     turn = {v: sc.lineage_file(f"{v}_cutout", ("turnaround",)) for v in TURN_VIEWS}
+    try:
+        source, front_view = original_pictures(sc, Path(picture))
+    except Exception:  # noqa: BLE001  (no lineage to read: the pass paints from the model's own picture, as before)
+        source, front_view = None, None
     work = sc.dir / "srcproject"
     work.mkdir(parents=True, exist_ok=True)
     try:
-        r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, front_only=front_only)
+        r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
+                                    front_view=front_view)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current

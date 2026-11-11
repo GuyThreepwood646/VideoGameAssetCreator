@@ -242,4 +242,3 @@ def test_on_by_itself_only_for_characters_on_a_smooth_look():
     assert sp.on({}, "prop_rigid", {}) is False                      # other models only when asked
     assert sp.on({"source_project": True}, "prop_rigid", {"crisp": True}) is True
     assert sp.on({"source_project": False}, "humanoid", {}) is False
-    assert sp.asked({}) is False and sp.asked({"source_project": True}) is True

@@ -619,8 +619,17 @@ async def fidelity_checks(sc: StageContext, rec: dict[str, Any], input_view: str
         return []
     if "texture_fidelity" not in (sc.version.metrics or {}):
         try:
-            pic = _input_image(sc, input_view or sc.category.get("input_view_default") or "concept")
+            # Against the original picture (what the texture should look like), not the view drawn from it that the
+            # model was built from; the built-from picture when the original has hair the bald model lacks, or shows
+            # what an edit removed.
+            mv = sc.version if sc.version.stage == "mesh" else sc.stage_version("mesh")
+            orig = None
+            if not hairlib.is_library(sc) and not (mv is not None and (mv.params or {}).get("picture_edit")):
+                orig = sc.lineage_file("cutout", ("concept",))
+            original = orig is not None and Path(orig).is_file()
+            pic = Path(orig) if original else _input_image(sc, input_view or sc.category.get("input_view_default") or "concept")
             fid = await asyncio.to_thread(texfidelity.measure_for_stage, glb, pic, base)
+            fid["against"] = "original" if original else "built_from"
         except Exception as e:  # noqa: BLE001  (no picture to compare with)
             fid = {"error": str(e)[:200]}
         sc.set_metrics(texture_fidelity=fid)
