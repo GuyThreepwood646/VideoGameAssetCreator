@@ -408,7 +408,7 @@ ADDED_ON = {
 }
 # Texture fidelity (2026-11): the report-only measure in both steps, and the picture painted onto a character by itself.
 for _stage, _part, _keys in (("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
-                             ("prep", "metrics", ["srcproject_applied", "srcproject_front_only", "srcproject_reason", "texture_fidelity"])):
+                             ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "texture_fidelity"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}
