@@ -67,7 +67,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, texcolour
+from .. import guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, srcproject, texcolour
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -254,6 +254,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The face detail pass (stages/face_detail.py) on the final maps: it may give the face more of the texture
         # (every map baked again onto the new layout, the GLB replaced) and paints the face into the base colour.
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
+        if srcproject.on(params):  # paint the picture's own pixels into the base colour (vgac/srcproject.py), off unless asked
+            current = await srcproject.run_stage(sc, out, current, params)
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
         face_matters = getattr(sc.asset, "face_matters", None) is not False
         if params.get("face_detail") is None and not face_matters:
