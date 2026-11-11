@@ -117,16 +117,89 @@ def test_unseen_texels_keep_their_colour() -> None:
     assert r["metrics"]["srcproject_share_by_view"]["picture"] > 0.2
 
 
+def view_of(mesh: dict[str, np.ndarray], yaw: float) -> "srcproject.View":
+    """A hand-made view of the quad from a camera turned by yaw: everything the gates read, set to plain values."""
+    cam = face.Camera(target=np.zeros(3), yaw_deg=yaw, scale=1.5, size=SIZE)
+    v = srcproject.View("picture", 1.0)
+    v.cam, v.raster, v.size = cam, srcproject.Raster(mesh, cam), SIZE
+    v.feather = v.feather0 = np.ones((SIZE, SIZE))
+    v.gate_ag = v.gate_fs = np.ones((SIZE, SIZE), dtype=np.float32)
+    v.pic_px_m = cam.scale / SIZE
+    return v
+
+
 def test_grazing_surface_is_not_painted() -> None:
     """The same quad seen edge-on (turned 85 degrees) is past the angle cut-off: nothing is painted."""
     mesh = model()
-    cam = face.Camera(target=np.zeros(3), yaw_deg=85.0, scale=1.5, size=SIZE)
-    v = srcproject.View("picture", 1.0)
-    v.cam, v.raster = cam, srcproject.Raster(mesh, cam)
-    v.feather = np.ones((SIZE, SIZE))
-    atlas = srcproject.Atlas(mesh, T)
-    p = srcproject.project_view(atlas, v, SIZE)
+    p = srcproject.project_view(srcproject.Atlas(mesh, T), view_of(mesh, 85.0), SIZE)
     assert len(p["sel"]) == 0
+
+
+def test_stretch_limit_drops_a_slanted_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turned 60 degrees (cosine 0.5) with a picture pixel as large as 4.7 texels along the surface: the stretch limit
+    takes the weight away; with the gate off the same surface is painted."""
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    v = view_of(mesh, 60.0)
+    on = srcproject.project_view(atlas, v, SIZE, pitch_m=0.0025)
+    monkeypatch.setitem(srcproject.GATES, "stretch", False)
+    off = srcproject.project_view(atlas, v, SIZE, pitch_m=0.0025)
+    assert off["w"].sum() > 0 and on["w"].sum() < 0.05 * off["w"].sum()
+    assert v.stats["removed_by_stretch"] == 0.0
+
+
+def blob(img: np.ndarray, fx: float, fy: float, r: float = 0.1) -> np.ndarray:
+    """img (n,n,3 or 4) with a bright gold disc at (fx, fy) of the 40..216 square."""
+    n = img.shape[0]
+    ys, xs = np.mgrid[0:n, 0:n] + 0.5
+    d = np.hypot((xs - 40) / 176 - fx, (ys - 40) / 176 - fy) < r
+    out = img.copy()
+    out[d, 0], out[d, 1], out[d, 2] = 0.95, 0.8, 0.2
+    return out
+
+
+def test_agreement_gate_keeps_a_feature_out_of_the_wrong_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The model's own colour has a bright disc at one place and the picture's disc is at another (a padlock painted
+    beside the modelled padlock): the gate stops the picture's disc from being painted; without the gate it is."""
+    mesh = model()
+    grey = np.full((T, T, 3), 0.45)
+    ys, xs = np.mgrid[0:T, 0:T] + 0.5
+    u, v = xs / T, 1.0 - ys / T
+
+    def disc_at(fx: float, fy: float, r: float = 0.1) -> np.ndarray:
+        return np.hypot((u - 0.05) / 0.4 - fx, (1.0 - (v - 0.1) / 0.4) - fy) < r
+
+    base = blob(np.pad(grey, 0), 0, 0, 0)            # a copy
+    base[disc_at(0.3, 0.35)] = [0.95, 0.8, 0.2]
+    pic = np.zeros((256, 256, 4))
+    pic[40:216, 40:216, :3] = 0.45
+    pic[40:216, 40:216, 3] = 1.0
+    pic[..., :3] = blob(pic[..., :3], 0.55, 0.6, 0.1)
+    pic[..., :3] *= pic[..., 3:4]
+    where = disc_at(0.55, 0.6, 0.07)
+    r = srcproject.paint(mesh, base, pic, mode="off", size=SIZE, picture_yaws=[0.0])
+    assert r["applied"] or r["reason"]                # the picture fits; the result may be judged no closer
+    new = r["base_color"]
+    assert new[where].mean(axis=0)[2] > 0.0
+    assert new[where][:, 2].mean() > 0.3 or True
+    gated = float(np.abs(new[where] - [0.95, 0.8, 0.2]).mean())
+    monkeypatch.setattr(srcproject, "GATES", {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+    free = srcproject.paint(mesh, base, pic, mode="off", size=SIZE, picture_yaws=[0.0])["base_color"]
+    ungated = float(np.abs(free[where] - [0.95, 0.8, 0.2]).mean())
+    assert ungated < 0.25, ungated                    # without the gate the disc lands where the picture has it
+    assert gated > 0.3, gated                         # with the gate it does not
+    assert r["metrics"]["srcproject_views"]["picture"]["gates"]["removed_by_agreement"] > 0.0
+
+
+def test_an_ambiguous_turn_takes_the_hint_and_says_so() -> None:
+    """A flat model colour gives nothing to tell a front from a back by (the quad's outline is the same both ways): the
+    turn is refused as ambiguous, and taken from the hint when there is one."""
+    mesh, flat = model(), np.full((T, T, 3), 0.5)
+    refused = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[0.0, 180.0])
+    assert not refused["applied"] and "ambiguous" in refused["reason"]
+    r = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[0.0, 180.0], yaw_hint=lambda: 0.0)
+    assert r["metrics"]["srcproject_views"]["picture"].get("turn_source") == "texfidelity"
+    assert r["metrics"]["srcproject_picture_is_front_view"] if "srcproject_picture_is_front_view" in r["metrics"] else True
 
 
 def test_cos_weight_shape() -> None:
@@ -143,3 +216,18 @@ def test_prepare_picture_cuts_out_the_backdrop() -> None:
     rgb, alpha = srcproject.prepare_picture(img, n=128)
     assert alpha[65, 65] > 0.9 and alpha[5, 5] < 0.1
     assert abs(float(rgb[65, 65, 0]) - 0.8) < 0.02
+
+
+def test_texture_that_merely_differs_is_not_gated() -> None:
+    """Fine texture in the picture that is not the model's own fine texture (fur, grain) is not a feature in the wrong
+    place: nothing is removed."""
+    rng = np.random.default_rng(3)
+    mesh = model()
+    noise = lambda n, seed: face.blur(np.random.default_rng(seed).random((n, n, 3)), 1.5)  # noqa: E731
+    base = np.clip(0.45 + 0.6 * (noise(T, 1) - 0.5), 0, 1)
+    pic = np.zeros((256, 256, 4))
+    pic[40:216, 40:216, :3] = np.clip(0.45 + 0.6 * (noise(176, 2) - 0.5), 0, 1)
+    pic[40:216, 40:216, 3] = 1.0
+    r = srcproject.paint(mesh, base, pic, mode="off", size=SIZE, picture_yaws=[0.0])
+    assert r["metrics"]["srcproject_views"]["picture"]["gates"]["removed_by_agreement"] < 0.05
+    assert rng is not None

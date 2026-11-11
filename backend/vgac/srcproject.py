@@ -18,6 +18,11 @@ For each view (the picture first, then the turnaround views):
 4. turnaround views either give full colour ("full") or only fine detail on top of the TRELLIS colour ("detail": the
    TRELLIS colour below a few texels' worth of surface, the view's detail above it, so an AI side or back view cannot
    shift tone; this is the default);
+   Gates keep the picture out of places it would smear or paint twice: surface seen more edge-on than the stretch limit
+   (one picture pixel covering more than 2 to 3 texels along the surface), pixels next to a jump in depth (a limb in
+   front of the body), regions where the picture and the model's own colour disagree on structure (a padlock painted
+   beside the modelled padlock; tone is not compared), and regions where the flow ran into its limit. The share of
+   painting weight each gate removes is recorded in the metrics;
 5. texels no view reaches keep their colour with its low frequencies shifted, along the surface, to agree with the
    painted colour near them (no tone step), and island borders are grown into the gutter.
 
@@ -52,6 +57,10 @@ ALPHA_RAMP = (0.004, 0.06)
 GUTTER_PX = 3
 DETAIL_TEXELS = 2.0      # "detail" mode: the TRELLIS colour is kept below this many texels of surface
 BG = 0.5
+STRETCH = (2.0, 3.5)     # one picture pixel covering this many texels along the surface: weight falls from 1 to 0
+DISC_PX = 4              # pixels (at the working size) kept away from depth discontinuities
+GATES = {"disc": True, "stretch": True, "agree": True, "flowsat": True}
+AGREE = {"lo": 0.025, "hi": 0.05, "reach": 0.25, "grow": 0.07}   # structure agreement gate, see agreement_gate
 TURN_YAWS = {
     "quarter": [y for y in range(20, 71, 10)] + [-y for y in range(20, 71, 10)],
     "left": [y for y in range(70, 111, 10)] + [-y for y in range(70, 111, 10)],
@@ -426,11 +435,83 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     v.pic_aligned, v.pic_affine, v.alpha_img = a_use, a_aff, al_use
     v.valid = rm & (al_use > 0.5)
     r = max(2, size // 340)
-    v.feather = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    v.size = size
+    v.pic_px_m = (cam.scale / size) / float(np.hypot(M[0, 0], M[1, 0]))     # metres of surface one picture pixel spans
+    v.flow_u, v.flow_cap = (u if (use_flow and both_s.any()) else np.zeros((fn, fn, 2))), MAX_FLOW * fn
+    v.disc = depth_discontinuities(v.raster.z, cam.scale / size)
+    v.gate_ag = v.gate_fs = np.ones((size, size), dtype=np.float32)
     v.ok = True
     if log:
         log(f"view {name}: yaw {yaw}, iou {fit['iou']:.3f}, flow {flow_used}")
     return v
+
+
+# --- gates ------------------------------------------------------------------------------------------------------
+
+
+def depth_discontinuities(z: np.ndarray, px_m: float, jump_px: float = 10.0) -> np.ndarray:
+    """Pixels beside a jump in depth of more than jump_px pixel sizes (a limb in front of the body): the picture's colour
+    there is a mix of two surfaces."""
+    zf = np.where(np.isfinite(z), z, np.nan)
+    d = np.zeros(z.shape, dtype=bool)
+    h, w = zf.shape
+    for dy, dx in ((0, 1), (1, 0)):
+        j = np.nan_to_num(np.abs(zf[dy:, dx:] - zf[:h - dy, :w - dx]) > jump_px * px_m, nan=False).astype(bool)
+        d[dy:, dx:] |= j
+        d[:h - dy, :w - dx] |= j
+    return d
+
+
+def agreement_gate(v: "View", fn: int = 512) -> tuple[np.ndarray, float]:
+    """Where the picture and the model's own colour each hold a feature the other lacks, close to one another: the same
+    thing drawn in two places (a padlock painted beside the modelled padlock). Both are reduced to fn and band-passed
+    (luminance between 4 and 14 px: a few texels to a few dozen); the structure energy over a 16 px window says where a
+    feature is. A feature in one with nothing in the other at that place, and a feature of the other within a fifth of
+    the frame with nothing in the first at its place, are both not painted. Fine texture that merely differs (fur,
+    wood grain) has energy in both, a feature only one of them has has no partner, and tone is not compared. Returns
+    (gate at fn, share of the figure removed)."""
+    k = fn / 512.0
+    a, b = small(v.pic_aligned, fn), small(v.render, fn)
+    m = small(v.valid.astype(np.float64), fn) > 0.5
+    la, lb = face.luminance(a), face.luminance(b)
+    s1, s2, sg = 4.0 * k, 14.0 * k, 16.0 * k
+    sa = (face.masked_blur(la, m, s1) - face.masked_blur(la, m, s2)) * m
+    sb = (face.masked_blur(lb, m, s1) - face.masked_blur(lb, m, s2)) * m
+    ea, eb = face.blur(sa * sa, sg), face.blur(sb * sb, sg)
+    hi, lo = AGREE["hi"] ** 2, AGREE["lo"] ** 2
+    orphan_a = (ea > hi) & (eb < lo) & m          # the picture has a feature here and the model's colour has none
+    orphan_b = (eb > hi) & (ea < lo) & m          # the model's colour has one here and the picture has none
+    reach = max(2, int(round(AGREE["reach"] * fn)))
+    bad = (orphan_a & face.dilate_mask(orphan_b, reach)) | (orphan_b & face.dilate_mask(orphan_a, reach))
+    # a feature is gated as a whole: close up the rings the band picks out, so the inside of a padlock goes with its edge
+    bad = face.fill_holes(face.dilate_mask(bad, max(2, int(round(AGREE["grow"] * fn))))) & m
+    g = np.where(m, 1.0 - np.clip(face.blur(bad.astype(np.float64), 1.5), 0.0, 1.0), 1.0)
+    return g, float(bad.sum() / max(m.sum(), 1))
+
+
+def prepare_gates(v: "View", gates: dict[str, bool] | None = None) -> None:
+    """The per-view gates on top of the angle cut-off: depth-edge erosion (changes the feather), the structure agreement
+    gate and the flow-limit gate (images in v.gate_ag and v.gate_fs)."""
+    g = GATES if gates is None else gates
+    size = v.size
+    r = max(2, size // 340)
+    valid = v.valid & ~face.dilate_mask(v.disc, DISC_PX) if g.get("disc") else v.valid
+    v.feather = np.clip(face.blur(face.erode(valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    ones = np.ones((size, size), dtype=np.float32)
+    v.gate_ag = v.gate_fs = ones
+    v.info["gate_pixels"] = {}
+    if g.get("agree"):
+        ga, share = agreement_gate(v, min(512, v.size))
+        v.gate_ag = _rs(ga, size, size).astype(np.float32)
+        v.info["gate_pixels"]["agreement"] = round(share, 4)
+    if g.get("flowsat"):
+        fn = v.flow_u.shape[0]
+        sat = (np.hypot(v.flow_u[..., 0], v.flow_u[..., 1]) >= 0.9 * v.flow_cap).astype(np.float64)
+        f = 1.0 - 0.7 * np.clip(face.blur(sat, 3.0) * 2.0, 0.0, 1.0)
+        v.gate_fs = _rs(f, size, size).astype(np.float32)
+        inside = small(v.valid.astype(np.float64), fn) > 0.5
+        v.info["gate_pixels"]["flow_cap"] = round(float(((f < 0.5) & inside).sum() / max(inside.sum(), 1)), 4)
 
 
 # --- the atlas side ---------------------------------------------------------------------------------------------
@@ -497,9 +578,10 @@ def cos_weight(cosv: np.ndarray) -> np.ndarray:
     return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(COS_CUT, COS_CUT + 0.12, cosv)
 
 
-def project_view(atlas: Atlas, v: View, size: int) -> dict[str, np.ndarray]:
+def project_view(atlas: Atlas, v: View, size: int, pitch_m: float | None = None) -> dict[str, np.ndarray]:
     """The texels this view sees squarely: index into atlas.idx, screen position, weight."""
     cam = v.cam
+    pitch_m = atlas.pitch_m if pitch_m is None else pitch_m
     sp, sd = cam.project(atlas.pos)
     xi = np.clip(sp[:, 0].astype(int), 0, size - 1)
     yi = np.clip(sp[:, 1].astype(int), 0, size - 1)
@@ -507,8 +589,21 @@ def project_view(atlas: Atlas, v: View, size: int) -> dict[str, np.ndarray]:
     tol = 2.5 * (cam.scale / size) / np.maximum(np.abs(cosv), 0.15)
     inb = (sp[:, 0] >= 0) & (sp[:, 0] < size) & (sp[:, 1] >= 0) & (sp[:, 1] < size)
     visible = inb & (sd <= v.raster.z[yi, xi] + tol) & (v.raster.fcos[yi, xi] > 0.05)
-    feather = face.sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
-    w = v.weight * cos_weight(cosv) * feather * visible
+    f0 = face.sample(v.feather0[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    f1 = face.sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    ga = face.sample(v.gate_ag[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    gf = face.sample(v.gate_fs[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    foot = v.pic_px_m / np.maximum(cosv, 0.05) / pitch_m
+    st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
+    fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
+    base = v.weight * cos_weight(cosv) * f0 * visible
+    w = base * fd * st * ga * gf
+    wsum = max(float(base.sum()), 1e-12)
+    v.stats = {"removed_by_depth_edge": round(float((base * (1 - fd)).sum() / wsum), 4),
+               "removed_by_stretch": round(float((base * (1 - st)).sum() / wsum), 4),
+               "removed_by_agreement": round(float((base * (1 - ga)).sum() / wsum), 4),
+               "removed_by_flow_cap": round(float((base * (1 - gf)).sum() / wsum), 4),
+               "removed_any": round(float(1.0 - w.sum() / wsum), 4)}
     keep = np.flatnonzero(w > 1e-5)
     return {"sel": keep, "sp": sp[keep], "w": w[keep]}
 
@@ -618,7 +713,7 @@ def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
 
 def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround: dict[str, Any] | None = None, *,
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
-          log: Callable[[str], None] | None = None) -> dict[str, Any]:
+          yaw_hint: Callable[[], float | None] | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had."""
@@ -627,6 +722,13 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     centre, scale = model_frame(mesh)
     pic, alpha = prepare_picture(picture)
     front = fit_view(mesh, tex, pic, alpha, "picture", picture_yaws or PICTURE_YAWS, centre, scale, size, min_iou, log=log)
+    if not front.ok and "ambiguous" in str(front.info.get("refused")) and yaw_hint is not None:
+        # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
+        hint = yaw_hint()
+        if hint is not None:
+            front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
+            front.info["turn_source"] = "texfidelity"
+    front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
     views = [front]
     infos = {"picture": front.info}
     if not front.ok:
@@ -644,7 +746,11 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             if vw.ok:
                 views.append(vw)
     atlas = Atlas(mesh, tex.shape[0])
+    for v in views:
+        prepare_gates(v)
     projs = [project_view(atlas, v, size) for v in views]
+    for v in views:
+        infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
     pitch_px = atlas.pitch_m * size / scale
     images = [views[0].pic_aligned]
     for v in views[1:]:
@@ -653,7 +759,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     new = finish(atlas, tex, paint_, alpha_)
     before, after = front_measures(front, tex), front_measures(front, new)
     painted = alpha_ > 0.5
-    m = {"srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
+    m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_seconds": round(time.time() - t0, 1)}
@@ -674,8 +780,16 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
     if mesh is None:
         return {"applied": False, "reason": "the model has no texture layout", "base_color": Path(base_color), "metrics": {}}
     tex = face.read_rgb(base_color)
+    def hint() -> float | None:
+        from . import texfidelity
+
+        try:
+            return float(texfidelity.score(glb, picture, base_color=base_color, views=False).get("yaw"))
+        except Exception:  # noqa: BLE001
+            return None
+
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
-              mode=mode, size=size, log=log)
+              mode=mode, size=size, yaw_hint=hint, log=log)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
