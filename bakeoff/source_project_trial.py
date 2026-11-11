@@ -50,6 +50,13 @@ FLOW_SMOOTH = 8.0        # final Gaussian sigma of the field, in pixels at FIT_S
 VIEW_WEIGHT = {"front": 1.0, "quarter": 0.5, "left": 0.5, "right": 0.5, "back": 0.5}
 BG = 0.5
 TAG = ""               # output folder suffix (--tag)
+CUT_DEG = 75.0           # surfaces seen more edge-on than this are not painted (--cut)
+STRETCH = (2.0, 3.5)     # one picture pixel covering this many texels along the surface: weight falls from 1 to 0
+DISC_PX = 4              # pixels (at S) kept away from depth discontinuities
+GATES = {"disc": True, "stretch": True, "agree": True, "flowsat": True}   # --gates none | disc,stretch,agree,flowsat
+AGREE = {"lo": 0.025, "hi": 0.05, "reach": 0.25, "grow": 0.07}   # structure agreement gate, see agreement_gate
+CACHE = False            # --cache: keep the fitted views on disk so gate trials do not refit
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", "source_project", "_cache")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -488,9 +495,82 @@ def fit_view(mesh: dict, tex: np.ndarray, pic: np.ndarray, alpha: np.ndarray, na
     # feather: eroded valid area blurred over a few pixels at S (about 6 px at 2048)
     r = max(2, S // 340)
     v.feather = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    v.M = M
+    v.pic_px_m = (cam.scale / S) / float(np.hypot(M[0, 0], M[1, 0]))     # metres of surface one picture pixel spans
+    v.flow_u, v.flow_cap = u, max_px
+    v.disc = depth_discontinuities(v.raster.z, cam.scale / S)
+    v.feather0 = v.feather
+    v.gate = np.ones((S, S), dtype=np.float32)
+    v.gate_ag = v.gate_fs = v.gate
     v.ok = True
     log(f"  view {name}: yaw {yaw}, iou {fit['iou']:.3f}, flow {v.info['flow_used']} (match {fm0:.3f} -> {fm1:.3f}, max {v.info['flow_max_px_512']} px)")
     return v
+
+
+def depth_discontinuities(z: np.ndarray, px_m: float, jump_px: float = 10.0) -> np.ndarray:
+    """Pixels next to a jump in depth of more than jump_px pixel sizes (a limb in front of the body): the picture's
+    colour there is a mix of two surfaces."""
+    zf = np.where(np.isfinite(z), z, np.nan)
+    d = np.zeros(z.shape, dtype=bool)
+    for dy, dx in ((0, 1), (1, 0)):
+        a = zf[dy:, dx:] if (dy or dx) else zf
+        b = zf[:zf.shape[0] - dy, :zf.shape[1] - dx]
+        j = np.abs(a - b) > jump_px * px_m
+        j = np.nan_to_num(j, nan=False).astype(bool)
+        d[dy:, dx:] |= j
+        d[:zf.shape[0] - dy, :zf.shape[1] - dx] |= j
+    return d
+
+
+def agreement_gate(v: "View", fn: int = 512) -> tuple[np.ndarray, dict]:
+    """Where the picture and the model's own colour each hold a feature the other lacks, close to one another: the same
+    thing drawn in two places (a padlock painted beside the modelled padlock). Both are reduced to fn and band-passed
+    (luminance between 4 and 14 px: a few texels to a few dozen); the structure energy over a 16 px window says where a
+    feature is. A feature in one with nothing in the other at that place, and a feature of the other within a fifth of
+    the frame with nothing in the first at its place, are both not painted. Fine texture that merely differs (fur,
+    wood grain) has energy in both, a feature only one of them has has no partner, and tone is not compared. Returns
+    (gate at fn, share of the figure removed)."""
+    k = fn / 512.0
+    a, b = small(v.pic_aligned, fn), small(v.render, fn)
+    m = small(v.valid.astype(np.float64), fn) > 0.5
+    la, lb = face.luminance(a), face.luminance(b)
+    s1, s2, sg = 4.0 * k, 14.0 * k, 16.0 * k
+    sa = (face.masked_blur(la, m, s1) - face.masked_blur(la, m, s2)) * m
+    sb = (face.masked_blur(lb, m, s1) - face.masked_blur(lb, m, s2)) * m
+    ea, eb = face.blur(sa * sa, sg), face.blur(sb * sb, sg)
+    hi, lo = AGREE["hi"] ** 2, AGREE["lo"] ** 2
+    orphan_a = (ea > hi) & (eb < lo) & m          # the picture has a feature here and the model's colour has none
+    orphan_b = (eb > hi) & (ea < lo) & m          # the model's colour has one here and the picture has none
+    reach = max(2, int(round(AGREE["reach"] * fn)))
+    bad = (orphan_a & face.dilate_mask(orphan_b, reach)) | (orphan_b & face.dilate_mask(orphan_a, reach))
+    # a feature is gated as a whole: close up the rings the band picks out, so the inside of a padlock goes with its edge
+    bad = face.fill_holes(face.dilate_mask(bad, max(2, int(round(AGREE["grow"] * fn))))) & m
+    g = np.where(m, 1.0 - np.clip(face.blur(bad.astype(np.float64), 1.5), 0.0, 1.0), 1.0)
+    return g, {"removed_share": round(float(bad.sum() / max(m.sum(), 1)), 4)}
+
+
+def prepare_gates(v: "View", gates: dict | None = None) -> None:
+    """Per-view gates on top of the cut-off: depth-edge erosion (changes the feather), the structure agreement gate and
+    the flow-saturation gate (both S-sized images in v.gate_ag and v.gate_fs)."""
+    g = GATES if gates is None else gates
+    r = max(2, S // 340)
+    valid = v.valid
+    if g.get("disc"):
+        valid = valid & ~face.dilate_mask(v.disc, DISC_PX)
+    v.feather = np.clip(face.blur(face.erode(valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    ones = np.ones((S, S), dtype=np.float32)
+    v.gate_ag = v.gate_fs = ones
+    v.info["gate_pixels"] = {}
+    if g.get("agree"):
+        ga, st = agreement_gate(v)
+        v.gate_ag = _rs(ga, S, S).astype(np.float32)
+        v.info["gate_pixels"]["agree"] = st["removed_share"]
+    if g.get("flowsat"):
+        mag = np.hypot(v.flow_u[..., 0], v.flow_u[..., 1])
+        sat = (mag >= 0.9 * v.flow_cap).astype(np.float64)
+        f = 1.0 - 0.7 * np.clip(face.blur(sat, 3.0) * 2.0, 0.0, 1.0)
+        v.gate_fs = _rs(f, S, S).astype(np.float32)
+        v.info["gate_pixels"]["flowsat"] = round(float(((f < 0.5) & (small(v.valid.astype(np.float64), FIT_S) > 0.5)).sum() / max((small(v.valid.astype(np.float64), FIT_S) > 0.5).sum(), 1)), 4)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -575,8 +655,30 @@ def project_view(atlas: Atlas, v: View) -> dict:
     z = v.raster.z[yi, xi]
     visible = inb & (sd <= z + tol)
     visible &= v.raster.fcos[yi, xi] > 0.05
-    feather = face.sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
-    w = v.weight * cos_weight(cosv) * feather * visible
+    f0 = face.sample(v.feather0[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    f1 = face.sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    ga = face.sample(v.gate_ag[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    gf = face.sample(v.gate_fs[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    foot = v.pic_px_m / np.maximum(cosv, 0.05) / atlas.pitch_m
+    st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
+    fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
+    base = v.weight * cos_weight(cosv) * f0 * visible
+    w = base * fd * st * ga * gf
+    live = base > 1e-5
+    n_live = max(int(live.sum()), 1)
+    wsum = max(float(base.sum()), 1e-12)
+
+    def wshare(f: np.ndarray) -> float:      # share of the view's painting weight a gate takes away
+        return round(float((base * (1.0 - f)).sum() / wsum), 4)
+
+    v.stats = {"texels_seen": int(live.sum()),
+               "removed_by_depth_edge": wshare(fd), "removed_by_stretch": wshare(st),
+               "removed_by_agreement": wshare(ga), "removed_by_flow_cap": wshare(gf),
+               "removed_any": round(float(1.0 - (w.sum() / wsum)), 4),
+               "texels_below_half": {"depth_edge": round(float((live & (fd < 0.5)).sum() / n_live), 4),
+                                     "stretch": round(float((live & (st < 0.5)).sum() / n_live), 4),
+                                     "agreement": round(float((live & (ga < 0.5)).sum() / n_live), 4),
+                                     "flow_cap": round(float((live & (gf < 0.5)).sum() / n_live), 4)}}
     keep = np.flatnonzero(w > 1e-5)
     return {"sel": keep, "sp": sp[keep], "w": w[keep], "cos": cosv[keep]}
 
@@ -698,7 +800,8 @@ def solve(atlas: Atlas, base: np.ndarray, views: list[View], images: list[np.nda
     for vi, (v, img) in enumerate(zip(views, images)):
         ras = v.raster
         ok = ras.mask & (ras.fcos > 0.05) & (v.feather > 0)
-        w = v.weight * cos_weight(ras.cos) * v.feather * ok
+        stretch = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], v.pic_px_m / np.maximum(ras.cos, 0.05) / atlas.pitch_m) if GATES.get("stretch") else 1.0
+        w = v.weight * cos_weight(ras.cos) * v.feather * ok * stretch * v.gate_ag * v.gate_fs
         if vi > 0 and front_map is not None:
             tx_ = np.clip((ras.uv[..., 0] * T).astype(int), 0, T - 1)
             ty_ = np.clip((ras.uv[..., 1] * T).astype(int), 0, T - 1)
@@ -891,7 +994,7 @@ def sheets(dest: str, subject: str, rows: dict, front: View, pic_img: np.ndarray
     cy2 = ys.mean()
     cx2 = xs.mean()
     cs = 320
-    cr = Image.new("RGB", (cs * 4, cs * (len(names) + 1)), (40, 40, 40))
+    cr = Image.new("RGB", (cs * 6, cs * (len(names) + 1)), (40, 40, 40))
     # first row: the picture itself at the same crops
     cr.paste(label(crop(pic_img, cx, cy, cs), "picture head"), (0, 0))
     cr.paste(label(crop(pic_img, cx2, cy2, cs), "picture body"), (cs, 0))
@@ -901,6 +1004,11 @@ def sheets(dest: str, subject: str, rows: dict, front: View, pic_img: np.ndarray
         cr.paste(label(crop(r["front"], cx2, cy2, cs), f"{n} body"), (cs, (i + 1) * cs))
         cr.paste(label(crop(r["imgs"][45], 512, 400, cs), f"{n} quarter"), (2 * cs, (i + 1) * cs))
         cr.paste(label(crop(r["imgs"][180], 512, 400, cs), f"{n} back"), (3 * cs, (i + 1) * cs))
+        for j, yy in enumerate((90, 270)):
+            im = r["imgs"][yy]
+            mm = np.abs(im - BG).max(2) > 0.02
+            yy_, xx_ = np.where(mm)
+            cr.paste(label(crop(im, xx_.mean() if len(xx_) else 512, yy_.min() + 0.28 * (yy_.max() - yy_.min()) if len(yy_) else 400, cs), f"{n} side {yy}"), ((4 + j) * cs, (i + 1) * cs))
     cr.save(os.path.join(dest, "sheet_crops.png"))
 
 
@@ -932,25 +1040,48 @@ def run_subject(key: str, variants: list[str], turn: bool, log=print) -> dict:
     pitch_px = atlas.pitch_m * S / scale
     log(f"[{key}] texel pitch {atlas.pitch_m * 1000:.2f} mm = {pitch_px:.2f} px at {S}; picture px = {S / 1024:.1f} of ours; atlas used {atlas.cover.mean():.3f} ({atlas.seconds:.0f}s)")
     t0 = time.time()
-    views: list[View] = []
-    front = fit_view(mesh, tex, pic, alpha, "front", FRONT_YAWS, centre, scale, log=log)
-    if not front.ok:
-        raise SystemExit(f"{key}: front picture refused: {front.info.get('refused')}")
-    views.append(front)
-    all_info = {"front": front.info}
-    if turn:
-        for name in ("quarter", "left", "right", "back"):
-            p = os.path.join(TURN, tname, name + ".png")
-            if not os.path.isfile(p):
-                continue
-            tp, ta = load_picture(p, p)
-            vw = fit_view(mesh, tex, tp, ta, name, TURN_YAWS[name], centre, scale, log=log)
-            all_info[name] = vw.info
-            if vw.ok:
-                views.append(vw)
+    cache_file = os.path.join(CACHE_DIR, f"{key}{'_noturn' if not turn else ''}{'_s%d' % S}.pkl")
+    views = load_views(cache_file) if CACHE and os.path.isfile(cache_file) else None
+    if views is not None:
+        log(f"[{key}] views from cache {cache_file}")
+        front = views[0]
+        all_info = {v.name: v.info for v in views}
+    else:
+        views = []
+        front = fit_view(mesh, tex, pic, alpha, "front", FRONT_YAWS, centre, scale, log=log)
+        if not front.ok and "ambiguous" in str(front.info.get("refused")):
+            from vgac import texfidelity
+
+            hint = texfidelity.score(os.path.join(b, "model.glb"), os.path.join(b, "input.png"), base_color=os.path.join(b, "base.png"), views=False)
+            log(f"[{key}] the turn is ambiguous; Lane A's best-fit turn is {hint.get('yaw')} (iou {hint.get('silhouette_iou')})")
+            front = fit_view(mesh, tex, pic, alpha, "front", [float(hint["yaw"])], centre, scale, log=log)
+            front.info["turn_source"] = "texfidelity"
+        if not front.ok:
+            raise SystemExit(f"{key}: front picture refused: {front.info.get('refused')}")
+        views.append(front)
+        all_info = {"front": front.info}
+        if turn:
+            for name in ("quarter", "left", "right", "back"):
+                p = os.path.join(TURN, tname, name + ".png")
+                if not os.path.isfile(p):
+                    continue
+                tp, ta = load_picture(p, p)
+                vw = fit_view(mesh, tex, tp, ta, name, TURN_YAWS[name], centre, scale, log=log)
+                all_info[name] = vw.info
+                if vw.ok:
+                    views.append(vw)
+        if CACHE:
+            save_views(views, cache_file)
+    for vw in views:
+        prepare_gates(vw)
+    yaw_f = front.info["yaw"]
+    front.info["front_view"] = bool(abs(((yaw_f + 180) % 360) - 180) <= 25)
     t_fit = time.time() - t0
     t0 = time.time()
     projs = [project_view(atlas, v) for v in views]
+    for v in views:
+        all_info.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
+        log(f"[{key}] gates {v.name}: {json.dumps(v.stats)}")
     t_proj = time.time() - t0
     meas = Measurer(mesh, atlas, front)
     results: dict[str, dict] = {}
@@ -1006,6 +1137,8 @@ def run_subject(key: str, variants: list[str], turn: bool, log=print) -> dict:
         m["seconds"] = round(secs, 1)
         m.update(extra)
         m["painted_share"] = round(float((a > 0.5).mean()), 4)
+        if dom is not None and var == "v1":
+            view_share_sheet(dest, mesh, atlas, views, dom, a, T)
         if dom is not None:
             m["share_by_view"] = {views[i].name: round(float(((dom == i) & (a > 0.5)).mean()), 4) for i in range(len(views))}
         results[var] = m
@@ -1024,6 +1157,75 @@ def run_subject(key: str, variants: list[str], turn: bool, log=print) -> dict:
     with open(os.path.join(dest, "report.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, indent=1, default=float)
     return rep
+
+
+def save_views(views: list[View], path: str) -> None:
+    import pickle
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    slim = []
+    for v in views:
+        c = copy_view(v)
+        slim.append(c)
+    with open(path, "wb") as f:
+        pickle.dump(slim, f, protocol=4)
+
+
+def copy_view(v: View) -> View:
+    """A copy for the cache: raster internals dropped, colour images as float32."""
+    import copy
+
+    c = copy.copy(v)
+    r = copy.copy(v.raster)
+    r.ras = None
+    c.raster = r
+    for k in ("pic_aligned", "pic_affine", "render"):
+        setattr(c, k, getattr(v, k).astype(np.float32))
+    for k in ("gate", "gate_ag", "gate_fs", "feather", "feather0"):
+        setattr(c, k, getattr(v, k).astype(np.float32))
+    c.flow_u = v.flow_u.astype(np.float32)
+    return c
+
+
+def load_views(path: str) -> list[View]:
+    import pickle
+
+    class _Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):  # the cache may have been written by this file run as a script
+            if module == "__main__" and not hasattr(sys.modules["__main__"], name):
+                module = "source_project_trial"
+            return super().find_class(module, name)
+
+    with open(path, "rb") as f:
+        views = _Unpickler(f).load()
+    for v in views:
+        for k in ("pic_aligned", "pic_affine", "render"):
+            setattr(v, k, getattr(v, k).astype(np.float64))
+        v.flow_u = v.flow_u.astype(np.float64)
+        v.feather = v.feather0.astype(np.float64)
+        v.feather0 = v.feather0.astype(np.float64)
+    return views
+
+
+VIEW_COLOURS = {"front": (0.9, 0.2, 0.2), "quarter": (0.2, 0.8, 0.2), "right": (0.2, 0.3, 0.95), "back": (0.95, 0.85, 0.1), "left": (0.9, 0.2, 0.9)}
+
+
+def view_share_sheet(dest: str, mesh: dict, atlas: Atlas, views: list[View], dom: np.ndarray, alpha: np.ndarray, T: int) -> None:
+    """The atlas coloured by the view that paints each texel (grey: kept), seen from four sides."""
+    flat = np.full((T * T, 3), 0.5)
+    for i, v in enumerate(views):
+        sel = (dom == i) & (alpha > 0.5)
+        flat[atlas.idx[sel]] = VIEW_COLOURS.get(v.name, (1, 1, 1))
+    tex = imaging.dilate(flat.reshape(T, T, 3), atlas.cover_ext, 4)
+    c, s = model_frame(mesh)
+    tiles = []
+    for yaw in (0, 90, 180, 270):
+        r = Raster(mesh, face.Camera(target=c, yaw_deg=float(yaw), scale=s, size=512))
+        tiles.append(Image.fromarray(face.to_uint8(render_colour(mesh, r, tex))))
+    sheet = Image.new("RGB", (512 * 4, 512), (40, 40, 40))
+    for i, t in enumerate(tiles):
+        sheet.paste(label(t, f"yaw {(0, 90, 180, 270)[i]}; " + ", ".join(v.name for v in views)), (i * 512, 0))
+    sheet.save(os.path.join(dest, "view_share.png"))
 
 
 def table(reports: list[dict]) -> str:
@@ -1060,7 +1262,22 @@ def main() -> None:
         if a == "--front-yaws":
             FRONT_YAWS = [float(x) for x in sys.argv[i + 1].split(",")]
             args = [x for x in args if x != sys.argv[i + 1]]
-    global MIN_IOU, TAG
+    global MIN_IOU, TAG, COS_CUT, CUT_DEG, GATES, CACHE
+    for i, a in enumerate(sys.argv):
+        if a == "--cut":
+            CUT_DEG = float(sys.argv[i + 1])
+            COS_CUT = math.cos(math.radians(CUT_DEG))
+            args = [x for x in args if x != sys.argv[i + 1]]
+        if a == "--gates":
+            names = [] if sys.argv[i + 1] == "none" else sys.argv[i + 1].split(",")
+            GATES = {k: (k in names) for k in GATES}
+            args = [x for x in args if x != sys.argv[i + 1]]
+        if a == "--cache":
+            CACHE = True
+        if a == "--agree":
+            v_ = [float(x) for x in sys.argv[i + 1].split(",")]
+            AGREE.update(dict(zip(("lo", "hi", "d0", "d1"), v_)))
+            args = [x for x in args if x != sys.argv[i + 1]]
     for i, a in enumerate(sys.argv):
         if a == "--tag":
             TAG = sys.argv[i + 1]
