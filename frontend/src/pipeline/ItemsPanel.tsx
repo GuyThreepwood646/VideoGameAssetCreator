@@ -26,6 +26,8 @@ const MOVES: { label: string; title: string; move: [number, number, number] }[] 
   { label: 'To their left', title: "Move it toward the character's own left", move: [1, 0, 0] },
   { label: 'To their right', title: "Move it toward the character's own right", move: [-1, 0, 0] },
 ]
+// The six moves laid out as a pad: up and down on the left, forward and back in the middle, sideways on the right.
+const MOVE_PAD = ['Up', 'Forward', '', 'To their left', '', 'To their right', 'Down', 'Back', '']
 const TURNS: { label: string; title: string; turn: [number, number, number] }[] = [
   { label: 'Tip forward', title: 'Tilt the top of the item toward the front', turn: [1, 0, 0] },
   { label: 'Tip back', title: 'Tilt the top of the item toward the back', turn: [-1, 0, 0] },
@@ -301,11 +303,18 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                   </span>
                   <div className="items-nudges" role="group" aria-label="Move">
                     <span className="muted small nudge-title">Move</span>
-                    {MOVES.map((m) => (
-                      <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
-                        {m.label}
-                      </button>
-                    ))}
+                    <div className="nudge-pad" aria-label="Move pad">
+                      {MOVE_PAD.map((label, i) => {
+                        const m = MOVES.find((x) => x.label === label)
+                        return m ? (
+                          <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
+                            {m.label}
+                          </button>
+                        ) : (
+                          <span key={i} aria-hidden="true" />
+                        )
+                      })}
+                    </div>
                   </div>
                   <div className="items-nudges" role="group" aria-label="Turn">
                     <span className="muted small nudge-title">Turn</span>
