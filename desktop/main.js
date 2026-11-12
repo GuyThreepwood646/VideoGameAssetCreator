@@ -117,12 +117,20 @@ function createMainWindow() {
   });
   // The window only ever shows the local backend; any other navigation goes to the system browser instead.
   const appOrigin = new URL(cfg.backend.url).origin;
-  mainWindow.webContents.on('will-navigate', (e, url) => {
-    if (new URL(url).origin !== appOrigin) {
+  // Same rule for a plain navigation, a redirect, and a navigation inside any frame. The URL is read from the event
+  // (newer Electron) or the second argument (older Electron).
+  const guardNavigation = (e, legacyUrl) => {
+    const url = e.url || legacyUrl;
+    let foreign = true;
+    try { foreign = new URL(url).origin !== appOrigin; } catch { /* an unparsable URL is treated as foreign */ }
+    if (foreign) {
       e.preventDefault();
       if (/^https?:/i.test(url)) shell.openExternal(url);
     }
-  });
+  };
+  mainWindow.webContents.on('will-navigate', guardNavigation);
+  mainWindow.webContents.on('will-redirect', guardNavigation);
+  mainWindow.webContents.on('will-frame-navigate', guardNavigation);
   mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   mainWindow.on('close', (e) => {
     if (quitting) return;
