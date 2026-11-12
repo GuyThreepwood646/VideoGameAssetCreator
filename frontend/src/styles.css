@@ -4152,3 +4152,45 @@ button.preset-card .swatches {
 button.preset-card:hover:not(:disabled) {
   border-color: var(--accent);
 }
+
+.compare-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+}
+.compare-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+}
+.compare-side figure {
+  margin: 0;
+  text-align: center;
+}
+.compare-side img,
+.compare-stack img {
+  max-width: 100%;
+  max-height: 340px;
+  object-fit: contain;
+}
+.compare-stack {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.compare-over {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+}
+.compare-slider input[type='range'] {
+  width: 100%;
+}
+.compare-toggle {
+  margin-bottom: var(--s1);
+}
