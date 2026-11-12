@@ -66,6 +66,12 @@ export function HealthBadge() {
     [health],
   )
   const offNow = offEvent && offEvent.health === health ? offEvent.count : null
+  // Assets whose Autopilot is waiting for the person (UI-19): the chip says Needs you and links to the first one.
+  const [needs, setNeeds] = useState<Record<string, boolean>>({})
+  useEvents((ev) => {
+    if (ev.type === 'autopilot') setNeeds((n) => ({ ...n, [ev.asset_id]: (ev.autopilot.status === 'paused' && !ev.autopilot.stopped_by_user) || ev.autopilot.status === 'error' }))
+  }, [])
+  const needsId = Object.keys(needs).find((k) => needs[k])
   if (error) {
     return (
       <Link to="/health" className="chip chip-bad" title={'The engine did not answer: ' + error}>
@@ -78,14 +84,20 @@ export function HealthBadge() {
   const lowRam = health.host.ram_free_gb < health.host.min_free_ram_gb
   const anyReady = Object.values(health.instances).some((i) => i.enabled !== false)
   // One chip (UI-19). An engine that starts when a step needs it is normal, so it is never red.
-  const label = !anyReady ? 'Every card is off' : lowRam ? 'Low memory' : 'Ready'
-  const tone = !anyReady || lowRam ? 'chip-warn' : 'chip-ok'
+  const working = Object.values(health.queue ?? {}).some((q) => q.current_job_id != null)
+  const label = needsId ? 'Needs you' : !anyReady ? 'Every card is off' : lowRam ? 'Low memory' : working ? 'Working' : 'Ready'
+  const tone = needsId || !anyReady || lowRam ? 'chip-warn' : working ? 'chip-accent' : 'chip-ok'
   return (
     <details className="status-chip health-badge">
       <summary className={'chip ' + tone} title="Click for details about your graphics cards and memory">
         {label}
       </summary>
       <div className="status-pop">
+        {needsId && (
+          <Link to={`/assets/${needsId}`} className="small">
+            An asset is waiting for you. Open it.
+          </Link>
+        )}
         <div className="muted small">VGAC engine v{health.version}</div>
         {off > 0 && (
           <Link to="/health" className="small">

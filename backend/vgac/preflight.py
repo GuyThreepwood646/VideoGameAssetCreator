@@ -256,7 +256,7 @@ def check_unity(settings: Settings) -> list[dict[str, Any]]:
         out.append(item("unity", "tools", "Unity editor", "warn",
                         "The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything "
                         "else works; the hand-off still makes the files.",
-                        "Install the Unity editor, or set unity_exe in backend/config.yaml to its Unity.exe.", ["export"], tech))
+                        "Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of backend/config.yaml.", ["export"], tech))
     else:
         out.append(item("unity", "tools", "Unity editor", "ok", "The Unity editor is ready for the test import.", "",
                         ["export"], tech))
