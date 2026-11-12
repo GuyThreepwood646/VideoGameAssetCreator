@@ -164,12 +164,54 @@ export default function AssetPage() {
   // Follow the autopilot from stage to stage while the page is looking at the stage it was on.
   const apStageNow = autopilotStage(autopilot)
   const apStatus = autopilot?.status
+  // Following stops as soon as the person scrolls, clicks or types on the page, and can be turned off for good (UI-16).
+  const [followOn, setFollowOn] = useState(() => {
+    try {
+      return localStorage.getItem('vgac.follow') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const touchedRef = useRef(false)
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    touchedRef.current = false
+    setTouched(false)
+    const mark = () => {
+      if (!touchedRef.current) {
+        touchedRef.current = true
+        setTouched(true)
+      }
+    }
+    const main = document.querySelector('.stage-main')
+    main?.addEventListener('wheel', mark, { passive: true })
+    main?.addEventListener('pointerdown', mark)
+    main?.addEventListener('keydown', mark)
+    return () => {
+      main?.removeEventListener('wheel', mark)
+      main?.removeEventListener('pointerdown', mark)
+      main?.removeEventListener('keydown', mark)
+    }
+  }, [aid, haveAsset])
+  const chooseFollow = (on: boolean) => {
+    setFollowOn(on)
+    if (on) {
+      touchedRef.current = false
+      setTouched(false)
+    }
+    try {
+      localStorage.setItem('vgac.follow', on ? '1' : '0')
+    } catch {
+      // not remembered
+    }
+  }
   useEffect(() => {
     if (!apStageNow || !apStatus || apStatus === 'idle') return
-    const following = followRef.current === null || followRef.current === stage
+    const following = followOn && !touchedRef.current && (followRef.current === null || followRef.current === stage)
     if (following && apStageNow !== stage) navigate(`/assets/${aid}/${apStageNow}`, { replace: true })
     followRef.current = apStageNow
   }, [apStageNow, apStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+  const apElsewhere = apStatus === 'running' && apStageNow && apStageNow !== stage ? apStageNow : null
 
   const reloadSoon = useCallback(() => {
     if (reloadTimer.current != null) return
@@ -427,6 +469,18 @@ export default function AssetPage() {
         </div>
       </aside>
       <section className="stage-main">
+        {apElsewhere && (
+          <div className="follow-bar small" role="status">
+            <span>
+              Autopilot is on step {STAGES.indexOf(apElsewhere) + 1}, {stagePlain(apElsewhere)}.
+            </span>
+            <Link to={`/assets/${asset.id}/${apElsewhere}`}>Go there</Link>
+            <label className="check-item">
+              <input type="checkbox" checked={followOn && !touched} onChange={(e) => chooseFollow(e.target.checked)} />
+              <span>Follow Autopilot</span>
+            </label>
+          </div>
+        )}
         <header className="asset-head">
           <div className={'asset-status' + (guideVisible ? ' asset-status-quiet' : '')}>
             <span className={'traffic traffic-' + status.tone} aria-hidden="true" />
