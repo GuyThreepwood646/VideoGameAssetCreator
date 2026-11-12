@@ -69,3 +69,12 @@ export function lookLabelForStyle(presets: LookPreset[] | null | undefined, styl
   const hit = (presets ?? []).find((p) => p.style_preset === styleId)
   return hit?.label ?? fallback ?? 'Custom look'
 }
+
+// The look a project's pipeline settings come from: its own look, else the one a custom look is based on, else the look
+// whose painter it uses, else the first look. One id, because a look and a style are one list (UI-01).
+export function baseLookId(presets: LookPreset[] | null | undefined, lock: StyleLock): string | null {
+  const list = presets ?? []
+  if (lock.preset && list.some((p) => p.id === lock.preset)) return lock.preset
+  if (lock.based_on && list.some((p) => p.id === lock.based_on)) return lock.based_on
+  return (list.find((p) => p.style_lock.model === lock.model) ?? list[0])?.id ?? null
+}

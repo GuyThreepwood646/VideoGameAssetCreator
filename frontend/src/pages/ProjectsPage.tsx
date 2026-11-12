@@ -8,7 +8,7 @@ import { Info } from '../components/Info'
 import { PresetRow } from '../components/PresetRow'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
 import { modelLabel, platformConsequence, platformPlain, stagePlain } from '../help'
-import { lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
+import { baseLookId, lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
 import { MatchPicture } from './MatchPicture'
 
 type SortKey = 'recent' | 'name' | 'newest'
@@ -53,7 +53,7 @@ export default function ProjectsPage() {
 
   const shown = useMemo(() => {
     if (!projects) return []
-    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? 'Custom look'
+    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? (presetById(presets, baseLookId(presets, p.style_lock))?.label ? `Custom look (based on ${presetById(presets, baseLookId(presets, p.style_lock))?.label})` : 'Custom look')
     const q = query.trim().toLowerCase()
     const list = q ? projects.filter((p) => [p.name, look(p), platformPlain(p.platform_target)].some((t) => t.toLowerCase().includes(q))) : [...projects]
     const activity = (p: Project) => p.last_activity ?? p.created_at
@@ -577,7 +577,7 @@ function StyleLockEditor({ project, onSaved, onDeleted, dirtyRef }: { project: P
     setBusy(true)
     setError(null)
     try {
-      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: next })
+      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: next.preset ? next : { ...next, based_on: next.based_on ?? baseLookId(presets, next) } })
       setSaved(new Date().toLocaleTimeString())
       onSaved()
     } catch (err) {
@@ -644,7 +644,7 @@ function StyleLockEditor({ project, onSaved, onDeleted, dirtyRef }: { project: P
                 {edited ? ' (edited by hand)' : ''}
               </>
             ) : presets ? (
-              <span className="muted">No ready-made look chosen; the fields below are set by hand.</span>
+              <span className="muted">Custom look. Based on: <strong>{presetById(presets, baseLookId(presets, lock))?.label ?? 'Painted fantasy'}</strong> for the 3D settings.</span>
             ) : null}
           </span>
         </div>

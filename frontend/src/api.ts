@@ -66,6 +66,8 @@ export type StyleLock = {
   negative: string
   // The ready-made look this lock was filled from (GET /api/style-presets id), if any.
   preset?: string | null
+  // A custom look (no preset) takes its pipeline settings from this look; the project's look by default.
+  based_on?: string | null
 }
 
 // A ready-made look (GET /api/style-presets): fills the project's style lock and
