@@ -381,7 +381,7 @@ export default function AssetPage() {
                 <span className="sdot sdot-idle" />
                 <span className="rail-index">0.5</span>
                 <span className="rail-label">From your pictures</span>
-                <span className="rail-meta">optional</span>
+                <span className="rail-meta">extra</span>
               </button>
               <Info term="term.compose" />
             </div>

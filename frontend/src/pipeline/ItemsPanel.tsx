@@ -297,21 +297,24 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                   <span className="field-label">
                     Nudge it <span className="muted small">(each press {data.step_cm} cm or {data.step_deg} degrees; hold Shift for bigger steps)</span>
                   </span>
-                  <div className="items-nudges">
+                  <div className="items-nudges" role="group" aria-label="Move">
+                    <span className="muted small nudge-title">Move</span>
                     {MOVES.map((m) => (
                       <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
                         {m.label}
                       </button>
                     ))}
                   </div>
-                  <div className="items-nudges">
+                  <div className="items-nudges" role="group" aria-label="Turn">
+                    <span className="muted small nudge-title">Turn</span>
                     {TURNS.map((t) => (
                       <button key={t.label} type="button" title={t.title} onClick={() => press({ turn: t.turn })}>
                         {t.label}
                       </button>
                     ))}
                   </div>
-                  <div className="items-nudges">
+                  <div className="items-nudges" role="group" aria-label="Size and grip">
+                    <span className="muted small nudge-title">Size and grip</span>
                     <button type="button" title="Slide the item so the hand sits closer to its tip or head" onClick={() => press({ slide: 1 })}>
                       Hold it nearer the tip
                     </button>
