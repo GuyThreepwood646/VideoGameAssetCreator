@@ -65,8 +65,11 @@ def _hair() -> list[dict[str, Any]]:
     styles = hairstyles.catalogue().get("styles", {})
     out = []
     for s in styles.values():
-        out.append(_entry("Hairstyle: " + s.get("name", s["id"]), HAIR_DOES, s.get("author", ""), s.get("licence", ""), s.get("source_url", ""),
-                          in_your_assets=True))
+        mine = bool(s.get("own"))
+        out.append(_entry(("Your hairstyle: " if mine else "Hairstyle: ") + s.get("name", s["id"]), HAIR_DOES, s.get("author", ""), s.get("licence", ""),
+                          s.get("source_url", ""), in_your_assets=True,
+                          note=("Added by you. Where it came from: " + s["source_note"]) if mine and s.get("source_note") else "",
+                          confirmed="you said so" if mine else "records"))
     return out
 
 
@@ -80,7 +83,7 @@ def credits() -> dict[str, Any]:
         {"id": "data", "title": "Ready-made data (moves, light pictures)",
          "intro": "Files that come with the app. Moves can end up inside your characters.", "entries": _from_hand(hand.get("data", []))},
         {"id": "hair", "title": "Hairstyles (the hair library)",
-         "intro": "Every style is CC0 (public domain dedication) and is fitted onto characters you export.", "entries": _hair()},
+         "intro": "The built-in styles are CC0 (public domain dedication). Hairstyles you added yourself are listed with the source and licence you gave. All of them are fitted onto characters you export.", "entries": _hair()},
         {"id": "tools", "title": "Tools (outside programs the app calls)",
          "intro": "None of these is included in the app.", "entries": _from_hand(hand.get("tools", []))},
         {"id": "libraries", "title": "Software libraries (code the app is built from)",
