@@ -374,3 +374,17 @@ def test_blender_prep_rebakes_when_mirroring_and_shrinking(tmp_path):
     report2 = json.loads((tmp_path / "out2" / "prep_report.json").read_text())
     assert not report2["rebaked"] and report2["rebake_reason"] is None
     assert imaging.uv_match_fraction(imaging.load_uv_mesh(src), imaging.load_uv_mesh(out2)) >= prep_stage.BAKE_MATCH_MIN
+
+
+def test_clamp_albedo_does_not_turn_near_black_into_a_pure_colour():
+    """A near-black brown lifted into range stays a dark brown: its hue is noise, and scaled ten times over it came out
+    pure red (the crown of a dark-haired head)."""
+    import numpy as np
+
+    from vgac import imaging
+
+    base = np.array([[[8, 1, 0], [60, 40, 30]]], dtype=np.float64) / 255.0
+    out = imaging.clamp_albedo(base, None) * 255.0
+    assert out[0, 0, 0] < 60 and out[0, 0, 1] > 20            # was about (97, 12, 0)
+    assert abs(float(imaging.srgb_luminance(out[0, 0] / 255.0)) * 255.0 - 30.0) < 2.0  # the brightness still reaches the floor
+    assert np.allclose(out[0, 1], [60, 40, 30])                # a colour already in range is untouched

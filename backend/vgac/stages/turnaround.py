@@ -26,6 +26,19 @@ from .base import StageContext, random_seed
 from .concept import stage_recipe
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
+# The three-quarter view from the other side: drawn for these categories whenever the three-quarter view is, because
+# the texture is painted from the views (prep) and one three-quarter view leaves the other cheek and flank to a full
+# side view alone. `second_quarter: false` on the version leaves it out.
+SECOND_QUARTER = "quarter2"
+SECOND_QUARTER_CATEGORIES = ("humanoid",)
+
+
+def with_second_quarter(views: list[str], category: str | None, params: dict[str, Any]) -> list[str]:
+    if (category in SECOND_QUARTER_CATEGORIES and "quarter" in views and SECOND_QUARTER not in views
+            and params.get("second_quarter") is not False):
+        i = views.index("quarter") + 1
+        return views[:i] + [SECOND_QUARTER] + views[i:]
+    return views
 MAX_REROLLS = 2
 LIMITS = {"height_ratio": (0.75, 1.3), "hist_distance": 0.35, "mirror_iou": 0.55, "min_coverage": 0.02}
 
@@ -386,7 +399,7 @@ def _publish_views(sc: StageContext, results: dict[str, dict[str, Any]]) -> None
 
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
-    views = list(params.get("views") or sc.category.get("views") or DEFAULT_VIEWS)
+    views = with_second_quarter(list(params.get("views") or sc.category.get("views") or DEFAULT_VIEWS), _category(sc), params)
     supplied = supplied_files(sc)
     views += [v for v in supplied if v not in views]
     bald = _bald_on(sc, params)
@@ -538,7 +551,8 @@ def has_facial_hair(description: str | None) -> bool:
 def bald_prompt(description: str | None) -> str:
     """The bald edit's prompt: the trial's, plus the beard sentence only when the description names facial hair."""
     return BALD_PROMPT + (BALD_BEARD_SENTENCE if has_facial_hair(description) else "")
-BALD_SIDE_VIEWS = ("quarter", "left", "right")  # quarter is the 3D input; left and right are for the face pass. No back.
+# quarter is the 3D input; the other three-quarter view, left and right are for the face pass. No back.
+BALD_SIDE_VIEWS = ("quarter", "quarter2", "left", "right")
 BALD_KEPT_MIN = 0.9  # bald_picture: share of the picture outside the hair that must stay unchanged
 BALD_FACE_DELTA_MAX = 10.0  # over this the face changed (the measure's own units, from baldpic.kept_measure)
 BALD_NO_HAIR_SHARE = 0.002  # a hair outline under this share of the picture: no hair was taken away
