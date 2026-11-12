@@ -107,6 +107,7 @@ async def _block_foreign_origins(request: Request, call_next):
 
 class StyleLock(BaseModel):
     preset: str | None = None
+    based_on: str | None = None  # a custom look (no preset) takes its pipeline settings from this look
     prompt_block: str = ""
     model: str | None = None
     loras: list[str] = Field(default_factory=list)

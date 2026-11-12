@@ -10,7 +10,7 @@ import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
-import { lookLabelForStyle, presetById, usePresets } from '../presets'
+import { baseLookId, lookLabelForStyle, presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
 
@@ -256,7 +256,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [poseFirst, setPoseFirst] = useState(false)
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
-  const projectStyleId = projectLook && ref?.styles.some((s) => s.id === projectLook.style_preset) ? projectLook.style_preset : (ref?.styles.find((s) => s.model === project.style_lock.model) ?? ref?.styles[0])?.id
+  const projectStyleId = baseLookId(presets, project.style_lock) ?? ref?.styles[0]?.id
 
   useEffect(() => {
     if (!ref) return
