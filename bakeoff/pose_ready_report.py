@@ -101,14 +101,14 @@ def main(argv):
         res["error"] = "no mesh"
     else:
         res["hands"] = handscore.score(mesh)
-        tex = texfidelity.load_texture(glb, first(prep, "base_color.png"))
+        tex = texfidelity.load_texture(glb)  # the model's own texture: base_color.png beside it predates the face step's re-pack
         if tex is not None:
             textured_hands(mesh, tex).save(OUT / f"{name}_textured.png")
         fid = {}
         for label, pic in (("original", orig), ("posed", posed)):
             if pic is None:
                 continue
-            s = texfidelity.score(glb, pic, first(prep, "base_color.png"), views=False)
+            s = texfidelity.score(glb, pic, None, views=False)
             fid[label] = {k: s.get(k) for k in ("delta_e", "ssim", "silhouette_iou", "fit_ok", "error") if k in s}
         res["fidelity"] = fid
     sj = OUT / "pose_scores.json"
