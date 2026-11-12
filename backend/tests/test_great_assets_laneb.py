@@ -172,8 +172,8 @@ def test_number_formats():
     assert t("{value:m}", {"value": 4.4999}) == "4.5" and t("{value:m}", {"value": 1.8}) == "1.8" and t("{value:m}", {"value": 0.123}) == "0.12"
     assert t("{value:dims}", {"value": [1000, 2048]}) == "1000 x 2048"
     c = _described("triangle_budget", 26000, 20000, False)
-    assert c["help"] == "The model has 6,000 more triangles than your platform allows (26,000 of 20,000); it would run slower than it should."
-    assert _described("triangle_budget", 18000, 20000, True)["help"] == "The model's 18,000 triangles fit your platform's budget of 20,000."
+    assert c["help"] == "Your full model has 26,000 triangles (the flat pieces it is made of), 6,000 more than your platform's limit of 20,000; it would run slower than it should."
+    assert _described("triangle_budget", 18000, 20000, True)["help"] == "Your full model has 18,000 triangles (the flat pieces it is made of), inside your platform's limit of 20,000."
 
 
 def test_pattern_checks_have_both_sentences():

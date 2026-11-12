@@ -265,9 +265,9 @@ def test_triangle_and_texture_checks_speak_of_the_look():
     limit, vars_ = mesh_stage.triangle_target(low, {}, b)
     assert limit == 5000 and vars_["look"] == "Low-poly" and vars_["recipe"]
     c = guidance.describe_check({"name": "triangle_budget", "passed": True, "value": 4890, "limit": limit, "vars": vars_})
-    assert c["help"] == "The model's 4,890 triangles fit the Low-poly look's target of 5,000; your platform would allow up to 20,000."
+    assert c["help"] == "Your full model has 4,890 triangles, inside the Low-poly look's limit of 5,000 (your platform would allow up to 20,000)."
     bad = guidance.describe_check({"name": "triangle_budget", "passed": False, "value": 6000, "limit": limit, "vars": vars_})
-    assert bad["help"].startswith("The model has 1,000 more triangles than the Low-poly look calls for")
+    assert bad["help"].startswith("Your full model has 6,000 triangles, 1,000 more than the Low-poly look's limit of 5,000")
     assert mesh_stage.triangle_target(low, {"target_faces": 9000, "target_faces_source": "chosen"}, b) == (20000, None)
     assert mesh_stage.triangle_target(reference.recipe("painted", "humanoid", "pc_mid"), {}, b) == (20000, None)
     tl, tv = mesh_stage.texture_target(reference.recipe("pixel", "humanoid", "pc_mid"), b)

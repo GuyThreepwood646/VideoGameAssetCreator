@@ -525,8 +525,8 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
           fail ? budget + 210 : budget - 1580,
           budget,
           fail
-            ? { fix: { stage: 'mesh', params: { target_faces: budget }, label: 'Shrink to the budget' }, help: `The model has 210 more triangles than this platform can handle (${(budget + 210).toLocaleString('en-US')} of ${budget.toLocaleString('en-US')}).` }
-            : { help: `The model has ${(budget - 1580).toLocaleString('en-US')} triangles, within the ${budget.toLocaleString('en-US')} this platform allows.` },
+            ? { fix: { stage: 'mesh', params: { target_faces: budget }, label: 'Shrink to the budget' }, help: `Your full model has ${(budget + 210).toLocaleString('en-US')} triangles (the flat pieces it is made of), 210 more than your platform's limit of ${budget.toLocaleString('en-US')}; it would run slower than it should.` }
+            : { help: `Your full model has ${(budget - 1580).toLocaleString('en-US')} triangles (the flat pieces it is made of), inside your platform's limit of ${budget.toLocaleString('en-US')}.` },
         ),
         // No help and no label: the frontend sentence and fallback label "Close the holes" show.
         chk('manifold', !fail, fail ? 8 : 0, 0, fail ? { fix: { stage: 'mesh', params: { remesh: true } } } : {}),
