@@ -441,6 +441,34 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
+// While a step runs, show what it is working from, faded, and the redraw as soon as it exists (UI-18).
+function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset }) {
+  const parent = version.parent_version_id ? Object.values(asset.stages ?? {}).flatMap((l) => l ?? []).find((v) => v.id === version.parent_version_id) : undefined
+  const from = parent ? libraryUrl(parent.files.front_cutout ?? parent.files.cutout ?? parent.files.image ?? parent.files.front) : undefined
+  const redraw = libraryUrl(version.files.pose_ready_picture ?? undefined)
+  return (
+    <div className="placeholder-box running-placeholder" role="status">
+      {(from || redraw) && (
+        <div className="running-pictures">
+          {from && (
+            <figure className="running-from">
+              <img src={from} alt="The picture this step is working from" />
+              <figcaption className="muted small">Working from this</figcaption>
+            </figure>
+          )}
+          {redraw && (
+            <figure>
+              <img src={redraw} alt="The redrawn picture for 3D" />
+              <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
+            </figure>
+          )}
+        </div>
+      )}
+      <span>{version.status === 'queued' ? 'Waiting for the graphics card...' : 'Working on it. The result appears here when it is ready.'}</span>
+    </div>
+  )
+}
+
 function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
@@ -450,7 +478,8 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     return <div className="placeholder-box">This version was stopped before it made a result.</div>
   }
   if (version.status !== 'done' && version.status !== 'rejected') {
-    return <div className="placeholder-box">{version.status === 'error' ? 'This version has no result.' : 'Waiting for the result...'}</div>
+    if (version.status === 'error') return <div className="placeholder-box">This version has no result.</div>
+    return <RunningPlaceholder version={version} asset={asset} />
   }
   switch (stage) {
     case 'concept':
