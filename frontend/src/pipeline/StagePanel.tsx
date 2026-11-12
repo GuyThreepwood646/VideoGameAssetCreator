@@ -361,7 +361,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             </div>
             {active.status === 'error' && (
               <div className="error-box">
-                <div className="error-sentence">{humanError(active.error)}</div>
+                <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
                 <div className="row-gap">
                   {state !== 'error' && (
                     <button type="button" disabled={busy} onClick={() => retry(active)}>
