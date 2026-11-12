@@ -101,8 +101,16 @@ export function stageVerb(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_verb || STAGE_TEXT[stage].verb
 }
 
-export function stagePlaceholder(stage: StageId): string {
-  return STAGE_TEXT[stage].placeholder
+// The example in the Describe the change box. It fits the kind of thing being made, so a chest is not offered a helmet (UI-36).
+const CHANGE_EXAMPLES: Record<string, Partial<Record<StageId, string>>> = {
+  prop: { concept: 'e.g. make the lid rounder and the metal darker', turnaround: 'e.g. the back view should show the hinges', mesh: 'e.g. thicker corners and a flatter base', prep: 'e.g. more wear on the edges', export: 'e.g. drop the sprite sheet' },
+  creature: { concept: 'e.g. longer horns and a thicker tail', turnaround: 'e.g. the back view should show the spikes', mesh: 'e.g. rounder belly and thicker legs', prep: 'e.g. more scuffs on the scales', rig: 'e.g. smoother bending in the tail' },
+  vehicle: { concept: 'e.g. bigger wheels and a lower roof', turnaround: 'e.g. the back view should show the exhaust', mesh: 'e.g. sharper edges on the hood', prep: 'e.g. more dirt near the wheels' },
+  scenery: { concept: 'e.g. more moss on the stones and a wider archway', turnaround: 'e.g. the back view should show the steps', mesh: 'e.g. flatter ground and thicker walls', prep: 'e.g. more weathering on the stone' },
+}
+export function stagePlaceholder(stage: StageId, category?: string): string {
+  const group = !category || category === 'humanoid' ? null : /prop|material/.test(category) ? 'prop' : /vehicle|mech/.test(category) ? 'vehicle' : /environment|scenery/.test(category) ? 'scenery' : 'creature'
+  return (group && CHANGE_EXAMPLES[group]?.[stage]) || STAGE_TEXT[stage].placeholder
 }
 
 export function stageGerund(stage: StageId): string {
