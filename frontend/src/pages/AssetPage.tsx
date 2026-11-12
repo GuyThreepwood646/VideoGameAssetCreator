@@ -11,7 +11,7 @@ import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { COMPOSE_CATEGORIES, ComposePanel } from '../pipeline/ComposePanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
-import { ViewerLookContext } from '../previewLight'
+import { ViewerLookContext, ViewerPausedContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
 export default function AssetPage() {
@@ -369,6 +369,7 @@ export default function AssetPage() {
 
   return (
     <ViewerLookContext.Provider value={asset.style_preset}>
+    <ViewerPausedContext.Provider value={itemsOpen}>
     <div className={'pipeline-layout' + (showLog ? ' with-log' : '')}>
       <aside className="stage-rail">
         <div className="rail-head">
@@ -561,6 +562,7 @@ export default function AssetPage() {
         </aside>
       )}
     </div>
+    </ViewerPausedContext.Provider>
     </ViewerLookContext.Provider>
   )
 }
