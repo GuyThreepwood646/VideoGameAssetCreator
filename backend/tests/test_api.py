@@ -399,7 +399,11 @@ def test_security_hardening(client, tmp_path):
     p, a = _project_asset(client)
     url = f"/api/assets/{a['id']}/stages/concept/run"
     assert client.post(url, json={}, headers={"Origin": "http://evil.example"}).status_code == 403
-    assert client.post(url, json={}, headers={"Origin": "http://localhost:5174"}).status_code == 200
+    assert client.post(url, json={}, headers={"Origin": "http://localhost:5173"}).status_code == 200
+    assert client.post(url, json={}, headers={"Origin": "http://127.0.0.1:8765"}).status_code == 200
+    # Another local port is a foreign page too.
+    assert client.post(url, json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
+    assert client.post(url, json={}, headers={"Origin": "null"}).status_code == 403
     assert client.get("/api/projects", headers={"Origin": "http://evil.example"}).status_code == 200
     # Unknown Host (DNS rebinding) is refused.
     assert client.get("/api/projects", headers={"Host": "evil.example"}).status_code == 400
@@ -408,6 +412,9 @@ def test_security_hardening(client, tmp_path):
 
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/api/ws/events", headers={"Origin": "http://evil.example"}) as ws:
+            ws.receive_json()
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/ws/events", headers={"Origin": "http://localhost:9999"}) as ws:
             ws.receive_json()
     # The database file is never served even though it sits in the library folder.
     assert client.get("/api/library/vgac.sqlite").status_code in (403, 404)

@@ -386,7 +386,7 @@ if ($Nodes) {
                 } else {
                     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('vgac-setup-' + [guid]::NewGuid().ToString('N'))
                     New-Item -ItemType Directory -Path $tmp | Out-Null
-                    [void](Save-Download $np.zip (Join-Path $tmp 'pack.zip'))
+                    [void](Save-Download $np.zip (Join-Path $tmp 'pack.zip') -Sha256 ([string](Get-Prop $np 'sha256')))
                     $ex = Join-Path $tmp 'x'; [void](Expand-Safe (Join-Path $tmp 'pack.zip') $ex)
                     $inner = @(Get-ChildItem -LiteralPath $ex -Directory)
                     $src = if ($inner.Count -eq 1) { $inner[0].FullName } else { $ex }
