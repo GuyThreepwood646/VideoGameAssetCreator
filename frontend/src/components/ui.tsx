@@ -308,15 +308,15 @@ export function ChipInput({ value, onChange, placeholder }: { value: string[]; o
   )
 }
 
-// Enter submits, Shift+Enter inserts a newline.
-export function SubmitTextarea(props: React.ComponentProps<'textarea'> & { onSubmit?: () => void }) {
-  const { onSubmit, onKeyDown, ...rest } = props
+// Enter submits, Shift+Enter inserts a newline. With ctrlEnter, Enter adds a line and Ctrl+Enter submits.
+export function SubmitTextarea(props: React.ComponentProps<'textarea'> & { onSubmit?: () => void; ctrlEnter?: boolean }) {
+  const { onSubmit, onKeyDown, ctrlEnter, ...rest } = props
   return (
     <textarea
       {...rest}
       onKeyDown={(e) => {
         onKeyDown?.(e)
-        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented) {
+        if (e.key === 'Enter' && (ctrlEnter ? e.ctrlKey || e.metaKey : !e.shiftKey) && !e.defaultPrevented) {
           e.preventDefault()
           if (onSubmit) onSubmit()
           else e.currentTarget.form?.requestSubmit()
