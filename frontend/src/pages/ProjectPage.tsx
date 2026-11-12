@@ -12,6 +12,7 @@ import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
 import { lookLabelForStyle, presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
+import { useConfirm } from '../components/Confirm'
 
 export default function ProjectPage() {
   const { pid = '' } = useParams()
@@ -23,6 +24,9 @@ export default function ProjectPage() {
   }, [pid])
   const { ref } = useRefData()
   const { presets } = usePresets()
+  const [filter, setFilter] = useState<AssetFilter>('all')
+  const [query, setQuery] = useState('')
+  const confirm = useConfirm()
 
   // Any version finishing for an asset of this project refreshes the grid. A job
   // end sends a job event and a version event; the short delay folds them into one reload.
@@ -66,23 +70,38 @@ export default function ProjectPage() {
           </h1>
           {project && (
             <span className="muted small">
-              {platformPlain(project.platform_target)}
-              <Info term={'platform.' + project.platform_target} /> / {presetById(presets, project.style_lock.preset)?.label ?? modelLabel(project.style_lock.model)}
-              <Info term={project.style_lock.preset && presetById(presets, project.style_lock.preset) ? 'term.look' : 'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>Look and settings</Link>
+              {presetById(presets, project.style_lock.preset)?.label ?? 'Custom'} look, {platformPlain(project.platform_target).split(':')[0]}
+              <Info term={'platform.' + project.platform_target} />. <Link to={`/?edit=${project.id}`}>Look and settings</Link>
               <Info term="term.style_lock" />
             </span>
           )}
         </div>
         <ErrorText error={perr ?? error} />
+        {confirm.dialog}
+        {assets && assets.length >= 3 && (
+          <div className="asset-tools row-gap" role="group" aria-label="Filter the assets">
+            <div className="segmented">
+              {(['all', 'progress', 'needs', 'ready'] as AssetFilter[]).map((f) => (
+                <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                  {FILTER_LABEL[f]}
+                </button>
+              ))}
+            </div>
+            {assets.length >= 8 && <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search assets" aria-label="Search assets" />}
+          </div>
+        )}
         <div className="asset-grid">
-          {assets
-            ?.filter((a) => !a.base_asset_id || !assets.some((b) => b.id === a.base_asset_id))
-            .map((a) => {
-              const variants = assets.filter((v) => v.base_asset_id === a.id)
-              return (
-                <AssetGroup key={a.id} base={a} variants={variants} categoryName={categoryLabel(ref, a.category)} />
-              )
-            })}
+          {assets && (() => {
+            const q = query.trim().toLowerCase()
+            const matches = (a: AssetSummary) => (filter === 'all' || assetStatus(a) === filter) && (!q || a.name.toLowerCase().includes(q))
+            const filtering = filter !== 'all' || !!q
+            const top = assets.filter((a) => !a.base_asset_id || !assets.some((b) => b.id === a.base_asset_id))
+            // While filtering, every matching asset shows on its own; otherwise variants stack under their base asset.
+            if (filtering) return assets.filter(matches).map((a) => <AssetCard key={a.id} asset={a} categoryName={categoryLabel(ref, a.category)} onChanged={reload} confirm={confirm} />)
+            return top.map((a) => (
+              <AssetGroup key={a.id} base={a} variants={assets.filter((v) => v.base_asset_id === a.id)} categoryName={categoryLabel(ref, a.category)} onChanged={reload} confirm={confirm} />
+            ))
+          })()}
           {assets && assets.length === 0 && (
             <div className="empty-state">
               <h2 className="card-title">
@@ -99,15 +118,28 @@ export default function ProjectPage() {
   )
 }
 
-// A base asset followed by a strip of its variants (grouped by base_asset_id).
-function AssetGroup({ base, variants, categoryName }: { base: AssetSummary; variants: AssetSummary[]; categoryName: string }) {
+export type AssetFilter = 'all' | 'progress' | 'needs' | 'ready'
+const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In progress', needs: 'Needs a look', ready: 'Ready' }
+
+function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
+  const sts = STAGES.map((x) => stageState(a, x))
+  if (sts.includes('error')) return 'needs'
+  if (sts.every((x) => x === 'done')) return 'ready'
+  return 'progress'
+}
+
+type Confirm = ReturnType<typeof useConfirm>
+
+// A base asset with its variants stacked behind a "+n variants" badge (grouped by base_asset_id).
+function AssetGroup({ base, variants, categoryName, onChanged, confirm }: { base: AssetSummary; variants: AssetSummary[]; categoryName: string; onChanged: () => void; confirm: Confirm }) {
+  const [open, setOpen] = useState(false)
   return (
     <>
-      <AssetCard asset={base} categoryName={categoryName} />
-      {variants.length > 0 && (
+      <AssetCard asset={base} categoryName={categoryName} onChanged={onChanged} confirm={confirm} badge={variants.length > 0 ? { text: `+${variants.length} variant${variants.length === 1 ? '' : 's'}`, open, toggle: () => setOpen((v) => !v) } : undefined} />
+      {variants.length > 0 && open && (
         <div className="variant-strip" aria-label={`variants of ${base.name}`}>
           {variants.map((v) => (
-            <AssetCard key={v.id} asset={v} categoryName={`variant: ${v.variant_change ?? ''}`} />
+            <AssetCard key={v.id} asset={v} categoryName={`variant: ${v.variant_change ?? ''}`} onChanged={onChanged} confirm={confirm} />
           ))}
         </div>
       )}
@@ -115,27 +147,73 @@ function AssetGroup({ base, variants, categoryName }: { base: AssetSummary; vari
   )
 }
 
-function AssetCard({ asset, categoryName }: { asset: AssetSummary; categoryName: string }) {
+function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: AssetSummary; categoryName: string; onChanged: () => void; confirm: Confirm; badge?: { text: string; open: boolean; toggle: () => void } }) {
+  const [renaming, setRenaming] = useState(false)
+  const [name, setName] = useState(asset.name)
   const concept = selectedVersion(asset, 'concept')
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
   return (
-    <Link to={`/assets/${asset.id}`} className="asset-card">
-      <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
-      <div className="asset-name">{asset.name}</div>
-      <div className="muted small">{categoryName}</div>
-      {(() => {
-        const sts = STAGES.map((x) => stageState(asset, x))
-        const failedAt = sts.indexOf('error')
-        const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
-        return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
-      })()}
-      <div className="stage-dots" aria-label="stage progress">
-        {STAGES.map((s) => {
-          const st = stageState(asset, s)
-          return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
-        })}
+    <div className="asset-card-wrap">
+      <Link to={`/assets/${asset.id}`} className="asset-card">
+        <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
+        <div className="asset-name">{asset.name}</div>
+        <div className="muted small">{categoryName}</div>
+        {(() => {
+          const sts = STAGES.map((x) => stageState(asset, x))
+          const failedAt = sts.indexOf('error')
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+          return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+        })()}
+        <div className="stage-dots" aria-label="stage progress">
+          {STAGES.map((s) => {
+            const st = stageState(asset, s)
+            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
+          })}
+        </div>
+      </Link>
+      <div className="asset-card-tools">
+        {badge && (
+          <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
+            {badge.text}
+          </button>
+        )}
+        <details className="more-menu">
+          <summary aria-label={`More actions for ${asset.name}`} title="More actions">...</summary>
+          <div className="status-pop more-pop card-pop">
+            <button type="button" className="link small" onClick={() => setRenaming(true)}>
+              Rename
+            </button>
+            <button
+              type="button"
+              className="link small"
+              onClick={async () => {
+                const ok = await confirm.ask({ title: `Delete ${asset.name}?`, body: 'Its versions and files in the library are deleted. Files already exported stay. This cannot be undone.', confirmLabel: 'Delete asset', danger: true })
+                if (ok) {
+                  await api.deleteAsset(asset.id).catch(() => undefined)
+                  onChanged()
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </details>
       </div>
-    </Link>
+      {renaming && (
+        <form
+          className="asset-rename"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            if (name.trim()) await api.updateAsset(asset.id, { name: name.trim() }).catch(() => undefined)
+            setRenaming(false)
+            onChanged()
+          }}
+        >
+          <input value={name} autoFocus aria-label="Asset name" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setRenaming(false)} />
+          <button type="submit" className="primary small-btn">Save</button>
+        </form>
+      )}
+    </div>
   )
 }
 
