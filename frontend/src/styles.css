@@ -150,6 +150,30 @@ button.link {
   padding: 0;
   color: var(--accent);
 }
+/* UI-35: one raised-card look and one inset-card look; a class adds only what differs (radius, padding, layout). */
+.card,
+.section,
+.empty-state,
+.asset-card,
+.gallery-card,
+.glossary-item,
+.jump-card,
+.pcard {
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.instance,
+.jobrow,
+.details-grid,
+.gpu-row,
+.front-option,
+.addon-row,
+.moves-panel,
+.move-card,
+.compare-pane {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
 button.small-btn {
   padding: 2px var(--s2);
   font-size: var(--fs-xs);
@@ -338,11 +362,9 @@ input[type='checkbox'] {
   color: var(--muted);
 }
 .instance {
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s2) 10px;
   margin-bottom: var(--s2);
-  background: var(--panel-2);
 }
 .instance .row {
   display: flex;
@@ -371,8 +393,6 @@ input[type='checkbox'] {
 
 /* Cards, fields, chips */
 .card {
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s3);
   display: flex;
@@ -674,8 +694,6 @@ button.btn-lg {
   display: flex;
   flex-direction: column;
   min-height: 240px;
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-card);
   overflow: hidden;
   transition: border-color var(--dur-fast), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast);
@@ -1102,8 +1120,6 @@ button.btn-lg {
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s2);
   color: var(--text);
@@ -1251,8 +1267,6 @@ button.btn-lg {
   gap: var(--s3);
 }
 .section {
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s3);
   display: flex;
@@ -1864,13 +1878,11 @@ button.btn-lg {
   gap: var(--s2);
 }
 .jobrow {
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--s2);
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  background: var(--panel-2);
 }
 .jobrow.job-running {
   border-color: var(--accent);
@@ -2285,9 +2297,7 @@ button.btn-lg {
   flex-direction: column;
   gap: var(--s2);
   padding: var(--s2);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-2);
 }
 
 /* Views */
@@ -2346,9 +2356,7 @@ button.btn-lg {
   flex-direction: column;
   gap: var(--s2);
   padding: var(--s3);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--panel);
   max-width: 640px;
 }
 .empty-state p {
@@ -2690,8 +2698,6 @@ button.btn-lg {
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s2);
   min-width: 0;
@@ -2767,9 +2773,7 @@ button.btn-lg {
 }
 .glossary-item {
   padding: var(--s2) var(--s3);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--panel);
   scroll-margin-top: var(--s3);
 }
 .glossary-item dt {
@@ -2799,10 +2803,8 @@ button.btn-lg {
   grid-template-columns: 1fr auto;
   column-gap: var(--s3);
   row-gap: var(--s1);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--s2) 10px;
-  background: var(--panel-2);
 }
 .gpu-row.gpu-off {
   border-style: dashed;
@@ -3011,9 +3013,7 @@ button.btn-lg {
   gap: var(--s1);
   width: 132px;
   padding: var(--s1);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-2);
   cursor: pointer;
   text-align: center;
 }
@@ -3189,9 +3189,7 @@ button.btn-lg {
 }
 .addon-row {
   padding: var(--s2);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-2);
 }
 .addon-head {
   display: flex;
@@ -3474,9 +3472,7 @@ button.small-btn .resume-icon {
   flex-direction: column;
   gap: var(--s2);
   padding: var(--s2) var(--s3);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-2);
 }
 .moves-instead {
   margin: 0;
@@ -3537,9 +3533,7 @@ button.small-btn .resume-icon {
   align-items: center;
   gap: var(--s1);
   padding: var(--s2);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-2);
   cursor: pointer;
 }
 .move-card-on {
@@ -3677,8 +3671,6 @@ button.small-btn .resume-icon {
   align-items: center;
   gap: var(--s3);
   padding: var(--s2);
-  background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-card);
   color: var(--text);
   transition: border-color var(--dur-fast);
@@ -4158,9 +4150,7 @@ button.preset-card:hover:not(:disabled) {
   flex-direction: column;
   gap: var(--s2);
   padding: var(--s3);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--panel-2);
 }
 .compare-side {
   display: grid;
