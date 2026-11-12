@@ -7,7 +7,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, examplePrompts, fmtDuration, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
 import { lookLabelForStyle, presetById, usePresets } from '../presets'
@@ -174,6 +174,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [faceMatters, setFaceMatters] = useState(true)
   const { presets } = usePresets()
   const [lookOpen, setLookOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [poseFirst, setPoseFirst] = useState(false)
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
   const projectStyleId = projectLook && ref?.styles.some((s) => s.id === projectLook.style_preset) ? projectLook.style_preset : (ref?.styles.find((s) => s.model === project.style_lock.model) ?? ref?.styles[0])?.id
@@ -269,7 +271,7 @@ function CreateAssetForm({ project }: { project: Project }) {
       if (autopilot) {
         // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
         try {
-          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export' })
+          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', ...(fromPicture && category === 'humanoid' && poseFirst ? { stage_params: { turnaround: { pose_ready: true } } } : {}) })
         } catch (err) {
           if (!(err instanceof ApiError && err.status === 404)) console.warn('autopilot did not start', err)
         }
@@ -312,13 +314,13 @@ function CreateAssetForm({ project }: { project: Project }) {
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
       <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
-        <select value={category} onChange={(e) => changeCategory(e.target.value)}>
+        <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
           {ref?.categories.map((c) => (
-            <option key={c.id} value={c.id}>
+            <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
               {c.label}
-            </option>
+            </button>
           ))}
-        </select>
+        </div>
       </Field>
       {fromPicture ? (
         <Field label="Describe your picture (optional)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
@@ -344,7 +346,11 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.hair_pictures" />
         </div>
       ))}
-      {hairOffered && <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />}
+      {hairOffered && (
+        <ExtraChip summary={hairChoice === 'library' ? 'Hair: from the library.' : 'Hair: built with the 3D model.'}>
+          <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />
+        </ExtraChip>
+      )}
       {category === 'humanoid' && (
         <label className="check-item" title="Off for a hidden or very simple face: the clean-up step then skips the face pass">
           <input type="checkbox" checked={faceMatters} onChange={(e) => setFaceMatters(e.target.checked)} />
@@ -354,7 +360,20 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.face_matters" />
         </label>
       )}
-      {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
+      {fromPicture && category === 'humanoid' && autopilot && (
+        <label className="check-item" title="Redraws your picture in an A-pose with open, empty hands before the other views are made">
+          <input type="checkbox" checked={poseFirst} onChange={(e) => setPoseFirst(e.target.checked)} />
+          <span>
+            Hands hidden or holding something? Pose for 3D first{' '}
+            <span className="muted small">(off by default; it removes extra arms, claws and tools, and can recolour a black-and-white picture. Autopilot stops after step 2 so you can check the redraw)</span>
+          </span>
+        </label>
+      )}
+      {found && found.items.length > 0 && (
+        <ExtraChip summary={itemChoice === 'separate' ? `We will make ${joinAnd(found.items.map((i) => i.label))} as its own item.` : `${joinAnd(found.items.map((i) => i.label))} stays part of the body.`}>
+          <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />
+        </ExtraChip>
+      )}
       {!fromPicture && (
         <div className="examples">
           <span className="muted small">Examples:</span>
@@ -365,6 +384,17 @@ function CreateAssetForm({ project }: { project: Project }) {
           ))}
         </div>
       )}
+      <div className="settings-summary small">
+        <span>
+          <strong>{projectLook && style === projectStyleId ? projectLook.label : lookLabelForStyle(presets, style, 'Custom look')}</strong> look, {platformPlain(platform).split(':')[0]}
+          {suggestion ? `, ${fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset` : ''}.
+        </span>
+        <button type="button" className="link small" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
+          {settingsOpen ? 'Hide' : 'Change'}
+        </button>
+      </div>
+      {settingsOpen && (
+        <>
       <div className="grid-2">
         {projectLook && style === projectStyleId && !lookOpen ? (
           <Field label="Look" term="term.look" hint="Every asset in this project follows it.">
@@ -422,6 +452,8 @@ function CreateAssetForm({ project }: { project: Project }) {
       {(suggestion?.recipe_notes ?? []).map((note) => (
         <div className="suggest-line muted" key={note}>Good to know: {note}</div>
       ))}
+        </>
+      )}
       <Disclosure label="Advanced">
         <div className="col">
           <Field
@@ -485,6 +517,22 @@ function CreateAssetForm({ project }: { project: Project }) {
 }
 
 // The quiet line under the description when it names carried items (docs/CHARACTER-PARTS-RESEARCH.md 6.2).
+// A detected extra shown as one line with a Change toggle, so the form does not grow while typing (UI-11).
+function ExtraChip({ summary, children }: { summary: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="extra-chip">
+      <div className="small">
+        <span className="chip chip-accent">{summary}</span>{' '}
+        <button type="button" className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Hide' : 'Change'}
+        </button>
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
 function ItemsLine({ found, choice, onChoice }: { found: ItemDetect; choice: 'separate' | 'keep'; onChoice: (c: 'separate' | 'keep') => void }) {
   const names = found.items.map((i) => i.label)
   return (
