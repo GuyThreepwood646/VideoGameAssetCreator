@@ -677,7 +677,7 @@ export const api = {
   // withLater: the versions made from it (later steps built on it, changes of it) go too.
   deleteVersion: (vid: string, withLater = false) => del<DeleteResult & { deleted_ids?: string[] }>(`/api/versions/${vid}${withLater ? '?with_later=true' : ''}`),
   versionZipUrl: (vid: string) => `/api/versions/${vid}/zip`,
-  openVersionFolder: (vid: string) => post<{ opened: boolean; folder: string }>(`/api/versions/${vid}/open-folder`),
+  openVersionFolder: (vid: string, where: 'files' | 'unity' = 'files') => post<{ opened: boolean; folder: string }>(`/api/versions/${vid}/open-folder${where === 'unity' ? '?where=unity' : ''}`),
   getVersion: (vid: string) => get<Version>(`/api/versions/${vid}`),
   // In local mode the judging runs as a queued job, returned as judge_job.
   judge: (vid: string, mode: 'metrics' | 'local') => post<Version & { judge_job?: Job }>(`/api/versions/${vid}/judge`, { mode }),

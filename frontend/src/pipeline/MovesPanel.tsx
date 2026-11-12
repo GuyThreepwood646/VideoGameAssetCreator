@@ -13,7 +13,8 @@ import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: 'yours', 'built-in': 'built in' }
 const BUSY_POLL_MS = 4000
 
-export function MovesPanel({ version }: { version: Version }) {
+// previewClips: the clips the viewer can play (from the file); a move outside it says so. onPlay plays one in the viewer.
+export function MovesPanel({ version, previewClips = null, onPlay }: { version: Version; previewClips?: string[] | null; onPlay?: (clip: string) => void }) {
   const aid = version.asset_id
   const [data, setData] = useState<CharacterMoves | null>(null)
   const [missing, setMissing] = useState(false)
@@ -94,11 +95,17 @@ export function MovesPanel({ version }: { version: Version }) {
       <ul className="moves-list">
         {data.moves.map((m) => (
           <li key={m.name} className={m.made ? '' : 'move-not-made'}>
+            {onPlay && m.clip && previewClips?.includes(m.clip) && (
+              <button type="button" className="small-btn" aria-label={`Play ${m.label} in the viewer`} title="Play this move in the viewer above" onClick={() => onPlay(m.clip!)}>
+                Play
+              </button>
+            )}
             <span className="move-label">{m.label}</span>
             <span className="muted small">
               {m.loop ? 'loops' : 'plays once'}, {SOURCE_WORD[m.source]}
               {m.added ? ', added by you' : ''}
             </span>
+            {previewClips && previewClips.length > 0 && (!m.clip || !previewClips.includes(m.clip)) && <span className="muted small">preview not available</span>}
             {data.can_add && kept && (
               <button type="button" className="link small move-remove" disabled={busy} aria-label={`Remove ${m.label} from your files`} onClick={() => change({ remove: [m.name] })}>
                 Remove

@@ -10,7 +10,7 @@ import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip,
 import Viewer from '../Viewer'
 import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
-import { UnityHandoff } from './UnityHandoff'
+import { UnityHandoff, unityImportOf } from './UnityHandoff'
 import { Deliverables, deliverableKeys } from './views/ExportView'
 
 export type AutopilotActions = {
@@ -308,12 +308,13 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const mainFile = exp?.files.fbx ?? exp?.files.glb
   const [folderBusy, setFolderBusy] = useState(false)
   const [folderMsg, setFolderMsg] = useState('')
+  const unity = unityImportOf(exp)
   const openFolder = async () => {
     if (!exp) return
     setFolderBusy(true)
     setFolderMsg('')
     try {
-      await api.openVersionFolder(exp.id)
+      await api.openVersionFolder(exp.id, unity?.folder ? 'unity' : 'files')
     } catch {
       setFolderMsg('The folder could not be opened. The files are under the library folder for this asset.')
     } finally {
@@ -373,8 +374,8 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         )}
         {exp && (
           <div className="row-gap finish-deliver">
-            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder holding the finished files in your file explorer">
-              Open the asset folder
+            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder in your file explorer">
+              {unity?.folder ? 'Open the Unity folder' : 'Open the asset folder'}
             </button>
             {mainFile && (
               <a className="btn" href={libraryUrl(mainFile)} download={mainFile.split('/').pop()}>
@@ -385,6 +386,15 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
               Download everything (.zip)
             </a>
             {folderMsg && <span className="muted small">{folderMsg}</span>}
+            {unity ? (
+              <span className="small">
+                Copied to your Unity project{unity.project ? <>: <span className="mono">{unity.project}</span></> : ''}.
+              </span>
+            ) : (
+              <Link className="small" to={`/?edit=${asset.project_id}`} title="Pick the Unity project in Look and settings; the next export copies into it">
+                Set a Unity project
+              </Link>
+            )}
           </div>
         )}
         {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}

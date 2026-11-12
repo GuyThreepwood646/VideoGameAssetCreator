@@ -41,7 +41,7 @@ export const categories: Category[] = [
     size_axis: 'height',
     size_label: 'How tall is it?',
     size_hint: 'In metres, from the ground to the top of the head. A person is about 1.8 m.',
-    parts_default: ['weapon', 'shield'],
+    parts_default: [],
     budgets: { mobile_low: { triangles: 8000, texture: 1024 }, pc_mid: { triangles: 30000, texture: 2048 }, high: { triangles: 80000, texture: 4096 } },
   },
   {

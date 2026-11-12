@@ -889,10 +889,12 @@ def version_zip(vid: str, db: Session = Depends(get_session)) -> FileResponse:
 
 
 @app.post("/api/versions/{vid}/open-folder")
-def version_open_folder(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+def version_open_folder(vid: str, where: str = "files", db: Session = Depends(get_session)) -> dict[str, Any]:
     """Open the folder holding a version's files (the delivered folder when the export has one) in the file explorer."""
     v = _version(db, vid)
     delivered = v.metrics.get("delivered_to")
+    if where == "unity":
+        delivered = (v.metrics.get("unity_project_import") or {}).get("folder")
     folder: Path | None = Path(str(delivered)) if delivered else None
     if folder is None or not folder.is_dir():
         files = _version_files(v)
