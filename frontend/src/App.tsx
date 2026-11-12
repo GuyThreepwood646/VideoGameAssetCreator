@@ -1,10 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { NavLink, Outlet } from 'react-router'
-import { isMock } from './api'
-import { HealthBadge } from './HealthPanel'
+import { EngineBanner, HealthBadge } from './HealthPanel'
 import { SetupBadge } from './SetupCheck'
 import { useEventMode } from './events'
 import { closeGuide, openGuide, useGuide } from './guide'
+import { notifyEnabled, setNotifyEnabled, Toasts } from './notify'
 
 export default function App() {
   const mode = useEventMode()
@@ -29,24 +29,51 @@ export default function App() {
           <NavLink to="/gallery">Gallery</NavLink>
           <NavLink to="/glossary">Glossary</NavLink>
           <NavLink to="/credits">Credits</NavLink>
-          <NavLink to="/health">Health</NavLink>
+          <NavLink to="/health">System</NavLink>
         </nav>
         <span className="grow" />
-        <button type="button" className="link small" onClick={openGuide}>
-          Show guide again
-        </button>
-        {isMock() && <span className="pill pill-warn" title="VITE_MOCK=1: all API calls are answered by the in-browser mock">mock backend</span>}
-        <span className="pill" title="Event channel: WebSocket or 3 s polling fallback">
-          events: {mode === 'ws' ? 'live' : mode === 'poll' ? 'polling' : 'connecting'}
-        </span>
+        {mode === 'poll' && (
+          <span className="pill pill-warn" title="Live updates are not connected, so the page checks every 3 seconds instead.">
+            Updating slowly
+          </span>
+        )}
         <SetupBadge />
         <HealthBadge />
+        <HelpMenu />
       </header>
+      <EngineBanner />
       <main className="page">
         <Outlet />
       </main>
+      <Toasts />
       {guideOpen && <FirstRunOverlay />}
     </div>
+  )
+}
+
+// "?" menu: the guide, glossary, credits and keyboard shortcuts in one place (UI-19, UI-40, UI-41).
+function HelpMenu() {
+  const ref = useRef<HTMLDetailsElement>(null)
+  const close = () => ref.current?.removeAttribute('open')
+  return (
+    <details className="help-menu" ref={ref}>
+      <summary aria-label="Help" title="Help">?</summary>
+      <div className="status-pop help-pop" onClick={close}>
+        <button type="button" className="link" onClick={openGuide}>Show the guide again</button>
+        <NavLink to="/glossary">Glossary (what the words mean)</NavLink>
+        <NavLink to="/credits">Credits</NavLink>
+        <label className="check-item" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" defaultChecked={notifyEnabled()} onChange={(e) => setNotifyEnabled(e.target.checked)} />
+          <span>Tell me when a long run finishes or needs me</span>
+        </label>
+        <div className="muted small shortcuts">
+          <strong>Keyboard shortcuts on an asset</strong>
+          <div>K keep this version, R try again, C change something</div>
+          <div>Left and right arrows: previous and next version</div>
+          <div>1 to 6: go to a step</div>
+        </div>
+      </div>
+    </details>
   )
 }
 
