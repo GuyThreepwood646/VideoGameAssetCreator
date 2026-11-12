@@ -2,12 +2,14 @@
 // hairstyles shown on the person's own character with plain fit words, triangles, solid shape or strips and the credit,
 // "Use this hairstyle", what changing the pick costs before it is made, and "Show more hairstyles" from the catalogue.
 import { useEffect, useRef, useState } from 'react'
-import { creditText, hairApi, hairLibraryUrl, libraryUrl, stageEstimateSeconds, type Asset, type HairCandidate, type HairPanel, type HairStyleEntry, type Version } from '../api'
+import { creditText, hairApi, hairLibraryUrl, libraryUrl, stageEstimateSeconds, type Asset, type HairCandidate, type HairPanel, type HairStyleEntry, type MyHairStyle, type Version } from '../api'
+import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { ErrorText } from '../components/ui'
 import { fmtDuration, joinAnd, stagePlain, type FixAction } from '../help'
 import { useHairPanel } from './HairSetting'
+import { AddMyHairstyle } from './AddMyHairstyle'
 
 export const FAMILY_WORDS: Record<string, string> = { bob: 'Bob', short: 'Short', long: 'Long', ponytail: 'Ponytail', bun: 'Bun', braid: 'Braid', afro: 'Afro' }
 const FAMILY_ORDER = ['bob', 'short', 'long', 'ponytail', 'bun', 'braid', 'afro']
@@ -89,6 +91,10 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   const [error, setError] = useState<unknown>(null)
   const [more, setMore] = useState(false)
   const [lighter, setLighter] = useState(false)
+  // Your own hairstyles: the add form, the change form for one of them, and the app's own confirm for removing.
+  const [adding, setAdding] = useState(false)
+  const [changing, setChanging] = useState<MyHairStyle | null>(null)
+  const { ask, dialog } = useConfirm()
   const [catalogue, setCatalogue] = useState<HairStyleEntry[] | null>(null)
   // Bigger cards for the whole picker, and one style's pictures at full size.
   const [large, setLarge] = useState(false)
@@ -136,6 +142,41 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
       setBusy(false)
     }
   }
+  // A change to your own hairstyles: the catalogue is asked for again, and the list opens so the new one is seen.
+  const mineChanged = () => {
+    setAdding(false)
+    setChanging(null)
+    setCatalogue(null)
+    setMore(true)
+  }
+  const editMine = async (id: string) => {
+    setError(null)
+    try {
+      const found = (await hairApi.mine()).styles.find((s) => s.id === id)
+      if (found) {
+        setAdding(false)
+        setChanging(found)
+      }
+    } catch (e) {
+      setError(e)
+    }
+  }
+  const removeMine = async (id: string, name: string) => {
+    const ok = await ask({
+      title: `Remove "${name}"?`,
+      body: 'It is taken out of your hairstyle list and its copy is deleted from the app. Characters already built with it keep their hair. A character that has it picked right now must pick another hairstyle first.',
+      confirmLabel: 'Remove hairstyle',
+      danger: true,
+    })
+    if (!ok) return
+    setError(null)
+    try {
+      await hairApi.removeMine(id)
+      mineChanged()
+    } catch (e) {
+      setError(e)
+    }
+  }
   const choose = (style: string, triangles: number) => {
     if (changeCost(panel, triangles, appliedTriangles)) setConfirm(style)
     else void pick(style, false)
@@ -153,7 +194,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         : 'Your description does not name a hairstyle, so every style was tried quickly on your character. The order is a rough guide; pick by eye.')
   const notFromThisVersion = panel.mesh_version_id && panel.mesh_version_id !== version.id
 
-  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; pictures?: PictureItem[]; fit: string; score?: number | null; lite?: boolean }, tried: boolean) => {
+  const card = (c: { style: string; name: string; triangles: number; kind: string; credit?: string | null; picture?: string; pictures?: PictureItem[]; fit: string; score?: number | null; lite?: boolean; own?: boolean }, tried: boolean) => {
     // Tried styles: the backend renders your character's own head in plain grey with the recoloured hair, front and
     // three-quarter. Catalogue thumbnails: the style itself in grey on a grey reference figure.
     const inUse = panel.applied?.style === c.style
@@ -192,6 +233,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
             {inUse && <span className="chip chip-ok">In use</span>}
             {isPick && <span className="chip chip-accent">Your pick</span>}
             {isBest && <span className="chip chip-accent">Best match</span>}
+            {c.own && <span className="chip">Yours</span>}
           </span>
           <span className={'small' + (typeof c.score === 'number' && c.score < 0.6 ? ' warn-text' : '')}>{c.fit}</span>
           <span className="small muted">
@@ -217,6 +259,16 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
             {inUse ? 'In use' : isPick ? 'Picked' : 'Use this hairstyle'}
           </button>
         )}
+        {c.own && !cost && (
+          <div className="row-gap">
+            <button type="button" className="link small" disabled={busy} onClick={() => void editMine(c.style)} aria-label={`Change ${c.name}`}>
+              Change
+            </button>
+            <button type="button" className="link small" disabled={busy || inUse} onClick={() => void removeMine(c.style, c.name)} aria-label={`Remove ${c.name}`}>
+              Remove
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -241,7 +293,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   const appliedEntry = panel.applied && !panel.candidates.some((c) => c.style === panel.applied!.style) ? byId.get(panel.applied.style) : undefined
   if (appliedEntry)
     tried.unshift(
-      card({ style: appliedEntry.id, name: appliedEntry.name, triangles: typeof appliedEntry.triangles_used === 'number' ? appliedEntry.triangles_used : appliedEntry.triangles, lite: appliedEntry.lite_used, kind: appliedEntry.kind, credit: creditOf(appliedEntry), picture: thumbOf(appliedEntry), pictures: thumbsOf(appliedEntry), fit: fitWords(panel.applied?.score ?? null), score: panel.applied?.score ?? null }, false),
+      card({ style: appliedEntry.id, name: appliedEntry.name, own: appliedEntry.own, triangles: typeof appliedEntry.triangles_used === 'number' ? appliedEntry.triangles_used : appliedEntry.triangles, lite: appliedEntry.lite_used, kind: appliedEntry.kind, credit: creditOf(appliedEntry), picture: thumbOf(appliedEntry), pictures: thumbsOf(appliedEntry), fit: fitWords(panel.applied?.score ?? null), score: panel.applied?.score ?? null }, false),
     )
   const triedIds = new Set([...panel.candidates.map((c) => c.style), ...(appliedEntry ? [appliedEntry.id] : [])])
   const phone = asset.platform_target === 'mobile_low'
@@ -250,7 +302,8 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   const used = (s: HairStyleEntry) => (typeof s.triangles_used === 'number' ? s.triangles_used : s.triangles)
   const others = (catalogue ?? []).filter((s) => !triedIds.has(s.id) && (perPlatform || !phone || s.phone_ok || (s.kind !== 'cards' && s.triangles <= 750)))
   const anyLite = others.some((s) => s.lite_used)
-  const families = [...new Set([panel.family ?? '', ...FAMILY_ORDER, ...others.map((s) => s.family)])].filter((f) => others.some((s) => s.family === f))
+  const mine = others.filter((s) => s.own)
+  const families = [...new Set([panel.family ?? '', ...FAMILY_ORDER, ...others.map((s) => s.family)])].filter((f) => others.some((s) => s.family === f && !s.own))
   const allowance = allowanceOf(panel, appliedTriangles)
 
   return (
@@ -298,11 +351,17 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         </div>
       )}
       <ErrorText error={error} />
-      <div>
+      <div className="row-gap">
         <button type="button" className="link small" aria-expanded={more} onClick={() => setMore((m) => !m)}>
           {more ? 'Show fewer hairstyles' : 'Show more hairstyles'}
         </button>
+        <button type="button" className="link small" aria-expanded={adding} disabled={adding || !!changing} onClick={() => setAdding(true)}>
+          Add your own hairstyle
+        </button>
       </div>
+      {adding && <AddMyHairstyle onDone={mineChanged} onCancel={() => setAdding(false)} />}
+      {changing && <AddMyHairstyle editing={changing} onDone={mineChanged} onCancel={() => setChanging(null)} />}
+      {dialog}
       {more && (
         <div className="col col-snug">
           <div className="small muted">
@@ -313,16 +372,24 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
           {lighter && allowance > 0 && <div className="small">Lightest first. The room kept for hair on this body is about {allowance.toLocaleString('en-US')} triangles; heavier styles make {stagePlain('prep')} run in full.</div>}
           {!catalogue && !error && <div className="muted small">Loading the hair library...</div>}
           {catalogue && others.length === 0 && <div className="muted small">Every hairstyle in the library is shown above.</div>}
+          {!lighter && mine.length > 0 && (
+            <div className="move-group">
+              <div className="field-label">Yours</div>
+              <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 320 : 170}px, 1fr))` }}>
+                {mine.map((s) => card({ style: s.id, name: s.name, own: true, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
+              </div>
+            </div>
+          )}
           {lighter ? (
             <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 320 : 170}px, 1fr))` }}>
-              {[...others].sort((a, b) => used(a) - used(b)).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
+              {[...others].sort((a, b) => used(a) - used(b)).map((s) => card({ style: s.id, name: s.name, own: s.own, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
             </div>
           ) : (
             families.map((f) => (
               <div key={f} className="move-group">
                 <div className="field-label">{FAMILY_WORDS[f] ?? f}</div>
                 <div className="move-cards" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${large ? 320 : 170}px, 1fr))` }}>
-                  {others.filter((s) => s.family === f).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
+                  {others.filter((s) => s.family === f && !s.own).map((s) => card({ style: s.id, name: s.name, triangles: used(s), lite: s.lite_used, kind: s.kind, credit: creditOf(s), picture: thumbOf(s), pictures: thumbsOf(s), fit: fitWords(null) }, false))}
                 </div>
               </div>
             ))

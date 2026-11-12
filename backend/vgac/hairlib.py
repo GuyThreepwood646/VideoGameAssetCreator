@@ -652,6 +652,7 @@ def hair_library(platform: str | None = None, asset_id: str | None = None, db: S
         styles.append({"id": s.get("id"), "name": s.get("name"), "family": s.get("family"), "kind": s.get("kind"),
                        "alpha": s.get("alpha"), "triangles": s.get("triangles"), "triangles_used": used, "lite_used": lite,
                        "phone_ok": s.get("phone_ok"), "fringe": s.get("fringe"), "parting": s.get("parting"), "thumbs": thumbs,
+                       "own": bool(s.get("own")),
                        "credit": _credit(str(s.get("id")))})
     families = sorted({str(s["family"]) for s in styles if s.get("family")})
     return {"styles": styles, "families": families, "installed": True, "platform": platform}
@@ -659,6 +660,16 @@ def hair_library(platform: str | None = None, asset_id: str | None = None, db: S
 
 @router.get("/api/hair-library/files/{path:path}")
 def hair_library_file(path: str) -> FileResponse:
+    if path.startswith("mine/"):  # the person's own hairstyles: my_hair.resolve keeps it inside their folder
+        from . import my_hair
+
+        try:
+            own = my_hair.resolve(path)
+        except ValueError:
+            raise HTTPException(404, "file not found")
+        if not own.is_file():
+            raise HTTPException(404, "file not found")
+        return FileResponse(own)
     try:
         hs = _hairstyles()
         root = Path(hs.library_dir()).resolve() if hasattr(hs, "library_dir") else DATA_DIR.resolve()

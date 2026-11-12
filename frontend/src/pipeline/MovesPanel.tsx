@@ -10,7 +10,8 @@ import { joinAnd } from '../help'
 import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 
-const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: 'yours', 'built-in': 'built in' }
+// Your own moves carry a Yours mark instead of a word here.
+const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: '', 'built-in': 'built in' }
 const BUSY_POLL_MS = 4000
 
 // previewClips: the clips the viewer can play (from the file); a move outside it says so. onPlay plays one in the viewer.
@@ -20,6 +21,8 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [picking, setPicking] = useState(false)
+  // "Add your own move" opens the same window straight on the file chooser.
+  const [pickingOwn, setPickingOwn] = useState(false)
   const [sending, setSending] = useState(false)
   const [sameAs, setSameAs] = useState('')
 
@@ -50,7 +53,8 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
     setError(null)
     try {
       await movesApi.change(aid, body)
-        setPicking(false)
+      setPicking(false)
+      setPickingOwn(false)
       await load()
     } catch (e) {
       setError(e)
@@ -70,9 +74,14 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
           <Info term="term.add_move" />
         </div>
         {data.can_add && kept && (
-          <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)}>
-            Add a move
-          </button>
+          <div className="row-gap">
+            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)}>
+              Add a move
+            </button>
+            <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file from another source: FBX, GLB or BVH">
+              Add your own move
+            </button>
+          </div>
         )}
       </div>
       {!data.can_add && (
@@ -101,8 +110,10 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
               </button>
             )}
             <span className="move-label">{m.label}</span>
+            {m.source === 'mine' && <span className="chip">Yours</span>}
             <span className="muted small">
-              {m.loop ? 'loops' : 'plays once'}, {SOURCE_WORD[m.source]}
+              {m.loop ? 'loops' : 'plays once'}
+              {SOURCE_WORD[m.source] ? `, ${SOURCE_WORD[m.source]}` : ''}
               {m.added ? ', added by you' : ''}
             </span>
             {previewClips && previewClips.length > 0 && (!m.clip || !previewClips.includes(m.clip)) && <span className="muted small">preview not available</span>}
@@ -148,20 +159,25 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
         </Disclosure>
       )}
       <ErrorText error={error} />
-      {picking && <MovePicker have={data.moves} busy={busy} onAdd={(ids) => change({ add: ids })} onClose={() => setPicking(false)} />}
+      {(picking || pickingOwn) && (
+        <MovePicker have={data.moves} busy={busy} startOwn={pickingOwn} onAdd={(ids) => change({ add: ids })} onClose={() => {
+          setPicking(false)
+          setPickingOwn(false)
+        }} />
+      )}
     </section>
   )
 }
 
 // --- The picker ----------------------------------------------------------------------------------------------------
 
-function MovePicker({ have, busy, onAdd, onClose }: { have: CharacterMove[]; busy: boolean; onAdd: (ids: string[]) => void; onClose: () => void }) {
+function MovePicker({ have, busy, startOwn = false, onAdd, onClose }: { have: CharacterMove[]; busy: boolean; startOwn?: boolean; onAdd: (ids: string[]) => void; onClose: () => void }) {
   const [lib, setLib] = useState<MoveLibrary | null>(null)
   const [mine, setMine] = useState<MyMovesListing | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [query, setQuery] = useState('')
   const [ticked, setTicked] = useState<Set<string>>(new Set())
-  const [own, setOwn] = useState<{ mode: 'upload' } | { mode: 'edit'; file: MyMoveFile } | null>(null)
+  const [own, setOwn] = useState<{ mode: 'upload' } | { mode: 'edit'; file: MyMoveFile } | null>(startOwn ? { mode: 'upload' } : null)
 
   const loadLib = useCallback(async () => {
     try {
@@ -284,7 +300,7 @@ function MovePicker({ have, busy, onAdd, onClose }: { have: CharacterMove[]; bus
                           </span>
                         ))}
                         <button type="button" onClick={() => setOwn({ mode: 'upload' })}>
-                          Use my own animation file
+                          Add your own move
                         </button>
                         <span className="muted">{mine?.responsibility || RESPONSIBILITY}</span>
                       </div>
@@ -300,6 +316,7 @@ function MovePicker({ have, busy, onAdd, onClose }: { have: CharacterMove[]; bus
                               <span className="row-gap">
                                 <input type="checkbox" checked={on || already} disabled={already || busy} onChange={(e) => tick(c.id, e.target.checked)} />
                                 <span className="move-card-label">{c.label}</span>
+                                {c.pack === 'mine' && <span className="chip">Yours</span>}
                               </span>
                               <span className="muted small">
                                 {already ? 'already has it' : c.loop ? 'loops' : 'plays once'}

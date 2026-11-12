@@ -6,7 +6,7 @@ import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, ty
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
 import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
-import { hairCatalogue, hairPanel } from './hair'
+import { addMyHair, changeMyHair, hairCatalogue, hairPanel, myHairListing, OwnHairError, removeMyHair } from './hair'
 import { mockCredits } from './credits'
 import { addedOf, changeMoves, characterMoves, moveLibrary, mockReadMoveFile, myMoveFiles, removedOf } from './moves'
 
@@ -1350,6 +1350,27 @@ on('DELETE', '/api/my-moves/:id', (m) => {
   const [gone] = myMoveFiles.splice(i, 1)
   return { removed: gone.id }
 })
+
+// Your own hairstyles (mock/hair.ts; backend vgac/my_hair.py)
+const ownHairErrors = <T,>(fn: () => T): T => {
+  try {
+    return fn()
+  } catch (e) {
+    if (e instanceof OwnHairError) throw new HttpError(e.status, e.message)
+    throw e
+  }
+}
+on('GET', '/api/my-hair', () => myHairListing())
+on('POST', '/api/my-hair/upload', (_m, _b, query) => ownHairErrors(() => addMyHair(query)))
+on('PUT', '/api/my-hair/:id', (m, body) => ownHairErrors(() => changeMyHair(m.groups!.id, body)))
+on('DELETE', '/api/my-hair/:id', (m) =>
+  ownHairErrors(() =>
+    removeMyHair(
+      m.groups!.id,
+      store.assets.filter((a) => a.hair?.pick === m.groups!.id).map((a) => a.name),
+    ),
+  ),
+)
 
 // Hair from the library (mock/hair.ts; backend vgac/hairlib.py)
 on('GET', '/api/hair-library', (_m, _b, query) => {
