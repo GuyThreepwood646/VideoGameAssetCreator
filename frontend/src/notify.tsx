@@ -5,6 +5,8 @@ import { Link } from 'react-router'
 import { api, type AutopilotState } from './api'
 import { useEvents } from './events'
 import { plainJargon, stagePlain } from './help'
+import { badgeIcon, desktopBridge, workCount } from './desktop'
+import { useHealth } from './HealthPanel'
 import type { StageId } from './api'
 
 const KEY = 'vgac.notify'
@@ -38,6 +40,18 @@ export function endingMessage(name: string, prev: string | undefined, ap: Autopi
   return `${name} stopped at ${where}.`
 }
 
+// The taskbar badge while work runs (desktop app only): the number of running and waiting jobs, cleared at 0.
+function WorkBadge() {
+  const { health } = useHealth(5000)
+  const n = workCount(health?.queue)
+  useEffect(() => {
+    const desk = desktopBridge()
+    if (!desk) return
+    void desk.setWork(n, n ? badgeIcon(n) : '')
+  }, [n])
+  return null
+}
+
 export function Toasts() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const last = useRef(new Map<string, string>())
@@ -62,7 +76,10 @@ export function Toasts() {
       if (!text) return
       const id = next.current++
       setToasts((t) => [...t, { id, text, to: `/assets/${ev.asset_id}` }])
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) new Notification('VGAC', { body: text })
+      // Inside the desktop app the launcher shows the notification (the app window blocks web notifications).
+      const desk = desktopBridge()
+      if (desk) void desk.notify('VGAC', text)
+      else if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) new Notification('VGAC', { body: text })
     })()
   }, [])
   useEffect(() => {
@@ -70,8 +87,10 @@ export function Toasts() {
     const t = window.setTimeout(() => setToasts((l) => l.slice(1)), 12000)
     return () => window.clearTimeout(t)
   }, [toasts])
-  if (!toasts.length) return null
+  if (!toasts.length) return <WorkBadge />
   return (
+    <>
+    <WorkBadge />
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div key={t.id} className="toast">
@@ -84,5 +103,6 @@ export function Toasts() {
         </div>
       ))}
     </div>
+    </>
   )
 }
