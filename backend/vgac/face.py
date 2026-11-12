@@ -526,7 +526,30 @@ def landmarks(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
     from . import facemarks
 
     m = facemarks.find(img, info)
-    return m if m is not None else darkest_landmarks(img, info)
+    if m is None:
+        return darkest_landmarks(img, info)
+    return add_mouth_corners(m, img, info)
+
+
+def add_mouth_corners(lm: dict[str, Any], img: np.ndarray, info: dict[str, Any]) -> dict[str, Any]:
+    """lm (MediaPipe's eyes and lips centroid, vgac/facemarks.py) with "mouth_corners" ([left, right] in the picture) from
+    the lip points of the mediapipe Python package (vgac/lipmarks.py), so fit_landmarks can fit the mouth's width too.
+    lm itself is returned when the package or its model is missing, no face is found, or the lips found are not the
+    ones lm has (their middle more than a tenth of the face's width from lm's mouth): then the fit is as before."""
+    from . import lipmarks
+
+    if "mouth_corners" in lm or not lipmarks.available():
+        return lm
+    lp = lipmarks.find(img)
+    if lp is None:
+        return lm
+    w = float(info["width_px"])
+    mid = (np.array(lp["left"]) + np.array(lp["right"])) / 2
+    if np.hypot(*(mid - np.array(lm["mouth"]))) > 0.1 * w or lipmarks.width_px(lp) < 0.12 * w:
+        return lm
+    out = dict(lm)  # the finder's cache holds lm
+    out["mouth_corners"] = [lp["left"], lp["right"]]
+    return out
 
 
 def landmark_pair(a: np.ndarray, b: np.ndarray, info: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -580,11 +603,16 @@ def darkest_landmarks(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] |
 
 
 def fit_landmarks(src: dict[str, Any], dst: dict[str, Any], centre: tuple[float, float], limit: float = 0.2) -> dict[str, Any] | None:
-    """One scale and a shift that put the picture's eye line and mouth on the model's: the scale from the distance
+    """A scale and a shift that put the picture's eye line and mouth on the model's: the scale from the distance
     between the eye line and the mouth, the shift from the middle of the eyes and the mouth. The spacing of the eyes
     stays the picture's: the 3D builder models no eye sockets at this triangle count (the nose and the mouth line are
     what the shape has), and its blurred eye smudges are only a rough guess. None when the scale would be more than
-    `limit` away from 1 (then the points are not the same features). residual_px: how far the eyes still differ."""
+    `limit` away from 1 (then the points are not the same features). residual_px: how far the eyes still differ.
+
+    When both have "mouth_corners" ([left, right], add_mouth_corners) the sideways scale is the model's mouth width
+    over the picture's instead, kept within 15 percent of the upright scale (a corner found on a crease is a rough
+    guess too) and within `limit` of 1, else equal to the upright one as before. corner_residual_px: how far the
+    corners still differ (both axes, the largest of the two)."""
     def parts(lm: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         e = np.array(lm["eyes"], dtype=np.float64)
         return e.mean(axis=0), np.array(lm["mouth"], dtype=np.float64)
@@ -597,13 +625,29 @@ def fit_landmarks(src: dict[str, Any], dst: dict[str, Any], centre: tuple[float,
     k = float(hd / hs)
     if not (1 - limit <= k <= 1 + limit):
         return None
+    kx = k
+    cs, cd = src.get("mouth_corners"), dst.get("mouth_corners")
+    if cs and cd:
+        ws = abs(cs[1][0] - cs[0][0])
+        wd = abs(cd[1][0] - cd[0][0])
+        if ws > 1 and wd > 1 and 1 - limit <= wd / ws <= 1 + limit:
+            kx = float(np.clip(wd / ws, k / 1.15, k * 1.15))
     c = np.array(centre, dtype=np.float64)
+    s2 = np.array([kx, k])
     mid_s, mid_d = (se + sm) / 2, (de + dm) / 2
-    t = mid_d - (c + k * (mid_s - c))
-    pe = c + k * (np.array(src["eyes"]) - c) + t
+    t = mid_d - (c + s2 * (mid_s - c))
+    if cs and cd:
+        # the mouth's own middle decides the sideways shift (the eyes' places are the rough guess here)
+        ms, md = np.mean(np.array(cs, dtype=np.float64)[:, 0]), np.mean(np.array(cd, dtype=np.float64)[:, 0])
+        t[0] = md - (c[0] + kx * (ms - c[0]))
+    pe = c + s2 * (np.array(src["eyes"]) - c) + t
     res = float(np.abs(pe - np.array(dst["eyes"])).max())
-    return {"sx": round(k, 4), "sy": round(k, 4), "tx": round(float(t[0]), 2), "ty": round(float(t[1]), 2),
-            "centre": (float(c[0]), float(c[1])), "residual_px": round(res, 2)}
+    out = {"sx": round(kx, 4), "sy": round(k, 4), "tx": round(float(t[0]), 2), "ty": round(float(t[1]), 2),
+           "centre": (float(c[0]), float(c[1])), "residual_px": round(res, 2)}
+    if cs and cd:
+        pc = c + s2 * (np.array(cs, dtype=np.float64) - c) + t
+        out["corner_residual_px"] = round(float(np.abs(pc - np.array(cd, dtype=np.float64)).max()), 2)
+    return out
 
 
 def band(img: np.ndarray, lo: float, hi: float) -> np.ndarray:
