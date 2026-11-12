@@ -385,7 +385,7 @@ GOLDEN_OFF = {
              # face_closeup_guided and face_sides (the face pass's optional steps) were added later, on 2026-11-10.
              "params": ["delight", "face_closeup", "face_closeup_guided", "face_density", "face_detail", "face_sides",
                         "face_strength", "face_yaw",
-                        "hair_detail", "hair_material", "hair_strength", "head_triangles", "pbr_fix", "pivot", "rebake",
+                        "hair_detail", "hair_material", "hair_strength", "hand_triangles", "head_triangles", "pbr_fix", "pivot", "rebake",
                         "shading", "size_axis", "size_m", "size_word", "smooth_angle", "symmetric"]},
     "turnaround": {"checks": [],
                    "files": ["back", "back_cutout", "back_white", "front", "front_cutout", "front_white", "left",

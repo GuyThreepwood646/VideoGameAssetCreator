@@ -25,13 +25,21 @@ from typing import Any
 # at any count, so the head only has what the larger model gives it: on the knight (same seed) the head had 1,241 at
 # the budget, 1,615 at 1.3 times and 2,439 at 2 times. Twice its share needs 2 times; the build took no longer
 # (117 s against 116 s at the budget) and the decimation in Blender about a second (runtime/tmp/headtris).
-HEAD_ROOM = 2.0
+# 2.5 since the hands joined (docs/HANDS-PLAN.md, phase 1): at 2 the two hands of the boy's model had 2,106 triangles
+# to start from and the clean-up leaves 1,184 of them with no protection, so even all of them is 1.78 times the share
+# and never twice; at 2.5 the cap (97 percent of what the model has) is above twice.
+HEAD_ROOM = 2.5
 # The head's triangles after the weighted decimation, as a multiple of what an even decimation leaves it.
 HEAD_GAIN = 2.0
+# The hands' triangles after the weighted decimation, as a multiple of an even decimation's (capped at 97 percent of
+# what the 3D model has there). Hands join the head's vertex group (blender/headweight.py hand_zones).
+HAND_GAIN = 3.0
 # The top share of the model's height that is the head (face.find_head's default).
 HEAD_SHARE = 0.13
 # The clean-up option, on unless the version turns it off.
 PARAM = "head_triangles"
+# The hands part of it, on unless the version turns it off (the head's own option turns both off).
+HAND_PARAM = "hand_triangles"
 
 
 def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
@@ -53,6 +61,11 @@ def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
 def on(params: dict[str, Any] | None) -> bool:
     """The clean-up option (head_triangles), on unless turned off."""
     return (params or {}).get(PARAM) is not False
+
+
+def hands_on(params: dict[str, Any] | None) -> bool:
+    """The hands' share of the clean-up option (hand_triangles), on unless turned off."""
+    return (params or {}).get(HAND_PARAM) is not False
 
 
 def room_target(base_target: int) -> int:
@@ -126,6 +139,8 @@ def head_vars(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     total = m.get("triangles") or 0
     out = {"head_weighted": True, "head_triangles": int(m["head_triangles"])}
+    if m.get("hand_triangles") is not None:
+        out["hand_triangles"] = int(m["hand_triangles"])
     if m.get("head_triangles_even") is not None:
         out["head_even"] = int(m["head_triangles_even"])
     if total:
