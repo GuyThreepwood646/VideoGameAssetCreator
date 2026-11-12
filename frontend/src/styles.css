@@ -3966,3 +3966,23 @@ button.small-btn .resume-icon {
   content: '+ ';
   color: var(--accent);
 }
+
+.category-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.category-tile {
+  min-height: var(--control-lg);
+  padding: var(--s1) var(--s3);
+}
+.settings-summary {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+}
+.extra-chip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
