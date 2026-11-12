@@ -3,6 +3,7 @@
 import { isSetAside, isStopped, libraryUrl, versionFeedback, type Job, type StageId, type Version } from '../api'
 import { StatusBadge, TrafficDot } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
+import { useState } from 'react'
 import { firstFailing, looksGood } from '../help'
 
 export function CandidateStrip({
@@ -20,21 +21,101 @@ export function CandidateStrip({
   selectedId: string | null
   onPick: (id: string) => void
 }) {
+  const [compare, setCompare] = useState(false)
+  const [picked, setPicked] = useState<string[]>([])
   if (!versions.length) return null
+  const done = versions.filter((v) => v.status === 'done')
+  // In compare mode a click picks a version to compare (two at most) instead of opening it.
+  const click = (id: string) => {
+    if (!compare) return onPick(id)
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p.slice(-1), id]))
+  }
+  const a = versions.find((v) => v.id === picked[0])
+  const b = versions.find((v) => v.id === picked[1])
   return (
-    <div className="candidates">
-      {versions.map((v, i) => (
-        <CandidateCard
-          key={v.id}
-          version={v}
-          index={i + 1}
-          stage={stage}
-          job={jobOfVersion(jobs, v)}
-          isActive={activeId === v.id}
-          isSelected={selectedId === v.id}
-          onClick={() => onPick(v.id)}
-        />
-      ))}
+    <>
+      {done.length > 1 && (
+        <div className="row-gap small compare-toggle">
+          <button type="button" className="small-btn" aria-pressed={compare} onClick={() => { setCompare((c) => !c); setPicked([]) }} title="Pick two versions to see them side by side">
+            Compare
+          </button>
+          {compare && <span className="muted">Pick two versions below.</span>}
+        </div>
+      )}
+      <div className="candidates">
+        {versions.map((v, i) => (
+          <CandidateCard
+            key={v.id}
+            version={v}
+            index={i + 1}
+            stage={stage}
+            job={jobOfVersion(jobs, v)}
+            isActive={compare ? picked.includes(v.id) : activeId === v.id}
+            isSelected={selectedId === v.id}
+            onClick={() => click(v.id)}
+          />
+        ))}
+      </div>
+      {compare && a && b && <ComparePane a={a} b={b} aNo={versions.indexOf(a) + 1} bNo={versions.indexOf(b) + 1} stage={stage} />}
+    </>
+  )
+}
+
+function versionPicture(stage: StageId, v: Version): string | undefined {
+  const path = stage === 'concept' ? (v.files.cutout ?? v.files.image) : stage === 'turnaround' ? (v.files.front_cutout ?? v.files.front ?? Object.values(v.files)[0]) : v.files.preview
+  return libraryUrl(path)
+}
+
+function ComparePic({ stage, v }: { stage: StageId; v: Version }) {
+  const is3d = stage === 'mesh' || stage === 'prep' || stage === 'rig' || stage === 'export'
+  const glbUrl = is3d && !v.files.preview ? libraryUrl(v.files.glb) : undefined
+  const { src: snap } = useGlbSnapshot(glbUrl)
+  return versionPicture(stage, v) ?? snap ? <img src={(versionPicture(stage, v) ?? snap) as string} alt="" /> : <span className="muted small">no picture</span>
+}
+
+// Two versions side by side, or one over the other with a slider (UI-25).
+function ComparePane({ a, b, aNo, bNo, stage }: { a: Version; b: Version; aNo: number; bNo: number; stage: StageId }) {
+  const [mode, setMode] = useState<'side' | 'slider'>('side')
+  const [cut, setCut] = useState(50)
+  return (
+    <div className="compare-pane" aria-label={`Comparing version ${aNo} and version ${bNo}`}>
+      <div className="row-gap small">
+        <strong>
+          Version {aNo} and version {bNo}
+        </strong>
+        <span className="segmented">
+          <button type="button" aria-pressed={mode === 'side'} onClick={() => setMode('side')}>
+            Side by side
+          </button>
+          <button type="button" aria-pressed={mode === 'slider'} onClick={() => setMode('slider')}>
+            Slider
+          </button>
+        </span>
+      </div>
+      {mode === 'side' ? (
+        <div className="compare-side">
+          {[a, b].map((v, i) => (
+            <figure key={v.id} className="checker">
+              <ComparePic stage={stage} v={v} />
+              <figcaption className="small">Version {i === 0 ? aNo : bNo}</figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : (
+        <div className="compare-slider">
+          <div className="compare-stack checker">
+            <ComparePic stage={stage} v={b} />
+            <div className="compare-over" style={{ clipPath: `inset(0 ${100 - cut}% 0 0)` }}>
+              <ComparePic stage={stage} v={a} />
+            </div>
+          </div>
+          <input type="range" min={0} max={100} value={cut} onChange={(e) => setCut(Number(e.target.value))} aria-label={`Show version ${aNo} on the left and version ${bNo} on the right`} />
+          <div className="row-between small">
+            <span>Version {aNo}</span>
+            <span>Version {bNo}</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
