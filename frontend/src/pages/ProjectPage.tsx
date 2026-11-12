@@ -7,10 +7,10 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, examplePrompts, fmtDuration, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
-import { presetById, usePresets } from '../presets'
+import { lookLabelForStyle, presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 
 export default function ProjectPage() {
@@ -68,7 +68,7 @@ export default function ProjectPage() {
             <span className="muted small">
               {platformPlain(project.platform_target)}
               <Info term={'platform.' + project.platform_target} /> / {presetById(presets, project.style_lock.preset)?.label ?? modelLabel(project.style_lock.model)}
-              <Info term={project.style_lock.preset && presetById(presets, project.style_lock.preset) ? 'term.look' : 'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>style lock</Link>
+              <Info term={project.style_lock.preset && presetById(presets, project.style_lock.preset) ? 'term.look' : 'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>Look and settings</Link>
               <Info term="term.style_lock" />
             </span>
           )}
@@ -163,6 +163,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   // "The face matters": on unless the person says the face is hidden or too simple to gain from the face pass.
   const [faceMatters, setFaceMatters] = useState(true)
   const { presets } = usePresets()
+  const [lookOpen, setLookOpen] = useState(false)
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
   const projectStyleId = projectLook && ref?.styles.some((s) => s.id === projectLook.style_preset) ? projectLook.style_preset : (ref?.styles.find((s) => s.model === project.style_lock.model) ?? ref?.styles[0])?.id
@@ -351,16 +352,27 @@ function CreateAssetForm({ project }: { project: Project }) {
         </select>
       </Field>
       <div className="grid-2">
-        <Field label="Style preset (look)" term={'style.' + style} hint={projectLook ? (style === projectStyleId ? `Your project's style preset: ${projectLook.label}.` : `Different from your project's style preset (${projectLook.label}).`) : undefined}>
-          <select value={style} onChange={(e) => setStyle(e.target.value)}>
-            {ref?.styles.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-                {projectLook && s.id === projectStyleId ? ` (${projectLook.label}, the project style preset)` : ''}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {projectLook && style === projectStyleId && !lookOpen ? (
+          <Field label="Look" term="term.look" hint="Every asset in this project follows it.">
+            <div className="look-default">
+              <strong>{projectLook.label}</strong> <span className="muted">(this project's look)</span>{' '}
+              <button type="button" className="link small" onClick={() => setLookOpen(true)}>
+                Use a different look for this asset
+              </button>
+            </div>
+          </Field>
+        ) : (
+          <Field label="Look" term="term.look" hint={projectLook ? (style === projectStyleId ? `This project's look: ${projectLook.label}.` : `Different from this project's look (${projectLook.label}).`) : undefined}>
+            <select value={style} onChange={(e) => setStyle(e.target.value)}>
+              {ref?.styles.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {lookLabelForStyle(presets, s.id, s.label)}
+                  {projectLook && s.id === projectStyleId ? ' (this project)' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="Platform" term={'platform.' + platform} hint={budget ? `${budget.triangles.toLocaleString('en-US')} triangles, ${budget.texture} px texture` : platformConsequence(platform)}>
           <select value={platform} onChange={(e) => setPlatform(e.target.value as PlatformId)}>
             {(ref?.platforms ?? []).map((p) => (
@@ -381,7 +393,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           ) : (
             <>
               Suggested: <strong>{suggestion.model_label}</strong>
-              <Info term={'model.' + suggestion.model} /> because {suggestion.reason}
+              <Info term={'model.' + suggestion.model} /> because {plainJargon(suggestion.reason)}
             </>
           )}
           ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the model under Advanced.</span>
@@ -389,7 +401,7 @@ function CreateAssetForm({ project }: { project: Project }) {
       )}
       {suggestion?.recipe_plain && (
         <div className="recipe-line small">
-          Recipe: {suggestion.recipe_plain}
+          How the look is built: {suggestion.recipe_plain}
           <Info term="term.recipe" />
         </div>
       )}
@@ -407,7 +419,7 @@ function CreateAssetForm({ project }: { project: Project }) {
             hint={
               suggestion ? (
                 <>
-                  Suggested: {suggestion.model_label} because {suggestion.reason}. Pick another to override it; you can change it later under Fine-tune.
+                  Suggested: {suggestion.model_label} because {plainJargon(suggestion.reason)}. Pick another to override it; you can change it later under Fine-tune.
                   {overridden && (
                     <>
                       {' '}

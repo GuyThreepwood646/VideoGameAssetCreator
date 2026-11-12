@@ -6,7 +6,7 @@ import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, 
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
+import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
 import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
@@ -165,7 +165,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
               <div className="progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
             </div>
             <span className="muted small">
-              {job?.message || 'working'}
+              {plainJargon(job?.message) || 'working'}
               {ap.stages_done.length ? ` / ${ap.stages_done.length} of ${STAGES.length} steps kept` : ''}
             </span>
           </div>

@@ -62,3 +62,10 @@ export function lockMatchesPreset(lock: StyleLock, p: LookPreset | null): boolea
     JSON.stringify(a.palette.map((c) => c.toLowerCase())) === JSON.stringify(lock.palette.map((c) => c.toLowerCase()))
   )
 }
+
+// The look name for a style id from the asset form's list. Looks and styles are one idea: the person only ever
+// sees the look name. A style no look maps to is shown as a custom look, never as a model name (UI-01).
+export function lookLabelForStyle(presets: LookPreset[] | null | undefined, styleId: string | null | undefined, fallback?: string): string {
+  const hit = (presets ?? []).find((p) => p.style_preset === styleId)
+  return hit?.label ?? fallback ?? 'Custom look'
+}
