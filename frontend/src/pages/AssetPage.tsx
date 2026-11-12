@@ -42,6 +42,24 @@ export default function AssetPage() {
   const followRef = useRef<string | null>(null) // the autopilot stage the page last followed to
   const jobStatusRef = useRef(new Map<string, JobStatus>()) // last seen status per job id
   const autopilot = asset && asset.id === aid ? (asset.autopilot ?? null) : null
+  // The status line in the header shows only while the guide card is scrolled out of view (UI-14).
+  const [guideVisible, setGuideVisible] = useState(true)
+  const haveAsset = !!asset
+  useEffect(() => {
+    const main = document.querySelector('.stage-main')
+    const card = main?.querySelector('.guide')
+    if (!main || !card || typeof IntersectionObserver === 'undefined') {
+      setGuideVisible(false)
+      return
+    }
+    const io = new IntersectionObserver(([e]) => setGuideVisible(e.isIntersecting), { root: main, threshold: 0.2 })
+    io.observe(card)
+    return () => io.disconnect()
+  })
+  // A new step opens at its top, not where the last one was scrolled to (UI-15).
+  useEffect(() => {
+    document.querySelector('.stage-main')?.scrollTo({ top: 0 })
+  }, [stage, aid, haveAsset])
   const hair = useHairPanel(asset && asset.id === aid ? asset : null)
 
   const applyAutopilot = useCallback((assetId: string, st: AutopilotState) => {
@@ -371,7 +389,7 @@ export default function AssetPage() {
       </aside>
       <section className="stage-main">
         <header className="asset-head">
-          <div className="asset-status">
+          <div className={'asset-status' + (guideVisible ? ' asset-status-quiet' : '')}>
             <span className={'traffic traffic-' + status.tone} aria-hidden="true" />
             <span className="asset-status-text">{status.text}</span>
             {status.raw && (
