@@ -61,6 +61,18 @@ type Props = {
 
 // The first build of a step has no version yet: the settings form starts from an empty one, so every setting shows
 // its default (the recipe's, or the category's) and only what the person changes is sent.
+// The version of `stage` that `version` was built from, walking up its parents (a redraw's parent is the version it redrew).
+function lineageVersion(asset: Asset, version: Version, stage: StageId): Version | undefined {
+  const byId = new Map<string, Version>()
+  for (const list of Object.values(asset.stages ?? {})) for (const v of list ?? []) byId.set(v.id, v)
+  let v: Version | undefined = version
+  for (let guard = 0; v && guard < 200; guard++) {
+    if (v.stage === stage) return v
+    v = v.parent_version_id ? byId.get(v.parent_version_id) : undefined
+  }
+  return undefined
+}
+
 function firstTarget(asset: Asset, stage: StageId): Version {
   return { id: `first-${asset.id}-${stage}`, asset_id: asset.id, stage, parent_version_id: null, status: 'queued', params: {}, files: {}, metrics: {}, job_id: null, error: null, created_at: '', selected: false }
 }
@@ -447,6 +459,7 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
           version={version}
           busy={busy}
           onRedraw={onRedrawViews}
+          originalFiles={lineageVersion(asset, version, 'concept')?.files ?? null}
           locked={
             version.status === 'done'
               ? null
