@@ -224,3 +224,62 @@ def test_the_crown_measure_matches_between_the_library_and_the_reader():
     w, y, z = my_hair.crown(q)
     assert z == pytest.approx(1.2)
     assert w == pytest.approx(2.4) and y == pytest.approx(0.3)        # top 40 percent: the three upper points
+
+
+# --- run_import with a stand-in for the Blender call (it writes the file names blender/hairimport.py writes) -------------
+
+
+def _blender_stub(result: dict[str, Any]):
+    def run(settings, script, args, log_path=None, timeout=None, on_start=None):
+        assert script == "hairimport.py" and args[0] == "import"
+        job = json.loads(Path(args[1]).read_text())
+        out, sid = Path(job["out_dir"]), job["id"]
+        assert Path(job["reference"]).is_file() and set(job["stats"]) == {"w", "ycen", "ztop"}
+        (out / "thumbs").mkdir(exist_ok=True)
+        q = np.zeros((4, 3), np.float32)
+        for n in (f"{sid}.npz", f"{sid}_lite.npz"):
+            np.savez_compressed(out / n, q=q)
+        for v in ("front", "quarter"):
+            Image.new("RGB", (8, 8)).save(out / "thumbs" / f"{sid}_{v}.png")
+        Image.new("RGBA", (4, 4), (200, 100, 50, 255)).save(out / "grey_rgba.png")
+        (out / "result.json").write_text(json.dumps(result))
+        return ""
+    return run
+
+
+def test_run_import_collects_the_files_the_reader_writes(settings, monkeypatch, tmp_path: Path):
+    from vgac import tools
+
+    res = dict(triangles=100, source_triangles=100, vertices=90, lite_triangles=100, hang_groups=[], length_rel_head=1.0, self_check_mm=0.0, kind="shell", has_texture=True)
+    monkeypatch.setattr(tools, "run_blender", _blender_stub(res))
+    src = tmp_path / "x.glb"
+    src.write_bytes(GLB)
+    folder = tmp_path / "out"
+    doc = my_hair.run_import(settings, src, "mine_x", folder)
+    assert doc["triangles"] == 100
+    assert (folder / "mine_x.npz").is_file() and (folder / "mine_x_lite.npz").is_file() and (folder / "thumbs" / "front.png").is_file()
+    g = Image.open(folder / "grey.png")
+    assert g.mode == "LA" and g.getpixel((0, 0))[1] == 255          # a shell's grey texture is opaque
+
+
+def test_a_refusal_written_by_the_reader_becomes_its_plain_sentence(settings, monkeypatch, tmp_path: Path):
+    from vgac import tools
+
+    def run(settings, script, args, log_path=None, timeout=None, on_start=None):
+        out = Path(json.loads(Path(args[1]).read_text())["out_dir"])
+        (out / "result.json").write_text(json.dumps({"error": "no_mesh", "detail": ""}))
+        return ""
+
+    monkeypatch.setattr(tools, "run_blender", run)
+    src = tmp_path / "x.glb"
+    src.write_bytes(GLB)
+    with pytest.raises(my_hair.HairError) as e:
+        my_hair.run_import(settings, src, "mine_x", tmp_path / "out")
+    assert e.value.message == "This file has no mesh we can use as hair."
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_reference_head_ships_with_the_app():
+    assert my_hair.REFERENCE.is_file()
+    ref = np.load(my_hair.REFERENCE)
+    assert ref["V"].shape[1] == 3 and ref["T"].shape[1] == 3 and 1.6 < float(ref["V"][:, 2].max()) < 1.8

@@ -309,7 +309,7 @@ def run_import(settings: Settings, src: Path, sid: str, folder: Path) -> dict[st
             raise HairError(REFUSALS["failed"], 422)
         if doc.get("error"):
             raise HairError(REFUSALS.get(doc["error"], REFUSALS["failed"]))
-        for need in (f"{sid}.npz", "thumbs/front.png"):
+        for need in (f"{sid}.npz", f"thumbs/{sid}_front.png"):
             if not (work / need).is_file():
                 raise HairError(REFUSALS["failed"], 422)
         folder.mkdir(parents=True, exist_ok=True)
