@@ -148,7 +148,7 @@ export function RigView({ version }: { version: Version }) {
           </div>
           <div className="small">
             {boneCount !== undefined ? `${boneCount} bones` : 'bone count unknown'}
-            {template ? `, ${String(template)} skeleton` : ''}
+            {template ? `, ${/^mixamo$/i.test(String(template)) ? 'standard human skeleton (Mixamo)' : `${String(template)} skeleton`}` : ''}
           </div>
           {bones && bones.length > 0 && (
             <Disclosure label="Bone names">

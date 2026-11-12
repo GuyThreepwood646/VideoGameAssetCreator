@@ -1648,3 +1648,12 @@ export function looksGood(metrics: Record<string, unknown>): boolean | null {
   }
   return null
 }
+
+// A job's kind and card in plain words for the Activity panel: "Build the 3D model, on RTX 3060" (UI-08).
+export function jobKindPlain(kind: string, instance: string, gpuName?: string | null): string {
+  const [stage, op] = kind.split('.')
+  const name = (STAGES as readonly string[]).includes(stage) ? STAGE_TEXT[stage as StageId].plain : stage.replace(/_/g, ' ')
+  const what = op === 'run' || !op ? name : op === 'adjust' ? `${name} (change)` : op === 'refine' ? `${name} (redo)` : `${name} (${op.replace(/_/g, ' ')})`
+  const where = instance === 'host' ? 'on this PC' : gpuName ? `on ${gpuName}` : `on graphics card ${instance}`
+  return `${what}, ${where}`
+}
