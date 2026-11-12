@@ -138,7 +138,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
         <span className="chip" title={item.category}>
           {categoryName}
         </span>
-        <span className="chip" title={item.platform_target}>
+        <span className="chip" title={platformPlain(item.platform_target)}>
           {platformPlain(item.platform_target).split(':')[0]}
         </span>
         {style && (
