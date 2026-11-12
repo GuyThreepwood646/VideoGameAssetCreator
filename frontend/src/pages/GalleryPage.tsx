@@ -20,7 +20,14 @@ export default function GalleryPage() {
     for (const it of items ?? []) if (!seen.has(it.project_id)) seen.set(it.project_id, it.project_name)
     return [...seen.entries()]
   }, [items])
-  const shown = (items ?? []).filter((it) => !project || it.project_id === project)
+  const [category, setCategory] = useState('')
+  const [look, setLook] = useState('')
+  const [query, setQuery] = useState('')
+  const { presets } = usePresets()
+  const cats = useMemo(() => [...new Set((items ?? []).map((it) => it.category))], [items])
+  const looks = useMemo(() => [...new Set((items ?? []).map((it) => it.style_preset))], [items])
+  const q = query.trim().toLowerCase()
+  const shown = (items ?? []).filter((it) => (!project || it.project_id === project) && (!category || it.category === category) && (!look || it.style_preset === look) && (!q || it.asset_name.toLowerCase().includes(q)))
   const missing = error instanceof ApiError && error.status === 404
 
   return (
@@ -44,6 +51,27 @@ export default function GalleryPage() {
           </label>
         )}
       </div>
+      {items && items.length > 1 && (
+        <div className="row-gap small gallery-filters" role="group" aria-label="Filter the finished assets">
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name" aria-label="Search by name" />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Show one kind of asset">
+            <option value="">All kinds</option>
+            {cats.map((c) => (
+              <option key={c} value={c}>
+                {ref?.categories.some((x) => x.id === c) ? categoryLabel(ref, c) : (CATEGORY_HELP[c]?.plain ?? c)}
+              </option>
+            ))}
+          </select>
+          <select value={look} onChange={(e) => setLook(e.target.value)} aria-label="Show one look">
+            <option value="">All looks</option>
+            {looks.map((l) => (
+              <option key={l} value={l}>
+                {lookLabelForStyle(presets, l, STYLE_HELP[l]?.plain ?? l)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {missing ? <div className="placeholder-box">This backend does not have a gallery yet. Finished assets are still on each project's page.</div> : <ErrorText error={error} />}
       {loading && !items && <div className="muted">Loading...</div>}
       {items && items.length === 0 && <EmptyGallery />}
@@ -112,7 +140,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
       <div className="muted small" title={when ? new Date(when).toLocaleString() : undefined}>
         Finished {when ? `${new Date(when).toLocaleDateString()} (${timeAgo(when)})` : 'at an unknown time'}
       </div>
-      <DeliveredRow path={item.delivered_to} />
+      <DeliveredRow path={item.delivered_to} versionId={item.export_version_id} />
       {(item.fbx || item.glb) && (
         <div className="files-row small">
           <span className="muted">files:</span>
@@ -132,7 +160,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
   )
 }
 
-function DeliveredRow({ path }: { path: string | null }) {
+function DeliveredRow({ path, versionId }: { path: string | null; versionId?: string }) {
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
   useEffect(() => {
     if (!copied) return
@@ -147,10 +175,12 @@ function DeliveredRow({ path }: { path: string | null }) {
         <Info term="term.delivered_to" />
       </div>
       <div className="delivered-row">
-        <code className="delivered-path mono small" title={path}>
-          {path}
-        </code>
-        <button type="button" className="small-btn" onClick={() => copyText(path).then((ok) => setCopied(ok ? 'ok' : 'fail'))} aria-label={`Copy the folder path ${path}`}>
+        {versionId && (
+          <button type="button" className="small-btn" title={path} onClick={() => void api.openVersionFolder(versionId).catch(() => undefined)}>
+            Open folder
+          </button>
+        )}
+        <button type="button" className="small-btn" title={path} onClick={() => copyText(path).then((ok) => setCopied(ok ? 'ok' : 'fail'))} aria-label={`Copy the folder path ${path}`}>
           {copied === 'ok' ? 'Copied' : copied === 'fail' ? 'Copy failed' : 'Copy'}
         </button>
       </div>
