@@ -64,6 +64,7 @@ export function makeItEstimate(asset: Asset, stages: StageInfo[] | null, estimat
 // "Make it": the one button that runs everything. Primary unless told otherwise.
 export function MakeItAction({ asset, stages, estimates, busy, primary, onStart }: { asset: Asset; stages: StageInfo[] | null; estimates: Record<string, number> | null; busy: boolean; primary: boolean; onStart: (body: AutopilotBody) => void }) {
   const [stopOn, setStopOn] = useState<StopOn>('block')
+  const [changing, setChanging] = useState(false)
   const est = makeItEstimate(asset, stages, estimates)
   const opt = STOP_ON_OPTIONS.find((o) => o.id === stopOn) ?? STOP_ON_OPTIONS[0]
   return (
@@ -76,6 +77,14 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         Runs every step and only stops if something needs you.
         <Info term="term.autopilot" />
       </div>
+      {!changing ? (
+        <div className="make-it-stop small muted">
+          {opt.id === 'block' ? 'Stops for serious problems.' : opt.id === 'warn' ? 'Stops for any warning.' : 'Never stops for checks.'}{' '}
+          <button type="button" className="link small" onClick={() => setChanging(true)}>
+            Change
+          </button>
+        </div>
+      ) : (
       <label className="make-it-stop small">
         <select value={stopOn} onChange={(e) => setStopOn(e.target.value as StopOn)} aria-label="When the autopilot should stop" title={opt.hint} disabled={busy}>
           {STOP_ON_OPTIONS.map((o) => (
@@ -86,6 +95,7 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         </select>
         <Info term="term.stop_on" />
       </label>
+      )}
     </div>
   )
 }

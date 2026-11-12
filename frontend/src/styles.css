@@ -4024,3 +4024,21 @@ button.small-btn .resume-icon {
 .asset-tools {
   margin-bottom: var(--s2);
 }
+
+.rail-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-row {
+  display: flex;
+  gap: var(--s2);
+}
+.rail-row dt {
+  color: var(--muted);
+  min-width: 56px;
+}
+.rail-row dd {
+  margin: 0;
+}

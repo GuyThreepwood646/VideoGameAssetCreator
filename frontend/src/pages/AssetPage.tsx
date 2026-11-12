@@ -341,13 +341,22 @@ export default function AssetPage() {
               <Info term="term.variant" />
             </div>
           )}
-          <div className="muted small">
-            {categoryLabel(ref, asset.category)}
-            <Info term={'category.' + asset.category} />
-            {' / '}
-            {platformPlain(asset.platform_target)}
-            <Info term={'platform.' + asset.platform_target} />
-          </div>
+          <dl className="rail-facts small">
+            <div className="rail-row">
+              <dt>Type</dt>
+              <dd>
+                {categoryLabel(ref, asset.category)}
+                <Info term={'category.' + asset.category} />
+              </dd>
+            </div>
+            <div className="rail-row">
+              <dt>Platform</dt>
+              <dd>
+                {platformPlain(asset.platform_target)}
+                <Info term={'platform.' + asset.platform_target} />
+              </dd>
+            </div>
+          </dl>
           {asset.held_item?.character_id && (
             <div className="muted small">
               item for <Link to={`/assets/${asset.held_item.character_id}`}>{asset.held_item.character_name ?? 'its character'}</Link>
@@ -356,7 +365,7 @@ export default function AssetPage() {
           )}
           {(asset.equipment?.set_aside?.length ?? 0) > 0 && (
             <div className="muted small">
-              made separately:{' '}
+              Items:{' '}
               {asset.equipment!.set_aside.map((it, i) => (
                 <span key={it.item_asset_id}>
                   {i > 0 ? ', ' : ''}
@@ -369,7 +378,7 @@ export default function AssetPage() {
           {hair.panel && <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />}
           {asset.parts.length > 0 && (
             <div className="muted small">
-              parts: {asset.parts.join(', ')}
+              Moving parts: {asset.parts.join(', ')}
               <Info term="term.parts" />
             </div>
           )}
