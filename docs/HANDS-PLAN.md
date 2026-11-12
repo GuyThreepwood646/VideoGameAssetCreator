@@ -137,15 +137,15 @@ model against the original and against the posed picture (lower is closer). All 
 
 | Run | Pieces L/R | Hand share | delta_e vs original | delta_e vs posed |
 |---|---|---|---|---|
-| Soldier, pose_ready off | 1 / 0 | 15.7 % | 22.3 | |
-| Soldier, pose_ready on | 4 / 3 | 18.8 % | 27.0 | 8.6 |
+| Soldier, pose_ready off | 1 / 0 | 15.7 % | 11.3 | |
+| Soldier, pose_ready on | 4 / 3 | 18.8 % | 26.3 | 4.7 |
 | Knight (library, before) | 1 / 1 | 8.4 % | 8.4 | |
-| Knight, on | 3 / 4 | 12.3 % | 15.3 | 14.8 |
+| Knight, on | 3 / 4 | 12.3 % | 5.2 | 5.0 |
 | TheHeir (before) | 0 / 0 | 2.8 % | 12.3 | |
-| TheHeir, on | 1 / 1 | 4.5 % | 13.1 | 11.5 |
-| Caped hero (before) | 1 / 1 | 1.1 % | 15.9 | |
-| Caped hero, on | 1 / 1 | 6.0 % | 15.6 | 14.9 |
-| Mage, on (no earlier clean-up) | 1 / 1 | 11.0 % | 11.6 | 13.5 |
+| TheHeir, on | 1 / 1 | 4.5 % | 11.7 | 9.9 |
+| Caped hero (before) | 1 / 1 | 1.1 % | 9.7 | |
+| Caped hero, on | 1 / 1 | 6.0 % | 4.7 | 5.2 |
+| Mage, on (no earlier clean-up) | 1 / 1 | 11.0 % | 3.8 | 1.9 |
 | Viking (library hair, before) | 0 / 0 | 2.1 % | 11.8 | |
 | Viking, on | 0 / 0 | 11.0 % | 3.3 | 2.4 |
 
@@ -161,18 +161,15 @@ What the pictures show:
   other than face_matches_picture. The second pose-off run needed a retry after the graphics engine stopped twice on the first try (not
   related to the edit). The boy toy photo was not needed: the soldier did not fail for reasons unrelated to hands.
 - Knight: gauntlets kept in the picture; the hands become open gloves (the plate vambrace and the star tabard are unchanged), fingers separate
-  in the model. On the textured sheet the fingers are painted in patches of armour grey and blue, not the glove black: the paint on the
-  fingers is still wrong.
+  in the model. On the textured sheet the fingers are painted glove black with the vambrace and star kept: the paint lands on the fingers.
 - TheHeir (expected failure): the edit removed all four tool arms and the tools, leaving a different character (a hand-and-two-pods suit).
   Claws and held tools are not kept. pose_ready must not be on for characters whose hands or arms are the design.
 - Caped hero: the edit added brown bracers and fingerless gloves that were not in the picture; the cape hides the arm geometry in the model.
-- Mage: the edit added black fingerless gloves; the sleeves are wide so the hands are small in the model; paint on the hands is patchy.
+- Mage: the edit added black fingerless gloves; the sleeves are wide so the hands are small in the model; the paint lands on the fingers (skin tips, black glove).
 - Viking: wrist cuffs kept, hands opened, the sword hilt at the hip removed; face and hair colour unchanged (delta_e 3.3 and 2.4 is the
   head build route). The hair-library route ran (bald picture from the posed one) and finished; its hair_fit check failed as on earlier runs.
 
-Texture on the fingers: in every pose-on run the fingers are painted from a mix of views that does not agree about the hands, so they show
-patches of the sleeve or armour colour. Not fixed here (srcproject.py belongs to another session); the fix is in the paint step, which should
-weight the front and back pictures of the hands and skip views where a hand is edge-on.
+Texture on the fingers: measured with the model's own texture (a first version of this section used the base_color.png beside the model, which predates the face step's re-pack, and wrongly saw patchy paint). In the pose-on runs the paint lands on the fingers on the soldier, knight and mage sheets (skin tips, glove black, vambrace); the old hands are not painted onto the new ones. Soldier: a stray thumb blob in the left hand's back view. No change to the texture pass is needed.
 
 Verdict: pose_ready gives separate fingers where the picture has plain hands (soldier, knight) and removes held items on purpose. It also
 colourises black-and-white photos, adds gloves and bracers, and can delete whole limbs. Do not turn it on by default; offer it as an option
