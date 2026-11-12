@@ -1415,7 +1415,7 @@ export function setupReport(): SetupReport {
     ({ id, group, label, state, detail, fix, needed_for, technical })
   const items: SetupItem[] = [
     it('blender', 'tools', 'Blender', 'ok', 'Blender 5.2.3 is ready.', '', ['mesh', 'prep', 'rig', 'export'], 'blender_exe in backend/config.yaml: F:/Tools/blender-5.2.3-windows-x64/blender.exe (version 5.2.3)'),
-    it('unity', 'tools', 'Unity editor', 'warn', 'The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything else works; the hand-off still makes the files.', 'Install the Unity editor, or set unity_exe in backend/config.yaml to its Unity.exe.', ['export'], 'unity_exe in backend/config.yaml: C:/Program Files/Unity/Hub/Editor/6000.4.3f1/Editor/Unity.exe'),
+    it('unity', 'tools', 'Unity editor', 'warn', 'The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything else works; the hand-off still makes the files.', 'Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of backend/config.yaml.', ['export'], 'unity_exe in backend/config.yaml: C:/Program Files/Unity/Hub/Editor/6000.4.3f1/Editor/Unity.exe'),
     it('unity_project', 'tools', 'Unity test project', 'ok', 'The Unity test project is there.', '', ['export'], 'unity_project in backend/config.yaml'),
     it('clips.ual1', 'tools', 'Shared animation library', 'ok', 'The shared animations (walk, run, idle and more) are there.', '', ['export'], 'clips_libraries.ual1 in backend/config.yaml'),
     it('skintoken_blender', 'tools', 'Blender for rigging', 'ok', 'The rigging engine knows where Blender is.', '', ['rig'], 'SKINTOKEN_BLENDER_BIN in runtime/start-comfy-b.ps1'),

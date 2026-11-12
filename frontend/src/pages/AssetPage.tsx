@@ -60,11 +60,12 @@ export default function AssetPage() {
   useEffect(() => {
     if (!asset || asset.id !== aid) return
     const k = STAGES.indexOf(stage) + 1
-    document.title = `${asset.name}, step ${k} | VGAC`
+    const apK = autopilot?.status === 'running' && autopilot.stage ? STAGES.indexOf(autopilot.stage as StageId) + 1 : 0
+    document.title = `${apK > 0 ? `(${apK}/${STAGES.length}) ` : ''}${asset.name}, step ${k} | VGAC`
     return () => {
       document.title = 'Video Game Asset Creator'
     }
-  }, [asset, aid, stage])
+  }, [asset, aid, stage, autopilot?.status, autopilot?.stage])
   // Keyboard shortcuts for the review loop (UI-40): K keep, R try again, C change, arrows for versions, 1 to 6 for steps.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
