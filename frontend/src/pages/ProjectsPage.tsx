@@ -29,6 +29,16 @@ function readSort(): SortKey {
 export default function ProjectsPage() {
   const { data: projects, error, loading, reload } = useAsync(() => api.listProjects(), [])
   const [params, setParams] = useSearchParams()
+  const dirtyRef = useRef(false)
+  const drawerConfirm = useConfirm()
+  const requestClose = async () => {
+    if (dirtyRef.current) {
+      const ok = await drawerConfirm.ask({ title: 'Close without saving?', body: 'You have changes that are not saved yet. They will be lost.', confirmLabel: 'Close without saving', danger: true })
+      if (!ok) return
+    }
+    dirtyRef.current = false
+    setParams({})
+  }
   const navigate = useNavigate()
   const editId = params.get('edit')
   const editing = projects?.find((p) => p.id === editId) ?? null
@@ -163,10 +173,12 @@ export default function ProjectsPage() {
         </Modal>
       )}
 
+      {drawerConfirm.dialog}
       {editing && (
-        <Drawer title="Look and settings" onClose={() => setParams({})}>
+        <Drawer title="Look and settings" onClose={requestClose}>
           <StyleLockEditor
             key={editing.id}
+            dirtyRef={dirtyRef}
             project={editing}
             onSaved={reload}
             onDeleted={() => {
@@ -535,7 +547,7 @@ function CreateProjectForm({ onCreated, roomy = false }: { onCreated: (p: Projec
   )
 }
 
-function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; onSaved: () => void; onDeleted: () => void }) {
+function StyleLockEditor({ project, onSaved, onDeleted, dirtyRef }: { project: Project; onSaved: () => void; onDeleted: () => void; dirtyRef: { current: boolean } }) {
   const navigate = useNavigate()
   const [name, setName] = useState(project.name)
   const [platform, setPlatform] = useState<PlatformId>(project.platform_target)
@@ -547,6 +559,14 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
   const { presets, unavailable } = usePresets()
   const current = presetById(presets, lock.preset)
   const edited = !!current && !lockMatchesPreset(lock, current)
+  // One save model (UI-22): every change is staged until Save; the drawer asks before closing with unsaved changes.
+  const dirty = name !== project.name || platform !== project.platform_target || JSON.stringify(lock) !== JSON.stringify(project.style_lock)
+  dirtyRef.current = dirty
+  const discard = () => {
+    setName(project.name)
+    setPlatform(project.platform_target)
+    setLock({ ...project.style_lock, loras: [...project.style_lock.loras], palette: [...project.style_lock.palette] })
+  }
 
   useEffect(() => {
     setSaved(null)
@@ -573,11 +593,9 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
     await saveWith(lock)
   }
 
-  // Choosing a look fills the fields and saves straight away.
+  // Choosing a look fills the fields; Save makes it the project's look.
   const usePreset = (p: LookPreset) => {
-    const next = lockFromPreset(p)
-    setLock(next)
-    void saveWith(next)
+    setLock(lockFromPreset(p))
   }
 
   const confirm = useConfirm()
@@ -655,8 +673,8 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       />
       <Disclosure label="Advanced (edit the look by hand)" defaultOpen={!current && !!presets}>
       <div className="col">
-      <Field label="Style prompt (style words)" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">
-        <SubmitTextarea rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
+      <Field label="Style prompt (style words)" term="term.prompt_block" hint="Added in front of every description in this project. Enter adds a line; Ctrl+Enter saves.">
+        <SubmitTextarea ctrlEnter rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
       </Field>
       <div className="grid-2">
         <Field label="Model (the painter)" term={'model.' + lock.model}>
@@ -692,15 +710,18 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
         </div>
       </Field>
       <Field label="Negative prompt (things to avoid)" term="term.negative" hint="Things the model should leave out.">
-        <SubmitTextarea rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
+        <SubmitTextarea ctrlEnter rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
       </Field>
       </div>
       </Disclosure>
-      <div className="row-gap">
-        <button type="submit" className="primary" disabled={busy}>
+      <div className="row-gap form-footer">
+        <button type="submit" className="primary" disabled={busy || !dirty}>
           {busy ? 'Saving...' : 'Save'}
         </button>
-        {saved && <span className="muted small">Saved {saved}</span>}
+        <button type="button" disabled={busy || !dirty} onClick={discard}>
+          Discard
+        </button>
+        {dirty ? <span className="small warn-text">Unsaved changes</span> : saved ? <span className="muted small">Saved {saved}</span> : null}
         <ErrorText error={error} />
         <span className="grow" />
         <button type="button" className="danger" onClick={remove}>
