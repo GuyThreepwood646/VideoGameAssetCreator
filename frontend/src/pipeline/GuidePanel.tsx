@@ -6,7 +6,7 @@ import { Link } from 'react-router'
 import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { findCheckStage, finishLines } from './finish'
+import { failingCheckCount, findCheckStage, finishLines } from './finish'
 import { fmtDuration, humanError, looksGood, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -69,6 +69,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? '. A check on this step needs a look' : ''}.`
   const warnLines = finishLines(asset).filter((l) => l.state === 'warn')
   const warns = warnLines.length
+  const allFailing = failingCheckCount(asset)
   const exp = selectedVersion(asset, 'export')
   const file = exp?.files.fbx ?? exp?.files.glb
   return (
@@ -95,6 +96,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
                 )
               })}
             </ul>
+            {allFailing > warns && <div className="muted">Counting every check on steps 4 to 6, {allFailing} need a look. The step pages list them all.</div>}
           </div>
         )}
       </div>
