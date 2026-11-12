@@ -327,7 +327,6 @@ def _data() -> dict[str, Any]:
 
 def reload() -> None:
     _data.cache_clear()
-    _presets.cache_clear()
 
 
 def categories() -> list[dict[str, Any]]:
@@ -459,14 +458,27 @@ def budget(category_id: str, platform_id: str) -> dict[str, int]:
     return {"triangles": int(p["triangles_character"] if is_character else p["triangles_prop"]), "texture": int(p["texture"])}
 
 
-@lru_cache(maxsize=1)
-def _presets() -> tuple[dict[str, Any], ...]:
-    return tuple(_load_yaml(DATA_DIR / "style_presets.yaml") or [])
-
-
 def style_presets() -> list[dict[str, Any]]:
-    """Ready-made looks that fill a project's style lock (docs/UX-REVIEW.md item H)."""
-    return [dict(p) for p in _presets()]
+    """The one list of looks (docs/UI-REVIEW-2026-11-12.md UI-01). Each style in data/styles.yaml is also a look: its `lock`
+    is the painting part a project's look carries, the rest of the entry is the pipeline part. The id is the style id, so an
+    asset's `style_preset` and a project's `style_lock.preset` name the same thing. `style_preset` is kept in each entry
+    for older clients."""
+    out: list[dict[str, Any]] = []
+    for s in styles():
+        lock = s.get("lock")
+        if not lock:
+            continue
+        out.append({
+            "id": s["id"],
+            "label": s.get("look_label") or s.get("label") or s["id"],
+            "description": s.get("look_description", ""),
+            "style_preset": s["id"],
+            "example_prompt": s.get("example_prompt", ""),
+            "style_lock": {"preset": s["id"], "model": lock.get("model"), "prompt_block": lock.get("prompt_block", ""),
+                           "loras": list(lock.get("loras") or []), "palette": list(lock.get("palette") or []),
+                           "negative": lock.get("negative", "")},
+        })
+    return out
 
 
 # --- Add-ons (data/addons.yaml, plus the person's own in user_addons.py) --------------------------------------------
