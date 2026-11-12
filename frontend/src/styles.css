@@ -2214,8 +2214,8 @@ button.btn-lg {
   color: var(--muted);
 }
 .plain-check .small-btn {
-  border-color: var(--ok);
-  color: var(--ok);
+  border-color: var(--border-control);
+  color: var(--text);
 }
 
 /* Happy with this? */
@@ -3294,9 +3294,9 @@ button.stop-btn:focus-visible {
   flex: none;
 }
 button.resume-btn {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: var(--accent-ink);
+  background: var(--btn-bg);
+  border-color: var(--accent);
+  color: var(--accent);
   font-weight: 600;
   gap: var(--s2);
 }
