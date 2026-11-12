@@ -6,6 +6,7 @@ import { api, ApiError, libraryUrl, type GalleryItem } from '../api'
 import { Info } from '../components/Info'
 import { ErrorText, timeAgo, useAsync } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
+import Viewer from '../Viewer'
 import { CATEGORY_HELP, platformPlain, STAGE_TEXT, STYLE_HELP } from '../help'
 import { categoryLabel, useRefData } from '../refdata'
 import { lookLabelForStyle, usePresets } from '../presets'
@@ -112,6 +113,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
   // No picture: fall back to a still of the finished model.
   const { src: snap } = useGlbSnapshot(thumbUrl ? undefined : libraryUrl(item.preview ?? item.glb))
   const img = thumbUrl ?? snap
+  const [look, setLook] = useState(false)
   const when = item.finished_at ?? item.created_at
   const to = `/assets/${item.asset_id}/export`
   const style = lookLabelForStyle(presets, item.style_preset, STYLE_HELP[item.style_preset]?.plain ?? item.style_preset)
@@ -124,6 +126,14 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
       <div className="muted small">
         <Link to={`/projects/${item.project_id}`}>{item.project_name}</Link>
       </div>
+      {(item.glb || item.preview) && (
+        <div>
+          <button type="button" className="small-btn" aria-expanded={look} onClick={() => setLook((v) => !v)} title="Turn the model around right here">
+            {look ? 'Close quick look' : 'Quick look (turn it around)'}
+          </button>
+          {look && libraryUrl(item.glb ?? item.preview) && <Viewer url={libraryUrl(item.glb ?? item.preview) as string} height={240} turntableDefault showBonesDefault={false} />}
+        </div>
+      )}
       <div className="chips">
         <span className="chip" title={item.category}>
           {categoryName}
