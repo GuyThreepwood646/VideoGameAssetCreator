@@ -337,7 +337,6 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
               <div className="row-gap">
                 <strong title={`Technical id: ${shortId(active.id)}`}>Version {versions.indexOf(active) + 1}</strong>
                 <StatusBadge status={active.status} stopped={isStopped(active)} setAside={isSetAside(active)} />
-                {selected?.id === active.id && <span className="chip chip-ok">kept</span>}
                 <span className="muted small">
                   made {timeAgo(active.created_at)}
                   {(() => {
@@ -818,7 +817,7 @@ function ChangePanel({
           <Info term="term.instruction" />
         </div>
         <div className="refine-row">
-          <SubmitTextarea ref={describeRef} rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage)} aria-label="Describe the change" />
+          <SubmitTextarea ref={describeRef} rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage, asset.category)} aria-label="Describe the change" />
           {stage === 'turnaround' && (
             <select value={view} onChange={(e) => setView(e.target.value)} aria-label="Which view to change">
               <option value="">all views</option>
