@@ -243,7 +243,9 @@ export const stages: StageInfo[] = [
     label: 'Turnaround',
     estimate_seconds: 110,
     adjust_schema: [
-      { name: 'views', label: 'Views', type: 'multiselect', options: ['front', 'left', 'back', 'right', 'quarter', 'top'], default: ['front', 'left', 'back', 'right', 'quarter'] },
+      { name: 'views', label: 'Views', type: 'multiselect', options: ['front', 'left', 'back', 'right', 'quarter', 'quarter2', 'top'], default: ['front', 'left', 'back', 'right', 'quarter', 'quarter2'] },
+      { name: 'pose_ready', label: 'Pose for 3D first (A-pose, open empty hands)', type: 'boolean', default: null, categories: ['humanoid'] },
+      { name: 'neutral_mouth', label: 'Close the mouth too', type: 'boolean', default: null, categories: ['humanoid'] },
       {
         name: 'turn_method',
         label: 'How to turn the views',
@@ -270,6 +272,8 @@ export const stages: StageInfo[] = [
       { name: 'upsample', label: 'Finer colour and shape', type: 'select', options: [1024, 1536], default: 1024 },
       { name: 'tex_steps', label: 'Colour detail', type: 'select', options: [12, 24], default: 24 },
       { name: 'head_build', label: 'Build the head on its own', type: 'boolean', default: null },
+      { name: 'hand_edit', label: 'Open the hands first (hands only)', type: 'boolean', default: null, categories: ['humanoid'] },
+      { name: 'hand_triangles', label: 'Weighted decimation (more triangles on the hands)', type: 'boolean', default: true, categories: ['humanoid'] },
       { name: 'head_crop', label: 'Head crop (share of the height)', type: 'number', min: 0.18, max: 0.4, step: 0.02, default: null },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 5 },
       { name: 'remesh', label: 'Remesh to watertight', type: 'boolean', default: true },
