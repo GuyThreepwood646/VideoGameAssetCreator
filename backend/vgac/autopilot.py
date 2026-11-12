@@ -69,6 +69,19 @@ def _passes(v: Version, stop_on: str) -> tuple[bool, str | None]:
     return True, None
 
 
+REDRAW_PAUSE_REASON = "Step 2 redrew your character for 3D (open hands, standing pose). Check the redraw before the 3D build."
+
+
+def redraw_pause_reason(v: Version, stop_on: str) -> str | None:
+    """Pose for 3D first redraws the step 1 picture and every later view starts from the redraw, so Autopilot stops once
+    after step 2 for the person to look at it (UI-47). "Never stop for checks" skips this; so does a step 2 without a redraw."""
+    if stop_on == "never" or v.stage != "turnaround":
+        return None
+    if (v.params or {}).get("pose_ready") and (v.files or {}).get("pose_ready_picture"):
+        return REDRAW_PAUSE_REASON
+    return None
+
+
 def _rank(v: Version) -> tuple[int, int, float, float]:
     """Gate passed, then checks passed, then silhouette match, then newest (so a fix beats its predecessor on a tie)."""
     m = v.metrics or {}
@@ -356,6 +369,10 @@ async def _run(aid: str) -> None:
                 ok, reason = _passes(best, stop_on)
                 if not ok:
                     _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=reason)
+                    return
+                redraw = redraw_pause_reason(best, stop_on)
+                if redraw:
+                    _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=redraw)
                     return
                 pipeline.select(db, best)
                 _set(aid, stage=target, version_id=best.id, job_id=None)
