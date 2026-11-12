@@ -354,13 +354,31 @@ input[type='checkbox'] {
   gap: var(--s1);
   min-width: 0;
 }
+/* A yes-or-no setting: the box, its label beside it, the hint underneath (it used to sit between the two). */
 .field-inline {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s2);
+  column-gap: var(--s2);
+  row-gap: 2px;
+}
+.field-inline > input {
+  order: 0;
 }
 .field-inline .field-label {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.field-inline .field-hint {
   order: 2;
+  flex-basis: 100%;
+}
+.field-inline:has(input:disabled) .field-label {
+  opacity: 0.6;
+}
+.knob-blocked {
+  color: var(--text);
 }
 .field-label {
   font-size: 11px;
@@ -3700,4 +3718,14 @@ button.small-btn .resume-icon {
 }
 .rail-stage-half .rail-index {
   font-size: 0.85em;
+}
+
+/* Step 2: the Pose for 3D first picture above the views */
+.pose-ready-row {
+  margin-bottom: var(--s3);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--border);
+}
+.pose-ready-row .view-cell {
+  flex: 0 1 280px;
 }

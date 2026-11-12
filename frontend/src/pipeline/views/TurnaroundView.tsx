@@ -74,6 +74,41 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
   )
 }
 
+// Pose for 3D first (pose_ready): the step 1 picture next to the redrawn one every view and the 3D model start from,
+// so a removed arm or tool, new gloves or new colours are seen here, before the 3D step.
+function PoseReadyRow({ version, originalFiles, cutout }: { version: Version; originalFiles?: Record<string, string> | null; cutout: boolean }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const posed = cutout ? (version.files.pose_ready_cutout ?? version.files.pose_ready_picture) : version.files.pose_ready_picture
+  if (!posed) return null
+  const mouth = version.params?.neutral_mouth === true
+  const original = originalFiles ? (cutout ? (originalFiles.cutout ?? originalFiles.image) : originalFiles.image) : null
+  const items: PictureItem[] = [
+    ...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []),
+    { src: libraryUrl(posed)!, label: 'Redrawn for 3D' },
+  ]
+  return (
+    <div className="pose-ready-row">
+      <div className="view-intro muted small" style={{ paddingBottom: 0 }}>
+        <strong>Redrawn for 3D (Pose for 3D first was on)</strong>
+        <Info term="param.pose_ready" /> Every view below and the 3D model start from the redrawn picture{mouth ? ', which also has a closed mouth' : ''}; your step 1 picture is unchanged. Check that nothing that belongs to the design is gone (extra arms, claws, tools) and that the colours still match. If it is wrong, turn Pose for 3D first off under Fine-tune and draw the views again.
+      </div>
+      <div className="views-row">
+        {items.map((it, i) => (
+          <div key={it.label} className="view-cell">
+            <Zoomable className={'view-image' + (cutout ? ' checker' : '')} label={it.label.toLowerCase()} onOpen={() => setOpen(i)}>
+              <img src={it.src} alt={it.label} />
+            </Zoomable>
+            <div className="row-between small">
+              <strong>{it.label}</strong>
+            </div>
+          </div>
+        ))}
+      </div>
+      {open !== null && <PictureViewer items={items} start={open} checker={cutout} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
 const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' }
 
 // Words for a list of views: "Back", "Back and right side", "Front, back and right side".
@@ -91,9 +126,11 @@ type Props = {
   busy?: boolean
   // Why this version cannot be redrawn from (it is not finished). The ticks are not offered then.
   locked?: string | null
+  // The step 1 version's files this one was drawn from, shown beside the Pose for 3D first picture.
+  originalFiles?: Record<string, string> | null
 }
 
-export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
+export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles }: Props) {
   const [cutout, setCutout] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [open, setOpen] = useState<number | null>(null)
@@ -138,6 +175,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked }: Props) {
           ) : null}
         </span>
       </div>
+      <PoseReadyRow version={version} originalFiles={originalFiles} cutout={cutout} />
       <div className="views-row">
         {views.map((view) => {
           const path = pathOf(view)

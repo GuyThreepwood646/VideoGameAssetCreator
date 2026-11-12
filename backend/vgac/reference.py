@@ -88,10 +88,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
         # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
-        _param("pose_ready", "boolean", None, categories=["humanoid"], label="Pose the character for 3D first",
-               description="The front picture is edited once so each hand is open with the fingers apart, nothing held, hands out of pockets, arms in an A pose; every side is then drawn from it and the 3D build uses it. One more picture edit (about a minute); off when empty"),
-        _param("neutral_mouth", "boolean", None, categories=["humanoid"], label="Relaxed closed mouth (with the pose edit)",
-               description="Added to the pose edit: a relaxed closed mouth, same face. Only with the pose edit; off when empty"),
+        _param("pose_ready", "boolean", None, categories=["humanoid"], label="Pose for 3D first (A-pose, open empty hands)",
+               description="The step 1 picture is redrawn once so each hand is open with the fingers apart, nothing held, hands out of pockets, arms slightly away from the body (A-pose); every side is then drawn from it and the 3D build uses it. Removes held things and designed extra arms or tools, and can change colours. About a minute; off when empty"),
+        _param("neutral_mouth", "boolean", None, categories=["humanoid"], label="Close the mouth too",
+               description="Added to the Pose for 3D first redraw: a relaxed closed mouth, same face. Only with pose_ready; off when empty"),
     ],
     "mesh": [
         _param("engine", "select", "trellis", options=["trellis", "hy3d"]),
@@ -103,11 +103,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
         _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
                description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),
-        # Hands redrawn before the build (docs/HANDS-PLAN.md, phase 0: the only change that gave the build separate fingers).
-        _param("hand_edit", "boolean", None, categories=["humanoid"], label="Redraw the hands first",
-               description="The picture the build starts from is edited once so each hand is open, back toward the camera, fingers straight and slightly apart; the build then resolves separate fingers. One more picture edit (about a minute); off when empty"),
         _param("head_crop", "number", None, min=0.18, max=0.4, step=0.02, categories=["humanoid"], label="Head crop (share of the height)",
                description="How much of the figure, from the top, the head build sees; 0.26 when empty"),
+        # Hands redrawn before the build (docs/HANDS-PLAN.md, phase 0: the only change that gave the build separate fingers).
+        _param("hand_edit", "boolean", None, categories=["humanoid"], label="Open the hands first (hands only)",
+               description="The picture the build starts from is edited once so each hand is open, back toward the camera, fingers straight and slightly apart; the build then resolves separate fingers. Skipped when the side views step already made a pose_ready picture. One more picture edit (about a minute); off when empty"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
         # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.
@@ -170,7 +170,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("head_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the head)",
                description="When the 3D model was built with room for it, the head keeps about twice its share of the triangles and the body gives them up; the total stays inside the budget"),
         _param("hand_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the hands)",
-               description="With the head weighting: the hands keep about three times their even share of the triangles; needs the 3D model built with room (the head weighting's)"),
+               description="Only with head_triangles: the hands keep about three times their even share of the triangles; needs the 3D model built with room (the head weighting's)"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),

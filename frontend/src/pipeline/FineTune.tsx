@@ -74,13 +74,36 @@ export function FineTune({
     }
     // Add-ons: only the choices this version made ({id: off | subtle | normal | strong}); the rest follow the recipe.
     for (const p of visible) if (p.type === 'addons') out[p.name] = addonChoices(target.params?.[p.name])
+    // A character gets Three-quarter (other side) whenever Three-quarter is drawn (turnaround with_second_quarter), so
+    // the ticks show it unless this version left it out (second_quarter false).
+    if (stage === 'turnaround' && asset.category === 'humanoid' && Array.isArray(out.views)) {
+      const v = (out.views as unknown[]).map(String)
+      if (v.includes('quarter') && !v.includes('quarter2') && target.params?.second_quarter !== false) {
+        const p = visible.find((x) => x.name === 'views')
+        out.views = (p?.options ?? []).filter((o) => v.includes(String(o)) || String(o) === 'quarter2')
+      }
+    }
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey])
   const [values, setValues] = useState<Record<string, unknown>>(initial)
   useEffect(() => setValues(initial), [initial])
 
-  const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }))
+  const set = (k: string, v: unknown) =>
+    setValues((s) => {
+      const next = { ...s, [k]: v }
+      // A setting that only works with another one goes off with it, so a stale "on" is never sent.
+      for (const [dep, on] of Object.entries(DEPENDS_ON)) if (on.clear && on.param === k && !on.isOn(v) && dep in next && next[dep]) next[dep] = false
+      return next
+    })
+  // Why a setting cannot be used right now (it needs another setting, or an earlier step already did its job).
+  const step2Posed = stage === 'mesh' && poseReadyUpstream(asset, target)
+  const blockedReason = (name: string): string | null => {
+    const dep = DEPENDS_ON[name]
+    if (dep && visible.some((p) => p.name === dep.param) && !dep.isOn(values[dep.param])) return dep.reason
+    if (name === 'hand_edit' && step2Posed) return 'Step 2 already redrew this character with open hands (Pose for 3D first), so this is skipped.'
+    return null
+  }
   const changed = visible.filter((p) => JSON.stringify(values[p.name] ?? null) !== JSON.stringify(initial[p.name] ?? null))
 
   // Add-ons (concept) follow the recipe for this asset's look; the turnaround lists its own helpers read-only.
@@ -151,6 +174,8 @@ export function FineTune({
   const collect = (): Record<string, unknown> => {
     const params: Record<string, unknown> = {}
     for (const p of changed) params[p.name] = values[p.name]
+    // Three-quarter (other side) is added for a character unless second_quarter is false: say which the ticks mean.
+    if (stage === 'turnaround' && asset.category === 'humanoid' && Array.isArray(params.views)) params.second_quarter = (params.views as unknown[]).map(String).includes('quarter2')
     // Add-ons: only the rows shown for this painter.
     if (addonsParam && addonsParam.name in params) {
       const ids = new Set(rows.map((r) => r.entry.id))
@@ -327,7 +352,31 @@ export function FineTune({
         />
       )
     }
-    return <AdjustField param={p.name === 'moves' || p.name === 'hitbox_regions' ? { ...p, options: shownOptions(p, values.motion, values[p.name]) } : p} value={values[p.name]} onChange={(v) => set(p.name, v)} disabled={disabled} />
+    // A yes-or-no setting whose empty value means "decided for you" shows that choice as Automatic, not as an unticked box.
+    const auto = AUTO_BOOLEANS[p.name]
+    if (auto && p.type === 'boolean') {
+      const v = values[p.name]
+      const now = auto.now?.(target)
+      return (
+        <Field label={paramPlain(p.name, p.label)} term={`param.${p.name}`} hint={<>{p.hint ?? p.help?.meaning ?? p.description}{now ? <span className="size-now"> {now}</span> : null} <span className="muted">(<span className="mono muted">{p.name}</span>)</span></>}>
+          <select value={v === true ? 'on' : v === false ? 'off' : ''} disabled={disabled} onChange={(e) => set(p.name, e.target.value === 'on' ? true : e.target.value === 'off' ? false : null)}>
+            <option value="">{auto.label}</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </Field>
+      )
+    }
+    const blocked = blockedReason(p.name)
+    return (
+      <AdjustField
+        param={p.name === 'moves' || p.name === 'hitbox_regions' ? { ...p, options: shownOptions(p, values.motion, values[p.name]) } : p}
+        value={blocked && p.type === 'boolean' && p.name === 'hand_edit' ? false : values[p.name]}
+        onChange={(v) => set(p.name, v)}
+        disabled={disabled || !!blocked}
+        blockedReason={blocked}
+      />
+    )
   }
 
   // The choices worth offering: the moves this way of moving can make, and the body parts this skeleton has.
@@ -394,6 +443,36 @@ export function FineTune({
   )
 }
 
+// Settings that only work while another setting is on (the backend ignores them otherwise). `clear` turns the
+// dependent one off with it; without it the dependent keeps its tick and is shown greyed with the reason.
+const DEPENDS_ON: Record<string, { param: string; isOn: (v: unknown) => boolean; reason: string; clear?: boolean }> = {
+  neutral_mouth: { param: 'pose_ready', isOn: (v) => v === true, reason: 'Turn on Pose for 3D first to use this.', clear: true },
+  hand_triangles: { param: 'head_triangles', isOn: (v) => v !== false, reason: 'Works only while Weighted decimation (more triangles on the head) is on.' },
+}
+
+// Yes-or-no settings whose empty value means "decided for you" (the backend picks by category or look), shown as
+// Automatic / On / Off so an empty value never looks like Off. `now` says what the version shown actually did.
+const AUTO_BOOLEANS: Record<string, { label: string; now?: (v: Version) => string | null }> = {
+  source_project: {
+    label: 'Automatic (on for characters on smooth looks)',
+    now: (v) => (v.stage !== 'prep' || typeof v.metrics?.srcproject_applied !== 'boolean' ? null : v.metrics.srcproject_applied ? 'This version: painted from your pictures.' : 'This version: not painted from your pictures.'),
+  },
+  head_build: { label: 'Automatic (on with hair from the library)' },
+}
+
+// Whether the side views this 3D step builds on were made with Pose for 3D first: the turnaround above `target` in its
+// lineage, or the kept one for a first build. The 3D step skips its own hand redraw then (stages/mesh.py).
+function poseReadyUpstream(asset: Asset, target: Version): boolean {
+  const all = new Map<string, Version>()
+  for (const list of Object.values(asset.stages ?? {})) for (const v of list ?? []) all.set(v.id, v)
+  let v: Version | undefined = target
+  for (let guard = 0; v && guard < 100; guard++) {
+    if (v.stage === 'turnaround') return v.params?.pose_ready === true
+    v = v.parent_version_id ? all.get(v.parent_version_id) : undefined
+  }
+  return selectedVersion(asset, 'turnaround')?.params?.pose_ready === true
+}
+
 // A stored add-ons value as {id: choice}, keeping only the four known choices.
 function addonChoices(raw: unknown): Record<string, AddonChoice> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -439,6 +518,7 @@ function AdjustField({
   hintText,
   term: termOverride,
   unit,
+  blockedReason,
 }: {
   param: AdjustParam
   value: unknown
@@ -448,17 +528,24 @@ function AdjustField({
   hintText?: ReactNode
   term?: string
   unit?: string
+  // Why the setting cannot be used right now; shown before the hint.
+  blockedReason?: string | null
 }) {
   const label = labelText ?? paramPlain(p.name, p.label)
   const term = termOverride ?? `param.${p.name}`
   const hint = hintText ?? p.hint ?? p.help?.meaning ?? p.description
   const tech = <span className="mono muted">{p.name}</span>
-  const hintNode = hint ? (
+  const hintNode = (
     <>
-      {hint} <span className="muted">({tech})</span>
+      {blockedReason ? <span className="knob-blocked">{blockedReason} </span> : null}
+      {hint ? (
+        <>
+          {hint} <span className="muted">({tech})</span>
+        </>
+      ) : (
+        tech
+      )}
     </>
-  ) : (
-    tech
   )
   switch (p.type) {
     case 'number':
