@@ -27,7 +27,7 @@ export default function GalleryPage() {
     <div className="gallery-page">
       <div className="row-between">
         <h1 className="page-title">
-          Gallery
+          Finished assets
           <Info term="term.gallery" />
         </h1>
         {projects.length > 1 && (
