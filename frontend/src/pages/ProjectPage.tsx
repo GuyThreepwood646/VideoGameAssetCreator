@@ -291,7 +291,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           Start from
           <Info term="term.start_from" />
         </span>
-        <div className="segmented" role="radiogroup" aria-label="Start from">
+        <div className="choice-row" role="radiogroup" aria-label="Start from">
           <label className="check-item">
             <input type="radio" name="start-from" checked={!fromPicture} onChange={() => setStartFrom('words')} />
             <span>A description</span>
@@ -493,7 +493,7 @@ function ItemsLine({ found, choice, onChoice }: { found: ItemDetect; choice: 'se
         {found.sentence ?? `Weapons work best as their own asset: ${names.join(', ')}.`}
         <Info term="term.items" />
       </p>
-      <div className="segmented" role="radiogroup" aria-label="What to do with the items">
+      <div className="choice-row" role="radiogroup" aria-label="What to do with the items">
         <label className="check-item">
           <input type="radio" name="items-choice" checked={choice === 'separate'} onChange={() => onChoice('separate')} />
           <span>Make them separately (recommended)</span>

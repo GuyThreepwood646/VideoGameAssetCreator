@@ -74,7 +74,7 @@ export function HairFormLine({ value, onChange, platform }: { value: HairSource;
 function HairOptions({ name, value, onChange, disabled }: { name: string; value: HairSource; onChange: (v: HairSource) => void; disabled?: boolean }) {
   return (
     // One option per row, each row clickable across its whole width (the words select it, not only the round button).
-    <div className="segmented" role="radiogroup" aria-label={HAIR_SETTING} style={{ flexDirection: 'column', gap: 'var(--s1)' }}>
+    <div className="choice-row" role="radiogroup" aria-label={HAIR_SETTING} style={{ flexDirection: 'column', gap: 'var(--s1)' }}>
       {(['model', 'library'] as const).map((s) => (
         <label className="check-item" key={s} style={{ display: 'flex', width: '100%', cursor: disabled ? 'default' : 'pointer', minHeight: 28 }}>
           <input type="radio" name={name} checked={value === s} disabled={disabled} onChange={() => onChange(s)} />
