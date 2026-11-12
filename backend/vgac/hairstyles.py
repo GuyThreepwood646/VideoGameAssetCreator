@@ -88,7 +88,20 @@ def _only_chosen(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def catalogue() -> dict[str, Any]:
-    return _load(str(_dir[0]))
+    """The built-in library, with the person's own hairstyles (my_hair.py) added when it is the app's own library. An own
+    style never shadows a built-in id."""
+    base = _load(str(_dir[0]))
+    if _dir[0] != DATA_DIR:
+        return base
+    try:
+        from . import my_hair
+
+        own = my_hair.entries()
+    except Exception:  # a bad own-hair file must never take the library away
+        own = {}
+    if not own:
+        return base
+    return {**base, "styles": {**own, **base.get("styles", {})}}
 
 
 def style(style_id: str) -> dict[str, Any]:
@@ -150,8 +163,14 @@ def paths(style_id: str) -> dict[str, Path | None]:
     d = _dir[0]
 
     def p(rel: str | None) -> Path | None:
-        return (d / rel) if rel else None
-    return dict(npz=p(f"styles/{style_id}.npz"), lite=p(e.get("lite")), grey=p(e["textures"]["grey"]),
+        if not rel:
+            return None
+        if rel.startswith("mine/"):  # the person's own hairstyle (my_hair.py): resolved inside its own folder
+            from . import my_hair
+
+            return my_hair.resolve(rel)
+        return d / rel
+    return dict(npz=p((e.get("files") or {}).get("npz") or f"styles/{style_id}.npz"), lite=p(e.get("lite")), grey=p(e["textures"]["grey"]),
                 normal=p(e["textures"].get("normal")), thumb_front=p(e["thumbs"]["front"]), thumb_quarter=p(e["thumbs"]["quarter"]))
 
 
