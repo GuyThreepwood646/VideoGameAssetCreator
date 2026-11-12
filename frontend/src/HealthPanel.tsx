@@ -128,7 +128,7 @@ export default function HealthPanel() {
       {!error && <GpuCards />}
       <h2>Checks</h2>
       {error && <div className="error">The engine did not answer: {error}</div>}
-      {health &&
+      {health && <div className="instances-grid">{
         Object.entries(health.instances).map(([name, inst]) => (
           <div className="instance" key={name}>
             <div className="row">
@@ -160,7 +160,7 @@ export default function HealthPanel() {
               </div>
             )}
           </div>
-        ))}
+        ))}</div>}
       {health && (
         <div className="host">
           <div className={health.host.ram_free_gb < health.host.min_free_ram_gb ? 'warn' : ''}>

@@ -4194,3 +4194,31 @@ button.preset-card:hover:not(:disabled) {
 .compare-toggle {
   margin-bottom: var(--s1);
 }
+
+/* UI-34: wider reading pages use both columns on a large window. */
+.glossary.page-narrow {
+  max-width: min(1400px, 100%);
+}
+.glossary-index {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.instances-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--s3);
+}
+@media (min-width: 1280px) {
+  .glossary-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s3) var(--s4);
+  }
+  .instances-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
