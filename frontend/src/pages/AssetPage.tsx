@@ -5,7 +5,7 @@ import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, ResumeButton, StopButton, SubmitTextarea, type FixRequest } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { COMPOSE_CATEGORIES, ComposePanel } from '../pipeline/ComposePanel'
@@ -557,12 +557,12 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
       const left = s ? autopilotSecondsLeft(s, queued ? 0 : (apJob?.progress ?? 0), until, ref?.stages, suggestion?.estimates) : null
       return { text: autopilotLine(s, left, { queued }) + '.', tone: 'ok' }
     }
-    return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${autopilot.reason ?? 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
+    return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${plainJargon(autopilot.reason) || 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
   }
   if (job) {
     const s = stageOfJob(job, asset)
     const step = s ? `step ${STAGES.indexOf(s) + 1} of ${STAGES.length}` : ''
-    if (job.status === 'queued') return { text: `${s ? stageGerund(s) : 'Working'}: waiting for a free machine${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    if (job.status === 'queued') return { text: `${s ? stageGerund(s) : 'Working'}: waiting for the graphics card${step ? `, ${step}` : ''}.`, tone: 'warn' }
     const est = s ? stageEstimate(s, ref?.stages.find((x) => x.id === s), suggestion?.estimates) : 120
     const left = est * (1 - (job.progress ?? 0))
     return { text: `${s ? stageGerund(s) : 'Working'}, ${fmtDuration(left)} left${step ? `, ${step}` : ''}.`, tone: 'ok' }

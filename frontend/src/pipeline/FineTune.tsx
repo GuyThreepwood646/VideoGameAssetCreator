@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
 import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
@@ -408,7 +408,7 @@ export function FineTune({
         </div>
         {stage === 'concept' && suggestion && (
           <span className="muted small">
-            We suggest {suggestion.model_label}, because {suggestion.reason}; {fmtDuration(totalEstimate(suggestion.estimates, refData))} to a finished asset.
+            We suggest {suggestion.model_label}, because {plainJargon(suggestion.reason)}; {fmtDuration(totalEstimate(suggestion.estimates, refData))} to a finished asset.
           </span>
         )}
       </div>

@@ -330,11 +330,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           <div className="active-version">
             <div className="row-between">
               <div className="row-gap">
-                <strong>Version {versions.indexOf(active) + 1}</strong>
-                <span className="muted small mono">{shortId(active.id)}</span>
+                <strong title={`Technical id: ${shortId(active.id)}`}>Version {versions.indexOf(active) + 1}</strong>
                 <StatusBadge status={active.status} stopped={isStopped(active)} setAside={isSetAside(active)} />
                 {selected?.id === active.id && <span className="chip chip-ok">kept</span>}
-                {active.parent_version_id && <span className="muted small">changed from {shortId(active.parent_version_id)}</span>}
+                {active.parent_version_id && <span className="muted small">{(() => { const n = versions.findIndex((v) => v.id === active.parent_version_id); return n >= 0 ? `changed from version ${n + 1}` : 'changed from an earlier version' })()}</span>}
                 <span className="muted small">{timeAgo(active.created_at)}</span>
               </div>
               {removable.some((v) => v.id === active.id) && (

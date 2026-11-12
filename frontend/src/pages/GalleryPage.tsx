@@ -8,6 +8,7 @@ import { ErrorText, timeAgo, useAsync } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
 import { CATEGORY_HELP, platformPlain, STAGE_TEXT, STYLE_HELP } from '../help'
 import { categoryLabel, useRefData } from '../refdata'
+import { lookLabelForStyle, usePresets } from '../presets'
 
 export default function GalleryPage() {
   const { data: items, error, loading } = useAsync(() => api.gallery(), [])
@@ -78,13 +79,14 @@ function EmptyGallery() {
 }
 
 function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: string }) {
+  const { presets } = usePresets()
   const thumbUrl = libraryUrl(item.thumbnail)
   // No picture: fall back to a still of the finished model.
   const { src: snap } = useGlbSnapshot(thumbUrl ? undefined : libraryUrl(item.preview ?? item.glb))
   const img = thumbUrl ?? snap
   const when = item.finished_at ?? item.created_at
   const to = `/assets/${item.asset_id}/export`
-  const style = STYLE_HELP[item.style_preset]?.plain ?? item.style_preset
+  const style = lookLabelForStyle(presets, item.style_preset, STYLE_HELP[item.style_preset]?.plain ?? item.style_preset)
   return (
     <article className="gallery-card">
       <Link to={to} className="gallery-open" aria-label={`Open ${item.asset_name}`}>
