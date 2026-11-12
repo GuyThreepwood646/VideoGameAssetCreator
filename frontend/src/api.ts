@@ -1110,6 +1110,9 @@ export type HairStyleEntry = {
   lite_used?: boolean
   alpha?: 'opaque' | 'cutout' | string
   fringe?: boolean
+  curly?: boolean
+  // Added by the person (backend my_hair.py): shown with a Yours mark, and can be edited or removed.
+  own?: boolean
   parting?: string | null
   // Thumbnails by view ({front, quarter}): full URLs from the backend, or paths inside the library.
   thumbs?: Record<string, string> | string[] | null
@@ -1173,4 +1176,68 @@ export const hairApi = {
     }
     return req
   },
+  // Your own hairstyles (backend vgac/my_hair.py, /api/my-hair).
+  mine: () => get<MyHairListing>('/api/my-hair'),
+  updateMine: (id: string, body: MyHairUpdate) => put<MyHairStyle>(`/api/my-hair/${encodeURIComponent(id)}`, body).then(forgetHairLibrary),
+  removeMine: (id: string) => del<{ removed: string }>(`/api/my-hair/${encodeURIComponent(id)}`).then(forgetHairLibrary),
+  uploadMine: (file: File, form: MyHairForm, onProgress?: (fraction: number) => void) => uploadHairFile(file, form, onProgress).then(forgetHairLibrary),
+}
+
+// The catalogue is cached per page load; adding, changing or removing your own hairstyle makes the next read ask again.
+function forgetHairLibrary<T>(x: T): T {
+  hairLibraryRequests.clear()
+  return x
+}
+
+export type MyHairStyle = {
+  id: string
+  name: string
+  family: string
+  family_label: string
+  fringe: boolean
+  curly: boolean
+  kind: string
+  triangles: number
+  phone_ok: boolean
+  source: string
+  licence: string
+  file_name: string
+  thumbs: Record<string, string>
+  added_at: string
+  has_texture: boolean
+  own: true
+}
+export type MyHairListing = { styles: MyHairStyle[]; responsibility: string; max_mb: number; kinds: string[]; families: { id: string; label: string }[]; licences: string[] }
+export type MyHairForm = { label: string; family: string; fringe: boolean; curly: boolean; source: string; licence: string }
+export type MyHairUpdate = { label?: string; family?: string; fringe?: boolean; curly?: boolean; source?: string; licence?: string }
+
+// POST /api/my-hair/upload: the file is the body, the form fields are in the query (as for your own animation files).
+// The backend reads the mesh in Blender and draws its pictures, so the answer comes some seconds after the last byte.
+function uploadHairFile(file: File, form: MyHairForm, onProgress?: (fraction: number) => void): Promise<MyHairStyle> {
+  const q = new URLSearchParams({ name: file.name, label: form.label, family: form.family, fringe: String(form.fringe), curly: String(form.curly), source: form.source, licence: form.licence })
+  const path = '/api/my-hair/upload?' + q.toString()
+  if (isMock()) return request<MyHairStyle>('POST', path + '&bytes=' + file.size)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as MyHairStyle)
+      else {
+        const d = (body as { detail?: unknown } | null)?.detail
+        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The hairstyle could not be added (HTTP ${xhr.status}).`, body))
+      }
+    }
+    xhr.send(file)
+  })
 }

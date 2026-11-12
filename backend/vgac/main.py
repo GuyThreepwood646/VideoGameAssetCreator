@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, user_addons
+from . import credits as credits_mod, hairlib, items, my_hair, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -60,6 +60,7 @@ app.include_router(__import__("vgac.compose", fromlist=["router"]).router)  # st
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
+app.include_router(my_hair.router)  # your own hairstyles: add, rename, remove (my_hair.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
 
 # Exact origins the app is served from: the backend itself (the launcher and the built UI) and the Vite dev server
