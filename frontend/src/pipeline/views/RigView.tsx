@@ -135,8 +135,8 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
-      <MovesPanel version={version} />
       {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      <MovesPanel version={version} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
       {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
       <div className="rig-side">
