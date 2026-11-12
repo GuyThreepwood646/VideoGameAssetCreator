@@ -1743,6 +1743,11 @@ button.btn-lg {
   object-fit: contain;
   cursor: zoom-in;
 }
+/* Fit fills the window, so a small picture (a 256 px hairstyle thumbnail) opens large, not at its own size. */
+.picture-viewer-stage:not(.actual) img {
+  width: 100%;
+  height: 100%;
+}
 .picture-viewer-stage.actual {
   display: block;
   overflow: auto;
