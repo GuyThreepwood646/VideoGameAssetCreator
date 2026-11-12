@@ -165,7 +165,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
       if (pics.length) setViewing({ items: pics, start: Math.max(0, pics.findIndex((p) => p.src === c.picture)) })
     }
     return (
-      <div key={c.style} className={'move-card' + (current === c.style ? ' move-card-on' : '')} style={{ cursor: 'default', alignItems: 'stretch' }}>
+      <div key={c.style} className={'move-card' + (current === c.style ? ' move-card-on' : '')} >
         {c.picture ? (
           <Zoomable
             label={c.name}
@@ -201,9 +201,9 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
           {c.credit && <span className="small muted">Credit: {c.credit}</span>}
         </div>
         {cost ? (
-          <div className="tool-note small" style={{ marginBottom: 0 }}>
+          <div className="tool-note tool-note-flush small">
             {cost.text}
-            <div className="row-gap" style={{ marginTop: 'var(--s2)' }}>
+            <div className="row-gap row-gap-top">
               <button type="button" className="primary small-btn" disabled={busy} onClick={() => pick(c.style, true)}>
                 Change the hairstyle
               </button>
@@ -254,7 +254,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
   const allowance = allowanceOf(panel, appliedTriangles)
 
   return (
-    <div className="hair-picker" ref={boxRef} style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 'var(--s2)' }}>
+    <div className="hair-picker" ref={boxRef}>
       <div className="row-between">
         <div className="field-label">
           Hairstyle (Hair from the library)
@@ -272,7 +272,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         <div className="tool-note small">
           Nothing in the library fits this picture well. You can still use the closest style, or go back to the hair built with the 3D model.
           {onFix && (
-            <div className="row-gap" style={{ marginTop: 'var(--s2)' }}>
+            <div className="row-gap row-gap-top">
               <button
                 type="button"
                 className="small-btn"
@@ -304,7 +304,7 @@ export function HairPicker({ asset, version, focus, onFix, onChanged }: Props) {
         </button>
       </div>
       {more && (
-        <div className="col" style={{ gap: 'var(--s2)' }}>
+        <div className="col col-snug">
           <div className="small muted">
             These have not been tried on your character; the one you choose is fitted at {stagePlain('prep')}. The pictures show each style in grey on a stand-in figure.
             {phone ? ' On Phone only hairstyles made as one solid shape are shown.' : ''}
