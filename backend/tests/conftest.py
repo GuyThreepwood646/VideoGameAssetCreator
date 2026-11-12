@@ -68,3 +68,14 @@ def _never_touch_live_comfy(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(comfy.ComfyClient, "interrupt", _noop)
     monkeypatch.setattr(comfy.ComfyClient, "free", _free)
+
+
+@pytest.fixture(autouse=True)
+def _own_hair_stays_out_of_tests_without_a_temporary_library(request, monkeypatch: pytest.MonkeyPatch):
+    """A test that does not use the temporary-library fixture would read the person's real my_hair/ folder, and the
+    built-in library tests (all CC0, all with files in the app's data folder) would see their own hairstyles."""
+    if "settings" in request.fixturenames:
+        return
+    from vgac import my_hair
+
+    monkeypatch.setattr(my_hair, "entries", lambda settings=None: {})
