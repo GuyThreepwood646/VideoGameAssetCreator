@@ -114,8 +114,8 @@ export function AddMyHairstyle({ editing, onDone, onCancel }: { editing?: MyHair
       {!editing && (
         <>
           <p className="muted small">
-            Choose a hairstyle from another source: a GLB, glTF or FBX file with only the hair in it, not a whole character. The app keeps a copy, fits it to the same head the ready-made styles use, and shows it here next to them. The file
-            stays on this computer.
+            Choose a hairstyle from another source: a GLB, glTF or FBX file with only the hair in it, not a whole character. The app keeps a copy, fits it to the same head the ready-made styles use, and shows it here next to them. Very detailed hair
+            is simplified to about 4,500 triangles so it fits a game's budget. The file stays on this computer.
           </p>
           <label className="field">
             <span className="field-label">Hair file</span>

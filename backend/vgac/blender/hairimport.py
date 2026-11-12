@@ -27,7 +27,7 @@ import bpy  # noqa: E402
 import hairfit as hf  # noqa: E402
 
 LITE_MAX = 750
-THIN_TO = 8000
+THIN_TO = 4500          # the hair share of a PC budget is 5,000 triangles less the cap margin (hairlib.py HAIR_SHARE_MAX, CAP_MARGIN)
 MAX_SOURCE_TRIS = 300000
 MIN_TRIS = 40
 TEX = 1024
