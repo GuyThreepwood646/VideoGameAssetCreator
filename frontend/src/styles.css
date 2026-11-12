@@ -4222,3 +4222,15 @@ button.preset-card:hover:not(:disabled) {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+.preset-sample {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.preset-row.compact .preset-sample {
+  max-height: 96px;
+}
