@@ -26,7 +26,7 @@ export default function App() {
           <NavLink to="/" end>
             Projects
           </NavLink>
-          <NavLink to="/gallery">Gallery</NavLink>
+          <NavLink to="/gallery">Finished</NavLink>
           <NavLink to="/glossary">Glossary</NavLink>
           <NavLink to="/credits">Credits</NavLink>
           <NavLink to="/health">System</NavLink>

@@ -438,8 +438,8 @@ export default function AssetPage() {
                 Add an item
               </button>
             )}
-            <button type="button" className="small-btn" aria-pressed={showLog} onClick={() => setShowLog((v) => !v)} title="Show the job log">
-              Details
+            <button type="button" className="small-btn" aria-pressed={showLog} onClick={() => setShowLog((v) => !v)} title="Show what the app did and when: every job, with its time and result">
+              Activity
             </button>
           </div>
         </header>
@@ -608,7 +608,7 @@ function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () =
           <Info term="term.variant" />
         </div>
         <button type="button" className="link small" onClick={onClose}>
-          close
+          Close
         </button>
       </div>
       <div className="muted small">We start from the picture you kept and repaint it with your change, so it stays the same character. The rest of the steps run as usual.</div>

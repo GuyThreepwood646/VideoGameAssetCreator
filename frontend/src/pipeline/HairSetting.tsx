@@ -192,7 +192,7 @@ export function HairSettingPanel({ asset, panel, onClose, onSaved, onError }: { 
           <Info term="term.hair_library" />
         </div>
         <button type="button" className="link small" onClick={onClose}>
-          close
+          Close
         </button>
       </div>
       {!panel.available && panel.source !== 'library' ? (

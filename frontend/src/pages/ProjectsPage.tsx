@@ -198,7 +198,7 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
     <section className="jump" aria-labelledby="jump-title">
       <div className="row-between">
         <h2 id="jump-title" className="jump-title">
-          Jump back in <span className="muted">in {recent.name}</span>
+          Jump back in <span className="muted">({recent.name})</span>
         </h2>
         <Link to={`/projects/${recent.id}`} className="small">
           All {recent.asset_count} assets

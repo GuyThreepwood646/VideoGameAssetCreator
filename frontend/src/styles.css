@@ -313,7 +313,7 @@ input[type='checkbox'] {
   overflow: auto;
 }
 .page-narrow {
-  max-width: 720px;
+  max-width: min(1100px, 100%);
   padding: var(--s3) var(--s4);
 }
 .page-title {
@@ -3982,4 +3982,15 @@ button.small-btn .resume-icon {
 .nudge-title {
   min-width: 72px;
   align-self: center;
+}
+
+/* UI-45: the examples read as clickable chips. */
+.example-btn {
+  border-style: solid;
+  border-radius: var(--radius-pill);
+  color: var(--text);
+}
+.example-btn::before {
+  content: '+ ';
+  color: var(--accent);
 }
