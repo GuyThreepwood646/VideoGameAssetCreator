@@ -3,15 +3,15 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, STAGES, stageState, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
-import { Disclosure, ErrorText, Field, ResumeButton, StopButton, SubmitTextarea, type FixRequest } from '../components/ui'
+import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { COMPOSE_CATEGORIES, ComposePanel } from '../pipeline/ComposePanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
-import { ViewerLookContext } from '../previewLight'
+import { ViewerLookContext, ViewerPausedContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
 export default function AssetPage() {
@@ -42,6 +42,55 @@ export default function AssetPage() {
   const followRef = useRef<string | null>(null) // the autopilot stage the page last followed to
   const jobStatusRef = useRef(new Map<string, JobStatus>()) // last seen status per job id
   const autopilot = asset && asset.id === aid ? (asset.autopilot ?? null) : null
+  // The status line in the header shows only while the guide card is scrolled out of view (UI-14).
+  const [guideVisible, setGuideVisible] = useState(true)
+  const haveAsset = !!asset
+  useEffect(() => {
+    const main = document.querySelector('.stage-main')
+    const card = main?.querySelector('.guide')
+    if (!main || !card || typeof IntersectionObserver === 'undefined') {
+      setGuideVisible(false)
+      return
+    }
+    const io = new IntersectionObserver(([e]) => setGuideVisible(e.isIntersecting), { root: main, threshold: 0.2 })
+    io.observe(card)
+    return () => io.disconnect()
+  })
+  // Window title: where you are and, while work runs, progress (UI-38).
+  useEffect(() => {
+    if (!asset || asset.id !== aid) return
+    const k = STAGES.indexOf(stage) + 1
+    const apK = autopilot?.status === 'running' && autopilot.stage ? STAGES.indexOf(autopilot.stage as StageId) + 1 : 0
+    document.title = `${apK > 0 ? `(${apK}/${STAGES.length}) ` : ''}${asset.name}, step ${k} | VGAC`
+    return () => {
+      document.title = 'Video Game Asset Creator'
+    }
+  }, [asset, aid, stage, autopilot?.status, autopilot?.stage])
+  // Keyboard shortcuts for the review loop (UI-40): K keep, R try again, C change, arrows for versions, 1 to 6 for steps.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (e.ctrlKey || e.metaKey || e.altKey || (t && (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable))) return
+      if (document.querySelector('[role=dialog]')) return
+      const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
+      const k = e.key.toLowerCase()
+      if (k === 'k') byText('yes, keep')?.click()
+      else if (k === 'r') byText('try again')?.click()
+      else if (k === 'c') byText('change something')?.click()
+      else if (k === 'arrowleft' || k === 'arrowright') {
+        const list = [...document.querySelectorAll<HTMLButtonElement>('.candidate')]
+        const i = list.findIndex((b) => b.getAttribute('aria-pressed') === 'true')
+        list[i + (k === 'arrowright' ? 1 : -1)]?.click()
+      } else if (/^[1-6]$/.test(k) && aid) navigate(`/assets/${aid}/${STAGES[Number(k) - 1]}`)
+      else return
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [aid, navigate])
+  // A new step opens at its top, not where the last one was scrolled to (UI-15).
+  useEffect(() => {
+    document.querySelector('.stage-main')?.scrollTo({ top: 0 })
+  }, [stage, aid, haveAsset])
   const hair = useHairPanel(asset && asset.id === aid ? asset : null)
 
   const applyAutopilot = useCallback((assetId: string, st: AutopilotState) => {
@@ -116,12 +165,54 @@ export default function AssetPage() {
   // Follow the autopilot from stage to stage while the page is looking at the stage it was on.
   const apStageNow = autopilotStage(autopilot)
   const apStatus = autopilot?.status
+  // Following stops as soon as the person scrolls, clicks or types on the page, and can be turned off for good (UI-16).
+  const [followOn, setFollowOn] = useState(() => {
+    try {
+      return localStorage.getItem('vgac.follow') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const touchedRef = useRef(false)
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    touchedRef.current = false
+    setTouched(false)
+    const mark = () => {
+      if (!touchedRef.current) {
+        touchedRef.current = true
+        setTouched(true)
+      }
+    }
+    const main = document.querySelector('.stage-main')
+    main?.addEventListener('wheel', mark, { passive: true })
+    main?.addEventListener('pointerdown', mark)
+    main?.addEventListener('keydown', mark)
+    return () => {
+      main?.removeEventListener('wheel', mark)
+      main?.removeEventListener('pointerdown', mark)
+      main?.removeEventListener('keydown', mark)
+    }
+  }, [aid, haveAsset])
+  const chooseFollow = (on: boolean) => {
+    setFollowOn(on)
+    if (on) {
+      touchedRef.current = false
+      setTouched(false)
+    }
+    try {
+      localStorage.setItem('vgac.follow', on ? '1' : '0')
+    } catch {
+      // not remembered
+    }
+  }
   useEffect(() => {
     if (!apStageNow || !apStatus || apStatus === 'idle') return
-    const following = followRef.current === null || followRef.current === stage
+    const following = followOn && !touchedRef.current && (followRef.current === null || followRef.current === stage)
     if (following && apStageNow !== stage) navigate(`/assets/${aid}/${apStageNow}`, { replace: true })
     followRef.current = apStageNow
   }, [apStageNow, apStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+  const apElsewhere = apStatus === 'running' && apStageNow && apStageNow !== stage ? apStageNow : null
 
   const reloadSoon = useCallback(() => {
     if (reloadTimer.current != null) return
@@ -279,13 +370,14 @@ export default function AssetPage() {
 
   return (
     <ViewerLookContext.Provider value={asset.style_preset}>
+    <ViewerPausedContext.Provider value={itemsOpen}>
     <div className={'pipeline-layout' + (showLog ? ' with-log' : '')}>
       <aside className="stage-rail">
         <div className="rail-head">
           <Link to={`/projects/${asset.project_id}`} className="crumb">
             Back to assets
           </Link>
-          <div className="asset-title">{asset.name}</div>
+          <RailEdit asset={asset} field="name" onSaved={reload} onError={setError} />
           {asset.base_asset_id && (
             <div className="variant-of">
               variant of <Link to={`/assets/${asset.base_asset_id}`}>{baseName ?? 'the original'}</Link>
@@ -293,13 +385,22 @@ export default function AssetPage() {
               <Info term="term.variant" />
             </div>
           )}
-          <div className="muted small">
-            {categoryLabel(ref, asset.category)}
-            <Info term={'category.' + asset.category} />
-            {' / '}
-            {platformPlain(asset.platform_target)}
-            <Info term={'platform.' + asset.platform_target} />
-          </div>
+          <dl className="rail-facts small">
+            <div className="rail-row">
+              <dt>Type</dt>
+              <dd>
+                {categoryLabel(ref, asset.category)}
+                <Info term={'category.' + asset.category} />
+              </dd>
+            </div>
+            <div className="rail-row">
+              <dt>Platform</dt>
+              <dd>
+                {platformPlain(asset.platform_target)}
+                <Info term={'platform.' + asset.platform_target} />
+              </dd>
+            </div>
+          </dl>
           {asset.held_item?.character_id && (
             <div className="muted small">
               item for <Link to={`/assets/${asset.held_item.character_id}`}>{asset.held_item.character_name ?? 'its character'}</Link>
@@ -308,7 +409,7 @@ export default function AssetPage() {
           )}
           {(asset.equipment?.set_aside?.length ?? 0) > 0 && (
             <div className="muted small">
-              made separately:{' '}
+              Items:{' '}
               {asset.equipment!.set_aside.map((it, i) => (
                 <span key={it.item_asset_id}>
                   {i > 0 ? ', ' : ''}
@@ -321,11 +422,12 @@ export default function AssetPage() {
           {hair.panel && <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />}
           {asset.parts.length > 0 && (
             <div className="muted small">
-              parts: {asset.parts.join(', ')}
+              Moving parts: {asset.parts.join(', ')}
               <Info term="term.parts" />
             </div>
           )}
         </div>
+        {autopilot?.status === 'running' && <div className="rail-progress small" role="status">{status.text}</div>}
         <nav className="rail-stages" aria-label="Progress">
           {COMPOSE_CATEGORIES.includes(asset.category) && (
             <div className={'rail-stage rail-stage-half reached' + (composeOpen ? ' active' : '')}>
@@ -333,7 +435,7 @@ export default function AssetPage() {
                 <span className="sdot sdot-idle" />
                 <span className="rail-index">0.5</span>
                 <span className="rail-label">From your pictures</span>
-                <span className="rail-meta">optional</span>
+                <span className="rail-meta">extra</span>
               </button>
               <Info term="term.compose" />
             </div>
@@ -343,11 +445,10 @@ export default function AssetPage() {
             const list = versionsOf(asset, s)
             const kept = list.some((v) => v.selected || asset.selected[s] === v.id)
             const reached = list.length > 0
-            const cls = ['rail-stage', s === stage ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
+            const cls = ['rail-stage', s === stage && !composeOpen ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
             const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
-            const stopping = st === 'running' && jobs.some((j) => j.message === 'cancelling' && list.some((v) => v.id === j.version_id))
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
-            const meta = st === 'running' || stopped ? '' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            const meta = st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
@@ -357,16 +458,6 @@ export default function AssetPage() {
                   <span className="rail-label">{stagePlain(s, help)}</span>
                   <span className="rail-meta">{meta}</span>
                 </button>
-                {st === 'running' && (
-                  <span className="rail-step-action">
-                    <StopButton small onClick={() => stopStep(s)} stopping={stopping} title={`Stop "${stagePlain(s, help)}" now. Everything you kept stays.`} />
-                  </span>
-                )}
-                {stopped && (
-                  <span className="rail-step-action">
-                    <ResumeButton small onClick={() => (autopilot?.stopped_by_user && autopilot.status === 'paused' ? autopilotActions.resume() : resumeStep(s))} title={`Run "${stagePlain(s, help)}" again from its start, with the same settings.`} />
-                  </span>
-                )}
                 <Info term={'stage.' + s} />
               </div>
             )
@@ -377,12 +468,24 @@ export default function AssetPage() {
             Prompt (description)
             <Info term="term.prompt" />
           </div>
-          <div className="small">{asset.prompt}</div>
+          <RailEdit asset={asset} field="prompt" onSaved={reload} onError={setError} />
         </div>
       </aside>
       <section className="stage-main">
+        {apElsewhere && (
+          <div className="follow-bar small" role="status">
+            <span>
+              Autopilot is on step {STAGES.indexOf(apElsewhere) + 1}, {stagePlain(apElsewhere)}.
+            </span>
+            <Link to={`/assets/${asset.id}/${apElsewhere}`}>Go there</Link>
+            <label className="check-item">
+              <input type="checkbox" checked={followOn && !touched} onChange={(e) => chooseFollow(e.target.checked)} />
+              <span>Follow Autopilot</span>
+            </label>
+          </div>
+        )}
         <header className="asset-head">
-          <div className="asset-status">
+          <div className={'asset-status' + (guideVisible ? ' asset-status-quiet' : '')}>
             <span className={'traffic traffic-' + status.tone} aria-hidden="true" />
             <span className="asset-status-text">{status.text}</span>
             {status.raw && (
@@ -392,9 +495,6 @@ export default function AssetPage() {
             )}
           </div>
           <div className="row-gap">
-            {autopilot?.status === 'running' && (
-              <StopButton small label="Stop autopilot" disabled={apBusy} onClick={autopilotActions.stop} title="Stops the autopilot and the step in progress now. Everything made so far is kept, and Resume carries on from this step." />
-            )}
             <button type="button" className="small-btn" aria-pressed={variantOpen} disabled={!asset.selected?.concept} onClick={() => setVariantOpen((v) => !v)} title={asset.selected?.concept ? 'Make a copy of this asset with one change' : 'Keep a concept picture first'}>
               Make a variant
             </button>
@@ -404,8 +504,8 @@ export default function AssetPage() {
                 Add an item
               </button>
             )}
-            <button type="button" className="small-btn" aria-pressed={showLog} onClick={() => setShowLog((v) => !v)} title="Show the job log">
-              Details
+            <button type="button" className="small-btn" aria-pressed={showLog} onClick={() => setShowLog((v) => !v)} title="Show what the app did and when: every job, with its time and result">
+              Activity
             </button>
           </div>
         </header>
@@ -463,6 +563,7 @@ export default function AssetPage() {
         </aside>
       )}
     </div>
+    </ViewerPausedContext.Provider>
     </ViewerLookContext.Provider>
   )
 }
@@ -483,6 +584,70 @@ function newerAutopilot(cur: AutopilotState | null, next: AutopilotState | null)
 }
 
 // "Make a variant": a sibling asset with one change that keeps this one's identity.
+// The asset's name or description, editable in place (UI-04, UI-26). A changed description offers a new step 1 picture.
+function RailEdit({ asset, field, onSaved, onError }: { asset: Asset; field: 'name' | 'prompt'; onSaved: () => Promise<unknown> | void; onError: (e: unknown) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState('')
+  const [asked, setAsked] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const current = field === 'name' ? asset.name : asset.prompt
+  const isName = field === 'name'
+  const save = async (thenRun: boolean) => {
+    setBusy(true)
+    try {
+      await api.updateAsset(asset.id, { [field]: text.trim() })
+      if (thenRun) await api.runStage(asset.id, 'concept', {})
+      await onSaved()
+      setEditing(false)
+      setAsked(false)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (!editing) {
+    return (
+      <div className={isName ? 'asset-title rail-edit' : 'small rail-edit'}>
+        <span>{current}</span>
+        <button type="button" className="link small rail-edit-btn" aria-label={isName ? 'Rename this asset' : 'Edit the description'} onClick={() => { setText(current ?? ''); setEditing(true) }}>
+          Edit
+        </button>
+      </div>
+    )
+  }
+  if (asked) {
+    return (
+      <div className="col-tight small">
+        <div>Make a new step 1 picture from this description?</div>
+        <div className="row-gap">
+          <button type="button" className="primary small-btn" disabled={busy} onClick={() => save(true)}>Make it</button>
+          <button type="button" className="small-btn" disabled={busy} onClick={() => save(false)}>Just save the text</button>
+        </div>
+      </div>
+    )
+  }
+  const ok = text.trim().length > 0
+  const submit = () => {
+    if (!ok || text.trim() === (current ?? '').trim()) return setEditing(false)
+    if (isName) void save(false)
+    else setAsked(true)
+  }
+  return (
+    <div className="col-tight">
+      {isName ? (
+        <input value={text} autoFocus aria-label="Asset name" maxLength={200} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setEditing(false) }} />
+      ) : (
+        <textarea value={text} rows={4} autoFocus aria-label="Description" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false) }} />
+      )}
+      <div className="row-gap">
+        <button type="button" className="primary small-btn" disabled={busy || !ok} onClick={submit}>Save</button>
+        <button type="button" className="small-btn" onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
 function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () => void; onError: (e: unknown) => void }) {
   const navigate = useNavigate()
   const [change, setChange] = useState('')
@@ -509,9 +674,7 @@ function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () =
           Make a variant of {asset.name}
           <Info term="term.variant" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       <div className="muted small">We start from the picture you kept and repaint it with your change, so it stays the same character. The rest of the steps run as usual.</div>
       <Field label="What changes?" term="term.variant_change">
@@ -557,12 +720,12 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
       const left = s ? autopilotSecondsLeft(s, queued ? 0 : (apJob?.progress ?? 0), until, ref?.stages, suggestion?.estimates) : null
       return { text: autopilotLine(s, left, { queued }) + '.', tone: 'ok' }
     }
-    return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${autopilot.reason ?? 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
+    return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${plainJargon(autopilot.reason) || 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
   }
   if (job) {
     const s = stageOfJob(job, asset)
     const step = s ? `step ${STAGES.indexOf(s) + 1} of ${STAGES.length}` : ''
-    if (job.status === 'queued') return { text: `${s ? stageGerund(s) : 'Working'}: waiting for a free machine${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    if (job.status === 'queued') return { text: `${s ? stageGerund(s) : 'Working'}: waiting for the graphics card${step ? `, ${step}` : ''}.`, tone: 'warn' }
     const est = s ? stageEstimate(s, ref?.stages.find((x) => x.id === s), suggestion?.estimates) : 120
     const left = est * (1 - (job.progress ?? 0))
     return { text: `${s ? stageGerund(s) : 'Working'}, ${fmtDuration(left)} left${step ? `, ${step}` : ''}.`, tone: 'ok' }

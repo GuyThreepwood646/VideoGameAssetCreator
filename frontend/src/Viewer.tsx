@@ -616,6 +616,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const socketGroupsRef = useRef<THREE.Group[]>([])
   const showMoveRef = useRef(showMove)
   const [hoverLabel, setHoverLabel] = useState<string | null>(null)
+  // The mouse hint shows once; the ? button brings it back (UI-24).
+  const [hintOn, setHintOn] = useState(true)
 
   // Scene setup once.
   useEffect(() => {
@@ -785,6 +787,13 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     renderer.domElement.addEventListener('dblclick', onDouble)
     renderer.domElement.addEventListener('pointerdown', stopFocus)
     renderer.domElement.addEventListener('wheel', stopFocus, { passive: true })
+    // The wheel zooms only with Ctrl held or once the picture has been clicked, so the page can scroll past it (UI-07).
+    const gateZoom = (e: WheelEvent) => {
+      const ok = e.ctrlKey || document.activeElement === renderer.domElement
+      controls.enableZoom = ok
+      if (!ok) setHoverLabel('Hold Ctrl to zoom, or click the picture first')
+    }
+    renderer.domElement.addEventListener('wheel', gateZoom, { capture: true, passive: true })
 
     // Hovering a hit box names it in the status line and brightens it.
     const ray = new THREE.Raycaster()
@@ -818,6 +827,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       renderer.domElement.removeEventListener('dblclick', onDouble)
       renderer.domElement.removeEventListener('pointerdown', stopFocus)
       renderer.domElement.removeEventListener('wheel', stopFocus)
+      renderer.domElement.removeEventListener('wheel', gateZoom, { capture: true })
       controlsRef.current = null
       ro.disconnect()
       controls.dispose()
@@ -972,7 +982,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         attachOverlay(hh)
         placeAttachments()
         applyClipRequest()
-        setStatus(`${Math.round(tris).toLocaleString('en-US')} tris${skinned ? ', skinned' : ''}${names.length ? `, ${names.length} clips` : ''}`)
+        setStatus(`Preview: ${Math.round(tris).toLocaleString('en-US')} triangles${skinned ? ', skinned' : ''}${names.length ? `, ${names.length} moves` : ''}`)
       },
       undefined,
       (err) => {
@@ -1261,16 +1271,19 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   return (
     <section className={'viewer ' + className} style={{ height: large ? 'min(86vh, 960px)' : height }}>
       <div className="viewer-toolbar">
-        <div className="seg">
+        <div className="segmented">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
             <button key={s} type="button" aria-pressed={shading === s} onClick={() => changeShading(s)}>
-              {s}
+              {s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
         <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)} title={reduceMotion && !turntable ? 'Off because your system asks for less motion; press to spin the model' : undefined}>
           Turntable
         </button>
+        <details className="viewer-show">
+          <summary title="Choose what to show on the model">Show</summary>
+          <div className="viewer-show-pop">
         <button type="button" aria-pressed={grid} onClick={() => setGrid((g) => !g)}>
           Grid
         </button>
@@ -1308,22 +1321,35 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             <Info term="term.movement_shape" />
           </span>
         )}
+          </div>
+        </details>
+        <LightPicker value={light} onChange={chooseLight} note={lightNote} />
         {clips.length > 0 && (
           <>
+            {orderedClips.length <= 10 ? (
+              <span className="move-chips" role="group" aria-label="Moves">
+                {orderedClips.map((c) => (
+                  <button key={c} type="button" className="chip-btn" aria-pressed={clip === c} onClick={() => changeClip(c)} title={loops(c) ? 'Loops' : 'Plays once'}>
+                    {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)}
+                  </button>
+                ))}
+              </span>
+            ) : (
             <select value={clip} onChange={(e) => changeClip(e.target.value)} aria-label="Animation clip">
-              {orderedClips.map((c) => (
-                <option key={c} value={c}>
-                  {/* The plain name the moves list uses, when the clip file gives one (added moves). */}
-                  {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
-                </option>
-              ))}
-            </select>
+                {orderedClips.map((c) => (
+                  <option key={c} value={c}>
+                    {/* The plain name the moves list uses, when the clip file gives one (added moves). */}
+                    {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
+                  </option>
+                ))}
+              </select>
+            )}
             <button type="button" onClick={togglePlay} aria-pressed={playing} className={!playing && reduceMotion ? 'viewer-play' : undefined} title={!playing && reduceMotion ? 'Paused because your system asks for less motion; press to play' : undefined}>
               {playing ? 'Pause' : 'Play'}
             </button>
           </>
         )}
-        <div className="seg" role="group" aria-label="What dragging does">
+        <div className="segmented" role="group" aria-label="What dragging does">
           <button type="button" aria-pressed={dragMode === 'turn'} onClick={() => setDragMode('turn')} title="Dragging turns the model">
             Turn
           </button>
@@ -1331,6 +1357,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             Move
           </button>
         </div>
+        <button type="button" aria-pressed={hintOn} aria-label="How to move around" title="Shows how to turn, move and zoom" onClick={() => setHintOn((h) => !h)}>
+          ?
+        </button>
         <button type="button" onClick={resetView} title="Shows the whole model again">
           Reset view
         </button>
@@ -1341,11 +1370,10 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           {hoverLabel ?? status}
         </span>
       </div>
-      <div className="canvas-host" ref={hostRef}>
-        <LightPicker value={light} onChange={chooseLight} note={lightNote} />
-        <div className="viewer-hint">
-          {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Scroll to zoom. Double-click a spot to look at it closely.
-        </div>
+      <div className="canvas-host" ref={hostRef} onPointerDown={() => setHintOn(false)}>
+        {hintOn && <div className="viewer-hint">
+          {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Hold Ctrl and scroll to zoom. Double-click a spot to look at it closely.
+        </div>}
       </div>
     </section>
   )

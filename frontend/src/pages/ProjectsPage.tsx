@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api, libraryUrl, PLATFORMS, selectedVersion, STAGES, stageState, STYLE_MODELS, versionsOf, type AssetSummary, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
+import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { PresetRow } from '../components/PresetRow'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
 import { modelLabel, platformConsequence, platformPlain, stagePlain } from '../help'
-import { lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
+import { baseLookId, lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
 import { MatchPicture } from './MatchPicture'
 
 type SortKey = 'recent' | 'name' | 'newest'
@@ -28,6 +29,16 @@ function readSort(): SortKey {
 export default function ProjectsPage() {
   const { data: projects, error, loading, reload } = useAsync(() => api.listProjects(), [])
   const [params, setParams] = useSearchParams()
+  const dirtyRef = useRef(false)
+  const drawerConfirm = useConfirm()
+  const requestClose = async () => {
+    if (dirtyRef.current) {
+      const ok = await drawerConfirm.ask({ title: 'Close without saving?', body: 'You have changes that are not saved yet. They will be lost.', confirmLabel: 'Close without saving', danger: true })
+      if (!ok) return
+    }
+    dirtyRef.current = false
+    setParams({})
+  }
   const navigate = useNavigate()
   const editId = params.get('edit')
   const editing = projects?.find((p) => p.id === editId) ?? null
@@ -42,7 +53,7 @@ export default function ProjectsPage() {
 
   const shown = useMemo(() => {
     if (!projects) return []
-    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? modelLabel(p.style_lock.model)
+    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? (presetById(presets, baseLookId(presets, p.style_lock))?.label ? `Custom look (based on ${presetById(presets, baseLookId(presets, p.style_lock))?.label})` : 'Custom look')
     const q = query.trim().toLowerCase()
     const list = q ? projects.filter((p) => [p.name, look(p), platformPlain(p.platform_target)].some((t) => t.toLowerCase().includes(q))) : [...projects]
     const activity = (p: Project) => p.last_activity ?? p.created_at
@@ -162,10 +173,12 @@ export default function ProjectsPage() {
         </Modal>
       )}
 
+      {drawerConfirm.dialog}
       {editing && (
-        <Drawer title="Look and settings" onClose={() => setParams({})}>
+        <Drawer title="Look and settings" onClose={requestClose}>
           <StyleLockEditor
             key={editing.id}
+            dirtyRef={dirtyRef}
             project={editing}
             onSaved={reload}
             onDeleted={() => {
@@ -198,7 +211,7 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
     <section className="jump" aria-labelledby="jump-title">
       <div className="row-between">
         <h2 id="jump-title" className="jump-title">
-          Jump back in <span className="muted">in {recent.name}</span>
+          Jump back in <span className="muted">({recent.name})</span>
         </h2>
         <Link to={`/projects/${recent.id}`} className="small">
           All {recent.asset_count} assets
@@ -500,13 +513,12 @@ function CreateProjectForm({ onCreated, roomy = false }: { onCreated: (p: Projec
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hollow Keep" aria-label="Project name" data-autofocus autoFocus maxLength={80} />
         </Field>
-        <Field label="Platform" term={'platform.' + platform}>
+        <Field label="Platform" term={'platform.' + platform} hint={platformConsequence(platform)}>
           <select value={platform} onChange={(e) => setPlatform(e.target.value as PlatformId)} aria-label="Default platform target">
             <PlatformOptions />
           </select>
         </Field>
       </div>
-      <div className="muted small">{platformConsequence(platform)}</div>
       {presets && presets.length > 0 && (
         <div className="col-tight">
           <div className="field-label">
@@ -534,7 +546,7 @@ function CreateProjectForm({ onCreated, roomy = false }: { onCreated: (p: Projec
   )
 }
 
-function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; onSaved: () => void; onDeleted: () => void }) {
+function StyleLockEditor({ project, onSaved, onDeleted, dirtyRef }: { project: Project; onSaved: () => void; onDeleted: () => void; dirtyRef: { current: boolean } }) {
   const navigate = useNavigate()
   const [name, setName] = useState(project.name)
   const [platform, setPlatform] = useState<PlatformId>(project.platform_target)
@@ -546,6 +558,14 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
   const { presets, unavailable } = usePresets()
   const current = presetById(presets, lock.preset)
   const edited = !!current && !lockMatchesPreset(lock, current)
+  // One save model (UI-22): every change is staged until Save; the drawer asks before closing with unsaved changes.
+  const dirty = name !== project.name || platform !== project.platform_target || JSON.stringify(lock) !== JSON.stringify(project.style_lock)
+  dirtyRef.current = dirty
+  const discard = () => {
+    setName(project.name)
+    setPlatform(project.platform_target)
+    setLock({ ...project.style_lock, loras: [...project.style_lock.loras], palette: [...project.style_lock.palette] })
+  }
 
   useEffect(() => {
     setSaved(null)
@@ -557,7 +577,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
     setBusy(true)
     setError(null)
     try {
-      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: next })
+      await api.updateProject(project.id, { name: name.trim() || project.name, platform_target: platform, style_lock: next.preset ? next : { ...next, based_on: next.based_on ?? baseLookId(presets, next) } })
       setSaved(new Date().toLocaleTimeString())
       onSaved()
     } catch (err) {
@@ -572,15 +592,22 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
     await saveWith(lock)
   }
 
-  // Choosing a look fills the fields and saves straight away.
+  // Choosing a look fills the fields; Save makes it the project's look.
   const usePreset = (p: LookPreset) => {
-    const next = lockFromPreset(p)
-    setLock(next)
-    void saveWith(next)
+    setLock(lockFromPreset(p))
   }
 
+  const confirm = useConfirm()
   const remove = async () => {
-    if (!window.confirm(`Delete project "${project.name}" and all its assets?`)) return
+    const n = project.asset_count
+    const ok = await confirm.ask({
+      title: `Delete "${project.name}"?`,
+      body: `${n === undefined ? 'Every asset in it' : n === 1 ? '1 asset' : `${n} assets`} and all their versions will be deleted. Files already exported to the exports folder stay. This cannot be undone.`,
+      confirmLabel: 'Delete project',
+      danger: true,
+      typeToConfirm: project.name,
+    })
+    if (!ok) return
     try {
       await api.deleteProject(project.id)
       onDeleted()
@@ -593,6 +620,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
 
   return (
     <form className="col" onSubmit={save}>
+      {confirm.dialog}
       <div className="row-between">
         <h3 className="drawer-project">
           {project.name}
@@ -606,7 +634,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       <div className="col">
         <div className="row-between">
           <div className="field-label">
-            Style preset (look)
+            Look
             <Info term="term.look" />
           </div>
           <span className="small">
@@ -616,7 +644,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
                 {edited ? ' (edited by hand)' : ''}
               </>
             ) : presets ? (
-              <span className="muted">No ready-made look chosen; the fields below are set by hand.</span>
+              <span className="muted">Custom look. Based on: <strong>{presetById(presets, baseLookId(presets, lock))?.label ?? 'Painted fantasy'}</strong> for the 3D settings.</span>
             ) : null}
           </span>
         </div>
@@ -644,8 +672,8 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       />
       <Disclosure label="Advanced (edit the look by hand)" defaultOpen={!current && !!presets}>
       <div className="col">
-      <Field label="Style prompt (style words)" term="term.prompt_block" hint="Added in front of every description in this project. Enter saves, Shift+Enter adds a line.">
-        <SubmitTextarea rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
+      <Field label="Style prompt (style words)" term="term.prompt_block" hint="Added in front of every description in this project. Enter adds a line; Ctrl+Enter saves.">
+        <SubmitTextarea ctrlEnter rows={3} value={lock.prompt_block} onChange={(e) => set('prompt_block', e.target.value)} placeholder="e.g. hand-painted stylised fantasy, chunky proportions, soft rim light, clean silhouette" />
       </Field>
       <div className="grid-2">
         <Field label="Model (the painter)" term={'model.' + lock.model}>
@@ -681,15 +709,18 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
         </div>
       </Field>
       <Field label="Negative prompt (things to avoid)" term="term.negative" hint="Things the model should leave out.">
-        <SubmitTextarea rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
+        <SubmitTextarea ctrlEnter rows={2} value={lock.negative} onChange={(e) => set('negative', e.target.value)} placeholder="e.g. text, watermark, blurry, extra limbs" />
       </Field>
       </div>
       </Disclosure>
-      <div className="row-gap">
-        <button type="submit" className="primary" disabled={busy}>
+      <div className="row-gap form-footer">
+        <button type="submit" className="primary" disabled={busy || !dirty}>
           {busy ? 'Saving...' : 'Save'}
         </button>
-        {saved && <span className="muted small">Saved {saved}</span>}
+        <button type="button" disabled={busy || !dirty} onClick={discard}>
+          Discard
+        </button>
+        {dirty ? <span className="small warn-text">Unsaved changes</span> : saved ? <span className="muted small">Saved {saved}</span> : null}
         <ErrorText error={error} />
         <span className="grow" />
         <button type="button" className="danger" onClick={remove}>

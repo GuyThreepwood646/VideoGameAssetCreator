@@ -40,7 +40,7 @@ export function ConceptView({ version }: { version: Version }) {
           ) : null}
           {version.params.source !== 'upload' && version.params.seed !== undefined && version.params.seed !== null ? (
             <>
-              , seed {String(version.params.seed)}
+              , picture number {String(version.params.seed)} <small className="muted">(seed)</small>
               <Info term="term.seed" />
             </>
           ) : null}

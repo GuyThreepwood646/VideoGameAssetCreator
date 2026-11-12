@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Job } from '../api'
 import { useEventMode } from '../events'
+import { jobKindPlain } from '../help'
 import { duration, StatusBadge, StopButton, timeAgo } from './ui'
 
 export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string) => void }) {
@@ -18,10 +19,10 @@ export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string)
   return (
     <div className="joblog">
       <div className="joblog-head">
-        <span className="field-label">Job log</span>
+        <span className="field-label">Activity</span>
         <span className="muted small">
           {active ? `${active} active, ` : ''}
-          {mode === 'ws' ? 'live' : mode === 'poll' ? 'polling 3 s' : 'connecting'}
+          {mode === 'ws' ? 'updating live' : mode === 'poll' ? 'checking every 3 seconds' : 'connecting'}
         </span>
       </div>
       <ul className="joblist">
@@ -29,7 +30,7 @@ export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string)
           <li key={j.id} className={'jobrow job-' + j.status}>
             <div className="row-between">
               <span className="job-kind">
-                {j.kind} <span className="muted small">on {j.instance}</span>
+                {jobKindPlain(j.kind, j.instance)} <span className="muted small mono" title="Technical name">{j.kind}</span>
               </span>
               <StatusBadge status={j.status} />
             </div>

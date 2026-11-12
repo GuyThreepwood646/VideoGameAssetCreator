@@ -283,5 +283,5 @@ export function addonsNotUsed(v: Version | undefined | null, catalog: AddonEntry
   const ids = [...new Set([...ignored, ...unknown])]
   if (!ids.length) return null
   const label = (id: string) => catalog?.find((a) => a.id === id)?.label ?? id
-  return `Not used: ${joinAnd(ids.map(label))}.`
+  return `${ids.length === 1 ? '1 style add-on was' : `${ids.length} style add-ons were`} skipped because ${ids.length === 1 ? 'it does' : 'they do'} not fit this painter (${joinAnd(ids.map(label))}).`
 }

@@ -7,11 +7,12 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, examplePrompts, fmtDuration, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
-import { presetById, usePresets } from '../presets'
+import { baseLookId, lookLabelForStyle, presetById, usePresets } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
+import { useConfirm } from '../components/Confirm'
 
 export default function ProjectPage() {
   const { pid = '' } = useParams()
@@ -23,6 +24,9 @@ export default function ProjectPage() {
   }, [pid])
   const { ref } = useRefData()
   const { presets } = usePresets()
+  const [filter, setFilter] = useState<AssetFilter>('all')
+  const [query, setQuery] = useState('')
+  const confirm = useConfirm()
 
   // Any version finishing for an asset of this project refreshes the grid. A job
   // end sends a job event and a version event; the short delay folds them into one reload.
@@ -66,23 +70,38 @@ export default function ProjectPage() {
           </h1>
           {project && (
             <span className="muted small">
-              {platformPlain(project.platform_target)}
-              <Info term={'platform.' + project.platform_target} /> / {presetById(presets, project.style_lock.preset)?.label ?? modelLabel(project.style_lock.model)}
-              <Info term={project.style_lock.preset && presetById(presets, project.style_lock.preset) ? 'term.look' : 'model.' + project.style_lock.model} /> / <Link to={`/?edit=${project.id}`}>style lock</Link>
+              {presetById(presets, project.style_lock.preset)?.label ?? 'Custom'} look, {platformPlain(project.platform_target).split(':')[0]}
+              <Info term={'platform.' + project.platform_target} />. <Link to={`/?edit=${project.id}`}>Look and settings</Link>
               <Info term="term.style_lock" />
             </span>
           )}
         </div>
         <ErrorText error={perr ?? error} />
+        {confirm.dialog}
+        {assets && assets.length >= 3 && (
+          <div className="asset-tools row-gap" role="group" aria-label="Filter the assets">
+            <div className="segmented">
+              {(['all', 'progress', 'needs', 'ready'] as AssetFilter[]).map((f) => (
+                <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                  {FILTER_LABEL[f]}
+                </button>
+              ))}
+            </div>
+            {assets.length >= 8 && <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search assets" aria-label="Search assets" />}
+          </div>
+        )}
         <div className="asset-grid">
-          {assets
-            ?.filter((a) => !a.base_asset_id || !assets.some((b) => b.id === a.base_asset_id))
-            .map((a) => {
-              const variants = assets.filter((v) => v.base_asset_id === a.id)
-              return (
-                <AssetGroup key={a.id} base={a} variants={variants} categoryName={categoryLabel(ref, a.category)} />
-              )
-            })}
+          {assets && (() => {
+            const q = query.trim().toLowerCase()
+            const matches = (a: AssetSummary) => (filter === 'all' || assetStatus(a) === filter) && (!q || a.name.toLowerCase().includes(q))
+            const filtering = filter !== 'all' || !!q
+            const top = assets.filter((a) => !a.base_asset_id || !assets.some((b) => b.id === a.base_asset_id))
+            // While filtering, every matching asset shows on its own; otherwise variants stack under their base asset.
+            if (filtering) return assets.filter(matches).map((a) => <AssetCard key={a.id} asset={a} categoryName={categoryLabel(ref, a.category)} onChanged={reload} confirm={confirm} />)
+            return top.map((a) => (
+              <AssetGroup key={a.id} base={a} variants={assets.filter((v) => v.base_asset_id === a.id)} categoryName={categoryLabel(ref, a.category)} onChanged={reload} confirm={confirm} />
+            ))
+          })()}
           {assets && assets.length === 0 && (
             <div className="empty-state">
               <h2 className="card-title">
@@ -99,15 +118,28 @@ export default function ProjectPage() {
   )
 }
 
-// A base asset followed by a strip of its variants (grouped by base_asset_id).
-function AssetGroup({ base, variants, categoryName }: { base: AssetSummary; variants: AssetSummary[]; categoryName: string }) {
+export type AssetFilter = 'all' | 'progress' | 'needs' | 'ready'
+const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In progress', needs: 'Needs a look', ready: 'Ready' }
+
+function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
+  const sts = STAGES.map((x) => stageState(a, x))
+  if (sts.includes('error')) return 'needs'
+  if (sts.every((x) => x === 'done')) return 'ready'
+  return 'progress'
+}
+
+type Confirm = ReturnType<typeof useConfirm>
+
+// A base asset with its variants stacked behind a "+n variants" badge (grouped by base_asset_id).
+function AssetGroup({ base, variants, categoryName, onChanged, confirm }: { base: AssetSummary; variants: AssetSummary[]; categoryName: string; onChanged: () => void; confirm: Confirm }) {
+  const [open, setOpen] = useState(false)
   return (
     <>
-      <AssetCard asset={base} categoryName={categoryName} />
-      {variants.length > 0 && (
+      <AssetCard asset={base} categoryName={categoryName} onChanged={onChanged} confirm={confirm} badge={variants.length > 0 ? { text: `+${variants.length} variant${variants.length === 1 ? '' : 's'}`, open, toggle: () => setOpen((v) => !v) } : undefined} />
+      {variants.length > 0 && open && (
         <div className="variant-strip" aria-label={`variants of ${base.name}`}>
           {variants.map((v) => (
-            <AssetCard key={v.id} asset={v} categoryName={`variant: ${v.variant_change ?? ''}`} />
+            <AssetCard key={v.id} asset={v} categoryName={`variant: ${v.variant_change ?? ''}`} onChanged={onChanged} confirm={confirm} />
           ))}
         </div>
       )}
@@ -115,27 +147,91 @@ function AssetGroup({ base, variants, categoryName }: { base: AssetSummary; vari
   )
 }
 
-function AssetCard({ asset, categoryName }: { asset: AssetSummary; categoryName: string }) {
+function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: AssetSummary; categoryName: string; onChanged: () => void; confirm: Confirm; badge?: { text: string; open: boolean; toggle: () => void } }) {
+  const [renaming, setRenaming] = useState(false)
+  const [name, setName] = useState(asset.name)
   const concept = selectedVersion(asset, 'concept')
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
   return (
-    <Link to={`/assets/${asset.id}`} className="asset-card">
-      <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
-      <div className="asset-name">{asset.name}</div>
-      <div className="muted small">{categoryName}</div>
-      <div className="stage-dots" aria-label="stage progress">
-        {STAGES.map((s) => {
-          const st = stageState(asset, s)
-          return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
-        })}
+    <div className="asset-card-wrap">
+      <Link to={`/assets/${asset.id}`} className="asset-card">
+        <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
+        <div className="asset-name">{asset.name}</div>
+        <div className="muted small">{categoryName}</div>
+        {(() => {
+          const sts = STAGES.map((x) => stageState(asset, x))
+          const failedAt = sts.indexOf('error')
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+          return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+        })()}
+        <div className="stage-dots" aria-label="stage progress">
+          {STAGES.map((s) => {
+            const st = stageState(asset, s)
+            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
+          })}
+        </div>
+      </Link>
+      <div className="asset-card-tools">
+        {badge && (
+          <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
+            {badge.text}
+          </button>
+        )}
+        <details className="more-menu">
+          <summary aria-label={`More actions for ${asset.name}`} title="More actions">...</summary>
+          <div className="status-pop more-pop card-pop">
+            <button type="button" className="link small" onClick={() => setRenaming(true)}>
+              Rename
+            </button>
+            {selectedVersion(asset, 'export')?.status === 'done' && (
+              <button type="button" className="link small" onClick={() => void api.openVersionFolder(selectedVersion(asset, 'export')!.id).catch(() => undefined)}>
+                Open folder
+              </button>
+            )}
+            <Link className="small" to={`/assets/${asset.id}`} title="Open the asset, then use Make a variant for a copy with one change">
+              Make a variant
+            </Link>
+            <button
+              type="button"
+              className="link small"
+              onClick={async () => {
+                const ok = await confirm.ask({ title: `Delete ${asset.name}?`, body: 'Its versions and files in the library are deleted. Files already exported stay. This cannot be undone.', confirmLabel: 'Delete asset', danger: true })
+                if (ok) {
+                  await api.deleteAsset(asset.id).catch(() => undefined)
+                  onChanged()
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </details>
       </div>
-    </Link>
+      {renaming && (
+        <form
+          className="asset-rename"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            if (name.trim()) await api.updateAsset(asset.id, { name: name.trim() }).catch(() => undefined)
+            setRenaming(false)
+            onChanged()
+          }}
+        >
+          <input value={name} autoFocus aria-label="Asset name" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setRenaming(false)} />
+          <button type="submit" className="primary small-btn">Save</button>
+        </form>
+      )}
+    </div>
   )
 }
 
-function autoName(prompt: string): string {
-  const head = prompt.split(/[,.;:]/)[0].trim().replace(/^(an?|the)\s+/i, '')
-  const words = head.split(/\s+/).filter(Boolean).slice(0, 4).join(' ')
+// A name cut at the first place the description starts adding detail (a comma, "with", "in", "wearing"...), so it is
+// never cut mid-phrase ("Grumpy goblin merchant", not "Grumpy goblin merchant with"). At most six words.
+const NAME_STOP = /\s+(with|in|on|of|for|and|that|who|which|wearing|holding|carrying|from|by|at|to|made|using)\s+/i
+export function autoName(prompt: string): string {
+  const first = prompt.split(/[,.;:\n]/)[0].trim().replace(/^(an?|the)\s+/i, '')
+  const head = first.split(NAME_STOP)[0].trim()
+  const words = head.split(/\s+/).filter(Boolean).slice(0, 6).join(' ')
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : ''
 }
 
@@ -163,9 +259,12 @@ function CreateAssetForm({ project }: { project: Project }) {
   // "The face matters": on unless the person says the face is hidden or too simple to gain from the face pass.
   const [faceMatters, setFaceMatters] = useState(true)
   const { presets } = usePresets()
+  const [lookOpen, setLookOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [poseFirst, setPoseFirst] = useState(false)
   // The project's ready-made look names the asset style new assets default to.
   const projectLook = presetById(presets, project.style_lock.preset)
-  const projectStyleId = projectLook && ref?.styles.some((s) => s.id === projectLook.style_preset) ? projectLook.style_preset : (ref?.styles.find((s) => s.model === project.style_lock.model) ?? ref?.styles[0])?.id
+  const projectStyleId = baseLookId(presets, project.style_lock) ?? ref?.styles[0]?.id
 
   useEffect(() => {
     if (!ref) return
@@ -258,7 +357,7 @@ function CreateAssetForm({ project }: { project: Project }) {
       if (autopilot) {
         // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
         try {
-          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export' })
+          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', ...(fromPicture && category === 'humanoid' && poseFirst ? { stage_params: { turnaround: { pose_ready: true } } } : {}) })
         } catch (err) {
           if (!(err instanceof ApiError && err.status === 404)) console.warn('autopilot did not start', err)
         }
@@ -280,7 +379,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           Start from
           <Info term="term.start_from" />
         </span>
-        <div className="segmented" role="radiogroup" aria-label="Start from">
+        <div className="choice-row" role="radiogroup" aria-label="Start from">
           <label className="check-item">
             <input type="radio" name="start-from" checked={!fromPicture} onChange={() => setStartFrom('words')} />
             <span>A description</span>
@@ -300,15 +399,28 @@ function CreateAssetForm({ project }: { project: Project }) {
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
+      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
+        <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
+          {ref?.categories.map((c) => (
+            <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </Field>
       {fromPicture ? (
-        <Field label="What is it? (optional, helps the later steps)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
-          <SubmitTextarea rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" />
+        <Field label="Describe your picture (optional)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
+          <SubmitTextarea ctrlEnter rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" aria-label="Describe your picture" />
         </Field>
       ) : (
-        <Field label="Prompt (description)" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
-          <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
+        <Field label="2. Describe it" term="term.prompt" hint="One sentence is enough. Enter adds a line; Ctrl+Enter creates the asset.">
+          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. a sturdy young knight in worn plate armour, short dark hair" aria-label="Description" autoFocus />
+          <div className="muted small">Template: {PROMPT_TEMPLATE}</div>
         </Field>
       )}
+      <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
+      </Field>
       {described && (
         <div className="muted small described-size">
           Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
@@ -320,7 +432,11 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.hair_pictures" />
         </div>
       ))}
-      {hairOffered && <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />}
+      {hairOffered && (
+        <ExtraChip summary={hairChoice === 'library' ? 'Hair: from the library.' : 'Hair: built with the 3D model.'}>
+          <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />
+        </ExtraChip>
+      )}
       {category === 'humanoid' && (
         <label className="check-item" title="Off for a hidden or very simple face: the clean-up step then skips the face pass">
           <input type="checkbox" checked={faceMatters} onChange={(e) => setFaceMatters(e.target.checked)} />
@@ -330,7 +446,20 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.face_matters" />
         </label>
       )}
-      {found && found.items.length > 0 && <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />}
+      {fromPicture && category === 'humanoid' && autopilot && (
+        <label className="check-item" title="Redraws your picture in an A-pose with open, empty hands before the other views are made">
+          <input type="checkbox" checked={poseFirst} onChange={(e) => setPoseFirst(e.target.checked)} />
+          <span>
+            Hands hidden or holding something? Pose for 3D first{' '}
+            <span className="muted small">(off by default; it removes extra arms, claws and tools, and can recolour a black-and-white picture. Autopilot stops after step 2 so you can check the redraw)</span>
+          </span>
+        </label>
+      )}
+      {found && found.items.length > 0 && (
+        <ExtraChip summary={itemChoice === 'separate' ? `We will make ${joinAnd(found.items.map((i) => i.label))} as its own item.` : `${joinAnd(found.items.map((i) => i.label))} stays part of the body.`}>
+          <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />
+        </ExtraChip>
+      )}
       {!fromPicture && (
         <div className="examples">
           <span className="muted small">Examples:</span>
@@ -341,26 +470,39 @@ function CreateAssetForm({ project }: { project: Project }) {
           ))}
         </div>
       )}
-      <Field label="What is it" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
-        <select value={category} onChange={(e) => changeCategory(e.target.value)}>
-          {ref?.categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <div className="settings-summary small">
+        <span>
+          <strong>{projectLook && style === projectStyleId ? projectLook.label : lookLabelForStyle(presets, style, 'Custom look')}</strong> look, {platformPlain(platform).split(':')[0]}
+          {suggestion ? `, ${fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset` : ''}.
+        </span>
+        <button type="button" className="link small" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
+          {settingsOpen ? 'Hide' : 'Change'}
+        </button>
+      </div>
+      {settingsOpen && (
+        <>
       <div className="grid-2">
-        <Field label="Style preset (look)" term={'style.' + style} hint={projectLook ? (style === projectStyleId ? `Your project's style preset: ${projectLook.label}.` : `Different from your project's style preset (${projectLook.label}).`) : undefined}>
-          <select value={style} onChange={(e) => setStyle(e.target.value)}>
-            {ref?.styles.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-                {projectLook && s.id === projectStyleId ? ` (${projectLook.label}, the project style preset)` : ''}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {projectLook && style === projectStyleId && !lookOpen ? (
+          <Field label="Look" term="term.look" hint="Every asset in this project follows it.">
+            <div className="look-default">
+              <strong>{projectLook.label}</strong> <span className="muted">(this project's look)</span>{' '}
+              <button type="button" className="link small" onClick={() => setLookOpen(true)}>
+                Use a different look for this asset
+              </button>
+            </div>
+          </Field>
+        ) : (
+          <Field label="Look" term="term.look" hint={projectLook ? (style === projectStyleId ? `This project's look: ${projectLook.label}.` : `Different from this project's look (${projectLook.label}).`) : undefined}>
+            <select value={style} onChange={(e) => setStyle(e.target.value)}>
+              {ref?.styles.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {lookLabelForStyle(presets, s.id, s.label)}
+                  {projectLook && s.id === projectStyleId ? ' (this project)' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="Platform" term={'platform.' + platform} hint={budget ? `${budget.triangles.toLocaleString('en-US')} triangles, ${budget.texture} px texture` : platformConsequence(platform)}>
           <select value={platform} onChange={(e) => setPlatform(e.target.value as PlatformId)}>
             {(ref?.platforms ?? []).map((p) => (
@@ -381,7 +523,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           ) : (
             <>
               Suggested: <strong>{suggestion.model_label}</strong>
-              <Info term={'model.' + suggestion.model} /> because {suggestion.reason}
+              <Info term={'model.' + suggestion.model} /> because {plainJargon(suggestion.reason)}
             </>
           )}
           ; {fmtDuration(totalEstimate(suggestion.estimates, ref))} to a finished asset. <span className="muted">Change the model under Advanced.</span>
@@ -389,25 +531,24 @@ function CreateAssetForm({ project }: { project: Project }) {
       )}
       {suggestion?.recipe_plain && (
         <div className="recipe-line small">
-          Recipe: {suggestion.recipe_plain}
+          How the look is built: {suggestion.recipe_plain}
           <Info term="term.recipe" />
         </div>
       )}
       {(suggestion?.recipe_notes ?? []).map((note) => (
         <div className="suggest-line muted" key={note}>Good to know: {note}</div>
       ))}
+        </>
+      )}
       <Disclosure label="Advanced">
         <div className="col">
-          <Field label="Name" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
-          </Field>
           <Field
             label="Model (the painter)"
             term="term.concept_model"
             hint={
               suggestion ? (
                 <>
-                  Suggested: {suggestion.model_label} because {suggestion.reason}. Pick another to override it; you can change it later under Fine-tune.
+                  Suggested: {suggestion.model_label} because {plainJargon(suggestion.reason)}. Pick another to override it; you can change it later under Fine-tune.
                   {overridden && (
                     <>
                       {' '}
@@ -448,7 +589,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <span className="muted small block">Runs every step and only stops if something needs you.</span>
         </span>
       </label>
-      <div className="row-gap">
+      <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? 'Creating...' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>
@@ -462,6 +603,22 @@ function CreateAssetForm({ project }: { project: Project }) {
 }
 
 // The quiet line under the description when it names carried items (docs/CHARACTER-PARTS-RESEARCH.md 6.2).
+// A detected extra shown as one line with a Change toggle, so the form does not grow while typing (UI-11).
+function ExtraChip({ summary, children }: { summary: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="extra-chip">
+      <div className="small">
+        <span className="chip chip-accent">{summary}</span>{' '}
+        <button type="button" className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Hide' : 'Change'}
+        </button>
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
 function ItemsLine({ found, choice, onChoice }: { found: ItemDetect; choice: 'separate' | 'keep'; onChoice: (c: 'separate' | 'keep') => void }) {
   const names = found.items.map((i) => i.label)
   return (
@@ -470,7 +627,7 @@ function ItemsLine({ found, choice, onChoice }: { found: ItemDetect; choice: 'se
         {found.sentence ?? `Weapons work best as their own asset: ${names.join(', ')}.`}
         <Info term="term.items" />
       </p>
-      <div className="segmented" role="radiogroup" aria-label="What to do with the items">
+      <div className="choice-row" role="radiogroup" aria-label="What to do with the items">
         <label className="check-item">
           <input type="radio" name="items-choice" checked={choice === 'separate'} onChange={() => onChoice('separate')} />
           <span>Make them separately (recommended)</span>

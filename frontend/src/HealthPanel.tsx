@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import GpuCards from './GpuCards'
 import SetupCheck from './SetupCheck'
 import { useEvents } from './events'
+import { desktopBridge } from './desktop'
 
 const GB = 1024 ** 3
 
@@ -43,6 +44,32 @@ export function useHealth(intervalMs = 5000) {
 }
 
 // Compact indicator for the top bar: one dot per ComfyUI instance plus host RAM.
+// A full-width banner when the engine does not answer (UI-32). The desktop launcher restarts it from its tray menu.
+export function EngineBanner() {
+  const { error } = useHealth(10000)
+  const [starting, setStarting] = useState(false)
+  if (!error) return null
+  const desk = desktopBridge()
+  const start = () => {
+    setStarting(true)
+    void desk?.startEngine().finally(() => window.setTimeout(() => setStarting(false), 15000))
+  }
+  return (
+    <div className="engine-banner" role="alert">
+      <span>
+        <strong>VGAC's engine is not running.</strong> Your work is safe.
+        {desk ? ' Start it again and this page carries on.' : ' If you opened VGAC from the desktop launcher, use its tray menu to restart the engine, then reload this page.'}
+      </span>
+      {desk && (
+        <button type="button" className="primary" disabled={starting} onClick={start}>
+          {starting ? 'Starting...' : 'Start the engine'}
+        </button>
+      )}
+      <Link to="/health">What happened?</Link>
+    </div>
+  )
+}
+
 export function HealthBadge() {
   const { health, error } = useHealth(10000)
   // Cards turned off in the app: from the health poll, overridden at once by a "gpus" event until the next poll.
@@ -54,33 +81,57 @@ export function HealthBadge() {
     [health],
   )
   const offNow = offEvent && offEvent.health === health ? offEvent.count : null
+  // Assets whose Autopilot is waiting for the person (UI-19): the chip says Needs you and links to the first one.
+  const [needs, setNeeds] = useState<Record<string, boolean>>({})
+  useEvents((ev) => {
+    if (ev.type === 'autopilot') setNeeds((n) => ({ ...n, [ev.asset_id]: (ev.autopilot.status === 'paused' && !ev.autopilot.stopped_by_user) || ev.autopilot.status === 'error' }))
+  }, [])
+  const needsId = Object.keys(needs).find((k) => needs[k])
   if (error) {
     return (
-      <span className="pill pill-bad" title={'Backend unreachable: ' + error}>
-        backend down
-      </span>
+      <Link to="/health" className="chip chip-bad" title={'The engine did not answer: ' + error}>
+        Engine not responding
+      </Link>
     )
   }
-  if (!health) return <span className="pill">health...</span>
+  if (!health) return <span className="chip">Checking...</span>
   const off = offNow ?? Object.values(health.instances).filter((i) => i.enabled === false).length
+  const lowRam = health.host.ram_free_gb < health.host.min_free_ram_gb
+  const anyReady = Object.values(health.instances).some((i) => i.enabled !== false)
+  // One chip (UI-19). An engine that starts when a step needs it is normal, so it is never red.
+  const working = Object.values(health.queue ?? {}).some((q) => q.current_job_id != null)
+  const label = needsId ? 'Needs you' : !anyReady ? 'Every card is off' : lowRam ? 'Low memory' : working ? 'Working' : 'Ready'
+  const tone = needsId || !anyReady || lowRam ? 'chip-warn' : working ? 'chip-accent' : 'chip-ok'
   return (
-    <span className="health-badge" title={`Backend v${health.version}`}>
-      {off > 0 && (
-        <Link to="/health" className="pill pill-warn" title="Turned off on the Health page; the other card carries on with the work">
-          {off} card{off === 1 ? '' : 's'} off
-        </Link>
-      )}
-      {Object.entries(health.instances).map(([name, inst]) => (
-        <span key={name} className="health-inst" title={`${inst.gpu} / ${inst.role} / ${inst.url}${inst.enabled === false ? ' / turned off in the app' : ''}${inst.error ? ' / ' + inst.error : ''}`}>
-          <span className={'dot ' + (inst.enabled === false ? 'off' : inst.reachable ? 'ok' : 'bad')} />
-          {name}
-          {inst.reachable && inst.devices?.[0]?.vram_free != null ? <span className="muted"> {gb(inst.devices[0].vram_free)} GB</span> : null}
-        </span>
-      ))}
-      <span className={'health-inst' + (health.host.ram_free_gb < health.host.min_free_ram_gb ? ' warn' : '')} title="Host RAM free">
-        RAM {health.host.ram_free_gb} GB
-      </span>
-    </span>
+    <details className="status-chip health-badge">
+      <summary className={'chip ' + tone} title="Click for details about your graphics cards and memory">
+        {label}
+      </summary>
+      <div className="status-pop">
+        {needsId && (
+          <Link to={`/assets/${needsId}`} className="small">
+            An asset is waiting for you. Open it.
+          </Link>
+        )}
+        <div className="muted small">VGAC engine v{health.version}</div>
+        {off > 0 && (
+          <Link to="/health" className="small">
+            {off} card{off === 1 ? '' : 's'} turned off. Open System to change.
+          </Link>
+        )}
+        {Object.entries(health.instances).map(([name, inst]) => {
+          const state = inst.enabled === false ? 'Turned off' : inst.reachable ? 'Ready' : 'Starts when needed'
+          return (
+            <div key={name} className="health-inst" title={`${inst.gpu} / ${inst.role} / ${inst.url}${inst.error ? ' / ' + inst.error : ''}`}>
+              <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
+              {inst.gpu || name}: {state}
+              {inst.reachable && inst.devices?.[0]?.vram_free != null ? <span className="muted"> ({gb(inst.devices[0].vram_free)} GB free)</span> : null}
+            </div>
+          )
+        })}
+        <div className={'health-inst' + (lowRam ? ' warn' : '')}>Computer memory: {health.host.ram_free_gb} GB free</div>
+      </div>
+    </details>
   )
 }
 
@@ -90,19 +141,18 @@ export default function HealthPanel() {
     <div className="panel">
       {!error && <SetupCheck />}
       {!error && <GpuCards />}
-      <h2>Health</h2>
-      {error && <div className="error">Backend unreachable: {error}</div>}
-      {health &&
+      <h2>Checks</h2>
+      {error && <div className="error">The engine did not answer: {error}</div>}
+      {health && <div className="instances-grid">{
         Object.entries(health.instances).map(([name, inst]) => (
           <div className="instance" key={name}>
             <div className="row">
               <span className="name">
-                <span className={'dot ' + (inst.reachable ? 'ok' : 'bad')} />
-                Instance {name}
+                <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
+                {inst.gpu || `Card ${name}`}
               </span>
               <span className="meta">
-                {inst.reachable ? 'reachable' : 'unreachable'}
-                {inst.enabled === false ? ', off in the app' : ''}
+                {inst.enabled === false ? 'Turned off' : inst.reachable ? 'Ready' : 'Starts when needed'}
               </span>
             </div>
             <div className="meta">
@@ -112,28 +162,28 @@ export default function HealthPanel() {
             {inst.reachable ? (
               (inst.devices ?? []).map((d, i) => (
                 <div className="device" key={i}>
-                  {d.name ?? d.type ?? 'device'}: VRAM {gb(d.vram_free)} / {gb(d.vram_total)} GB free
+                  {d.name ?? d.type ?? 'device'}: {d.vram_total != null && d.vram_free != null ? gb(d.vram_total - d.vram_free) : "?"} of {gb(d.vram_total)} GB used
                 </div>
               ))
             ) : (
-              <div className="device">{inst.error ?? 'no response'}</div>
+              <div className="device muted">{inst.enabled === false ? 'Turned off in the app.' : 'Not running right now. It starts by itself when a step needs it.'}</div>
             )}
             {health.queue[name] && (
               <div className="device">
-                queue: {health.queue[name].paused ? 'paused' : 'active'}
-                {health.queue[name].current_job_id != null && `, running job ${health.queue[name].current_job_id}`}
+                Work queue: {health.queue[name].paused ? 'paused' : 'taking work'}
+                {health.queue[name].current_job_id != null && ', busy with a job'}
               </div>
             )}
           </div>
-        ))}
+        ))}</div>}
       {health && (
         <div className="host">
           <div className={health.host.ram_free_gb < health.host.min_free_ram_gb ? 'warn' : ''}>
-            Host RAM free: {health.host.ram_free_gb} / {gb(health.host.ram_total_bytes)} GB (dispatch floor {health.host.min_free_ram_gb} GB)
+            Computer memory free: {health.host.ram_free_gb} of {gb(health.host.ram_total_bytes)} GB (work waits if it drops below {health.host.min_free_ram_gb} GB)
           </div>
           <div>CPU: {health.host.cpu_percent}%</div>
           <div>
-            Backend v{health.version}
+            VGAC engine v{health.version}
             {updated && `, updated ${updated.toLocaleTimeString()}`}
           </div>
         </div>
@@ -146,7 +196,7 @@ export default function HealthPanel() {
 export function HealthPage() {
   return (
     <div className="page-narrow">
-      <h1 className="page-title">Backend health</h1>
+      <h1 className="page-title">System</h1>
       <HealthPanel />
     </div>
   )

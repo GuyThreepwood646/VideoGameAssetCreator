@@ -49,7 +49,7 @@ export function PictureViewer({ items, start = 0, checker = false, onClose }: { 
           </strong>
           {size && <span className="muted small">{size[0]} x {size[1]} px</span>}
           <span className="grow" />
-          <div className="seg">
+          <div className="segmented">
             <button type="button" aria-pressed={!actual} onClick={() => setActual(false)} title="The whole picture in the window">
               Fit
             </button>

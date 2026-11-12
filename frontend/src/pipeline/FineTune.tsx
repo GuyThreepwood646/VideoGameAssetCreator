@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { aboutSize, fmtDuration, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
 import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
@@ -408,7 +408,7 @@ export function FineTune({
         </div>
         {stage === 'concept' && suggestion && (
           <span className="muted small">
-            We suggest {suggestion.model_label}, because {suggestion.reason}; {fmtDuration(totalEstimate(suggestion.estimates, refData))} to a finished asset.
+            We suggest {suggestion.model_label}, because {plainJargon(suggestion.reason)}; {fmtDuration(totalEstimate(suggestion.estimates, refData))} to a finished asset.
           </span>
         )}
       </div>
@@ -458,6 +458,14 @@ const AUTO_BOOLEANS: Record<string, { label: string; now?: (v: Version) => strin
     now: (v) => (v.stage !== 'prep' || typeof v.metrics?.srcproject_applied !== 'boolean' ? null : v.metrics.srcproject_applied ? 'This version: painted from your pictures.' : 'This version: not painted from your pictures.'),
   },
   head_build: { label: 'Automatic (on with hair from the library)' },
+  pbr_fix: {
+    label: 'Automatic (on for realistic looks)',
+    now: (v) => (v.stage !== 'prep' || typeof v.metrics?.pbr_fix_applied !== 'boolean' ? null : v.metrics.pbr_fix_applied ? 'This version: colours were kept in the real-material range.' : 'This version: colours were left as drawn.'),
+  },
+  remesh: {
+    label: 'Automatic (on, except for scenery)',
+    now: (v) => (v.stage !== 'mesh' || typeof v.params?.remesh !== 'boolean' ? null : v.params.remesh ? 'This version: the surface was rebuilt as one closed shell.' : 'This version: the surface was left as built.'),
+  },
 }
 
 // Whether the side views this 3D step builds on were made with Pose for 3D first: the turnaround above `target` in its

@@ -599,3 +599,43 @@ def test_remove_a_failed_version(client, fake_execute):
     kept = client.get(f"/api/versions/{good['version']['id']}").json()
     assert kept["status"] == "done" and kept["selected"] is True
 
+
+
+def test_version_zip_and_open_folder(client, fake_execute, monkeypatch):
+    """Finish card: one zip of a version's files, and the folder opens (UI-03)."""
+    import io
+    import zipfile
+
+    from vgac import user_addons
+
+    p, a = _project_asset(client)
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    wait_job(client, out["job"]["id"])
+    vid = out["version"]["id"]
+    r = client.get(f"/api/versions/{vid}/zip")
+    assert r.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "image.png" in names and "cutout.png" in names
+    opened: list[Path] = []
+    monkeypatch.setattr(user_addons, "_launch_explorer", lambda p: opened.append(p))
+    r = client.post(f"/api/versions/{vid}/open-folder")
+    assert r.status_code == 200 and opened and opened[0].is_dir()
+    assert client.get("/api/versions/nope/zip").status_code == 404
+
+
+def test_stage_context_publish_sends_a_version_event(client, monkeypatch):
+    """The redraw is announced the moment its files are registered (UI-18); the pages then show it while step 2 runs."""
+    from types import SimpleNamespace
+
+    from vgac.db import Version, session_factory
+    from vgac.events import bus
+    from vgac.stages.base import StageContext
+
+    p, a = _project_asset(client)
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    seen: list[dict] = []
+    monkeypatch.setattr(bus, "publish_threadsafe", lambda ev: seen.append(ev))
+    with session_factory()() as db:
+        v = db.get(Version, out["version"]["id"])
+        StageContext.publish(SimpleNamespace(version=v))
+    assert seen and seen[0]["type"] == "version" and seen[0]["version"]["id"] == out["version"]["id"]

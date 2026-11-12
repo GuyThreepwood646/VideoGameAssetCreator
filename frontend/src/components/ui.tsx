@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { Check, JobStatus, VersionStatus } from '../api'
+import { Link } from 'react-router'
+import { ApiError, type Check, type JobStatus, type VersionStatus } from '../api'
 import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
 import { useRefData } from '../refdata'
 import { Info } from './Info'
@@ -271,9 +272,35 @@ export function Field({ label, hint, children, inline = false, term }: { label: 
   )
 }
 
+// One error block: a plain sentence, the next action, and the technical text behind a disclosure (UI-32).
 export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null
-  return <div className="error">{error instanceof Error ? error.message : String(error)}</div>
+  const raw = error instanceof Error ? error.message : String(error)
+  const status = error instanceof ApiError ? error.status : null
+  let plain = ''
+  let action: ReactNode = null
+  if (status === 404) {
+    plain = 'That could not be found. It may have been deleted or moved.'
+    action = <Link to="/">Back to projects</Link>
+  } else if (status === 0) {
+    plain = "VGAC's engine is not answering. Check that it is running, then try again."
+    action = (
+      <Link to="/health" className="small">
+        Open System
+      </Link>
+    )
+  } else if (status !== null && status >= 500) {
+    plain = 'Something went wrong inside VGAC. Trying again often fixes it.'
+  }
+  if (!plain) return <div className="error">{raw}</div>
+  return (
+    <div className="error error-block" role="alert">
+      <div>{plain} {action}</div>
+      <Disclosure label="What happened?">
+        <pre className="raw-error">{raw}</pre>
+      </Disclosure>
+    </div>
+  )
 }
 
 // Text chips with an input: Enter adds, Backspace on empty removes the last.
@@ -308,15 +335,15 @@ export function ChipInput({ value, onChange, placeholder }: { value: string[]; o
   )
 }
 
-// Enter submits, Shift+Enter inserts a newline.
-export function SubmitTextarea(props: React.ComponentProps<'textarea'> & { onSubmit?: () => void }) {
-  const { onSubmit, onKeyDown, ...rest } = props
+// Enter submits, Shift+Enter inserts a newline. With ctrlEnter, Enter adds a line and Ctrl+Enter submits.
+export function SubmitTextarea(props: React.ComponentProps<'textarea'> & { onSubmit?: () => void; ctrlEnter?: boolean }) {
+  const { onSubmit, onKeyDown, ctrlEnter, ...rest } = props
   return (
     <textarea
       {...rest}
       onKeyDown={(e) => {
         onKeyDown?.(e)
-        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented) {
+        if (e.key === 'Enter' && (ctrlEnter ? e.ctrlKey || e.metaKey : !e.shiftKey) && !e.defaultPrevented) {
           e.preventDefault()
           if (onSubmit) onSubmit()
           else e.currentTarget.form?.requestSubmit()
@@ -382,4 +409,23 @@ export function duration(a: string | null | undefined, b: string | null | undefi
   const s = Math.max(0, (end - new Date(a).getTime()) / 1000)
   if (s < 60) return `${Math.round(s)}s`
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
+}
+
+// One close control for every inline panel: an x icon button (aria-label Close) and Esc closes it too (UI-27).
+export function PanelClose({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent | globalThis.KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (e.key === 'Escape' && !(t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) && !document.querySelector('[role=dialog], [role=alertdialog]')) onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)">
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
 }
