@@ -4234,3 +4234,35 @@ button.preset-card:hover:not(:disabled) {
   white-space: normal;
   justify-content: center;
 }
+
+/* UI-24: the light menu sits in the toolbar with the other view controls. */
+.viewer-toolbar .viewer-light {
+  position: relative;
+  top: auto;
+  right: auto;
+  align-items: flex-start;
+}
+.viewer-toolbar .viewer-light-pop {
+  position: absolute;
+  top: calc(100% + var(--s1));
+  left: 0;
+  z-index: var(--z-pop);
+  min-width: 260px;
+}
+.viewer-toolbar .viewer-light-btn {
+  padding: var(--s1) 10px;
+  font-size: inherit;
+  background: var(--btn-bg);
+}
+
+/* UI-13: moves as chips inside the viewer (a long list keeps the dropdown). */
+.move-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+.chip-btn {
+  border-radius: var(--radius-pill);
+  padding: 2px var(--s2);
+  font-size: var(--fs-xs);
+}

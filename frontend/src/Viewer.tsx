@@ -1323,16 +1323,27 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         )}
           </div>
         </details>
+        <LightPicker value={light} onChange={chooseLight} note={lightNote} />
         {clips.length > 0 && (
           <>
+            {orderedClips.length <= 10 ? (
+              <span className="move-chips" role="group" aria-label="Moves">
+                {orderedClips.map((c) => (
+                  <button key={c} type="button" className="chip-btn" aria-pressed={clip === c} onClick={() => changeClip(c)} title={loops(c) ? 'Loops' : 'Plays once'}>
+                    {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)}
+                  </button>
+                ))}
+              </span>
+            ) : (
             <select value={clip} onChange={(e) => changeClip(e.target.value)} aria-label="Animation clip">
-              {orderedClips.map((c) => (
-                <option key={c} value={c}>
-                  {/* The plain name the moves list uses, when the clip file gives one (added moves). */}
-                  {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
-                </option>
-              ))}
-            </select>
+                {orderedClips.map((c) => (
+                  <option key={c} value={c}>
+                    {/* The plain name the moves list uses, when the clip file gives one (added moves). */}
+                    {clipInfo?.find((i) => i.name === c)?.label || clipLabel(c)} {loops(c) ? '(loops)' : '(plays once)'}
+                  </option>
+                ))}
+              </select>
+            )}
             <button type="button" onClick={togglePlay} aria-pressed={playing} className={!playing && reduceMotion ? 'viewer-play' : undefined} title={!playing && reduceMotion ? 'Paused because your system asks for less motion; press to play' : undefined}>
               {playing ? 'Pause' : 'Play'}
             </button>
@@ -1360,7 +1371,6 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         </span>
       </div>
       <div className="canvas-host" ref={hostRef} onPointerDown={() => setHintOn(false)}>
-        <LightPicker value={light} onChange={chooseLight} note={lightNote} />
         {hintOn && <div className="viewer-hint">
           {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Hold Ctrl and scroll to zoom. Double-click a spot to look at it closely.
         </div>}
