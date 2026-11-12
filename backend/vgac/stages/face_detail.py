@@ -52,6 +52,7 @@ FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from ed
 # face are then the three-quarter views' own, and the close-up's cheek outline laid on them showed as a line from the
 # side (the photo boy's right cheek). The painted face hands over earlier: full to about 37 degrees, gone by 63.
 FACING_OVER_PICTURES = (0.45, 0.8)
+FEATURES_FEATHER = 0.05  # of the face's width: how softly the painted face ends around the eyes, nose and mouth
 BROW_BAND = (0.32, 0.10)  # above and below the eye line, as shares of the face's width: where the old reach is kept
 EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
 # Each eye on its own (eye_measures, eye_state). Measured on the knights: painted eyes 0.98 to 1.0 painted, match 0.93
@@ -738,6 +739,12 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         filled = face.inpaint(fitted, paint & ~bad)
         fitted = np.where(bad[..., None], filled, fitted)
     weight = face.screen_weight(paint)
+    if tuple(facing) != tuple(FACING):
+        # The body was painted from the pictures: the forehead, the fringe, the temples and the cheeks already carry the
+        # picture itself, sharper and truer than a redrawn close-up. The painted face keeps to the eyes, nose and mouth,
+        # fading out around them (the photo boy: a line at the temple and a soft band under the fringe otherwise).
+        box = face.features_box(info).astype(np.float64)
+        weight = weight * np.clip(face.blur(box, FEATURES_FEATHER * float(info["width_px"])), 0.0, 1.0)
     # where the paint will fade (the region's edge, and surface turning away from the camera) the tone is matched
     # locally, so the cheeks do not show a step where the painted face hands over to the old texture
     fade = weight * face.smoothstep(facing[0], min(1.0, facing[1] + 0.25), view["facing"])
@@ -1380,7 +1387,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     # Optional (face_sides, on unless turned off): it hides the seam where the front painting ends on the cheek (the boy,
     # the red-haired knight), but on the T-pose man it painted a brown smear behind the ear from a side view whose
     # beard sat elsewhere; it also lowers the front's match a little (0.96 to 0.90, 0.90 to 0.88, 0.67 to 0.63).
-    sides = side_pictures(sc) if params.get("face_sides") is not False else {}
+    # (not when the body was painted from the pictures: every view is already on the model there, in its own order)
+    sides = side_pictures(sc) if params.get("face_sides") is not False and not body_painted else {}
     facing = FACING_OVER_PICTURES if body_painted else FACING
     over = (facing,) if body_painted else ()  # the earlier hand-over, only when the body was painted from the pictures
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
