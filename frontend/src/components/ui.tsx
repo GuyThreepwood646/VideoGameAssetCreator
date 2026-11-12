@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { Check, JobStatus, VersionStatus } from '../api'
+import { Link } from 'react-router'
+import { ApiError, type Check, type JobStatus, type VersionStatus } from '../api'
 import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
 import { useRefData } from '../refdata'
 import { Info } from './Info'
@@ -271,9 +272,35 @@ export function Field({ label, hint, children, inline = false, term }: { label: 
   )
 }
 
+// One error block: a plain sentence, the next action, and the technical text behind a disclosure (UI-32).
 export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null
-  return <div className="error">{error instanceof Error ? error.message : String(error)}</div>
+  const raw = error instanceof Error ? error.message : String(error)
+  const status = error instanceof ApiError ? error.status : null
+  let plain = ''
+  let action: ReactNode = null
+  if (status === 404) {
+    plain = 'That could not be found. It may have been deleted or moved.'
+    action = <Link to="/">Back to projects</Link>
+  } else if (status === 0) {
+    plain = "VGAC's engine is not answering. Check that it is running, then try again."
+    action = (
+      <Link to="/health" className="small">
+        Open System
+      </Link>
+    )
+  } else if (status !== null && status >= 500) {
+    plain = 'Something went wrong inside VGAC. Trying again often fixes it.'
+  }
+  if (!plain) return <div className="error">{raw}</div>
+  return (
+    <div className="error error-block" role="alert">
+      <div>{plain} {action}</div>
+      <Disclosure label="What happened?">
+        <pre className="raw-error">{raw}</pre>
+      </Disclosure>
+    </div>
+  )
 }
 
 // Text chips with an input: Enter adds, Backspace on empty removes the last.

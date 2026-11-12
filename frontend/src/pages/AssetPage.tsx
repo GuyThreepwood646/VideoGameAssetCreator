@@ -56,6 +56,36 @@ export default function AssetPage() {
     io.observe(card)
     return () => io.disconnect()
   })
+  // Window title: where you are and, while work runs, progress (UI-38).
+  useEffect(() => {
+    if (!asset || asset.id !== aid) return
+    const k = STAGES.indexOf(stage) + 1
+    document.title = `${asset.name}, step ${k} | VGAC`
+    return () => {
+      document.title = 'Video Game Asset Creator'
+    }
+  }, [asset, aid, stage])
+  // Keyboard shortcuts for the review loop (UI-40): K keep, R try again, C change, arrows for versions, 1 to 6 for steps.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (e.ctrlKey || e.metaKey || e.altKey || (t && (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable))) return
+      if (document.querySelector('[role=dialog]')) return
+      const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
+      const k = e.key.toLowerCase()
+      if (k === 'k') byText('yes, keep')?.click()
+      else if (k === 'r') byText('try again')?.click()
+      else if (k === 'c') byText('change something')?.click()
+      else if (k === 'arrowleft' || k === 'arrowright') {
+        const list = [...document.querySelectorAll<HTMLButtonElement>('.candidate')]
+        const i = list.findIndex((b) => b.getAttribute('aria-pressed') === 'true')
+        list[i + (k === 'arrowright' ? 1 : -1)]?.click()
+      } else if (/^[1-6]$/.test(k) && aid) navigate(`/assets/${aid}/${STAGES[Number(k) - 1]}`)
+      else return
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [aid, navigate])
   // A new step opens at its top, not where the last one was scrolled to (UI-15).
   useEffect(() => {
     document.querySelector('.stage-main')?.scrollTo({ top: 0 })
