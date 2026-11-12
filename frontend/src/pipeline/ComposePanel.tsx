@@ -68,13 +68,14 @@ export function ComposePanel({ asset, onClose, onCreated, onError }: { asset: As
           Step 0.5: make the character from your pictures
           <Info term="term.compose" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          close
+        <button type="button" className="link small" onClick={onClose} aria-label="Close">
+          Close
         </button>
       </div>
       <div className="muted small">
         Add a picture for each part you want to use. The app draws one new full-body character from them, standing ready for 3D and in this project's look. Each result appears in step 1, where you keep the one you like; the other steps then carry on as usual. The drawing model looks at three pictures at most: with more, the extra ones share one sheet and come through less exactly.
       </div>
+      <div className="muted small">Your pictures stay on this computer.</div>
       {!hasFace && filled.length > 0 && (
         <div className="tool-note small">
           For a likeness, give the face its own picture. With a photo of the whole person, use "Crop the face from it" under the picture: a close crop of the face carries the person's features much better than the whole photo does.

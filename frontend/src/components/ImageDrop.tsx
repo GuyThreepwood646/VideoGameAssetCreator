@@ -148,7 +148,7 @@ export function ImageDrop({
       )}
       {error && <div className="error small">{error}</div>}
       {hint && <div className="field-hint">{hint}</div>}
-      <div className="muted small">Your pictures stay on this computer.</div>
+      {!compact && <div className="muted small">Your pictures stay on this computer.</div>}
     </div>
   )
 }
