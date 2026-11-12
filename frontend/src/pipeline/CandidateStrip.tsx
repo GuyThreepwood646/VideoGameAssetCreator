@@ -93,8 +93,7 @@ function CandidateCard({
       </div>
       <div className="candidate-meta">
         <span className="row-between">
-          <strong>v{index}</strong>
-          <span className="muted mono small">{shortId(version.id)}</span>
+          <strong title={`Technical id: ${shortId(version.id)}`}>Version {index}</strong>
         </span>
         {stage === 'concept' && version.params.source === 'upload' && (
           <span className="chip chip-accent" title="Made from a picture you added, not painted by the app">
@@ -102,10 +101,12 @@ function CandidateCard({
           </span>
         )}
         {version.status === 'done' ? (
-          <span className={'traffic-line ' + (good === false ? 'bad' : good ? 'ok' : 'none')} title={reason ?? (good ? 'Every check passed' : 'No checks for this version')}>
-            <TrafficDot state={good === false ? 'bad' : good ? 'ok' : 'none'} />
-            {good === false ? 'needs attention' : good ? 'looks good' : 'no checks'}
-          </span>
+          good === null || good === undefined ? null : (
+            <span className={'traffic-line ' + (good === false ? 'bad' : 'ok')} title={reason ?? 'Every check passed'}>
+              <TrafficDot state={good === false ? 'bad' : 'ok'} />
+              {good === false ? 'Needs a look' : 'Looks good'}
+            </span>
+          )
         ) : (
           <StatusBadge status={version.status} stopped={isStopped(version)} setAside={isSetAside(version)} />
         )}

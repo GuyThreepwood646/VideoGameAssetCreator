@@ -7,7 +7,7 @@ import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, ve
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { finishLines } from './finish'
-import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { fmtDuration, humanError, looksGood, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
 export type GuideState = 'blocked' | 'empty' | 'running' | 'stopped' | 'error' | 'review' | 'selected' | 'finished'
@@ -189,13 +189,13 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       const left = job?.status === 'running' ? est * (1 - progress) : est
       const isVariantRepaint = stage === 'concept' && !!asset.base_asset_id && (job?.kind.includes('refine') || versions.length <= 2)
       happened = isVariantRepaint ? `We are repainting ${baseName ?? 'the original'} with your change${asset.variant_change ? ` ("${asset.variant_change}")` : ''}.` : `${stageGerund(stage)}.`
-      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? `Waiting for a free machine, then ${fmtDuration(est)}.` : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
+      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? `Waiting for the graphics card, then ${fmtDuration(est)}.` : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
       extra = (
         <div className="guide-progress">
           <div className="progress" aria-label={`progress ${Math.round(progress * 100)} percent`}>
             <div className="progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
-          <span className="muted small">{job?.message || 'working'}</span>
+          <span className="muted small">{plainJargon(job?.message) || 'working'}</span>
         </div>
       )
       const stopping = job?.message === 'cancelling'

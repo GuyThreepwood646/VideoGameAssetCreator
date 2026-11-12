@@ -972,7 +972,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         attachOverlay(hh)
         placeAttachments()
         applyClipRequest()
-        setStatus(`${Math.round(tris).toLocaleString('en-US')} tris${skinned ? ', skinned' : ''}${names.length ? `, ${names.length} clips` : ''}`)
+        setStatus(`Preview: ${Math.round(tris).toLocaleString('en-US')} triangles${skinned ? ', skinned' : ''}${names.length ? `, ${names.length} moves` : ''}`)
       },
       undefined,
       (err) => {

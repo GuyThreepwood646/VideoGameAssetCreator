@@ -42,7 +42,7 @@ export default function ProjectsPage() {
 
   const shown = useMemo(() => {
     if (!projects) return []
-    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? modelLabel(p.style_lock.model)
+    const look = (p: Project) => presetById(presets, p.style_lock.preset)?.label ?? 'Custom look'
     const q = query.trim().toLowerCase()
     const list = q ? projects.filter((p) => [p.name, look(p), platformPlain(p.platform_target)].some((t) => t.toLowerCase().includes(q))) : [...projects]
     const activity = (p: Project) => p.last_activity ?? p.created_at
@@ -606,7 +606,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
       <div className="col">
         <div className="row-between">
           <div className="field-label">
-            Style preset (look)
+            Look
             <Info term="term.look" />
           </div>
           <span className="small">
