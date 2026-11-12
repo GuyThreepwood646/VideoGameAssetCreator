@@ -4234,3 +4234,13 @@ button.preset-card:hover:not(:disabled) {
 .preset-row.compact .preset-sample {
   max-height: 96px;
 }
+
+.nudge-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(92px, auto));
+  gap: var(--s1);
+}
+.nudge-pad > button {
+  white-space: normal;
+  justify-content: center;
+}
