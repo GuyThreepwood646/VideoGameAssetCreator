@@ -1,6 +1,6 @@
 // Autopilot: the "Make it" action, the running/paused card that replaces the
 // guide while the autopilot owns the asset, and the finishing moment card.
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, useContext, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
@@ -8,6 +8,7 @@ import { Info } from '../components/Info'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
+import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
 import { UnityHandoff, unityImportOf } from './UnityHandoff'
@@ -124,9 +125,9 @@ export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset:
   const chosen = (pick && options.includes(pick) ? pick : stale && options.includes(stale) ? stale : options[options.length - 1]) as StageId
   const name = (s: StageId) => stagePlain(s, stages?.find((x) => x.id === s) ?? null)
   return (
-    <div className="resume-from">
+    <Disclosure label="Saw something off earlier? Go back to an earlier step" className="resume-from">
       <label className="small muted" htmlFor="resume-from-step">
-        Saw something off earlier? Go back to
+        Go back to
       </label>
       <div className="row-gap">
         <select id="resume-from-step" value={chosen} disabled={busy} onChange={(e) => setPick(e.target.value as StageId)}>
@@ -139,7 +140,7 @@ export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset:
         <ResumeButton small label="Resume from there" disabled={busy} onClick={() => onResumeFrom(chosen)} title={`Makes "${name(chosen)}" again and rebuilds every step after it. The results you have now stay in the history.`} />
       </div>
       <div className="small muted">That step is made again and every step after it is rebuilt.</div>
-    </div>
+    </Disclosure>
   )
 }
 
@@ -316,6 +317,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
   const mainFile = exp?.files.fbx ?? exp?.files.glb
+  const viewerPaused = useContext(ViewerPausedContext)
   const [folderBusy, setFolderBusy] = useState(false)
   const [folderMsg, setFolderMsg] = useState('')
   const unity = unityImportOf(exp)
@@ -408,7 +410,13 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           </div>
         )}
         {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
-        {glb ? <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
+        {viewerPaused ? (
+          <div className="placeholder-box">The preview is paused while the Items panel is open, so only one 3D view runs at a time.</div>
+        ) : glb ? (
+          <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" />
+        ) : (
+          <div className="placeholder-box">No 3D model to show.</div>
+        )}
         {exp && <BeautyPicture version={exp} name={asset.name} />}
         {exp && (
           <Disclosure label={`All files (${deliverableKeys(exp).length})`}>

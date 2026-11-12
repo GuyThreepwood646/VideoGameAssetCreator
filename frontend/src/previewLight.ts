@@ -305,3 +305,6 @@ export function keepOverlayColours(root: THREE.Object3D) {
     for (const m of Array.isArray(mat) ? mat : [mat]) m.toneMapped = false
   })
 }
+
+// True while another live 3D preview (the Items panel) is open: the finishing preview waits, so two never run at once (UI-07).
+export const ViewerPausedContext = createContext<boolean>(false)
