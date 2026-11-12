@@ -28,6 +28,7 @@ import { preferredConceptModel } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
+import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { OwnPictures, ReferencePicture } from './OwnPictures'
@@ -79,6 +80,7 @@ function firstTarget(asset: Asset, stage: StageId): Version {
 
 export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped, hideStaleFrom }: Props) {
   const navigate = useNavigate()
+  const confirm = useConfirm()
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -188,8 +190,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   // Remove versions that failed, were stopped or were rejected (their files go too; this cannot be undone).
   const removable = versions.filter((v) => isRemovable(asset, v))
   const failedRemovable = removable.filter((v) => v.status === 'error')
-  const removeVersions = (list: Version[], question: string) => {
-    if (!list.length || !window.confirm(question)) return
+  const removeVersions = async (list: Version[], question: string) => {
+    if (!list.length) return
+    const ok = await confirm.ask({ title: list.length === 1 ? 'Remove this version?' : `Remove ${list.length} versions?`, body: question, confirmLabel: 'Remove', danger: true })
+    if (!ok) return
     void act(async () => {
       if (active && list.some((v) => v.id === active.id)) setActiveId(null)
       for (const v of list) await api.deleteVersion(v.id, true)
@@ -237,6 +241,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
 
   return (
     <div className="stage-panel">
+      {confirm.dialog}
       <GuidePanel
         asset={asset}
         stage={stage}
@@ -330,12 +335,16 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           <div className="active-version">
             <div className="row-between">
               <div className="row-gap">
-                <strong>Version {versions.indexOf(active) + 1}</strong>
-                <span className="muted small mono">{shortId(active.id)}</span>
+                <strong title={`Technical id: ${shortId(active.id)}`}>Version {versions.indexOf(active) + 1}</strong>
                 <StatusBadge status={active.status} stopped={isStopped(active)} setAside={isSetAside(active)} />
-                {selected?.id === active.id && <span className="chip chip-ok">kept</span>}
-                {active.parent_version_id && <span className="muted small">changed from {shortId(active.parent_version_id)}</span>}
-                <span className="muted small">{timeAgo(active.created_at)}</span>
+                <span className="muted small">
+                  made {timeAgo(active.created_at)}
+                  {(() => {
+                    if (!active.parent_version_id) return ''
+                    const n = versions.findIndex((v) => v.id === active.parent_version_id)
+                    return n >= 0 ? ` from version ${n + 1}` : ' from an earlier version'
+                  })()}
+                </span>
               </div>
               {removable.some((v) => v.id === active.id) && (
                 <button
@@ -351,7 +360,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             </div>
             {active.status === 'error' && (
               <div className="error-box">
-                <div className="error-sentence">{humanError(active.error)}</div>
+                <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
                 <div className="row-gap">
                   {state !== 'error' && (
                     <button type="button" disabled={busy} onClick={() => retry(active)}>
@@ -437,6 +446,34 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
 }
 
+// While a step runs, show what it is working from, faded, and the redraw as soon as it exists (UI-18).
+function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset }) {
+  const parent = version.parent_version_id ? Object.values(asset.stages ?? {}).flatMap((l) => l ?? []).find((v) => v.id === version.parent_version_id) : undefined
+  const from = parent ? libraryUrl(parent.files.front_cutout ?? parent.files.cutout ?? parent.files.image ?? parent.files.front) : undefined
+  const redraw = libraryUrl(version.files.pose_ready_picture ?? undefined)
+  return (
+    <div className="placeholder-box running-placeholder" role="status">
+      {(from || redraw) && (
+        <div className="running-pictures">
+          {from && (
+            <figure className="running-from">
+              <img src={from} alt="The picture this step is working from" />
+              <figcaption className="muted small">Working from this</figcaption>
+            </figure>
+          )}
+          {redraw && (
+            <figure>
+              <img src={redraw} alt="The redrawn picture for 3D" />
+              <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
+            </figure>
+          )}
+        </div>
+      )}
+      <span>{version.status === 'queued' ? 'Waiting for the graphics card...' : 'Working on it. The result appears here when it is ready.'}</span>
+    </div>
+  )
+}
+
 function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
@@ -446,7 +483,8 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     return <div className="placeholder-box">This version was stopped before it made a result.</div>
   }
   if (version.status !== 'done' && version.status !== 'rejected') {
-    return <div className="placeholder-box">{version.status === 'error' ? 'This version has no result.' : 'Waiting for the result...'}</div>
+    if (version.status === 'error') return <div className="placeholder-box">This version has no result.</div>
+    return <RunningPlaceholder version={version} asset={asset} />
   }
   switch (stage) {
     case 'concept':
@@ -566,9 +604,14 @@ function HappyBlock({
         </button>
         <span className="grow" />
         <FeedbackButtons fb={fb} />
-        <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
-          Reject
-        </button>
+        <details className="more-menu">
+          <summary aria-label="More actions" title="More actions">...</summary>
+          <div className="status-pop more-pop">
+            <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
+              Reject this version
+            </button>
+          </div>
+        </details>
       </div>
       <FeedbackNote key={active.id} fb={fb} />
     </div>
@@ -774,7 +817,7 @@ function ChangePanel({
           <Info term="term.instruction" />
         </div>
         <div className="refine-row">
-          <SubmitTextarea ref={describeRef} rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage)} aria-label="Describe the change" />
+          <SubmitTextarea ref={describeRef} rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={stagePlaceholder(stage, asset.category)} aria-label="Describe the change" />
           {stage === 'turnaround' && (
             <select value={view} onChange={(e) => setView(e.target.value)} aria-label="Which view to change">
               <option value="">all views</option>

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { movesApi, type CharacterMove, type CharacterMoves, type MoveClip, type MoveLibrary, type MyMoveFile, type MyMovesListing, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, ErrorText } from '../components/ui'
+import { Disclosure, ErrorText, PanelClose } from '../components/ui'
 import { joinAnd } from '../help'
 import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
@@ -13,12 +13,12 @@ import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: 'yours', 'built-in': 'built in' }
 const BUSY_POLL_MS = 4000
 
-export function MovesPanel({ version }: { version: Version }) {
+// previewClips: the clips the viewer can play (from the file); a move outside it says so. onPlay plays one in the viewer.
+export function MovesPanel({ version, previewClips = null, onPlay }: { version: Version; previewClips?: string[] | null; onPlay?: (clip: string) => void }) {
   const aid = version.asset_id
   const [data, setData] = useState<CharacterMoves | null>(null)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  const [remove, setRemove] = useState<Set<string>>(new Set())
   const [picking, setPicking] = useState(false)
   const [sending, setSending] = useState(false)
   const [sameAs, setSameAs] = useState('')
@@ -36,7 +36,6 @@ export function MovesPanel({ version }: { version: Version }) {
   }, [aid])
 
   useEffect(() => {
-    setRemove(new Set())
     void load()
   }, [load, version.id, version.status])
 
@@ -51,8 +50,7 @@ export function MovesPanel({ version }: { version: Version }) {
     setError(null)
     try {
       await movesApi.change(aid, body)
-      setRemove(new Set())
-      setPicking(false)
+        setPicking(false)
       await load()
     } catch (e) {
       setError(e)
@@ -64,19 +62,11 @@ export function MovesPanel({ version }: { version: Version }) {
   if (missing || !data || version.stage !== 'rig') return null
   const busy = data.busy || sending
   const kept = data.rig_version === version.id
-  const toggleRemove = (name: string, on: boolean) =>
-    setRemove((s) => {
-      const n = new Set(s)
-      if (on) n.add(name)
-      else n.delete(name)
-      return n
-    })
-
   return (
     <section className="moves-panel">
       <div className="row-between">
         <div className="field-label">
-          Moves ({data.moves.length})
+          Moves in your files ({data.moves.length})
           <Info term="term.add_move" />
         </div>
         {data.can_add && kept && (
@@ -105,14 +95,22 @@ export function MovesPanel({ version }: { version: Version }) {
       <ul className="moves-list">
         {data.moves.map((m) => (
           <li key={m.name} className={m.made ? '' : 'move-not-made'}>
-            {data.can_add && kept && (
-              <input type="checkbox" aria-label={`Remove ${m.label}`} checked={remove.has(m.name)} disabled={busy} onChange={(e) => toggleRemove(m.name, e.target.checked)} />
+            {onPlay && m.clip && previewClips?.includes(m.clip) && (
+              <button type="button" className="small-btn" aria-label={`Play ${m.label} in the viewer`} title="Play this move in the viewer above" onClick={() => onPlay(m.clip!)}>
+                Play
+              </button>
             )}
             <span className="move-label">{m.label}</span>
             <span className="muted small">
               {m.loop ? 'loops' : 'plays once'}, {SOURCE_WORD[m.source]}
               {m.added ? ', added by you' : ''}
             </span>
+            {previewClips && previewClips.length > 0 && (!m.clip || !previewClips.includes(m.clip)) && <span className="muted small">preview not available</span>}
+            {data.can_add && kept && (
+              <button type="button" className="link small move-remove" disabled={busy} aria-label={`Remove ${m.label} from your files`} onClick={() => change({ remove: [m.name] })}>
+                Remove
+              </button>
+            )}
             {!m.made && (
               <span className="small">
                 <span className="warn-mark">CHECK</span>could not be made
@@ -123,10 +121,6 @@ export function MovesPanel({ version }: { version: Version }) {
       </ul>
       {data.can_add && kept && (
         <div className="row-gap">
-          <button type="button" disabled={busy || remove.size === 0} onClick={() => change({ remove: [...remove] })}>
-            {remove.size ? `Remove them (${remove.size})` : 'Remove them'}
-          </button>
-          {remove.size === 0 && <span className="muted small">Tick moves to take them off.</span>}
           {data.others.length > 0 && (
             <span className="row-gap moves-same">
               <select value={sameAs} disabled={busy} aria-label="Character to copy the moves from" onChange={(e) => setSameAs(e.target.value)}>
@@ -235,9 +229,7 @@ function MovePicker({ have, busy, onAdd, onClose }: { have: CharacterMove[]; bus
           <h2 id="move-picker-title" className="overlay-title">
             Add a move
           </h2>
-          <button type="button" className="link" onClick={onClose}>
-            Close
-          </button>
+          <PanelClose onClose={onClose} />
         </div>
         {own ? (
           own.mode === 'upload' ? (

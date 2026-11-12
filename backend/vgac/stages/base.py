@@ -87,6 +87,13 @@ class StageContext:
         self.save()
         return rel
 
+    def publish(self) -> None:
+        """Tell the open pages this version changed (its files, so a picture made mid-step shows at once)."""
+        from ..db import version_to_dict
+        from ..events import bus
+
+        bus.publish_threadsafe({"type": "version", "version": version_to_dict(self.version)})
+
     def set_metrics(self, **values: Any) -> None:
         library.update_metrics(self.version, **values)
         self.save()

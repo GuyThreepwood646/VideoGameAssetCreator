@@ -6,8 +6,10 @@ import { api, ApiError, libraryUrl, type GalleryItem } from '../api'
 import { Info } from '../components/Info'
 import { ErrorText, timeAgo, useAsync } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
+import Viewer from '../Viewer'
 import { CATEGORY_HELP, platformPlain, STAGE_TEXT, STYLE_HELP } from '../help'
 import { categoryLabel, useRefData } from '../refdata'
+import { lookLabelForStyle, usePresets } from '../presets'
 
 export default function GalleryPage() {
   const { data: items, error, loading } = useAsync(() => api.gallery(), [])
@@ -19,14 +21,21 @@ export default function GalleryPage() {
     for (const it of items ?? []) if (!seen.has(it.project_id)) seen.set(it.project_id, it.project_name)
     return [...seen.entries()]
   }, [items])
-  const shown = (items ?? []).filter((it) => !project || it.project_id === project)
+  const [category, setCategory] = useState('')
+  const [look, setLook] = useState('')
+  const [query, setQuery] = useState('')
+  const { presets } = usePresets()
+  const cats = useMemo(() => [...new Set((items ?? []).map((it) => it.category))], [items])
+  const looks = useMemo(() => [...new Set((items ?? []).map((it) => it.style_preset))], [items])
+  const q = query.trim().toLowerCase()
+  const shown = (items ?? []).filter((it) => (!project || it.project_id === project) && (!category || it.category === category) && (!look || it.style_preset === look) && (!q || it.asset_name.toLowerCase().includes(q)))
   const missing = error instanceof ApiError && error.status === 404
 
   return (
     <div className="gallery-page">
       <div className="row-between">
         <h1 className="page-title">
-          Gallery
+          Finished assets
           <Info term="term.gallery" />
         </h1>
         {projects.length > 1 && (
@@ -43,6 +52,27 @@ export default function GalleryPage() {
           </label>
         )}
       </div>
+      {items && items.length > 1 && (
+        <div className="row-gap small gallery-filters" role="group" aria-label="Filter the finished assets">
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name" aria-label="Search by name" />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Show one kind of asset">
+            <option value="">All kinds</option>
+            {cats.map((c) => (
+              <option key={c} value={c}>
+                {ref?.categories.some((x) => x.id === c) ? categoryLabel(ref, c) : (CATEGORY_HELP[c]?.plain ?? c)}
+              </option>
+            ))}
+          </select>
+          <select value={look} onChange={(e) => setLook(e.target.value)} aria-label="Show one look">
+            <option value="">All looks</option>
+            {looks.map((l) => (
+              <option key={l} value={l}>
+                {lookLabelForStyle(presets, l, STYLE_HELP[l]?.plain ?? l)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {missing ? <div className="placeholder-box">This backend does not have a gallery yet. Finished assets are still on each project's page.</div> : <ErrorText error={error} />}
       {loading && !items && <div className="muted">Loading...</div>}
       {items && items.length === 0 && <EmptyGallery />}
@@ -78,13 +108,15 @@ function EmptyGallery() {
 }
 
 function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: string }) {
+  const { presets } = usePresets()
   const thumbUrl = libraryUrl(item.thumbnail)
   // No picture: fall back to a still of the finished model.
   const { src: snap } = useGlbSnapshot(thumbUrl ? undefined : libraryUrl(item.preview ?? item.glb))
   const img = thumbUrl ?? snap
+  const [look, setLook] = useState(false)
   const when = item.finished_at ?? item.created_at
   const to = `/assets/${item.asset_id}/export`
-  const style = STYLE_HELP[item.style_preset]?.plain ?? item.style_preset
+  const style = lookLabelForStyle(presets, item.style_preset, STYLE_HELP[item.style_preset]?.plain ?? item.style_preset)
   return (
     <article className="gallery-card">
       <Link to={to} className="gallery-open" aria-label={`Open ${item.asset_name}`}>
@@ -94,11 +126,19 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
       <div className="muted small">
         <Link to={`/projects/${item.project_id}`}>{item.project_name}</Link>
       </div>
+      {(item.glb || item.preview) && (
+        <div>
+          <button type="button" className="small-btn" aria-expanded={look} onClick={() => setLook((v) => !v)} title="Turn the model around right here">
+            {look ? 'Close quick look' : 'Quick look (turn it around)'}
+          </button>
+          {look && libraryUrl(item.glb ?? item.preview) && <Viewer url={libraryUrl(item.glb ?? item.preview) as string} height={240} turntableDefault showBonesDefault={false} />}
+        </div>
+      )}
       <div className="chips">
         <span className="chip" title={item.category}>
           {categoryName}
         </span>
-        <span className="chip" title={item.platform_target}>
+        <span className="chip" title={platformPlain(item.platform_target)}>
           {platformPlain(item.platform_target).split(':')[0]}
         </span>
         {style && (
@@ -110,7 +150,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
       <div className="muted small" title={when ? new Date(when).toLocaleString() : undefined}>
         Finished {when ? `${new Date(when).toLocaleDateString()} (${timeAgo(when)})` : 'at an unknown time'}
       </div>
-      <DeliveredRow path={item.delivered_to} />
+      <DeliveredRow path={item.delivered_to} versionId={item.export_version_id} />
       {(item.fbx || item.glb) && (
         <div className="files-row small">
           <span className="muted">files:</span>
@@ -130,7 +170,7 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
   )
 }
 
-function DeliveredRow({ path }: { path: string | null }) {
+function DeliveredRow({ path, versionId }: { path: string | null; versionId?: string }) {
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
   useEffect(() => {
     if (!copied) return
@@ -145,10 +185,12 @@ function DeliveredRow({ path }: { path: string | null }) {
         <Info term="term.delivered_to" />
       </div>
       <div className="delivered-row">
-        <code className="delivered-path mono small" title={path}>
-          {path}
-        </code>
-        <button type="button" className="small-btn" onClick={() => copyText(path).then((ok) => setCopied(ok ? 'ok' : 'fail'))} aria-label={`Copy the folder path ${path}`}>
+        {versionId && (
+          <button type="button" className="small-btn" title={path} onClick={() => void api.openVersionFolder(versionId).catch(() => undefined)}>
+            Open folder
+          </button>
+        )}
+        <button type="button" className="small-btn" title={path} onClick={() => copyText(path).then((ok) => setCopied(ok ? 'ok' : 'fail'))} aria-label={`Copy the folder path ${path}`}>
           {copied === 'ok' ? 'Copied' : copied === 'fail' ? 'Copy failed' : 'Copy'}
         </button>
       </div>

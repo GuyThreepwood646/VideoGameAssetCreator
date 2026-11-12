@@ -1,17 +1,19 @@
 // Autopilot: the "Make it" action, the running/paused card that replaces the
 // guide while the autopilot owns the asset, and the finishing moment card.
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, useContext, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
+import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, stagePlain, STOP_ON_OPTIONS } from '../help'
+import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
+import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
-import { UnityHandoff } from './UnityHandoff'
-import { Deliverables } from './views/ExportView'
+import { UnityHandoff, unityImportOf } from './UnityHandoff'
+import { Deliverables, deliverableKeys } from './views/ExportView'
 
 export type AutopilotActions = {
   start: (body?: AutopilotBody) => void
@@ -64,6 +66,7 @@ export function makeItEstimate(asset: Asset, stages: StageInfo[] | null, estimat
 // "Make it": the one button that runs everything. Primary unless told otherwise.
 export function MakeItAction({ asset, stages, estimates, busy, primary, onStart }: { asset: Asset; stages: StageInfo[] | null; estimates: Record<string, number> | null; busy: boolean; primary: boolean; onStart: (body: AutopilotBody) => void }) {
   const [stopOn, setStopOn] = useState<StopOn>('block')
+  const [changing, setChanging] = useState(false)
   const est = makeItEstimate(asset, stages, estimates)
   const opt = STOP_ON_OPTIONS.find((o) => o.id === stopOn) ?? STOP_ON_OPTIONS[0]
   return (
@@ -76,6 +79,14 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         Runs every step and only stops if something needs you.
         <Info term="term.autopilot" />
       </div>
+      {!changing ? (
+        <div className="make-it-stop small muted">
+          {opt.id === 'block' ? 'Stops for serious problems.' : opt.id === 'warn' ? 'Stops for any warning.' : 'Never stops for checks.'}{' '}
+          <button type="button" className="link small" onClick={() => setChanging(true)}>
+            Change
+          </button>
+        </div>
+      ) : (
       <label className="make-it-stop small">
         <select value={stopOn} onChange={(e) => setStopOn(e.target.value as StopOn)} aria-label="When the autopilot should stop" title={opt.hint} disabled={busy}>
           {STOP_ON_OPTIONS.map((o) => (
@@ -86,6 +97,7 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         </select>
         <Info term="term.stop_on" />
       </label>
+      )}
     </div>
   )
 }
@@ -114,9 +126,9 @@ export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset:
   const chosen = (pick && options.includes(pick) ? pick : stale && options.includes(stale) ? stale : options[options.length - 1]) as StageId
   const name = (s: StageId) => stagePlain(s, stages?.find((x) => x.id === s) ?? null)
   return (
-    <div className="resume-from">
+    <Disclosure label="Saw something off earlier? Go back to an earlier step" className="resume-from">
       <label className="small muted" htmlFor="resume-from-step">
-        Saw something off earlier? Go back to
+        Go back to
       </label>
       <div className="row-gap">
         <select id="resume-from-step" value={chosen} disabled={busy} onChange={(e) => setPick(e.target.value as StageId)}>
@@ -129,6 +141,41 @@ export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset:
         <ResumeButton small label="Resume from there" disabled={busy} onClick={() => onResumeFrom(chosen)} title={`Makes "${name(chosen)}" again and rebuilds every step after it. The results you have now stay in the history.`} />
       </div>
       <div className="small muted">That step is made again and every step after it is rebuilt.</div>
+    </Disclosure>
+  )
+}
+
+// The step 1 version that `version` was drawn from, walking up the parents.
+function conceptOf(asset: Asset, version: Version): Version | undefined {
+  const byId = new Map<string, Version>()
+  for (const list of Object.values(asset.stages ?? {})) for (const v of list ?? []) byId.set(v.id, v)
+  let v: Version | undefined = version
+  for (let guard = 0; v && guard < 200; guard++) {
+    if (v.stage === 'concept') return v
+    v = v.parent_version_id ? byId.get(v.parent_version_id) : undefined
+  }
+  return undefined
+}
+
+// UI-47: the pause after Pose for 3D first. Your step 1 picture beside the redraw every view and the 3D model start from,
+// so a lost arm or a changed colour is seen here, before the 3D build.
+function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const redraw = version.files.pose_ready_picture
+  if (!redraw) return null
+  const original = conceptOf(asset, version)?.files.image
+  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Redrawn for 3D' }]
+  return (
+    <div className="redraw-pair" aria-label="Your picture and its redraw side by side">
+      {items.map((it, i) => (
+        <figure key={it.label} className="redraw-pair-cell">
+          <Zoomable className="redraw-pair-image" label={it.label.toLowerCase()} onOpen={() => setOpen(i)}>
+            <img src={it.src} alt={it.label} />
+          </Zoomable>
+          <figcaption className="small">{it.label}</figcaption>
+        </figure>
+      ))}
+      {open !== null && <PictureViewer items={items} start={open} checker={false} onClose={() => setOpen(null)} />}
     </div>
   )
 }
@@ -165,7 +212,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
               <div className="progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
             </div>
             <span className="muted small">
-              {job?.message || 'working'}
+              {plainJargon(job?.message) || 'working'}
               {ap.stages_done.length ? ` / ${ap.stages_done.length} of ${STAGES.length} steps kept` : ''}
             </span>
           </div>
@@ -184,6 +231,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   // "Fix and continue" only takes a re-run fix; a fix that opens a tool waits for the person.
   // An upscale makes a new step 1 picture to keep, so it is never the autopilot's own "Fix and continue".
   const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui && f.op !== 'upscale') ?? null
+  const firstFixCheck = firstFix ? failing.find((c) => checkFix(c)?.label === firstFix.label) : undefined
   const onFix = (f: FixRequest) => (f.op === 'upscale' ? version && void api.upscale(version.id) : f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
   const versionFailed = version?.status === 'error'
   const paused = ap.status === 'paused'
@@ -237,6 +285,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           )}
         </div>
         <div className="guide-happened">{ap.reason || (paused ? 'The autopilot is waiting for you.' : 'The autopilot stopped.')}</div>
+        {paused && version?.status === 'done' && ap.reason?.startsWith('Step 2 redrew') && <RedrawPair asset={asset} version={version} />}
         {versionFailed && version?.error && (
           <div className="guide-now">
             {humanError(version.error)}
@@ -254,7 +303,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           {paused
             ? failing.length
               ? firstFix
-                ? '"Fix and continue" applies the first fix and carries on; "Continue anyway" keeps this result as it is.'
+                ? `"${firstFix.label} and continue" fixes ${firstFixCheck?.message ? `"${firstFixCheck.message}"` : 'the first problem listed'} and carries on. You can also keep this result as it is.`
                 : 'No automatic fix is known for this. Change something below, keep a result, then continue; or continue anyway.'
               : versionFailed
                 ? 'Try again runs this step once more and carries on.'
@@ -266,12 +315,12 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
       <div className="guide-action guide-action-col">
         {paused && !versionFailed && firstFix && (
           <button type="button" className="primary" disabled={busy} onClick={() => actions.fixAndContinue(firstFix)} title={`${firstFix.label}: ${fixTooltip(firstFix, stages)} Then the autopilot carries on.`}>
-            Fix and continue
+            {firstFix.label} and continue
           </button>
         )}
         {paused && !versionFailed && version?.status === 'done' && (
-          <button type="button" className={firstFix ? '' : 'primary'} disabled={busy} onClick={actions.continueAnyway} title="Keeps this result and runs the remaining steps">
-            Continue anyway
+          <button type="button" className={firstFix ? 'link small' : 'primary'} disabled={busy} onClick={actions.continueAnyway} title="Keeps this result and runs the remaining steps">
+            {ap.reason?.startsWith('Step 2 redrew') ? 'Looks right, continue' : 'Continue anyway'}
           </button>
         )}
         {paused && (versionFailed || !version) && (
@@ -304,6 +353,23 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const lines = finishLines(asset)
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
+  const mainFile = exp?.files.fbx ?? exp?.files.glb
+  const viewerPaused = useContext(ViewerPausedContext)
+  const [folderBusy, setFolderBusy] = useState(false)
+  const [folderMsg, setFolderMsg] = useState('')
+  const unity = unityImportOf(exp)
+  const openFolder = async () => {
+    if (!exp) return
+    setFolderBusy(true)
+    setFolderMsg('')
+    try {
+      await api.openVersionFolder(exp.id, unity?.folder ? 'unity' : 'files')
+    } catch {
+      setFolderMsg('The folder could not be opened. The files are under the library folder for this asset.')
+    } finally {
+      setFolderBusy(false)
+    }
+  }
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
   // The plain walk by its exact name: a looser match used to pick "crouch_walk" once more moves were offered.
@@ -316,7 +382,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         <div className="guide-kicker">{byAutopilot ? 'Autopilot finished' : 'Finished'}</div>
         <div className="guide-happened finish-title">Your asset is ready</div>
         <div className="guide-now">
-          {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
+          Your {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
         {(lines.length > 0 || look) && (
           <div className="finish-lines">
@@ -355,10 +421,45 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
             </ul>
           </div>
         )}
-        {glb ? <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
-        {exp && <BeautyPicture version={exp} name={asset.name} />}
-        {exp && <Deliverables version={exp} />}
+        {exp && (
+          <div className="row-gap finish-deliver">
+            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder in your file explorer">
+              {unity?.folder ? 'Open the Unity folder' : 'Open the asset folder'}
+            </button>
+            {mainFile && (
+              <a className="btn" href={libraryUrl(mainFile)} download={mainFile.split('/').pop()}>
+                Download {exp.files.fbx ? 'FBX' : 'GLB'}
+              </a>
+            )}
+            <a className="btn" href={api.versionZipUrl(exp.id)} download>
+              Download everything (.zip)
+            </a>
+            {folderMsg && <span className="muted small">{folderMsg}</span>}
+            {unity ? (
+              <span className="small">
+                Copied to your Unity project{unity.project ? <>: <span className="mono">{unity.project}</span></> : ''}.
+              </span>
+            ) : (
+              <Link className="small" to={`/?edit=${asset.project_id}`} title="Pick the Unity project in Look and settings; the next export copies into it">
+                Set a Unity project
+              </Link>
+            )}
+          </div>
+        )}
         {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
+        {viewerPaused ? (
+          <div className="placeholder-box">The preview is paused while the Items panel is open, so only one 3D view runs at a time.</div>
+        ) : glb ? (
+          <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" />
+        ) : (
+          <div className="placeholder-box">No 3D model to show.</div>
+        )}
+        {exp && <BeautyPicture version={exp} name={asset.name} />}
+        {exp && (
+          <Disclosure label={`All files (${deliverableKeys(exp).length})`}>
+            <Deliverables version={exp} />
+          </Disclosure>
+        )}
         {howto && (
           <Disclosure label="Using it in Unity" className="unity-howto">
             <div className="muted small">
@@ -373,7 +474,8 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           </Disclosure>
         )}
         <div className="row-gap finish-actions">
-          <Link className="btn primary" to={`/projects/${asset.project_id}`}>
+          <span className="muted small">What next?</span>
+          <Link className="btn" to={`/projects/${asset.project_id}`}>
             Make another
           </Link>
           <button type="button" onClick={onMakeVariant} disabled={!asset.selected?.concept} title="A copy of this asset with one change">

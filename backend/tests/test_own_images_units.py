@@ -150,8 +150,9 @@ def test_props_measure_across_and_skip_the_arms_check():
 
 def test_redraw_instruction_uses_each_category_pose_block():
     assert readiness.redraw_instruction(reference.category("humanoid")) == (
-        "Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose, "
-        "whole body in frame, plain light grey background, even lighting")
+        "Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose with each hand "
+        "open and empty, back of the hand toward the camera, fingers straight and slightly spread, nothing held in "
+        "either hand and no hand in a pocket or hidden, whole body in frame, plain light grey background, even lighting")
     for cid in ("quadruped", "prop_rigid", "vehicle"):
         cat = reference.category(cid)
         text = readiness.redraw_instruction(cat)

@@ -6,8 +6,8 @@ import { Link } from 'react-router'
 import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { finishLines } from './finish'
-import { fmtDuration, humanError, looksGood, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { failingCheckCount, findCheckStage, finishLines } from './finish'
+import { fmtDuration, humanError, looksGood, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
 export type GuideState = 'blocked' | 'empty' | 'running' | 'stopped' | 'error' | 'review' | 'selected' | 'finished'
@@ -66,8 +66,10 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   const versions = versionsOf(asset, stage)
   const idx = selected ? versions.indexOf(selected) + 1 : 0
   const good = selected ? looksGood(selected.metrics) : null
-  const kept = `You kept version ${idx}${good === true ? ', and it passed every check' : good === false ? ', though a check needs attention' : ''}.`
-  const warns = finishLines(asset).filter((l) => l.state === 'warn').length
+  const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? '. A check on this step needs a look' : ''}.`
+  const warnLines = finishLines(asset).filter((l) => l.state === 'warn')
+  const warns = warnLines.length
+  const allFailing = failingCheckCount(asset)
   const exp = selectedVersion(asset, 'export')
   const file = exp?.files.fbx ?? exp?.files.glb
   return (
@@ -82,7 +84,19 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
         {warns > 0 && (
           <div className="finish-bar-warn small">
             <TrafficDot state="warn" />
-            {warns === 1 ? '1 check on the finished asset needs a look.' : `${warns} checks on the finished asset need a look.`}
+            {warns === 1 ? '1 check on the finished asset needs a look:' : `${warns} checks on the finished asset need a look:`}
+            <ul className="finish-bar-list">
+              {warnLines.map((l) => {
+                const at = findCheckStage(asset, l.check ?? l.id)
+                return (
+                  <li key={l.id}>
+                    {at && <span className="muted">Step {STAGES.indexOf(at) + 1}, {stagePlain(at, null)}: </span>}
+                    {l.text} {at && at !== stage && <Link to={`/assets/${asset.id}/${at}`}>Go there</Link>}
+                  </li>
+                )
+              })}
+            </ul>
+            {allFailing > warns && <div className="muted">Counting every check on steps 4 to 6, {allFailing} need a look. The step pages list them all.</div>}
           </div>
         )}
       </div>
@@ -98,6 +112,14 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
       </div>
     </section>
   )
+}
+
+// Whether a step after this one failed and has no kept result: it outranks "Make it" as the next action (UI-02).
+export function laterFailed(asset: Asset, stage: StageId): boolean {
+  return STAGES.slice(STAGES.indexOf(stage) + 1).some((s) => {
+    const vs = versionsOf(asset, s)
+    return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+  })
 }
 
 export function nextStage(stage: StageId): StageId | null {
@@ -152,9 +174,9 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
     apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
-      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
     ) : null
-  const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' ? <span className="or-just">{node}</span> : node)
+  const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage)) ? <span className="or-just">{node}</span> : node)
 
   let happened: string
   let now: string
@@ -189,13 +211,13 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       const left = job?.status === 'running' ? est * (1 - progress) : est
       const isVariantRepaint = stage === 'concept' && !!asset.base_asset_id && (job?.kind.includes('refine') || versions.length <= 2)
       happened = isVariantRepaint ? `We are repainting ${baseName ?? 'the original'} with your change${asset.variant_change ? ` ("${asset.variant_change}")` : ''}.` : `${stageGerund(stage)}.`
-      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? `Waiting for a free machine, then ${fmtDuration(est)}.` : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
+      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? `Waiting for the graphics card, then ${fmtDuration(est)}.` : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
       extra = (
         <div className="guide-progress">
           <div className="progress" aria-label={`progress ${Math.round(progress * 100)} percent`}>
             <div className="progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
-          <span className="muted small">{job?.message || 'working'}</span>
+          <span className="muted small">{plainJargon(job?.message) || 'working'}</span>
         </div>
       )
       const stopping = job?.message === 'cancelling'
@@ -243,6 +265,31 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       break
     }
     case 'selected': {
+      // A later step that did not finish comes first: never say "continue" into a failure (UI-02).
+      const failedLater = STAGES.slice(STAGES.indexOf(stage) + 1).find((s) => {
+        const vs = versionsOf(asset, s)
+        return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+      })
+      if (failedLater) {
+        const fi = info(failedLater)
+        const failedV = versionsOf(asset, failedLater).slice(-1)[0]
+        happened = `Step ${STAGES.indexOf(failedLater) + 1}, ${stagePlain(failedLater, fi)}, did not finish.`
+        now = `${humanError(failedV.error)} Your kept version here is fine; the problem is further on.`
+        action = (
+          <>
+            {failedLater === next ? (
+              <button type="button" className="primary" disabled={busy} onClick={() => onRunNext(next!)}>
+                Try again on step {STAGES.indexOf(failedLater) + 1}
+                <span className="btn-est">{fmtDuration(stageEstimate(failedLater, fi, estimates))}</span>
+              </button>
+            ) : null}
+            <Link className={'btn' + (failedLater === next ? '' : ' primary')} to={`/assets/${asset.id}/${failedLater}`}>
+              Go to step {STAGES.indexOf(failedLater) + 1}
+            </Link>
+          </>
+        )
+        break
+      }
       const idx = selected ? versions.indexOf(selected) + 1 : 0
       const good = selected ? looksGood(selected.metrics) : null
       happened = `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ', though a check needs attention' : ''}.`
@@ -299,8 +346,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       </div>
       {(action || makeIt) && (
         <div className={'guide-action' + (makeIt && action ? ' guide-action-col' : '')}>
-          {makeIt}
-          {action && secondary(action)}
+          {state === 'selected' && laterFailed(asset, stage) ? (<>{action}{makeIt}</>) : (<>{makeIt}{action && secondary(action)}</>)}
         </div>
       )}
     </section>

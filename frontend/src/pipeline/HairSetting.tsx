@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { ApiError, hairApi, STAGES, stageEstimateSeconds, type Asset, type HairPanel, type HairSource, type Job, type StageId } from '../api'
 import { Info } from '../components/Info'
-import { ResumeButton } from '../components/ui'
+import { ResumeButton, PanelClose } from '../components/ui'
 import { BALD_WORDS, COVER_AFTER, COVER_NEGATORS, COVER_WORDS, HAIR_WORDS, hairKind, NO_HAIR_BODIES } from '../hairNotes'
 import { fmtDuration, stagePlain } from '../help'
 
@@ -74,9 +74,9 @@ export function HairFormLine({ value, onChange, platform }: { value: HairSource;
 function HairOptions({ name, value, onChange, disabled }: { name: string; value: HairSource; onChange: (v: HairSource) => void; disabled?: boolean }) {
   return (
     // One option per row, each row clickable across its whole width (the words select it, not only the round button).
-    <div className="segmented" role="radiogroup" aria-label={HAIR_SETTING} style={{ flexDirection: 'column', gap: 'var(--s1)' }}>
+    <div className="choice-row choice-column" role="radiogroup" aria-label={HAIR_SETTING}>
       {(['model', 'library'] as const).map((s) => (
-        <label className="check-item" key={s} style={{ display: 'flex', width: '100%', cursor: disabled ? 'default' : 'pointer', minHeight: 28 }}>
+        <label className={'check-item check-item-wide' + (disabled ? ' is-disabled' : '')} key={s}>
           <input type="radio" name={name} checked={value === s} disabled={disabled} onChange={() => onChange(s)} />
           <span>
             {HAIR_OPTION[s]}
@@ -191,9 +191,7 @@ export function HairSettingPanel({ asset, panel, onClose, onSaved, onError }: { 
           {HAIR_SETTING}
           <Info term="term.hair_library" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       {!panel.available && panel.source !== 'library' ? (
         <div className="muted small">Not offered for this character. {panel.unavailable_reason || 'Its hair cannot be replaced.'} The hair stays built with the 3D model.</div>

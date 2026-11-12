@@ -258,11 +258,58 @@ def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(engine)
     _ensure_columns(engine)
+    migrate_looks(engine)
 
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
                                                                                           "held_item_json": "TEXT", "equipment_json": "TEXT", "hair_json": "TEXT", "face_matters": "BOOLEAN"},
                   "job": {"result_json": "TEXT"}}
+
+
+# One list of looks (UI-01): the old look ids a project's style lock carried now name the style they were paired with, so a
+# look and a style are one id. Old style ids stay as they are.
+LOOK_ID_MIGRATION = {"painted_fantasy": "painted", "clean_cartoon": "cel", "pixel_retro": "pixel", "realistic": "realistic_pbr",
+                     "clay_toy": "clay"}
+
+
+def migrate_looks(engine) -> int:
+    """Map old look ids to the merged ids on projects, and unknown asset styles to the project's look. Idempotent. Copies
+    the database file next to itself first when anything has to change. Returns how many rows changed."""
+    import shutil
+
+    from sqlalchemy import text
+
+    from . import reference
+
+    known = {s["id"] for s in reference.styles()}
+    changed = 0
+    with engine.begin() as conn:
+        projects = conn.execute(text("SELECT id, style_lock_json FROM project")).fetchall()
+        plan_projects: list[tuple[str, str]] = []
+        look_of: dict[str, str] = {}
+        for pid, raw in projects:
+            lock = _loads(raw, {})
+            preset = lock.get("preset")
+            new = LOOK_ID_MIGRATION.get(preset, preset)
+            if new and new not in known:
+                new = None  # a look that no longer exists: the lock keeps its own fields and says what it is based on
+                lock["based_on"] = lock.get("based_on") if lock.get("based_on") in known else "painted"
+            if new != preset:
+                lock["preset"] = new
+                plan_projects.append((pid, _dumps(lock)))
+            look_of[pid] = new or (lock.get("based_on") if lock.get("based_on") in known else "painted")
+        assets = conn.execute(text("SELECT id, project_id, style_preset FROM asset")).fetchall()
+        plan_assets = [(aid, look_of.get(pid) or "painted") for aid, pid, sp in assets if sp not in known]
+        if plan_projects or plan_assets:
+            path = get_settings().db_path
+            if path.is_file():
+                shutil.copy2(path, path.with_name(path.name + ".before-looks-merge"))
+            for pid, raw in plan_projects:
+                conn.execute(text("UPDATE project SET style_lock_json = :j WHERE id = :i"), {"j": raw, "i": pid})
+            for aid, sp in plan_assets:
+                conn.execute(text("UPDATE asset SET style_preset = :s WHERE id = :i"), {"s": sp, "i": aid})
+            changed = len(plan_projects) + len(plan_assets)
+    return changed
 
 
 def _ensure_columns(engine) -> None:

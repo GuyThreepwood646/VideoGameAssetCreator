@@ -96,10 +96,10 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
         Match a picture
         <Info term="term.match_picture" />
       </div>
-      <div className="muted small">Use a picture you like to set this project's colours or look. Nothing changes until you press Apply.</div>
+      <div className="muted small">Use a picture you like to set this project's colours or look. Nothing changes until you press Apply and then Save.</div>
       <ImageDrop value={picture} onChange={setPicture} label="Picture to match" disabled={busy || working} />
       <div className="row-gap">
-        <button type="button" disabled={!picture || busy || working} onClick={takeColours}>
+        <button type="button" disabled={!picture || busy || working} onClick={takeColours} title={picture ? undefined : 'Add a picture first'}>
           Take the colours
         </button>
         <select value={colors} onChange={(e) => setColors(Number(e.target.value) as 8 | 16 | 32)} aria-label="How many colours" disabled={busy || working}>
@@ -110,7 +110,7 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
           ))}
         </select>
         <Info term="term.take_colours" />
-        <button type="button" disabled={!picture || busy || working || !!waiting} onClick={describe}>
+        <button type="button" disabled={!picture || busy || working || !!waiting} onClick={describe} title={picture ? undefined : 'Add a picture first'}>
           Describe the style
         </button>
         <Info term="term.describe_style" />

@@ -1,6 +1,7 @@
 // Step 0.5: a character from several of your own pictures. The person drops a face, a body, an outfit and anything
 // else; the backend (vgac/compose.py) draws new full-body pictures from them in the project's look, and each one
 // arrives in step 1 as a normal first picture to keep.
+import { PanelClose } from '../components/ui'
 import { useState } from 'react'
 import { api, type Asset, type ComposeRole } from '../api'
 import { FaceCrop } from '../components/FaceCrop'
@@ -68,13 +69,12 @@ export function ComposePanel({ asset, onClose, onCreated, onError }: { asset: As
           Step 0.5: make the character from your pictures
           <Info term="term.compose" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       <div className="muted small">
         Add a picture for each part you want to use. The app draws one new full-body character from them, standing ready for 3D and in this project's look. Each result appears in step 1, where you keep the one you like; the other steps then carry on as usual. The drawing model looks at three pictures at most: with more, the extra ones share one sheet and come through less exactly.
       </div>
+      <div className="muted small">Your pictures stay on this computer.</div>
       {!hasFace && filled.length > 0 && (
         <div className="tool-note small">
           For a likeness, give the face its own picture. With a photo of the whole person, use "Crop the face from it" under the picture: a close crop of the face carries the person's features much better than the whole photo does.

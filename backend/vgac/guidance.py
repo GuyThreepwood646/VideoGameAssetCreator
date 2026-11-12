@@ -239,6 +239,15 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_sides": {"simple": False, "help": {"meaning": "Paints the sides of the face from the side views of step 2, where the front picture cannot reach.",
                                              "why": "It hides the seam where the front painting ends on the cheek. Turn it off if it leaves smudges by the ears or the neck; the front of the face is unchanged either way.",
                                              "technical": "Second projections from the quarter and side cut-outs, only where the front painted little"}},
+    "part_legs": {"simple": False, "help": {"meaning": "Where the 3D build joined the legs together low down (a strand between the shoes), the legs are split so each moves on its own.",
+                                            "why": "Joined legs drag each other along when the character walks and stretch the shoes. A tabard or cape between the legs is left whole.",
+                                            "technical": "Spring-bone pass (springs.py): separates leg weights below the knee when the legs share vertices near the feet"}},
+    "head_sway": {"simple": False, "help": {"meaning": "Chooses which parts on the head may sway: only hair (and a headscarf, ribbon or veil named in the description), or everything that hangs.",
+                                            "why": "A hat brim, hood or helmet should move with the head, so Automatic only lets hair sway. Pick Everything that hangs to get the older behaviour.",
+                                            "technical": "head_sway auto | hair | all; selects which head-attached meshes get spring-bone chains"}},
+    "sprite_frames": {"simple": False, "help": {"meaning": "How many pictures each move gets in the 2D sprite sheet.",
+                                                "why": "More frames look smoother but make a bigger sheet; 8 is a good start for a walk or an attack.",
+                                                "technical": "Frames per clip rendered into sprite_sheet and sprite_atlas (1 to 64)"}},
     "pbr_fix": {"simple": False, "help": {"meaning": "Keep colours, metal and shine inside the range real materials have.",
                                           "why": "Colours outside it look flat, chalky or glowing under modern game lighting.",
                                           "technical": "PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0"}},
@@ -347,22 +356,22 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         # With the recipe's own target (vars recipe, look): a low-poly model is measured against its look, not the platform.
         # The 3D step's model with room for the head (vars head_room, headtris) is measured against its own target, which
         # is over the platform's budget on purpose; the clean-up step's sentence adds the head's share (vars head_weighted).
-        "ok": lambda c: ("The body's {value:n} triangles fit the {limit:n} left for it after {hair_allowance:n} of your platform's "
-                         "{platform_triangles:n} are kept for the library hairstyle."
+        "ok": lambda c: ("Your model's body has {value:n} triangles, inside the {limit:n} left for it after {hair_allowance:n} of your platform's "
+                         "limit of {platform_triangles:n} are kept for the library hairstyle."
                          if _var(c, "hair_allowance") is not None and _var(c, "platform_triangles") is not None else
-                         "The model's {value:n} triangles are more than your platform's {platform_triangles:n} on purpose: Clean up for the game "
-                         "brings it back to the budget with weighted decimation (more triangles on the head)."
+                         "Your full model has {value:n} triangles, more than your platform's limit of {platform_triangles:n} on purpose: Clean up for the game "
+                         "brings it back to the limit with weighted decimation (more triangles on the head)."
                          if _var(c, "head_room") else
-                         "The model's {value:n} triangles fit the {look} look's target of {limit:n}; your platform would allow up to {platform_triangles:n}."
-                         if _var(c, "recipe") else "The model's {value:n} triangles fit your platform's budget of {limit:n}.") + _head_line(c),
-        "fail": lambda c: ("The body has {over:n} more triangles than the {limit:n} left for it ({value:n}) after {hair_allowance:n} of your "
-                           "platform's {platform_triangles:n} are kept for the library hairstyle."
+                         "Your full model has {value:n} triangles, inside the {look} look's limit of {limit:n} (your platform would allow up to {platform_triangles:n})."
+                         if _var(c, "recipe") else "Your full model has {value:n} triangles (the flat pieces it is made of), inside your platform's limit of {limit:n}.") + _head_line(c),
+        "fail": lambda c: ("Your model's body has {value:n} triangles, {over:n} more than the {limit:n} left for it after {hair_allowance:n} of your "
+                           "platform's limit of {platform_triangles:n} are kept for the library hairstyle."
                            if _var(c, "hair_allowance") is not None and _var(c, "platform_triangles") is not None else
-                           "The model has {over:n} more triangles than the 3D step asked for ({value:n} of {limit:n}, which already leaves room for the head)."
+                           "Your full model has {value:n} triangles, {over:n} more than the 3D step's limit of {limit:n} (which already leaves room for the head)."
                            if _var(c, "head_room") else
-                           "The model has {over:n} more triangles than the {look} look calls for ({value:n} of {limit:n}), so it looks less chunky than it should."
+                           "Your full model has {value:n} triangles, {over:n} more than the {look} look's limit of {limit:n}, so it looks less chunky than it should."
                            if _var(c, "recipe") else
-                           "The model has {over:n} more triangles than your platform allows ({value:n} of {limit:n}); it would run slower than it should."),
+                           "Your full model has {value:n} triangles (the flat pieces it is made of), {over:n} more than your platform's limit of {limit:n}; it would run slower than it should."),
         "vars": _over,
         "fix": lambda c: {"stage": "prep", "params": {}},
         "fix_label": "Shrink to the budget",
@@ -909,7 +918,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "arms_away": {
         "severity": "warn",
         "ok": "The arms stand away from the body, so the skeleton step can tell them apart.",
-        "fail": "The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.",
+        "fail": "The arms are close to the body, so the hands may be hidden or holding something; the 3D model may join the arms to the sides and the skeleton step may not tell them apart. The redraw also opens the hands and removes held items.",
         "fix": _redraw_fix,
         "fix_label": REDRAW_LABEL,
     },
@@ -1004,11 +1013,10 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "hair_triangles": {
         "severity": "warn",
-        "ok": lambda c: ("With the library hairstyle the character has {value:n} triangles, within your platform's {limit:n}"
+        "ok": lambda c: ("With the library hairstyle your full model has {value:n} triangles, inside your platform's limit of {limit:n}"
                          + (": {body:n} for the body and {hair:n} for the hair." if _var(c, "body") is not None and _var(c, "hair") is not None else ".")),
-        "fail": lambda c: ("With the library hairstyle the character has {over:n} more triangles than your platform allows "
-                           "({value:n} of {limit:n}" + ("; the hair alone has {hair:n}" if _var(c, "hair") is not None else "")
-                           + "), so it would run slower than it should. Choose a lighter hairstyle."),
+        "fail": lambda c: ("With the library hairstyle your full model has {value:n} triangles, {over:n} more than your platform's limit of {limit:n}" + ("; the hair alone has {hair:n}" if _var(c, "hair") is not None else "")
+                           + ", so it would run slower than it should. Choose a lighter hairstyle."),
         "vars": _over,
         "fix": lambda c: {"stage": "mesh", "ui": "hair_picker", "params": {}},
         "fix_label": "Choose a lighter hairstyle",

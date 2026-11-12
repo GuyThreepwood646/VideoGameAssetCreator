@@ -41,8 +41,9 @@ TPOSE_RATIO = 2.5  # arm span over waist width that counts as arms held out
 EVEN_LIGHT_MAX = 0.25  # brightness change across a material photo, 0 to 1
 DETAIL_RATIO_MAX = 2.0  # finer detail on one side than the other
 
-HUMANOID_REDRAW = ("Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose, "
-                   "whole body in frame, plain light grey background, even lighting")
+HUMANOID_REDRAW = ("Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose with each hand "
+                   "open and empty, back of the hand toward the camera, fingers straight and slightly spread, nothing held in "
+                   "either hand and no hand in a pocket or hidden, whole body in frame, plain light grey background, even lighting")
 SUBJECT_WORDS = {"quadruped": "animal", "multileg": "creature", "winged": "creature", "serpent": "creature",
                  "vehicle": "vehicle", "prop_rigid": "object", "prop_articulated": "object", "environment": "structure",
                  "foliage": "plant"}

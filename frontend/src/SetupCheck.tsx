@@ -143,7 +143,7 @@ export function SetupBadge() {
   if (!report || report.summary.fails === 0) return null
   return (
     <span className="setup-badge">
-      <Link to="/health" className="pill pill-bad" title="Open the Health page to see what is missing and how to fix it">
+      <Link to="/health" className="chip chip-bad" title="Open the Health page to see what is missing and how to fix it">
         Setup needs attention
       </Link>
       <Info term="setup_needs_attention" />

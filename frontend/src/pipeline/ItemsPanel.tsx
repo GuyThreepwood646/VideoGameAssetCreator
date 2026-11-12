@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { itemsApi, libraryUrl, type Asset, type Attachment, type ItemsPanel as PanelData, type ItemStatus, type NudgeBody } from '../api'
+import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
-import { Disclosure, ErrorText } from '../components/ui'
+import { Disclosure, ErrorText, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
 import Viewer, { type ViewerAttachment } from '../Viewer'
 
@@ -25,6 +26,8 @@ const MOVES: { label: string; title: string; move: [number, number, number] }[] 
   { label: 'To their left', title: "Move it toward the character's own left", move: [1, 0, 0] },
   { label: 'To their right', title: "Move it toward the character's own right", move: [-1, 0, 0] },
 ]
+// The six moves laid out as a pad: up and down on the left, forward and back in the middle, sideways on the right.
+const MOVE_PAD = ['Up', 'Forward', '', 'To their left', '', 'To their right', 'Down', 'Back', '']
 const TURNS: { label: string; title: string; turn: [number, number, number] }[] = [
   { label: 'Tip forward', title: 'Tilt the top of the item toward the front', turn: [1, 0, 0] },
   { label: 'Tip back', title: 'Tilt the top of the item toward the back', turn: [-1, 0, 0] },
@@ -51,6 +54,7 @@ function itemStatusText(s: ItemStatus | undefined): string {
 }
 
 export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+  const confirm = useConfirm()
   const [data, setData] = useState<PanelData | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [current, setCurrent] = useState<string | null>(null)
@@ -169,7 +173,8 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
     }
   }
   const takeOff = async () => {
-    if (!att || !window.confirm(`Take the ${att.label} off ${asset.name}? The item itself stays in the project.`)) return
+    if (!att) return
+    if (!(await confirm.ask({ title: `Take the ${att.label} off?`, body: `It comes off ${asset.name}. The item itself stays in the project.`, confirmLabel: 'Take it off', danger: true }))) return
     try {
       const r = await itemsApi.remove(asset.id, att.id)
       setData(r.panel)
@@ -190,14 +195,13 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
 
   return (
     <section className="card items-panel" aria-label="Add an item">
+      {confirm.dialog}
       <div className="row-between">
         <h2 className="card-title">
           Items on {asset.name}
           <Info term="term.items" />
         </h2>
-        <button type="button" className="small-btn" onClick={onClose}>
-          Close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       <ErrorText error={error} />
       {!data ? (
@@ -297,21 +301,31 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                   <span className="field-label">
                     Nudge it <span className="muted small">(each press {data.step_cm} cm or {data.step_deg} degrees; hold Shift for bigger steps)</span>
                   </span>
-                  <div className="items-nudges">
-                    {MOVES.map((m) => (
-                      <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
-                        {m.label}
-                      </button>
-                    ))}
+                  <div className="items-nudges" role="group" aria-label="Move">
+                    <span className="muted small nudge-title">Move</span>
+                    <div className="nudge-pad" aria-label="Move pad">
+                      {MOVE_PAD.map((label, i) => {
+                        const m = MOVES.find((x) => x.label === label)
+                        return m ? (
+                          <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
+                            {m.label}
+                          </button>
+                        ) : (
+                          <span key={i} aria-hidden="true" />
+                        )
+                      })}
+                    </div>
                   </div>
-                  <div className="items-nudges">
+                  <div className="items-nudges" role="group" aria-label="Turn">
+                    <span className="muted small nudge-title">Turn</span>
                     {TURNS.map((t) => (
                       <button key={t.label} type="button" title={t.title} onClick={() => press({ turn: t.turn })}>
                         {t.label}
                       </button>
                     ))}
                   </div>
-                  <div className="items-nudges">
+                  <div className="items-nudges" role="group" aria-label="Size and grip">
+                    <span className="muted small nudge-title">Size and grip</span>
                     <button type="button" title="Slide the item so the hand sits closer to its tip or head" onClick={() => press({ slide: 1 })}>
                       Hold it nearer the tip
                     </button>

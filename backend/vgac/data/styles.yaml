@@ -26,6 +26,17 @@ styles:
     label: Painted
     model: zturbo
     look: Painted
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Painted fantasy"
+    look_description: "Rich oil-and-airbrush painting, warm light, readable shapes. Good for RPGs and adventure games."
+    example_prompt: "A weathered dwarven blacksmith with a braided beard, leather apron and heavy hammer."
+    lock:
+      model: zturbo
+      prompt_block: "A realistic acrylic and airbrush painting with visible confident brushstrokes and soft painted edges, forms modelled by light and value, rich colour, one warm key light. Painted illustration. No outlines, no line art, no comic or cartoon styling, no lettering."
+      loras: []
+      palette: ["#5b3a1e", "#c9a35c", "#2e4a6b", "#8a1c1c", "#e8dcc3"]
+      negative: "comic and cartoon styling, outlines, cel shading, flat colours, anime, vector, text, logos, borders"
     plain: smooth painted colours and full detail for your platform.
     prompt_block: >-
       A full-body painted concept art reference for a video game, a real digital painting with
@@ -62,6 +73,17 @@ styles:
     label: Cel shaded
     model: anima
     look: Cel-shaded
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Clean cartoon"
+    look_description: "Smooth shapes, bold simple colours, friendly proportions. Good for casual and family games."
+    example_prompt: "A round cheerful robot helper with a single big eye and stubby arms."
+    lock:
+      model: anima
+      prompt_block: "Clean cel-shaded cartoon illustration with smooth simple shapes, bold flat colours, soft two-tone shading, friendly rounded proportions, plain background. No texture noise, no realism, no lettering."
+      loras: []
+      palette: ["#ff8a5b", "#ffd166", "#06d6a0", "#118ab2", "#f7f7f2"]
+      negative: "realistic, photographic, gritty, noisy texture, text, logos"
     plain: flat colour regions and two-tone shading, full detail for your platform.
     prompt_block: >-
       Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and
@@ -96,6 +118,17 @@ styles:
     label: Pixel art
     model: pixel
     look: Pixel-art
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Pixel retro"
+    look_description: "16-bit pixel art with a limited palette and crisp pixels. Good for retro and indie games."
+    example_prompt: "A small knight sprite with a blue tunic and a round shield."
+    lock:
+      model: pixel
+      prompt_block: "Pixel art style. 16-bit era sprite art with a limited palette, crisp clean pixels, no anti-aliasing, strong readable silhouette, plain background."
+      loras: []
+      palette: ["#1a1c2c", "#5d275d", "#b13e53", "#ef7d57", "#ffcd75", "#a7f070", "#38b764", "#3b5dc9"]
+      negative: "blurry, smooth gradients, photographic, 3D render, text"
     plain: small crisp textures with a limited palette, chunky shapes, no smoothing.
     prompt_block: >-
       16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.
@@ -116,6 +149,17 @@ styles:
     label: Retro 64
     model: zturbo
     look: Retro 64
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Retro 64"
+    look_description: "Chunky low-polygon shapes and soft blurry textures, like a late-1990s console game. Good for nostalgic 3D games."
+    example_prompt: "A stout adventurer in a green tunic with a short sword and a wooden shield."
+    lock:
+      model: zturbo
+      prompt_block: "An in-game real-time 3D model from a late-1990s 64-bit console game: chunky low-polygon shapes, smooth vertex shading, soft blurry low-resolution textures, bold saturated colours, plain background. Not pixel art, no voxels."
+      loras: []
+      palette: ["#2b3a67", "#e84855", "#f9dc5c", "#3bb273", "#f4f1de"]
+      negative: "photographic, realistic skin, pixel art, voxels, cubes, text, logos"
     plain: chunky shapes with fewer triangles, small soft textures, no surface bumps.
     # Bake-off 6: starting with the medium stops the cube-headed voxel figures the old block gave.
     prompt_block: >-
@@ -134,6 +178,17 @@ styles:
     label: Low-poly flat
     model: zturbo
     look: Low-poly
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Low-poly flat"
+    look_description: "Faceted shapes with one flat colour per face and soft pastel colours. Good for stylised and mobile games."
+    example_prompt: "A friendly low-poly fox with a long tail and a small scarf."
+    lock:
+      model: zturbo
+      prompt_block: "A low-poly 3D model with flat shading, built from large flat triangular facets, every facet one solid colour, sharp angular edges, soft pastel palette, plain background. No textures, no smooth surfaces."
+      loras: []
+      palette: ["#8ecae6", "#ffb703", "#fb8500", "#bde0a8", "#f1faee"]
+      negative: "photographic, smooth gradients, fine texture, pixel art, text, logos"
     plain: faceted shapes with one flat colour per face, a quarter of the usual triangles, simple textures.
     # Bake-off 6: the old block stayed smooth; this one names the facets.
     prompt_block: >-
@@ -155,6 +210,17 @@ styles:
     label: Photoreal
     model: zbase
     look: Photoreal
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Realistic"
+    look_description: "Photographic materials and lighting with physically based surfaces. Good for PC and console showcase assets."
+    example_prompt: "A battle-worn steel longsword with a leather-wrapped grip and a bronze pommel."
+    lock:
+      model: zbase
+      prompt_block: "Photorealistic studio photograph of the subject, physically accurate materials, soft even studio lighting, neutral grey backdrop, sharp focus, true-to-life proportions. No stylisation, no lettering."
+      loras: []
+      palette: ["#3a3a3a", "#8c7b6b", "#b5b5b5", "#5a6b4a", "#d9d2c5"]
+      negative: "cartoon, anime, painting, illustration, outlines, text, logos, watermark"
     plain: the most detail your platform allows, lit evenly so it reacts to your game's lights, with real-world colours, metal and shine.
     # Shown with the recipe when the platform is not one of these: the look needs detail to read as real.
     recommend_platforms: [pc_mid, high]
@@ -256,6 +322,17 @@ styles:
     # Never add "puppet" or "figure" to the block: a second clay figure then appears beside the subject.
     model: zturbo
     look: Clay
+    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
+    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
+    look_label: "Clay toy"
+    look_description: "Soft matte clay and plastic look with chunky forms, like a stop-motion toy. Good for cosy and puzzle games."
+    example_prompt: "A chunky clay fox with button eyes and a stubby tail."
+    lock:
+      model: klein
+      prompt_block: "Stylised 3D render of a handmade clay and plastic toy, soft matte materials, chunky rounded forms, fingerprint-smooth surfaces, soft studio light, plain pastel background. No lettering."
+      loras: []
+      palette: ["#f4a261", "#e76f51", "#2a9d8f", "#e9c46a", "#f1faee"]
+      negative: "realistic skin, photographic, gritty, sharp metal, text, logos"
     plain: soft sculpted shapes and matte colours, full detail for your platform.
     prompt_block: >-
       Clay animation, Clay. Stop-motion clay style, soft matte sculpted surfaces with fingerprint

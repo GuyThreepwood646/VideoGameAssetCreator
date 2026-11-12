@@ -92,6 +92,7 @@ export function RigView({ version }: { version: Version }) {
   const movesFrom = movesSourceLine(m)
   const missing = movesPlain(m.missing_clips)
   const clipData = clipFile.data
+  const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
@@ -135,8 +136,8 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
-      <MovesPanel version={version} />
-      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
       {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
       <div className="rig-side">
@@ -147,7 +148,7 @@ export function RigView({ version }: { version: Version }) {
           </div>
           <div className="small">
             {boneCount !== undefined ? `${boneCount} bones` : 'bone count unknown'}
-            {template ? `, ${String(template)} skeleton` : ''}
+            {template ? `, ${/^mixamo$/i.test(String(template)) ? 'standard human skeleton (Mixamo)' : `${String(template)} skeleton`}` : ''}
           </div>
           {bones && bones.length > 0 && (
             <Disclosure label="Bone names">
