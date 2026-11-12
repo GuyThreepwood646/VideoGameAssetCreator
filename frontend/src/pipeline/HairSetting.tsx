@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { ApiError, hairApi, STAGES, stageEstimateSeconds, type Asset, type HairPanel, type HairSource, type Job, type StageId } from '../api'
 import { Info } from '../components/Info'
-import { ResumeButton } from '../components/ui'
+import { ResumeButton, PanelClose } from '../components/ui'
 import { BALD_WORDS, COVER_AFTER, COVER_NEGATORS, COVER_WORDS, HAIR_WORDS, hairKind, NO_HAIR_BODIES } from '../hairNotes'
 import { fmtDuration, stagePlain } from '../help'
 
@@ -191,9 +191,7 @@ export function HairSettingPanel({ asset, panel, onClose, onSaved, onError }: { 
           {HAIR_SETTING}
           <Info term="term.hair_library" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          Close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       {!panel.available && panel.source !== 'library' ? (
         <div className="muted small">Not offered for this character. {panel.unavailable_reason || 'Its hair cannot be replaced.'} The hair stays built with the 3D model.</div>
