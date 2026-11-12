@@ -1,6 +1,14 @@
 // A row of ready-made looks (style presets): label, description, palette swatches
 // The whole card is the button; the chosen one shows Selected. The model name lives in Advanced.
+import { useState } from 'react'
 import type { LookPreset } from '../api'
+
+// The same knight painted in each look (public/looks/<look id>.webp). A look with no sample simply shows no picture.
+function LookSample({ preset }: { preset: LookPreset }) {
+  const [missing, setMissing] = useState(false)
+  if (missing) return null
+  return <img className="preset-sample" src={`/looks/${preset.id}.webp`} alt={`Sample of the ${preset.label} look: the same knight painted in this look`} width={384} height={384} loading="lazy" onError={() => setMissing(true)} />
+}
 
 export function PresetRow({
   presets,
@@ -32,6 +40,7 @@ export function PresetRow({
             onClick={() => onPick(p)}
             title={current && edited ? 'Edited by hand. Click to go back to this look as it was made.' : p.style_lock.prompt_block}
           >
+            <LookSample preset={p} />
             <span className="preset-head">
               <span className="preset-label">{p.label}</span>
               {current && <span className="chip chip-ok">{edited ? 'Selected, edited' : 'Selected'}</span>}
