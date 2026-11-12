@@ -153,10 +153,10 @@ def test_the_3d_step_sentence_says_over_on_purpose():
     tris = 39194
     c = quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=vars_)
     assert c["passed"] and c["severity"] == "block"
-    assert c["help"] == ("The model's 39,194 triangles are more than your platform's 20,000 on purpose: Clean up for the game "
-                         "brings it back to the budget with weighted decimation (more triangles on the head).")
+    assert c["help"] == ("Your full model has 39,194 triangles, more than your platform's limit of 20,000 on purpose: Clean up for the game "
+                         "brings it back to the limit with weighted decimation (more triangles on the head).")
     bad = quality.check("triangle_budget", False, 42000, limit, vars=vars_)
-    assert bad["help"] == "The model has 2,800 more triangles than the 3D step asked for (42,000 of 39,200, which already leaves room for the head)."
+    assert bad["help"] == "Your full model has 42,000 triangles, 2,800 more than the 3D step's limit of 39,200 (which already leaves room for the head)."
     assert bad["fix"]["stage"] == "prep"
 
 
@@ -167,12 +167,12 @@ def test_the_clean_up_sentence_says_how_many_triangles_the_head_has():
     checks = prep_stage.prep_checks({"triangles": 19900}, {}, m, "humanoid", 20000, hv)
     c = next(c for c in checks if c["name"] == "triangle_budget")
     assert c["passed"]
-    assert c["help"] == ("The model's 19,900 triangles fit your platform's budget of 20,000. "
+    assert c["help"] == ("Your full model has 19,900 triangles (the flat pieces it is made of), inside your platform's limit of 20,000. "
                          "The head has 2,430 of them (12.2%); an even spread would have left it 1,308.")
     # Not weighted (off, another look, a model built at the budget): the sentence is as before.
     assert headtris.head_vars({"triangles": 19594, "head_weighted": False, "head_triangles": 1241}) is None
     plain = guidance.describe_check({"name": "triangle_budget", "passed": True, "value": 19594, "limit": 20000})
-    assert plain["help"] == "The model's 19,594 triangles fit your platform's budget of 20,000."
+    assert plain["help"] == "Your full model has 19,594 triangles (the flat pieces it is made of), inside your platform's limit of 20,000."
 
 
 def test_the_option_is_in_advanced_with_the_real_term_first():

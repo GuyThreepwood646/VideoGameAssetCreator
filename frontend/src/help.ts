@@ -646,19 +646,18 @@ const headLine = (vars: Record<string, unknown>): string => {
 }
 
 const CHECK_TEXT: Record<string, CheckText> = {
-  triangle_budget: (v, l, ok, ctx, vars) => {
+  triangle_budget: (v, l, ok, _ctx, vars) => {
     const over = num(v) !== null && num(l) !== null ? num(v)! - num(l)! : null
-    const who = ctx.platform ? platformPlain(ctx.platform).split(':')[0].toLowerCase() : 'this platform'
     // Library hair: the body is measured against what is left after the hair's share (vars hair_allowance, platform_triangles).
     if (num(vars.hair_allowance) !== null && num(vars.platform_triangles) !== null)
       return ok
-        ? `The body's ${n0(v)} triangles fit the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's ${n0(vars.platform_triangles)} are kept for the library hairstyle.${headLine(vars)}`
-        : `The body has ${over !== null ? n0(over) + ' more' : 'more'} triangles than the ${n0(l)} left for it (${n0(v)}) after ${n0(vars.hair_allowance)} of your platform's ${n0(vars.platform_triangles)} are kept for the library hairstyle.`
+        ? `Your model's body has ${n0(v)} triangles, inside the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's limit of ${n0(vars.platform_triangles)} are kept for the library hairstyle.${headLine(vars)}`
+        : `Your model's body has ${n0(v)} triangles, ${over !== null ? n0(over) + ' more' : 'more'} than the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's limit of ${n0(vars.platform_triangles)} are kept for the library hairstyle.`
     // The 3D step's model built over the budget on purpose, so the clean-up step can give the head more (vars head_room).
     if (vars.head_room && ok)
-      return `The model has ${n0(v)} triangles, more than the ${n0(vars.platform_triangles)} ${who} allows on purpose: Clean up for the game brings it back to the budget with weighted decimation (more triangles on the head).`
-    if (vars.head_room) return `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than the 3D step asked for (${n0(v)} of ${n0(l)}, which already leaves room for the head).`
-    return ok ? `The model has ${n0(v)} triangles, within the ${n0(l)} ${who} allows.${headLine(vars)}` : `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than ${who === 'phone' ? 'a phone' : who} can handle (${n0(v)} of ${n0(l)}).`
+      return `Your full model has ${n0(v)} triangles, more than your platform's limit of ${n0(vars.platform_triangles)} on purpose: Clean up for the game brings it back to the limit with weighted decimation (more triangles on the head).`
+    if (vars.head_room) return `Your full model has ${n0(v)} triangles, ${over !== null ? n0(over) + ' more' : 'more'} than the 3D step's limit of ${n0(l)} (which already leaves room for the head).`
+    return ok ? `Your full model has ${n0(v)} triangles (the flat pieces it is made of), inside your platform's limit of ${n0(l)}.${headLine(vars)}` : `Your full model has ${n0(v)} triangles (the flat pieces it is made of), ${over !== null ? n0(over) + ' more' : 'more'} than your platform's limit of ${n0(l)}; it would run slower than it should.`
   },
   manifold: (v, _l, ok) => (ok ? 'The surface has no overlapping or broken edges.' : `The surface has ${n0(v)} broken or overlapping edges.`),
   watertight: (v, _l, ok) => (ok ? 'The surface is closed with no holes.' : `The surface has ${n0(v)} open holes.`),
@@ -766,9 +765,9 @@ const CHECK_TEXT: Record<string, CheckText> = {
     return `The library hairstyle covers the head: ${pct(v)} of the scalp shows through, under the ${pct(l)} limit. A scalp cap (a hair-coloured layer under the hair) hides small gaps.`
   },
   hair_triangles: (v, l, ok, _ctx, vars) => {
-    if (!ok) return `With the library hairstyle the character has ${n0(v)} triangles, more than your platform's ${n0(l)}, so it would run slower than it should. Choose a lighter hairstyle.`
+    if (!ok) return `With the library hairstyle your full model has ${n0(v)} triangles, more than your platform's limit of ${n0(l)}, so it would run slower than it should. Choose a lighter hairstyle.`
     const split = num(vars.body) !== null && num(vars.hair) !== null ? `: ${n0(vars.body)} for the body and ${n0(vars.hair)} for the hair` : ''
-    return `With the library hairstyle the character has ${n0(v)} triangles, within your platform's ${n0(l)}${split}.`
+    return `With the library hairstyle your full model has ${n0(v)} triangles, inside your platform's limit of ${n0(l)}${split}.`
   },
   hair_bound: (v, _l, ok, _ctx, vars) => {
     if (!ok) return `Only ${pct(v)} of the library hairstyle follows the skeleton, so the rest would stay behind when the character moves. Making the moves again joins all of it to the skeleton.`
