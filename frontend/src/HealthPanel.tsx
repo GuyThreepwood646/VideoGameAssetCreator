@@ -3,6 +3,7 @@ import { api, type Health } from './api'
 import { Link } from 'react-router'
 import GpuCards from './GpuCards'
 import SetupCheck from './SetupCheck'
+import YourLibrary from './YourLibrary'
 import { useEvents } from './events'
 import { desktopBridge } from './desktop'
 
@@ -141,6 +142,7 @@ export default function HealthPanel() {
     <div className="panel">
       {!error && <SetupCheck />}
       {!error && <GpuCards />}
+      {!error && <YourLibrary />}
       <h2>Checks</h2>
       {error && <div className="error">The engine did not answer: {error}</div>}
       {health && <div className="instances-grid">{
