@@ -68,21 +68,21 @@ export function HealthBadge() {
   const offNow = offEvent && offEvent.health === health ? offEvent.count : null
   if (error) {
     return (
-      <Link to="/health" className="pill pill-bad" title={'The engine did not answer: ' + error}>
+      <Link to="/health" className="chip chip-bad" title={'The engine did not answer: ' + error}>
         Engine not responding
       </Link>
     )
   }
-  if (!health) return <span className="pill">Checking...</span>
+  if (!health) return <span className="chip">Checking...</span>
   const off = offNow ?? Object.values(health.instances).filter((i) => i.enabled === false).length
   const lowRam = health.host.ram_free_gb < health.host.min_free_ram_gb
   const anyReady = Object.values(health.instances).some((i) => i.enabled !== false)
   // One chip (UI-19). An engine that starts when a step needs it is normal, so it is never red.
   const label = !anyReady ? 'Every card is off' : lowRam ? 'Low memory' : 'Ready'
-  const tone = !anyReady || lowRam ? 'pill-warn' : 'pill-ok'
+  const tone = !anyReady || lowRam ? 'chip-warn' : 'chip-ok'
   return (
     <details className="status-chip health-badge">
-      <summary className={'pill ' + tone} title="Click for details about your graphics cards and memory">
+      <summary className={'chip ' + tone} title="Click for details about your graphics cards and memory">
         {label}
       </summary>
       <div className="status-pop">

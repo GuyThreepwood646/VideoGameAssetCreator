@@ -33,7 +33,7 @@ export default function App() {
         </nav>
         <span className="grow" />
         {mode === 'poll' && (
-          <span className="pill pill-warn" title="Live updates are not connected, so the page checks every 3 seconds instead.">
+          <span className="chip chip-warn" title="Live updates are not connected, so the page checks every 3 seconds instead.">
             Updating slowly
           </span>
         )}

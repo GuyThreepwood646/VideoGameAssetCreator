@@ -1269,7 +1269,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   return (
     <section className={'viewer ' + className} style={{ height: large ? 'min(86vh, 960px)' : height }}>
       <div className="viewer-toolbar">
-        <div className="seg">
+        <div className="segmented">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
             <button key={s} type="button" aria-pressed={shading === s} onClick={() => changeShading(s)}>
               {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -1336,7 +1336,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             </button>
           </>
         )}
-        <div className="seg" role="group" aria-label="What dragging does">
+        <div className="segmented" role="group" aria-label="What dragging does">
           <button type="button" aria-pressed={dragMode === 'turn'} onClick={() => setDragMode('turn')} title="Dragging turns the model">
             Turn
           </button>
