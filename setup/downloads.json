@@ -198,7 +198,8 @@
    "name": "ComfyUI-SkinToken",
    "what": "Rigging (skeleton and skin weights).",
    "repo": "https://github.com/Rizzlord/ComfyUI-SkinToken",
-   "zip": "https://github.com/Rizzlord/ComfyUI-SkinToken/archive/refs/heads/main.zip",
+   "zip": "https://github.com/Rizzlord/ComfyUI-SkinToken/archive/4a83157322d222b2e8e0f05acc9dff0daae567ce.zip",
+   "sha256": "57c9ba7b6edea60aca19163e45e7d38cf0eef515fe9f41cf0a6266a37015d54f",
    "folder": "ComfyUI-SkinToken",
    "licence": "No licence file in the pack; it defers to the MIT SkinTokens project (not confirmed as its own licence)"
   },
@@ -206,7 +207,8 @@
    "name": "ComfyUI-PixelArt-Detector",
    "what": "Shrinks a picture to a small palette for the pixel-art look.",
    "repo": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector",
-   "zip": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector/archive/refs/heads/main.zip",
+   "zip": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector/archive/d5ed602cb2eb67c05fbe8f5eae5c3b77ee257897.zip",
+   "sha256": "d5a7bc7861fb7c678a2b94511dd44cca6e684ea21ec0ba54c042b115ed0d4785",
    "folder": "ComfyUI-PixelArt-Detector",
    "licence": "MIT"
   },
