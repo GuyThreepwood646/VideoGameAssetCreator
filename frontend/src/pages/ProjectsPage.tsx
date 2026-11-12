@@ -513,13 +513,12 @@ function CreateProjectForm({ onCreated, roomy = false }: { onCreated: (p: Projec
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hollow Keep" aria-label="Project name" data-autofocus autoFocus maxLength={80} />
         </Field>
-        <Field label="Platform" term={'platform.' + platform}>
+        <Field label="Platform" term={'platform.' + platform} hint={platformConsequence(platform)}>
           <select value={platform} onChange={(e) => setPlatform(e.target.value as PlatformId)} aria-label="Default platform target">
             <PlatformOptions />
           </select>
         </Field>
       </div>
-      <div className="muted small">{platformConsequence(platform)}</div>
       {presets && presets.length > 0 && (
         <div className="col-tight">
           <div className="field-label">

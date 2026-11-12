@@ -4139,3 +4139,16 @@ button.small-btn .resume-icon {
 .warn-text {
   color: var(--warn);
 }
+button.preset-card {
+  text-align: left;
+  align-items: stretch;
+  white-space: normal;
+  cursor: pointer;
+}
+button.preset-card .preset-head,
+button.preset-card .swatches {
+  display: flex;
+}
+button.preset-card:hover:not(:disabled) {
+  border-color: var(--accent);
+}
