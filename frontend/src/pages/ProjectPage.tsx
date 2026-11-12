@@ -183,6 +183,14 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
             <button type="button" className="link small" onClick={() => setRenaming(true)}>
               Rename
             </button>
+            {selectedVersion(asset, 'export')?.status === 'done' && (
+              <button type="button" className="link small" onClick={() => void api.openVersionFolder(selectedVersion(asset, 'export')!.id).catch(() => undefined)}>
+                Open folder
+              </button>
+            )}
+            <Link className="small" to={`/assets/${asset.id}`} title="Open the asset, then use Make a variant for a copy with one change">
+              Make a variant
+            </Link>
             <button
               type="button"
               className="link small"
