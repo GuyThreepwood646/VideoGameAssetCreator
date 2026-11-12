@@ -9,7 +9,7 @@ from __future__ import annotations
 from vgac import guidance, reference
 
 # Options that still have no help entry; new options must not join this list.
-KNOWN_WITHOUT_HELP = {"part_legs", "head_sway", "sprite_frames"}
+KNOWN_WITHOUT_HELP: set[str] = set()
 
 REVIEWED = ("views", "pose_ready", "neutral_mouth", "hand_edit", "source_project", "head_triangles", "hand_triangles",
             "face_closeup_guided", "face_sides")

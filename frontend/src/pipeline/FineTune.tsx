@@ -458,6 +458,14 @@ const AUTO_BOOLEANS: Record<string, { label: string; now?: (v: Version) => strin
     now: (v) => (v.stage !== 'prep' || typeof v.metrics?.srcproject_applied !== 'boolean' ? null : v.metrics.srcproject_applied ? 'This version: painted from your pictures.' : 'This version: not painted from your pictures.'),
   },
   head_build: { label: 'Automatic (on with hair from the library)' },
+  pbr_fix: {
+    label: 'Automatic (on for realistic looks)',
+    now: (v) => (v.stage !== 'prep' || typeof v.metrics?.pbr_fix_applied !== 'boolean' ? null : v.metrics.pbr_fix_applied ? 'This version: colours were kept in the real-material range.' : 'This version: colours were left as drawn.'),
+  },
+  remesh: {
+    label: 'Automatic (on, except for scenery)',
+    now: (v) => (v.stage !== 'mesh' || typeof v.params?.remesh !== 'boolean' ? null : v.params.remesh ? 'This version: the surface was rebuilt as one closed shell.' : 'This version: the surface was left as built.'),
+  },
 }
 
 // Whether the side views this 3D step builds on were made with Pose for 3D first: the turnaround above `target` in its
