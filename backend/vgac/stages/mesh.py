@@ -189,6 +189,10 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     first_seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)
+    if params.get("hand_edit") and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
+        # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
+        await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
+        sc.set_params(hand_edit=True)
     src = _input_image(sc, input_view)
     sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
@@ -756,6 +760,10 @@ async def _rerun_from_mesh_parent(sc: StageContext, merged: dict[str, Any]) -> N
 # --- the picture edit behind a refine instruction ---------------------------------------------------------------------
 
 EDITED_KEY = "edited_cutout"
+# The hand redraw (the mesh param hand_edit): what the phase 0 trials used. Fingers resolve in the build only when they
+# are separate in the picture, and the three-quarter view shows a hand edge-on unless its back faces the camera.
+HAND_EDIT = ("Redraw only the hands: each hand open with the back of the hand toward the camera, all five fingers straight, long and "
+             "slightly spread apart with clear gaps between them, thumb separate.")
 # Params that belong to one version's own picture edit: never inherited as they are.
 EDIT_PARAMS = ("picture_edit", "edit_seed", "edit_from")
 # After the person's words, so the edit changes only what they asked for and the cutout stays usable for 3D.
