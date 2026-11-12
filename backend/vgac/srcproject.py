@@ -20,9 +20,9 @@ For each view:
 3. every texel (islands and a few texels of border) the view sees squarely takes the picture's colour with weight
    view weight x cos^4 of the angle to the surface, depth tested, zero past 75 degrees, feathered at the outline. The
    picture wins where it sees well: the turnaround views fade out where the picture's own weight is high;
-4. turnaround views either give full colour ("full") or only fine detail on top of the TRELLIS colour ("detail": the
-   TRELLIS colour below a few texels' worth of surface, the view's detail above it, so an AI side or back view cannot
-   shift tone; this is the default);
+4. turnaround views either give full colour ("full", the default: the back and far sides then look like the drawn
+   views) or only fine detail on top of the TRELLIS colour ("detail": the TRELLIS colour below a few texels' worth of
+   surface, the view's detail above it, so an AI side or back view cannot shift tone);
    Gates keep the picture out of places it would smear or paint twice: surface seen more edge-on than the stretch limit
    (one picture pixel covering more than 2 to 3 texels along the surface), pixels next to a jump in depth (a limb in
    front of the body), regions where the picture and the model's own colour disagree on structure (a padlock painted
@@ -80,6 +80,11 @@ TURN_YAWS = {
 }
 PICTURE_YAWS = list(range(0, 360, 10))
 FRONT_YAWS = [-20, -10, 0, 10, 20]
+SOURCE_MIN_IOU = 0.82    # the original picture is taken at a slightly looser outline match than the drawn views (the
+                         # photo boy: 0.843, and with it colour difference 9.0 to 4.7 and his own face on the model)
+TURN_AGREE = False       # the structure gate on the drawn side and back views when they paint in full colour: off,
+                         # because there it compares two guesses (the builder's back and the drawn back) and cuts the
+                         # drawn one into patches
 MAX_SHARED = 0.15        # share of the texture layout used by more than one triangle above which nothing is painted
 WORKERS = max(1, min(6, (os.cpu_count() or 2) - 1))   # views fitted at the same time
 TURN_VIEWS = ("quarter", "left", "right", "back")
@@ -814,7 +819,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
     def fit(name: str, src: Any, yaws: list[float]) -> View:
         p_, a_ = prepare_picture(src, pic_n)
-        return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, min_iou, log=log, outlines=outlines)
+        bar = min(min_iou, SOURCE_MIN_IOU) if name == "source" else min_iou
+        return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
 
     # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were
     # measured and are no faster, the large images saturate memory either way); which ones are used, and in which
@@ -867,9 +873,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
         def ready(i: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
             v = views[i]
-            prepare_gates(v)
-            proj = project_view(atlas, v, size)
             full = i < n_primary or mode == "full"
+            prepare_gates(v, {**GATES, "agree": False} if (i >= n_primary and full and not TURN_AGREE) else None)
+            proj = project_view(atlas, v, size)
             return proj, (v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px))
 
         done = list(pool.map(ready, range(len(views))))
@@ -940,6 +946,10 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
 
 PARAM = "source_project"
 MODES = ("detail", "full", "off")
+# "full": the drawn side and back views paint in full colour, as the original picture does. Measured on the boy, the knight
+# and the caped hero against "detail" (their fine detail over the builder's own colour): the back and far sides come
+# out as the drawn views show them (8-view sharpness 3.9 to 4.7, 4.6 to 5.0, 2.1 to 2.2), the front is unchanged.
+DEFAULT_MODE = "full"
 
 
 AUTO_CATEGORIES = ("humanoid",)
@@ -981,7 +991,7 @@ def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]
 
 def mode_of(params: dict[str, Any]) -> str:
     m = params.get("source_project_mode")
-    return m if m in MODES else "detail"
+    return m if m in MODES else DEFAULT_MODE
 
 
 def _longer_side(p: Path) -> int:
@@ -1000,8 +1010,8 @@ def _with_alpha_of(big: Path, small_: Path, dest: Path) -> Path:
 
 
 async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) -> tuple[dict[str, Path | None], dict[str, Any]]:
-    """Each picture under UPSCALE_BELOW made twice as big with the first step's learned upscaler (photos and the Realistic
-    look: 4xRealWebPhoto; painted and drawn looks: Real-ESRGAN x2) on the card that draws pictures, before it is painted
+    """Each picture under UPSCALE_BELOW made twice as big with the first step's learned upscaler (an original photo, or
+    the original of a Realistic look: 4xRealWebPhoto; everything else: Real-ESRGAN x2) on the card that draws pictures, before it is painted
     onto the model: a picture sampled at its own size cannot be sharper than its pixels, and the atlas can hold more
     (measured on the knight: front sharpness 0.47 without, 0.73 with, colour unchanged). A picture that cannot be
     upscaled (no card, a failure) is used as it is. Returns (the files to use, {upscaled: [...], model, seconds})."""
@@ -1016,7 +1026,12 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
     cv = sc.stage_version("concept")
     photo = getattr(sc.asset, "style_preset", None) == "realistic_pbr" or (
         cv is not None and (cv.params or {}).get("source") in ("upload", "upload_edit"))
-    model = concept.UPSCALE_PHOTO_MODEL if photo else concept.UPSCALE_ART_MODEL
+    # The photo upscaler is far slower (about 40 s a picture against 5): it is kept for the original photo, where its
+    # care with camera noise matters; the views drawn from it are clean pictures and take the quick one.
+    def model_for(key: str) -> str:
+        return concept.UPSCALE_PHOTO_MODEL if photo and key == "source" else concept.UPSCALE_ART_MODEL
+
+    used: set[str] = set()
     out = dict(files)
     done: dict[str, Path] = {}
     for key, p in files.items():
@@ -1033,18 +1048,21 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
                 w, h = im.size
             f = PIC_N_BIG / float(side)
             name = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_srcproject_{key}.png", instance=inst)
+            model = model_for(key)
             graph = concept.upscale_graph(name, model, int(round(w * f)), int(round(h * f)), sc.prefix(f"srcproject_{key}"))
             entry = await sc.comfy(graph, instance=inst, message="Sharpening the pictures to paint from")
             raw = await sc.download_image(entry, "save", work / f"up_{key}_raw.png", instance=inst)
             out[key] = done[str(p)] = await asyncio.to_thread(_with_alpha_of, Path(raw), Path(p), work / f"up_{key}.png")
             info["upscaled"].append(key)
+            used.add(model)
         except (JobCancelled, asyncio.CancelledError):
             raise
         except Exception as e:  # noqa: BLE001  (the picture is used as it is)
             info.setdefault("failed", {})[key] = str(e)[:160]
-    if info["upscaled"]:
-        info["model"] = model
-        sc.use_model("upscale_photo" if photo else "upscale_art")
+    if used:
+        info["model"] = sorted(used)
+        for m in used:
+            sc.use_model("upscale_photo" if m == concept.UPSCALE_PHOTO_MODEL else "upscale_art")
     info["seconds"] = round(time.time() - t0, 1)
     return out, info
 
