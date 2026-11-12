@@ -5,7 +5,7 @@
 // the hair on the skeleton at Make it move (metrics.hair_bind), and GET /api/assets/{aid}/hair.
 // Prompt words for trying the rare paths: "waist" gives candidates that do not fit well (nothing_fits), "heavy" fails
 // hair_triangles once, "changed face" makes the bald picture fail on the face.
-import type { Asset, HairCandidate, HairCreditInfo, HairLibrary, HairPanel, HairStyleEntry, LibraryHairMetrics, Version } from '../api'
+import type { Asset, HairCandidate, HairCreditInfo, HairLibrary, HairPanel, HairStyleEntry, LibraryHairMetrics, MyHairListing, MyHairStyle, Version } from '../api'
 import { hairLibraryOffer } from '../pipeline/HairSetting'
 import { makeHairCandidate, makeHairThumb, makeImage, type HairShape, type ViewName } from './images'
 
@@ -49,7 +49,10 @@ const HAIR_HUE = 28
 
 const style = (id: string | null | undefined) => HAIR_STYLES.find((s) => s.id === id) ?? null
 // The credit object the backend sends everywhere a style is named.
-export const credit = (s: MockStyle): HairCreditInfo => ({ id: s.id, name: s.id.replace(/^(q|mh|rule)_/, ''), author: s.author, licence: 'CC0-1.0', source_url: s.source_url })
+export const credit = (s: MockStyle): HairCreditInfo =>
+  s.own
+    ? { id: s.id, name: s.name, author: s.author, licence: s.licence ?? 'Not stated', source_url: s.source_url }
+    : { id: s.id, name: s.id.replace(/^(q|mh|rule)_/, ''), author: s.author, licence: 'CC0-1.0', source_url: s.source_url }
 
 let thumbsMade = false
 // On Phone a solid style uses its lite version (at most 1,000 triangles); cards are not offered there.
@@ -285,4 +288,140 @@ export function hairPanel(a: Asset): HairPanel {
     bald_state: baldState,
     sentence,
   }
+}
+
+
+// --- Your own hairstyles (backend vgac/my_hair.py, /api/my-hair) -------------------------------------------------------
+// The demo "reads" a file by its name: "nomesh", "character" and "huge" in the name give the backend's plain refusals.
+const OWN_FAMILIES = [
+  { id: 'short', label: 'Short' },
+  { id: 'bob', label: 'Bob' },
+  { id: 'long', label: 'Long' },
+  { id: 'ponytail', label: 'Ponytail' },
+  { id: 'bun', label: 'Bun' },
+  { id: 'braid', label: 'Braid' },
+  { id: 'afro', label: 'Afro' },
+]
+const OWN_LICENCES = ['CC0', 'CC-BY', 'My own work', 'Paid or licensed asset', 'Not sure']
+const myHair: MyHairStyle[] = []
+
+export class OwnHairError extends Error {
+  status: number
+  constructor(message: string, status = 400) {
+    super(message)
+    this.status = status
+  }
+}
+
+const ownEntry = (h: MyHairStyle): MockStyle => ({
+  id: h.id,
+  name: h.name,
+  family: h.family,
+  kind: 'shell',
+  alpha: 'opaque',
+  triangles: h.triangles,
+  phone_ok: h.phone_ok,
+  fringe: h.fringe,
+  curly: h.curly,
+  parting: 'centre',
+  author: h.licence === 'My own work' ? 'You' : h.source && !/^https?:/i.test(h.source) ? h.source : 'Not stated',
+  source_url: /^https?:/i.test(h.source) ? h.source : '',
+  licence: h.licence || 'Not stated',
+  own: true,
+  thumbs: h.thumbs,
+})
+
+const syncOwn = () => {
+  for (let i = HAIR_STYLES.length - 1; i >= 0; i--) if (HAIR_STYLES[i].own) HAIR_STYLES.splice(i, 1)
+  for (const h of myHair) {
+    const e = ownEntry(h)
+    e.credit = credit(e)
+    HAIR_STYLES.push(e)
+  }
+}
+
+export function myHairListing(): MyHairListing {
+  return {
+    styles: myHair.map((h) => ({ ...h })),
+    responsibility:
+      'Only add hair you made or have the right to use. The file stays on this computer, and the name, source and licence you give here are written into the credits of every character that uses it.',
+    max_mb: 80,
+    kinds: ['.glb', '.gltf', '.fbx'],
+    families: OWN_FAMILIES,
+    licences: OWN_LICENCES,
+  }
+}
+
+export function addMyHair(q: URLSearchParams): MyHairStyle {
+  const name = String(q.get('name') ?? '')
+  if (/[\\/:]|\.\./.test(name)) throw new OwnHairError('The file name must be a plain file name, without folders.')
+  if (!/\.(glb|gltf|fbx)$/i.test(name)) throw new OwnHairError('Use a GLB, glTF or FBX hair mesh.')
+  const label = (q.get('label') || name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ')).trim().slice(0, 60)
+  const family = String(q.get('family') ?? 'short')
+  if (!OWN_FAMILIES.some((f) => f.id === family)) throw new OwnHairError('Pick the kind of hairstyle (short, long, bob, ponytail, bun, braid or afro).')
+  const licence = String(q.get('licence') ?? '')
+  if (licence && !OWN_LICENCES.includes(licence)) throw new OwnHairError('Pick one of the licences in the list, or leave it unset.')
+  if (Number(q.get('bytes') ?? 0) > 80 * 1024 * 1024) throw new OwnHairError('This file is larger than 80 MB. Hair meshes are much smaller.', 413)
+  if (myHair.some((h) => h.name.toLowerCase() === label.toLowerCase())) throw new OwnHairError('You already have a hairstyle with that name. Choose another name.')
+  const low = name.toLowerCase()
+  if (low.includes('nomesh')) throw new OwnHairError('This file has no mesh we can use as hair.')
+  if (low.includes('character')) throw new OwnHairError('This file looks like a whole character or a rigged model, not just hair. Export only the hair mesh and try again.')
+  if (low.includes('huge')) throw new OwnHairError('This hair has far too many triangles (over 300,000). Reduce it in your 3D program and try again.')
+  let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'hair')
+  const base = id
+  for (let i = 2; myHair.some((h) => h.id === id) || HAIR_STYLES.some((s) => s.id === id && !s.own); i++) id = `${base}_${i}`
+  const shape = { family, hue: 28, light: 60 }
+  const thumbs = { front: makeHairThumb(shape), quarter: makeHairThumb(shape) }
+  const h: MyHairStyle = {
+    id,
+    name: label,
+    family,
+    family_label: OWN_FAMILIES.find((f) => f.id === family)?.label ?? family,
+    fringe: q.get('fringe') === 'true',
+    curly: q.get('curly') === 'true',
+    kind: 'shell',
+    triangles: 2400,
+    phone_ok: true,
+    source: String(q.get('source') ?? '').trim().slice(0, 300),
+    licence: licence || 'Not stated',
+    file_name: name,
+    thumbs,
+    added_at: new Date().toISOString(),
+    has_texture: false,
+    own: true,
+  }
+  myHair.push(h)
+  syncOwn()
+  return { ...h }
+}
+
+export function changeMyHair(id: string, body: Record<string, unknown>): MyHairStyle {
+  const h = myHair.find((x) => x.id === id)
+  if (!h) throw new OwnHairError('That hairstyle is not on your list.', 404)
+  if (typeof body.label === 'string') {
+    const label = body.label.trim().slice(0, 60)
+    if (!label) throw new OwnHairError('Give the hairstyle a name.')
+    if (myHair.some((x) => x.id !== id && x.name.toLowerCase() === label.toLowerCase())) throw new OwnHairError('You already have a hairstyle with that name. Choose another name.')
+    h.name = label
+  }
+  if (typeof body.family === 'string') {
+    if (!OWN_FAMILIES.some((f) => f.id === body.family)) throw new OwnHairError('Pick the kind of hairstyle (short, long, bob, ponytail, bun, braid or afro).')
+    h.family = body.family
+    h.family_label = OWN_FAMILIES.find((f) => f.id === body.family)?.label ?? h.family
+  }
+  if (typeof body.fringe === 'boolean') h.fringe = body.fringe
+  if (typeof body.curly === 'boolean') h.curly = body.curly
+  if (typeof body.source === 'string') h.source = body.source.trim().slice(0, 300)
+  if (typeof body.licence === 'string') h.licence = body.licence.trim() || 'Not stated'
+  syncOwn()
+  return { ...h }
+}
+
+export function removeMyHair(id: string, inUse: string[] = []): { removed: string } {
+  const i = myHair.findIndex((x) => x.id === id)
+  if (i < 0) throw new OwnHairError('That hairstyle is not on your list.', 404)
+  if (inUse.length) throw new OwnHairError('Used by ' + inUse.slice(0, 3).join(', ') + '. Pick another hairstyle for it first, then remove this one.', 409)
+  myHair.splice(i, 1)
+  syncOwn()
+  return { removed: id }
 }
