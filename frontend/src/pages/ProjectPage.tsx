@@ -133,9 +133,13 @@ function AssetCard({ asset, categoryName }: { asset: AssetSummary; categoryName:
   )
 }
 
-function autoName(prompt: string): string {
-  const head = prompt.split(/[,.;:]/)[0].trim().replace(/^(an?|the)\s+/i, '')
-  const words = head.split(/\s+/).filter(Boolean).slice(0, 4).join(' ')
+// A name cut at the first place the description starts adding detail (a comma, "with", "in", "wearing"...), so it is
+// never cut mid-phrase ("Grumpy goblin merchant", not "Grumpy goblin merchant with"). At most six words.
+const NAME_STOP = /\s+(with|in|on|of|for|and|that|who|which|wearing|holding|carrying|from|by|at|to|made|using)\s+/i
+export function autoName(prompt: string): string {
+  const first = prompt.split(/[,.;:\n]/)[0].trim().replace(/^(an?|the)\s+/i, '')
+  const head = first.split(NAME_STOP)[0].trim()
+  const words = head.split(/\s+/).filter(Boolean).slice(0, 6).join(' ')
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : ''
 }
 
@@ -301,15 +305,28 @@ function CreateAssetForm({ project }: { project: Project }) {
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
+      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
+        <select value={category} onChange={(e) => changeCategory(e.target.value)}>
+          {ref?.categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </Field>
       {fromPicture ? (
-        <Field label="What is it? (optional, helps the later steps)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
-          <SubmitTextarea rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" />
+        <Field label="Describe your picture (optional)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
+          <SubmitTextarea ctrlEnter rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" aria-label="Describe your picture" />
         </Field>
       ) : (
-        <Field label="Prompt (description)" term="term.prompt" hint="One sentence is enough. Enter creates the asset, Shift+Enter adds a line.">
-          <SubmitTextarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PROMPT_TEMPLATE} autoFocus />
+        <Field label="2. Describe it" term="term.prompt" hint="One sentence is enough. Enter adds a line; Ctrl+Enter creates the asset.">
+          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. a sturdy young knight in worn plate armour, short dark hair" aria-label="Description" autoFocus />
+          <div className="muted small">Template: {PROMPT_TEMPLATE}</div>
         </Field>
       )}
+      <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
+      </Field>
       {described && (
         <div className="muted small described-size">
           Size: {metres(described.value)} m {describedWord}, from your description. You can change it later in {stagePlain('prep')}.
@@ -342,15 +359,6 @@ function CreateAssetForm({ project }: { project: Project }) {
           ))}
         </div>
       )}
-      <Field label="What is it" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
-        <select value={category} onChange={(e) => changeCategory(e.target.value)}>
-          {ref?.categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </Field>
       <div className="grid-2">
         {projectLook && style === projectStyleId && !lookOpen ? (
           <Field label="Look" term="term.look" hint="Every asset in this project follows it.">
@@ -410,9 +418,6 @@ function CreateAssetForm({ project }: { project: Project }) {
       ))}
       <Disclosure label="Advanced">
         <div className="col">
-          <Field label="Name" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
-          </Field>
           <Field
             label="Model (the painter)"
             term="term.concept_model"
@@ -460,7 +465,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <span className="muted small block">Runs every step and only stops if something needs you.</span>
         </span>
       </label>
-      <div className="row-gap">
+      <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? 'Creating...' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>

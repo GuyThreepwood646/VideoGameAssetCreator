@@ -3815,3 +3815,28 @@ button.small-btn .resume-icon {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* UI-11: the Create button stays visible while the form grows. */
+.form-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  background: var(--panel);
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--border);
+}
+
+.rail-edit {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  justify-content: space-between;
+}
+.rail-edit-btn {
+  opacity: 0.7;
+  flex: none;
+}
+.rail-edit:hover .rail-edit-btn,
+.rail-edit-btn:focus-visible {
+  opacity: 1;
+}
