@@ -5,6 +5,7 @@ import { Link } from 'react-router'
 import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
+import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
@@ -144,6 +145,41 @@ export function ResumeFrom({ asset, upTo, stages, busy, onResumeFrom }: { asset:
   )
 }
 
+// The step 1 version that `version` was drawn from, walking up the parents.
+function conceptOf(asset: Asset, version: Version): Version | undefined {
+  const byId = new Map<string, Version>()
+  for (const list of Object.values(asset.stages ?? {})) for (const v of list ?? []) byId.set(v.id, v)
+  let v: Version | undefined = version
+  for (let guard = 0; v && guard < 200; guard++) {
+    if (v.stage === 'concept') return v
+    v = v.parent_version_id ? byId.get(v.parent_version_id) : undefined
+  }
+  return undefined
+}
+
+// UI-47: the pause after Pose for 3D first. Your step 1 picture beside the redraw every view and the 3D model start from,
+// so a lost arm or a changed colour is seen here, before the 3D build.
+function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const redraw = version.files.pose_ready_picture
+  if (!redraw) return null
+  const original = conceptOf(asset, version)?.files.image
+  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Redrawn for 3D' }]
+  return (
+    <div className="redraw-pair" aria-label="Your picture and its redraw side by side">
+      {items.map((it, i) => (
+        <figure key={it.label} className="redraw-pair-cell">
+          <Zoomable className="redraw-pair-image" label={it.label.toLowerCase()} onOpen={() => setOpen(i)}>
+            <img src={it.src} alt={it.label} />
+          </Zoomable>
+          <figcaption className="small">{it.label}</figcaption>
+        </figure>
+      ))}
+      {open !== null && <PictureViewer items={items} start={open} checker={false} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
 // The card shown instead of "Your next step" while the autopilot runs, is paused or stopped.
 export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions, onOpenTool }: CardProps) {
   const apStage = autopilotStage(ap)
@@ -249,6 +285,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           )}
         </div>
         <div className="guide-happened">{ap.reason || (paused ? 'The autopilot is waiting for you.' : 'The autopilot stopped.')}</div>
+        {paused && version?.status === 'done' && ap.reason?.startsWith('Step 2 redrew') && <RedrawPair asset={asset} version={version} />}
         {versionFailed && version?.error && (
           <div className="guide-now">
             {humanError(version.error)}
