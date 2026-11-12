@@ -3990,3 +3990,37 @@ button.small-btn .resume-icon {
 .confirm-card {
   width: 460px;
 }
+
+.asset-card-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.asset-card-wrap > .asset-card {
+  flex: 1;
+}
+.asset-card-tools {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  display: flex;
+  gap: var(--s1);
+  align-items: center;
+}
+.asset-card-tools .more-menu > summary {
+  background: var(--scrim);
+}
+.card-pop {
+  top: calc(100% + var(--s1));
+  bottom: auto;
+  min-width: 140px;
+}
+.asset-rename {
+  display: flex;
+  gap: var(--s1);
+  padding-top: var(--s1);
+}
+.asset-tools {
+  margin-bottom: var(--s2);
+}
