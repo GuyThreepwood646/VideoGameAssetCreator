@@ -425,6 +425,7 @@ export default function AssetPage() {
             </div>
           )}
         </div>
+        {autopilot?.status === 'running' && <div className="rail-progress small" role="status">{status.text}</div>}
         <nav className="rail-stages" aria-label="Progress">
           {COMPOSE_CATEGORIES.includes(asset.category) && (
             <div className={'rail-stage rail-stage-half reached' + (composeOpen ? ' active' : '')}>

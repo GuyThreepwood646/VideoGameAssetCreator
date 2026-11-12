@@ -26,3 +26,4 @@ def test_no_pause_without_a_redraw_or_on_other_steps():
     assert redraw_pause_reason(_v(), "block") is None
     assert redraw_pause_reason(_v(params={"pose_ready": True}), "block") is None
     assert redraw_pause_reason(_v(stage="mesh", params={"pose_ready": True}, files={"pose_ready_picture": "x"}), "block") is None
+
