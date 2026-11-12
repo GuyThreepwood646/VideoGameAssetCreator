@@ -4107,3 +4107,31 @@ button.small-btn .resume-icon {
   border: 1px solid var(--accent);
   border-radius: var(--radius-md);
 }
+
+.running-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+.running-pictures {
+  display: flex;
+  gap: var(--s4);
+  justify-content: center;
+}
+.running-pictures figure {
+  margin: 0;
+  text-align: center;
+}
+.running-pictures img {
+  max-height: 220px;
+  max-width: 100%;
+}
+.running-from img {
+  opacity: 0.45;
+}
+
+.rail-progress {
+  padding: var(--s2) var(--s3);
+  color: var(--accent);
+}
