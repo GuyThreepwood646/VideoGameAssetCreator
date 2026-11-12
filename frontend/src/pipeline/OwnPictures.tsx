@@ -160,7 +160,7 @@ function OwnFaceCloseup({ asset, active, busy, act, onCreated }: { asset: Asset;
           {current && (
             <div className="row-gap">
               <a href={current} target="_blank" rel="noreferrer" title="Open your close-up">
-                <img src={current} alt="Your close-up of the face" className="own-face-closeup-thumb" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 4 }} />
+                <img src={current} alt="Your close-up of the face" className="own-face-closeup-thumb" />
               </a>
               <span className="muted small">
                 In use: every clean-up of this asset paints the face from it.

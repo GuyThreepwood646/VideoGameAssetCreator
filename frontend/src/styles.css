@@ -4042,3 +4042,56 @@ button.small-btn .resume-icon {
 .rail-row dd {
   margin: 0;
 }
+
+/* UI-46: layout that lived in inline styles. */
+.view-intro-flush {
+  padding-bottom: 0;
+}
+.view-cell-wide {
+  min-width: 300px;
+}
+.row-gap-tight {
+  gap: var(--s1);
+}
+.row-gap-top {
+  margin-top: var(--s2);
+}
+.view-image-tall {
+  flex: 1 1 0;
+  height: 280px;
+}
+.choice-column {
+  flex-direction: column;
+  gap: var(--s1);
+}
+.check-item-wide {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  min-height: 28px;
+}
+.check-item-wide.is-disabled {
+  cursor: default;
+}
+.hair-picker .move-card {
+  cursor: default;
+  align-items: stretch;
+}
+.tool-note-flush {
+  margin-bottom: 0;
+}
+.col-snug {
+  gap: var(--s2);
+}
+.hair-picker {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.own-face-closeup-thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
