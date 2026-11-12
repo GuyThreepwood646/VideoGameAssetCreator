@@ -785,6 +785,13 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     renderer.domElement.addEventListener('dblclick', onDouble)
     renderer.domElement.addEventListener('pointerdown', stopFocus)
     renderer.domElement.addEventListener('wheel', stopFocus, { passive: true })
+    // The wheel zooms only with Ctrl held or once the picture has been clicked, so the page can scroll past it (UI-07).
+    const gateZoom = (e: WheelEvent) => {
+      const ok = e.ctrlKey || document.activeElement === renderer.domElement
+      controls.enableZoom = ok
+      if (!ok) setHoverLabel('Hold Ctrl to zoom, or click the picture first')
+    }
+    renderer.domElement.addEventListener('wheel', gateZoom, { capture: true, passive: true })
 
     // Hovering a hit box names it in the status line and brightens it.
     const ray = new THREE.Raycaster()
@@ -818,6 +825,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       renderer.domElement.removeEventListener('dblclick', onDouble)
       renderer.domElement.removeEventListener('pointerdown', stopFocus)
       renderer.domElement.removeEventListener('wheel', stopFocus)
+      renderer.domElement.removeEventListener('wheel', gateZoom, { capture: true })
       controlsRef.current = null
       ro.disconnect()
       controls.dispose()
@@ -1264,13 +1272,16 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         <div className="seg">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
             <button key={s} type="button" aria-pressed={shading === s} onClick={() => changeShading(s)}>
-              {s}
+              {s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
         <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)} title={reduceMotion && !turntable ? 'Off because your system asks for less motion; press to spin the model' : undefined}>
           Turntable
         </button>
+        <details className="viewer-show">
+          <summary title="Choose what to show on the model">Show</summary>
+          <div className="viewer-show-pop">
         <button type="button" aria-pressed={grid} onClick={() => setGrid((g) => !g)}>
           Grid
         </button>
@@ -1308,6 +1319,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             <Info term="term.movement_shape" />
           </span>
         )}
+          </div>
+        </details>
         {clips.length > 0 && (
           <>
             <select value={clip} onChange={(e) => changeClip(e.target.value)} aria-label="Animation clip">
@@ -1344,7 +1357,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       <div className="canvas-host" ref={hostRef}>
         <LightPicker value={light} onChange={chooseLight} note={lightNote} />
         <div className="viewer-hint">
-          {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Scroll to zoom. Double-click a spot to look at it closely.
+          {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Hold Ctrl and scroll to zoom. Double-click a spot to look at it closely.
         </div>
       </div>
     </section>
