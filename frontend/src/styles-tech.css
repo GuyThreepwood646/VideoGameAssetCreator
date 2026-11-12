@@ -23,3 +23,18 @@
   border: 1px solid var(--border);
   background: var(--panel);
 }
+
+/* Your library (System page) */
+.your-library {
+  margin: var(--s4, 16px) 0;
+}
+.your-library ul {
+  margin: var(--s1, 4px) 0 var(--s3, 12px);
+  padding-left: var(--s4, 16px);
+}
+.myhair-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2, 8px);
+  max-width: 560px;
+}
