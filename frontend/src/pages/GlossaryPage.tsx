@@ -142,7 +142,7 @@ export default function GlossaryPage() {
                     <div>{r.entry.meaning}</div>
                     <div className="muted">Why it matters: {r.entry.why}</div>
                     <div className="muted small">
-                      Technical name: <span className="mono">{r.entry.technical}</span>
+                      Technical name: <span className="mono">{r.entry.technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '')}</span>
                     </div>
                   </dd>
                 </div>

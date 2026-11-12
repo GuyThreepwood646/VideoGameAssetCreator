@@ -67,6 +67,32 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
   },
 }
 
+// Internal words that leak into running text (job messages, reasons from the backend) swapped for plain ones (UI-08).
+// Technical names stay in Details and help; this only touches sentences a person reads.
+const JARGON: Array<[RegExp, string]> = [
+  [/pc[ _]mid/gi, 'PC and console'],
+  [/mobile[ _]low/gi, 'phones'],
+  [/waiting for a free machine/gi, 'waiting for the graphics card'],
+  [/texture voxel/gi, 'painting the textures'],
+  [/sparse structure/gi, 'shaping the model'],
+  [/uv unwrap(ping)?/gi, 'laying out the textures'],
+  [/consistency checks?/gi, 'comparing the views'],
+]
+const STEP_QUOTED: Record<string, string> = {
+  concept: 'step 1, Describe',
+  turnaround: 'step 2, Check all sides',
+  mesh: 'step 3, Build the 3D model',
+  prep: 'step 4, Clean up for the game',
+  rig: 'step 5, Make it move',
+  export: 'step 6, Hand off to the game',
+}
+export function plainJargon(text: string | null | undefined): string {
+  if (!text) return ''
+  let out = text.replace(/"(concept|turnaround|mesh|prep|rig|export)"/g, (_m, k: string) => STEP_QUOTED[k])
+  for (const [re, to] of JARGON) out = out.replace(re, to)
+  return out
+}
+
 export function stagePlain(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_name || STAGE_TEXT[stage].plain
 }
@@ -75,8 +101,16 @@ export function stageVerb(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_verb || STAGE_TEXT[stage].verb
 }
 
-export function stagePlaceholder(stage: StageId): string {
-  return STAGE_TEXT[stage].placeholder
+// The example in the Describe the change box. It fits the kind of thing being made, so a chest is not offered a helmet (UI-36).
+const CHANGE_EXAMPLES: Record<string, Partial<Record<StageId, string>>> = {
+  prop: { concept: 'e.g. make the lid rounder and the metal darker', turnaround: 'e.g. the back view should show the hinges', mesh: 'e.g. thicker corners and a flatter base', prep: 'e.g. more wear on the edges', export: 'e.g. drop the sprite sheet' },
+  creature: { concept: 'e.g. longer horns and a thicker tail', turnaround: 'e.g. the back view should show the spikes', mesh: 'e.g. rounder belly and thicker legs', prep: 'e.g. more scuffs on the scales', rig: 'e.g. smoother bending in the tail' },
+  vehicle: { concept: 'e.g. bigger wheels and a lower roof', turnaround: 'e.g. the back view should show the exhaust', mesh: 'e.g. sharper edges on the hood', prep: 'e.g. more dirt near the wheels' },
+  scenery: { concept: 'e.g. more moss on the stones and a wider archway', turnaround: 'e.g. the back view should show the steps', mesh: 'e.g. flatter ground and thicker walls', prep: 'e.g. more weathering on the stone' },
+}
+export function stagePlaceholder(stage: StageId, category?: string): string {
+  const group = !category || category === 'humanoid' ? null : /prop|material/.test(category) ? 'prop' : /vehicle|mech/.test(category) ? 'vehicle' : /environment|scenery/.test(category) ? 'scenery' : 'creature'
+  return (group && CHANGE_EXAMPLES[group]?.[stage]) || STAGE_TEXT[stage].placeholder
 }
 
 export function stageGerund(stage: StageId): string {
@@ -227,7 +261,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   style_preset: H('Style', 'The look: painted, cel shaded, pixel art and so on.', 'Picks the model and the wording added to every description.', 'style_preset'),
   platform: H('Platform', 'Where the game will run: phone, PC or showcase.', 'Sets how many triangles and how big a texture the model may have.', 'platform_target'),
   parts: H('Parts', 'Pieces that must move or swap on their own, such as a weapon or a lid.', 'We ask the image model to draw these as clearly separate pieces; for now they stay joined to the rest of the 3D model.', 'parts'),
-  style_lock: H('Style lock', 'The look every asset in this project shares.', 'Keeps a whole game looking like one game.', 'style_lock'),
+  style_lock: H('Look and settings', 'The look every asset in this project shares (technical name: style lock).', 'Keeps a whole game looking like one game.', 'style_lock'),
   prompt_block: H('Style prompt (style words)', 'Words added in front of every description in this project.', 'This is how the style stays the same from asset to asset.', 'prompt_block'),
   palette: H('Palette', 'The handful of colours the project uses.', 'Shared colours make assets look like they belong together.', 'palette'),
   negative: H('Negative prompt (things to avoid)', 'Things the model should leave out, such as text or blur.', 'Removes common mistakes before they happen.', 'negative (style_lock.negative)'),
@@ -450,8 +484,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),
   until_stage: H('Run until', 'The last step the autopilot runs before it stops.', 'Usually the hand-off; stop earlier if you only want the picture or the model.', 'until_stage'),
   // Style presets
-  look: H('Style preset (look)', 'A ready-made style: the model, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (GET /api/style-presets, stored as style_lock.preset)'),
-  look_preset: H('Style preset (look)', 'A ready-made style: the model, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (style_lock.preset)'),
+  look: H('Look', 'A ready-made style: the model, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (GET /api/style-presets, stored as style_lock.preset)'),
+  look_preset: H('Look', 'A ready-made style: the model, the style words, a palette and what to avoid, chosen together so they work.', 'Pick one and every asset in the project matches it; edit the fields by hand only if you want something unusual.', 'style preset (style_lock.preset)'),
   // Graphics cards (Health page)
   gpu_default: H('Default card', 'The card new work goes to first. Every step it can do starts there; rigging stays on the card that can rig.', 'Pick the faster card to finish single assets sooner, or leave each step on its usual card so both cards stay loaded with the models they use most.', 'prefs.json default_instance (PUT /api/gpus)'),
   gpu_share: H('Use the other card when one is busy', 'When one card is busy and the other has nothing to do, a waiting step moves to the free card, if that card can do it and is allowed to.', 'Turn it on when you make several assets at once. A card loads the models for a new kind of step the first time, which adds a minute or two.', 'prefs.json share_when_busy; JobQueue.take_shared'),
@@ -479,7 +513,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   setup_needs_attention: H('Setup needs attention', 'At least one thing the app needs is missing or broken.', 'Open the Health page to see what it is and how to fix it.', 'GET /api/setup summary.fails'),
   gpu_free_after: H('Free memory after each step', 'After every step on this card, the app tells it to unload its models and release its memory.', 'Leaves the card\'s memory free for your other apps between steps, at the cost of a slower next step, because the models have to load again.', 'free_after_job (ComfyUI POST /free)'),
   // Recipes: the look carried through every step
-  recipe: H('Recipe', 'How your chosen look is carried through every step: detail level, texture size, shading and how the game engine shows the textures.', 'So a pixel-art or low-poly asset stays that way all the way into your game, not just in the first picture.', 'reference.recipe'),
+  recipe: H('How the look is built', 'How your chosen look is carried through every step: detail level, texture size, shading and how the game engine shows the textures.', 'So a pixel-art or low-poly asset stays that way all the way into your game, not just in the first picture.', 'reference.recipe'),
   addons: H(
     'LoRAs (style add-ons)',
     'Small trained files that load on top of the image model and push the picture toward a look. Each one is made for one model family (its base model), so the list changes when you change the model.',
@@ -540,7 +574,7 @@ export const STOP_ON_OPTIONS: { id: 'block' | 'warn' | 'never'; label: string; h
 export function autopilotLine(stage: StageId | null, secondsLeft: number | null, extra?: { queued?: boolean }): string {
   if (!stage) return 'Autopilot: starting.'
   const k = STAGES.indexOf(stage) + 1
-  const time = extra?.queued ? 'waiting for a free machine' : secondsLeft !== null ? `${fmtDuration(secondsLeft)} left` : ''
+  const time = extra?.queued ? 'waiting for the graphics card' : secondsLeft !== null ? `${fmtDuration(secondsLeft)} left` : ''
   const g = stageGerund(stage)
   return `Autopilot: ${g.charAt(0).toLowerCase() + g.slice(1)}${time ? `, ${time}` : ''}, step ${k} of ${STAGES.length}`
 }
@@ -612,19 +646,18 @@ const headLine = (vars: Record<string, unknown>): string => {
 }
 
 const CHECK_TEXT: Record<string, CheckText> = {
-  triangle_budget: (v, l, ok, ctx, vars) => {
+  triangle_budget: (v, l, ok, _ctx, vars) => {
     const over = num(v) !== null && num(l) !== null ? num(v)! - num(l)! : null
-    const who = ctx.platform ? platformPlain(ctx.platform).split(':')[0].toLowerCase() : 'this platform'
     // Library hair: the body is measured against what is left after the hair's share (vars hair_allowance, platform_triangles).
     if (num(vars.hair_allowance) !== null && num(vars.platform_triangles) !== null)
       return ok
-        ? `The body's ${n0(v)} triangles fit the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's ${n0(vars.platform_triangles)} are kept for the library hairstyle.${headLine(vars)}`
-        : `The body has ${over !== null ? n0(over) + ' more' : 'more'} triangles than the ${n0(l)} left for it (${n0(v)}) after ${n0(vars.hair_allowance)} of your platform's ${n0(vars.platform_triangles)} are kept for the library hairstyle.`
+        ? `Your model's body has ${n0(v)} triangles, inside the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's limit of ${n0(vars.platform_triangles)} are kept for the library hairstyle.${headLine(vars)}`
+        : `Your model's body has ${n0(v)} triangles, ${over !== null ? n0(over) + ' more' : 'more'} than the ${n0(l)} left for it after ${n0(vars.hair_allowance)} of your platform's limit of ${n0(vars.platform_triangles)} are kept for the library hairstyle.`
     // The 3D step's model built over the budget on purpose, so the clean-up step can give the head more (vars head_room).
     if (vars.head_room && ok)
-      return `The model has ${n0(v)} triangles, more than the ${n0(vars.platform_triangles)} ${who} allows on purpose: Clean up for the game brings it back to the budget with weighted decimation (more triangles on the head).`
-    if (vars.head_room) return `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than the 3D step asked for (${n0(v)} of ${n0(l)}, which already leaves room for the head).`
-    return ok ? `The model has ${n0(v)} triangles, within the ${n0(l)} ${who} allows.${headLine(vars)}` : `The model has ${over !== null ? n0(over) + ' more' : 'more'} triangles than ${who === 'phone' ? 'a phone' : who} can handle (${n0(v)} of ${n0(l)}).`
+      return `Your full model has ${n0(v)} triangles, more than your platform's limit of ${n0(vars.platform_triangles)} on purpose: Clean up for the game brings it back to the limit with weighted decimation (more triangles on the head).`
+    if (vars.head_room) return `Your full model has ${n0(v)} triangles, ${over !== null ? n0(over) + ' more' : 'more'} than the 3D step's limit of ${n0(l)} (which already leaves room for the head).`
+    return ok ? `Your full model has ${n0(v)} triangles (the flat pieces it is made of), inside your platform's limit of ${n0(l)}.${headLine(vars)}` : `Your full model has ${n0(v)} triangles (the flat pieces it is made of), ${over !== null ? n0(over) + ' more' : 'more'} than your platform's limit of ${n0(l)}; it would run slower than it should.`
   },
   manifold: (v, _l, ok) => (ok ? 'The surface has no overlapping or broken edges.' : `The surface has ${n0(v)} broken or overlapping edges.`),
   watertight: (v, _l, ok) => (ok ? 'The surface is closed with no holes.' : `The surface has ${n0(v)} open holes.`),
@@ -732,9 +765,9 @@ const CHECK_TEXT: Record<string, CheckText> = {
     return `The library hairstyle covers the head: ${pct(v)} of the scalp shows through, under the ${pct(l)} limit. A scalp cap (a hair-coloured layer under the hair) hides small gaps.`
   },
   hair_triangles: (v, l, ok, _ctx, vars) => {
-    if (!ok) return `With the library hairstyle the character has ${n0(v)} triangles, more than your platform's ${n0(l)}, so it would run slower than it should. Choose a lighter hairstyle.`
+    if (!ok) return `With the library hairstyle your full model has ${n0(v)} triangles, more than your platform's limit of ${n0(l)}, so it would run slower than it should. Choose a lighter hairstyle.`
     const split = num(vars.body) !== null && num(vars.hair) !== null ? `: ${n0(vars.body)} for the body and ${n0(vars.hair)} for the hair` : ''
-    return `With the library hairstyle the character has ${n0(v)} triangles, within your platform's ${n0(l)}${split}.`
+    return `With the library hairstyle your full model has ${n0(v)} triangles, inside your platform's limit of ${n0(l)}${split}.`
   },
   hair_bound: (v, _l, ok, _ctx, vars) => {
     if (!ok) return `Only ${pct(v)} of the library hairstyle follows the skeleton, so the rest would stay behind when the character moves. Making the moves again joins all of it to the skeleton.`
@@ -817,7 +850,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
   big_enough: (v, l, ok, _ctx, vars) =>
     ok ? `The subject is ${n0(v)} pixels ${str(vars.measure) || 'tall'}, big enough for the 3D step.` : `The subject is only ${n0(v)} pixels ${str(vars.measure) || 'tall'}; at least ${n0(l)} keeps the detail in the 3D model.`,
   arms_away: (_v, _l, ok) =>
-    ok ? 'The arms stand away from the body, so the skeleton step can tell them apart.' : 'The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.',
+    ok ? 'The arms stand away from the body, so the skeleton step can tell them apart.' : 'The arms are close to the body, so the hands may be hidden or holding something; the 3D model may join the arms to the sides and the skeleton step may not tell them apart. The redraw also opens the hands and removes held items.',
   even_lighting: (v, _l, ok) =>
     ok ? 'The light is even across the photo.' : `One side of the photo is much brighter than the other (${pct(v)} difference), so the repeating texture will show stripes of light and dark. Take it in even, cloudy-day light.`,
   straight_on: (_v, _l, ok) =>
@@ -1621,4 +1654,13 @@ export function looksGood(metrics: Record<string, unknown>): boolean | null {
     if (vs.length) return vs.every((v) => v?.passed !== false)
   }
   return null
+}
+
+// A job's kind and card in plain words for the Activity panel: "Build the 3D model, on RTX 3060" (UI-08).
+export function jobKindPlain(kind: string, instance: string, gpuName?: string | null): string {
+  const [stage, op] = kind.split('.')
+  const name = (STAGES as readonly string[]).includes(stage) ? STAGE_TEXT[stage as StageId].plain : stage.replace(/_/g, ' ')
+  const what = op === 'run' || !op ? name : op === 'adjust' ? `${name} (change)` : op === 'refine' ? `${name} (redo)` : `${name} (${op.replace(/_/g, ' ')})`
+  const where = instance === 'host' ? 'on this PC' : gpuName ? `on ${gpuName}` : `on graphics card ${instance}`
+  return `${what}, ${where}`
 }

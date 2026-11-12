@@ -300,6 +300,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=seed)
     sc.set_metrics(pose_ready={"seed": seed, "card": card, "size": [w, h], "neutral_mouth": mouth, "prompt": prompt,
                                "elapsed_seconds": entry.get("elapsed_seconds")})
+    sc.publish()  # the redraw exists about 40 seconds in; show it now, not when the whole step ends (UI-18)
     return Path(sc.file("pose_ready_picture"))
 
 

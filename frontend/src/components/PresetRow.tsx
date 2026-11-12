@@ -1,8 +1,14 @@
 // A row of ready-made looks (style presets): label, description, palette swatches
-// and "Use this look". The current one is highlighted.
+// The whole card is the button; the chosen one shows Selected. The model name lives in Advanced.
+import { useState } from 'react'
 import type { LookPreset } from '../api'
-import { modelLabel } from '../help'
-import { Info } from './Info'
+
+// The same knight painted in each look (public/looks/<look id>.webp). A look with no sample simply shows no picture.
+function LookSample({ preset }: { preset: LookPreset }) {
+  const [missing, setMissing] = useState(false)
+  if (missing) return null
+  return <img className="preset-sample" src={`/looks/${preset.id}.webp`} alt={`Sample of the ${preset.label} look: the same knight painted in this look`} width={384} height={384} loading="lazy" onError={() => setMissing(true)} />
+}
 
 export function PresetRow({
   presets,
@@ -20,29 +26,32 @@ export function PresetRow({
   onPick: (p: LookPreset) => void
 }) {
   return (
-    <div className={'preset-row' + (compact ? ' compact' : '')} role="list" aria-label="Ready-made looks">
+    <div className={'preset-row' + (compact ? ' compact' : '')} role="radiogroup" aria-label="Ready-made looks">
       {presets.map((p) => {
         const current = p.id === currentId
         return (
-          <div key={p.id} role="listitem" className={'preset-card' + (current ? ' current' : '')}>
-            <div className="preset-head">
+          <button
+            key={p.id}
+            type="button"
+            role="radio"
+            aria-checked={current}
+            className={'preset-card' + (current ? ' current' : '')}
+            disabled={busy}
+            onClick={() => onPick(p)}
+            title={current && edited ? 'Edited by hand. Click to go back to this look as it was made.' : p.style_lock.prompt_block}
+          >
+            <LookSample preset={p} />
+            <span className="preset-head">
               <span className="preset-label">{p.label}</span>
-              {current && <span className="chip chip-ok">{edited ? 'using, edited' : 'using'}</span>}
-            </div>
-            {!compact && <div className="preset-desc small">{p.description}</div>}
-            <div className="swatches" aria-label="palette">
+              {current && <span className="chip chip-ok">{edited ? 'Selected, edited' : 'Selected'}</span>}
+            </span>
+            {!compact && <span className="preset-desc small">{p.description}</span>}
+            <span className="swatches" aria-label="palette">
               {(p.style_lock.palette ?? []).map((c, i) => (
                 <span key={i} className="swatch" style={{ background: c }} title={c} />
               ))}
-            </div>
-            <div className="muted small preset-meta">
-              {modelLabel(p.style_lock.model)}
-              <Info term={'model.' + p.style_lock.model} />
-            </div>
-            <button type="button" className={current ? 'small-btn' : 'small-btn preset-use'} disabled={busy || (current && !edited)} onClick={() => onPick(p)} title={p.style_lock.prompt_block}>
-              {current ? (edited ? 'Reset to this look' : 'Using this look') : 'Use this look'}
-            </button>
-          </div>
+            </span>
+          </button>
         )
       })}
     </div>

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -106,6 +107,7 @@ async def _block_foreign_origins(request: Request, call_next):
 
 class StyleLock(BaseModel):
     preset: str | None = None
+    based_on: str | None = None  # a custom look (no preset) takes its pipeline settings from this look
     prompt_block: str = ""
     model: str | None = None
     loras: list[str] = Field(default_factory=list)
@@ -849,6 +851,62 @@ def delete_version(vid: str, with_later: bool = False, db: Session = Depends(get
 @app.get("/api/versions/{vid}")
 def get_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
     return version_to_dict(_version(db, vid))
+
+
+def _version_files(v: Version) -> list[tuple[str, Path]]:
+    """The version's files that exist inside the library, as (name to show, path). Nothing outside the library is listed."""
+    root = get_settings().library_path.resolve()
+    out: list[tuple[str, Path]] = []
+    for rel in v.files.values():
+        p = (root / rel).resolve()
+        try:
+            p.relative_to(root)
+        except ValueError:
+            continue
+        if p.is_file() and p.name not in {x[0] for x in out}:
+            out.append((p.name, p))
+    return out
+
+
+@app.get("/api/versions/{vid}/zip")
+def version_zip(vid: str, db: Session = Depends(get_session)) -> FileResponse:
+    """Every file of a version in one .zip ("Download everything" on the finish card)."""
+    import tempfile
+    import zipfile
+
+    from starlette.background import BackgroundTask
+
+    v = _version(db, vid)
+    files = _version_files(v)
+    if not files:
+        raise HTTPException(404, "This version has no files to download.")
+    fd, name = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    tmp = Path(name)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, path in files:
+            z.write(path, name)
+    return FileResponse(tmp, media_type="application/zip", filename=f"{vid[:8]}-files.zip", background=BackgroundTask(tmp.unlink, missing_ok=True))
+
+
+@app.post("/api/versions/{vid}/open-folder")
+def version_open_folder(vid: str, where: str = "files", db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Open the folder holding a version's files (the delivered folder when the export has one) in the file explorer."""
+    v = _version(db, vid)
+    delivered = v.metrics.get("delivered_to")
+    if where == "unity":
+        delivered = (v.metrics.get("unity_project_import") or {}).get("folder")
+    folder: Path | None = Path(str(delivered)) if delivered else None
+    if folder is None or not folder.is_dir():
+        files = _version_files(v)
+        folder = files[0][1].parent if files else None
+    if folder is None:
+        raise HTTPException(404, "This version has no folder yet.")
+    try:
+        user_addons._launch_explorer(folder)
+    except OSError as e:
+        raise HTTPException(500, f"The folder could not be opened: {e.strerror or e}")
+    return {"opened": True, "folder": str(folder)}
 
 
 @app.post("/api/versions/{vid}/feedback")
