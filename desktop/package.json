@@ -22,6 +22,8 @@
     "files": [
       "main.js",
       "preload.js",
+      "preload-app.js",
+      "appbridge.js",
       "services.js",
       "procs.js",
       "status.html",

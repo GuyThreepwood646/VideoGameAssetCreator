@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import GpuCards from './GpuCards'
 import SetupCheck from './SetupCheck'
 import { useEvents } from './events'
+import { desktopBridge } from './desktop'
 
 const GB = 1024 ** 3
 
@@ -46,10 +47,24 @@ export function useHealth(intervalMs = 5000) {
 // A full-width banner when the engine does not answer (UI-32). The desktop launcher restarts it from its tray menu.
 export function EngineBanner() {
   const { error } = useHealth(10000)
+  const [starting, setStarting] = useState(false)
   if (!error) return null
+  const desk = desktopBridge()
+  const start = () => {
+    setStarting(true)
+    void desk?.startEngine().finally(() => window.setTimeout(() => setStarting(false), 15000))
+  }
   return (
     <div className="engine-banner" role="alert">
-      <strong>VGAC's engine is not running.</strong> Your work is safe. If you opened VGAC from the desktop launcher, use its tray menu to restart the engine, then reload this page.
+      <span>
+        <strong>VGAC's engine is not running.</strong> Your work is safe.
+        {desk ? ' Start it again and this page carries on.' : ' If you opened VGAC from the desktop launcher, use its tray menu to restart the engine, then reload this page.'}
+      </span>
+      {desk && (
+        <button type="button" className="primary" disabled={starting} onClick={start}>
+          {starting ? 'Starting...' : 'Start the engine'}
+        </button>
+      )}
       <Link to="/health">What happened?</Link>
     </div>
   )

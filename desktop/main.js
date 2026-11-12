@@ -1,11 +1,12 @@
 // VGAC desktop launcher (Electron main process).
 // Shows a status window, brings up ComfyUI B, the backend and the UI build, then opens the app window.
 'use strict';
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, nativeImage, shell, dialog, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { Supervisor } = require('./services');
+const bridge = require('./appbridge');
 
 // ---- config ---------------------------------------------------------------------------------------------------
 
@@ -103,7 +104,8 @@ function createMainWindow() {
     backgroundColor: '#1b1d21',
     icon: appIcon(),
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    // preload-app.js exposes three narrow calls (window.vgacDesktop); contextIsolation and the sandbox stay on.
+    webPreferences: { preload: path.join(__dirname, 'preload-app.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   mainWindow.loadURL(cfg.backend.url + '/');
   mainWindow.once('ready-to-show', () => { mainWindow.show(); mainWindow.focus(); });
@@ -287,6 +289,44 @@ ipcMain.handle('action', async (e, id) => {
     default: log('unknown action ' + id);
   }
   sendState();
+  return true;
+});
+
+// The app window's bridge (UI-31 badge and notifications, UI-32 Start the engine). Each call is accepted only from the
+// app window's own frame on the backend's origin, and every value is cleaned before it is used.
+function fromAppWindow(e) {
+  if (!mainWindow || mainWindow.isDestroyed() || e.sender !== mainWindow.webContents) return false;
+  return bridge.senderAllowed(e.senderFrame && e.senderFrame.url, cfg.backend.url);
+}
+
+ipcMain.handle('app:setWork', (e, count, icon) => {
+  if (!fromAppWindow(e)) return false;
+  const n = bridge.cleanCount(count);
+  if (process.platform === 'win32') {
+    const png = n ? bridge.cleanIcon(icon) : null;
+    const img = png ? nativeImage.createFromBuffer(png) : null;
+    mainWindow.setOverlayIcon(img && !img.isEmpty() ? img : null, n ? `${n} running` : '');
+  } else {
+    app.setBadgeCount(n);
+  }
+  return true;
+});
+
+ipcMain.handle('app:notify', (e, title, body) => {
+  if (!fromAppWindow(e) || !Notification.isSupported()) return false;
+  if (mainWindow.isFocused()) return false; // the page already shows a toast
+  const n = new Notification({ title: bridge.cleanText(title, 80) || 'VGAC', body: bridge.cleanText(body, 240), icon: appIcon() });
+  n.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+  n.show();
+  return true;
+});
+
+let engineStarting = false;
+ipcMain.handle('app:startEngine', async (e) => {
+  if (!fromAppWindow(e) || !supervisor || engineStarting) return false;
+  engineStarting = true;
+  log('action: startEngine (from the app window)');
+  try { await restartService('backend'); } finally { engineStarting = false; }
   return true;
 });
 
