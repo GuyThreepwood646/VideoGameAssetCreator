@@ -851,7 +851,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
   big_enough: (v, l, ok, _ctx, vars) =>
     ok ? `The subject is ${n0(v)} pixels ${str(vars.measure) || 'tall'}, big enough for the 3D step.` : `The subject is only ${n0(v)} pixels ${str(vars.measure) || 'tall'}; at least ${n0(l)} keeps the detail in the 3D model.`,
   arms_away: (_v, _l, ok) =>
-    ok ? 'The arms stand away from the body, so the skeleton step can tell them apart.' : 'The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.',
+    ok ? 'The arms stand away from the body, so the skeleton step can tell them apart.' : 'The arms are close to the body, so the hands may be hidden or holding something; the 3D model may join the arms to the sides and the skeleton step may not tell them apart. The redraw also opens the hands and removes held items.',
   even_lighting: (v, _l, ok) =>
     ok ? 'The light is even across the photo.' : `One side of the photo is much brighter than the other (${pct(v)} difference), so the repeating texture will show stripes of light and dark. Take it in even, cloudy-day light.`,
   straight_on: (_v, _l, ok) =>
