@@ -44,6 +44,9 @@ class _SC:
     def set_params(self, **kw):
         self.version.params.update(kw)
 
+    def publish(self):
+        self.published = getattr(self, 'published', 0) + 1
+
     def set_metrics(self, **kw):
         self.version.metrics.update(kw)
 
