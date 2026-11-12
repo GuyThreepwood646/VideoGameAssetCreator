@@ -123,6 +123,12 @@ function AssetCard({ asset, categoryName }: { asset: AssetSummary; categoryName:
       <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
       <div className="asset-name">{asset.name}</div>
       <div className="muted small">{categoryName}</div>
+      {(() => {
+        const sts = STAGES.map((x) => stageState(asset, x))
+        const failedAt = sts.indexOf('error')
+        const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+        return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+      })()}
       <div className="stage-dots" aria-label="stage progress">
         {STAGES.map((s) => {
           const st = stageState(asset, s)

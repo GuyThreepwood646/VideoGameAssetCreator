@@ -84,7 +84,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             <Info term="term.triangles" />
           </div>
           <div className="small">
-            {tris !== null ? `${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
+            {tris !== null ? `Your model: ${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
             {libHairOn && tris !== null && typeof libHair?.triangles === 'number' ? ` in the body and ${libHair.triangles.toLocaleString('en-US')} in the hair` : ''}
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
             {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}

@@ -59,6 +59,14 @@ export function findCheck(asset: Asset, id: string): Check | null {
   return null
 }
 
+// The step whose kept version holds a check, so a message can say where it is (UI-12).
+export function findCheckStage(asset: Asset, id: string): StageId | null {
+  for (const s of STAGES_WITH_FINISH_CHECKS) {
+    if (checksOf(selectedVersion(asset, s)).some((x) => (x.id ?? x.name) === id)) return s
+  }
+  return null
+}
+
 export function unityClips(rep: UnityReport | null): UnityClip[] {
   if (!rep || !Array.isArray(rep.clips)) return []
   return rep.clips.map((c) => (typeof c === 'string' ? { name: c } : c)).filter((c) => c && typeof c.name === 'string')

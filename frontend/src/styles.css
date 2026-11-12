@@ -3840,3 +3840,87 @@ button.small-btn .resume-icon {
 .rail-edit-btn:focus-visible {
   opacity: 1;
 }
+.finish-bar-list {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+}
+
+/* Top bar status chip and help menu (UI-19). */
+.status-chip,
+.help-menu {
+  position: relative;
+}
+.status-chip > summary,
+.help-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.status-chip > summary::-webkit-details-marker,
+.help-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.help-menu > summary {
+  width: var(--control-md);
+  height: var(--control-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+}
+.status-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--s1));
+  min-width: 260px;
+  z-index: var(--z-pop);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+.pill-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.toasts {
+  position: fixed;
+  right: var(--s3);
+  bottom: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  z-index: var(--z-modal);
+  max-width: 360px;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.engine-banner {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s2) var(--s4);
+  background: var(--bad-tint);
+  border-bottom: 1px solid var(--bad);
+}
+.error-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
