@@ -616,6 +616,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const socketGroupsRef = useRef<THREE.Group[]>([])
   const showMoveRef = useRef(showMove)
   const [hoverLabel, setHoverLabel] = useState<string | null>(null)
+  // The mouse hint shows once; the ? button brings it back (UI-24).
+  const [hintOn, setHintOn] = useState(true)
 
   // Scene setup once.
   useEffect(() => {
@@ -1344,6 +1346,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             Move
           </button>
         </div>
+        <button type="button" aria-pressed={hintOn} aria-label="How to move around" title="Shows how to turn, move and zoom" onClick={() => setHintOn((h) => !h)}>
+          ?
+        </button>
         <button type="button" onClick={resetView} title="Shows the whole model again">
           Reset view
         </button>
@@ -1354,11 +1359,11 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           {hoverLabel ?? status}
         </span>
       </div>
-      <div className="canvas-host" ref={hostRef}>
+      <div className="canvas-host" ref={hostRef} onPointerDown={() => setHintOn(false)}>
         <LightPicker value={light} onChange={chooseLight} note={lightNote} />
-        <div className="viewer-hint">
+        {hintOn && <div className="viewer-hint">
           {dragMode === 'turn' ? 'Drag to turn. Right-drag to move.' : 'Drag to move. Right-drag to turn.'} Hold Ctrl and scroll to zoom. Double-click a spot to look at it closely.
-        </div>
+        </div>}
       </div>
     </section>
   )
