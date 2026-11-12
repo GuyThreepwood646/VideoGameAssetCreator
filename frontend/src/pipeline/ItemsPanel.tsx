@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { itemsApi, libraryUrl, type Asset, type Attachment, type ItemsPanel as PanelData, type ItemStatus, type NudgeBody } from '../api'
+import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { Disclosure, ErrorText } from '../components/ui'
 import { useEvents } from '../events'
@@ -51,6 +52,7 @@ function itemStatusText(s: ItemStatus | undefined): string {
 }
 
 export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+  const confirm = useConfirm()
   const [data, setData] = useState<PanelData | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [current, setCurrent] = useState<string | null>(null)
@@ -169,7 +171,8 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
     }
   }
   const takeOff = async () => {
-    if (!att || !window.confirm(`Take the ${att.label} off ${asset.name}? The item itself stays in the project.`)) return
+    if (!att) return
+    if (!(await confirm.ask({ title: `Take the ${att.label} off?`, body: `It comes off ${asset.name}. The item itself stays in the project.`, confirmLabel: 'Take it off', danger: true }))) return
     try {
       const r = await itemsApi.remove(asset.id, att.id)
       setData(r.panel)
@@ -190,6 +193,7 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
 
   return (
     <section className="card items-panel" aria-label="Add an item">
+      {confirm.dialog}
       <div className="row-between">
         <h2 className="card-title">
           Items on {asset.name}

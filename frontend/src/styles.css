@@ -3986,3 +3986,7 @@ button.small-btn .resume-icon {
   flex-direction: column;
   gap: var(--s2);
 }
+
+.confirm-card {
+  width: 460px;
+}
