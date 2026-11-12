@@ -26,7 +26,7 @@ STAGE_LABELS = {
     "rig": "Rig",
     "export": "Export",
 }
-TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "top")
+TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "quarter2", "top")
 
 # Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). Material has no mesh
 # to size, turn or clean. Environment pieces are sized by the grid (G15, plan 3.8): they get the grid knobs instead

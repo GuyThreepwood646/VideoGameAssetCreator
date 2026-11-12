@@ -12,7 +12,7 @@ export const STAGE_LABELS: Record<StageId, string> = {
   export: 'Export',
 }
 
-export const TURNAROUND_VIEWS = ['front', 'left', 'back', 'right', 'quarter', 'top'] as const
+export const TURNAROUND_VIEWS = ['front', 'left', 'back', 'right', 'quarter', 'quarter2', 'top'] as const
 export type ViewId = (typeof TURNAROUND_VIEWS)[number]
 
 // Seconds each stage usually takes, used only until GET /api/stages (estimate_seconds) has loaded or when it is
