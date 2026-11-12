@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -62,11 +61,22 @@ app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
 
-LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
+# Exact origins the app is served from: the backend itself (the launcher and the built UI) and the Vite dev server
+# (frontend/vite.config.ts, port 5173, proxying /api to this backend). Any other local port is a foreign page.
+BACKEND_PORT = 8765
+DEV_UI_PORT = 5173
+ALLOWED_ORIGINS = frozenset(
+    f"http://{host}:{port}" for host in ("127.0.0.1", "localhost", "[::1]") for port in (BACKEND_PORT, DEV_UI_PORT)
+)
+
+
+def is_allowed_origin(origin: str) -> bool:
+    return origin.lower() in ALLOWED_ORIGINS
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=LOCAL_ORIGIN.pattern,
+    allow_origins=sorted(ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +94,7 @@ async def _pipeline_error(request: Request, exc: PipelineError) -> JSONResponse:
 @app.middleware("http")
 async def _block_foreign_origins(request: Request, call_next):
     origin = request.headers.get("origin")
-    if origin and request.method not in ("GET", "HEAD", "OPTIONS") and not LOCAL_ORIGIN.match(origin):
+    if origin and request.method not in ("GET", "HEAD", "OPTIONS") and not is_allowed_origin(origin):
         return JSONResponse({"detail": "cross-site requests are not allowed"}, status_code=403)
     return await call_next(request)
 
@@ -1071,7 +1081,7 @@ async def stop_gpu_engine(instance: str) -> list[dict[str, Any]]:
 @app.websocket("/api/ws/events")
 async def ws_events(ws: WebSocket) -> None:
     origin = ws.headers.get("origin")
-    if origin and not LOCAL_ORIGIN.match(origin):
+    if origin and not is_allowed_origin(origin):
         await ws.close(code=1008)  # policy violation: a foreign page must not read the event stream
         return
     await ws.accept()
