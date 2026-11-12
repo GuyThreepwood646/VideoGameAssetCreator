@@ -184,7 +184,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                   delight=params.get("delight") or "auto", pbr_fix=surface["pbr_fix"], rebake=bool(params.get("rebake") or False),
                   shading=params.get("shading") if params.get("shading") in reference.SHADING_OPTIONS else "auto", **(grid or {}))
     if headtris.applies(rec, sc.asset.category):
-        sc.set_params(**{headtris.PARAM: headtris.on(params)})
+        sc.set_params(**{headtris.PARAM: headtris.on(params), headtris.HAND_PARAM: headtris.hands_on(params)})
     if hair is not None:
         sc.set_params(hair_source=hairlib.LIBRARY, hair_style=hair["style"], hair_style_source=hair["style_source"],
                       hair_allowance=hair["allowance"], hair_cover=hair["cover"])
@@ -199,6 +199,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         args += ["--budget", int(tri_limit["limit"])]
         if head["weighted"]:
             args += ["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
+            if headtris.hands_on(params):
+                args += ["--hand-gain", headtris.HAND_GAIN]
     if symmetric:
         args.append("--symmetric")
     if grid:
@@ -466,6 +468,9 @@ def head_metrics(report: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]
         out["head_weight_reason"] = head.get("reason") or ("error" if report.get("head_weight_error") else None)
     if report.get("head_weight_error"):
         out["head_weight_error"] = report["head_weight_error"]
+    if report.get("hand_triangles_final") is not None:
+        out.update(hand_triangles=report["hand_triangles_final"], hand_triangles_even=report.get("hand_triangles_even"),
+                   hand_triangles_source=report.get("hand_triangles_source"))
     return out
 
 

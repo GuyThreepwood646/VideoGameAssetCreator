@@ -4,7 +4,7 @@ Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8]
      [--yaw 0] [--symmetric] [--pivot base|center|corner] [--smooth-angle 60] [--shading smooth|flat] [--budget N]
      [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never]
      [--grid 1] [--grid-footprint auto|1x1|2x1|2x2|4x1|4x4] [--grid-height auto|0.5|1|3|4] [--tiling out.png]
-     [--protect-head 0.13 --head-gain 2]
+     [--protect-head 0.13 --head-gain 2 [--hand-gain 2]]
      (--height H is the old form of --size H --size-axis height)
 
 Grid (G15, scenery): with --grid, after the turn and the size, the piece is scaled per side onto the grid by
@@ -81,6 +81,7 @@ grid_height = _common.opt("--grid-height", "auto")
 tiling_png = _common.opt("--tiling", None)
 protect_head = float(_common.opt("--protect-head", 0) or 0)
 head_gain = float(_common.opt("--head-gain", 2.0))
+hand_gain = float(_common.opt("--hand-gain", 0) or 0)
 if grid_m is not None:
     pivot = "corner"
 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -217,7 +218,7 @@ if decimated:
     weighted = False
     if protect_head > 0:
         try:
-            head_report = headweight.decimate(mesh, budget / len(mesh.data.loop_triangles) * 0.995, protect_head, head_gain, symmetric)
+            head_report = headweight.decimate(mesh, budget / len(mesh.data.loop_triangles) * 0.995, protect_head, head_gain, symmetric, hand_gain)
             weighted = True
         except Exception as exc:  # the plain decimation below still brings the model to the budget
             for m in [m for m in mesh.modifiers if m.name == "budget"]:
@@ -352,6 +353,7 @@ report = {
     **head_report,
     # after the clean-up below the decimation: the final model's head (top 13 percent of the height, face.find_head)
     "head_triangles": headweight.head_count(mesh.data, headweight.head_cut(mesh, 0.13)[0]),
+    **({"hand_triangles_final": headweight.hand_count(mesh.data, headweight.hand_zones(mesh))} if hand_gain > 0 else {}),
     "texture_size": tex_size,
     **bake_report,
 }

@@ -98,6 +98,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
         _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
                description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),
+        # Hands redrawn before the build (docs/HANDS-PLAN.md, phase 0: the only change that gave the build separate fingers).
+        _param("hand_edit", "boolean", None, categories=["humanoid"], label="Redraw the hands first",
+               description="The picture the build starts from is edited once so each hand is open, back toward the camera, fingers straight and slightly apart; the build then resolves separate fingers. One more picture edit (about a minute); off when empty"),
         _param("head_crop", "number", None, min=0.18, max=0.4, step=0.02, categories=["humanoid"], label="Head crop (share of the height)",
                description="How much of the figure, from the top, the head build sees; 0.26 when empty"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
@@ -161,6 +164,8 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # More triangles on the head (vgac/headtris.py): humanoids in looks with smooth shading and the full budget.
         _param("head_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the head)",
                description="When the 3D model was built with room for it, the head keeps about twice its share of the triangles and the body gives them up; the total stays inside the budget"),
+        _param("hand_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the hands)",
+               description="With the head weighting: the hands keep about three times their even share of the triangles; needs the 3D model built with room (the head weighting's)"),
     ],
     "rig": [
         _param("template", "select", "auto", options=["auto", "mixamo", "generic", "none"]),

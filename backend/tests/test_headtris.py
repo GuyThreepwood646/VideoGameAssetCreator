@@ -61,7 +61,7 @@ def test_plan_reasons():
 def test_the_3d_step_asks_for_room_only_where_it_applies():
     painted = rec("painted")
     t = mesh_stage.resolve_targets(painted, {}, B, "humanoid")
-    assert t["target_faces"] == 2 * 19600 == 39200 and t["head_room"] == headtris.HEAD_ROOM and t["target_faces_source"] == "recipe"
+    assert t["target_faces"] == int(2.5 * 19600) == 49000 and t["head_room"] == headtris.HEAD_ROOM and t["target_faces_source"] == "recipe"
     # Without the category (older callers) and for other categories: unchanged.
     assert "head_room" not in mesh_stage.resolve_targets(painted, {}, B)
     assert mesh_stage.resolve_targets(rec("painted", "prop_rigid"), {}, reference.budget("prop_rigid", "pc_mid"), "prop_rigid").get("head_room") is None
@@ -92,7 +92,7 @@ def test_a_new_run_recomputes_the_room():
     # inherit drops a recipe target; the run then resolves it again (and sets head_room again, or None).
     merged = mesh_stage.inherit({"target_faces": 39200, "target_faces_source": "recipe", "head_room": 2.0, "seed": 5}, {})
     assert "target_faces" not in merged
-    assert mesh_stage.resolve_targets(rec("painted"), merged, B, "humanoid")["target_faces"] == 39200
+    assert mesh_stage.resolve_targets(rec("painted"), merged, B, "humanoid")["target_faces"] == 49000
 
 
 def test_head_metrics_from_the_blender_report():
