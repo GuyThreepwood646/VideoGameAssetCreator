@@ -4095,3 +4095,15 @@ button.small-btn .resume-icon {
   object-fit: cover;
   border-radius: var(--radius);
 }
+
+.follow-bar {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  flex-wrap: wrap;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s2);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+}
