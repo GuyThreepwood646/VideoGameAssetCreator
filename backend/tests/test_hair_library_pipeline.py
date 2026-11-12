@@ -398,7 +398,7 @@ GOLDEN_OFF = {
                               "turn_method", "views"]}}
 
 # What library hair adds, step by step (docs/HAIR-LIBRARY-PLAN.md sections 1, 2, 5, 6 and 7).
-BALD_FILES = {f"bald_{v}{s}" for v in ("front", "quarter", "left", "right") for s in ("", "_cutout", "_white")}
+BALD_FILES = {f"bald_{v}{s}" for v in ("front", "quarter", "quarter2", "left", "right") for s in ("", "_cutout", "_white")}
 ADDED_ON = {
     "turnaround": {"params": {"bald_views", "bald_seed"}, "files": BALD_FILES | {"hair_outline_front", "hair_picture", "bald_sheet"},
                    "metrics": {"bald", "checks", "checks_passed", "checks_failed", "gate_ok"}, "checks": {"bald_picture"}},
@@ -409,7 +409,8 @@ ADDED_ON = {
              "metrics": {"hair_library", "body_glb_hash"}, "checks": {"hair_fit", "hair_skin_through", "hair_triangles"}},
 }
 # Texture fidelity (2026-11): the report-only measure in both steps, and the picture painted onto a character by itself.
-for _stage, _part, _keys in (("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
+for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cutout", "quarter2_white"]),  # the other three-quarter view
+                             ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
                              ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
@@ -481,7 +482,7 @@ def test_off_is_unchanged(settings, engines, lane1, hair):
     assert all("l2" in g for g in engines.graphs)  # no bald edit was sent
     assert not lane1.rank_calls and not lane1.attach_calls
     assert chain["prep"].metrics["hair_detail"]["skipped"] == "too_little"  # the hair pass ran as today
-    assert all(set(s) == {"quarter", "left", "right"} and all("bald" not in str(p) for p in s.values()) for s in engines.face_sides)
+    assert all(set(s) == {"quarter", "quarter2", "left", "right"} and all("bald" not in str(p) for p in s.values()) for s in engines.face_sides)
     # Today's 3D input: the haired quarter view, as the autopilot runs it (no input_view in the payload).
     assert chain["mesh"].params["input_view"] == "quarter"
     assert path_of(chain["mesh"], "input", settings).read_bytes() == path_of(chain["turnaround"], "quarter_cutout", settings).read_bytes()
@@ -511,12 +512,12 @@ def test_library_chain_bald_pictures_mesh_and_prep(settings, engines, lane1):
     assert len(edits) == 1 and edits[0]["ks"]["inputs"]["seed"] == turn.params["bald_seed"]
     assert edits[0]["pos"]["inputs"]["prompt"] == turn_stage.BALD_PROMPT  # the trial's words; no beard is named
     bald_views = [g for g in engines.graphs if "l2" in g and "bald" in g["img"]["inputs"]["image"]]
-    assert len(bald_views) == 3
-    seeds = {v: turn.metrics["views"][v]["seed"] for v in ("quarter", "left", "right")}
+    assert len(bald_views) == 4  # both three-quarter views, left and right
+    seeds = {v: turn.metrics["views"][v]["seed"] for v in ("quarter", "quarter2", "left", "right")}
     assert sorted(g["ks"]["inputs"]["seed"] for g in bald_views) == sorted(seeds.values())  # each with its haired view's seed
     for key in BALD_FILES | {"hair_outline_front", "hair_picture", "bald_sheet"}:
         assert path_of(turn, key, settings).is_file(), key
-    assert "bald" not in turn.metrics["views"] and set(turn.metrics["views"]) == {"front", "left", "back", "right", "quarter"}
+    assert "bald" not in turn.metrics["views"] and set(turn.metrics["views"]) == {"front", "left", "back", "right", "quarter", "quarter2"}
     with Image.open(path_of(turn, "hair_outline_front", settings)) as im:
         assert im.mode == "L" and im.size == (S, S)
     pic = json.loads(path_of(turn, "hair_picture", settings).read_text())
@@ -559,7 +560,7 @@ def test_library_chain_bald_pictures_mesh_and_prep(settings, engines, lane1):
     assert check(prep, "hair_skin_through")["passed"] and check(prep, "hair_fit")["vars"]["step"] == "prep"
     # The face pass paints from the concept and reads only bald side pictures.
     sides = engines.face_sides[-1]
-    assert set(sides) == {"quarter", "left", "right"} and all(p.name.startswith("bald_") for p in sides.values())
+    assert set(sides) == {"quarter", "quarter2", "left", "right"} and all(p.name.startswith("bald_") for p in sides.values())
 
 
 def test_face_pass_reads_no_side_picture_when_the_bald_ones_are_missing(settings, engines, lane1):

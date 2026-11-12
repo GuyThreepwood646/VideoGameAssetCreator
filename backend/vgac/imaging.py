@@ -541,6 +541,9 @@ def pbr_stats(base: np.ndarray, metallic: np.ndarray | None, roughness: np.ndarr
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in out.items()}
 
 
+CHROMA_GAIN_MAX = 3.0  # clamp_albedo: how many times a dark texel's colour (its distance from grey) may be multiplied
+
+
 def clamp_albedo(base: np.ndarray, metallic: np.ndarray | None) -> np.ndarray:
     """Soft-clamp non-metal colours into 30 to 240 sRGB luminance. Each texel is scaled (hue kept) so its luminance
     lands inside the range; the last 10 levels at each end ease in rather than cut hard. Metal texels are untouched."""
@@ -553,7 +556,15 @@ def clamp_albedo(base: np.ndarray, metallic: np.ndarray | None) -> np.ndarray:
     high = lum > hi - knee
     t = np.clip((lum[high] - (hi - knee)) / (255.0 - (hi - knee)), 0, 1)
     target[high] = (hi - knee) + knee * t * (2 - t)
-    out = base * (target / np.maximum(lum, 1e-3))[..., None]
+    gain = target / np.maximum(lum, 1e-3)
+    out = base * gain[..., None]
+    # A near-black texel's hue is noise: lifted many times over, a dark brown that is (8, 1, 0) comes out pure red (the
+    # crown of the photo boy's hair). Past CHROMA_GAIN_MAX the brightness still reaches the target, but the colour's
+    # distance from grey grows no further.
+    much = gain > CHROMA_GAIN_MAX
+    if much.any():
+        grey = (lum[much] / 255.0)[..., None]
+        out[much] = (target[much] / 255.0)[..., None] + (base[much] - grey) * CHROMA_GAIN_MAX
     black = lum <= 1e-3
     out[black] = lo / 255.0  # a black texel cannot be scaled up: it takes the floor grey
     out = np.clip(out, 0, 1)

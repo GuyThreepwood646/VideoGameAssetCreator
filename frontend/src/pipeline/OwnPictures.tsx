@@ -10,7 +10,7 @@ import { useRefData } from '../refdata'
 
 type Act = (fn: () => Promise<unknown>) => Promise<void> | void
 
-export const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' }
+export const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' }
 
 // Which way the subject faces in each view, in words (the diagram shows the same from above).
 const FACING_TEXT: Record<string, string> = {
@@ -19,9 +19,10 @@ const FACING_TEXT: Record<string, string> = {
   back: 'It faces away from you.',
   right: 'Its right side toward you; it faces your right.',
   quarter: 'Turned part way: it faces toward you and to your right.',
+  quarter2: 'Turned part way the other way: it faces toward you and to your left.',
   top: 'Seen from straight above.',
 }
-const FACING_DIR: Record<string, [number, number] | null> = { front: [0, 1], left: [-1, 0], back: [0, -1], right: [1, 0], quarter: [0.71, 0.71], top: null }
+const FACING_DIR: Record<string, [number, number] | null> = { front: [0, 1], left: [-1, 0], back: [0, -1], right: [1, 0], quarter: [0.71, 0.71], quarter2: [-0.71, 0.71], top: null }
 
 // Seen from above: the subject is the circle, its nose the triangle, you (the camera) at the bottom.
 export function FacingDiagram({ view }: { view: string }) {

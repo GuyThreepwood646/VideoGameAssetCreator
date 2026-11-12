@@ -249,7 +249,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   finetune: H('Fine-tune', 'Re-run this step with different settings.', 'Use it when the result is close but a setting is off; the description stays the same.', 'adjust'),
   instruction: H('Change request', 'What you asked to change in this attempt.', 'Recorded so you can see how this version came about.', 'instruction'),
   // Turnaround
-  views: H('Views', 'Which sides to draw: front, left, back, right, a three-quarter view and top.', 'The 3D step uses them to get the back and sides right.', 'views'),
+  views: H('Views', 'Which sides to draw: front, left, back, right, a three-quarter view and top.', 'The 3D step uses them to get the back and sides right, and the clean-up step paints the texture from them. For a character the three-quarter view from the other side is drawn too, so both cheeks and both flanks have a picture behind them.', 'views'),
   view: H('View', 'One side of the character.', 'Regenerate a single view when only that one looks wrong.', 'view'),
   turnaround: H('Turnaround (all sides)', 'The same character drawn from several sides.', 'Without it the 3D model has to guess what the back looks like.', 'turnaround'),
   turn_method: H('How to turn the views', 'How the side, back and three-quarter views are drawn from your picture.', 'Standard works for everything and keeps your look. For a character, all sides in one picture makes the clothes and details match best but looks more photographic. For a rigid prop, shadow-free gives clean white views for the 3D model, with colours a little further from the picture.', 'turn_method: standard (multiple-angles LoRA), sheet (turnaround sheet LoRA), shadow_free (camera-angle LoRA)'),
@@ -1160,7 +1160,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   template: { auto: 'Automatic (from the category)', mixamo: 'Standard human skeleton', generic: 'Fitted to the shape', none: 'No skeleton' },
   formats: { fbx: 'FBX (Unity, Unreal, Godot)', glb: 'GLB (web, Godot, Blender)' },
   clips_library: { ual1: 'Standard human moves (46 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
-  views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' },
+  views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' },
   turn_method: { standard: 'Standard', sheet: 'All sides in one picture', shadow_free: 'Shadow-free on white' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },
   delight: { auto: 'Automatic (by look)', remove: 'Remove them', keep: 'Keep them (part of the look)' },

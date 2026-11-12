@@ -19,6 +19,9 @@ VIEWS = {
     "back":    "<sks> back view eye-level shot medium shot",
     "right":   "<sks> left side view eye-level shot medium shot",
     "quarter": "<sks> front-right quarter view eye-level shot medium shot",
+    # The three-quarter view from the other side (the angles LoRA's own tag for it). Without it one cheek and one flank
+    # have no picture between the front and the full side, and a seam shows there (vgac/srcproject.py, face_detail.py).
+    "quarter2": "<sks> front-left quarter view eye-level shot medium shot",
     # Not validated in the bake-off; same prompt grammar as the LoRA's documented tags.
     "top":     "<sks> top view high-angle shot medium shot",
 }

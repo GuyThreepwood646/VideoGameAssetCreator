@@ -8,7 +8,7 @@ import { metricPlain } from '../../help'
 type ViewMetrics = Record<string, unknown> & { passed?: boolean; checks?: Check[] }
 
 // Hair from the library: the bald pictures, each next to the picture it was drawn from (concept for the front).
-const BALD_VIEWS = ['front', 'quarter', 'left', 'right'] as const
+const BALD_VIEWS = ['front', 'quarter', 'quarter2', 'left', 'right'] as const
 
 function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
   const [open, setOpen] = useState<number | null>(null)
@@ -74,7 +74,7 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
   )
 }
 
-const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', top: 'Top' }
+const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' }
 
 // Words for a list of views: "Back", "Back and right side", "Front, back and right side".
 function viewList(views: string[]): string {

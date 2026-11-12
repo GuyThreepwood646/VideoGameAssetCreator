@@ -61,9 +61,11 @@ COS_CUT = math.cos(math.radians(75.0))
 MAX_FLOW = 0.02          # of the frame
 FLOW_ALPHA = 2.0         # Horn-Schunck smoothness (higher: a stiffer field)
 FLOW_SMOOTH = 8.0        # Gaussian sigma of the field in flow pixels
-VIEW_WEIGHT = {"source": 1.0, "front": 1.0, "picture": 1.0, "quarter": 0.5, "left": 0.5, "right": 0.5, "back": 0.5}
+VIEW_WEIGHT = {"source": 1.0, "front": 1.0, "picture": 1.0, "quarter": 0.5, "quarter2": 1.0, "left": 0.5, "right": 0.5, "back": 0.5}
 BLEND_POW = 2.0          # the dominant view of a texel counts as weight squared, so views do not blur each other
-FRONT_PRIORITY = 0.15    # where the picture's own weight reaches this, the turnaround views are switched off
+FRONT_PRIORITY = 0.4     # where a priority picture's own weight reaches this, the views after it are switched off. At 0.15
+                         # the original photo kept painting round the cheek to about 52 degrees off its line of sight and
+                         # laid its own cheek outline there as a crease; at 0.4 it hands over at about 37 degrees.
 ALPHA_RAMP = (0.004, 0.06)
 GUTTER_PX = 3
 DETAIL_TEXELS = 2.0      # "detail" mode: the TRELLIS colour is kept below this many texels of surface
@@ -74,6 +76,7 @@ GATES = {"disc": True, "stretch": True, "agree": True, "flowsat": True}
 AGREE = {"lo": 0.025, "hi": 0.05, "reach": 0.25, "grow": 0.07}   # structure agreement gate, see agreement_gate
 TURN_YAWS = {
     "quarter": [y for y in range(20, 71, 10)] + [-y for y in range(20, 71, 10)],
+    "quarter2": [y for y in range(20, 71, 10)] + [-y for y in range(20, 71, 10)],  # the other side's three-quarter view
     "left": [y for y in range(70, 111, 10)] + [-y for y in range(70, 111, 10)],
     "right": [y for y in range(70, 111, 10)] + [-y for y in range(70, 111, 10)],
     "back": list(range(140, 221, 10)),
@@ -85,9 +88,12 @@ SOURCE_MIN_IOU = 0.82    # the original picture is taken at a slightly looser ou
 TURN_AGREE = False       # the structure gate on the drawn side and back views when they paint in full colour: off,
                          # because there it compares two guesses (the builder's back and the drawn back) and cuts the
                          # drawn one into patches
+TURN_COLOUR_MARGIN = 3.0  # colour difference (Lab) by which the chosen turn must beat every far turn to settle an
+                          # outline that fits both ways round
 MAX_SHARED = 0.15        # share of the texture layout used by more than one triangle above which nothing is painted
 WORKERS = max(1, min(6, (os.cpu_count() or 2) - 1))   # views fitted at the same time
-TURN_VIEWS = ("quarter", "left", "right", "back")
+SECOND_QUARTER = "quarter2"
+TURN_VIEWS = ("quarter", SECOND_QUARTER, "left", "right", "back")
 
 
 # --- image helpers ----------------------------------------------------------------------------------------------
@@ -439,6 +445,7 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     top_iou = max(f["iou"] for f in fits.values())
     pool = [y for y, f in fits.items() if f["iou"] >= top_iou - 0.03]
     best_y, best_d, best_corr = pool[0], 1e9, -1.0
+    lds: dict[float, float] = {}
     if len(pool) > 1:
         for y in pool:
             f = fits[y]
@@ -454,6 +461,7 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
                 ld = float(np.linalg.norm(la - lb, axis=-1)[face.erode(both, 2)].mean())
                 corr = face.feature_match(ap, rc, both, lo=1.0, hi=4.0)
                 d = ld - 40.0 * corr  # colour and structure agreement together
+                lds[y] = ld
             else:
                 corr, d = -1.0, 1e9
             best_corr = max(best_corr, corr)
@@ -465,7 +473,15 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     spread = 360.0 - max(gaps) if len(ys_sorted) > 1 else 0.0
     v.info.update(yaw=float(yaw), iou=round(float(fit["iou"]), 4), scale=round(float(fit["s"]), 4),
                   rot_deg=round(math.degrees(fit["rot"]), 2), pool_spread_deg=round(spread, 1))
-    if spread > 90.0 and best_corr < 0.05:
+    # The original picture of a figure standing square fits its outline from the front and from the back alike. When the
+    # model's own colour is clearly closer to the picture at the chosen turn than at any turn far from it, the colour has
+    # settled it (the photo boy: yellow shirt front, spiral back). Only for the original: a prop's picture that fits at any
+    # turn stays refused.
+    far = [lds[y] for y in pool if y in lds and abs(((y - best_y + 180.0) % 360.0) - 180.0) > 60.0]
+    by_colour = name == "source" and best_y in lds and bool(far) and lds[best_y] <= min(far) - TURN_COLOUR_MARGIN
+    if spread > 90.0 and best_corr < 0.05 and by_colour:
+        v.info["turn_by_colour"] = {"here": round(lds[best_y], 2), "elsewhere": round(min(far), 2)}
+    if spread > 90.0 and best_corr < 0.05 and not by_colour:
         v.info["refused"] = f"the turn is ambiguous (the outline fits over {spread:.0f} degrees)"
     elif fit["iou"] < min_iou:
         v.info["refused"] = f"silhouette match {fit['iou']:.3f} is under {min_iou}"
@@ -519,6 +535,9 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
     v.size = size
     v.pic_px_m = (cam.scale / size) / float(np.hypot(M[0, 0], M[1, 0]))     # metres of surface one picture pixel spans
+    # The stretch limit is in pixels of a picture at its own size: a picture made twice as big before it came here has no
+    # more to say at a steep angle than it had, so its pixels count double (else upscaling quietly loosens the limit).
+    v.pic_px_m *= pic.shape[0] / float(PIC_N)
     v.flow_u, v.flow_cap = (u if (use_flow and both_s.any()) else np.zeros((fn, fn, 2))), MAX_FLOW * fn
     v.disc = depth_discontinuities(v.raster.z, cam.scale / size)
     v.gate_ag = v.gate_fs = np.ones((size, size), dtype=np.float32)
@@ -852,6 +871,12 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                 views.append(fitted[name])
         if front.ok:
             views.append(front)
+        # The three-quarter view from the other side stands where the built-from picture stands on its own side: ahead of
+        # the full side views. As one of them it got a thin strip between the front and the side view, which took the
+        # whole cheek (and painted the side view's own mouth beside the photo's).
+        other = fitted.get(SECOND_QUARTER)
+        if views and other is not None and other.ok:
+            views.append(other)
         n_primary = len(views)
         if not views:
             res["reason"] = front.info.get("refused", "the picture was refused")
@@ -860,7 +885,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         for name in TURN_VIEWS:
             if name in fitted:
                 infos[name] = fitted[name].info
-                if fitted[name].ok:
+                if fitted[name].ok and fitted[name] not in views:
                     views.append(fitted[name])
         atlas = atlas_job.result()
         if atlas.shared > MAX_SHARED:
@@ -874,7 +899,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         def ready(i: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
             v = views[i]
             full = i < n_primary or mode == "full"
-            prepare_gates(v, {**GATES, "agree": False} if (i >= n_primary and full and not TURN_AGREE) else None)
+            drawn = i >= n_primary or v.name == SECOND_QUARTER  # a view drawn from the picture, not the picture itself
+            prepare_gates(v, {**GATES, "agree": False} if (drawn and full and not TURN_AGREE) else None)
             proj = project_view(atlas, v, size)
             return proj, (v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px))
 

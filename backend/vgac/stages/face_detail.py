@@ -48,6 +48,11 @@ ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the
 RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the inner face, as a share of the picture
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
+# The same when prep has already painted the model from its pictures (vgac/srcproject.py): the cheeks under the painted
+# face are then the three-quarter views' own, and the close-up's cheek outline laid on them showed as a line from the
+# side (the photo boy's right cheek). The painted face hands over earlier: full to about 37 degrees, gone by 63.
+FACING_OVER_PICTURES = (0.45, 0.8)
+BROW_BAND = (0.32, 0.10)  # above and below the eye line, as shares of the face's width: where the old reach is kept
 EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
 # Each eye on its own (eye_measures, eye_state). Measured on the knights: painted eyes 0.98 to 1.0 painted, match 0.93
 # to 1.0, sharp 0.58 to 0.80 of the picture's; the eye left as a smudge 0.004 painted, match 0.19, sharp 0.25.
@@ -56,7 +61,8 @@ EYE_MATCH_MIN = 0.6  # the render's eye against the picture's (face.feature_matc
 EYE_SHARP_MIN = 0.4  # the render's sharpness in the eye box over the picture's
 EYE_HAIR_COVER = 0.3  # an unpainted eye whose box is at least this much the model's hair is under the hair
 # Side views (the turnaround's pictures): which picture, from where. The quarter view's side is found by its outline.
-SIDE_VIEWS = (("quarter", (40.0, -40.0)), ("left", (90.0,)), ("right", (-90.0,)))
+# quarter2 is the three-quarter view from the other side: it takes the side the first one did not.
+SIDE_VIEWS = (("quarter", (40.0, -40.0)), ("quarter2", (-40.0, 40.0)), ("left", (90.0,)), ("right", (-90.0,)))
 SIDE_IOU_MIN = 0.85  # the side picture's head outline against the model's; under it the side is not used
 SIDE_FACING = (0.25, 0.7)
 DEBUG_SIDES = False  # write side_<view>.png (picture, toned, render; weight, front cover, skin) into the face folder
@@ -257,7 +263,8 @@ def density_note(plan: dict[str, Any], achieved: int | None, rest_scale: float |
             f"its sharpness{loss}.")
 
 
-SIDE_WORDS = {"quarter": "the three-quarter view", "left": "the left side", "right": "the right side"}
+SIDE_WORDS = {"quarter": "the three-quarter view", "quarter2": "the other three-quarter view", "left": "the left side",
+              "right": "the right side"}
 
 
 def side_words(used: list[str]) -> str:
@@ -674,7 +681,8 @@ def redraw_kept(sharp: Path, crop: Path) -> float:
 
 def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, before_tex: Path, crop: Path, out_dir: Path,
                   strength: float, sides: dict[str, Path] | None = None, colour_source: Path | None = None,
-                  require_landmarks: bool = False, fit_from_crop: bool = False) -> dict[str, Any]:
+                  require_landmarks: bool = False, fit_from_crop: bool = False,
+                  facing: tuple[float, float] = FACING) -> dict[str, Any]:
     """Steps 3 and 5 on the final layout: fit the picture to the render, paint it back, measure, and draw the before
     and after sheet. Writes base_color_face.png and face_before_after.png into out_dir.
 
@@ -732,11 +740,26 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     weight = face.screen_weight(paint)
     # where the paint will fade (the region's edge, and surface turning away from the camera) the tone is matched
     # locally, so the cheeks do not show a step where the painted face hands over to the old texture
-    fade = weight * face.smoothstep(FACING[0], FACING[1] + 0.25, view["facing"])
+    fade = weight * face.smoothstep(facing[0], min(1.0, facing[1] + 0.25), view["facing"])
     lm_fit = face.landmarks(fitted, info)
     keep = face.eye_boxes(region.shape, lm_fit["eyes"], float(info["width_px"])) if lm_fit else None
     toned = face.tone_match_local(fitted, view["image"], paint, fade, keep=keep)
-    res = face.project_back(mesh, tex, cam, toned, weight, facing=FACING, strength=strength, soften_m=SOFTEN_M)
+    res = face.project_back(mesh, tex, cam, toned, weight, facing=facing, strength=strength, soften_m=SOFTEN_M)
+    if tuple(facing) != tuple(FACING) and lm_fit:
+        # Handing over early is for the cheeks and the jaw. Across the brows and eyes the painted face keeps its old
+        # reach: under it lies the picture's own brow, a little higher, and where the paint thinned out there a second
+        # brow showed above the painted one (the photo boy, both sides).
+        wpx, rows = float(info["width_px"]), view["image"].shape[0]
+        eye_y = float(np.mean([e[1] for e in lm_fit["eyes"]]))
+        band = np.zeros(view["image"].shape[:2])
+        band[int(max(0, eye_y - BROW_BAND[0] * wpx)): int(min(rows, eye_y + BROW_BAND[1] * wpx))] = 1.0
+        band = np.clip(face.blur(band, 0.03 * wpx), 0.0, 1.0)
+        more = face.project_back(mesh, res["texture"], cam, toned, weight * band, facing=FACING, strength=strength,
+                                 soften_m=SOFTEN_M, cover=res["texel_weight"])
+        tw = np.clip(res["texel_weight"] + more["texel_weight"], 0.0, 1.0)
+        boxes = [bx for bx in (res.get("bbox"), more.get("bbox")) if bx]
+        bbox = (min(b_[0] for b_ in boxes), min(b_[1] for b_ in boxes), max(b_[2] for b_ in boxes), max(b_[3] for b_ in boxes)) if boxes else None
+        res = {**res, "texture": more["texture"], "texel_weight": tw, "changed": int((tw > 0.5).sum()), "bbox": bbox}
     spread, spread_n = face.spread_tone(mesh, tex, res["texture"], res["texel_weight"], info["skin"])
     uvm = imaging.load_uv_mesh(glb)
     coverage = imaging.rasterise_uv(uvm, T)["labels"] > 0
@@ -845,6 +868,9 @@ def paint_sides(mesh: dict[str, Any], old_tex: np.ndarray, tex: np.ndarray, cove
             continue
         rgba = np.asarray(Image.open(path).convert("RGBA"), dtype=np.float64) / 255.0
         best = None
+        first = (record.get("quarter") or {}).get("yaw") if name == "quarter2" else None
+        if first is not None:
+            yaws = (-float(first),)  # the side the first three-quarter view was not fitted to
         for yaw in yaws:
             cam = face.head_camera(head, yaw, 1024)
             crop = face.painted_head(rgba, head, cam)
@@ -1109,7 +1135,7 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
               hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None,
-              after_relayout: Any = None) -> dict[str, Any]:
+              after_relayout: Any = None, body_painted: bool = False) -> dict[str, Any]:
     """_run with the image card's MediaPipe face landmarker finding the eyes and mouth (vgac/facemarks.py)."""
     token = None
     try:
@@ -1121,7 +1147,7 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
         token = None
     before = dict(facemarks.stats)
     try:
-        out = await _run(sc, glb, maps, rec, params, hair_plan, face_detail_seed, after_relayout)
+        out = await _run(sc, glb, maps, rec, params, hair_plan, face_detail_seed, after_relayout, body_painted)
     finally:
         facemarks.done(token)
     fd = (out.get("metrics") or {}).get("face_detail")
@@ -1132,7 +1158,7 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
 
 async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
                hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None,
-               after_relayout: Any = None) -> dict[str, Any]:
+               after_relayout: Any = None, body_painted: bool = False) -> dict[str, Any]:
     """The pass on the prepared model `glb` (changed in place) with the current maps. Returns {files: {key: path},
     metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int, layout: the relayout report or None}. Never
     raises for a reason that should not fail the clean-up step (those are recorded as skipped); Stop still stops it.
@@ -1142,7 +1168,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
 
     after_relayout: async (glb, maps) -> maps, called once the texture has been packed again and every map baked onto
     the new layout, before the face is painted: prep paints the picture onto the body again there (vgac/srcproject.py
-    run_again), because that bake softens it."""
+    run_again), because that bake softens it. body_painted: prep painted the model from its pictures, so the painted
+    face fades out earlier on the cheeks (FACING_OVER_PICTURES)."""
     t0 = time.time()
     out_dir = sc.dir / "face"
     cutout = sc.lineage_file("cutout", ("concept",))
@@ -1354,14 +1381,16 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     # the red-haired knight), but on the T-pose man it painted a brown smear behind the ear from a side view whose
     # beard sat elsewhere; it also lowers the front's match a little (0.96 to 0.90, 0.90 to 0.88, 0.67 to 0.63).
     sides = side_pictures(sc) if params.get("face_sides") is not False else {}
+    facing = FACING_OVER_PICTURES if body_painted else FACING
+    over = (facing,) if body_painted else ()  # the earlier hand-over, only when the body was painted from the pictures
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
-                                   crop, out_dir, strength, sides, colour_source, False, source == "closeup")
+                                   crop, out_dir, strength, sides, colour_source, False, source == "closeup", *over)
     if not done.get("ok") and done.get("reason") == "closeup_off_model":
         closeup.update(used=False, reason="off_model")
         source, colour_source = "painting", None
         picture, method, redraw_seconds = await sharpen()
         done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
-                                       crop, out_dir, strength, sides)
+                                       crop, out_dir, strength, sides, None, False, False, *over)
     if not done.get("ok"):
         return _skipped(done.get("reason") or "error", t0, {**record, "closeup": closeup, "alignment": done.get("alignment")})
     files: dict[str, Path] = {k: p for k, p in work_maps.items() if k != "base_color"} if relayout else {}
@@ -1397,7 +1426,7 @@ def enlarge(src: Path, size: int, dest: Path) -> Path:
 
 
 def side_pictures(sc: StageContext) -> dict[str, Path]:
-    """The side-views step's cut-out pictures this pass can paint from (quarter, left, right), the ones that exist.
+    """The side-views step's cut-out pictures this pass can paint from (both quarters, left, right), the ones that exist.
     With hair from the library (the 3D model was built bald) only the bald side pictures are read, and none at all when
     they are missing, so no haired side picture is ever painted onto the skull."""
     from .. import hairlib

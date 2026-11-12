@@ -112,7 +112,7 @@ def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, setti
     t = client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()
     assert wait_job(client, t["job"]["id"])["status"] == "done"
     tv = client.get(f"/api/versions/{t['version']['id']}").json()
-    assert tv["parent_version_id"] == v["id"] and tv["metrics"]["views_total"] == 5
+    assert tv["parent_version_id"] == v["id"] and tv["metrics"]["views_total"] == 6
     assert any(n.endswith("_concept.png") for n in engine["staged"])
 
 
@@ -212,7 +212,7 @@ def test_supplied_views_are_kept_and_missing_ones_drawn(client, engine):
     assert wait_job(client, up["job"]["id"])["status"] == "done"
     uv = client.get(f"/api/versions/{up['version']['id']}").json()
     assert uv["metrics"]["views"]["left"]["supplied"] and uv["metrics"]["views"]["back"]["supplied"]
-    assert set(uv["metrics"]["views"]) == {"front", "left", "back", "right", "quarter"}
+    assert set(uv["metrics"]["views"]) == {"front", "left", "back", "right", "quarter", "quarter2"}
     assert not [c for c in engine["comfy"][before:] if c["message"].startswith("view ")]
     assert client.post(f"/api/versions/{out['version']['id']}/views/left/upload", json={"image": b64(figure())}).status_code == 400
 

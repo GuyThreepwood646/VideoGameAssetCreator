@@ -279,7 +279,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         hf = await hair_detail.find(sc, out, current, rec, params)
         face_detail_seed = params.get("face_detail_seed")
         fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
-                                   after_relayout=paint_body_again if body_views.get("views") else None)
+                                   after_relayout=paint_body_again if body_views.get("views") else None,
+                                   body_painted=bool(body_views.get("views")))
         body_views.clear()  # several large pictures per view: let them go
         for key, p in fd["files"].items():
             sc.register(key, p)
