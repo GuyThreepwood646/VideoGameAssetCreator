@@ -26,7 +26,7 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
   const at = (label: string) => setOpen(Math.max(0, items.findIndex((i) => i.label === label)))
   return (
     <div className="bald-row">
-      <div className="view-intro muted small" style={{ paddingBottom: 0 }}>
+      <div className="view-intro view-intro-flush muted small">
         <strong>Bald pictures (the character without hair, used to build the 3D model)</strong>
         <Info term="term.bald_picture" /> Check that only the hair is gone: the face and the clothes should look the same in both pictures of each pair.
         {typeof bald?.kept_share === 'number' ? ` ${Math.round(bald.kept_share * 100)}% of the picture outside the hair is unchanged.` : ''}
@@ -46,18 +46,18 @@ function BaldRow({ version, cutout }: { version: Version; cutout: boolean }) {
         {shown.map((view) => {
           const haired = pick(view)
           return (
-            <div key={view} className="view-cell" style={{ minWidth: 300 }}>
-              <div className="row-gap" style={{ gap: 'var(--s1)' }}>
+            <div key={view} className="view-cell view-cell-wide">
+              <div className="row-gap row-gap-tight">
                 {haired ? (
-                  <Zoomable className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }} label={`the ${view} view with hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, with hair`)}>
+                  <Zoomable className={'view-image view-image-tall' + (cutout ? ' checker' : '')}  label={`the ${view} view with hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, with hair`)}>
                     <img src={libraryUrl(haired)} alt={`${view} with hair`} />
                   </Zoomable>
                 ) : (
-                  <div className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }}>
+                  <div className={'view-image view-image-tall' + (cutout ? ' checker' : '')} >
                     <span className="muted small">the first picture</span>
                   </div>
                 )}
-                <Zoomable className={'view-image' + (cutout ? ' checker' : '')} style={{ flex: '1 1 0', height: 280 }} label={`the ${view} view without hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, bald`)}>
+                <Zoomable className={'view-image view-image-tall' + (cutout ? ' checker' : '')}  label={`the ${view} view without hair`} onOpen={() => at(`${VIEW_NAMES[view] ?? view}, bald`)}>
                   <img src={libraryUrl(pick(`bald_${view}`))} alt={`${view} without hair`} />
                 </Zoomable>
               </div>
@@ -88,14 +88,14 @@ function PoseReadyRow({ version, originalFiles, cutout }: { version: Version; or
   ]
   return (
     <div className="pose-ready-row">
-      <div className="view-intro muted small" style={{ paddingBottom: 0 }}>
+      <div className="view-intro view-intro-flush muted small">
         <strong>Redrawn for 3D (Pose for 3D first was on)</strong>
         <Info term="param.pose_ready" /> Every view below and the 3D model start from the redrawn picture{mouth ? ', which also has a closed mouth' : ''}; your step 1 picture is unchanged. Check that nothing that belongs to the design is gone (extra arms, claws, tools) and that the colours still match. If it is wrong, turn Pose for 3D first off under Fine-tune and draw the views again.
       </div>
       <div className="views-row">
         {items.map((it, i) => (
           <div key={it.label} className="view-cell">
-            <Zoomable className={'view-image' + (cutout ? ' checker' : '')} label={it.label.toLowerCase()} onOpen={() => setOpen(i)}>
+            <Zoomable className={'view-image view-image-tall' + (cutout ? ' checker' : '')} label={it.label.toLowerCase()} onOpen={() => setOpen(i)}>
               <img src={it.src} alt={it.label} />
             </Zoomable>
             <div className="row-between small">
@@ -186,7 +186,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
           const on = ticked.includes(view)
           return (
             <div key={view} className={'view-cell' + (failed ? ' failed' : '') + (on ? ' picked' : '')}>
-              <Zoomable className={'view-image' + (cutout ? ' checker' : '')} label={`the ${(VIEW_NAMES[view] ?? view).toLowerCase()} view`} onOpen={() => setOpen(views.indexOf(view))}>
+              <Zoomable className={'view-image view-image-tall' + (cutout ? ' checker' : '')} label={`the ${(VIEW_NAMES[view] ?? view).toLowerCase()} view`} onOpen={() => setOpen(views.indexOf(view))}>
                 <img src={libraryUrl(path)} alt={view} />
               </Zoomable>
               <div className="row-between">
