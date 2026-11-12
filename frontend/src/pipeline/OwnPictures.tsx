@@ -5,7 +5,7 @@ import { api, ApiError, libraryUrl, type Asset, type FaceCloseup, type StageId, 
 import { ImageDrop, type PickedImage } from '../components/ImageDrop'
 import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
-import { Disclosure } from '../components/ui'
+import { Disclosure, PanelClose } from '../components/ui'
 import { useRefData } from '../refdata'
 
 type Act = (fn: () => Promise<unknown>) => Promise<void> | void
@@ -188,9 +188,7 @@ function OwnFaceCloseup({ asset, active, busy, act, onCreated }: { asset: Asset;
               </button>
             )}
             {current && !onVersion && <span className="muted small">The next clean-up uses it.</span>}
-            <button type="button" className="link small" onClick={() => setOpen(false)}>
-              Close
-            </button>
+            <PanelClose onClose={() => setOpen(false)} />
           </div>
         </div>
       )}

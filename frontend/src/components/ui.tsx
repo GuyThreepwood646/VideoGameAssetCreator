@@ -410,3 +410,22 @@ export function duration(a: string | null | undefined, b: string | null | undefi
   if (s < 60) return `${Math.round(s)}s`
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
 }
+
+// One close control for every inline panel: an x icon button (aria-label Close) and Esc closes it too (UI-27).
+export function PanelClose({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent | globalThis.KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (e.key === 'Escape' && !(t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) && !document.querySelector('[role=dialog], [role=alertdialog]')) onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)">
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}

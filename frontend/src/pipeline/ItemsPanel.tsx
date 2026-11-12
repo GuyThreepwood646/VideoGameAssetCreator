@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { itemsApi, libraryUrl, type Asset, type Attachment, type ItemsPanel as PanelData, type ItemStatus, type NudgeBody } from '../api'
 import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
-import { Disclosure, ErrorText } from '../components/ui'
+import { Disclosure, ErrorText, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
 import Viewer, { type ViewerAttachment } from '../Viewer'
 
@@ -199,9 +199,7 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
           Items on {asset.name}
           <Info term="term.items" />
         </h2>
-        <button type="button" className="small-btn" onClick={onClose}>
-          Close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       <ErrorText error={error} />
       {!data ? (
