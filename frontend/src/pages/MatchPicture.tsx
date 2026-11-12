@@ -96,7 +96,7 @@ export function MatchPicture({ projectId, busy, onApply }: { projectId: string; 
         Match a picture
         <Info term="term.match_picture" />
       </div>
-      <div className="muted small">Use a picture you like to set this project's colours or look. Nothing changes until you press Apply.</div>
+      <div className="muted small">Use a picture you like to set this project's colours or look. Nothing changes until you press Apply and then Save.</div>
       <ImageDrop value={picture} onChange={setPicture} label="Picture to match" disabled={busy || working} />
       <div className="row-gap">
         <button type="button" disabled={!picture || busy || working} onClick={takeColours} title={picture ? undefined : 'Add a picture first'}>
