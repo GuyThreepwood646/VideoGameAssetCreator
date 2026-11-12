@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, STAGES, stageState, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
-import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest } from '../components/ui'
+import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
@@ -674,9 +674,7 @@ function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () =
           Make a variant of {asset.name}
           <Info term="term.variant" />
         </div>
-        <button type="button" className="link small" onClick={onClose}>
-          Close
-        </button>
+        <PanelClose onClose={onClose} />
       </div>
       <div className="muted small">We start from the picture you kept and repaint it with your change, so it stays the same character. The rest of the steps run as usual.</div>
       <Field label="What changes?" term="term.variant_change">

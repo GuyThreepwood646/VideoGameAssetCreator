@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { movesApi, type CharacterMove, type CharacterMoves, type MoveClip, type MoveLibrary, type MyMoveFile, type MyMovesListing, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, ErrorText } from '../components/ui'
+import { Disclosure, ErrorText, PanelClose } from '../components/ui'
 import { joinAnd } from '../help'
 import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
@@ -229,9 +229,7 @@ function MovePicker({ have, busy, onAdd, onClose }: { have: CharacterMove[]; bus
           <h2 id="move-picker-title" className="overlay-title">
             Add a move
           </h2>
-          <button type="button" className="link" onClick={onClose}>
-            Close
-          </button>
+          <PanelClose onClose={onClose} />
         </div>
         {own ? (
           own.mode === 'upload' ? (
