@@ -87,6 +87,11 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("lora_strength", "number", 0.9, min=0.0, max=1.5, step=0.05),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
+        # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
+        _param("pose_ready", "boolean", None, categories=["humanoid"], label="Pose the character for 3D first",
+               description="The front picture is edited once so each hand is open with the fingers apart, nothing held, hands out of pockets, arms in an A pose; every side is then drawn from it and the 3D build uses it. One more picture edit (about a minute); off when empty"),
+        _param("neutral_mouth", "boolean", None, categories=["humanoid"], label="Relaxed closed mouth (with the pose edit)",
+               description="Added to the pose edit: a relaxed closed mouth, same face. Only with the pose edit; off when empty"),
     ],
     "mesh": [
         _param("engine", "select", "trellis", options=["trellis", "hy3d"]),

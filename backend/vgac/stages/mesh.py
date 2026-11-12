@@ -84,6 +84,9 @@ def _input_image(sc: StageContext, input_view: str) -> Path:
                                     "with the 3D model.")
         return p
     if input_view == "concept":
+        posed = sc.lineage_file("pose_ready_cutout", ("turnaround",))  # the turnaround's pose-ready picture, when it made one
+        if posed is not None:
+            return posed
         p = sc.lineage_file("cutout", ("concept",))
         if p is None:
             raise FileNotFoundError("no concept cutout in lineage")
@@ -189,7 +192,9 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     first_seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
     padding = resolve_padding(params, tex)
-    if params.get("hand_edit") and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
+    # The side views step already opened the hands when its version holds a pose-ready picture.
+    posed = bool(params.get("hand_edit")) and sc.lineage_file("pose_ready_cutout", ("turnaround",)) is not None
+    if params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
         # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
         await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
         sc.set_params(hand_edit=True)

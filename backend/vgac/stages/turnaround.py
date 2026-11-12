@@ -214,8 +214,100 @@ def split_sheet(raw: Path, cutout: Path, out_dir: Path) -> dict[str, dict[str, P
     return out
 
 
+# --- the pose-ready picture (docs/HANDS-PLAN.md, "Pose ready results") --------------------------------------------------
+
+# One edit of the front picture before any angle is drawn, so every view and the 3D build agree about the hands. The
+# concept version itself is never touched. Unlike the 3D step's hand_edit, a held object is removed on purpose.
+POSE_READY = ("Redraw the character ready for 3D: each hand open with the back of the hand toward the camera, all five fingers "
+              "straight, long and slightly spread apart with clear gaps between them, thumb out to the side; nothing held in "
+              "either hand, so remove any cane, tool, bag or toy from the hands; no hand in a pocket, behind the body or hidden "
+              "by clothing; arms hanging down and slightly away from the body in an A pose; standing upright with both feet "
+              "on the ground. Gloves, gauntlets and claws keep their design but are open and spread.")
+POSE_MOUTH = " Give the face a relaxed, closed mouth with the lips together; keep the same face, eyes, nose and features."
+POSE_SUFFIX = (" Keep everything else exactly the same: the same character, face, hair, clothes, outfit design, colours, materials, "
+               "body proportions, camera angle, size and framing, the whole body in frame, on a plain white background.")
+POSE_KEYS = ("pose_ready_picture", "pose_ready_cutout")
+
+
+def pose_ready_on(params: dict[str, Any], category: str | None) -> bool:
+    """Whether the pose-ready edit applies: the param is on and the asset is a humanoid."""
+    return bool(params.get("pose_ready")) and category == "humanoid"
+
+
+def pose_ready_prompt(neutral_mouth: bool = False) -> str:
+    return POSE_READY + (POSE_MOUTH if neutral_mouth else "") + POSE_SUFFIX
+
+
+def _pose_parent_files(sc: StageContext, neutral_mouth: bool) -> dict[str, Path] | None:
+    """The parent turnaround's pose-ready files, when it made them with the same mouth setting (a redraw of one view,
+    an upload or an adjust keeps the picture the other views were drawn from)."""
+    parent = sc.parent
+    if parent is None or parent.stage != "turnaround" or not (parent.params or {}).get("pose_ready"):
+        return None
+    if bool((parent.params or {}).get("neutral_mouth")) != neutral_mouth:
+        return None
+    out = {k: library.version_file(parent, k, sc.settings) for k in POSE_KEYS}
+    return {k: Path(p) for k, p in out.items() if p is not None and Path(p).is_file()} if all(out.values()) else None
+
+
+async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Path) -> Path | None:
+    """The concept picture edited once so the hands are open and apart (files pose_ready_picture, pose_ready_cutout);
+    None when the param is off or the asset is not a humanoid. Reuses the parent's edit or this version's own (Resume)."""
+    if not pose_ready_on(params, _category(sc)):
+        return None
+    mouth = bool(params.get("neutral_mouth"))
+    own = {k: sc.file(k) for k in POSE_KEYS}
+    if all(own.values()):
+        return Path(own["pose_ready_picture"])
+    kept = _pose_parent_files(sc, mouth)
+    if kept:
+        for k, p in kept.items():
+            sc.register(k, sc.copy_in(p, p.name))
+        sc.set_params(pose_ready=True, neutral_mouth=mouth)
+        return Path(sc.file("pose_ready_picture"))
+    from . import mesh  # the mesh step's picture-edit helpers (it does not import this module at load time)
+    from ..imaging import image_size
+
+    seed = random_seed()
+    white = await asyncio.to_thread(white_composite, src, sc.dir / "pose_source.png")
+    w, h = mesh.edit_size(*image_size(white))
+    cards = mesh._picture_cards(sc)
+    if not cards:
+        raise RuntimeError("no graphics card can edit the picture")
+    sc.use_model("qwen_edit")
+    sc.use_model("qwen_lightning_lora")
+    prompt = pose_ready_prompt(mouth)
+    last: Exception | None = None
+    for card in cards:
+        try:
+            name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_pose_src.png", card)
+            entry = await sc.comfy(edit_graph(name, prompt, seed, sc.prefix("pose"), w, h), instance=card, poll=1.0,
+                                   message="Posing the character for 3D", base=0.0, span=0.04)
+            edited = await sc.download_image(entry, "save", sc.dir / "pose_ready_picture.png", card)
+            cut = await sc.cutout(Path(edited), "pose_ready_cutout", instance=card, base=0.04, span=0.01)
+            break
+        except Exception as e:  # noqa: BLE001  (try the next card; a cancelled job stops at once)
+            if type(e).__name__ == "JobCancelled":
+                raise
+            last = e
+    else:
+        raise RuntimeError(f"the picture could not be posed: {last}")
+    stats = cut.get("stats") or {}
+    if stats.get("empty") or float(stats.get("coverage") or 0) < 0.02:
+        raise RuntimeError("the posed picture came out without the character; run it again")
+    sc.register("pose_ready_picture", edited)
+    sc.register("pose_ready_cutout", cut["cutout"])
+    sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=seed)
+    sc.set_metrics(pose_ready={"seed": seed, "card": card, "size": [w, h], "neutral_mouth": mouth, "prompt": prompt,
+                               "elapsed_seconds": entry.get("elapsed_seconds")})
+    return Path(sc.file("pose_ready_picture"))
+
+
 async def _concept_cutout(sc: StageContext, source: Version | None, src: Path) -> Path:
-    """The concept's own cut-out, or a fresh one of its picture when the version has none."""
+    """The concept's own cut-out (the pose-ready one when this version made it), or a fresh one of its picture."""
+    posed = sc.file("pose_ready_cutout")
+    if posed is not None and Path(posed).is_file():
+        return Path(posed)
     p = library.version_file(source, "cutout", sc.settings) if source is not None else None
     if p is not None:
         return Path(p)
@@ -284,6 +376,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     chosen_method = turn_method(_category(sc), params)
     method = method or chosen_method
     src = _source_image(sc, source)
+    posed = await _pose_ready_picture(sc, params, src)
+    if posed is not None:
+        src = posed  # every drawn view starts from the pose-ready picture; the concept stays as it is
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
     rec = stage_recipe(sc)
     # The camera-angle helper's strength: the version's, else the recipe's (the add-on's normal step, 0.9, unless the
@@ -376,6 +471,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             seed = random_seed()
         _publish_views(sc, results)
     sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed,
+                  **({"pose_ready": True} if posed is not None else {}),
                   lora_strength_source="chosen" if chosen is not None else "recipe", turn_method=chosen_method,
                   supplied_views=sorted({*(params.get("supplied_views") or []), *supplied}))
     # The LoRAs behind every view this version holds, the ones copied from the parent included (a view from before
@@ -743,6 +839,9 @@ async def _run_bald(sc: StageContext, source: Version | None, params: dict[str, 
     t0 = time.time()
     src = _source_image(sc, source)
     orig_cut = library.version_file(source, "cutout", sc.settings) if source is not None else None
+    if sc.file("pose_ready_picture") is not None and sc.file("pose_ready_cutout") is not None:
+        # The bald picture is edited from the pose-ready one, and its unchanged-share is measured against that picture.
+        src, orig_cut = Path(sc.file("pose_ready_picture")), Path(sc.file("pose_ready_cutout"))
     seed = sc.params.get("bald_seed")
     seed = int(seed) if seed not in (None, "") else _start_bald(sc, params)
     with Image.open(src) as im:
