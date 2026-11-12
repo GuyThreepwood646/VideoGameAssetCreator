@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, STAGES, stageState, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
-import { Disclosure, ErrorText, Field, ResumeButton, StopButton, SubmitTextarea, type FixRequest } from '../components/ui'
+import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
@@ -345,9 +345,8 @@ export default function AssetPage() {
             const reached = list.length > 0
             const cls = ['rail-stage', s === stage && !composeOpen ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
             const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
-            const stopping = st === 'running' && jobs.some((j) => j.message === 'cancelling' && list.some((v) => v.id === j.version_id))
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
-            const meta = st === 'running' || stopped ? '' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            const meta = st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
@@ -357,16 +356,6 @@ export default function AssetPage() {
                   <span className="rail-label">{stagePlain(s, help)}</span>
                   <span className="rail-meta">{meta}</span>
                 </button>
-                {st === 'running' && (
-                  <span className="rail-step-action">
-                    <StopButton small onClick={() => stopStep(s)} stopping={stopping} title={`Stop "${stagePlain(s, help)}" now. Everything you kept stays.`} />
-                  </span>
-                )}
-                {stopped && (
-                  <span className="rail-step-action">
-                    <ResumeButton small onClick={() => (autopilot?.stopped_by_user && autopilot.status === 'paused' ? autopilotActions.resume() : resumeStep(s))} title={`Run "${stagePlain(s, help)}" again from its start, with the same settings.`} />
-                  </span>
-                )}
                 <Info term={'stage.' + s} />
               </div>
             )
@@ -392,9 +381,6 @@ export default function AssetPage() {
             )}
           </div>
           <div className="row-gap">
-            {autopilot?.status === 'running' && (
-              <StopButton small label="Stop autopilot" disabled={apBusy} onClick={autopilotActions.stop} title="Stops the autopilot and the step in progress now. Everything made so far is kept, and Resume carries on from this step." />
-            )}
             <button type="button" className="small-btn" aria-pressed={variantOpen} disabled={!asset.selected?.concept} onClick={() => setVariantOpen((v) => !v)} title={asset.selected?.concept ? 'Make a copy of this asset with one change' : 'Keep a concept picture first'}>
               Make a variant
             </button>

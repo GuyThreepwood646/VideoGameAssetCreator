@@ -184,6 +184,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   // "Fix and continue" only takes a re-run fix; a fix that opens a tool waits for the person.
   // An upscale makes a new step 1 picture to keep, so it is never the autopilot's own "Fix and continue".
   const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui && f.op !== 'upscale') ?? null
+  const firstFixCheck = firstFix ? failing.find((c) => checkFix(c)?.label === firstFix.label) : undefined
   const onFix = (f: FixRequest) => (f.op === 'upscale' ? version && void api.upscale(version.id) : f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
   const versionFailed = version?.status === 'error'
   const paused = ap.status === 'paused'
@@ -254,7 +255,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           {paused
             ? failing.length
               ? firstFix
-                ? '"Fix and continue" applies the first fix and carries on; "Continue anyway" keeps this result as it is.'
+                ? `"${firstFix.label} and continue" fixes ${firstFixCheck?.message ? `"${firstFixCheck.message}"` : 'the first problem listed'} and carries on. You can also keep this result as it is.`
                 : 'No automatic fix is known for this. Change something below, keep a result, then continue; or continue anyway.'
               : versionFailed
                 ? 'Try again runs this step once more and carries on.'
@@ -266,11 +267,11 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
       <div className="guide-action guide-action-col">
         {paused && !versionFailed && firstFix && (
           <button type="button" className="primary" disabled={busy} onClick={() => actions.fixAndContinue(firstFix)} title={`${firstFix.label}: ${fixTooltip(firstFix, stages)} Then the autopilot carries on.`}>
-            Fix and continue
+            {firstFix.label} and continue
           </button>
         )}
         {paused && !versionFailed && version?.status === 'done' && (
-          <button type="button" className={firstFix ? '' : 'primary'} disabled={busy} onClick={actions.continueAnyway} title="Keeps this result and runs the remaining steps">
+          <button type="button" className={firstFix ? 'link small' : 'primary'} disabled={busy} onClick={actions.continueAnyway} title="Keeps this result and runs the remaining steps">
             Continue anyway
           </button>
         )}

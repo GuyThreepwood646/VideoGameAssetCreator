@@ -100,6 +100,14 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   )
 }
 
+// Whether a step after this one failed and has no kept result: it outranks "Make it" as the next action (UI-02).
+export function laterFailed(asset: Asset, stage: StageId): boolean {
+  return STAGES.slice(STAGES.indexOf(stage) + 1).some((s) => {
+    const vs = versionsOf(asset, s)
+    return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+  })
+}
+
 export function nextStage(stage: StageId): StageId | null {
   const i = STAGES.indexOf(stage)
   return i < STAGES.length - 1 ? STAGES[i + 1] : null
@@ -152,9 +160,9 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
     apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
-      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error'} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
     ) : null
-  const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' ? <span className="or-just">{node}</span> : node)
+  const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage)) ? <span className="or-just">{node}</span> : node)
 
   let happened: string
   let now: string
@@ -243,6 +251,31 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       break
     }
     case 'selected': {
+      // A later step that did not finish comes first: never say "continue" into a failure (UI-02).
+      const failedLater = STAGES.slice(STAGES.indexOf(stage) + 1).find((s) => {
+        const vs = versionsOf(asset, s)
+        return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+      })
+      if (failedLater) {
+        const fi = info(failedLater)
+        const failedV = versionsOf(asset, failedLater).slice(-1)[0]
+        happened = `Step ${STAGES.indexOf(failedLater) + 1}, ${stagePlain(failedLater, fi)}, did not finish.`
+        now = `${humanError(failedV.error)} Your kept version here is fine; the problem is further on.`
+        action = (
+          <>
+            {failedLater === next ? (
+              <button type="button" className="primary" disabled={busy} onClick={() => onRunNext(next!)}>
+                Try again on step {STAGES.indexOf(failedLater) + 1}
+                <span className="btn-est">{fmtDuration(stageEstimate(failedLater, fi, estimates))}</span>
+              </button>
+            ) : null}
+            <Link className={'btn' + (failedLater === next ? '' : ' primary')} to={`/assets/${asset.id}/${failedLater}`}>
+              Go to step {STAGES.indexOf(failedLater) + 1}
+            </Link>
+          </>
+        )
+        break
+      }
       const idx = selected ? versions.indexOf(selected) + 1 : 0
       const good = selected ? looksGood(selected.metrics) : null
       happened = `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ', though a check needs attention' : ''}.`
@@ -299,8 +332,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       </div>
       {(action || makeIt) && (
         <div className={'guide-action' + (makeIt && action ? ' guide-action-col' : '')}>
-          {makeIt}
-          {action && secondary(action)}
+          {state === 'selected' && laterFailed(asset, stage) ? (<>{action}{makeIt}</>) : (<>{makeIt}{action && secondary(action)}</>)}
         </div>
       )}
     </section>
