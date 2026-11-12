@@ -272,7 +272,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
         )}
         {paused && !versionFailed && version?.status === 'done' && (
           <button type="button" className={firstFix ? 'link small' : 'primary'} disabled={busy} onClick={actions.continueAnyway} title="Keeps this result and runs the remaining steps">
-            Continue anyway
+            {ap.reason?.startsWith('Step 2 redrew') ? 'Looks right, continue' : 'Continue anyway'}
           </button>
         )}
         {paused && (versionFailed || !version) && (
