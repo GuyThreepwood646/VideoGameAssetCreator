@@ -1108,7 +1108,8 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
 
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
-              hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None) -> dict[str, Any]:
+              hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None,
+              after_relayout: Any = None) -> dict[str, Any]:
     """_run with the image card's MediaPipe face landmarker finding the eyes and mouth (vgac/facemarks.py)."""
     token = None
     try:
@@ -1120,7 +1121,7 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
         token = None
     before = dict(facemarks.stats)
     try:
-        out = await _run(sc, glb, maps, rec, params, hair_plan, face_detail_seed)
+        out = await _run(sc, glb, maps, rec, params, hair_plan, face_detail_seed, after_relayout)
     finally:
         facemarks.done(token)
     fd = (out.get("metrics") or {}).get("face_detail")
@@ -1130,13 +1131,18 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
 
 
 async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
-               hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None) -> dict[str, Any]:
+               hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None,
+               after_relayout: Any = None) -> dict[str, Any]:
     """The pass on the prepared model `glb` (changed in place) with the current maps. Returns {files: {key: path},
     metrics: {"face_detail": {...}}, relayout: bool, base_color_size: int, layout: the relayout report or None}. Never
     raises for a reason that should not fail the clean-up step (those are recorded as skipped); Stop still stops it.
 
     hair_plan: {points (Path), gain} from the hair pass (stages/hair_detail.py find): the one relayout gives the hair
-    more texels too (blender/faceuv.py --hair-points), and runs for the hair even when the face needs none."""
+    more texels too (blender/faceuv.py --hair-points), and runs for the hair even when the face needs none.
+
+    after_relayout: async (glb, maps) -> maps, called once the texture has been packed again and every map baked onto
+    the new layout, before the face is painted: prep paints the picture onto the body again there (vgac/srcproject.py
+    run_again), because that bake softens it."""
     t0 = time.time()
     out_dir = sc.dir / "face"
     cutout = sc.lineage_file("cutout", ("concept",))
@@ -1334,6 +1340,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             work_maps = {k: Path(p) for k, p in (relayout.get("rebake_maps") or {}).items() if Path(p).is_file()}
         else:
             relayout = None
+    if relayout and after_relayout is not None:
+        work_maps = await after_relayout(work_glb, work_maps)
     if plan["ship"] > atlas:
         # 4096 base colour where the platform allows it: the atlas's base colour enlarged, then the face painted at 4096
         up = out_dir / "base_color_atlas_up.png"

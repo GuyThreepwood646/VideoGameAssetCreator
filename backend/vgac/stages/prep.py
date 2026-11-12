@@ -256,8 +256,13 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         current = {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
         # Paint the picture's own pixels into the base colour (vgac/srcproject.py): by itself for a character on a
         # smooth look; any model when the version asks for it.
+        body_views: dict[str, Any] = {}  # the fitted pictures, kept to paint again if the face pass packs the texture again
         if srcproject.on(params, sc.asset.category, look):
-            current = await srcproject.run_stage(sc, out, current, params)
+            current = await srcproject.run_stage(sc, out, current, params, keep=body_views)
+
+        async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
+            return await srcproject.run_again(sc, glb_, maps_, body_views)
+
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
         face_matters = getattr(sc.asset, "face_matters", None) is not False
         if params.get("face_detail") is None and not face_matters:
@@ -273,7 +278,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.set_params(**{hairmat.PARAM: hairmat.option(params)})  # hair as its own material (vgac/hairmat.py)
         hf = await hair_detail.find(sc, out, current, rec, params)
         face_detail_seed = params.get("face_detail_seed")
-        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed)
+        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
+                                   after_relayout=paint_body_again if body_views.get("views") else None)
+        body_views.clear()  # several large pictures per view: let them go
         for key, p in fd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**fd["metrics"])

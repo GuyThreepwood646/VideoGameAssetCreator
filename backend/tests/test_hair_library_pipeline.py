@@ -91,6 +91,8 @@ class Engines:
 
         async def comfy(self, graph, instance=None, poll=1.0, message="", base=0.0, span=1.0):
             self.progress(base, message)
+            if "um" in graph:  # prep making a picture bigger before painting it on (vgac/srcproject.py): not an edit;
+                raise RuntimeError("no upscaler in this harness")  # the picture is then used as it is
             if "l2" not in graph:
                 if eng.stop_on_edit:
                     raise JobCancelled()
@@ -408,7 +410,7 @@ ADDED_ON = {
 }
 # Texture fidelity (2026-11): the report-only measure in both steps, and the picture painted onto a character by itself.
 for _stage, _part, _keys in (("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
-                             ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "texture_fidelity"])):
+                             ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}

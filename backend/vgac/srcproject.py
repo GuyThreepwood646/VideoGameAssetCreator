@@ -37,6 +37,7 @@ chest (bakeoff/source_project_trial.py, bakeoff/out/source_project/results.md).
 
 from __future__ import annotations
 
+import asyncio
 import math
 import os
 import time
@@ -50,6 +51,9 @@ from PIL import Image
 from . import face, imaging
 
 SIZE = 2048              # working render size; the picture is sampled bicubic (Catmull-Rom) once, at this size
+PIC_N = 1024            # side the pictures are worked at when they come as they are
+PIC_N_BIG = 2048        # ... and when they were made bigger first (upscale_sources), or came bigger
+UPSCALE_BELOW = 1536    # a picture whose longer side is under this is made bigger before it is painted
 FIT_N = 256              # size the camera and silhouette search runs at
 FLOW_N = 512             # size the optical flow runs at
 MIN_IOU = 0.85           # silhouette match below this refuses a view
@@ -76,6 +80,7 @@ TURN_YAWS = {
 }
 PICTURE_YAWS = list(range(0, 360, 10))
 FRONT_YAWS = [-20, -10, 0, 10, 20]
+MAX_SHARED = 0.15        # share of the texture layout used by more than one triangle above which nothing is painted
 WORKERS = max(1, min(6, (os.cpu_count() or 2) - 1))   # views fitted at the same time
 TURN_VIEWS = ("quarter", "left", "right", "back")
 
@@ -116,10 +121,11 @@ def _rs(a: np.ndarray, h: int, w: int) -> np.ndarray:
     return np.asarray(Image.fromarray(a.astype(np.float32), "F").resize((w, h), Image.BILINEAR), dtype=np.float64)
 
 
-def prepare_picture(src: Path | str | Image.Image | np.ndarray, n: int = 1024) -> tuple[np.ndarray, np.ndarray]:
+def prepare_picture(src: Path | str | Image.Image | np.ndarray, n: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Colour (n,n,3) 0..1 and cut-out alpha (n,n) of a picture. The alpha is the picture's own when it has one; else the
     cut-out is whatever is not the backdrop (the colour of the corners), closed and with holes filled. Edges are
     defringed: colour is pulled outward from 2 px inside the cut-out."""
+    n = PIC_N if n is None else n
     if isinstance(src, np.ndarray):
         arr = np.asarray(src, dtype=np.float64)
         rgb = arr[..., :3]
@@ -597,6 +603,12 @@ class Atlas:
         ras = face.rasterise(uvp, np.zeros(len(mesh["uv"])), mesh["faces"], T)
         self.cover = ras["tri"] >= 0
         isl = np.flatnonzero(self.cover.ravel())
+        # Share of the layout that more than one triangle uses (a mirrored model: both halves on one piece of texture).
+        # The triangles' own area in texels against the texels they cover; without sharing the two agree.
+        tp = uvp[mesh["faces"]]
+        tri_px = 0.5 * np.abs((tp[:, 1, 0] - tp[:, 0, 0]) * (tp[:, 2, 1] - tp[:, 0, 1])
+                              - (tp[:, 1, 1] - tp[:, 0, 1]) * (tp[:, 2, 0] - tp[:, 0, 0])).sum()
+        self.shared = float(max(0.0, 1.0 - isl.size / max(tri_px, 1.0)))
         pos = face.interpolate(mesh["verts"], mesh["faces"], ras)[self.cover]
         n = face.interpolate(mesh["vnormals"], mesh["faces"], ras)[self.cover]
         nrm = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
@@ -787,7 +799,8 @@ def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
 def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround: dict[str, Any] | None = None, *,
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
-          log: Callable[[str], None] | None = None) -> dict[str, Any]:
+          pic_n: int | None = None, log: Callable[[str], None] | None = None,
+          keep: dict[str, Any] | None = None) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
@@ -800,7 +813,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     outlines: dict[tuple[float, int], np.ndarray] = {}
 
     def fit(name: str, src: Any, yaws: list[float]) -> View:
-        p_, a_ = prepare_picture(src)
+        p_, a_ = prepare_picture(src, pic_n)
         return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, min_iou, log=log, outlines=outlines)
 
     # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were
@@ -819,7 +832,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
             hint = yaw_hint()
             if hint is not None:
-                pic, alpha = prepare_picture(picture)
+                pic, alpha = prepare_picture(picture, pic_n)
                 front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
                 front.info["turn_source"] = "texfidelity"
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
@@ -844,6 +857,12 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                 if fitted[name].ok:
                     views.append(fitted[name])
         atlas = atlas_job.result()
+        if atlas.shared > MAX_SHARED:
+            # A picture shows one side; on a mirrored layout its texels are the other side's too, and it comes out in pieces
+            res["reason"] = "the model's two halves share one piece of texture (mirrored), so a picture cannot be painted on one side"
+            res["metrics"] = {"srcproject_layout_shared": round(atlas.shared, 3), "srcproject_views": infos,
+                              "srcproject_seconds": round(time.time() - t0, 1)}
+            return res
         pitch_px = atlas.pitch_m * size / scale
 
         def ready(i: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
@@ -871,12 +890,30 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         res["reason"] = "the result is no closer to the picture than the model's own colour"
         return res
     res.update(applied=True, base_color=new)
+    if keep is not None:  # the fitted views, to paint again on another layout of the same model (repaint)
+        keep.update(views=views, images=images, n_primary=n_primary, size=size)
     return res
+
+
+def repaint(mesh: dict[str, np.ndarray], tex: np.ndarray, kept: dict[str, Any]) -> dict[str, Any]:
+    """The views paint() fitted, painted again into `tex` on another texture layout of the same model (the face pass
+    packs the texture again and bakes every map onto the new layout, which softens what was painted: measured on the
+    knight, front sharpness 0.73 before that bake and 0.41 after). Nothing is fitted again: the model has not moved,
+    only its layout has. Returns {applied, base_color, reason}."""
+    atlas = Atlas(mesh, tex.shape[0])
+    if atlas.shared > MAX_SHARED:
+        return {"applied": False, "base_color": tex, "reason": "the new layout is mirrored"}
+    views, size = kept["views"], kept["size"]
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        projs = list(pool.map(lambda v: project_view(atlas, v, size), views))
+    paint_, alpha_, _ = blend(atlas, projs, kept["images"], kept["n_primary"])
+    return {"applied": True, "base_color": finish(atlas, tex, paint_, alpha_), "reason": None}
 
 
 def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, turnaround: dict[str, Path | None] | None,
                 out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
-                front_view: Path | str | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
+                front_view: Path | str | None = None, pic_n: int | None = None,
+                log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -892,7 +929,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
             return None
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
-              mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, log=log)
+              mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -947,12 +984,76 @@ def mode_of(params: dict[str, Any]) -> str:
     return m if m in MODES else "detail"
 
 
-async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any]) -> dict[str, Path]:
+def _longer_side(p: Path) -> int:
+    with Image.open(p) as im:
+        return max(im.size)
+
+
+def _with_alpha_of(big: Path, small_: Path, dest: Path) -> Path:
+    """The upscaled picture with the original's cut-out (the upscaler returns colour only)."""
+    with Image.open(big) as b, Image.open(small_) as s:
+        out = b.convert("RGB")
+        if "A" in s.getbands():
+            out.putalpha(s.getchannel("A").resize(out.size, Image.LANCZOS))
+        out.save(dest)
+    return dest
+
+
+async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) -> tuple[dict[str, Path | None], dict[str, Any]]:
+    """Each picture under UPSCALE_BELOW made twice as big with the first step's learned upscaler (photos and the Realistic
+    look: 4xRealWebPhoto; painted and drawn looks: Real-ESRGAN x2) on the card that draws pictures, before it is painted
+    onto the model: a picture sampled at its own size cannot be sharper than its pixels, and the atlas can hold more
+    (measured on the knight: front sharpness 0.47 without, 0.73 with, colour unchanged). A picture that cannot be
+    upscaled (no card, a failure) is used as it is. Returns (the files to use, {upscaled: [...], model, seconds})."""
+    from .jobs import JobCancelled
+    from .stages import concept, face_detail
+
+    t0 = time.time()
+    info: dict[str, Any] = {"upscaled": [], "model": None}
+    inst = face_detail.image_instance(sc)
+    if inst is None:
+        return files, {**info, "skipped": "no card to draw on"}
+    cv = sc.stage_version("concept")
+    photo = getattr(sc.asset, "style_preset", None) == "realistic_pbr" or (
+        cv is not None and (cv.params or {}).get("source") in ("upload", "upload_edit"))
+    model = concept.UPSCALE_PHOTO_MODEL if photo else concept.UPSCALE_ART_MODEL
+    out = dict(files)
+    done: dict[str, Path] = {}
+    for key, p in files.items():
+        if p is None or not Path(p).is_file():
+            continue
+        try:
+            side = _longer_side(Path(p))
+            if side >= UPSCALE_BELOW:
+                continue
+            if str(p) in done:
+                out[key] = done[str(p)]
+                continue
+            with Image.open(p) as im:
+                w, h = im.size
+            f = PIC_N_BIG / float(side)
+            name = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_srcproject_{key}.png", instance=inst)
+            graph = concept.upscale_graph(name, model, int(round(w * f)), int(round(h * f)), sc.prefix(f"srcproject_{key}"))
+            entry = await sc.comfy(graph, instance=inst, message="Sharpening the pictures to paint from")
+            raw = await sc.download_image(entry, "save", work / f"up_{key}_raw.png", instance=inst)
+            out[key] = done[str(p)] = await asyncio.to_thread(_with_alpha_of, Path(raw), Path(p), work / f"up_{key}.png")
+            info["upscaled"].append(key)
+        except (JobCancelled, asyncio.CancelledError):
+            raise
+        except Exception as e:  # noqa: BLE001  (the picture is used as it is)
+            info.setdefault("failed", {})[key] = str(e)[:160]
+    if info["upscaled"]:
+        info["model"] = model
+        sc.use_model("upscale_photo" if photo else "upscale_art")
+    info["seconds"] = round(time.time() - t0, 1)
+    return out, info
+
+
+async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
+                    keep: dict[str, Any] | None = None) -> dict[str, Path]:
     """The pass inside the prep stage (stages/prep.py), after the last rebake and before the face pass: paints the picture
     the asset started from, the picture the 3D step was given and the turnaround views into the current base colour; replaces it in the GLB and in
     `current` when it applies, and records the before and after numbers in the stage metrics. Returns `current`."""
-    import asyncio
-
     mode = mode_of(params)
     sc.set_params(**{"source_project_mode": mode})
     base = current.get("base_color")
@@ -967,9 +1068,22 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         source, front_view = None, None
     work = sc.dir / "srcproject"
     work.mkdir(parents=True, exist_ok=True)
+    from .jobs import JobCancelled
+
+    srcs: dict[str, Path | None] = {"picture": Path(picture), "source": source, "front": front_view, **turn}
+    try:
+        srcs, up = await upscale_sources(sc, srcs, work)
+    except (JobCancelled, asyncio.CancelledError):
+        raise
+    except Exception as e:  # noqa: BLE001  (the pictures are used as they are)
+        up = {"upscaled": [], "skipped": f"failed: {str(e)[:160]}"}
+    sc.set_metrics(srcproject_upscale=up)
+    big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
+    picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]
+    turn = {v: srcs.get(v) for v in TURN_VIEWS}
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
-                                    front_view=front_view)
+                                    front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
@@ -979,3 +1093,33 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         sc.register("base_color", r["base_color"])
         current = {**current, "base_color": r["base_color"]}
     return current
+
+
+async def run_again(sc: Any, glb: Path, maps: dict[str, Path], kept: dict[str, Any] | None) -> dict[str, Path]:
+    """After the face pass has packed the texture again (stages/face_detail.py): the same pictures painted onto the new
+    layout, so the bake onto it is not the last word on the body's sharpness. `glb` and `maps` are the newly laid out
+    model and its maps; returns the maps with the base colour replaced when it applies. Never fails the step."""
+    base = maps.get("base_color")
+    if not kept or not kept.get("views") or base is None:
+        return maps
+    t0 = time.time()
+    out = sc.dir / "srcproject" / "base_color_relaid.png"
+
+    def work() -> dict[str, Any]:
+        mesh = face.load_mesh(glb)
+        if mesh is None:
+            return {"applied": False, "reason": "the model has no texture layout"}
+        r = repaint(mesh, face.read_rgb(base), kept)
+        if r["applied"]:
+            face.save_rgb(r["base_color"], out)
+        return {"applied": r["applied"], "reason": r["reason"]}
+
+    try:
+        r = await asyncio.to_thread(work)
+    except Exception as e:  # noqa: BLE001
+        r = {"applied": False, "reason": f"failed: {str(e)[:200]}"}
+    sc.set_metrics(srcproject_again={**r, "seconds": round(time.time() - t0, 1)})
+    if not r["applied"]:
+        return maps
+    await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=out)
+    return {**maps, "base_color": out}

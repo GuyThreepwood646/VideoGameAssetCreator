@@ -263,3 +263,15 @@ def test_the_original_picture_paints_first() -> None:
     m = r["metrics"]
     assert m["srcproject_measured_against"] == "source"
     assert list(m["srcproject_share_by_view"]) == ["source", "picture"]
+
+
+def test_a_mirrored_layout_is_not_painted() -> None:
+    """Two halves on one piece of texture (prep's symmetric option): a one-sided picture would come out in pieces."""
+    mesh = model()
+    n = len(mesh["verts"])
+    twin = {k: (np.concatenate([v, v + n]) if k == "faces" else np.concatenate([v, v])) for k, v in mesh.items()}
+    twin["verts"][n:, 2] -= 0.05  # the second copy just behind the first, on the same UVs
+    assert srcproject.Atlas(mesh, 256, gutter=0).shared < 0.05
+    r = srcproject.paint(twin, soft_base(), picture(), size=256, picture_yaws=[0.0])
+    assert not r["applied"] and "mirrored" in r["reason"]
+    assert r["metrics"]["srcproject_layout_shared"] > 0.4
