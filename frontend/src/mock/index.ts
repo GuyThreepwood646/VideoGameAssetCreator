@@ -817,6 +817,7 @@ on('POST', '/api/versions/:vid/reject', (m) => {
   return version
 })
 on('GET', '/api/versions/:vid', (m) => findVersion(m.groups!.vid).version)
+on('POST', '/api/versions/:vid/open-folder', () => ({ opened: true, folder: 'demo/exports' }))
 on('POST', '/api/versions/:vid/feedback', (m, body) => {
   const { version } = findVersion(m.groups!.vid)
   const thumbs = body.thumbs === 'up' || body.thumbs === 'down' ? body.thumbs : body.thumbs === null || body.thumbs === undefined ? null : undefined

@@ -35,16 +35,39 @@ const DELIVERABLE_KEYS = ['fbx', 'fbx_unreal', 'glb', 'glb_godot', 'glb_lod1', '
 // Details, Files.
 const PACKED_REPLACES = new Set(['metallic', 'roughness'])
 
-// The download buttons for an export version (also used by the finishing card).
-export function Deliverables({ version }: { version: Version }) {
+// What each file is for, in three groups (UI-03): the model files first, then textures and 2D, then technical files.
+const FILE_GROUPS: Array<{ title: string; keys: string[] }> = [
+  { title: 'Model', keys: ['fbx', 'fbx_unreal', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage'] },
+  { title: 'Textures and 2D', keys: ['base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet'] },
+  { title: 'Technical', keys: ['manifest'] },
+]
+
+export function deliverableKeys(version: Version): string[] {
   const packed = !!(version.files.metallic_smoothness || version.files.orm)
-  const fileKeys = DELIVERABLE_KEYS.filter((k) => version.files[k] && !(packed && PACKED_REPLACES.has(k)))
+  return DELIVERABLE_KEYS.filter((k) => version.files[k] && !(packed && PACKED_REPLACES.has(k)))
+}
+
+// The download buttons for an export version (also used by the finishing card), grouped by what they are for.
+export function Deliverables({ version }: { version: Version }) {
+  const fileKeys = deliverableKeys(version)
+  const grouped = FILE_GROUPS.map((g) => ({ ...g, keys: g.keys.filter((k) => fileKeys.includes(k)) })).filter((g) => g.keys.length > 0)
+  const known = new Set(FILE_GROUPS.flatMap((g) => g.keys))
+  const other = fileKeys.filter((k) => !known.has(k))
+  if (other.length) grouped.push({ title: 'Other', keys: other })
   return (
-    <div className="deliverables">
-      {fileKeys.map((k) => (
-        <a key={k} className="btn" href={libraryUrl(version.files[k])} download={version.files[k].split('/').pop()} title={version.files[k]}>
-          {FILE_NAMES[k] ?? k}
-        </a>
+    <div className="deliverables-groups">
+      {grouped.map((g) => (
+        <div key={g.title} className="deliverables-group">
+          <div className="field-label">{g.title}</div>
+          <div className="deliverables">
+            {g.keys.map((k) => (
+              <a key={k} className="btn" href={libraryUrl(version.files[k])} download={version.files[k].split('/').pop()} title={version.files[k]}>
+                {FILE_NAMES[k] ?? k}
+                <span className="file-ext">.{version.files[k].split('.').pop()}</span>
+              </a>
+            ))}
+          </div>
+        </div>
       ))}
       {fileKeys.length === 0 && <span className="muted small">No files in this version.</span>}
     </div>

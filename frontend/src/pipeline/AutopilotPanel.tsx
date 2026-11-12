@@ -11,7 +11,7 @@ import Viewer from '../Viewer'
 import { versionLook } from '../recipe'
 import { finishLineFix, finishLines, unityHowto } from './finish'
 import { UnityHandoff } from './UnityHandoff'
-import { Deliverables } from './views/ExportView'
+import { Deliverables, deliverableKeys } from './views/ExportView'
 
 export type AutopilotActions = {
   start: (body?: AutopilotBody) => void
@@ -305,6 +305,21 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const lines = finishLines(asset)
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
+  const mainFile = exp?.files.fbx ?? exp?.files.glb
+  const [folderBusy, setFolderBusy] = useState(false)
+  const [folderMsg, setFolderMsg] = useState('')
+  const openFolder = async () => {
+    if (!exp) return
+    setFolderBusy(true)
+    setFolderMsg('')
+    try {
+      await api.openVersionFolder(exp.id)
+    } catch {
+      setFolderMsg('The folder could not be opened. The files are under the library folder for this asset.')
+    } finally {
+      setFolderBusy(false)
+    }
+  }
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
   // The plain walk by its exact name: a looser match used to pick "crouch_walk" once more moves were offered.
@@ -317,7 +332,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         <div className="guide-kicker">{byAutopilot ? 'Autopilot finished' : 'Finished'}</div>
         <div className="guide-happened finish-title">Your asset is ready</div>
         <div className="guide-now">
-          {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
+          Your {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
         {(lines.length > 0 || look) && (
           <div className="finish-lines">
@@ -356,10 +371,30 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
             </ul>
           </div>
         )}
+        {exp && (
+          <div className="row-gap finish-deliver">
+            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder holding the finished files in your file explorer">
+              Open the asset folder
+            </button>
+            {mainFile && (
+              <a className="btn" href={libraryUrl(mainFile)} download={mainFile.split('/').pop()}>
+                Download {exp.files.fbx ? 'FBX' : 'GLB'}
+              </a>
+            )}
+            <a className="btn" href={api.versionZipUrl(exp.id)} download>
+              Download everything (.zip)
+            </a>
+            {folderMsg && <span className="muted small">{folderMsg}</span>}
+          </div>
+        )}
+        {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
         {glb ? <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" /> : <div className="placeholder-box">No 3D model to show.</div>}
         {exp && <BeautyPicture version={exp} name={asset.name} />}
-        {exp && <Deliverables version={exp} />}
-        {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
+        {exp && (
+          <Disclosure label={`All files (${deliverableKeys(exp).length})`}>
+            <Deliverables version={exp} />
+          </Disclosure>
+        )}
         {howto && (
           <Disclosure label="Using it in Unity" className="unity-howto">
             <div className="muted small">
@@ -374,7 +409,8 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           </Disclosure>
         )}
         <div className="row-gap finish-actions">
-          <Link className="btn primary" to={`/projects/${asset.project_id}`}>
+          <span className="muted small">What next?</span>
+          <Link className="btn" to={`/projects/${asset.project_id}`}>
             Make another
           </Link>
           <button type="button" onClick={onMakeVariant} disabled={!asset.selected?.concept} title="A copy of this asset with one change">
