@@ -918,7 +918,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "arms_away": {
         "severity": "warn",
         "ok": "The arms stand away from the body, so the skeleton step can tell them apart.",
-        "fail": "The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.",
+        "fail": "The arms are close to the body, so the hands may be hidden or holding something; the 3D model may join the arms to the sides and the skeleton step may not tell them apart. The redraw also opens the hands and removes held items.",
         "fix": _redraw_fix,
         "fix_label": REDRAW_LABEL,
     },
