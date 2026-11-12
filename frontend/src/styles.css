@@ -4135,3 +4135,7 @@ button.small-btn .resume-icon {
   padding: var(--s2) var(--s3);
   color: var(--accent);
 }
+
+.warn-text {
+  color: var(--warn);
+}
