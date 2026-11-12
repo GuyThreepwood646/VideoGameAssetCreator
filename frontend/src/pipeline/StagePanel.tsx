@@ -565,9 +565,14 @@ function HappyBlock({
         </button>
         <span className="grow" />
         <FeedbackButtons fb={fb} />
-        <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
-          Reject
-        </button>
+        <details className="more-menu">
+          <summary aria-label="More actions" title="More actions">...</summary>
+          <div className="status-pop more-pop">
+            <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
+              Reject this version
+            </button>
+          </div>
+        </details>
       </div>
       <FeedbackNote key={active.id} fb={fb} />
     </div>

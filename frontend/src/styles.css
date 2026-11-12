@@ -3959,3 +3959,27 @@ button.small-btn .resume-icon {
   box-shadow: var(--shadow-1);
   white-space: nowrap;
 }
+
+.more-menu {
+  position: relative;
+}
+.more-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius);
+}
+.more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.more-pop {
+  min-width: 180px;
+  bottom: calc(100% + var(--s1));
+  top: auto;
+}
+
+.nudge-title {
+  min-width: 72px;
+  align-self: center;
+}
