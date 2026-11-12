@@ -28,6 +28,7 @@ import { preferredConceptModel } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
+import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { OwnPictures, ReferencePicture } from './OwnPictures'
@@ -79,6 +80,7 @@ function firstTarget(asset: Asset, stage: StageId): Version {
 
 export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onChanged, onError, onStop, onResume, onDismissStopped, hideStaleFrom }: Props) {
   const navigate = useNavigate()
+  const confirm = useConfirm()
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -188,8 +190,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   // Remove versions that failed, were stopped or were rejected (their files go too; this cannot be undone).
   const removable = versions.filter((v) => isRemovable(asset, v))
   const failedRemovable = removable.filter((v) => v.status === 'error')
-  const removeVersions = (list: Version[], question: string) => {
-    if (!list.length || !window.confirm(question)) return
+  const removeVersions = async (list: Version[], question: string) => {
+    if (!list.length) return
+    const ok = await confirm.ask({ title: list.length === 1 ? 'Remove this version?' : `Remove ${list.length} versions?`, body: question, confirmLabel: 'Remove', danger: true })
+    if (!ok) return
     void act(async () => {
       if (active && list.some((v) => v.id === active.id)) setActiveId(null)
       for (const v of list) await api.deleteVersion(v.id, true)
@@ -237,6 +241,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
 
   return (
     <div className="stage-panel">
+      {confirm.dialog}
       <GuidePanel
         asset={asset}
         stage={stage}

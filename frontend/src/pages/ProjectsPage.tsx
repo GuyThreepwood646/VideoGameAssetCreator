@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api, libraryUrl, PLATFORMS, selectedVersion, STAGES, stageState, STYLE_MODELS, versionsOf, type AssetSummary, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
+import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { PresetRow } from '../components/PresetRow'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
@@ -579,8 +580,17 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
     void saveWith(next)
   }
 
+  const confirm = useConfirm()
   const remove = async () => {
-    if (!window.confirm(`Delete project "${project.name}" and all its assets?`)) return
+    const n = project.asset_count
+    const ok = await confirm.ask({
+      title: `Delete "${project.name}"?`,
+      body: `${n === undefined ? 'Every asset in it' : n === 1 ? '1 asset' : `${n} assets`} and all their versions will be deleted. Files already exported to the exports folder stay. This cannot be undone.`,
+      confirmLabel: 'Delete project',
+      danger: true,
+      typeToConfirm: project.name,
+    })
+    if (!ok) return
     try {
       await api.deleteProject(project.id)
       onDeleted()
@@ -593,6 +603,7 @@ function StyleLockEditor({ project, onSaved, onDeleted }: { project: Project; on
 
   return (
     <form className="col" onSubmit={save}>
+      {confirm.dialog}
       <div className="row-between">
         <h3 className="drawer-project">
           {project.name}
