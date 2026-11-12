@@ -343,7 +343,7 @@ export default function AssetPage() {
             const list = versionsOf(asset, s)
             const kept = list.some((v) => v.selected || asset.selected[s] === v.id)
             const reached = list.length > 0
-            const cls = ['rail-stage', s === stage ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
+            const cls = ['rail-stage', s === stage && !composeOpen ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
             const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
             const stopping = st === 'running' && jobs.some((j) => j.message === 'cancelling' && list.some((v) => v.id === j.version_id))
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
