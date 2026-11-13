@@ -232,9 +232,10 @@ Other facts:
 - Fit score threshold: the 11 scores are 0.23, 0.31, 0.40, 0.57, then 0.75 and up. Hold below 0.65. Not enough alone:
   three flawed faces score 0.75 to 0.80; `face_matches_picture` failed on those three as well, so use both.
 
-### D2. Recommended build order for the face work
+### D2. Punch list: face, body and parallel work in one build order
 
-Earlier items remove causes that later items depend on. "New" means it was not in part A before the analysis.
+One list for everything decided (owner, 2026-11-13). Items 1 to 12 came from the face analysis; 13 to 19 were added
+the same day so the body and the parallel work are covered too. Earlier items remove causes that later items depend on. "New" means it was not in part A before the analysis.
 
 1. Facing (A6). A toes test (direction from shins to feet, seen from above) as tie-break and as a check that can
    fail; hold when it disagrees with the outline decision by more than 60 degrees. On the 11 runs it separates
@@ -256,11 +257,41 @@ Earlier items remove causes that later items depend on. "New" means it was not i
 8. Refuse a drawn view whose fitted turn contradicts the front (a back view near the front, left and right on one
    side). `srcproject.paint`. New.
 9. Hold the face paint when the fit score is under 0.65 or `face_matches_picture` fails, and say so (A7).
-10. The outward chain (A1 step 3). Last: it needs 3, 6 and 8 first, it makes the fitting sequential (projection
-    already takes 130 to 255 seconds), and the local correction still cannot line up a face on its own.
+10. The outward chain (A1 step 3), for the whole model and not only the head: every further view is fitted against
+    what has been painted so far, front first, then the left side (`quarter`, then `left`) and the right side
+    (`quarter2`, then `right`) at the same time as two processor threads, then the back against both, the front
+    keeping priority. Guardrails in A5 apply: a view waits for the one it depends on. Last among the painting items:
+    it needs 3, 6, 8 and 13 first, the projection already takes 130 to 255 seconds, and the local correction still
+    cannot line up a face on its own.
 11. Say so when the upscaler fails; review the 0.85 outline limit for three-quarter views (measure first); drop or
     re-scale the agreement gate. New.
 12. Warn on glasses and hard light at the picture step (A7).
+
+Body (added after the W1-bikini rerun, where clean-up streaked the sides and back while the front and face were good):
+
+13. Step 2 holds the pose. Each drawn view's outline is compared with the model from that angle (or with the pose of
+    the front), and a view whose arms or legs are in a different place is redrawn. In the rerun the front and side
+    views had the arms down and the back view had them out; painting them on left streaks down the arms and torso and
+    costume colour on the hand and hip. `stages/turnaround.py`. Also covers C14.
+14. Side and back views on the body: fine detail only, or only where they agree with the model. The "detail" mode
+    exists (`source_project_mode`, `srcproject.MODES`) but is not the default and has no control in the app; the
+    agreement gate exists but removed nothing in any run. Decide after the comparison clean-up of the W1-bikini
+    rerun (version cdc48e26): default for realistic characters, a control in the fine-tune panel, or a finer gate.
+15. Items 5 to 8 have body counterparts and should be built as one rule, not a face-only one: a view never paints a
+    region that a better-placed view owns, unpainted skin takes the tone of the painted skin beside it, and a view
+    whose fitted turn or pose contradicts the front is refused.
+16. Draw the face close-up again with a new seed when it is rejected, before falling back to the soft face. The same
+    picture gave 271 texels across the face in the first run (close-up rejected at likeness 0.88 against 0.93) and
+    451 in the rerun (accepted). About a minute and a half per retry. `stages/face_detail.py`.
+
+Parallel work (A3 to A5; not in the face list before):
+
+17. Step 2 on both cards: front first, then the left side and the right side at the same time, one card each where
+    two are free, then the back. First find out why 2 of 3 side-view jobs moved onto the 3080 timed out once.
+18. A second clean-up lane, with each lane's card bursts sent through the app's queue to a different card and
+    exports allowed to overtake a waiting clean-up.
+19. The guardrails for 10, 17 and 18 (A5): order enforced with a plain message when a dependency is missing; check
+    free card memory, busy cards, processor cores and system memory before going parallel, else run one at a time.
 
 Test plan after building: rerun the same 11 pictures on PC mid, plus the tall rows once item 4 is in, and score
 them with the same scorecard (`bakeoff/realistic_test/analysis/scorecard/`).
