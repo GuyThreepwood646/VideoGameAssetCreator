@@ -79,6 +79,7 @@ class Engines:
         self.hold_edit = False
         self.in_edit = False
         self.staged: list[Path] = []
+        self.staged_as: dict[str, Path] = {}
         self.body_at_budget = False
         self.fail_prep = False
         self.fail_edit = False
@@ -88,12 +89,13 @@ class Engines:
 
         async def stage_input(self, path, name, instance=None):
             eng.staged.append(Path(path))
+            eng.staged_as[name] = Path(path)
             return name
 
         async def comfy(self, graph, instance=None, poll=1.0, message="", base=0.0, span=1.0):
             self.progress(base, message)
-            if "um" in graph:  # prep making a picture bigger before painting it on (vgac/srcproject.py): not an edit;
-                raise RuntimeError("no upscaler in this harness")  # the picture is then used as it is
+            if "um" in graph:  # prep making a picture bigger before painting it on (vgac/srcproject.py): not an edit, and
+                return {"graph": graph, "outputs": {}}  # not one of the drawing graphs the tests look at
             if "l2" not in graph:
                 if eng.stop_on_edit:
                     raise JobCancelled()
@@ -108,6 +110,11 @@ class Engines:
 
         async def download_image(self, entry, node, dest, instance=None):
             g = entry["graph"]
+            if "um" in g:  # the upscaler answers as the real one does: the staged picture, at the size asked for
+                fit = g["fit"]["inputs"]
+                with Image.open(eng.staged_as[g["img"]["inputs"]["image"]]) as im:
+                    im.convert("RGB").resize((int(fit["width"]), int(fit["height"])), Image.LANCZOS).save(dest)
+                return Path(dest)
             edit = "l2" not in g
             src = str(g["img"]["inputs"]["image"])
             bald = edit or "bald" in src
