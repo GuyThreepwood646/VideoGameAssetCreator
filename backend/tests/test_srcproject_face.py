@@ -277,6 +277,7 @@ def test_a_failed_upscale_is_said_and_shown_as_a_warning() -> None:
     c = prep.upscale_check(fail)
     assert c["passed"] is False and c["severity"] == "warn" and c["help"] == note
     assert srcproject.upscale_note({"upscaled": [], "skipped": "no card to draw on"}).startswith("The pictures were not")
+    assert prep.upscale_check({"upscaled": [], "skipped": "no card to draw on"}) is None  # noted, not warned
     assert prep.upscale_check({"upscaled": ["picture", "source"], "model": ["x"]}) is None
     assert prep.upscale_check(None) is None
     checks = prep.prep_checks({}, {}, {"srcproject_upscale": fail}, "humanoid", None)
