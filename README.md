@@ -100,7 +100,7 @@ These are the engines the app drives. Install them yourself:
 
 ### Step 5. Download the models and add-ons
 
-A second helper offers each AI model, node pack, Blender and the optional animation packs as a pick list, showing the size and licence of each. Nothing downloads without your yes.
+A second helper offers each AI model, node pack, Blender, the optional animation packs and the hair packs as a pick list, showing the size and licence of each. Nothing downloads without your yes. The hair library is not stored in the project: with `-Packs -Install` the helper gets the free CC0 hairstyle packs you keep (two by direct link; the Quaternius one is a zip you download yourself from itch.io) and builds the library on your PC, about 640 MB of downloads and a minute with Blender. Until then the hair panel says the library is not installed and how to get it; your own hairstyles work either way.
 
 ```bash
 powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Install -ComfyRoot "C:\path\to\your\ComfyUI"
