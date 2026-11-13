@@ -303,3 +303,62 @@ def test_the_fill_stays_inside_its_own_area_when_there_is_one() -> None:
     assert np.abs(new[(box > 0) & inner] - SKIN).max() < 0.05
     rim = (face_w > 0) & (box == 0) & (alpha < 0.5) & inner  # the rest of the face keeps the old colour, as before
     assert np.allclose(new[rim], plain[rim])
+
+
+def test_one_scale_point_fit_and_where_it_moves_points() -> None:
+    src = np.array([[400.0, 450.0], [600.0, 450.0], [500.0, 640.0]])
+    dst = (src - 512.0) * 1.1 + 512.0 + np.array([12.0, -30.0])
+    a = srcproject.fit_points(src, dst, 1024)
+    assert abs(a["sx"] - 1.1) < 1e-3 and a["sx"] == a["sy"] and a["residual_px"] < 0.01
+    assert np.allclose(srcproject.moved_points(src, a), dst, atol=0.01)
+    img = np.zeros((1024, 1024))
+    img[450, 400] = 1.0  # face.apply_alignment puts the pixel where moved_points says
+    out = face.apply_alignment(img, a)
+    y, x = np.unravel_index(int(np.argmax(out)), out.shape)
+    assert abs(x + 0.5 - dst[0, 0]) <= 1.0 and abs(y + 0.5 - dst[0, 1]) <= 1.0
+
+
+def test_a_squashed_head_fit_is_fitted_again_with_one_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    pts = np.array([[400.0, 450.0], [600.0, 450.0], [500.0, 640.0]])
+    monkeypatch.setattr(srcproject, "head_points", lambda img: pts)
+    even = {"sx": 0.9, "sy": 0.92, "tx": 0.0, "ty": 0.0, "centre": (512.0, 512.0), "score": 0.5}
+    assert srcproject.limit_squash(None, None, even, 1024) is even
+    squashed = {**even, "sx": 0.87, "sy": 0.81}
+    a = srcproject.limit_squash(None, None, squashed, 1024)
+    assert a["sx"] == a["sy"] and "one scale" in a["squash"] and a["score"] == 0.5
+
+
+def test_no_body_fit_paints_where_a_head_view_paints() -> None:
+    N = 6
+    atlas = type("A", (), {"idx": np.arange(N)})()
+    img = lambda c: np.full((4, 4, 3), c)  # noqa: E731
+    sp = np.full((N, 2), 2.0)
+    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.5, 0.2, 0.08, 0.05, 0.0, 0.0])}
+    side = {"sel": np.arange(N), "sp": sp, "w": np.array([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])}
+    body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
+    paint, alpha, dom = srcproject.blend(atlas, [head, side, body], [img(0.9), img(0.5), img(0.1)], 3, [True, True, False])
+    assert dom[0] == 0 and dom[1] == 0  # the front head view where it sees well
+    assert paint[0, 0] > 0.85 and (dom != 2).all()  # no body colour under the head views (they blend among themselves)
+    assert paint[:, 0].min() >= 0.5 - 1e-6
+    assert dom[4] == 1 and dom[5] == 1  # the side head view where the front does not reach
+    assert np.allclose(paint[4:], 0.5, atol=0.01)  # and the body stays off under it too
+    plain, _, dom2 = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
+    assert dom2[5] == 1 and dom2[0] == 0  # no head paint at all: the body paints there
+
+
+def test_a_three_quarter_head_takes_its_body_turn_unless_that_contradicts_the_front() -> None:
+    v = srcproject.View("quarter", 0.5)
+    v.info = {"yaw": 47.5, "refused": "silhouette match 0.827 is under 0.85"}
+    assert srcproject.side_head_yaw("quarter", v, 0.0) == (47.5, "its whole-body fit")
+    v.info = {"yaw": 20.0, "refused": "its turn contradicts the front: ..."}
+    assert srcproject.side_head_yaw("quarter2", v, 0.0)[0] is None
+    assert srcproject.side_head_yaw("quarter2", None, 5.0)[0] == 5.0 - srcproject.SIDE_HEAD_YAW
+
+
+def test_one_head_view_per_side_and_within_its_turn() -> None:
+    assert srcproject.one_head_per_side({"quarter": -42.5, "quarter2": -20.0}, -1.4) == {
+        "quarter2": "both three-quarter views frame the head from the same side; this one is nearer the front"}
+    assert srcproject.one_head_per_side({"quarter": 40.0, "quarter2": -30.0}, 0.0) == {}
+    v = srcproject.View("quarter", 0.5)
+    v.info = {"yaw": -30.0}
+    assert srcproject.side_head_yaw("quarter", v, -180.0)[0] is None  # 150 degrees from the face: not a three-quarter view

@@ -106,6 +106,13 @@ SKIN_TOL = 14.0           # Lab distance (lightness half) from the painted face'
 HEAD_VIEW = "head"        # the first picture fitted on the head alone, by its eyes and mouth (item 6)
 HEAD_NECK = (0.95, 0.75)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
                           # nose tip (the chin is at about 0.65): the hand-over to the body's own fit lies on the neck
+HEAD_SIDES = ("quarter", SECOND_QUARTER)  # the three-quarter views that get a head view of their own, after the front's
+SIDE_HEAD_TURN = (15.0, 80.0)  # turn from the face a three-quarter head view must be seen from
+SIDE_HEAD_YAW = 40.0      # the turn from the face a three-quarter head view is seen from when its body fit gives none
+HEAD_HANDOVER = 0.1       # where a head view's weight reaches this, no whole-body fit paints (they hand over at the neck)
+SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this share is fitted again with one scale
+SIDE_AGREE_MAX = 0.12     # of the face's width: how far a three-quarter head view's own fit may put the eyes and mouth from
+                          # where the front head view painted them before it is refused
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
@@ -777,17 +784,28 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
 
 
 def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
-          n_primary: int = 1) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+          n_primary: int = 1, heads: list[bool] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
-    of priority: each one, and every view after them, fades out where the ones before it see well. Returns (paint (N,3),
-    alpha (N), dominant view per texel, -1 for none)."""
+    of priority: each one, and every view after them, fades out where the ones before it see well. Head views (heads[i],
+    first among them) hand over to one another the same way, and every other view stays off wherever a head view paints
+    with HEAD_HANDOVER or more (no whole-body fit paints the head once a head view has; they meet on the neck, where the
+    head views fade). Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
     N = atlas.idx.size
+    heads = heads or [False] * len(projs)
     num, den, wmax, dom = np.zeros((N, 3)), np.zeros(N), np.zeros(N), np.full(N, -1)
-    suppress = np.ones(N)
+    suppress, under_head = np.ones(N), np.ones(N)
+    head_chain = np.ones(N)
     for i, (p, img) in enumerate(zip(projs, images)):
         sel, w = p["sel"], p["w"]
-        w = w * suppress[sel]
-        if i < n_primary:
+        if heads[i]:
+            w = w * head_chain[sel]
+            seen = np.zeros(N)
+            seen[sel] = w
+            head_chain = head_chain * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
+            under_head = under_head * (1.0 - np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
+        else:
+            w = w * suppress[sel] * under_head[sel]
+        if i < n_primary and not heads[i]:
             seen = np.zeros(N)
             seen[sel] = w
             suppress = suppress * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
@@ -903,6 +921,11 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
     r = max(2, int(round(FACE_ZONE_FEATHER * size)))
     out["weight"] = np.clip(face.blur(info["region"].astype(np.float64), r) * 2.0, 0.0, 1.0)
     out["keep"] = never_skin(view, info, cam)
+    pos = face.interpolate(mesh["verts"], mesh["faces"], view["raster"])
+    nx, ny = info["nose"]
+    nose_y = float(pos[ny, nx, 1])
+    L = max(head.top - nose_y, 1e-3)
+    out["neck"] = (nose_y - HEAD_NECK[0] * L, nose_y - HEAD_NECK[1] * L)  # heights the head views fade in between
     # where a skin fill may go: the eyes, nose and mouth (face.features_box), feathered. The model's own features all
     # lie there; on the rest of the face (cheeks, jaw, temples) a fill showed as a flat band round the face on the
     # stored W1-clothed and P1-photo runs, and the old colour with its tone shifted (finish) reads better there.
@@ -959,6 +982,85 @@ def never_skin(view: dict[str, Any], info: dict[str, Any], cam: face.Camera) -> 
     return face.dilate_mask(seg["old_hair"], 2) | glasses
 
 
+def head_points(img: np.ndarray) -> np.ndarray | None:
+    """The eyes (left, right in the picture) and the mouth of the one face in img, by MediaPipe when a finder is set
+    (facemarks.points; at any turn, no check that it is the model's face), as a (3, 2) array; None when not found."""
+    from . import facemarks
+
+    m = facemarks.points(img)
+    if m is None or not m.get("eyes") or m.get("mouth") is None:
+        return None
+    eyes = sorted(m["eyes"])
+    return np.array([eyes[0], eyes[1], m["mouth"]], dtype=np.float64)
+
+
+def fit_points(src: np.ndarray, dst: np.ndarray, size: int) -> dict[str, Any]:
+    """One scale and a shift (no squash, no turn) that move the points src onto dst, least squares, as an alignment
+    face.apply_alignment takes (about the frame's middle), with "residual_px", the largest distance left."""
+    c = np.array([size / 2.0, size / 2.0])
+    a, b = src - c, dst - c
+    am, bm = a.mean(axis=0), b.mean(axis=0)
+    a0, b0 = a - am, b - bm
+    k = float((a0 * b0).sum() / max((a0 * a0).sum(), 1e-9))
+    t = bm - k * am
+    res = float(np.linalg.norm(a * k + t - b, axis=1).max())
+    return {"sx": round(k, 4), "sy": round(k, 4), "tx": round(float(t[0]), 2), "ty": round(float(t[1]), 2),
+            "centre": (float(c[0]), float(c[1])), "residual_px": round(res, 2), "how": "eyes and mouth, one scale"}
+
+
+def moved_points(pts: np.ndarray, a: dict[str, Any]) -> np.ndarray:
+    """Where face.apply_alignment(img, a) puts the points pts of img."""
+    c = np.array(a["centre"], dtype=np.float64)
+    return c + (pts - c) * np.array([a["sx"], a["sy"]]) + np.array([a["tx"], a["ty"]])
+
+
+def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, render: dict[str, Any], crop: dict[str, Any],
+                   a: dict[str, Any], zone: dict[str, Any], body_px_m: float, pic_n0: int) -> View:
+    """A head view: the picture's head (crop, framed by face.painted_head for cam) moved by the alignment a, painting the
+    head above the neck (zone["neck"], HEAD_NECK), with the depth-edge and stretch gates as the body's views have them."""
+    S = cam.size
+    v = View(name, 1.0)
+    v.cam, v.raster = cam, Raster(mesh, cam)
+    v.pic_aligned = v.pic_affine = np.clip(face.apply_alignment(crop["image"], a), 0.0, 1.0)
+    v.alpha_img = face.apply_alignment(crop["alpha"], a)
+    v.render = render["image"]
+    v.valid = v.raster.mask & (v.alpha_img > 0.5)
+    r = max(2, S // 340)
+    v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    pos = face.interpolate(mesh["verts"], mesh["faces"], render["raster"])
+    y0, y1 = zone["neck"]
+    v.zone_img = face.smoothstep(y0, y1, pos[..., 1]) * render["mask"]
+    v.size = S
+    k = 0.5 * (float(a["sx"]) + float(a["sy"]))
+    v.pic_px_m = 1.0 / float(crop["px_per_m"]) / max(k, 1e-6) * pic_n0 / float(PIC_N)
+    v.flow_u, v.flow_cap = np.zeros((8, 8, 2)), 1.0
+    # depth steps as the body's views see them: the same jump in metres, the same reach around them
+    px_m = cam.scale / S
+    disc = depth_discontinuities(render["raster"]["z"], body_px_m, 10.0)
+    v.disc = face.dilate_mask(disc, max(0, int(round(DISC_PX * body_px_m / px_m)) - DISC_PX))
+    # the structure gate compares the picture with the model's own face, which is what the head fit already did
+    prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+    v.ok = True
+    return v
+
+
+def limit_squash(crop: np.ndarray, render: np.ndarray, a: dict[str, Any], size: int) -> dict[str, Any]:
+    """The face pass's fit with its two scales held together: when they differ by more than SQUASH_MAX (the stored
+    W1-clothed run: 0.87 by 0.81, the face came out narrow with a second jaw beside it), the eyes and mouth are fitted
+    again with one scale (fit_points). The fit as it was when they do not differ that much, or when the points are not
+    found; the fit's record says which ("squash")."""
+    sx, sy = float(a["sx"]), float(a["sy"])
+    if abs(sx / max(sy, 1e-6) - 1.0) <= SQUASH_MAX:
+        return a
+    pc, pr = head_points(crop), head_points(render)
+    if pc is None or pr is None:
+        return {**a, "squash": "kept: the eyes and mouth were not found to fit with one scale"}
+    u = fit_points(pc, pr, size)
+    u["score"] = a.get("score", 0.0)
+    u["squash"] = f"{sx:.2f} by {sy:.2f} fitted again with one scale"
+    return u
+
+
 def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[tuple[str, Any]], body_px_m: float,
              pic_n: int | None = None, log: Callable[[str], None] | None = None) -> tuple[View | None, dict[str, Any]]:
     """The first picture fitted to the head on its own, by its eyes and mouth (docs/AFTER-TEST-CHANGES.md D2 item 6): the
@@ -986,39 +1088,16 @@ def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[t
         if crop is None:
             tried[name] = "no figure in the picture"
             continue
-        a = face_detail.fit_picture(crop["image"], view["image"], info, inner)
+        a = limit_squash(crop["image"], view["image"], face_detail.fit_picture(crop["image"], view["image"], info, inner), S)
         err = head_fit_error(crop["image"], view["image"], info, a)
         if err is None or err > face_detail.LANDMARK_RESIDUAL_MAX or a.get("score", 0) < face_detail.ALIGN_MIN:
             tried[name] = ("its eyes and mouth could not be found on both" if err is None else
                            f"its eyes land {err:.2f} of the face's width from the model's") + f" (fit: {a.get('how')}, score {a.get('score', 0):.2f})"
             continue
-        v = View(HEAD_VIEW, 1.0)
-        v.cam, v.raster = cam, Raster(mesh, cam)
-        v.pic_aligned = v.pic_affine = np.clip(face.apply_alignment(crop["image"], a), 0.0, 1.0)
-        v.alpha_img = face.apply_alignment(crop["alpha"], a)
-        v.render = view["image"]
-        v.valid = v.raster.mask & (v.alpha_img > 0.5)
-        r = max(2, S // 340)
-        v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
-        pos = face.interpolate(mesh["verts"], mesh["faces"], view["raster"])
-        nx, ny = info["nose"]
-        nose_y = float(pos[ny, nx, 1])
-        L = max(head.top - nose_y, 1e-3)
-        v.zone_img = face.smoothstep(nose_y - HEAD_NECK[0] * L, nose_y - HEAD_NECK[1] * L, pos[..., 1]) * view["mask"]
-        v.size = S
-        k = 0.5 * (float(a["sx"]) + float(a["sy"]))
-        v.pic_px_m = 1.0 / float(crop["px_per_m"]) / max(k, 1e-6) * pic.shape[0] / float(PIC_N)
-        v.flow_u, v.flow_cap = np.zeros((8, 8, 2)), 1.0
-        # depth steps as the body's views see them: the same jump in metres, the same reach around them
-        px_m = cam.scale / S
-        disc = depth_discontinuities(view["raster"]["z"], body_px_m, 10.0)
-        v.disc = face.dilate_mask(disc, max(0, int(round(DISC_PX * body_px_m / px_m)) - DISC_PX))
-        # the structure gate compares the picture with the model's own face, which is what the head fit already did
-        prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
-        v.ok = True
+        v = make_head_view(mesh, HEAD_VIEW, cam, view, crop, a, zone, body_px_m, pic.shape[0])
         rec.update(picture=name, yaw=round(float(cam.yaw_deg), 1), how=a.get("how"), score=round(float(a.get("score", 0)), 3),
                    eye_error=round(float(err), 3), fit={kk: a.get(kk) for kk in ("sx", "sy", "tx", "ty")},
-                   head_px=crop.get("head_px"), nose_from=info.get("nose_from", "shape"))
+                   head_px=crop.get("head_px"), nose_from=info.get("nose_from", "shape"), squash=a.get("squash"))
         if tried:
             rec["passed_over"] = tried
         v.info = rec
@@ -1029,6 +1108,87 @@ def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[t
     if log:
         log(f"view head: refused, {rec['refused']}")
     return None, rec
+
+
+def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndarray, zone: dict[str, Any], name: str,
+                  src: Any, yaw: float, body_px_m: float, pic_n: int | None = None,
+                  log: Callable[[str], None] | None = None) -> tuple[View | None, dict[str, Any]]:
+    """A three-quarter view's head view (the chain of head views, docs/AFTER-TEST-CHANGES.md D2 item 10 for the head):
+    the picture's head framed from `yaw` (face.painted_head), its eyes and mouth found by MediaPipe and fitted with one
+    scale onto the model's own (the model's colour seen from there), then checked against where the front head view
+    painted them (`painted`: the model's colour with the front head view painted on): when its own fit puts them more
+    than SIDE_AGREE_MAX of the face's width from the front's, it is refused (the two would paint the face twice); else it
+    is lined up to the front's points where they are found. Returns (the view or None, its record)."""
+    rec: dict[str, Any] = {"name": f"{HEAD_VIEW}_{name}", "picture": name, "yaw": round(float(yaw), 1)}
+
+    def refuse(why: str) -> tuple[None, dict[str, Any]]:
+        rec["refused"] = why
+        if log:
+            log(f"view {rec['name']}: refused, {why}")
+        return None, rec
+
+    head, w = zone["head"], float(zone["info"]["width_px"])
+    S = zone["cam"].size
+    cam = face.head_camera(head, float(yaw), S)
+    pic, alpha = prepare_picture(src, pic_n)
+    crop = face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, cam, size=S)
+    if crop is None:
+        return refuse("no figure in the picture")
+    render = face.render_view(mesh, tex, cam)
+    pc = head_points(crop["image"])
+    if pc is None:
+        return refuse("no face found on the picture's head")
+    pm = head_points(render["image"])
+    if pm is None:
+        return refuse("no face found on the model from this side")
+    own = fit_points(pc, pm, S)
+    pf = head_points(face.render_view(mesh, painted, cam)["image"])
+    if pf is not None:
+        apart = float(np.linalg.norm(moved_points(pc, own) - pf, axis=1).max()) / w
+        rec["apart_from_front"] = round(apart, 3)
+        if apart > SIDE_AGREE_MAX:
+            return refuse(f"its eyes and mouth land {apart:.2f} of the face's width from where the front painted them")
+        a, rec["lined_up_to"] = fit_points(pc, pf, S), "front"
+    else:
+        a, rec["lined_up_to"] = own, "model (the front's face was not found from this side)"
+    rec["residual"] = round(float(a["residual_px"]) / w, 3)
+    if rec["residual"] > SIDE_AGREE_MAX:
+        return refuse(f"its eyes and mouth do not fit with one scale (left {rec['residual']:.2f} of the face's width)")
+    v = make_head_view(mesh, rec["name"], cam, render, crop, a, zone, body_px_m, pic.shape[0])
+    rec.update(fit={kk: a.get(kk) for kk in ("sx", "tx", "ty")}, head_px=crop.get("head_px"))
+    v.info = rec
+    if log:
+        log(f"view {rec['name']}: yaw {yaw:.1f}, lined up to {rec['lined_up_to']}, residual {rec['residual']:.3f}")
+    return v, rec
+
+
+def side_head_yaw(name: str, body: View | None, head_yaw: float) -> tuple[float | None, str]:
+    """The yaw a three-quarter view's head is framed from: its whole-body fit's turn (also when that fit was refused for its
+    outline match, which says nothing about the head), else SIDE_HEAD_YAW to its side of the face. None when its turn
+    was refused as contradicting the front (item 8): that side keeps to today's painting."""
+    if body is not None and "contradicts" in str(body.info.get("refused")):
+        return None, "its turn contradicts the front"
+    if body is not None and body.info.get("yaw") is not None:
+        y = float(body.info["yaw"])
+        rel = abs(_signed(y - head_yaw))
+        if not SIDE_HEAD_TURN[0] <= rel <= SIDE_HEAD_TURN[1]:
+            return None, f"its whole-body fit is {rel:.0f} degrees from the face"
+        return y, "its whole-body fit"
+    return float(head_yaw + TURN_SIDE[name] * SIDE_HEAD_YAW), "its usual side"
+
+
+def one_head_per_side(yaws: dict[str, float], head_yaw: float) -> dict[str, str]:
+    """When both three-quarter views would frame the head from the same side of the face (the stored M1-clothed run:
+    -42.5 and -20, both drawn from one side), the one nearer the front is dropped: two head views of one side paint
+    that side twice. Returns {view: reason} for the dropped."""
+    if len(yaws) < 2:
+        return {}
+    (a, ya), (b, yb) = list(yaws.items())[:2]
+    ra, rb = _signed(ya - head_yaw), _signed(yb - head_yaw)
+    if np.sign(ra) != np.sign(rb):
+        return {}
+    drop = a if abs(ra) < abs(rb) else b
+    return {drop: "both three-quarter views frame the head from the same side; this one is nearer the front"}
 
 
 def head_fit_error(crop: np.ndarray, render: np.ndarray, info: dict[str, Any], a: dict[str, Any]) -> float | None:
@@ -1048,6 +1208,15 @@ def head_fit_error(crop: np.ndarray, render: np.ndarray, info: dict[str, Any], a
     if a.get("how") == "eyes and mouth" and a.get("residual_px") is not None:
         return float(a["residual_px"]) / w
     return None
+
+
+def front_painted(atlas: Atlas, hv: View, tex: np.ndarray) -> np.ndarray:
+    """The model's colour with the front head view painted on it alone, to line the three-quarter head views up to."""
+    p = project_view(atlas, hv)
+    paint_, alpha_, _ = blend(atlas, [p], [hv.pic_aligned], 1)
+    out = tex.copy().reshape(-1, 3)
+    out[atlas.idx] = out[atlas.idx] * (1 - alpha_[:, None]) + paint_ * alpha_[:, None]
+    return out.reshape(tex.shape)
 
 
 def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -1081,7 +1250,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
     atlas.zone = zone_texels(atlas, zone)
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
-    paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views])
     extra: dict[str, Any] = {}
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
@@ -1271,8 +1440,37 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         body = bool(views)
         zone, head_v, head_rec = zone_job.result()
         infos[HEAD_VIEW] = head_rec
+        sides: list[View] = []
+        if head_v is not None:
+            # each three-quarter view's own head view, lined up to what the front head view painted; the two sides are
+            # independent of each other and wait for the front only
+            atlas_ = atlas_job.result()
+            painted = front_painted(atlas_, head_v, tex)
+            side_jobs, side_yaw = {}, {}
+            for n in HEAD_SIDES:
+                src_ = (turnaround or {}).get(n) if mode != "off" else None
+                if src_ is None:
+                    infos[f"{HEAD_VIEW}_{n}"] = {"refused": "no such view"}
+                    continue
+                y_, why_ = side_head_yaw(n, fitted.get(n), head_yaw)
+                if y_ is None:
+                    infos[f"{HEAD_VIEW}_{n}"] = {"refused": why_}
+                    continue
+                side_yaw[n] = (y_, src_)
+            dropped = one_head_per_side({n: y for n, (y, _) in side_yaw.items()}, head_yaw)
+            for n, (y_, src_) in side_yaw.items():
+                if n in dropped:
+                    infos[f"{HEAD_VIEW}_{n}"] = {"refused": dropped[n]}
+                    continue
+                side_jobs[n] = pool.submit(contextvars.copy_context().run, fit_side_head, mesh, tex, painted, zone, n, src_,
+                                           y_, scale / size, pic_n, log)
+            for n, j in side_jobs.items():
+                sv, srec = j.result()
+                infos[f"{HEAD_VIEW}_{n}"] = srec
+                if sv is not None:
+                    sides.append(sv)
         if head_v is not None:  # the head on its own comes first, also when every whole-body fit was refused
-            views.insert(0, head_v)
+            views[:0] = [head_v] + sides
         n_primary = len(views)
         if not views:
             res["reason"] = front.info.get("refused", "the picture was refused")
@@ -1296,7 +1494,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
         def ready(i: int) -> np.ndarray:
             v = views[i]
-            if v.name == HEAD_VIEW:  # its gates were set when it was fitted
+            if v.name.startswith(HEAD_VIEW):  # its gates were set when it was fitted
                 return v.pic_aligned
             full = i < n_primary or mode == "full"
             drawn = i >= n_primary or v.name == SECOND_QUARTER  # a view drawn from the picture, not the picture itself
@@ -1308,7 +1506,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     paint_, alpha_, dom, new = c["paint"], c["alpha"], c["dom"], c["base_color"]
     for v in views:
         infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
-    mv = next((v for v in views if v.name != HEAD_VIEW), views[0])
+    mv = next((v for v in views if not v.name.startswith(HEAD_VIEW)), views[0])
     before, after = front_measures(mv, tex), front_measures(mv, new)  # against the first source that fitted
     painted = alpha_ > 0.5
     m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_measured_against": mv.name, "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
