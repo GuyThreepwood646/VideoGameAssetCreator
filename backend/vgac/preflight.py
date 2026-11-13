@@ -25,8 +25,8 @@ What is checked:
 - models: every model file of data/models.yaml (`models:` and `companions:`) the instance should have, found by asking the loader node's
   /object_info for its file choices and testing whether the one expected file name is among them. The list of
   choices is never returned, logged or kept: only found or missing is reported.
-- tools: rigging needs Blender visible to the SkinToken node: the start script of the instance that rigs sets
-  SKINTOKEN_BLENDER_BIN to a file that exists.
+- tools: rigging needs Blender visible to the SkinToken node through SKINTOKEN_BLENDER_BIN: an instance the backend
+  starts from its `engine` settings gets blender_exe (which must exist); an older start script must set it itself.
 
 Every request is a read-only GET.
 """
@@ -244,24 +244,24 @@ def blender_version(exe: Path, runner: Callable[[Path], str] = _run_version) -> 
 
 def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_version) -> dict[str, Any]:
     exe = settings.blender_exe
-    tech = f"blender_exe in backend/config.yaml: {exe}"
+    tech = f"blender_exe in the settings: {exe}"
     if not exe:
         return item("blender", "tools", "Blender", "fail", "Blender is not set up, so cleaning up, rigging and handing "
                     "off cannot run.", "Install Blender 5.0 or newer and put the path to blender.exe in blender_exe in "
-                    "backend/config.yaml.", HOST_BLENDER_STAGES, tech)
+                    "local/machine.json.", HOST_BLENDER_STAGES, tech)
     exe = Path(exe)
     if not exe.is_file():
         return item("blender", "tools", "Blender", "fail", "Blender was not found where the settings say it is.",
-                    "Install Blender 5.0 or newer, or correct blender_exe in backend/config.yaml.", HOST_BLENDER_STAGES, tech)
+                    "Install Blender 5.0 or newer, or correct blender_exe in local/machine.json.", HOST_BLENDER_STAGES, tech)
     ver = blender_version(exe, runner)
     if ver is None:
         return item("blender", "tools", "Blender", "warn", "Blender is there, but it did not say which version it is.",
                     "Open Blender once to check it starts. The app needs version 5.0 or newer (blender_exe in "
-                    "backend/config.yaml).", HOST_BLENDER_STAGES, tech)
+                    "local/machine.json).", HOST_BLENDER_STAGES, tech)
     v = ".".join(str(x) for x in ver)
     if ver[:2] < BLENDER_MIN:
         return item("blender", "tools", "Blender", "fail", f"Blender {v} is too old: the animation steps need 5.0 or newer.",
-                    "Install Blender 5.0 or newer and point blender_exe in backend/config.yaml at it.",
+                    "Install Blender 5.0 or newer and point blender_exe in local/machine.json at it.",
                     HOST_BLENDER_STAGES, f"{tech} (version {v}; action slots need 5.0)")
     return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready.", "", HOST_BLENDER_STAGES, f"{tech} (version {v})")
 
@@ -269,21 +269,21 @@ def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_versi
 def check_unity(settings: Settings) -> list[dict[str, Any]]:
     out = []
     exe = settings.unity_exe
-    tech = f"unity_exe in backend/config.yaml: {exe}"
+    tech = f"unity_exe in the settings: {exe}"
     if not exe or not Path(exe).is_file():
         out.append(item("unity", "tools", "Unity editor", "warn",
                         "The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything "
                         "else works; the hand-off still makes the files.",
-                        "Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of backend/config.yaml.", ["export"], tech))
+                        "Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of local/machine.json.", ["export"], tech))
     else:
         out.append(item("unity", "tools", "Unity editor", "ok", "The Unity editor is ready for the test import.", "",
                         ["export"], tech))
     proj = settings.unity_project
-    tech = f"unity_project in backend/config.yaml: {proj}"
+    tech = f"unity_project in the settings: {proj}"
     if not proj or not Path(proj).is_dir():
         out.append(item("unity_project", "tools", "Unity test project", "warn",
                         "The Unity project the app imports into for a test was not found.",
-                        "Set unity_project in backend/config.yaml to a Unity project folder (the app's own is "
+                        "Set unity_project in local/machine.json to a Unity project folder (the app's own is "
                         "unity-sandbox).", ["export"], tech))
     else:
         out.append(item("unity_project", "tools", "Unity test project", "ok", "The Unity test project is there.", "",
@@ -294,7 +294,7 @@ def check_unity(settings: Settings) -> list[dict[str, Any]]:
 def check_clips(settings: Settings) -> list[dict[str, Any]]:
     out = []
     for lib_id, path in settings.clips_libraries.items():
-        tech = f"clips_libraries.{lib_id} in backend/config.yaml: {path}"
+        tech = f"clips_libraries.{lib_id} in the settings: {path}"
         if Path(path).is_file():
             out.append(item(f"clips.{lib_id}", "tools", "Shared animation library", "ok",
                             "The shared animations (walk, run, idle and more) are there.", "", ["export"], tech))
@@ -302,7 +302,7 @@ def check_clips(settings: Settings) -> list[dict[str, Any]]:
             out.append(item(f"clips.{lib_id}", "tools", "Shared animation library", "warn",
                             "The shared animation file was not found, so characters are handed off without the shared "
                             "walk, run and idle moves.",
-                            f"Put the animation library back, or correct clips_libraries.{lib_id} in backend/config.yaml.",
+                            f"Put the animation library back, or correct clips_libraries.{lib_id} in local/machine.json.",
                             ["export"], tech))
     return out
 
@@ -342,11 +342,26 @@ def check_skintoken_blender(settings: Settings, project_dir: Path = PROJECT_DIR)
         return None
     gpu = inst.gpu or f"card {rigger}"
     label = "Blender for rigging"
+    if inst.engine is not None:
+        # The backend sets SKINTOKEN_BLENDER_BIN to blender_exe on every engine it starts (instances.engine_command).
+        exe = settings.blender_exe
+        tech = f"instances.{rigger}.engine: SKINTOKEN_BLENDER_BIN = blender_exe"
+        if exe is None:
+            return item("skintoken_blender", "tools", label, "fail", "The rigging engine is not told where Blender is, "
+                        "so rigging fails.", "Set blender_exe in local/machine.json, then restart that graphics engine.",
+                        ["rig"], f"{tech} (not set)")
+        if not Path(exe).is_file():
+            return item("skintoken_blender", "tools", label, "fail", "The rigging engine is told to use a Blender that "
+                        "is not there, so rigging fails.", "Correct blender_exe in local/machine.json, then restart "
+                        "that graphics engine.", ["rig"], f"{tech}: {exe}")
+        return item("skintoken_blender", "tools", label, "ok", "The rigging engine knows where Blender is.", "", ["rig"],
+                    f"{tech}: {exe} (when the app starts it; a copy started outside the app keeps its own setting)")
     if inst.start_script is None:
         return item("skintoken_blender", "tools", label, "warn",
                     f"The app cannot tell whether the rigging engine on the {gpu} can find Blender.",
-                    "Start that ComfyUI with the SKINTOKEN_BLENDER_BIN setting pointing at blender.exe.", ["rig"],
-                    f"instance {rigger} has no start_script; SKINTOKEN_BLENDER_BIN unknown")
+                    "Give that card engine settings in local/machine.json, so the app starts it with Blender set, or "
+                    "start that ComfyUI with SKINTOKEN_BLENDER_BIN pointing at blender.exe.", ["rig"],
+                    f"instance {rigger} has no engine and no start_script; SKINTOKEN_BLENDER_BIN unknown")
     script = Path(inst.start_script)
     script = script if script.is_absolute() else project_dir / script
     tech = f"SKINTOKEN_BLENDER_BIN in {script}"
@@ -355,7 +370,7 @@ def check_skintoken_blender(settings: Settings, project_dir: Path = PROJECT_DIR)
     except OSError:
         return item("skintoken_blender", "tools", label, "fail", f"The start script of the rigging engine on the {gpu} "
                     "was not found.", f"Put the start script back, or correct instances.{rigger}.start_script in "
-                    "backend/config.yaml.", ["rig"], tech)
+                    "local/machine.json.", ["rig"], tech)
     m = _SKINTOKEN_RE.search(text)
     if not m:
         return item("skintoken_blender", "tools", label, "fail", "The rigging engine is not told where Blender is, so "
@@ -426,13 +441,13 @@ def check_memory(settings: Settings, free_gb: Callable[[], float] | None = None)
             return psutil.virtual_memory().available / GB
     free = free_gb()
     need = settings.min_free_ram_gb
-    tech = f"min_free_ram_gb in backend/config.yaml: {need:g}; {free:.1f} GB free now"
+    tech = f"min_free_ram_gb in the settings: {need:g}; {free:.1f} GB free now"
     gpu_stages = ["concept", "turnaround", "mesh", "rig", "material", "judge"]
     if free < need:
         return item("memory", "storage", "Free memory", "warn",
                     f"{free:.1f} GB of memory is free; steps wait until {need:g} GB is free.",
                     "Close programs you do not need (games, browsers with many tabs), or lower min_free_ram_gb in "
-                    "backend/config.yaml.", gpu_stages, tech)
+                    "local/machine.json.", gpu_stages, tech)
     return item("memory", "storage", "Free memory", "ok", f"{free:.0f} GB of memory is free.", "", [], tech)
 
 
@@ -492,7 +507,7 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
     model_checks = [(mid, spec) for mid, spec in MODEL_LOADERS.items() if spec[2] in stages_here and models.get(mid, {}).get("file")]
     out: list[dict[str, Any]] = []
     eng_id, eng_label = f"engine.{name}", f"ComfyUI instance on the {gpu}"
-    starts = can_start if can_start is not None else inst.start_script is not None
+    starts = can_start if can_start is not None else (inst.engine is not None or inst.start_script is not None)
 
     def not_checked(reason: str) -> list[dict[str, Any]]:
         rest = []

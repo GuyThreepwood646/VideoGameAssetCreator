@@ -379,7 +379,7 @@ def _blender_exe() -> Path:
     exe = get_settings().blender_exe
     if not exe or not Path(exe).is_file():
         raise PackError("blender_missing", "The hairstyles are built with Blender, and Blender was not found.",
-                        "Install Blender 5 or newer (free, from blender.org), set its location as blender_exe in backend/config.yaml, then press Try again.")
+                        "Install Blender 5 or newer (free, from blender.org), set its location as blender_exe in local/machine.json, then press Try again.")
     try:
         from . import preflight
 
@@ -388,7 +388,7 @@ def _blender_exe() -> Path:
         v = None
     if v is not None and v[0] < 5:
         raise PackError("blender_old", f"The Blender found ({v[0]}.{v[1]}) is too old; the hairstyles need Blender 5 or newer.",
-                        "Install Blender 5 or newer (free, from blender.org), set its location as blender_exe in backend/config.yaml, then press Try again.")
+                        "Install Blender 5 or newer (free, from blender.org), set its location as blender_exe in local/machine.json, then press Try again.")
     return Path(exe)
 
 
