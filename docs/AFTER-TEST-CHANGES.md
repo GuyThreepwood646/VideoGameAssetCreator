@@ -240,11 +240,15 @@ Earlier items remove causes that later items depend on. "New" means it was not i
    fail; hold when it disagrees with the outline decision by more than 60 degrees. On the 11 runs it separates
    cleanly. Untested on robes, skirts and non-standing poses: fall back to today's decision when feet are not found.
    `stages/prep.py resolve_facing`, `quality.py`. New: the test itself.
+   **Done 2026-11-13**, commit 446f695 (`vgac/facing.py`). Toes test as tie-break (outline margin under 0.04) and when the tests differ by more than 60 degrees; new `facing_tests` check fails when they disagree. Measured on the 11 runs: M1-shorts turn 180 becomes 0 (toes 0.0, outline margin 0.0107), the other 10 unchanged, `facing_tests` fails on M1-shorts only; toes found on all 11 PC runs and both Showcase runs (feet splay 32 to 84 degrees apart; the limit is 110), and on 60 of 75 stored humanoid models; the other 15 (legs together or hidden by a robe) fall back to the outline. Across all 86 stored mesh models only M1-shorts changes turn. Verify: `tools/verify_face_d2.py a`.
 2. The face pass looks where the face is: give it the turn the first picture was fitted at, instead of straight
    ahead. `stages/face_detail.py`. New.
+   **Done 2026-11-13**, commit 5a1097f (`face_detail.HEAD_YAW`, `prep.resolve_facing` `face_remainder_deg`). Remainder read from the feet when found. Measured: W1-clothed head yaw -33.4 against -27.5 from the fitted source picture; W1-clothed-tall -23.3; the other runs within 3 degrees of straight. Not changed: the hair pass and skin-metal pass still look from straight ahead (`hair_detail.py:340`, `hair.py`, `skinmetal.py`). Verify: `tools/verify_face_d2.py b`.
 3. Step 2 redraws a side or three-quarter view drawn from the same side as its partner (as-drawn outline overlap
    higher than mirrored overlap). `stages/turnaround.py view_checks`. New. This also keeps the chain in A1 whole.
+   **Done 2026-11-13**, commit 79b35ff (`turnaround.same_side_check`, `imaging.pair_overlap`). Flags a view whose as-drawn overlap exceeds the mirrored one by more than 0.05; the existing auto-reroll (2) redraws it. Measured on 26 stored pairs: flags M1-shorts left/right (0.884 vs 0.599) and M1-clothed quarter/quarter2 (0.700 vs 0.550), nothing else (closest good pair -0.017). The 0.55 limit is unchanged and still applies to left/right only. Verify: `tools/verify_face_d2.py c`.
 4. Pad pictures to a square instead of squashing them. `srcproject.prepare_picture`. New. Small and safe.
+   **Done 2026-11-13**, commit d9356ff (`srcproject.square_pad`). Outline match of the original: tall picture 0.552 to 0.843, photo 0.574 to 0.921 (needs 0.82), square pictures unchanged. Verify: `tools/verify_face_d2.py d`.
 5. Keep left, right and back views off the face region. `srcproject.project_view`. (A1 step 4.)
 6. Fit the head on its own by its features, and do it even when the body fit is refused. `srcproject.paint`, reusing
    `face_detail.fit_picture`. (A1 step 1; "even when refused" is new.) Needs the landmark finder during projection.
