@@ -82,8 +82,8 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "auto_reroll": {"simple": True, "help": {"meaning": "Retry a view automatically when it fails the consistency check.", "why": "Saves you clicking regenerate on bad views.", "technical": "Auto re-roll on failed checks"}},
     "engine": {"simple": True, "help": {"meaning": "Which image-to-3D model (builder) to use.", "why": "TRELLIS.2 gives the most detail from one picture; Hunyuan3D uses all four side views, better for long animals.", "technical": "Image-to-3D engine: trellis or hy3d"},
                "options": {"trellis": "TRELLIS (most detail from one picture)", "hy3d": "Hunyuan (uses all four sides; good for long animals)"}},
-    "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front.", "technical": "Conditioning image selection"},
-                   "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view"}},
+    "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front. Left alone, a person is built from the three-quarter view, or from the other three-quarter view when the first one lost the pose of the arms and legs in your picture; a view you pick yourself is always used.", "technical": "Conditioning image selection; input_view_origin records whether the view was chosen by hand"},
+                   "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view", "quarter2": "Three-quarter view (other side)"}},
     "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
     "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
                      "options": {"256": "256 px (smallest, retro and pixel looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
@@ -1020,6 +1020,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                            + ", so that side is painted from the full side view alone and may look flatter or blurrier."),
         "fix": lambda c: {"stage": "turnaround", "params": {"add_views": ["quarter2"], "second_quarter": True}},
         "fix_label": "Draw the other three-quarter view",
+    },
+    # The three-quarter view the 3D step builds from (stages/mesh.choose_build_view): fails only when both views lost the pose.
+    "pose_held_build": {
+        "severity": "warn",
+        "ok": lambda c: _var(c, "words") or "The three-quarter view the model was built from has the arms and legs where they are in your picture.",
+        "fail": lambda c: _var(c, "words") or "Both three-quarter views have the arms or legs in a different place from your picture, so the model can grow the arms into the body.",
+        "fix": lambda c: {"stage": "turnaround", "params": {}},
+        "fix_label": "Draw the side views again",
     },
     "head_build": {
         "severity": "warn",

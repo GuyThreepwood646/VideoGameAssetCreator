@@ -95,7 +95,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "mesh": [
         _param("engine", "select", "trellis", options=["trellis", "hy3d"]),
-        _param("input_view", "select", "concept", options=["concept", "front", "quarter"]),
+        _param("input_view", "select", "concept", options=["concept", "front", "quarter", "quarter2"]),
         _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
         _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
         _param("upsample", "select", 1024, options=[1024, 1536]),
