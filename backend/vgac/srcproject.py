@@ -132,10 +132,37 @@ def _rs(a: np.ndarray, h: int, w: int) -> np.ndarray:
     return np.asarray(Image.fromarray(a.astype(np.float32), "F").resize((w, h), Image.BILINEAR), dtype=np.float64)
 
 
+def square_pad(rgb: np.ndarray, alpha: np.ndarray | None) -> tuple[np.ndarray, np.ndarray | None]:
+    """A picture that is not square, centred on a square of its longer side. The added border is transparent when the
+    picture has a cut-out, else the backdrop's colour (the corners', which is what prepare_picture reads as backdrop).
+    Resizing a tall picture or a phone photo straight to a square squashed the figure, and it then failed the outline
+    match (the tall test picture: 0.552 squashed, 0.843 padded; the real photo: 0.577 and 0.921)."""
+    h, w = rgb.shape[:2]
+    if h == w:
+        return rgb, alpha
+    s = max(h, w)
+    y0, x0 = (s - h) // 2, (s - w) // 2
+    if alpha is None:
+        corners = np.array([rgb[min(2, h - 1), min(2, w - 1)], rgb[min(2, h - 1), max(w - 3, 0)],
+                            rgb[max(h - 3, 0), min(2, w - 1)], rgb[max(h - 3, 0), max(w - 3, 0)]])
+        fill = np.median(corners, axis=0)
+    else:
+        fill = np.zeros(3)
+    out = np.empty((s, s, 3), dtype=np.float64)
+    out[...] = fill
+    out[y0:y0 + h, x0:x0 + w] = rgb
+    if alpha is None:
+        return out, None
+    a = np.zeros((s, s), dtype=np.float64)
+    a[y0:y0 + h, x0:x0 + w] = alpha
+    return out, a
+
+
 def prepare_picture(src: Path | str | Image.Image | np.ndarray, n: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Colour (n,n,3) 0..1 and cut-out alpha (n,n) of a picture. The alpha is the picture's own when it has one; else the
     cut-out is whatever is not the backdrop (the colour of the corners), closed and with holes filled. Edges are
-    defringed: colour is pulled outward from 2 px inside the cut-out."""
+    defringed: colour is pulled outward from 2 px inside the cut-out. A picture that is not square is padded to a
+    square first (square_pad), never squashed: the subject keeps its proportions."""
     n = PIC_N if n is None else n
     if isinstance(src, np.ndarray):
         arr = np.asarray(src, dtype=np.float64)
@@ -147,6 +174,7 @@ def prepare_picture(src: Path | str | Image.Image | np.ndarray, n: int | None = 
         rgb, alpha = rgba[..., :3], rgba[..., 3]
     if alpha is not None and alpha.min() > 0.98:
         alpha = None
+    rgb, alpha = square_pad(rgb, alpha)
     if rgb.shape[0] != n:
         rgb = face.resize(rgb, n, Image.LANCZOS)
         alpha = face.resize(alpha, n, Image.BILINEAR) if alpha is not None else None

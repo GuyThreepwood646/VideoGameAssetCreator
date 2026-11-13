@@ -275,3 +275,35 @@ def test_a_mirrored_layout_is_not_painted() -> None:
     r = srcproject.paint(twin, soft_base(), picture(), size=256, picture_yaws=[0.0])
     assert not r["applied"] and "mirrored" in r["reason"]
     assert r["metrics"]["srcproject_layout_shared"] > 0.4
+
+
+def test_a_tall_picture_is_padded_to_a_square_not_squashed() -> None:
+    """A picture that is not square keeps its subject's proportions: a square subject in a tall picture is still square
+    after preparation (squashing made it 1.75 times as wide as tall), and it sits in the middle."""
+    img = np.zeros((224, 128, 3))               # tall, 4:7, a plain backdrop and no cut-out of its own
+    img[72:152, 24:104] = [0.8, 0.3, 0.2]       # an 80 x 80 subject in the middle
+    rgb, alpha = srcproject.prepare_picture(img, n=128)
+    assert rgb.shape == (128, 128, 3) and alpha.shape == (128, 128)
+    ys, xs = np.nonzero(alpha > 0.5)
+    w, h = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
+    assert abs(w - h) <= 2, (w, h)
+    assert abs(w - 80 * 128 / 224) <= 3          # scaled by the longer side
+    assert abs((xs.min() + xs.max()) / 2 - 63.5) <= 1.5 and abs((ys.min() + ys.max()) / 2 - 63.5) <= 1.5
+    assert abs(float(rgb[64, 64, 0]) - 0.8) < 0.03
+
+
+def test_square_pad_fills_with_transparency_or_the_backdrop() -> None:
+    """With a cut-out the border is transparent; without one it takes the backdrop's colour, so the cut-out found from
+    the corners still sees one backdrop. A square picture is returned as it came."""
+    rgb = np.full((40, 100, 3), 0.9)             # wide, a light backdrop
+    rgb[10:30, 40:60] = 0.1
+    out, a = srcproject.square_pad(rgb, None)
+    assert out.shape == (100, 100, 3) and a is None
+    assert np.allclose(out[0, 0], 0.9) and np.allclose(out[99, 50], 0.9)
+    assert np.allclose(out[30 + 10:30 + 30, 40:60], 0.1)
+    alpha = np.zeros((40, 100))
+    alpha[10:30, 40:60] = 1.0
+    out, a = srcproject.square_pad(rgb, alpha)
+    assert a.shape == (100, 100) and a[:30].max() == 0.0 and a[70:].max() == 0.0 and a[45, 50] == 1.0
+    same, a2 = srcproject.square_pad(np.zeros((8, 8, 3)), None)
+    assert same.shape == (8, 8, 3) and a2 is None
