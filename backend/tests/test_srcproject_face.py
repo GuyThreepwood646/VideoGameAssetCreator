@@ -195,6 +195,8 @@ def test_glasses_and_hair_keep_their_colour() -> None:
     view, info, cam = head_view(z, img, region)
     keep = srcproject.never_skin(view, info, cam)
     assert keep[lens].mean() > 0.95
+    rim = (np.hypot(X - 95, Y - 120) > 20) & (np.hypot(X - 95, Y - 120) < 24)
+    assert keep[rim].mean() > 0.95
     assert keep[head & (Y <= 60)].mean() > 0.95  # the hair
     other_eye = np.hypot(X - 161, Y - 120) < 15
     assert keep[other_eye].mean() == 0.0  # bare skin around the other eye is free to fill

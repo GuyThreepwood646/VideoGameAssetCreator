@@ -940,15 +940,16 @@ def nose_by_landmarks(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: fa
 def never_skin(view: dict[str, Any], info: dict[str, Any], cam: face.Camera) -> np.ndarray:
     """Where the face region must keep the model's own colour rather than take a skin fill: the model's hair (the face
     pass's face.hair_and_skin: hair-coloured surface joined to the hair above the face, so a fringe, sideburns and a
-    beard that joins them) and glasses (a solid piece in front of the face: what a ring of depth steps of GLASSES_JUMP_M
-    or more encloses). A moustache or beard not joined to the hair, or glasses whose rim is not a closed ring of steps,
-    are not found."""
+    beard that joins them) and glasses (a solid piece in front of the face: the depth steps of GLASSES_JUMP_M or more,
+    and what a ring of them encloses). A moustache or beard not joined to the hair, and a lens joined to the face with
+    no step around it, are not found; the steps also keep the model's colour at other overhangs inside the face."""
     seg = face.hair_and_skin(view["image"], view["image"], info, view["mask"])
     px_m = cam.scale / cam.size
     steps = depth_discontinuities(view["raster"]["z"], px_m, jump_px=GLASSES_JUMP_M / px_m)
     ring = face.dilate_mask(steps, 2)
-    glasses = face.fill_holes(ring) & ~ring
-    glasses = face.dilate_mask(glasses, 3) & face.dilate_mask(info["region"], 4) if glasses.any() else glasses
+    # the steps themselves too: where a rim stands in front of the face the pictures are kept off by the depth-edge gate,
+    # and a fill there drew the frames in skin (the stored W2-clothed run, whose lenses are joined to the face)
+    glasses = (face.fill_holes(ring) | face.dilate_mask(steps, 4)) & face.dilate_mask(info["region"], 4)
     return face.dilate_mask(seg["old_hair"], 2) | glasses
 
 
