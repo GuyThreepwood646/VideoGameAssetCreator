@@ -125,6 +125,15 @@ CLOSEUP_LOOK_PROMPT = ("A head-and-shoulders close-up of this same character, dr
                        "expression, the same clothing at the shoulders, lit from the same direction. Facing straight "
                        "toward the viewer, the head centred and the same size and position in the picture, plain flat "
                        "grey background.")
+# The same request for a photographic look (the Photoreal look, delight_default "remove", or realistic_pbr: `photo` in run):
+# the plain prompt asks for "the same painting style", and with the realistic look the editor answered with an airbrushed
+# digital painting, no pores, drawn hair strands. Used for every try there, not only the retry.
+CLOSEUP_PHOTO_PROMPT = ("A head-and-shoulders close-up photograph of this same person, taken at high resolution: real skin "
+                        "with visible pores and fine lines, individual hair strands, natural unretouched detail. The same "
+                        "face and features, the same eye colour, the same hair and hairstyle, the same expression, the same "
+                        "clothing at the shoulders, the same colours, lit from the same direction with natural light. "
+                        "Facing straight toward the viewer, the head centred and the same size and position in the picture, "
+                        "plain flat grey background. A real photograph, not a painting or an illustration.")
 RETRY_REASONS = ("likeness", "features", "style")
 CLOSEUP_TRIES_MAX = 3  # one close-up and up to two more with new seeds, each about a minute and a half of card time
 CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
@@ -209,10 +218,12 @@ def density_choice(params: dict[str, Any]) -> str:
     return c if c in DENSITY_CHOICES else "auto"
 
 
-def closeup_tries(style_id: str | None) -> list[tuple[str, str]]:
+def closeup_tries(style_id: str | None, photo: bool = False) -> list[tuple[str, str]]:
     """The close-ups the pass may draw, in order, as (the version's seed key, the instruction): the plain prompt, then,
     for a look whose words are known (CLOSEUP_LOOK_WORDS), the same request in the look's own words. Each try has its
     own seed, carried by Resume (jobs.RESUME_SEEDS)."""
+    if photo:
+        return [(f"face_closeup_seed{suffix}", CLOSEUP_PHOTO_PROMPT) for suffix in ("", "_2", "_3")]
     out = [("face_closeup_seed", CLOSEUP_PROMPT)]
     words = CLOSEUP_LOOK_WORDS.get(style_id or "")
     again = CLOSEUP_LOOK_PROMPT.format(look=words) if words else CLOSEUP_PROMPT
@@ -221,8 +232,10 @@ def closeup_tries(style_id: str | None) -> list[tuple[str, str]]:
     return out
 
 
-def closeup_spare(style_id: str | None) -> tuple[str, str]:
+def closeup_spare(style_id: str | None, photo: bool = False) -> tuple[str, str]:
     """The fourth close-up, drawn only when two cards draw at once (a second round of two): its seed follows the second's."""
+    if photo:
+        return ("face_closeup_seed_4", CLOSEUP_PHOTO_PROMPT)
     words = CLOSEUP_LOOK_WORDS.get(style_id or "")
     return ("face_closeup_seed_4", CLOSEUP_LOOK_PROMPT.format(look=words) if words else CLOSEUP_PROMPT)
 
@@ -790,7 +803,7 @@ def frame_own(glb: Path, base_color: Path, crop: Path, own: Path, dest: Path) ->
             "coarse_score": first["score"], "alignment": {k: total.get(k) for k in ("sx", "sy", "tx", "ty")}}
 
 
-def own_verdict(guard: dict[str, Any]) -> tuple[str | None, list[str]]:
+def own_verdict(guard: dict[str, Any], photo: bool = False) -> tuple[str | None, list[str]]:
     """For the person's own close-up: (the reason it cannot be used, or None; the notes on how it differs from the
     painting). Only a picture whose features would be painted in the wrong place is refused (OWN_HARD, or no corrected
     picture); likeness, style and colours become notes."""
@@ -807,7 +820,7 @@ def own_verdict(guard: dict[str, Any]) -> tuple[str | None, list[str]]:
         notes.append("likeness")
     if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
         notes.append("features")
-    if m.get("skin_texture") is not None and float(m["skin_texture"]) > facecloseup.SKIN_TEXTURE_MAX:
+    if not photo and m.get("skin_texture") is not None and float(m["skin_texture"]) > facecloseup.SKIN_TEXTURE_MAX:
         notes.append("style")
     if float(m.get("eye_colour_shift") or 0.0) > EYE_COLOUR_MAX:
         notes.append("eye_colour")
@@ -1418,7 +1431,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                                             reference is not None)
             again = not parallel and not guard["ok"] and n + 1 < len(plan) and (reference is not None or retry_wanted(guard))
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), guard, again))
-            kind = "guided" if reference is not None else "plain" if prompt == CLOSEUP_PROMPT else "look"
+            kind = "guided" if reference is not None else "photo" if prompt == CLOSEUP_PHOTO_PROMPT else "plain" if prompt == CLOSEUP_PROMPT else "look"
             return {**guard, "file": name, "prompt": kind, "seed": seed_c}
 
         async def two_at_once(a: int, b: int) -> list[dict[str, Any]]:
@@ -1513,7 +1526,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             else:
                 guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, framed_path, found["painted_head_px"], photo)
                 closeup.update({k: v for k, v in guard.items() if k not in ("ok", "reason")})
-                hard, notes = own_verdict(guard)
+                hard, notes = own_verdict(guard, photo)
                 closeup["used"] = hard is None
                 closeup["reason"] = hard
                 closeup["notes"] = [CLOSEUP_REASONS[n] for n in notes]
@@ -1529,8 +1542,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         # also after guided close-ups that did not pass (step 0.5's face with another expression): the plain close-up
         sc.progress(0.77, "Drawing a close-up of the painted face")
         try:
-            tries = await draw_tries(closeup_tries(look), None, "painted_head_closeup", "Drawing a close-up of the painted face",
-                                     spare=closeup_spare(look))
+            tries = await draw_tries(closeup_tries(look, photo), None, "painted_head_closeup", "Drawing a close-up of the painted face",
+                                     spare=closeup_spare(look, photo))
             record_tries(tries)
             guard = pick_closeup(tries)
             closeup.update({k: v for k, v in guard.items() if k != "ok"})

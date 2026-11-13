@@ -194,3 +194,38 @@ def test_a_failing_card_never_fails_the_pass(tmp_path, stubbed, monkeypatch):
     _fake_source(monkeypatch)
     r = _run(Broken(tmp_path, 2048), glb, maps)["metrics"]["face_detail"]
     assert r["ran"] and r["closeup"]["used"]
+
+
+# --- the photographic look asks for a photograph -------------------------------------------------------------------
+
+
+def test_a_photographic_look_asks_for_a_photograph_on_every_try():
+    plan = fd.closeup_tries("realistic_pbr", True)
+    assert [k for k, _ in plan] == ["face_closeup_seed", "face_closeup_seed_2", "face_closeup_seed_3"]
+    assert {p for _, p in plan} == {fd.CLOSEUP_PHOTO_PROMPT}
+    p = fd.CLOSEUP_PHOTO_PROMPT
+    assert "photograph" in p and "pores" in p and "hair strands" in p and "not a painting" in p and "painting style" not in p
+    assert "same face and features" in p and "same colours" in p and "plain flat grey background" in p
+    assert fd.closeup_spare("realistic_pbr", True)[1] == p
+
+
+def test_painted_and_other_looks_keep_todays_words():
+    assert fd.closeup_tries("painted")[0][1] == fd.CLOSEUP_PROMPT and "digital painting" in fd.closeup_tries("painted")[1][1]
+    assert [p for _, p in fd.closeup_tries(None)] == [fd.CLOSEUP_PROMPT] * 3
+    assert "painting style" in fd.CLOSEUP_PROMPT
+
+
+def test_a_realistic_project_sends_the_photograph_words_and_is_not_refused_for_being_photographic(tmp_path, stubbed, monkeypatch):
+    calls, glb, maps = stubbed
+    seen = []
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: (seen.append(a[5]), _guard(None, 0.97))[1])
+    _fake_source(monkeypatch)
+    sc = _SC(tmp_path, 2048)
+    sc.asset.style_preset = "realistic_pbr"
+    _run(sc, glb, maps)
+    assert calls["prompts"][0] == fd.CLOSEUP_PHOTO_PROMPT and seen == [True]  # photo=True reaches the guard
+    # the verdict itself: a textured skin passes under photo, and is "style" otherwise
+    m = {"likeness": 0.97, "feature_scores": {"a": 0.9}, "feature_score_min": 0.9, "feature_move": 0.0, "skin_texture": 25.0,
+         "eye_colour_shift": 0.0, "skin_shift": 0.0, "hair_shift": 0.0, "registered": "x"}
+    assert fd.closeup_verdict(m, True) is None and fd.closeup_verdict(m, False) == "style"
+    assert "style" not in fd.own_verdict({**m, "ok": True}, True)[1] and "style" in fd.own_verdict({**m, "ok": True}, False)[1]
