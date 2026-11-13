@@ -149,6 +149,9 @@ class AssetIn(BaseModel):
     hair: Literal["model", "library"] | None = None
     # "The face matters": False skips the face detail pass in step 4 (db.Asset.face_matters).
     face_matters: bool | None = None
+    # The person chose a look other than the project's on purpose ("Use a different look for this asset"). Without it
+    # a look that differs from the project's is refused (_check_project_look).
+    different_look: bool | None = None
 
 
 class AssetPatch(BaseModel):
@@ -254,6 +257,23 @@ def _validate_platform(pid: str) -> None:
 def _validate_style(sid: str) -> None:
     if sid not in {s["id"] for s in reference.styles()}:
         raise HTTPException(400, f"unknown style_preset {sid!r}; see GET /api/styles")
+
+
+def _check_project_look(p: Project, body: "AssetIn") -> None:
+    """An asset follows its project's look unless the request says the person chose another one on purpose. A project
+    with no look set (no preset in its style lock) accepts any look, as before."""
+    want = (p.style_lock or {}).get("preset")
+    if not want or body.style_preset == want or body.different_look is True:
+        return
+
+    def label(sid: str) -> str:
+        return next((str(s.get("label") or sid) for s in reference.styles() if s["id"] == sid), sid)
+
+    raise HTTPException(
+        400,
+        f"This project's look is {label(want)}, but this asset was sent with the look {label(body.style_preset)}. "
+        f"Use {label(want)} for the asset, or choose \"Use a different look for this asset\" to make it on purpose.",
+    )
 
 
 def _validate_category(cid: str) -> None:
@@ -493,6 +513,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     p = _project(db, pid)
     _validate_category(body.category)
     _validate_style(body.style_preset)
+    _check_project_look(p, body)
     platform = body.platform_target or p.platform_target
     _validate_platform(platform)
     cat = reference.category(body.category)
