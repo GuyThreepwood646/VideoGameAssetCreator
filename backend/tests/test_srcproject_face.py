@@ -4,8 +4,9 @@ tone, and the head is fitted on its own."""
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from vgac import face, srcproject
+from vgac import face, facemarks, lipmarks, srcproject
 
 from tests.test_srcproject import SIZE, T, model, picture, soft_base
 
@@ -197,3 +198,71 @@ def test_glasses_and_hair_keep_their_colour() -> None:
     assert keep[head & (Y <= 60)].mean() > 0.95  # the hair
     other_eye = np.hypot(X - 161, Y - 120) < 15
     assert keep[other_eye].mean() == 0.0  # bare skin around the other eye is free to fill
+
+
+def head_from(mesh, tex, rect=(40, 216, 40, 216)):  # noqa: ANN001, ANN201
+    """A stand-in head view: the picture fitted from the front, named as the head view, with its own zone picture."""
+    centre, scale = srcproject.model_frame(mesh)
+    pic, alpha = srcproject.prepare_picture(picture(rect), SIZE)
+    v = srcproject.fit_view(mesh, tex, pic, alpha, srcproject.HEAD_VIEW, [0.0], centre, scale, size=SIZE, use_flow=False)
+    v.zone_img = np.zeros((SIZE, SIZE))
+    v.zone_img[: SIZE // 2] = 1.0  # the upper half only ("above the neck")
+    srcproject.prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+    return v
+
+
+def test_a_view_paints_inside_its_own_zone_only() -> None:
+    mesh, tex = model(), soft_base()
+    v = head_from(mesh, tex)
+    atlas = srcproject.Atlas(mesh, T)
+    p = srcproject.project_view(atlas, v)
+    y = atlas.pos[p["sel"], 1]
+    assert y.min() > -0.05 and (y > 0.2).any()
+
+
+def test_the_head_view_comes_first_even_when_the_whole_body_fit_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    mesh, tex = model(), soft_base()
+    hv = head_from(mesh, tex)
+    rec = {"name": "head", "picture": "source", "how": "eyes and mouth"}
+    hv.info = rec
+    monkeypatch.setattr(srcproject, "face_zone", lambda *a, **k: {"found": False, "reason": "test"})
+    monkeypatch.setattr(srcproject, "fit_head", lambda *a, **k: (hv, rec))
+    # the body fits: the head view is first, the body's original after it, the built-from picture after that
+    r = srcproject.paint(mesh, tex, picture(), source=picture(), size=SIZE, picture_yaws=[0.0])
+    assert r["applied"]
+    assert list(r["metrics"]["srcproject_share_by_view"]) == ["head", "source", "picture"]
+    assert r["metrics"]["srcproject_measured_against"] == "source"
+    assert r["metrics"]["srcproject_views"]["head"]["picture"] == "source"
+    # every whole-body fit refused (an outline match nothing reaches): the head alone still paints
+    r = srcproject.paint(mesh, tex, picture(), size=SIZE, picture_yaws=[0.0], min_iou=1.01)
+    assert r["metrics"]["srcproject_views"]["picture"].get("refused")
+    assert list(r["metrics"]["srcproject_share_by_view"]) == ["head"]
+    assert r["metrics"]["srcproject_share_by_view"]["head"] > 0.05
+
+
+def test_no_face_no_head_view() -> None:
+    v, rec = srcproject.fit_head(model(), {"found": False, "reason": "no_head"}, [("source", picture())], 0.001)
+    assert v is None and "not found" in rec["refused"]
+
+
+def test_the_local_finder_answers_without_a_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    pts = {"eyes": [(60.0, 40.0), (40.0, 40.0)], "mouth": (50.0, 70.0), "left": (42.0, 70.0), "right": (58.0, 70.0)}
+    monkeypatch.setattr(lipmarks, "available", lambda: True)
+    monkeypatch.setattr(lipmarks, "find", lambda img: pts)
+    info = {"nose": (50, 55), "width_px": 60.0}
+    img = np.zeros((100, 100, 3))
+    assert facemarks.find(img, info) is None  # nothing set: the darkest-spot finder is used, as before
+    tok = facemarks.use_local()
+    try:
+        assert facemarks.active()
+        m = facemarks.find(img, info)
+    finally:
+        facemarks.done_local(tok)
+    assert m["how"] == "mediapipe" and m["eyes"] == [(40.0, 40.0), (60.0, 40.0)] and m["mouth_corners"] == [(42.0, 70.0), (58.0, 70.0)]
+    assert not facemarks.active()
+    monkeypatch.setattr(lipmarks, "find", lambda img: {**pts, "mouth": (50.0, 20.0)})  # a mouth above the nose: not the model's
+    tok = facemarks.use_local()
+    try:
+        assert facemarks.find(img, info) is None
+    finally:
+        facemarks.done_local(tok)
