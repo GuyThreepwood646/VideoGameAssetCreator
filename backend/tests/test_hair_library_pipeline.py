@@ -23,6 +23,7 @@ import pytest
 from PIL import Image
 
 from vgac import imaging, library
+from vgac.graphs.qwen_edit import CUT_NODE
 from vgac.db import Asset, Project, Version, session_factory
 from vgac.jobs import JobCancelled, JobContext
 from vgac.stages import base as stage_base
@@ -112,7 +113,10 @@ class Engines:
             bald = edit or "bald" in src
             prompt = str(g["pos"]["inputs"]["prompt"])
             side = any(w in prompt.lower() for w in ("left", "right", "side"))
-            return save_rgb(figure(bald=bald, narrow=side and not edit), Path(dest))
+            pic = save_rgb(figure(bald=bald, narrow=side and not edit), Path(dest))
+            if node == CUT_NODE:  # a view's graph also holds the cut-out nodes: that node saves the cut-out (with alpha)
+                cut(pic, Path(dest))
+            return pic
 
         async def cutout(self, image_path, name, instance=None, base=0.0, span=0.1):
             dest = self.dir / f"{name}.png"
