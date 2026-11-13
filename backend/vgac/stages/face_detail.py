@@ -221,6 +221,51 @@ def closeup_tries(style_id: str | None) -> list[tuple[str, str]]:
     return out
 
 
+def closeup_spare(style_id: str | None) -> tuple[str, str]:
+    """The fourth close-up, drawn only when two cards draw at once (a second round of two): its seed follows the second's."""
+    words = CLOSEUP_LOOK_WORDS.get(style_id or "")
+    return ("face_closeup_seed_4", CLOSEUP_LOOK_PROMPT.format(look=words) if words else CLOSEUP_PROMPT)
+
+
+def closeup_score(t: dict[str, Any]) -> float:
+    """How near the painted face a close-up that passed is: its likeness and its weakest feature's match together."""
+    return float(t.get("likeness") or 0.0) + float(t.get("feature_score_min") or 0.0)
+
+
+def pick_closeup(tries: list[dict[str, Any]]) -> dict[str, Any]:
+    """The best close-up that passed (the first of equals), else the last one drawn."""
+    ok = [t for t in tries if t.get("ok")]
+    return max(ok, key=closeup_score) if ok else tries[-1]
+
+
+LEND_KIND = "turnaround.run"  # the kind of work the lent card must be allowed: drawing pictures (the clean-up job itself is "prep")
+
+
+async def borrow_card(sc: StageContext, home: str | None) -> tuple[Any, str]:
+    """(a Lease on a second card, "") when two close-ups can be drawn at once, else (None, why not in plain words). The
+    queue lends a card only when it is on, allowed to draw pictures, idle, has nothing waiting, its engine already answers
+    and it has the memory for drawing (jobs.JobQueue.lend); no card, one card or a step that cannot ask: one at a time.
+    The clean-up job runs on the host, not on a card, so the queue is asked for a card allowed LEND_KIND and not `home`
+    (the card the first close-up is drawn on) when its ctx.borrow takes those (kind, avoid); a ctx.borrow that does not
+    still lends by the clean-up job's own kind. A card lent that is the home card is handed straight back."""
+    import inspect
+
+    ask = getattr(getattr(sc, "ctx", None), "borrow", None)
+    if ask is None:
+        return None, "this step cannot ask for a second card"
+    try:
+        wanted = inspect.signature(ask).parameters
+        lease, why = await (ask(kind=LEND_KIND, avoid=home) if "kind" in wanted and "avoid" in wanted else ask())
+        if lease is not None and lease.instance == home:
+            await lease.end()
+            return None, "the only card free is the one drawing the first close-up"
+        return lease, why
+    except (JobCancelled, asyncio.CancelledError):
+        raise
+    except Exception as e:  # noqa: BLE001  (never fail the pass because a card could not be asked)
+        return None, f"a second card could not be asked ({str(e)[:100]})"
+
+
 def retry_wanted(first: dict[str, Any]) -> bool:
     """Another close-up is drawn (up to CLOSEUP_TRIES_MAX in all, each with its own seed) only when the last one was not
     the painting's face or look (likeness, features, style): the editor's drift, which a new seed or the look's own words
@@ -1211,6 +1256,9 @@ def picked_seed(sc: StageContext, params: dict[str, Any], key: str) -> int:
         # the third draw follows the second's seed, which a Resume carries, so it is the same draw again
         seed = int(params["face_closeup_seed_2"]) + 1
         sc.set_params(**{key: seed})
+    elif seed is None and key == "face_closeup_seed_4" and params.get("face_closeup_seed_2") is not None:
+        seed = int(params["face_closeup_seed_2"]) + 2  # the same way: a Resume carries the second seed
+        sc.set_params(**{key: seed})
     if seed is None:
         seed = random_seed()
         sc.set_params(**{key: seed})
@@ -1226,7 +1274,7 @@ def pin_pass_seed(sc: StageContext, params: dict[str, Any], face_detail_seed: in
     master = int(face_detail_seed)
     pinned: dict[str, int] = {}
     for key, value in (("face_closeup_seed", master), ("face_closeup_seed_2", master + 1), ("face_closeup_seed_3", master + 2),
-                       ("face_seed", master)):
+                       ("face_closeup_seed_4", master + 3), ("face_seed", master)):
         if params.get(key) is None:
             params[key] = value
             pinned[key] = value
@@ -1339,29 +1387,85 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         # the close-up with any feature that sat a little off moved back onto the painting's place
         return Path(guard["registered"]) if guard.get("registered") else fallback
 
-    async def draw_tries(plan: list[tuple[str, str]], reference: Path | None, stem: str, message: str) -> list[dict[str, Any]]:
+    async def draw_tries(plan: list[tuple[str, str]], reference: Path | None, stem: str, message: str,
+                         spare: tuple[str, str] | None = None) -> list[dict[str, Any]]:
+        """Draw the close-up (up to len(plan) times, each with its own seed) and check each. With a second card lent by the
+        queue (item 20b, the same lending step 2 uses) two are drawn at once, one on each card, and `spare` is one more
+        draw for a second round; a draw that follows a refusal always waits for the round before it. One card, or no card
+        free: one after another, as before."""
+        from ..jobs import is_engine_lost
+
         tries: list[dict[str, Any]] = []
-        for n, (key, prompt) in enumerate(plan):
-            if n and not (reference is not None or retry_wanted(tries[-1])):
-                break
+        lease, why = await borrow_card(sc, instance)
+        if lease is not None and spare is not None:
+            plan = [*plan, spare]
+        closeup["cards"] = {"two": lease is not None,
+                            "note": f"the {lease.gpu} drew a second close-up at the same time" if lease is not None else why}
+
+        async def one(n: int, card: str, parallel: bool) -> dict[str, Any]:
+            key, prompt = plan[n]
             seed_c = picked_seed(sc, params, key)
-            if n:
+            if n and not parallel:
                 sc.progress(0.77, retry_message(n, len(plan), message))
             name = f"{stem}.png" if n == 0 else f"{stem}_{n + 1}.png"
             job_key = stem.replace("painted_head_", "face_") + ("" if n == 0 else f"_{n + 1}")
             k = closeup_margin(found["face_width_px"], reference is not None, photo)
             closeup.setdefault("margins", {})["guided" if reference is not None else "plain"] = k
-            cu = await redraw(sc, instance, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
+            cu = await redraw(sc, card, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
                               reference=reference, margin=k)
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), None, False))
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
                                             reference is not None)
-            again = not guard["ok"] and n + 1 < len(plan) and (reference is not None or retry_wanted(guard))
+            again = not parallel and not guard["ok"] and n + 1 < len(plan) and (reference is not None or retry_wanted(guard))
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), guard, again))
             kind = "guided" if reference is not None else "plain" if prompt == CLOSEUP_PROMPT else "look"
-            tries.append({**guard, "file": name, "prompt": kind, "seed": seed_c})
-            if guard["ok"]:
-                break
+            return {**guard, "file": name, "prompt": kind, "seed": seed_c}
+
+        async def two_at_once(a: int, b: int) -> list[dict[str, Any]]:
+            """Draw a on the job's card and b on the lent one. The lent card failing or taken back: b is drawn again on the
+            job's card once a is done. Either failing otherwise (or a stop) stops the other."""
+            ta = asyncio.ensure_future(one(a, instance, True))
+            tb = asyncio.ensure_future(one(b, lease.instance, True))
+            try:
+                await asyncio.wait({ta, tb}, return_when=asyncio.FIRST_EXCEPTION)
+                if tb.done() and not tb.cancelled() and tb.exception() is not None:
+                    e = tb.exception()
+                    if isinstance(e, JobCancelled) or not (lease.revoked or is_engine_lost(e)):
+                        raise e
+                    gone = lease.revoked_reason or f"the graphics engine on {lease.gpu} stopped answering"
+                    closeup["cards"]["note"] = f"{gone}, so the second close-up was drawn on the job's card"
+                    await lease.end()
+                    ra = await ta
+                    return [ra, await one(b, instance, False)]
+                return [await ta, await tb]
+            except BaseException:
+                for t in (ta, tb):
+                    t.cancel()
+                raise
+
+        n = 0
+        try:
+            while n < len(plan):
+                together = lease is not None and not lease.ended and not lease.revoked and n + 1 < len(plan)
+                if together:
+                    sc.progress(0.77, message if n == 0 else "The close-ups were not good enough; drawing two more at the same time")
+                    got = await two_at_once(n, n + 1)
+                else:
+                    if lease is not None and not lease.ended:
+                        await lease.end()  # the second card is handed back as soon as it is no longer drawing
+                    got = [await one(n, instance, False)]
+                tries.extend(got)
+                n += len(got)
+                if any(t["ok"] for t in got):
+                    break
+                if n < len(plan) and not (reference is not None or any(retry_wanted(t) for t in got)):
+                    break
+        except BaseException:
+            if lease is not None:
+                await lease.end(interrupt=True)
+            raise
+        if lease is not None:
+            await lease.end()
         sc.use_model("qwen_edit")
         sc.use_model("qwen_lightning_lora")
         return tries
@@ -1383,7 +1487,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                                      "Drawing a close-up of the face, guided by your picture of it")
             record_tries(tries)
             closeup["guided_tries"] = closeup.get("tries")  # kept when a plain close-up is drawn after them
-            ok = next((t for t in tries if t["ok"]), None)
+            ok = pick_closeup(tries) if any(t["ok"] for t in tries) else None
             if ok is not None:
                 closeup.update({k: v for k, v in ok.items() if k != "ok"}, used=True)
                 merged = await asyncio.to_thread(closeup_source, crop, use_closeup(ok, out_dir / ok["file"]), found["painted_head_px"],
@@ -1425,9 +1529,10 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         # also after guided close-ups that did not pass (step 0.5's face with another expression): the plain close-up
         sc.progress(0.77, "Drawing a close-up of the painted face")
         try:
-            tries = await draw_tries(closeup_tries(look), None, "painted_head_closeup", "Drawing a close-up of the painted face")
+            tries = await draw_tries(closeup_tries(look), None, "painted_head_closeup", "Drawing a close-up of the painted face",
+                                     spare=closeup_spare(look))
             record_tries(tries)
-            guard = tries[-1]
+            guard = pick_closeup(tries)
             closeup.update({k: v for k, v in guard.items() if k != "ok"})
             closeup["used"] = bool(guard["ok"])
             if guard["ok"]:
