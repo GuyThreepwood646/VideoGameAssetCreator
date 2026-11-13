@@ -21,6 +21,16 @@ from typing import Any, Callable
 import httpx
 
 
+# A busy engine can stop answering HTTP for minutes while it loads a large model (the 20 GB drawing model took 187 s
+# to load cold on the 10 GB card in the realistic test of 2026-11-13, and two side-view jobs died with a ReadTimeout
+# on a /history poll after 30 s). So a poll that times out while READING is not the engine going away: the connection
+# was accepted, the process is there. wait() keeps polling until nothing has been read for ENGINE_STALL_SECONDS, then
+# lets the timeout through (the job queue counts it as the engine lost). A connection that is refused or reset still
+# raises at once, so a dead engine is noticed as fast as before.
+ENGINE_STALL_SECONDS = 600.0
+# The read timeout of POST /prompt. A submit is never repeated (a second try would draw the picture twice), so it
+# waits as long as a poll may stall instead.
+SUBMIT_READ_TIMEOUT = ENGINE_STALL_SECONDS
 _LIST_TAIL = re.compile(r"\s+not in (?:\[|\().*$", re.S)
 _LIST_ANYWHERE = re.compile(r"not in (?:\[|\().*?(?:\]|\))(?=[\"',}\s]|$)", re.S)
 
@@ -192,7 +202,8 @@ class ComfyClient:
         body: dict[str, Any] = {"prompt": graph}
         if client_id:
             body["client_id"] = client_id
-        r = await self._client().post("/prompt", json=body)
+        r = await self._client().post("/prompt", json=body,
+                                      timeout=httpx.Timeout(self.timeout, read=SUBMIT_READ_TIMEOUT))
         if r.status_code >= 400:
             # Never pass the reply on verbatim: a "Value not in list" error lists every file in a model folder.
             try:
@@ -227,11 +238,23 @@ class ComfyClient:
                    on_poll: Callable[[float], None] | None = None) -> dict[str, Any]:
         """Poll /history until the prompt completes. Returns the history entry.
 
-        Raises ComfyError if the prompt ended in error or the timeout elapsed.
+        Raises ComfyError if the prompt ended in error or the timeout elapsed. A poll that times out while reading is
+        tried again until nothing has been read for ENGINE_STALL_SECONDS (a busy engine loading a model); a refused
+        or reset connection raises at once.
         """
         t0 = time.monotonic()
+        last_answer = t0
         while True:
-            hist = await self.history(prompt_id)
+            try:
+                hist = await self.history(prompt_id)
+            except httpx.ReadTimeout:
+                stalled = time.monotonic() - last_answer
+                if stalled >= ENGINE_STALL_SECONDS:
+                    raise
+                log.info("instance %s: no answer to a poll for %.0f s; the engine is busy, waiting", self.name, stalled)
+                hist = {}
+            else:
+                last_answer = time.monotonic()
             if prompt_id in hist:
                 entry = hist[prompt_id]
                 status = entry.get("status", {})
