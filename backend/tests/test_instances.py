@@ -449,3 +449,58 @@ def test_no_start_script_means_no_start(settings, monkeypatch: pytest.MonkeyPatc
 
     asyncio.run(go())
     assert ops.spawned == []
+
+
+class LaunchOps(StubOps):
+    """StubOps that also records launches of an engine command (instances.ProcessOps.launch)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.launched: list[dict[str, Any]] = []
+
+    def launch(self, argv: list[str], cwd: Path, env: dict[str, str], out_log: Path, err_log: Path) -> int:
+        self.next_pid += 1
+        self.alive_pids.add(self.next_pid)
+        self.launched.append({"pid": self.next_pid, "argv": list(argv), "cwd": Path(cwd), "env": dict(env)})
+        return self.next_pid
+
+
+def test_engine_settings_start_the_command_not_a_script(settings, tmp_path):
+    """An instance with `engine` is started from the command built from the settings (instances.engine_command),
+    with CUDA_DEVICE_ORDER and SKINTOKEN_BLENDER_BIN; a script, if one is also set, is not used."""
+    from vgac.config import EngineConfig
+
+    comfy_dir = tmp_path / "comfy"
+    py = comfy_dir / "ComfyUI" / ".venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    blender = tmp_path / "blender.exe"
+    s = _scripted(settings, tmp_path)
+    eng = EngineConfig(comfy_dir=comfy_dir, python=py, cuda_device=1, user_dir=tmp_path / "u")
+    s = s.model_copy(update={"blender_exe": blender, "instances": {
+        **s.instances, "a": s.instances["a"].model_copy(update={"engine": eng})}})
+    ops = LaunchOps()
+    sup = Supervisor(s, {"a": FakeClient(up_after=3), "b": FakeClient()}, ops=ops, poll_seconds=0.01,
+                     project_dir=tmp_path)
+    assert sup.can_start("a")
+    asyncio.run(sup.ensure_running("a"))
+    assert ops.spawned == [] and len(ops.launched) == 1
+    run = ops.launched[0]
+    assert run["cwd"] == comfy_dir and run["argv"][0] == str(py) and run["argv"][1] == "-s"
+    assert run["argv"][run["argv"].index("--cuda-device") + 1] == "1"
+    assert run["argv"][run["argv"].index("--port") + 1] == "9"  # the port of the instance's url
+    assert run["env"] == {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "SKINTOKEN_BLENDER_BIN": str(blender)}
+    assert sup.owned("a") and sup.state("a") == "running"
+
+
+def test_engine_with_a_missing_comfyui_fails_plainly(settings, tmp_path):
+    from vgac.config import EngineConfig
+
+    s = _unscripted(settings)
+    eng = EngineConfig(comfy_dir=tmp_path / "gone", python=tmp_path / "gone" / "python.exe")
+    s = s.model_copy(update={"instances": {**s.instances, "a": s.instances["a"].model_copy(update={"engine": eng})}})
+    ops = LaunchOps()
+    sup = Supervisor(s, {"a": FakeClient(), "b": FakeClient()}, ops=ops, poll_seconds=0.01, project_dir=tmp_path)
+    with pytest.raises(StartFailed, match="ComfyUI folder .* was not found"):
+        asyncio.run(sup.ensure_running("a"))
+    assert ops.launched == [] and sup.state("a") == "failed"

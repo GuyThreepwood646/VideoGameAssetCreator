@@ -25,8 +25,8 @@ answers and has the memory the work needs. While lent, the card's worker picks n
 the job hands it back when it ends, fails or is stopped (Lease.end), and the worker hands back anything left over
 when the job finishes. Turning the lent card off takes it back from the job (Lease.revoked).
 
-On-demand start (instances.py): before a job runs on a card whose instance has a start script, the worker calls
-Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
+On-demand start (instances.py): before a job runs on a card the backend can start (engine settings or a start
+script), the worker calls Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
 <gpu> (about a minute)"; if the start fails the card counts as unavailable (like a card that is off) until Try again
 or the card is turned off and on, so the job moves to another card that can run it or waits with the reason. A card
 that is off is never started, and host jobs never start anything. An instance the backend started is stopped when its
@@ -1523,7 +1523,8 @@ class JobQueue:
         if instance in self.disabled:
             raise ValueError(f"{gpu} is turned off. Turn it on first; the app never starts a card that is off.")
         if not sup.can_start(instance):
-            raise ValueError(f"The app has no start script for the graphics engine on {gpu}, so it cannot start it.")
+            raise ValueError(f"The app does not know how to start the graphics engine on {gpu} (no engine settings and "
+                             "no start script), so it cannot start it.")
         sup.clear_failed(instance)
         sup.touch(instance)
         self._rebalance()  # jobs parked by the failed start may run here again
