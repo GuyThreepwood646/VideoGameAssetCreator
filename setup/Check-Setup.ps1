@@ -12,9 +12,8 @@
                2. npm install and npm run build in frontend\
                3. npm install in desktop\
                4. python backend\scripts\make_sample_glb.py
-             A step that is already done is skipped. Nothing is upgraded or replaced. No existing settings file is
-             edited: when the paths on this PC differ from backend\config.yaml or desktop\config.json, a proposed copy
-             is written beside it (config.proposed.yaml / config.proposed.json) and the script says so.
+             A step that is already done is skipped. Nothing is upgraded or replaced. No settings file is written:
+             the script says which values to set in local\machine.json (this PC's settings).
   -Yes       Answers "yes" to every question in -Install mode.
 
   The ComfyUI models folders are never listed. Model files are checked by exact name, through each ComfyUI's own
@@ -63,11 +62,24 @@ function Get-Json([string]$Url, [int]$Seconds = 6) {
     } catch { return $null }
 }
 
-# --- settings (read only, with plain regex because Windows PowerShell has no YAML reader) -------------------------------
+# --- settings (read only). backend\config.yaml holds the defaults (plain regex: Windows PowerShell has no YAML reader);
+# this PC's values are in local\machine.json under "backend", laid over them (backend\vgac\config.py).
 $cfgText = Read-Text (Join-Path $Root 'backend\config.yaml')
+$machineFile = 'local\machine.json'
+$machine = $null
+$machinePath = Join-Path $Root $machineFile
+if (Test-Path -LiteralPath $machinePath) {
+    try { $machine = (Get-Content -Raw -LiteralPath $machinePath | ConvertFrom-Json).backend } catch { $machine = $null }
+}
+function Abs-Path([string]$P) {
+    if (-not $P) { return $P }
+    if ([System.IO.Path]::IsPathRooted($P)) { return $P }
+    return (Join-Path $Root ($P -replace '/', '\'))
+}
 function Cfg-Value([string]$Key) {
+    if ($machine -and ($machine.PSObject.Properties.Name -contains $Key) -and $machine.$Key) { return (Abs-Path ([string]$machine.$Key)) }
     $m = [regex]::Match($cfgText, "(?m)^$Key\s*:\s*(.+?)\s*$")
-    if ($m.Success) { return $m.Groups[1].Value.Trim('"', "'") }
+    if ($m.Success) { return (Abs-Path $m.Groups[1].Value.Trim('"', "'")) }
     return $null
 }
 function Cfg-Url([string]$Inst) {
@@ -83,7 +95,7 @@ $urlB = Cfg-Url 'b'; if (-not $urlB) { $urlB = 'http://127.0.0.1:8189' }
 
 # Tool paths: the settings file first (when its path exists), then PATH, then the usual places. Never a fixed drive.
 function Find-Blender {
-    if ($cfgBlender -and (Test-Path -LiteralPath $cfgBlender)) { return @{ Path = $cfgBlender; From = 'backend\config.yaml' } }
+    if ($cfgBlender -and (Test-Path -LiteralPath $cfgBlender)) { return @{ Path = $cfgBlender; From = $machineFile } }
     $onPath = Get-Cmd 'blender'
     if ($onPath) { return @{ Path = $onPath; From = 'PATH' } }
     $dirs = @((Join-Path $Root 'tools'), "$env:ProgramFiles\Blender Foundation", "${env:ProgramFiles(x86)}\Blender Foundation", "$env:LOCALAPPDATA\Programs")
@@ -95,7 +107,7 @@ function Find-Blender {
     return $null
 }
 function Find-Unity {
-    if ($cfgUnity -and (Test-Path -LiteralPath $cfgUnity)) { return @{ Path = $cfgUnity; From = 'backend\config.yaml' } }
+    if ($cfgUnity -and (Test-Path -LiteralPath $cfgUnity)) { return @{ Path = $cfgUnity; From = $machineFile } }
     $hubs = @("$env:ProgramFiles\Unity\Hub\Editor", "$env:LOCALAPPDATA\Programs\Unity\Hub\Editor")
     foreach ($h in $hubs) {
         if (-not (Test-Path -LiteralPath $h)) { continue }
@@ -178,21 +190,21 @@ if ($gitV) { Add-Row 'Git' 'Ready' $gitV }
 else { Add-Row 'Git' 'Missing' 'Not found.' 'Install Git for Windows from git-scm.com (only needed to download or update the project).' }
 
 # --- 5. Blender and Unity (configured paths) ----------------------------------------------------------------------------
-$cfgBlenderOk = ($foundBlender -and $foundBlender.From -eq 'backend\config.yaml')
+$cfgBlenderOk = ($foundBlender -and $foundBlender.From -eq $machineFile)
 if ($foundBlender) {
     $bv = Invoke-Quiet $blenderExe @('--version')
     $m = [regex]::Match("$bv", 'Blender\s+(\d+)\.(\d+)')
-    $note = if ($cfgBlenderOk) { '' } else { " (found in $($foundBlender.From); backend\config.yaml does not point to it: set blender_exe)" }
-    if ($m.Success -and [int]$m.Groups[1].Value -ge 5) { Add-Row 'Blender' $(if ($cfgBlenderOk) { 'Ready' } else { 'Needs you' }) "$bv at $blenderExe$note" $(if ($cfgBlenderOk) { '' } else { 'Set blender_exe in backend\config.yaml to this path (-Install writes a proposed copy).' }) }
+    $note = if ($cfgBlenderOk) { '' } else { " (found in $($foundBlender.From); local\machine.json does not point to it: set blender_exe)" }
+    if ($m.Success -and [int]$m.Groups[1].Value -ge 5) { Add-Row 'Blender' $(if ($cfgBlenderOk) { 'Ready' } else { 'Needs you' }) "$bv at $blenderExe$note" $(if ($cfgBlenderOk) { '' } else { 'Set blender_exe in local\machine.json (under "backend") to this path.' }) }
     else { Add-Row 'Blender' 'Needs you' "Found at $blenderExe but version reads '$bv'." 'The app needs Blender 5.0 or newer (5.2.3 is what it was built with).' }
 } else {
-    Add-Row 'Blender' 'Missing' 'Not on PATH, not in the configured path, not in the usual places.' 'Unzip Blender 5.2.3 (portable) from blender.org anywhere you like, then set blender_exe in backend\config.yaml.'
+    Add-Row 'Blender' 'Missing' 'Not on PATH, not in the configured path, not in the usual places.' 'Unzip Blender 5.2.3 (portable) from blender.org anywhere you like, then set blender_exe in local\machine.json (under "backend").'
 }
 if ($foundUnity) {
-    $cfgUnityOk = ($foundUnity.From -eq 'backend\config.yaml')
-    Add-Row 'Unity Editor' $(if ($cfgUnityOk) { 'Ready' } else { 'Needs you' }) "Found at $unityExe (the licence cannot be checked from here)$(if (-not $cfgUnityOk) { '; backend\config.yaml does not point to it' })" $(if ($cfgUnityOk) { '' } else { 'Set unity_exe in backend\config.yaml to this path (-Install writes a proposed copy).' })
+    $cfgUnityOk = ($foundUnity.From -eq $machineFile)
+    Add-Row 'Unity Editor' $(if ($cfgUnityOk) { 'Ready' } else { 'Needs you' }) "Found at $unityExe (the licence cannot be checked from here)$(if (-not $cfgUnityOk) { '; local\machine.json does not point to it' })" $(if ($cfgUnityOk) { '' } else { 'Set unity_exe in local\machine.json (under "backend") to this path.' })
 } else {
-    Add-Row 'Unity Editor' 'Needs you' 'No Unity Editor found in the configured path or the Unity Hub folder.' 'Install Unity Hub, sign in, install Editor 6000.4.3f1 and activate a free Personal licence by hand. Then set unity_exe in backend\config.yaml.'
+    Add-Row 'Unity Editor' 'Needs you' 'No Unity Editor found in the configured path or the Unity Hub folder.' 'Install Unity Hub, sign in, install Editor 6000.4.3f1 and activate a free Personal licence by hand. Then set unity_exe in local\machine.json (under "backend").'
 }
 
 # --- 6. ComfyUI engines -------------------------------------------------------------------------------------------------
@@ -222,7 +234,7 @@ if ($engines.Count -eq 0) {
 } else {
     foreach ($e in $engines) {
         $role = if ($e -eq $engA) { ' (the app''s engine A, 3D models)' } elseif ($e -eq $engB) { ' (the app''s engine B, pictures and rigging)' } else { ' (not at a configured address)' }
-        $fix = if ($e -eq $engA -or $e -eq $engB) { '' } else { 'Set this address under instances in backend\config.yaml, or the app will not use it.' }
+        $fix = if ($e -eq $engA -or $e -eq $engB) { '' } else { 'Set this address under instances in local\machine.json (under "backend"), or the app will not use it.' }
         Add-Row "ComfyUI at $($e.Url)" $(if ($fix) { 'Needs you' } else { 'Ready' }) "Answers$role; card: $($e.Card)" $fix
     }
     if ($gpus.Count -eq 1 -and $engines.Count -gt 1) { Add-Row 'Two ComfyUIs on one card' 'Needs you' 'More than one ComfyUI is running but there is one graphics card.' 'Run only one at a time, or expect slow or failed steps from sharing the card.' }
@@ -293,7 +305,7 @@ foreach ($id in $modelIds) {
 # --- 8. Add-ons (exact paths under loras_dir) ---------------------------------------------------------------------------
 $addText = Read-Text (Join-Path $Root 'backend\vgac\data\addons.yaml')
 if (-not $lorasDir -or -not (Test-Path -LiteralPath $lorasDir)) {
-    Add-Row 'Add-ons (small extra files)' 'Needs you' 'Not checked: loras_dir in backend\config.yaml is missing or not found on this PC.' 'Set loras_dir to the "loras" folder of your ComfyUI models, then run this check again.'
+    Add-Row 'Add-ons (small extra files)' 'Needs you' 'Not checked: loras_dir in local\machine.json is missing or not found on this PC.' 'Set loras_dir to the "loras" folder of your ComfyUI models, then run this check again.'
 } else {
     foreach ($blk in ([regex]::Split($addText, '(?m)^\s*- id:\s*') | Select-Object -Skip 1)) {
         $id = ($blk -split '\r?\n')[0].Trim()
@@ -328,13 +340,14 @@ Check-Folder 'Sample 3D file' 'library\samples' 'sample.glb' 'Run this script wi
 $packFiles = @{ ual1 = 'AnimationLibrary_Unity_Standard.fbx'; ual2 = 'UAL2_Standard.fbx' }
 foreach ($id in 'ual1', 'ual2') {
     $m = [regex]::Match($cfgText, "(?m)^\s+${id}:\s*""([^""]+)""")
-    $pth = if ($m.Success) { $m.Groups[1].Value } else { '' }
+    $pth = if ($m.Success) { Abs-Path $m.Groups[1].Value } else { '' }
+    if ($machine -and $machine.clips_libraries -and $machine.clips_libraries.$id) { $pth = Abs-Path ([string]$machine.clips_libraries.$id) }
     $dir = Join-Path $Root "data\animations\$id"
     $hit = $null
     if ($pth -and (Test-Path -LiteralPath $pth)) { $hit = $pth }
     elseif (Test-Path -LiteralPath $dir) { $hit = Get-ChildItem -LiteralPath $dir -Filter $packFiles[$id] -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
     if ($hit -and $pth -and $hit -eq $pth) { Add-Row "Animation pack $id" 'Ready' 'Found' }
-    elseif ($hit) { Add-Row "Animation pack $id" 'Needs you' "Found in data\animations\$id, but clips_libraries in backend\config.yaml points elsewhere." 'Set clips_libraries to the found path (-Install writes a proposed copy).' }
+    elseif ($hit) { Add-Row "Animation pack $id" 'Needs you' "Found in data\animations\$id, but clips_libraries in the settings points elsewhere." 'Set clips_libraries in local\machine.json (under "backend") to the found path.' }
     else { Add-Row "Animation pack $id" 'Missing' "$($packFiles[$id]) not found under data\animations\$id." 'Download the free CC0 pack (see docs\FIRST-TIME-SETUP.md) into data\animations, keeping its folder names.' }
 }
 $hairBuilt = Join-Path $Root 'library\hairlib\catalogue.json'
@@ -423,31 +436,11 @@ else {
     }
 }
 
-# 5. Proposed settings. Existing files are never edited. Only the project folder path and (if found in the standard
-# Unity Hub folder) the Unity path are proposed; ComfyUI paths and Blender are reported, not guessed.
+# 5. Settings. Nothing is written: this PC's values go in local\machine.json, under "backend" (same keys as
+# backend\config.yaml) and "desktop" (same shape as desktop\config.json). Report what was found.
 ''
-$cfgPath = Join-Path $Root 'backend\config.yaml'
-$propYaml = $cfgText
-$fwd = $Root -replace '\\', '/'
-$propYaml = $propYaml.Replace('F:\Projects\VideoGameAssetCreator', $Root).Replace('F:/Projects/VideoGameAssetCreator', $fwd)   # same paths, this PC's folder
-if ($cfgUnity -and $foundUnity -and $foundUnity.From -ne 'backend\config.yaml') { $propYaml = $propYaml.Replace($cfgUnity, ($foundUnity.Path -replace '\\', '/')) }
-if ($cfgBlender -and $foundBlender -and $foundBlender.From -ne 'backend\config.yaml') { $propYaml = $propYaml.Replace($cfgBlender, ($foundBlender.Path -replace '\\', '/')) }
-$cfgDiffers = ($propYaml -ne $cfgText)
-$proposedYaml = Join-Path $Root 'backend\config.proposed.yaml'
-if ($cfgDiffers) {
-    if (Test-Path -LiteralPath $proposedYaml) { Write-Host 'backend\config.proposed.yaml already exists; not overwritten.' }
-    else { [System.IO.File]::WriteAllText($proposedYaml, $propYaml); Write-Host 'Wrote backend\config.proposed.yaml (backend\config.yaml was NOT changed). Compare the two and copy over what you want.' }
-} else { Write-Host 'backend\config.yaml already matches this PC: no proposed copy needed.' }
-
-$dkCfgPath = Join-Path $Root 'desktop\config.json'
-$dkText = Read-Text $dkCfgPath
-$jsRoot = ($Root -replace '\\', '\\')
-$dkProp = [regex]::Replace($dkText, '"projectRoot"\s*:\s*"[^"]*"', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) '"projectRoot": "' + $jsRoot + '"' })
-if ($dkProp -ne $dkText) {
-    $proposedJson = Join-Path $Root 'desktop\config.proposed.json'
-    if (Test-Path -LiteralPath $proposedJson) { Write-Host 'desktop\config.proposed.json already exists; not overwritten.' }
-    else { [System.IO.File]::WriteAllText($proposedJson, $dkProp); Write-Host 'Wrote desktop\config.proposed.json (desktop\config.json was NOT changed).' }
-} else { Write-Host 'desktop\config.json already matches this PC: no proposed copy needed.' }
-Write-Host 'Not proposed (by hand): the ComfyUI paths inside runtime\start-comfy-a.ps1 and start-comfy-b.ps1, desktopExe in desktop\config.json, comfy_input_dir, loras_dir and the Blender path.'
+if ($foundBlender -and $foundBlender.From -ne $machineFile) { Write-Host "Blender found at $($foundBlender.Path): set blender_exe in local\machine.json to use it." }
+if ($foundUnity -and $foundUnity.From -ne $machineFile) { Write-Host "Unity found at $($foundUnity.Path): set unity_exe in local\machine.json to use it." }
+Write-Host 'Set by hand in local\machine.json: each engine (instances.a/b.engine: the ComfyUI folder and card), comfy_input_dir, loras_dir and blender_exe. See backend\vgac\config.py.'
 ''
 'Install mode finished. Run the check again (without -Install) to see what is left.'

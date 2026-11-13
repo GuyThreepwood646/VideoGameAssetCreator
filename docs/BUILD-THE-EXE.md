@@ -6,7 +6,7 @@ Written 2026-11-06. Everything here was checked against this PC on that day.
 
 You already have it. The file is
 
-    F:\Projects\VideoGameAssetCreator\desktop\dist\VGAC-portable.exe
+    <project folder>\desktop\dist\VGAC-portable.exe
 
 and the "VGAC" shortcut on your desktop points at it. Double-click the shortcut and the app opens. You only need the steps below if you want to build the file again.
 
@@ -14,14 +14,14 @@ and the "VGAC" shortcut on your desktop points at it. Double-click the shortcut 
 
 - It is a launcher (a small program that starts the app's parts and opens its window). It is about 100 MB.
 - When you start it, it shows a status window, starts the second ComfyUI and the backend (the app's engine room) if they are not already running, and then opens the app in its own window. It also puts an icon in the tray (the row of small icons by the clock) with a Services menu.
-- It does not contain the app. The app itself lives in the project folder `F:\Projects\VideoGameAssetCreator`, and the launcher reads it from there. So the .exe on its own, copied to another PC, will not work. That PC would also need the project folder and everything the app depends on (ComfyUI, the models, Blender, Unity). A separate guide for that is being written: `docs/FIRST-TIME-SETUP.md`.
+- It does not contain the app. The app itself lives in the project folder (the folder the project was cloned into, written `<project folder>` below), and the launcher reads it from there. So the .exe on its own, copied to another PC, will not work. That PC would also need the project folder and everything the app depends on (ComfyUI, the models, Blender, Unity). A separate guide for that is being written: `docs/FIRST-TIME-SETUP.md`.
 
 ## When you need to build it again
 
 Almost never.
 
 - Changes to the app's screens or its engine room do not need a new .exe. The launcher picks them up the next time it starts.
-- You need a new .exe only when a file inside the `desktop` folder changes (the launcher's own code or its icon). The last such change was on 4 November, and the .exe you have was built after it, so it is current.
+- You need a new .exe only when a file inside the `desktop` folder changes (the launcher's own code or its icon). The last such change was on 13 November (the launcher reads this PC's values from `local\machine.json`). An .exe built before it keeps working with the settings file beside it; build a new one to pick the change up.
 
 ## Before you start (one time only)
 
@@ -34,7 +34,7 @@ Almost never.
 2. The launcher's building tools must be downloaded into the project. They are already there on this PC (the folder `desktop\node_modules`, about 440 MB). If that folder is ever missing, this puts it back (needs the internet, takes a few minutes):
 
     ```powershell
-    cd F:\Projects\VideoGameAssetCreator\desktop
+    cd "<project folder>\desktop"
     ```
 
     ```powershell
@@ -48,7 +48,7 @@ Almost never.
 2. Open PowerShell and go to the launcher's folder:
 
     ```powershell
-    cd F:\Projects\VideoGameAssetCreator\desktop
+    cd "<project folder>\desktop"
     ```
 
 3. Remove the old settings file that sits beside the .exe, so a fresh one is written the next time the launcher starts. (The build does not replace this file by itself.)
@@ -79,9 +79,11 @@ Almost never.
 
 ## Changing where things are
 
-The launcher reads its settings from `config.json` in the same folder as the .exe (`desktop\dist\config.json`). It holds the project folder, the addresses of the two ComfyUIs and the backend, and the window size. Edit it in Notepad and start the launcher again. If you delete it, the launcher writes a fresh copy from the one built into the .exe.
+The launcher reads its settings from `config.json` in the same folder as the .exe (`desktop\dist\config.json`). It holds the addresses of the two ComfyUIs and the backend, and the window size; these are the same on every PC. If you delete it, the launcher writes a fresh copy from the one built into the .exe.
 
-You can move the .exe (together with its `config.json`) anywhere on this PC, because the settings give the project folder as a full path. If you move it, run the shortcut step again from the `desktop` folder, or make a new shortcut by hand.
+This PC's own values (where ComfyUI Desktop is, the names of the graphics cards, the start script of the second ComfyUI if you use one) are in `local\machine.json` in the project folder, under `"desktop"`, in the same shape as `config.json`. The launcher lays them over `config.json` each time it starts.
+
+The launcher finds the project folder by looking upward from its `config.json` (and from the .exe), so it keeps working when the .exe stays inside the project folder. If you move it elsewhere, set `projectRoot` in its `config.json` to the project folder's full path, then run the shortcut step again from the `desktop` folder, or make a new shortcut by hand.
 
 ## If something goes wrong
 

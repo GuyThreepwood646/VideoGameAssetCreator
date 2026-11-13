@@ -9,14 +9,14 @@ Python 3.13 package `vgac` under `backend/`, FastAPI on port 8765, SQLite in `li
 
 | Module | Role |
 |---|---|
-| `config.py` | `backend/config.yaml` -> `Settings` (instances with `output_dir`, `start_script`, `process_match` and `discover`; library and export paths; Blender and Unity paths; ComfyUI input and loras folders; clip libraries; RAM floor; job and Blender timeouts; `stage_instances`, `material_stage_instances`, `judge_instance`, `instance_capabilities`). `VGAC_CONFIG` overrides the file; tests use it. |
+| `config.py` | `backend/config.yaml` (defaults) with `local/machine.json` (this PC, untracked) laid over it -> `Settings` (instances with `output_dir`, `engine`, `start_script`, `process_match` and `discover`; library and export paths; Blender and Unity paths; ComfyUI input and loras folders; clip libraries; RAM floor; job and Blender timeouts; `stage_instances`, `material_stage_instances`, `judge_instance`, `instance_capabilities`). `VGAC_CONFIG` overrides the defaults file and then no machine file is used unless `VGAC_MACHINE` names one; tests use it. `write_machine()` writes the machine file atomically. `machine_migrate.py` moved the old tracked values there. |
 | `db.py` | SQLAlchemy models `Project`, `Asset`, `Version`, `Job` with uuid4 string ids and JSON text columns (`style_lock`, `parts`, `params`, `files`, `metrics`, `payload`), plus the `*_to_dict` serialisers that produce the API shapes. Schema is `create_all` plus a forward-only list of added columns (`_ADDED_COLUMNS`) applied at start, and `migrate_looks`. A new column must be nullable and listed there. |
 | `library.py` | Path layout `library/projects/<pid>/assets/<aid>/<stage>/<vid>/` and helpers to register files on a version as library-relative paths (served by `GET /api/library/{path}`). |
 | `reference.py` | Loads `vgac/data/categories/*.yaml`, `styles.yaml`, `platforms.yaml`, `models.yaml`, `addons.yaml`; the stage Adjust schemas (`STAGE_SCHEMAS`); `STAGE_ORDER`; `budget(category, platform)`; `recipe(style, category, platform)`, which resolves how a look carries through the steps. |
 | `comfy.py` | Async ComfyUI client: `/prompt` (rejects `node_errors`), `/history` polling, `/view` download, `/upload/image`, `/interrupt`, `stage_input` (copies into the shared input folder so `LoadImage` and `VGACLoadTrimesh` find the file). `ComfyError` carries the history status so SkinToken's `AssertionError` is recognisable. |
 | `graphs/` | Pure graph builders: `concept` (six models), `qwen_edit` (angles and instruction edit), `birefnet`, `trellis`, `hy3d`, `skintoken`, `material` (graph plus numpy seamless and map derivation), `judge`. |
 | `jobs.py` | Job queue: one `InstanceWorker` per configured ComfyUI instance and one for `host`; routing (`route()`) from `Settings.stage_instances` and `material_stage_instances`, the person's default card, allowed kinds and capabilities; share-when-busy; lending a card to a running step; job kinds `<stage>.<op>` or `material.<stage>.<op>` (ops `run`, `refine`, `adjust`, `upload`, `upscale`, `compose`, `judge`); RAM guard; progress and message updates; stop and resume; one retry after a lost engine; orphan re-queue at start; the host lane's export-first order; websocket publishing. |
-| `instances.py` | Starts a ComfyUI instance on demand from its `start_script`, finds it by card, and stops only what the backend started. |
+| `instances.py` | Starts a ComfyUI instance on demand from its `engine` settings (`engine_command`; else a `start_script`), finds it by card, and stops only what the backend started. |
 | `prefs.py` | `library/prefs.json`: cards turned off, allowed kinds, default card, share when busy, free memory after a job, idle stop. |
 | `pipeline.py` | Rules shared by the API and the autopilot: which version is kept, making a version, submitting its job, starting a stage run with the right parent. |
 | `autopilot.py` | Runs the steps in order, keeps results that pass, pauses on a failed check. |
@@ -70,7 +70,7 @@ Judge: `POST /api/versions/{id}/judge` with `mode: metrics` recomputes the measu
 
 ## Configuration notes
 
-- Instance B is started by `runtime/start-comfy-b.ps1` with `--output-directory runtime/comfy-b-output`; `config.yaml` names that folder as `instances.b.output_dir` because SkinToken saves its GLB there and only reports the path as text.
+- Instance B is started with `--output-directory runtime/comfy-b-output`; `config.yaml` names that folder as `instances.b.output_dir` because SkinToken saves its GLB there and only reports the path as text.
 - `comfy_input_dir` must be the `--input-directory` of both instances; files are copied there under `vgac_<version>_...` names.
 - Unity runs against `unity-sandbox/` with `VgacImport.Run` (`-nographics`) and `VgacImport.Snapshot` (needs graphics). A Unity licence must be active for batch mode.
 - The RAM floor `min_free_ram_gb` holds every worker, including the host, so a Blender job does not start while system memory is scarce.

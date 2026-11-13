@@ -84,11 +84,11 @@ means the person does it, and the helper only reports on it.
 | 3 | Free disk space | Models, ComfyUI, assets, exports | 150 GB or more is comfortable (models alone are most of it); the check warns under 20 GB on the project drive | n/a | n/a | By hand |
 | 4 | RAM | The job queue holds work while free RAM is below `min_free_ram_gb` (24 in `backend/config.yaml`) | n/a | n/a | n/a | By hand (lower the number for a smaller PC) |
 
-Also needed on a PC that is not the author's: the ComfyUI paths in `runtime/start-comfy-a.ps1` and
-`runtime/start-comfy-b.ps1`, `desktop/config.json` (`desktopExe`, `projectRoot`) and several lines of
-`backend/config.yaml` still hold the author's paths. Section "What is still needed before other people can install this"
-says what a later round does about that. Until then, edit copies of those files by hand, and the helper's
-`-Install` writes proposed copies for the project folder path, Blender and Unity.
+Also needed on a PC that is not the author's: this PC's values in `local/machine.json` (untracked): each engine's
+ComfyUI folder and card, `blender_exe`, `unity_exe`, `comfy_input_dir`, `loras_dir`, and ComfyUI Desktop's path for
+the launcher (docs/ADVANCED.md, "Settings files"). Section "What is still needed before other people can install this"
+says what a later round does about that. Until then, write that file by hand; `setup\Check-Setup.ps1` says which
+Blender and Unity it found.
 
 ## 2. Developer tools
 
@@ -158,8 +158,8 @@ preferred the other card runs on it, one graphics step at a time.
 
 What a one-card PC has to get right, not built or tested in this round:
 
-1. One ComfyUI only, and it should be the one the app calls B (port 8189, started by `runtime/start-comfy-b.ps1`).
-   Rigging runs on B only: the SkinToken node finds Blender through `SKINTOKEN_BLENDER_BIN`, which that script sets.
+1. One ComfyUI only, and it should be the one the app calls B (port 8189, started from its `engine` settings).
+   Rigging runs on B only: the SkinToken node finds Blender through `SKINTOKEN_BLENDER_BIN`, which the backend sets.
    A rig job waits for B instead of moving to A.
 2. In the app, switch off the card you do not have. Pictures and the 3D model then use the one card.
 3. Memory: a 10 GB card ran the pictures and rigging on the author's PC; a 12 GB card ran the 3D model. Whether one
