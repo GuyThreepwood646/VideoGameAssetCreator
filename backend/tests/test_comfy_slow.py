@@ -103,3 +103,59 @@ def test_a_submit_waits_as_long_as_a_poll_may_stall(monkeypatch):
 
     assert asyncio.run(run()) == "p1"
     assert seen["read"] == comfy.SUBMIT_READ_TIMEOUT >= 300 and seen["connect"] == client.timeout
+
+
+def test_polls_come_every_quarter_second_for_a_short_job_whatever_the_caller_asked(monkeypatch):
+    """A job that finishes is noticed on average half a poll late: a quarter second, not the caller's 1 or 5 s."""
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        await real_sleep(0)
+
+    monkeypatch.setattr(comfy.asyncio, "sleep", fake_sleep)
+    n = {"i": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        n["i"] += 1
+        return httpx.Response(200, json=DONE if n["i"] > 3 else {})
+
+    client, http = fake_client(monkeypatch, handler)
+
+    async def run():
+        try:
+            return await client.wait("p1", poll_seconds=5.0)
+        finally:
+            await http.aclose()
+
+    asyncio.run(run())
+    assert sleeps == [comfy.POLL_FAST_SECONDS] * 3 and comfy.POLL_FAST_SECONDS == 0.25
+
+
+def test_a_long_job_falls_back_to_the_callers_interval_capped_at_one_second(monkeypatch):
+    sleeps: list[float] = []
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(comfy.time, "monotonic", lambda: clock["t"])
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        clock["t"] += 100.0       # each wait takes a long while
+
+    monkeypatch.setattr(comfy.asyncio, "sleep", fake_sleep)
+    n = {"i": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        n["i"] += 1
+        return httpx.Response(200, json=DONE if n["i"] > 3 else {})
+
+    client, http = fake_client(monkeypatch, handler)
+
+    async def run():
+        try:
+            return await client.wait("p1", poll_seconds=5.0)
+        finally:
+            await http.aclose()
+
+    asyncio.run(run())
+    assert sleeps == [0.25, 0.25, 1.0]      # past 120 s the 5 s caller is capped at 1 s
