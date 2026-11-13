@@ -135,6 +135,16 @@ def mirror_iou(a_path: Path | str, b_path: Path | str) -> float:
     return iou(a, b)
 
 
+def pair_overlap(a_path: Path | str, b_path: Path | str) -> tuple[float, float]:
+    """(as drawn, mirrored): the overlap of two views' outlines as they were drawn, and with the second one flipped
+    left to right. Two views from opposite sides of a figure (left and right, the two three-quarter views) are mirror
+    images, so the mirrored overlap is the higher one; when the as-drawn overlap is higher the two were drawn from
+    the same side. Measured on the 11 pictures of the realistic test: the two faulty pairs +0.285 and +0.150 (as drawn
+    minus mirrored), the 20 good pairs -0.017 to -0.479."""
+    a, b = silhouette(a_path), silhouette(b_path)
+    return iou(a, b), iou(a, b[:, ::-1])
+
+
 def white_composite(rgba_path: Path | str, dest: Path | str | None = None) -> Path:
     src = Path(rgba_path)
     im = Image.open(src).convert("RGBA")

@@ -21,7 +21,7 @@ from PIL import Image
 from .. import hairlib, library, quality, reference
 from ..db import Version
 from ..graphs.qwen_edit import CAMERA_TURNS, SHEET_INPUT, SHEET_ORDER, angle_graph, camera_graph, edit_graph, sheet_graph, view_prompt
-from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, mirror_iou, white_composite
+from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
 
@@ -40,6 +40,16 @@ def with_second_quarter(views: list[str], category: str | None, params: dict[str
         return views[:i] + [SECOND_QUARTER] + views[i:]
     return views
 MAX_REROLLS = 2
+# Views drawn from opposite sides of the figure. The later-drawn one of a pair is checked against the earlier one
+# (same_side): mirror images of each other when right, the same way round when one was drawn from the wrong side.
+# Only left and right also take the mirror_iou limit, as before.
+PARTNER = {"left": "right", "right": "left", "quarter": SECOND_QUARTER, SECOND_QUARTER: "quarter"}
+MIRROR_PAIRS = ("left", "right")
+# same_side fails when the as-drawn overlap beats the mirrored one by more than this. Not zero: a subject that looks the
+# same from both sides (a barrel, a figure standing square to the camera) has the two overlaps equal, and noise would
+# decide. The realistic test's two faulty pairs sit at +0.285 and +0.150, its 20 good pairs at -0.017 and below.
+SAME_SIDE_MARGIN = 0.05
+PARTNER_WORDS = {"left": "left side", "right": "right side", "quarter": "three-quarter", SECOND_QUARTER: "other three-quarter"}
 LIMITS = {"height_ratio": (0.75, 1.3), "hist_distance": 0.35, "mirror_iou": 0.55, "min_coverage": 0.02}
 
 # How the views are turned (turn_method). standard: the multiple-angles LoRA, one view at a time, every category.
@@ -103,7 +113,29 @@ def concept_of(sc: StageContext, v: Version | None) -> Version | None:
     return None if cur is None or cur.stage == "turnaround" else cur
 
 
-def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, hist_front, hist_view, mirror: float | None) -> dict[str, Any]:
+def same_side_check(view: str, as_drawn: float, mirror: float) -> dict[str, Any]:
+    """same_side: fails when this view's outline matches its partner's better as drawn than mirrored, which means both
+    were drawn from the same side of the figure (the realistic test: both side views of one run faced the same way and
+    the 3D model came out facing backwards; both three-quarter views of another showed the same cheek). value is the
+    as-drawn overlap, limit the mirrored one plus SAME_SIDE_MARGIN. A warning, like the other view checks; the sentence
+    is the check's own."""
+    ok = as_drawn <= mirror + SAME_SIDE_MARGIN
+    partner = PARTNER_WORDS.get(PARTNER.get(view, ""), "opposite")
+    if ok:
+        text = f"This view and the {partner} view are drawn from opposite sides of the figure."
+    else:
+        text = (f"This view looks drawn from the same side as the {partner} view: their outlines match better as drawn "
+                f"({as_drawn:.0%}) than mirrored ({mirror:.0%}). Draw this view again, or the model can come out facing "
+                "the wrong way or with one side painted twice.")
+    return {"id": "same_side", "ok": ok, "value": round(as_drawn, 4), "limit": round(mirror + SAME_SIDE_MARGIN, 4), "severity": "warn",
+            "help": text}
+
+
+def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, hist_front, hist_view, mirror: float | None,
+                as_drawn: float | None = None) -> dict[str, Any]:
+    """The checks of one view. mirror and as_drawn are its outline's overlap with its partner view's (mirrored, and as
+    drawn; imaging.pair_overlap), given when the partner exists: left and right take the mirror_iou limit, and every
+    pair takes same_side when as_drawn is given."""
     checks: list[dict[str, Any]] = []
     checks.append({"id": "coverage", "ok": stats["coverage"] >= LIMITS["min_coverage"], "value": stats["coverage"], "limit": LIMITS["min_coverage"]})
     out: dict[str, Any] = {"bbox": stats}
@@ -118,9 +150,12 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
         d = histogram_distance(hist_front, hist_view)
         out["hist_dist"] = round(d, 4)
         checks.append({"id": "hist_dist", "ok": d <= LIMITS["hist_distance"], "value": round(d, 4), "limit": LIMITS["hist_distance"]})
-    if mirror is not None:
+    if mirror is not None and view in MIRROR_PAIRS:
         out["mirror_iou"] = round(mirror, 4)
         checks.append({"id": "mirror_iou", "ok": mirror >= LIMITS["mirror_iou"], "value": round(mirror, 4), "limit": LIMITS["mirror_iou"]})
+    if mirror is not None and as_drawn is not None:
+        out["pair_as_drawn"], out["pair_mirrored"] = round(as_drawn, 4), round(mirror, 4)
+        checks.append(same_side_check(view, as_drawn, mirror))
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)
     out["ok"] = out["passed"]
@@ -139,14 +174,14 @@ async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, 
 
 
 def _measure(cutout: Path, stats: dict[str, Any] | None, other_cutout: Path | None,
-             hist_paths: dict[str, Path | None]) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
-    """CPU part of a view's checks (no database access, so it runs in a worker thread): bbox stats, mirror IoU
-    against the opposite view, and colour histograms for the views in `hist_paths`."""
+             hist_paths: dict[str, Path | None]) -> tuple[dict[str, Any], tuple[float, float] | None, dict[str, Any]]:
+    """CPU part of a view's checks (no database access, so it runs in a worker thread): bbox stats, the outline's
+    overlap with the partner view's (as drawn, mirrored), and colour histograms for the views in `hist_paths`."""
     if stats is None:
         stats = alpha_bbox(cutout)
-    mirror = mirror_iou(cutout, other_cutout) if other_cutout is not None else None
+    pair = pair_overlap(cutout, other_cutout) if other_cutout is not None else None
     hists = {v: (colour_histogram(p) if p else None) for v, p in hist_paths.items()}
-    return stats, mirror, hists
+    return stats, pair, hists
 
 
 def sheet_input(cutout: Path, dest: Path) -> Path:
@@ -447,23 +482,25 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             sc.register(f"{view}_white", files["white"])
             hist_cache.pop(view, None)
             front_stats = results.get("front", {}).get("bbox") if view != "front" else None
-            other = {"left": "right", "right": "left"}.get(view)
+            other = PARTNER.get(view)
             # File lookups read the version row, so they stay on the event loop; the image work goes to a thread.
             other_cutout = sc.file(f"{other}_cutout") if other else None
             front_cutout = sc.file("front_cutout") if view != "front" else None
             want: dict[str, Path | None] = {view: sc.file(f"{view}_cutout")}
             if front_cutout and "front" not in hist_cache:
                 want["front"] = front_cutout
-            stats, mirror, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
+            stats, pair, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
             hist_cache.update(new_hists)
-            info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror)
+            as_drawn, mirror = pair if pair is not None else (None, None)
+            info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
+                               as_drawn)
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew
             if view in supplied:
                 info["supplied"] = True
             results[view] = info
-            if other in results and mirror is not None:
+            if other in results and mirror is not None and view in MIRROR_PAIRS:
                 results[other]["mirror_iou"] = round(mirror, 4)
             if view in supplied or info["passed"] or not auto_reroll or attempts >= MAX_REROLLS:
                 info["flagged"] = not info["passed"]
