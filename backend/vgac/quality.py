@@ -85,6 +85,19 @@ def facing_check(best: float, applied: float) -> Check:
     return check("facing", ok, int(round(best)) % 360, int(round(applied)) % 360, vars={"fix_yaw": fix_yaw})
 
 
+def facing_tests_check(outline_turn: float, toes_turn: float, differ: float, decided: float | None, applied: float) -> Check:
+    """facing_tests: the two independent facing tests (the outline against the drawn views, and where the toes point)
+    agree to within facing.DISAGREE_DEG. Fails when they do not: the model may face the wrong way and nothing else
+    would say so (the outline test alone cannot fail, it is compared with itself). value is the angle between them;
+    vars carry both turns and the fix, the turn that was decided on."""
+    from .facing import DISAGREE_DEG
+
+    q = nearest_quarter(decided) if decided is not None else None
+    fix_yaw = q if q is not None and angle_diff(q, applied) > 0 else None
+    return check("facing_tests", float(differ) <= DISAGREE_DEG, round(float(differ), 1), DISAGREE_DEG,
+                 vars={"outline_turn": int(round(outline_turn)) % 360, "toes_turn": int(round(toes_turn)) % 360, "fix_yaw": fix_yaw})
+
+
 def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, size_m: float | None = None,
                     size_tolerance: float = SIZE_TOLERANCE, size_axis: str = "height", axis_word: str | None = None,
                     *, height_m: float | None = None, height_tolerance: float | None = None) -> list[Check]:

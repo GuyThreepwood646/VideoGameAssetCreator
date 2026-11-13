@@ -407,6 +407,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _facing_fix,
         "fix_label": "Turn it to face forward",
     },
+    "facing_tests": {
+        "severity": "warn",
+        "ok": "The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.",
+        "fail": ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but its "
+                 "toes say {toes_turn} degrees, {value} degrees apart. Look at the model from the front; if the face is on the back "
+                 "of the head, turn it."),
+        "vars": lambda c: {"outline_turn": _var(c, "outline_turn") if _var(c, "outline_turn") is not None else "?",
+                           "toes_turn": _var(c, "toes_turn") if _var(c, "toes_turn") is not None else "?"},
+        "fix": _facing_fix,
+        "fix_label": "Turn it to face forward",
+    },
     "uv_set": {
         "severity": "warn",
         "ok": lambda c: "The model has one texture layout." if c.get("value") == 1 else "The model has {value:n} texture layouts.",
