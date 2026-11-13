@@ -7,8 +7,8 @@
 Each picture goes through uploads.py (the same checks as every own picture) and is written into each new concept
 version's folder as files.compose_1 .. compose_N. A job (op "compose", stages/__init__.py) then asks Qwen-Image-Edit
 (graphs.qwen_edit.compose_graph) for one new full-body picture: the face from the face picture, the build from the
-body picture, the clothes from the outfit picture, drawn in the project's look (the style lock's prompt block, palette
-and the category's pose block, through stages/concept.build_prompt) on a plain background, standing the way the later
+body picture, the clothes from the outfit picture, drawn in the project's look (the style lock's prompt block and the category's pose block, through
+stages/concept.build_prompt; not its palette or hair rule, so the clothes and the hair stay as in the pictures) on a plain background, standing the way the later
 steps want. The result is a normal concept version (params.source = "compose"): it is cut out and checked like a
 painted picture, and the person keeps one in step 1 as usual, so nothing after step 1 changes.
 
@@ -91,9 +91,10 @@ def compose_prompt(roles: list[dict[str, Any]], plan: list[list[int]], look_prom
         else:
             parts = "; ".join(f"picture {k} on it, from the left: {_what(roles[i])}" for k, i in enumerate(group, start=1))
             lines.append(f"Picture {n} is a sheet of {len(group)} pictures side by side. Take from it: {parts}.")
-    lines.append("It is the same one person or creature throughout. Do not copy the pictures' backgrounds, poses, "
-                 "lighting or camera angles, and redraw everything in the look described next, not in the look of "
-                 "the pictures.")
+    lines.append("It is the same one person or creature throughout. Keep the hair (its colour, length and style) and "
+                 "the clothes exactly as the pictures show them, with the same colours. Do not copy the pictures' "
+                 "backgrounds, poses, lighting or camera angles; the next sentences only set how it is drawn and "
+                 "posed.")
     lines.append(look_prompt.strip())
     lines.append("Plain light grey background with nothing else in the picture.")
     return " ".join(x for x in lines if x)
@@ -132,7 +133,9 @@ async def run(sc, params: dict[str, Any]) -> None:
     width = int(p.get("width") or 1024)
     height = int(p.get("height") or 1024)
     words = (p.get("words") or "").strip()
-    look = concept.build_prompt(sc, {**p, "prompt_override": words or None})
+    # The look sets how it is drawn, not what the person wears or how the hair is done: no palette sentence and no hair
+    # rule here (the palette repainted the outfit and the hair rule tied the hair back in the one stored composed run).
+    look = concept.build_prompt(sc, {**p, "prompt_override": words or None, "palette_block": False, "hair_block": False})
     prompt = compose_prompt(roles, plan, look)
     sc.set_params(seed=seed, width=width, height=height, prompt=prompt, model="qwen_edit", source="compose")
     sc.use_model("qwen_edit")

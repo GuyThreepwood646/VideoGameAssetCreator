@@ -108,7 +108,7 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     hair = hair_sentence(sc, params, base)
     if hair:
         parts.append(hair)
-    pal = palette_sentence(lock.get("palette"))
+    pal = palette_sentence(lock.get("palette")) if params.get("palette_block", True) else ""
     if pal:
         parts.append(pal)
     if params.get("readiness_block", True) and (held or {}).get("pose_block"):
@@ -204,6 +204,12 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     light = await asyncio.to_thread(light_check, cutout, sc.category, _style_id(sc))
     if light is not None:
         checks.append(light)
+    params = getattr(getattr(sc, "version", None), "params", None) or {}
+    if params.get("source") == "compose":
+        pics = [(r.get("role", "other"), sc.file(f"compose_{i}")) for i, r in enumerate(params.get("compose_roles") or [], start=1)]
+        match = await asyncio.to_thread(compose_check, [(r, f) for r, f in pics if f is not None], cutout)
+        if match is not None:
+            checks.append(match)
     drawn = await _face_check(sc, cutout)
     if drawn is not None:
         checks.append(drawn)
@@ -275,6 +281,104 @@ def light_measure(cutout: Any) -> dict[str, Any] | None:
     if len(cells) < LIGHT_CELLS_MIN or max(cells) <= 0:
         return None
     return {"ratio": min(cells) / max(cells), "cells": len(cells), "bright": max(cells), "dark": min(cells)}
+
+
+# --- a combined picture keeps the clothes and the hair of the pictures it was made from ------------------------------
+# Measured on the stored runs (1 composed run, 6 pictures; and the Realistic test's pictures as same-outfit and
+# different-outfit pairs): the same outfit in another picture differs by at most 8.3 in Lab (colour distance) in the
+# upper or lower body band; the repainted outfit of the stored composed run by 25 to 35. The hair colour of the same
+# person differs by at most 16 across pictures; no stored picture has a different hair colour, so the hair limit is
+# set from the colour scale (black against dark brown is under 20), not from a measured miss.
+COMPOSE_OUTFIT_MAX = 20.0
+COMPOSE_HAIR_MAX = 25.0
+COMPOSE_SIDE = 256
+COMPOSE_PLAIN_MIN = 0.8  # share of the border that is one plain colour; busier pictures give no verdict
+
+
+def _compose_bands(path: Any) -> dict[str, Any] | None:
+    """Mean Lab colour of the upper body (28 to 55 percent of the figure's height), the lower body (55 to 92) and the
+    hair (the top 12 percent without skin) of a picture with a plain background, or a cut-out; None when the
+    background is not plain (a candid photo) or the figure is too small to read."""
+    import numpy as np
+    from PIL import Image
+
+    from .. import face
+
+    im = path if isinstance(path, Image.Image) else Image.open(path)
+    im = im.convert("RGBA") if im.mode in ("RGBA", "LA", "P") else im.convert("RGB")
+    s = COMPOSE_SIDE / max(im.size)
+    if s < 1:
+        im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.Resampling.NEAREST)
+    a = np.asarray(im.convert("RGBA"), dtype=np.float32) / 255.0
+    lab = face.to_lab(a[..., :3])
+    if im.mode == "RGBA" and float(a[..., 3].min()) < 0.99:
+        fg = a[..., 3] > 0.5
+    else:
+        edge = np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])
+        med = np.median(edge, axis=0)
+        if float((np.linalg.norm(edge - med, axis=-1) < 12).mean()) < COMPOSE_PLAIN_MIN:
+            return None
+        fg = np.linalg.norm(lab - med, axis=-1) > 14
+    if int(fg.sum()) < 300:
+        return None
+    ys = np.nonzero(fg)[0]
+    top, height = int(ys.min()), int(ys.max()) - int(ys.min()) + 1
+    L, ca, cb = lab[..., 0], lab[..., 1], lab[..., 2]
+    skin = (ca > 4) & (ca < 30) & (cb > 6) & (cb > 0.6 * ca) & (L > 8)
+
+    def band(lo: float, hi: float, no_skin: bool) -> Any:
+        y0, y1 = top + int(height * lo), top + int(height * hi)
+        m = fg[y0:y1] & (~skin[y0:y1] if no_skin else True)
+        return lab[y0:y1][m].mean(axis=0) if int(m.sum()) >= 60 else None
+
+    return {"upper": band(0.28, 0.55, False), "lower": band(0.55, 0.92, False), "hair": band(0.0, 0.12, True)}
+
+
+def compose_measure(inputs: list[tuple[str, Any]], cutout: Any) -> dict[str, Any] | None:
+    """How far the combined picture's clothes and hair are from the pictures they came from: {outfit, hair} (Lab colour
+    distances, None for a part that could not be compared), or None when nothing could be. `inputs` is
+    [(role, picture)]: body and outfit pictures give the clothes, face pictures the hair."""
+    import numpy as np
+
+    got = _compose_bands(cutout)
+    if got is None:
+        return None
+    outfit: list[float] = []
+    hair: list[float] = []
+    for role, pic in inputs:
+        try:
+            b = _compose_bands(pic)
+        except Exception:  # noqa: BLE001  an unreadable input: it simply is not compared
+            continue
+        if b is None:
+            continue
+        if role in ("body", "outfit"):
+            parts = [float(np.linalg.norm(b[k] - got[k])) for k in ("upper", "lower") if b[k] is not None and got[k] is not None]
+            if parts:
+                outfit.append(max(parts))
+        elif role == "face" and b["hair"] is not None and got["hair"] is not None:
+            hair.append(float(np.linalg.norm(b["hair"] - got["hair"])))
+    if not outfit and not hair:
+        return None
+    return {"outfit": min(outfit) if outfit else None, "hair": min(hair) if hair else None}
+
+
+def compose_check(inputs: list[tuple[str, Any]], cutout: Any) -> dict[str, Any] | None:
+    """The check `compose_match` (a warning only) for a picture combined from the person's own pictures: the clothes
+    and the hair colour still look like the pictures'. None when nothing could be compared. Never breaks the step."""
+    from .. import quality
+
+    try:
+        m = compose_measure(inputs, cutout)
+    except Exception:  # noqa: BLE001
+        return None
+    if m is None:
+        return None
+    ratios = {"the clothes": (m["outfit"] or 0.0) / COMPOSE_OUTFIT_MAX, "the hair": (m["hair"] or 0.0) / COMPOSE_HAIR_MAX}
+    changed = [k for k, v in ratios.items() if v > 1.0]
+    return quality.check("compose_match", not changed, round(max(ratios.values()), 2), 1.0,
+                         vars={"changed": " and ".join(changed), "outfit": None if m["outfit"] is None else round(m["outfit"], 1),
+                               "hair": None if m["hair"] is None else round(m["hair"], 1)})
 
 
 def _style_id(sc: StageContext) -> str:
