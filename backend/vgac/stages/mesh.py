@@ -57,6 +57,7 @@ from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dila
                        load_uv_mesh, rasterise_uv, silhouette, unwrap_padding, uv_hash)
 from .base import StageContext, random_seed
 from .concept import stage_recipe
+from .turnaround import SECOND_QUARTER, THREEQ_ARM_RANGE, pose_check
 
 TEXTURE_KEYS = ("base_color", "metallic", "roughness", "normal", "ao")
 # G05 (a): the mesh stage aims this far under the platform budget so prep does not have to decimate again.
@@ -98,6 +99,87 @@ def _input_image(sc: StageContext, input_view: str) -> Path:
     if p is None:
         raise FileNotFoundError(f"no turnaround view {input_view!r} in lineage")
     return p
+
+
+# Which three-quarter view the builder is given (docs/MESH-RESEARCH.md, part 4 method 1). The builder joins body parts
+# wherever its one picture shows them touching, so a `quarter` view redrawn with the arms down (the worst realistic run,
+# M1-clothed) gives fused arms, while the other three-quarter view of the same run kept the pose and gave free arms and
+# open hands. For a humanoid whose build view is not set by hand, both three-quarter views are measured against the
+# person's picture with step 2's pose_held measure (turnaround.pose_check, three-quarter limits); `quarter` is used
+# unless it lost the pose and `quarter2` kept it.
+# UNTESTED ON A CARD: the model's facing after a build from quarter2 (the facing tests should absorb it), and the rebuild itself.
+BUILD_VIEW_ORIGINS = ("default", "pose")  # input_view_origin values that are re-decided on every build; anything else was the person's
+
+
+def pick_build_view(first: dict[str, Any] | None, second: dict[str, Any] | None) -> tuple[str, str]:
+    """(the view to build from, why) from the pose_held checks of `quarter` and `quarter2` (None: not measurable).
+    why: kept (quarter held, or nothing to compare), switched (quarter lost it and quarter2 kept it), both_lost."""
+    if first is None or first["ok"]:
+        return "quarter", "kept"
+    if second is not None and second["ok"]:
+        return SECOND_QUARTER, "switched"
+    return "quarter", ("both_lost" if second is not None else "kept")
+
+
+def _pose_cutouts(sc: StageContext) -> tuple[Path | None, dict[str, Path]]:
+    """(the person's picture's cut-out, the pictures the builder would be given for quarter and quarter2); a view whose
+    picture is missing (the bald one of a library hairstyle too) is left out."""
+    ref = sc.lineage_file("pose_ready_cutout", ("turnaround",)) or sc.lineage_file("cutout", ("concept",))
+    pics: dict[str, Path] = {}
+    for v in ("quarter", SECOND_QUARTER):
+        try:
+            p = _input_image(sc, v)
+        except FileNotFoundError:
+            continue
+        if p is not None and Path(p).is_file():
+            pics[v] = Path(p)
+    return (Path(ref) if ref is not None and Path(ref).is_file() else None), pics
+
+
+def _measure_build_views(ref: Path, pics: dict[str, Path]) -> dict[str, dict[str, Any]]:
+    r = imaging.pose_extents(ref)
+    return {v: pose_check(v, imaging.pose_extents(p), r) for v, p in pics.items()}
+
+
+async def choose_build_view(sc: StageContext, view: str) -> dict[str, Any]:
+    """The build view for a humanoid started from the default `quarter`: {view, why, measures}; why "none" when nothing
+    was measured (not a humanoid, the default is another view, a picture edit, no picture to compare with)."""
+    out: dict[str, Any] = {"view": view, "why": "none", "measures": {}}
+    if sc.asset.category != "humanoid" or view != "quarter" or _edited_cutout(sc) is not None:
+        return out
+    ref, pics = _pose_cutouts(sc)
+    if ref is None or "quarter" not in pics:
+        return out
+    try:
+        checks = await asyncio.to_thread(_measure_build_views, ref, pics)
+    except Exception:  # noqa: BLE001  (a picture that cannot be measured: build from quarter, as before)
+        return out
+    chosen, why = pick_build_view(checks.get("quarter"), checks.get(SECOND_QUARTER))
+    out.update(view=chosen, why=why, measures={v: {"arm": c["value"], "leg": c["leg_ratio"], "ok": c["ok"]} for v, c in checks.items()})
+    return out
+
+
+def build_view_words(rec: dict[str, Any] | None) -> str | None:
+    """The plain sentence for a build view decision (metrics.build_view), None when nothing was measured."""
+    if not rec or rec.get("why") in (None, "none"):
+        return None
+    if rec["why"] == "switched":
+        return ("Built from the other three-quarter view, because the first one had lost the pose of the arms and legs in your "
+                "picture and the other one kept it. Arms held clear of the body in the picture are not fused to it in the model.")
+    if rec["why"] == "both_lost":
+        return ("Both three-quarter views have the arms or legs in a different place from your picture, so the 3D model can "
+                "grow the arms into the body. Draw the side views again before building.")
+    return "The three-quarter view the model was built from has the arms and legs where they are in your picture."
+
+
+def build_view_check(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """The pose_held_build check (warn): fails only when both three-quarter views lost the pose; None when not measured."""
+    rec = (metrics or {}).get("build_view")
+    if not rec or rec.get("why") in (None, "none"):
+        return None
+    m = (rec.get("measures") or {}).get(rec.get("view") or "quarter") or {}
+    return quality.check("pose_held_build", rec["why"] != "both_lost", m.get("arm"), list(THREEQ_ARM_RANGE),
+                         vars={"switched": rec["why"] == "switched", "words": build_view_words(rec)})
 
 
 def default_target_faces(budget_triangles: int | None) -> int:
@@ -179,7 +261,11 @@ DEFAULT_TEX_STEPS = 24  # the texture sampler's steps (graphs/trellis.py); 12 on
 
 
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
-    input_view = params.get("input_view") or sc.category.get("input_view_default") or "concept"
+    default_view = sc.category.get("input_view_default") or "concept"
+    # A view the person chose is kept as it is; the default (and a view this step chose itself) is decided again here.
+    by_hand = bool(params.get("input_view")) and params.get("input_view_origin") not in BUILD_VIEW_ORIGINS
+    decided = {"view": params["input_view"], "why": "none", "measures": {}} if by_hand else await choose_build_view(sc, default_view)
+    input_view = decided["view"]
     rec = stage_recipe(sc)
     # The TRELLIS builder only: more triangles than the budget, on purpose, for the clean-up step's weighted decimation
     targets = resolve_targets(rec, params, sc.budget, sc.asset.category)
@@ -202,9 +288,12 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
         await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
         sc.set_params(hand_edit=True)
     src = _input_image(sc, input_view)
-    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
+    origin = "hand" if by_hand else ("pose" if decided["why"] == "switched" else "default")
+    sc.set_params(engine="trellis", input_view=input_view, input_view_origin=origin, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                   head_room=targets.get("head_room"), first_seed=None)
+    if decided["why"] != "none":
+        sc.set_metrics(build_view=decided, build_view_note=build_view_words(decided))
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
     sc.register("input", sc.copy_in(src, "input_image.png"))
@@ -604,6 +693,9 @@ async def judge(sc: StageContext) -> None:
     hb = head_build_check(sc.version.metrics)
     if hb:
         checks.append(hb)
+    pb = build_view_check(sc.version.metrics)
+    if pb:
+        checks.append(pb)
     sc.set_metrics(**quality.summarise(checks))
 
 
