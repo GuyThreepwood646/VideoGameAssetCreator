@@ -1,7 +1,11 @@
 """Build the hair library (backend/vgac/data/hairlib) from the CC0 hair packs. Offline; run by hand with the backend venv.
 
     backend/.venv/Scripts/python.exe -I tools/hairlib_build.py --packs F:/Projects/VideoGameAssetCreator/runtime/hairpacks
-        [--out backend/vgac/data/hairlib] [--only id ...] [--tex 1024] [--normal 512] [--no-cap-check]
+        [--out backend/vgac/data/hairlib] [--only id ...] [--tex 1024] [--normal 512] [--no-cap-check] [--blender <blender.exe>]
+
+Packs that are not there are skipped (their styles are left out and the catalogue lists only what was built), so the
+library can be built from whichever of the three packs the person has. setup/Setup-Extras.ps1 -Packs runs this into
+library/hairlib. Blender: --blender, else the VGAC_BLENDER environment variable, else the default below.
 
 Reads the packs read-only as data (OBJ, glTF and their JSON, PNG, .mhclo/.mhmat text); runs no script from a pack.
 Steps: read curation.yaml; check each pack style's licence in its own file (MakeHuman .mhclo header; the Quaternius
@@ -51,6 +55,11 @@ SOURCES = {
 
 def pack_path(packs: Path, parts) -> Path:
     return packs.joinpath(*parts)
+
+
+def pack_present(packs: Path, pack: str) -> bool:
+    """The rule-built styles need no pack; a pack is there when its hair folder (or the Quaternius hair folder) is."""
+    return pack == "rule" or pack_path(packs, PACK_DIRS[pack]).is_dir()
 
 
 def licence_of(packs: Path, pack: str, src: str) -> tuple[bool, str, str | None]:
@@ -166,7 +175,9 @@ def main() -> int:
     ap.add_argument("--normal", type=int, default=512)
     ap.add_argument("--scratch", default=str(ROOT / "runtime" / "tmp" / "hairlib" / "build"))
     ap.add_argument("--no-cap-check", action="store_true")
+    ap.add_argument("--blender", default=None)
     a = ap.parse_args()
+    blender = a.blender or BLENDER
     packs, out = Path(a.packs).resolve(), Path(a.out).resolve()
     cur = yaml.safe_load(open(a.curation or (ROOT / "backend" / "vgac" / "data" / "hairlib" / "curation.yaml"), encoding="utf-8"))
     out.mkdir(parents=True, exist_ok=True)
@@ -184,6 +195,8 @@ def main() -> int:
     kept, refused, job_styles = {}, [], []
     # every MakeHuman style in the packs is checked so the "Left out" list is complete
     for pack in ("mh_hair01", "mh_system"):
+        if not pack_present(packs, pack):
+            continue
         for d in sorted(pack_path(packs, PACK_DIRS[pack]).iterdir()):
             if d.is_dir():
                 ok, line, _ = licence_of(packs, pack, d.name)
@@ -191,6 +204,11 @@ def main() -> int:
                     refused.append(dict(style=f"{pack}:{d.name}", licence_line=line))
     for sid, c in cur["styles"].items():
         if a.only and sid not in a.only:
+            continue
+        needs = [c["pack"]] + ([cur["styles"][c["texture_from"]]["pack"]] if c.get("texture_from") else [])
+        # every style is fitted on a reference head that comes from a pack (the MakeHuman proxies or the Quaternius figures)
+        if not all(pack_present(packs, n) for n in needs) or not pack_path(packs, REFS[c["ref"]]).is_file():
+            print("SKIPPED (pack not present)", sid)
             continue
         ok, line, author = licence_of(packs, c["pack"], c["src"])
         if not ok:
@@ -221,12 +239,16 @@ def main() -> int:
                                grey=str(tex_dir / grey) if grey else None, normal=str(tex_dir / normal) if normal else None,
                                kind=c["kind"], alpha="cutout" if cards else "opaque", thin=c.get("thin"), hang_groups=c.get("hang_groups")))
     scratch = Path(a.scratch); scratch.mkdir(parents=True, exist_ok=True)
-    job = dict(out=str(out), refs={k: str(pack_path(packs, v)) for k, v in REFS.items()}, styles=job_styles, tex=a.tex)
+    if not job_styles:
+        print("NOTHING TO BUILD: none of the packs is in", packs)
+        return 3
+    used_refs = {s_["ref"] for s_ in job_styles}
+    job = dict(out=str(out), refs={k: str(pack_path(packs, v)) for k, v in REFS.items() if k in used_refs}, styles=job_styles, tex=a.tex)
     jp = scratch / "build_job.json"
     jp.write_text(json.dumps(job, indent=1), encoding="utf-8")
     log = scratch / "build_blender.log"
     with open(log, "w", encoding="utf-8") as lf:
-        r = subprocess.run([BLENDER, "-b", "--python", str(ROOT / "tools" / "hairlib_blender.py"), "--", str(jp)], stdout=lf, stderr=subprocess.STDOUT)
+        r = subprocess.run([blender, "-b", "--python", str(ROOT / "tools" / "hairlib_blender.py"), "--", str(jp)], stdout=lf, stderr=subprocess.STDOUT)
     meas = json.loads((out / "build_measures.json").read_text(encoding="utf-8"))
     missing = [s for s in kept if s not in meas]
     if r.returncode or missing:
@@ -280,7 +302,9 @@ def main() -> int:
             sha256={k2: file_sha256(out / v) for k2, v in files.items()})
     catalogue["version"] = 1
     catalogue["refused"] = refused
-    catalogue["left_out"] = cur.get("left_out", {})
+    present = {"quaternius": pack_present(packs, "quaternius"), "mh_system": pack_present(packs, "mh_system"), "mh_hair01": pack_present(packs, "mh_hair01")}
+    left_out = {k2: v2 for k2, v2 in (cur.get("left_out") or {}).items() if present.get(k2.split(":")[0], True)}
+    catalogue["left_out"] = left_out
     cat_path.write_text(json.dumps(catalogue, indent=1), encoding="utf-8")
     lines = ["Hair library credits (backend/vgac/data/hairlib)", "",
              "Every style below is CC0 1.0 (public domain dedication) by its own file. No attribution is required; it is given anyway.", ""]
@@ -289,7 +313,7 @@ def main() -> int:
     lines += ["", "Left out", ""]
     for r in refused:
         lines.append(f"{r['style']}: licence line found: {r['licence_line']}")
-    for k2, why in (cur.get("left_out") or {}).items():
+    for k2, why in left_out.items():
         lines.append(f"{k2}: {why}")
     (out / "CREDITS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (out / "build_measures.json").unlink(missing_ok=True)
@@ -298,6 +322,12 @@ def main() -> int:
     for p in tex_dir.glob("*.png"):
         if p.name not in used:
             p.unlink()
+    # files of styles that are not in this build (an earlier build had more packs)
+    keep = {Path(v).as_posix() for e in catalogue["styles"].values() for v in (e["thumbs"]["front"], e["thumbs"]["quarter"], f"styles/{e['id']}.npz", e.get("lite")) if v}
+    for sub in ("styles", "thumbs"):
+        for p in (out / sub).glob("*"):
+            if p.is_file() and f"{sub}/{p.name}" not in keep:
+                p.unlink()
     total = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
     print(f"styles {len(catalogue['styles'])}, refused {len(refused)}, total {total / 1e6:.1f} MB")
     if total > CAP_BYTES and not a.no_cap_check:

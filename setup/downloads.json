@@ -251,6 +251,43 @@
   }
  },
  "animation_note": "Both packs are on itch.io (linked from quaternius.com). itch.io hands the file over after a click-through, so the helper does not fetch it: you download the zip, and the helper unpacks it into data/animations/<id>, keeping the folder names backend/config.yaml expects.",
+ "hair_sources": [
+  {
+   "id": "makehuman_system",
+   "name": "MakeHuman system assets",
+   "zip_name": "makehuman_system_assets_cc0.zip",
+   "zip": "https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip",
+   "zip_alt": "https://files2.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html",
+   "zip_size": 280737770,
+   "check_dir": "hair",
+   "licence": "CC0 1.0",
+   "note": "Direct link. Also holds the reference bodies every MakeHuman style is fitted on, so the hair01 styles need it too."
+  },
+  {
+   "id": "makehuman_hair01",
+   "name": "MakeHuman community pack hair01",
+   "zip_name": "hair01_cc0.zip",
+   "zip": "https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
+   "zip_alt": "https://files2.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
+   "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
+   "zip_size": 227775853,
+   "check_dir": "hair",
+   "licence": "CC0 1.0",
+   "needs": ["makehuman_system"],
+   "note": "Direct link. One zip for the Cortu, Faydaen and MargaretToigo styles."
+  },
+  {
+   "id": "quaternius_ubc",
+   "name": "Quaternius Universal Base Characters (Standard)",
+   "zip_name": "UniversalBaseCharacters_Standard.zip",
+   "page": "https://quaternius.itch.io/universal-base-characters",
+   "zip_size": 128968391,
+   "check_dir": "Universal Base Characters[Standard]",
+   "licence": "CC0 1.0",
+   "note": "itch.io click-through (Download Now, then No thanks, just take me to the downloads): the app cannot fetch it, so you download the zip yourself. It also holds the reference figures the rule-built styles are fitted on."
+  }
+ ],
  "hair_packs": [
   {
    "id": "quaternius_ubc",
@@ -260,6 +297,7 @@
    "author": "Quaternius",
    "licence": "CC0 1.0",
    "catalogue_pack": "Universal Base Characters (Standard)",
+   "source": "quaternius_ubc",
    "catalogue_author": "Quaternius",
    "page": "https://quaternius.itch.io/universal-base-characters",
    "zip_size": 128968391,
@@ -273,6 +311,7 @@
    "author": "MakeHuman team",
    "licence": "CC0 1.0",
    "catalogue_pack": "MakeHuman system assets",
+   "source": "makehuman_system",
    "catalogue_author": "MakeHuman team (Data Collection AB)",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html",
    "zip_size": 280737770,
@@ -287,6 +326,7 @@
    "author": "Cortu",
    "licence": "CC0 1.0",
    "catalogue_pack": "MakeHuman community hair pack hair01",
+   "source": "makehuman_hair01",
    "catalogue_author": "Cortu",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
    "zip_size": 227775853,
@@ -301,6 +341,7 @@
    "author": "Faydaen",
    "licence": "CC0 1.0",
    "catalogue_pack": "MakeHuman community hair pack hair01",
+   "source": "makehuman_hair01",
    "catalogue_author": "Faydaen",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
    "zip_size": 227775853,
@@ -315,6 +356,7 @@
    "author": "MargaretToigo",
    "licence": "CC0 1.0",
    "catalogue_pack": "MakeHuman community hair pack hair01",
+   "source": "makehuman_hair01",
    "catalogue_author": "MargaretToigo",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
    "zip_size": 227775853,
