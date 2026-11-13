@@ -152,12 +152,12 @@ def crown(q: np.ndarray) -> tuple[float, float, float]:
 def _stats(key: str) -> dict[str, float]:
     from . import hairstyles
 
-    cat = hairstyles._load(str(hairstyles.DATA_DIR))
+    cat = hairstyles._load(str(hairstyles.library_dir()))
     ws, ys, zs = [], [], []
     for sid, e in (cat.get("styles") or {}).items():
         if e.get("kind") != "shell":
             continue
-        f = hairstyles.DATA_DIR / "styles" / f"{sid}.npz"
+        f = hairstyles.library_dir() / "styles" / f"{sid}.npz"
         if not f.is_file():
             continue
         q = np.load(f)["q"]
@@ -171,7 +171,7 @@ def _stats(key: str) -> dict[str, float]:
 def reference_stats() -> dict[str, float]:
     from . import hairstyles
 
-    return _stats(str(hairstyles.DATA_DIR))
+    return _stats(str(hairstyles.library_dir()))
 
 
 # --- upload checks -----------------------------------------------------------------------------------------------------
@@ -278,7 +278,7 @@ def _check_form(label: str, family: str, licence: str) -> tuple[str, str, str]:
 def _builtin_ids() -> set[str]:
     from . import hairstyles
 
-    return set(hairstyles._load(str(hairstyles.DATA_DIR)).get("styles", {}))
+    return set(hairstyles._load(str(hairstyles.library_dir())).get("styles", {}))
 
 
 def _name_taken(label: str, settings: Settings, skip: str | None = None) -> bool:
