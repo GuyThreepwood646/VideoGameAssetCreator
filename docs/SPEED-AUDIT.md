@@ -56,6 +56,147 @@ card layout for everything else.
 Second: my offline timing of the projection ran while another session had all processor threads at 100 percent, so
 its absolute seconds are not usable; only the shares are (section 2.4).
 
+## 1A. Addendum: the application on any machine (2026-11-13, at the owner's request)
+
+Section 1 ranks by what this machine gains. The owner's point is right: the largest item there (O1) is a setting on
+one machine. This section re-ranks for any user. Everything about machines other than this one is **inferred** unless
+marked; the owner's data covers one machine with 96 GB of memory and fast disks.
+
+Reference machines: **(a)** one card of 8 GB, 8 cores, 32 GB. **(b)** one card of 12 to 16 GB, 8 to 12 cores, 32 to
+64 GB. **(c)** two unequal cards, as here.
+
+The best stand-in for (b) is already in the data: the test ran every card job of a single asset on the 12 GB 3060, so
+the 21.9 minutes of section 1 is close to what (b) gets today, flattered by 96 GB of memory. There is no stand-in
+for (a): the README says under 10 GB is untested, and nothing stored says whether it runs at all.
+
+### 1A.1 Opportunities re-ranked (minutes saved for one PC mid asset)
+
+| Rank | Change | (a) 8 GB, one card | (b) 12 to 16 GB, one card | (c) two cards | Basis |
+|---|---|---|---|---|---|
+| 1 | O4: cheaper processor work (turn search, picture loading, rasteriser, float32, one fidelity sweep, one exact packing pass) | 3 to 5, likely more | 3 to 5 | 3 to 5 | Profile shares on this machine; no card involved, so it transfers. Fewer cores make it worth more: the projection asks for 6 of 8 |
+| 2 | O2: stop the loaders running again for every draw | cannot estimate | 0.5 to 2 | 0.5 to 1.5 | Cause is in the engine's code, so it happens everywhere; size unmeasured even here |
+| 3 | N1 (new): a clean-up redo reuses the sharpened pictures and the fitted views | 4 to 5 per redo | 4 to 5 per redo | 2 to 4.5 per redo | Measured here: sharpening 79 s and projection 200 s are repeated unchanged; 9 of 63 clean-ups in three days were redos |
+| 4 | N2 (new): work at the size the quality level needs | about 3 on Phone assets, 0 otherwise | same | same | Code: the projection renders at 2048 and sharpens every picture to 2048 whatever the atlas size; a Phone atlas is 1024 |
+| 5 | N3 (new): memory floor and swap-aware order (1A.2) | may decide whether it runs | unmeasured, possibly minutes on slow disks | small | Code only |
+| 6 | O5: step 3 lets go of its card; exports overtake | 0 alone; 1.5 to 4.5 per queued asset | same | same | Measured 90 to 268 s of held card |
+| 7 | O7: negative prompt not encoded, faster polling | under 0.5 | under 0.5 | under 0.5 | Code |
+| 8 | O1 as app behaviour (1A.3) | 0 | 0 | 3 to 4.5 | Measured here |
+| 9 | O3, O6, items 17, 18, 20 (anything that needs a second card) | 0 | 0 | 1 to 3 | Section 3 |
+
+What I cannot estimate for (a) and (b), and what would be measured: seconds per drawn view and per 3D build on that
+card (one asset run with the engine's log kept); whether the 3D model builds at all on 8 GB; the cost of bringing
+the drawing model back after the 3D model on 32 GB of memory (experiment 1 of section 7, run on that machine).
+
+### 1A.2 What a one-card or low-memory machine does that this data cannot show
+
+**Model swaps on one engine (code).** Weights by size: drawing model 19.6 GB, its text encoder 7.9 GB, 3D model 5.3 GB
+plus a 1.2 GB image encoder, rig model 1.1 GB, cut-out 0.4 GB, upscalers under 0.2 GB, the judge 24 GB (only on
+request). For one asset on one card the large ones change four times: drawing model in (step 2), 3D model in (step
+3), drawing model back for the face close-up (step 4), rig model (step 5); the next asset brings the drawing model
+back a fifth time. Inside step 2 the text encoder and the drawing model also displace each other for every view,
+because together they are 27.5 GB and no consumer card holds both.
+
+**What a swap costs: not measured anywhere.** On this machine it is hidden: every draw already pays a full reload
+(O2), and 96 GB keeps every file in memory, so a close-up after the upscaler costs the same 57 to 63 s as an ordinary
+view. The one cold load on record took 187 s. With 32 GB the weights of steps 2 and 3 (about 34 GB) do not fit in
+memory beside the app, Blender and a browser, so each return of the drawing model reads up to 27 GB from disk again:
+roughly 10 s on a fast NVMe disk, about a minute on a SATA disk, several minutes on a hard disk (inferred from
+typical disk speeds, not measured). The engine pins 40 percent of memory for fast transfers (measured: 39 GB of 96);
+on 32 GB that is 13 GB, less than the drawing model.
+
+**The drawing model on 8 GB: unknown.** It already runs in pieces on 10 and 12 GB (it is twice the card), so it
+should run, slower; how much slower I cannot say. The text encoder (7.9 GB) will not fit either and would also run in
+pieces. `jobs.LEND_MIN_ROOM_GB = 7.0` is, by its own comment, a guess. The 3D model on 8 GB is the real question.
+
+**Memory under 32 GB, and at 32 GB (code).** `min_free_ram_gb` defaults to 24 in `config.py` and in the shipped
+`backend/config.yaml`. The worker checks it before every job and, when free memory is lower, waits and tries again
+every 5 s, writing only to the log (`jobs.py`, `InstanceWorker._run`). The job stays "queued" with no message. On a
+32 GB machine with an engine holding weights, free memory will often be under 24 GB, so the app can sit still
+indefinitely. The README mentions lowering the value; the app does not. That is a first-run failure, not a slow path.
+Other memory users: the projection keeps eight to ten 2048 x 2048 float64 pictures per view (about 2.3 GB seen
+mid-run here, peak not recorded; float32 in O4 halves it); Blender at PC mid is small.
+
+**What the app does today when memory is short.** Card memory: nothing of its own; it relies on the engine to run
+models in pieces, which is safe and slow. The "free memory after each step" switch unloads everything after every
+job, which guarantees a full reload for the next one: safe, and the slowest choice on one card. System memory: the
+silent wait above.
+
+**Order of work that minimises swaps on one card.**
+1. Within step 2: one graph per view that also cuts it out (O2 a), so nothing interrupts the drawing model; redraws
+   at the end of the pass, not interleaved.
+2. Sharpen the pictures at the end of step 2 (the upscalers are small and sit beside the drawing model), not in step
+   4 between the 3D model and the close-up.
+3. Step 3's processor work after the card is released (O5 b).
+4. In clean-up, do all processor work first and both drawing jobs (close-up, and its retry) together, so the
+   drawing model returns once.
+5. Between assets: when several are queued, prefer the waiting job whose model is already loaded
+   (`InstanceWorker._next_queued` takes the oldest today). Three assets then cost two large swaps per step, not per
+   asset. Bound the wait so one asset is never starved.
+6. Never run the judge between drawing jobs on the drawing card.
+
+### 1A.3 Machine-specific findings as application behaviour
+
+- **Which card does what (O1).** The app already has the answer in its own job table: card, kind and seconds for
+  every job. Rule: per kind (drawing, 3D, rig), route to the card with the lower median of its last five jobs; when a
+  card has no history for a kind and is idle, give it the next such job once. Cost to the user: nothing, no first-run
+  wait; the first one or two assets may run on the slower card. A first-run timing would cost 3 to 6 minutes of
+  cold loads per card and tell the same thing. A rule from memory size or card generation is wrong in the way this
+  machine shows: the card with more memory is the slower one, and memory does not help when the model fits neither.
+  Re-check: continuously (rolling median), and discard history when `/system_stats` reports a different card name or
+  memory. Keep the person's explicit default as an override, shown with the measured times beside it.
+- **The memory floor.** Derive it from the machine (for example a quarter of total, capped) and show a plain message
+  on the held job. Small, and it turns a hang into a wait the person can see.
+- **Cores.** `WORKERS = min(6, cores - 1)` counts threads. Use physical cores and leave two, so a second lane or a
+  browser does not stall it.
+- **Engine flags (O2 b).** The app starts its own engines from `runtime/start-comfy-*.ps1`; set the cache flags
+  there by total memory. An engine started by ComfyUI Desktop cannot be given flags, which is why O2 a (the graph
+  change) is the fix that works for every user.
+- **Display on another adapter.** Not app behaviour; at most a note on the Health page when the drawing card also
+  drives the screen and holds more than 1 GB for it. The app's own window should not use the drawing card.
+
+### 1A.4 Set aside earlier because I was looking at this machine
+
+- **A redo repeats everything (N1).** "Try a different face" and every Fine-tune of clean-up run `_prep` from the
+  top: Blender prep, texture pass, sharpening and projection, all with unchanged inputs, to reach a face pass that is
+  a third of the time. Redo median 366 s (measured, 9 jobs). Keep the sharpened pictures on the step 2 version and the
+  fitted views (turn, fit, flow field: small arrays) beside the clean-up version, keyed by the hashes of the model and
+  the pictures; a redo with the same model reuses them. Accuracy risk: none if the key is right; a wrong key reuses a
+  stale fit, so key on file content, not names.
+- **Quality levels spend the same time (N2).** Step 2 is identical at every level. The 3D build on a 1024 Phone
+  target takes 124 s against 151 s (measured, 2 jobs): the step counts and the cascade do not change. Clean-up
+  sharpens to 2048 and projects at 2048 for a 1024 atlas (code: `srcproject.SIZE`, `UPSCALE_BELOW` are constants).
+  For Phone: project at the atlas size and skip sharpening. Check on three Phone assets that sharpness in the 1024
+  atlas is unchanged. In the other direction, Showcase's 4096 texture pass took 154 s against 19 s, which is O4 (b).
+- **The same fidelity sweep three times.** Colour match, step 3's checks, and clean-up's final checks
+  (`prep.judge` calls `mesh.fidelity_checks` again: most of clean-up's last 40 s). The third is needed (the texture
+  changed) but can reuse the turn the first found and skip the search.
+- **Redraws that cannot pass.** 12 of 157 drawn views were redrawn; 10 of those used both redraws and were kept
+  flagged anyway (measured). That is 20 draws, 10 to 20 minutes on a slow card, for no change. Small numbers, but
+  worth recording which check failed and not redrawing for checks a new seed rarely fixes.
+- **3D rebuilds:** 0 of 32 builds were rebuilt for colour (measured). Nothing to gain.
+- **Start-up.** The backend asks each engine about some 70 node types one request at a time at start; it took under
+  a second here (measured in the log). Engine start is allowed 180 s. Blender starts in under a second. The first
+  draw after an engine start is the real first-run cost (187 s once here) and is the same reload as a swap.
+- **Stale estimates (C5)** matter more on slow machines: a person who is shown 20 seconds and waits 20 minutes stops
+  the job. Use the job table's own medians per card.
+
+### 1A.5 The five changes to make first, for the application
+
+First, O4, the processor work: 3 to 5 minutes on (b) and on the owner's machine, and it shrinks Showcase and every
+redo as well. Second, O2 a, the cut-out inside the view graph and one graph for the sharpening: 0.5 to 2 minutes on
+(b), 0.5 to 1.5 on the owner's, and the only loader fix that reaches users whose engine the app does not start.
+Third, N1, a clean-up redo reusing sharpened pictures and fitted views: 4 to 5 minutes per redo on (b), 2 to 4.5 on
+the owner's (less once O4 is in). Fourth, N3, the memory floor made visible and derived from the machine, with
+swap-aware ordering: no minutes on the owner's machine, and on a 32 GB machine the difference between a job that
+runs and one that sits queued; the ordering part is unmeasured. Fifth, routing learned from the job table (O1 as
+behaviour) together with O5: 0 on (b) for a single asset, 3 to 4.5 minutes on the owner's, and 1.5 to 4.5 minutes of
+card time per queued asset on both. N2 is sixth only because it helps Phone assets alone. For one PC mid asset I
+expect (b) to go from about 22 minutes to 15 to 17, and the owner's to 13 to 15 as before; the (b) figure rests on
+the 3060 runs here and should be confirmed on a real one-card machine with 32 GB.
+
+This changes the order of work at the end of section 5: O4 (a0) and (c), O2 a, N3's floor message, N1, then O1 as
+learned routing with O5, then experiment 1, O3, and the re-scoped items 17 and 18.
+
 ## 2. The time budget in full
 
 ### 2.1 Step 2, side views: 392.7 s (measured)
