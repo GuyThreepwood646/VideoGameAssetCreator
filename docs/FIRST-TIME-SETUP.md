@@ -52,7 +52,7 @@ A second script does the rest of the list. Same rules as the first: the default 
 | Node packs | `ComfyUI-SkinToken`, `ComfyUI-PixelArt-Detector` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | Both GitHub repositories' default branch is `main` (checked) |
 | Blender | Accepts an existing Blender 5.x (a note says only 5.2.3 is tested), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
 | Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
-| Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json` | See "Hair packs: plan" |
+| Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json`. Then it gets the packs you kept (the two MakeHuman zips by direct link after asking; the Quaternius zip you download yourself and give with `-QuaterniusZip`), unpacks them into `runtime/hairpacks` and builds the hair library into `library/hairlib` (needs Blender 5 and the backend venv), checks it with `tools/hairlib_verify.py` and swaps it in. Safe to run again: a pack already unpacked or a library already built is skipped. `-HairPacks id,id` picks without asking | See "Hair packs" below |
 | Settings | Writes proposed copies `backend/config.proposed.yaml`, `desktop/config.proposed.json`, `runtime/start-comfy-b.proposed.ps1` and `runtime/start-comfy-a.proposed.ps1` from what it finds (project folder, cards, `-ComfyRoot` and `-ComfyInstall`, Blender 5.x, Unity, input and output folders, animation pack paths). Never edits or overwrites an existing file, an earlier proposed one included. A key whose value already fits this PC is left out | One card: engine B only, `stage_instances`, `material_stage_instances` and `judge_instance` all on b, and no engine A start script |
 
 Could not be confirmed (so left to you, or guarded):
@@ -106,7 +106,7 @@ says what a later round does about that. Until then, edit copies of those files 
 | 9 | `frontend/node_modules` and `frontend/dist` (`npm install`, `npm run build`) | The screens you click in; the backend serves `dist` | about 400 MB | npm registry | Each package's own open licence | Helper |
 | 10 | `desktop/node_modules` (`npm install`) | The Electron launcher window | about 300 MB | npm registry | Each package's own open licence | Helper |
 | 11 | `library/samples/sample.glb` (`backend/scripts/make_sample_glb.py`) | A small sample 3D file for the viewer | under 1 MB | Written locally | n/a | Helper |
-| 12 | Hair library (`backend/vgac/data/hairlib`) | Hair styles for characters. It ships inside the project | see the folder | Quaternius Universal Base Characters and MakeHuman hair, plus rule-built styles | CC0 (see `CREDITS.txt` there) | Comes with the project; the helper only checks it |
+| 12 | Hair library (`library/hairlib`, built on this PC) | Hair styles for characters | about 16 MB built; the packs it is built from are about 640 MB of downloads (about 1 GB unpacked, which you can delete afterwards) | Quaternius Universal Base Characters and MakeHuman hair packs, plus rule-built styles | CC0 (see `CREDITS.txt` in the library folder) | `Setup-Extras.ps1 -Packs -Install`; the check helper reports it Ready or Missing. A copy inside the project (`backend/vgac/data/hairlib`) is used until the local library is built |
 
 ## 4. Blender, Unity and the animation packs (by hand)
 
@@ -198,8 +198,8 @@ GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
 
 Decision: setup should let each person choose which packs to download, with a short description of each, so nothing
 is pushed on them and the credit notices follow what they actually took. Built in part: `Setup-Extras.ps1 -Packs` unpacks the two
-animation packs (about 91 MB together) from a zip you download, and records a hair pick. Today the hair library (about
-16 MB) ships inside the project, so the hair pick does not yet change what is installed or credited. The packs are all CC0 and, with the hair, are the only content that is not a model.
+animation packs (about 91 MB together) from a zip you download, and gets the hair packs you pick and builds the hair library from them
+on your PC. The packs are all CC0 and, with the hair, are the only content that is not a model.
 
 Animation packs (both by Quaternius, from quaternius.com):
 
@@ -208,7 +208,7 @@ Animation packs (both by Quaternius, from quaternius.com):
 | Universal Animation Library (Standard) | The ready-made moves (walk, run, idle and more) for rigged humanoid characters | about 53 MB |
 | Universal Animation Library 2 (Standard) | More ready-made moves; uses Unreal-style bone names, which the app maps itself | about 38 MB |
 
-Hair packs (26 styles in the library now, all CC0; each style in the app has a plain name and a thumbnail):
+Hair packs (26 styles in the library when all packs are used, all CC0; each style in the app has a plain name and a thumbnail):
 
 | Pack | Styles | What it gives |
 |------|--------|---------------|
@@ -220,30 +220,39 @@ Hair packs (26 styles in the library now, all CC0; each style in the app has a p
 | VGAC rule-built styles (made by the app, no download) | 3 | Top bun, long straight with a centre parting, high ponytail |
 
 Left out on purpose, so the list stays CC0-only: the hair01 styles under AGPL-3.0 or CC BY, beards, and styles too
-heavy for a game character (see `backend/vgac/data/hairlib/CREDITS.txt`, "Left out").
+heavy for a game character (see `CREDITS.txt` in the library folder, "Left out").
 
-### Hair packs: plan
+### Hair packs
 
-Done: the credits follow the picks. Every catalogue style carries `pack` and `author`, and `setup/downloads.json` maps
-each pack above to that pair. `Setup-Extras.ps1 -Packs -Install` writes the picked packs to `library/hair-packs.json`;
-`hairstyles.py` (the one loader the hair picker, the fitting and the credits page all use) then hides styles from packs
-that were not kept, after the backend restarts. No file, or an unreadable one, means every style, as before. Tests:
-`backend/tests/test_hair_packs.py`.
+The hair library is not stored in the project's source. It is built on your PC from the packs you keep, so the packs are
+the only download and the credits follow what you took.
 
-Not done: shipping each pack as its own download, so unpicked packs are not on disk at all. The pack sources, read from
-the official pages on 6 Nov 2026 and equal in size to the zips the library was built from (kept in `runtime/hairpacks`):
+What to do: run `powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Packs -Install`. It lists each hair pack
+and asks which to keep (the choice is written to `library/hair-packs.json`), then for each pack needed:
 
-| Pack | Source | Size |
+| Pack zip | Where it comes from | Size |
 |------|--------|------|
-| MakeHuman system assets | https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip (page: static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | 280,737,770 bytes |
-| MakeHuman hair01 (Cortu, Faydaen, MargaretToigo are all in this one zip) | https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip (page: .../assetpacks/hair01.html) | 227,775,853 bytes |
-| Quaternius Universal Base Characters (Standard) | quaternius.itch.io/universal-base-characters: click-through, you download it yourself | 128,968,391 bytes |
+| MakeHuman system assets (also holds the reference bodies every MakeHuman style is fitted on) | Direct link, downloaded for you after asking: https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip (page: static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html) | 280,737,770 bytes |
+| MakeHuman hair01 (Cortu, Faydaen, MargaretToigo; needs the system assets above) | Direct link, downloaded for you after asking: https://files.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip (page: .../assetpacks/hair01.html) | 227,775,853 bytes |
+| Quaternius Universal Base Characters (Standard) (also holds the figures the rule-built styles are fitted on) | quaternius.itch.io/universal-base-characters: itch.io needs a click-through ("Download Now", then "No thanks, just take me to the downloads"), so you download the zip yourself and give its path with `-QuaterniusZip` (or the helper asks) | 128,968,391 bytes |
 
-Those zips are far bigger than the 16 MB of hair the app keeps from them, because the library holds baked, trimmed
-copies (`tools/hairlib_build.py`), so a per-pack download would be a packaged form of the baked files, not these zips.
-That is the part left to do.
+The helper unpacks the zips into `runtime/hairpacks`, runs `tools/hairlib_build.py` with Blender (about a minute), checks
+the result with `tools/hairlib_verify.py` (every file present and matching the catalogue's checksums), and only then
+swaps it in as `library/hairlib`; a failed build leaves the old library alone. Total: about 640 MB of downloads, about
+1 GB unpacked (delete `runtime/hairpacks` afterwards to free it; keep it to rebuild), 16 MB built. Restart the backend
+after it finishes. A pack you skip only leaves its styles out; the rule-built styles need the Quaternius pack.
 
-Size: medium. No licence question: all are CC0.
+Where the app reads it: the backend (`hairstyles.library_dir()`) uses `library/hairlib` first and falls back to the copy in
+`backend/vgac/data/hairlib` while that still exists. `library/` is not part of the source tree, so a project update leaves
+it alone. With neither present the hair panel says the library is not installed and how to get it; your own hairstyles
+(`library/my_hair`) work with or without it. `setup\Check-Setup.ps1` reports "Hair library" Ready or Missing the same way.
+
+Tests: `backend/tests/test_hairlib_install.py` (lookup, fallback, the missing-library message, own hairstyles) and
+`backend/tests/test_hair_packs.py` (the picks).
+
+Not guaranteed: the MakeHuman links belong to a community site that announced services shutting down in October 2026; if
+a link stops working the helper says so, and you can download the zip some other way and give its path with
+`-MakeHumanZip` or `-Hair01Zip`.
 
 ## What is still needed before other people can install this
 
@@ -257,7 +266,7 @@ Ranked by how much each blocks a stranger; size is the rough effort (small, medi
 | 3 | A tested one-card setup: run every step on one card, record the real graphics memory each model and step needs (a "needs about N GB" figure per model in `models.yaml`, measured, not guessed), fix the stage plan and `instance_capabilities` defaults, and give one-card PCs their own start script. The smallest card the app claims to support is then set by the hungriest required model, which is not necessarily the smallest file | Large (needs real hardware: a 10 GB and ideally a smaller card) | Decided: a plain "your mileage may vary" disclaimer, not a full hardware spec and no benchmarking of each model. Wording: "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." |
 | 4 | DONE (`Setup-Extras.ps1 -Models`, `-Nodes`). Fetching ComfyUI's node packs and the models from their official sources as a select list: size, licence and a yes or no per item, with a warning mark on any model that is likely too big for this PC's card (using the figures from item 3). Models are never bundled: each person downloads them under the model's own licence (some are not plain Apache-2.0: Anima is non-commercial, Hunyuan3D has its own community licence). Depends on item 3 for the warnings | Large (many sources, big downloads, resume and checksum handling) | Decided: the app ships with no models at all; setup is the only way they arrive. It offers a select list of the models the app uses today (the table above) and stays open to the person's own additions, without naming further models or adding a licence clause for each. The warning marks are just the 10 GB disclaimer, no per-model figures |
 | 5 | DONE, link not read back (`Setup-Extras.ps1 -Blender`). Blender portable fetched into the project's own `tools` folder, so no other Blender is touched and the path is known. Plan: fetch 5.2.3 (the version the app was built on) for new installs; accept an existing Blender 5.x with a disclaimer that only 5.2.3 is tested; refuse below 5.0 (the app's own check already requires 5.0 or newer). Other versions are not tested and not promised | Small | No: decided (disclaimer only, no version testing) |
-| 6 | Animation picker DONE; hair pick recorded only (see "Hair packs: plan"). The pick-what-you-want hair and animation pack list described above (CC0 downloads, one description per pack, credits from the picks), and a check that the Unity sandbox project is complete | Medium | No: decided |
+| 6 | Animation picker DONE; hair packs downloaded and the library built locally (see "Hair packs"). The pick-what-you-want hair and animation pack list described above (CC0 downloads, one description per pack, credits from the picks), and a check that the Unity sandbox project is complete | Medium | No: decided |
 | 7 | Installing Python, Node and Git for people who lack them (offering `winget` commands, asking first) | Small | No |
 
 Unity stays by hand whatever is built: it needs the person's own account and licence.
