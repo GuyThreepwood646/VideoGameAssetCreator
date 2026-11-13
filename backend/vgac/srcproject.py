@@ -329,6 +329,33 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
     return float((a & b).sum()) / float(max((a | b).sum(), 1))
 
 
+def iou_warped(pm: np.ndarray, support: tuple[int, int, int, int] | None, M: np.ndarray, rm: np.ndarray, rsum: int,
+               n: int) -> float:
+    """iou(warp_mask(pm, M, n) > 0.5, rm), exactly, sampling only the part of the frame that lands on the picture's
+    figure: a bilinear sample is above zero only when one of its four neighbours is, so outside the figure's box (one
+    pixel round) the warped mask is zero and only the model's outline counts there (rsum is its size). The turn search
+    scores about 150 warps per candidate turn, and the figure covers a small part of the frame (docs/SPEED-AUDIT.md O4
+    a0). A figure touching the picture's edge, which the border clamp repeats outward, is warped whole as before."""
+    h, w = pm.shape
+    if support is None:
+        return 0.0
+    x0s, x1s, y0s, y1s = support
+    if x0s <= 0 or y0s <= 0 or x1s >= w - 1 or y1s >= h - 1:
+        return iou(warp_mask(pm, M, n) > 0.5, rm)
+    corners = np.array([[x0s - 1.5, x1s + 2.5, x0s - 1.5, x1s + 2.5], [y0s - 1.5, y0s - 1.5, y1s + 2.5, y1s + 2.5], [1.0, 1.0, 1.0, 1.0]])
+    d = np.linalg.inv(M) @ corners
+    dx0, dx1 = max(0, int(np.floor(d[0].min())) - 2), min(n, int(np.ceil(d[0].max())) + 2)
+    dy0, dy1 = max(0, int(np.floor(d[1].min())) - 2), min(n, int(np.ceil(d[1].max())) + 2)
+    if dx1 <= dx0 or dy1 <= dy0:
+        return 0.0
+    ys, xs = np.mgrid[dy0:dy1, dx0:dx1] + 0.5
+    qx = M[0, 0] * xs + M[0, 1] * ys + M[0, 2]
+    qy = M[1, 0] * xs + M[1, 1] * ys + M[1, 2]
+    a = face.sample(pm[..., None], qx, qy)[..., 0] > 0.5
+    inter = int((a & rm[dy0:dy1, dx0:dx1]).sum())
+    return float(inter) / float(max(int(a.sum()) + rsum - inter, 1))
+
+
 def fit_similarity(pic_mask: np.ndarray, render_mask: np.ndarray, n: int = FIT_N) -> dict[str, Any]:
     """Scale, shift and a few degrees of turn of the picture's cut-out onto the drawing's mask, by overlap (IoU), from
     the bounding boxes."""
@@ -349,8 +376,12 @@ def fit_similarity(pic_mask: np.ndarray, render_mask: np.ndarray, n: int = FIT_N
     tx0 = (rx0 + rx1) / 2 - c - s0 * ((px0 + px1) / 2 - c)
     ty0 = (ry0 + ry1) / 2 - c - s0 * ((py0 + py1) / 2 - c)
 
+    ys_, xs_ = np.nonzero(pm > 0)
+    support = (int(xs_.min()), int(xs_.max()), int(ys_.min()), int(ys_.max()))
+    rsum = int(rm.sum())
+
     def score(p: list[float]) -> float:
-        return iou(warp_mask(pm, sim_matrix(p[0], p[1], p[2], p[3], n), n) > 0.5, rm)
+        return iou_warped(pm, support, sim_matrix(p[0], p[1], p[2], p[3], n), rm, rsum, n)
 
     best = [s0, 0.0, tx0, ty0]
     bs = score(best)

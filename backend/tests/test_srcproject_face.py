@@ -366,3 +366,22 @@ def test_one_head_view_per_side_and_within_its_turn() -> None:
     v = srcproject.View("quarter", 0.5)
     v.info = {"yaw": -30.0}
     assert srcproject.side_head_yaw("quarter", v, -180.0)[0] is None  # 150 degrees from the face: not a three-quarter view
+
+
+def test_the_turn_search_score_is_exactly_the_whole_frame_score() -> None:
+    rng = np.random.default_rng(0)
+    n = 256
+    yy, xx = np.mgrid[0:n, 0:n]
+    pm = face.blur(((np.abs(xx - 128) < 30) & (np.abs(yy - 128) < 100)).astype(float), 1.5)
+    rm = (np.abs(xx - 131) < 33) & (np.abs(yy - 125) < 97)
+    ys, xs = np.nonzero(pm > 0)
+    sup = (int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max()))
+    for _ in range(200):
+        M = srcproject.sim_matrix(rng.uniform(0.6, 1.4), rng.uniform(-0.1, 0.1), rng.uniform(-60, 60), rng.uniform(-60, 60), n)
+        assert srcproject.iou_warped(pm, sup, M, rm, int(rm.sum()), n) == srcproject.iou(srcproject.warp_mask(pm, M, n) > 0.5, rm)
+    edge = pm.copy()
+    edge[:, :3] = 1.0  # a figure touching the edge: warped whole, as before
+    ys, xs = np.nonzero(edge > 0)
+    sup = (int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max()))
+    M = srcproject.sim_matrix(0.9, 0.05, 20.0, 5.0, n)
+    assert srcproject.iou_warped(edge, sup, M, rm, int(rm.sum()), n) == srcproject.iou(srcproject.warp_mask(edge, M, n) > 0.5, rm)
