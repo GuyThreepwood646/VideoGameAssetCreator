@@ -6,7 +6,7 @@ import { Link } from 'react-router'
 import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { failingCheckCount, findCheckStage, finishLines } from './finish'
+import { attentionItems } from './finish'
 import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -68,9 +68,9 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   const idx = selected ? versions.indexOf(selected) + 1 : 0
   const good = selected ? looksGood(selected.metrics) : null
   const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? '. A check on this step needs a look' : ''}.`
-  const warnLines = finishLines(asset).filter((l) => l.state === 'warn')
-  const warns = warnLines.length
-  const allFailing = failingCheckCount(asset)
+  // The same list the finish card shows, so the count here and there agree.
+  const items = attentionItems(asset)
+  const warns = items.length
   const exp = selectedVersion(asset, 'export')
   const file = exp?.files.fbx ?? exp?.files.glb
   return (
@@ -87,17 +87,13 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
             <TrafficDot state="warn" />
             {warns === 1 ? '1 check on the finished asset needs a look:' : `${warns} checks on the finished asset need a look:`}
             <ul className="finish-bar-list">
-              {warnLines.map((l) => {
-                const at = findCheckStage(asset, l.check ?? l.id)
-                return (
-                  <li key={l.id}>
-                    {at && <span className="muted">Step {STAGES.indexOf(at) + 1}, {stagePlain(at, null)}: </span>}
-                    {l.text} {at && at !== stage && <Link to={`/assets/${asset.id}/${at}`}>Go there</Link>}
-                  </li>
-                )
-              })}
+              {items.map((a, i) => (
+                <li key={a.stage + a.id + i}>
+                  <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
+                  {a.text} {a.stage !== stage && <Link to={`/assets/${asset.id}/${a.stage}`}>Go there</Link>}
+                </li>
+              ))}
             </ul>
-            {allFailing > warns && <div className="muted">Counting every check on steps 4 to 6, {allFailing} need a look. The step pages list them all.</div>}
           </div>
         )}
       </div>

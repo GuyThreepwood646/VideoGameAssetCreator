@@ -11,7 +11,7 @@ import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip,
 import Viewer from '../Viewer'
 import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
-import { finishLineFix, finishLines, unityHowto } from './finish'
+import { attentionItems, finishLineFix, finishLines, unityHowto } from './finish'
 import { UnityHandoff, unityImportOf } from './UnityHandoff'
 import { Deliverables, deliverableKeys } from './views/ExportView'
 
@@ -351,6 +351,7 @@ function withCode(text: string): ReactNode {
 export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = false, onChanged }: { asset: Asset; byAutopilot: boolean; onMakeVariant: () => void; onFix?: (fix: FixRequest) => void; busy?: boolean; onChanged?: () => void }) {
   const exp = selectedVersion(asset, 'export')
   const lines = finishLines(asset)
+  const attention = attentionItems(asset)
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
   const mainFile = exp?.files.fbx ?? exp?.files.glb
@@ -423,6 +424,40 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
             </ul>
           </div>
         )}
+        <div className="finish-lines finish-needs-look">
+          <div className="field-label">Needs a look</div>
+          {attention.length === 0 ? (
+            <div className="finish-line ok">
+              <TrafficDot state="ok" title="checked" />
+              <span className="finish-line-text">Every check on all {STAGES.length} steps passed on the versions you kept.</span>
+            </div>
+          ) : (
+            <>
+              <div className="muted small">
+                {attention.length === 1 ? '1 check on the versions you kept did not pass:' : `${attention.length} checks on the versions you kept did not pass:`}
+              </div>
+              <ul>
+                {attention.map((a, i) => {
+                  const fix = onFix ? checkFix(a.check) : null
+                  return (
+                    <li key={a.stage + a.id + i} className="finish-line warn">
+                      <TrafficDot state="warn" title="needs a look" />
+                      <span className="finish-line-text">
+                        <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
+                        {a.text} <Link to={`/assets/${asset.id}/${a.stage}`}>Go to this step</Link>
+                      </span>
+                      {fix && (
+                        <button type="button" className="small-btn" disabled={busy} onClick={() => onFix!(fix)} title={fixTooltip(fix)}>
+                          {fix.label}
+                        </button>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </div>
         {exp && (
           <div className="row-gap finish-deliver">
             <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder in your file explorer">

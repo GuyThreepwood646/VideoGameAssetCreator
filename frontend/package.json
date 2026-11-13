@@ -8,7 +8,8 @@
     "dev:mock": "vite --mode mock",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node tests/run.mjs"
   },
   "dependencies": {
     "@types/three": "^0.187.0",
