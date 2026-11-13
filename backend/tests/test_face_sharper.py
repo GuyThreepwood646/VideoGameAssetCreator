@@ -253,7 +253,8 @@ def test_a_close_up_that_fails_the_guard_falls_back_to_the_painting_and_says_why
     res = asyncio.run(fd.run(sc, glb, maps, REC, {"face_density": "standard"}))
     r = res["metrics"]["face_detail"]
     assert r["ran"] and r["source"] == "painting" and r["closeup"]["used"] is False and r["closeup"]["reason"] == "likeness"
-    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_redraw"]  # the close-up, then today's sharpening
+    # the close-up is drawn again twice with new seeds (item 16), then today's sharpening
+    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_closeup_2", "face_closeup_3", "face_redraw"]
     assert calls["paint"][0]["colour"] is None and calls["paint"][0]["picture"] == "painted_head_sharp.png"
     # both seeds were written on the version at once, so a Stop and Resume redraws the same pictures
     assert {"face_closeup_seed", "face_seed"} <= set(sc.params)
@@ -302,7 +303,7 @@ def test_a_close_up_off_the_paintings_look_is_drawn_once_more_in_the_looks_own_w
     assert {"face_closeup_seed", "face_closeup_seed_2"} <= set(sc.params)  # both seeds kept for a Resume
 
 
-def test_no_second_close_up_for_moved_features_colours_or_a_look_without_words(tmp_path, stubbed, monkeypatch):
+def test_no_second_close_up_for_moved_features_or_colours(tmp_path, stubbed, monkeypatch):
     calls, glb, maps = stubbed
     monkeypatch.setattr(fd, "closeup_guard", lambda *a: {"ok": False, "reason": "eye_colour", "likeness": 0.97, "source_face_px": 459.0})
     sc = _SC(tmp_path, 2048)
@@ -314,7 +315,7 @@ def test_no_second_close_up_for_moved_features_colours_or_a_look_without_words(t
     sc = _SC(tmp_path, 2048)
     sc.style = {"id": "cel"}
     res = asyncio.run(fd.run(sc, glb, maps, REC, {"face_density": "standard"}))
-    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_redraw"]
+    assert [k for k, _ in calls["redraw"]] == ["face_closeup", "face_closeup_2", "face_closeup_3", "face_redraw"]
     c = guidance.describe_check(fd.face_checks({"face_detail": {"ran": True, "sharpness_after": 1.3, "feature_match_after": 0.8,
                                                                 **res["metrics"]["face_detail"], "source": "painting"}})[0])
     assert "A close-up was drawn but not used: it was drawn in a different style, more like a photograph than the painting." in c["help"]

@@ -122,6 +122,7 @@ CLOSEUP_LOOK_PROMPT = ("A head-and-shoulders close-up of this same character, dr
                        "toward the viewer, the head centred and the same size and position in the picture, plain flat "
                        "grey background.")
 RETRY_REASONS = ("likeness", "features", "style")
+CLOSEUP_TRIES_MAX = 3  # one close-up and up to two more with new seeds, each about a minute and a half of card time
 CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
 LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.980, different faces 0.19 to 0.87
 CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
@@ -210,16 +211,30 @@ def closeup_tries(style_id: str | None) -> list[tuple[str, str]]:
     own seed, carried by Resume (jobs.RESUME_SEEDS)."""
     out = [("face_closeup_seed", CLOSEUP_PROMPT)]
     words = CLOSEUP_LOOK_WORDS.get(style_id or "")
-    if words:
-        out.append(("face_closeup_seed_2", CLOSEUP_LOOK_PROMPT.format(look=words)))
+    again = CLOSEUP_LOOK_PROMPT.format(look=words) if words else CLOSEUP_PROMPT
+    out.append(("face_closeup_seed_2", again))
+    out.append(("face_closeup_seed_3", again))
     return out
 
 
 def retry_wanted(first: dict[str, Any]) -> bool:
-    """A second close-up is drawn only when the first was not the painting's face or look (likeness, features, style):
-    the editor's drift, which the look's own words reduce. A close-up refused for its colours or for moved features is
-    not drawn again."""
-    return not first.get("ok") and first.get("reason") in RETRY_REASONS
+    """Another close-up is drawn (up to CLOSEUP_TRIES_MAX in all, each with its own seed) only when the last one was not
+    the painting's face or look (likeness, features, style): the editor's drift, which a new seed or the look's own words
+    changes (the same picture was refused at likeness 0.880 and accepted in the next run). "no_features" counts when the
+    features could not be found in the drawn close-up, but not when the model's own face was not found (the guard marks
+    that model_face_missing): that is the same for every seed. A close-up refused for its colours or for moved
+    features is not drawn again, and neither is one whose drawing failed."""
+    if first.get("ok"):
+        return False
+    reason = first.get("reason")
+    if reason == "no_features":
+        return not first.get("model_face_missing")
+    return reason in RETRY_REASONS
+
+
+def retry_message(n: int, total: int, message: str) -> str:
+    """The progress words for draw number n (0 is the first): a retry says so."""
+    return message if n == 0 else f"The close-up was not good enough; trying again (draw {n + 1} of {total})"
 
 
 def closeup_on(params: dict[str, Any]) -> bool:
@@ -431,7 +446,7 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
-        return {"ok": False, "reason": "no_features"}
+        return {"ok": False, "reason": "no_features", "model_face_missing": True}
     out = facecloseup.guard(view, info, face.read_rgb(crop, 1024), face.read_rgb(closeup, 1024), painted_head_px,
                             LANDMARK_RESIDUAL_MAX, ALIGN_MIN)
     fixed = facecloseup.save_registered(out, Path(closeup).with_name(Path(closeup).stem + "_fixed.png"))
@@ -1128,6 +1143,10 @@ def picked_seed(sc: StageContext, params: dict[str, Any], key: str) -> int:
     carries the stopped run's, jobs.RESUME_SEEDS), else a new one, written on the version at once so a Stop and Resume
     redraws the same picture."""
     seed = params.get(key)
+    if seed is None and key == "face_closeup_seed_3" and params.get("face_closeup_seed_2") is not None:
+        # the third draw follows the second's seed, which a Resume carries, so it is the same draw again
+        seed = int(params["face_closeup_seed_2"]) + 1
+        sc.set_params(**{key: seed})
     if seed is None:
         seed = random_seed()
         sc.set_params(**{key: seed})
@@ -1142,7 +1161,8 @@ def pin_pass_seed(sc: StageContext, params: dict[str, Any], face_detail_seed: in
         return
     master = int(face_detail_seed)
     pinned: dict[str, int] = {}
-    for key, value in (("face_closeup_seed", master), ("face_closeup_seed_2", master + 1), ("face_seed", master)):
+    for key, value in (("face_closeup_seed", master), ("face_closeup_seed_2", master + 1), ("face_closeup_seed_3", master + 2),
+                       ("face_seed", master)):
         if params.get(key) is None:
             params[key] = value
             pinned[key] = value
@@ -1261,15 +1281,18 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             if n and not (reference is not None or retry_wanted(tries[-1])):
                 break
             seed_c = picked_seed(sc, params, key)
+            if n:
+                sc.progress(0.77, retry_message(n, len(plan), message))
             name = f"{stem}.png" if n == 0 else f"{stem}_{n + 1}.png"
             job_key = stem.replace("painted_head_", "face_") + ("" if n == 0 else f"_{n + 1}")
             k = closeup_margin(found["face_width_px"], reference is not None, photo)
             closeup.setdefault("margins", {})["guided" if reference is not None else "plain"] = k
-            cu = await redraw(sc, instance, crop, seed_c, out_dir / name, prompt, job_key, message, reference=reference, margin=k)
+            cu = await redraw(sc, instance, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
+                              reference=reference, margin=k)
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
                                             reference is not None)
             kind = "guided" if reference is not None else "plain" if prompt == CLOSEUP_PROMPT else "look"
-            tries.append({**guard, "file": name, "prompt": kind})
+            tries.append({**guard, "file": name, "prompt": kind, "seed": seed_c})
             if guard["ok"]:
                 break
         sc.use_model("qwen_edit")
@@ -1277,9 +1300,11 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         return tries
 
     def record_tries(tries: list[dict[str, Any]]) -> None:
-        if len(tries) > 1 or (tries and tries[0].get("prompt") == "guided"):
-            keys = ("prompt", "reason", "likeness", "feature_score_min", "feature_move", "hair_shift", "skin_texture")
+        if tries:
+            keys = ("prompt", "seed", "ok", "reason", "likeness", "feature_scores", "feature_score_min", "feature_move",
+                    "hair_shift", "skin_texture")
             closeup["tries"] = [{k: t.get(k) for k in keys} for t in tries]
+            closeup["draws"] = len(tries)
 
     t1 = time.time()
     if guide is not None:
