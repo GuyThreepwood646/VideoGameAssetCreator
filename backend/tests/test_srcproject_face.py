@@ -403,3 +403,20 @@ def test_a_prepared_picture_is_the_same_and_made_once(monkeypatch: pytest.Monkey
         a[0][0, 0, 0] = 1.0  # read-only: no caller changes what another reads
     prep(path, SIZE * 2)
     assert len(calls) == 2  # another size is another picture
+
+
+def test_a_model_built_from_the_second_three_quarter_view_refuses_no_turn_views() -> None:
+    def setup():  # noqa: ANN202
+        pic = turned(picture=-40.0)["picture"]
+        pic.info["front_view"] = False
+        return pic, turned(quarter=40.0, quarter2=-40.0, left=90.0, right=-90.0, back=180.0)
+
+    pic, f = setup()  # built from quarter2: the picture is quarter2's, on the - side; quarter is the other side's
+    assert srcproject.refuse_contradicting_turns(f, 0.0, pic, "quarter2") == {}
+    assert all(v.ok for v in f.values())
+    pic, f = setup()  # the same fits read as a quarter build (as before): quarter sits on the wrong side of its picture
+    assert set(srcproject.refuse_contradicting_turns(f, 0.0, pic, "quarter")) == {"quarter", "quarter2"}
+    pic, f = setup()
+    assert set(srcproject.refuse_contradicting_turns(f, 0.0, pic)) == {"quarter", "quarter2"}  # no input_view: quarter
+    assert srcproject.other_quarter("quarter2") == "quarter"
+    assert srcproject.other_quarter("quarter") == srcproject.other_quarter(None) == "quarter2"
