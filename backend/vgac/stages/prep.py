@@ -271,8 +271,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # Paint the picture's own pixels into the base colour (vgac/srcproject.py): by itself for a character on a
         # smooth look; any model when the version asks for it.
         body_views: dict[str, Any] = {}  # the fitted pictures, kept to paint again if the face pass packs the texture again
+        # the camera yaw the face is seen straight on from: the picture projection finds the face region from there, and
+        # the face pass paints from there
+        head_yaw = face_detail.head_yaw_from_remainder(facing_.get("face_remainder_deg"))
         if srcproject.on(params, sc.asset.category, look):
-            current = await srcproject.run_stage(sc, out, current, params, keep=body_views)
+            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
             return await srcproject.run_again(sc, glb_, maps_, body_views)
@@ -295,7 +298,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
                                    after_relayout=paint_body_again if body_views.get("views") else None,
                                    body_painted=bool(body_views.get("views")),
-                                   head_yaw=face_detail.head_yaw_from_remainder(facing_.get("face_remainder_deg")))
+                                   head_yaw=head_yaw)
         body_views.clear()  # several large pictures per view: let them go
         for key, p in fd["files"].items():
             sc.register(key, p)
