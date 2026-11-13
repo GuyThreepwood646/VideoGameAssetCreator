@@ -1,7 +1,7 @@
 """Concept image graphs: Z-Image Turbo (default), Z-Image base, FLUX.2 Klein 4B, Anima, Z-Image + pixel LoRA, Chroma1-HD.
 
 zimage_graph is bakeoff/gen_concepts.py node for node. The others follow
-C:/Users/evanr/.claude/skills/comfyui-game-art/scripts/stylemodels.py.
+scripts/stylemodels.py of the comfyui-game-art skill (outside this repository).
 
 Which model uses which builder, its default steps, its SaveImage node and whether it takes a negative prompt are
 read from data/models.yaml (docs/CODE-AUDIT.md D1); this module only holds the graph functions.

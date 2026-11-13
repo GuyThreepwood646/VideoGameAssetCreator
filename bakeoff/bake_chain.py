@@ -25,7 +25,9 @@ sys.path.insert(0, HERE)
 from vgac import face  # noqa: E402
 from texture_measure import measure  # noqa: E402
 
-BLENDER = "F:/Tools/blender-5.2.3-windows-x64/blender.exe"
+from local_paths import blender  # noqa: E402
+
+BLENDER = blender() or "blender"  # VGAC_BLENDER, else blender_exe in the app's settings
 PREP = os.path.join(HERE, "..", "backend", "vgac", "blender", "prep.py")
 OUT = os.path.join(HERE, "out", "bake_chain")
 SUBJECTS = {

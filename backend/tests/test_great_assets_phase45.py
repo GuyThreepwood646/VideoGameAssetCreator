@@ -22,17 +22,10 @@ BACKEND = Path(__file__).resolve().parent.parent
 
 
 def _blender() -> str | None:
-    import os
-    import shutil
+    from tests.machine_tools import blender
 
-    exe = os.environ.get("VGAC_BLENDER")
-    if not exe:
-        cfg = BACKEND / "config.yaml"
-        if cfg.is_file():
-            exe = (yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}).get("blender_exe")
-    if exe and Path(exe).is_file():
-        return exe
-    return shutil.which("blender")
+    exe = blender()
+    return str(exe) if exe else None
 
 
 # --- G03: padding, dilation, gutter ---------------------------------------------------------------

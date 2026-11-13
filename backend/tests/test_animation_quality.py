@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import random
 import subprocess
 from pathlib import Path
@@ -14,11 +13,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.machine_tools import blender as machine_blender
 from vgac.blender import gait
 from vgac.stages import rig
 
 ROOT = Path(__file__).resolve().parents[2]
-BLENDER = Path(os.environ.get("VGAC_TEST_BLENDER", "F:/Tools/blender-5.2.3-windows-x64/blender.exe"))
+BLENDER = machine_blender() or Path("blender-not-found")  # tests/machine_tools.py: VGAC_TEST_BLENDER, settings, PATH
 UAL1_GLB = ROOT / "data/animations/ual1/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb"
 UAL1_FBX = ROOT / "data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"
 

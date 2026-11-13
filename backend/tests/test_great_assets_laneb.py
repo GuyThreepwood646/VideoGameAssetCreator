@@ -5,8 +5,6 @@ the description)."""
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -346,14 +344,10 @@ def test_adjust_merge_rules():
 
 
 def _blender() -> str | None:
-    exe = os.environ.get("VGAC_BLENDER")
-    if not exe:
-        cfg = BACKEND / "config.yaml"
-        if cfg.is_file():
-            exe = (yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}).get("blender_exe")
-    if exe and Path(exe).is_file():
-        return exe
-    return shutil.which("blender")
+    from tests.machine_tools import blender
+
+    exe = blender()
+    return str(exe) if exe else None
 
 
 def test_blender_prep_scales_a_vehicle_box_by_length(tmp_path):

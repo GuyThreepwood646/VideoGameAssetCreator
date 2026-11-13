@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -24,7 +25,10 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "runtime" / "tmp" / "wigtrial"))
 from vgac import baldpic, hairfit, hairstyles  # noqa: E402
 
-BLENDER = r"F:/Tools/blender-5.2.3-windows-x64/blender.exe"
+from vgac.config import load_settings  # noqa: E402
+
+# VGAC_BLENDER, else blender_exe in this machine's settings (backend/config.yaml with local/machine.json over it).
+BLENDER = os.environ.get("VGAC_BLENDER") or str(load_settings(create_library=False).blender_exe or "blender")
 HL = ROOT / "runtime" / "tmp" / "hairlib"
 OUT = HL / "check"
 SAME = {"toigo_blunt_bob_with_bangs": "mh_toigo_blunt_bob_bangs", "bob02": "mh_bob02", "ponytail01": "mh_ponytail01",

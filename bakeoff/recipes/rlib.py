@@ -5,7 +5,8 @@ Uses the app's real graph builders (backend/vgac/graphs) and the app's prompt as
 LoRA after the model loader, and appends the app's BiRefNet cutout to the same graph so one job gives the image and
 its RGBA cutout. Run with backend/.venv/Scripts/python.exe.
 
-LoRAs tested here live only in F:/Projects/ComfyUI/models/loras/VGAC/ (downloaded for this bake-off).
+LoRAs tested here live only in the VGAC/ folder under ComfyUI's loras folder (loras_dir in the app's settings;
+downloaded for this bake-off).
 """
 from __future__ import annotations
 
