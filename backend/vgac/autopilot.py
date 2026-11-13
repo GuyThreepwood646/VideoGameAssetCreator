@@ -69,6 +69,46 @@ def _passes(v: Version, stop_on: str) -> tuple[bool, str | None]:
     return True, None
 
 
+# Faults that are not "block" checks (that severity would show them as problems that break the asset, and the pages treat
+# it as serious) but that the person should look at before the automatic run builds on them. Autopilot stops once after
+# the step that raised one, under "Stop for serious problems" (stop_on "block"); "warn" already stops on any failed check
+# and "never" never stops. The person carries on with Resume, or by hand from the step: a stop is a question, and the
+# version is judged again on Resume without this list. Each entry: stage, check name, a test of the failed check, and
+# the sentence a person reads (what was noticed, what it may mean, what they can do).
+FACING_STOP_REASON = (
+    "The two ways of working out which way the character faces disagree by about {value} degrees: the outline of the "
+    "drawn views says one thing and where the feet point says another. The character may be facing the wrong way. "
+    "Look at the clean-up step (step 4) and its facing check, and turn the character with its fix if it is wrong; or press "
+    "Resume to carry on as it is.")
+FACE_HELD_STOP_REASON = (
+    "The face was left as it was, not painted from the picture, because the picture could not be lined up with the "
+    "model's face well enough (fit {value} of 1, needs {limit}). The character may be left with a blurry or less "
+    "accurate face. Look at the clean-up step (step 4); you can try it again, or use a clearer picture of the face looking "
+    "straight at the camera; or press Resume to carry on as it is.")
+STOP_AND_ASK: tuple[tuple[str, str, Any, str], ...] = (
+    ("prep", "facing_tests", lambda c: True, FACING_STOP_REASON),
+    ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
+)
+
+
+def attention_reason(v: Version, stop_on: str) -> str | None:
+    """The plain sentence(s) for a finished version that fails a STOP_AND_ASK check, or None. Only for stop_on "block":
+    "warn" has stopped on any failed check already and "never" never stops."""
+    if stop_on != "block":
+        return None
+    out: list[str] = []
+    for stage, name, test, text in STOP_AND_ASK:
+        if v.stage != stage:
+            continue
+        for c in _failed_checks(v):
+            if c.get("name") == name and test(c):
+                value, limit = c.get("value"), c.get("limit")
+                out.append(text.format(value=f"{value:g}" if isinstance(value, (int, float)) else value,
+                                       limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit))
+                break
+    return " ".join(out) or None
+
+
 REDRAW_PAUSE_REASON = "Step 2 redrew your character for 3D (open hands, standing pose). Check the redraw before the 3D build."
 
 
@@ -191,6 +231,10 @@ def _settle_fix(aid: str, vid: str, fallback: str | None, stop_on: str) -> bool:
             ok, reason = _passes(v, stop_on)
             if not ok:
                 _set(aid, status="paused", stage=v.stage, version_id=v.id, job_id=None, reason=reason)
+                return False
+            ask = attention_reason(v, stop_on)
+            if ask:
+                _set(aid, status="paused", stage=v.stage, version_id=v.id, job_id=None, reason=ask)
                 return False
             pipeline.select(db, v)
             _set(aid, stage=v.stage, version_id=v.id, job_id=None)
@@ -370,7 +414,7 @@ async def _run(aid: str) -> None:
                 if not ok:
                     _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=reason)
                     return
-                redraw = redraw_pause_reason(best, stop_on)
+                redraw = redraw_pause_reason(best, stop_on) or attention_reason(best, stop_on)
                 if redraw:
                     _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=redraw)
                     return
