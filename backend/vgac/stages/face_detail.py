@@ -444,7 +444,7 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
         return {"found": False, "reason": "no_face"}
     cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
-    info = face.find_face(view, mesh, cam, head)
+    info = face.find_face_checked(view, mesh, cam, head)
     if not info.get("found"):
         return {"found": False, "reason": "no_face", "detail": info.get("reason")}
     if face.covered_head(info, head, cam, COVERED_WIDTH_MIN):
@@ -456,8 +456,10 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
     face.save_rgb(crop["image"], out_dir / "painted_head.png")
     dens = face.face_texels(mesh, cam, info["region"], tex.shape[0])
     tris = face.face_triangles(view, info["region"])
+    # nose_from is only there when the shape's nose was corrected by the finder's eyes and mouth (face.find_face_checked)
     return {"found": True, "reason": None, "texture_size": int(tex.shape[0]), "face_width_px": info["width_px"],
-            "painted_head_px": crop["head_px"], "face_triangles": face.triangle_centres(mesh, tris).round(6).tolist(), **dens}
+            "painted_head_px": crop["head_px"], "face_triangles": face.triangle_centres(mesh, tris).round(6).tolist(), **dens,
+            **({"nose_from": info["nose_from"]} if info.get("nose_from") else {})}
 
 
 def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painted_head_px: float,
@@ -474,7 +476,7 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     head = face.find_head(mesh["verts"])
     cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
-    info = face.find_face(view, mesh, cam, head)
+    info = face.find_face_checked(view, mesh, cam, head)
     if not info.get("found"):
         return {"ok": False, "reason": "no_features", "model_face_missing": True}
     out = facecloseup.guard(view, info, face.read_rgb(crop, 1024), face.read_rgb(closeup, 1024), painted_head_px,
@@ -723,7 +725,7 @@ def frame_own(glb: Path, base_color: Path, crop: Path, own: Path, dest: Path) ->
         return {"ok": False, "reason": "no_features"}
     cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
-    info = face.find_face(view, mesh, cam, head)
+    info = face.find_face_checked(view, mesh, cam, head)
     if not info.get("found"):
         return {"ok": False, "reason": "no_features"}
     inner = face.inner_face(info)
@@ -797,7 +799,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     head = face.find_head(mesh["verts"])
     cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
-    info = face.find_face(view, mesh, cam, head)
+    info = face.find_face_checked(view, mesh, cam, head)
     if not info.get("found"):
         return {"ok": False, "reason": "no_face"}
     region = info["region"]

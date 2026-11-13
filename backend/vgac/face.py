@@ -454,6 +454,85 @@ def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, he
             "eye_gap_px": added}
 
 
+_SHAPE_MARKS: dict[str, Any] = {}
+
+
+def shape_picture(view: dict[str, Any]) -> np.ndarray:
+    """The head as a plain lit surface from its shape alone (the view's facing, one skin-ish colour, whatever the
+    texture holds): a picture a face finder can read when the texture is still the soft, mottled one the model came with."""
+    img = np.clip(0.15 + 0.85 * view["facing"], 0.0, 1.0)[..., None] * np.array([0.85, 0.72, 0.62])
+    return np.where(view["mask"][..., None], img, 0.25)
+
+
+def shape_marks(view: dict[str, Any]) -> dict[str, Any] | None:
+    """MediaPipe's eyes and mouth on the shape-only picture (vgac/lipmarks.py, on the processor), or None: no package or
+    model, or no face found. Remembered per picture, so the passes that look at the same head ask once."""
+    import hashlib
+
+    from . import lipmarks
+
+    if not lipmarks.available():
+        return None
+    img = shape_picture(view)
+    key = hashlib.md5(to_uint8(img).tobytes()).hexdigest()
+    if key not in _SHAPE_MARKS:
+        from . import facemarks
+
+        if len(_SHAPE_MARKS) >= 16:
+            _SHAPE_MARKS.pop(next(iter(_SHAPE_MARKS)))
+        try:
+            _SHAPE_MARKS[key] = facemarks.local(img)
+        except Exception:  # noqa: BLE001  (no finder: the shape's nose stands)
+            _SHAPE_MARKS[key] = None
+    return _SHAPE_MARKS[key]
+
+
+def find_face_checked(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, head: Head,
+                      skin_tolerance: float = 16.0) -> dict[str, Any]:
+    """find_face, with the nose tip checked against MediaPipe's eyes and mouth read off the head's shape. The shape alone
+    puts the nose on loose curls, a glasses rim, the brow or the chin on some heads (the stored runs W2-clothed, W2-underwear
+    and P1-photo, 60 to 90 mm off, and everything the pass measures from the nose goes with it). When the nose is not
+    between the eyes and mouth the finder found, the nose tip is taken as the nearest surface point about 60 percent of the
+    way from the eyes' middle to the mouth, and the face is found again from there ("nose_from": "mediapipe", the first
+    nose kept as "nose_by_shape"). Without the finder, or when it finds no face or the new nose does not fit either, the
+    first finding stands."""
+    from . import facemarks
+
+    info = find_face(view, mesh, cam, head, skin_tolerance)
+    try:
+        m = shape_marks(view)
+        if m is None:
+            return info
+        eyes = np.array(m["eyes"], dtype=np.float64)
+        # the face's width as the eyes give it (about 0.45 of it between them), not the grown skin region's: on a texture
+        # that is still mottled the region can be a sliver, and a nose is then never "between the eyes and mouth"
+        width = max(float(np.linalg.norm(eyes[1] - eyes[0])) / 0.45, 1.0)
+
+        def holds(nose_xy: Any) -> bool:
+            return facemarks.plausible(m, {"nose": tuple(nose_xy), "width_px": width})
+
+        if info.get("found") and holds(info["nose"]):
+            return info
+        mid, mouth = eyes.mean(axis=0), np.array(m["mouth"], dtype=np.float64)
+        guess = mid + 0.6 * (mouth - mid)
+        S = cam.size
+        r = max(2, int(0.15 * float(np.linalg.norm(eyes[1] - eyes[0]))))
+        x0, x1 = int(max(0, guess[0] - r)), int(min(S, guess[0] + r + 1))
+        y0, y1 = int(max(0, guess[1] - r)), int(min(S, guess[1] + r + 1))
+        z = np.where(view["mask"], view["raster"]["z"], np.inf)[y0:y1, x0:x1]
+        if z.size == 0 or not np.isfinite(z).any():
+            return info
+        iy, ix = np.unravel_index(int(np.argmin(z)), z.shape)
+        again = find_face(view, mesh, cam, head, skin_tolerance, nose=(int(x0 + ix), int(y0 + iy)))
+        if not again.get("found") or not holds(again["nose"]):
+            return info
+        again["nose_from"] = "mediapipe"
+        again["nose_by_shape"] = info.get("nose")
+        return again
+    except Exception:  # noqa: BLE001  (a finder that fails changes nothing)
+        return info
+
+
 def hair_colour_above(lab: np.ndarray, m: np.ndarray, region: np.ndarray, nose: tuple[int, int],
                       box: tuple[int, int, int, int]) -> np.ndarray | None:
     """The middle colour (Lab) of the head above the face: the model's surface outside the face region, in the top
