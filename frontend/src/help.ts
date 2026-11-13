@@ -547,6 +547,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   in_frame: H('Whole subject in the picture', 'Whether there is space around the subject on every side.', 'A part cut off at the edge is missing from the 3D model.', 'cutout margin on every side, at least 1 percent'),
   big_enough: H('Big enough', 'How many pixels tall (or across) the subject is.', 'The 3D step reads about 500 pixels; a small subject loses its detail.', 'subject height in pixels, at least 400'),
   arms_away: H('Arms away from the body', 'Whether the arms stand clear of the sides, as in an A-pose or a T-pose.', 'Arms pressed to the body get joined to it in the 3D model, and the skeleton step cannot tell them apart.', 'silhouette gap between arm and torso, or arm span against waist width'),
+  soft_light: H('Soft, even light', 'Whether the light on the person is flat and even, or hard with strong shadows, found by comparing the darkest and the brightest skin on the figure.', 'The 3D step paints the light of the picture into the character as colour, so half the face, the legs or the back can come out nearly black. It only warns; you can keep the picture. "Redraw it in even light" asks the picture editor to redraw it in flat light; it makes a new version and your picture stays. Only checked for people in the Realistic look.', 'soft_light check (stages/concept.py): darkest skin cell over brightest skin cell, at least 0.29'),
   hair_off_eyes: H('Eyes clear of hair', 'Whether hair hangs over the eyes in the picture, found by telling the hair colour from the skin colour.', 'The 3D model turns hair over the face into a solid flap, and the face cannot be painted cleanly. "Move the hair off the face" asks the picture editor to sweep it aside; it makes a new version and your picture stays. When your description asks for hair over the eyes, the app does not check this.', 'hair_off_eyes check (vgac/hairpic.py): hair against skin in each eye area'),
   face_drawn: H('Face drawn', 'Whether the character in the picture has a face with eyes, and is not painted from behind. The local vision model (the review engine) looks at a close-up of the head.', 'The 3D model is built from the picture, so an empty face or the back of the head gives a model with no face. "Draw the face" asks the picture editor to draw it; it makes a new version and your picture stays. Only the Cel look is checked, because its painter sometimes leaves the face out. When your description hides the face (a closed helmet, a mask, a figure seen from behind), the app does not check this.', 'face_drawn check (vgac/hairpic.face_check): Gemma 3 on a head crop answers eyes, mouth and back'),
   redraw_ready: H('Redraw it ready for 3D', 'Asks the image edit model (picture editor) to redraw the same subject, same design and colours, in the standard pose on a plain light grey background.', 'It makes a new version; your picture stays as it was.', 'concept refine with the category pose block'),
@@ -950,6 +951,7 @@ const CHECK_HELP: Record<string, string> = {
   big_enough: 'big_enough',
   arms_away: 'arms_away',
   hair_off_eyes: 'hair_off_eyes',
+  soft_light: 'soft_light',
   face_drawn: 'face_drawn',
   bald_picture: 'bald_picture',
   hair_fit: 'hair_library',
@@ -986,7 +988,7 @@ export function checkPassed(check: Check): boolean {
 export function checkSeverity(check: Check): 'block' | 'warn' {
   if (check.severity === 'warn' || check.severity === 'block') return check.severity
   const id = check.id ?? check.name
-  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|normal_map_upright|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|face_drawn|even_lighting|straight_on|clips_face_forward|bald_picture|hair_fit|hair_skin_through|hair_triangles|hair_bound)$/.test(id)) return 'warn'
+  if (/^(texture_.+_budget|lod\d+_ratio|height_ratio|hist_dist|coverage|mirror_iou|clips|legs_moved|wings_found|hitbox_.+|movement_shape|collider_triangles|collider_count|openings_clear|bake_matches|normal_map_upright|texture_padding|atlas_used|face_matches_picture|hair_matches_picture|hair_material|hair_material_shipped|baked_light|albedo_range|metal_mixed|look_applied|one_subject|in_frame|big_enough|arms_away|hair_off_eyes|soft_light|face_drawn|even_lighting|straight_on|clips_face_forward|bald_picture|hair_fit|hair_skin_through|hair_triangles|hair_bound)$/.test(id)) return 'warn'
   return 'block'
 }
 
