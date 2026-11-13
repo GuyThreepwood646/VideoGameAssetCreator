@@ -385,3 +385,23 @@ def test_the_turn_search_score_is_exactly_the_whole_frame_score() -> None:
     sup = (int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max()))
     M = srcproject.sim_matrix(0.9, 0.05, 20.0, 5.0, n)
     assert srcproject.iou_warped(edge, sup, M, rm, int(rm.sum()), n) == srcproject.iou(srcproject.warp_mask(edge, M, n) > 0.5, rm)
+
+
+def test_a_prepared_picture_is_the_same_and_made_once(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from PIL import Image
+
+    path = tmp_path / "pic.png"
+    Image.fromarray((picture() * 255).astype(np.uint8), "RGBA").save(path)
+    calls = []
+    real = srcproject.prepare_picture
+    monkeypatch.setattr(srcproject, "prepare_picture", lambda src, n=None: calls.append(1) or real(src, n))
+    prep = srcproject.Prepared()
+    a = prep(path, SIZE)
+    b = prep(str(path), SIZE)
+    assert len(calls) == 1 and a[0] is b[0]
+    want = real(path, SIZE)
+    assert np.array_equal(a[0], want[0]) and np.array_equal(a[1], want[1])
+    with pytest.raises(ValueError):
+        a[0][0, 0, 0] = 1.0  # read-only: no caller changes what another reads
+    prep(path, SIZE * 2)
+    assert len(calls) == 2  # another size is another picture
