@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, headtris, library, quality
+from .. import guidance, headtris, library, limbjoins, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -243,6 +243,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         rig_glb = raw_glb
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
+        await _limb_joins(sc, rig_glb)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -904,9 +905,10 @@ def _description(sc: StageContext) -> str:
     return " ".join(w for w in words if w)
 
 
-# Joins the 3D build made between parts that never meet on a body (blender/joins.py): legs joined low down are parted
-# (the strand between Vivi's shoes); forearms grown into the body are only measured and named by the check.
-ARM_JOIN_MIN = 20
+# Joins the 3D build made between parts that never meet on a body. blender/joins.py parts legs joined low down (the
+# strand between Vivi's shoes); limbjoins.py then measures upper arms, forearms, hands and thighs grown into the body or
+# into each other on the model the game gets, and the check limb_joins names them. (The older check `joins` counted
+# forearm and hand triangles only and passed a model with both upper arms grown into the jacket; it is no longer made.)
 
 
 async def _joins(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
@@ -931,16 +933,30 @@ async def _joins(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> Non
         sc.set_metrics(joins={"error": str(e)[:300]})
 
 
-def joins_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The rig check `joins` (warn): fails when a forearm or hand is grown into the body; says when the legs were parted."""
-    if not m or m.get("error") or m.get("arm_joins") is None:
+async def _limb_joins(sc: StageContext, rig_glb: Path) -> None:
+    """metrics.limb_joins (limbjoins.measure, about a second of CPU, in a thread). Never raises."""
+    try:
+        sc.set_metrics(limb_joins=await asyncio.to_thread(limbjoins.measure, rig_glb))
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(limb_joins={"measured": False, "reason": "error", "error": str(e)[:300]})
+
+
+def limb_joins_check(m: dict[str, Any] | None, joins: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The rig check `limb_joins` (warn) from metrics.limb_joins, with the leg-parting pass (metrics.joins) said in its
+    text. None when the measure did not run (not a Mixamo-template rig, or an older version). The check carries its own
+    help text (limbjoins.check_values; it is not in guidance.CHECK_GUIDE), like `fingers`."""
+    j = joins or {}
+    v = limbjoins.check_values(m, legs_parted=int(j.get("legs_parted") or 0),
+                               legs_left_joined=bool(j.get("measured_only") and j.get("legs_found")))
+    if v is None:
         return None
-    arm = m.get("arm_joins") or {}
-    sides = [w for s, w in (("L", "left"), ("R", "right")) if int(arm.get(s) or 0) >= ARM_JOIN_MIN]
-    worst = max(int(arm.get("L") or 0), int(arm.get("R") or 0))
-    return quality.check("joins", not sides, worst, ARM_JOIN_MIN,
-                         vars={"sides": " and ".join(sides), "both": len(sides) == 2, "legs_parted": int(m.get("legs_parted") or 0),
-                               "legs_found": int(m.get("legs_found") or 0), "measured_only": bool(m.get("measured_only"))})
+    c = quality.check("limb_joins", v["ok"], v["value"], v["limit"], vars=v["vars"])
+    c["severity"] = "warn"
+    c["help"] = v["help"]
+    if not v["ok"]:
+        c["fix"] = {**v["fix"], "label": v["fix_label"]}
+        c["fix_label"] = v["fix_label"]
+    return c
 
 
 def springs_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1099,9 +1115,9 @@ async def judge(sc: StageContext) -> None:
         fc = fingers_check(info.get("bone_names"), info.get("bone_segments"))
         if fc is not None:
             checks.append(fc)
-    jc = joins_check(sc.version.metrics.get("joins"))
-    if jc is not None:
-        checks.append(jc)
+    lj = limb_joins_check(sc.version.metrics.get("limb_joins"), sc.version.metrics.get("joins"))
+    if lj is not None:
+        checks.append(lj)
     if not sc.version.metrics.get("rigid") and sc.asset.category in HITBOX_CATEGORIES:
         hb_path = sc.file("hitboxes")
         doc = json.loads(Path(hb_path).read_text()) if hb_path is not None else None

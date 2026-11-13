@@ -1,4 +1,4 @@
-"""Parts the 3D build joined (blender/joins.py, stages/rig.py _joins and joins_check)."""
+"""Parts the 3D build joined: the leg-parting pass (blender/joins.py, stages/rig.py _joins)."""
 
 from __future__ import annotations
 
@@ -44,12 +44,7 @@ def test_forearm_to_body_triangles_are_counted_per_side():
     assert jn.find_joins(V, F, vlab, hips_z=0.5)["arm_joins"] == {"L": 1, "R": 1}
 
 
-def test_the_joins_check():
-    assert rig.joins_check(None) is None and rig.joins_check({"error": "x"}) is None
-    ok = rig.joins_check({"arm_joins": {"L": 0, "R": 12}, "legs_parted": 7, "legs_found": 7})
-    assert ok["ok"] and "parted" in ok["help"]
-    bad = rig.joins_check({"arm_joins": {"L": 144, "R": 109}, "legs_parted": 0, "legs_found": 0})
-    assert not bad["ok"] and "forearms and hands are grown into the body" in bad["help"] and bad["fix"]["stage"] == "concept"
-    one = rig.joins_check({"arm_joins": {"L": 57, "R": 3}})
-    assert "left forearm or hand is" in one["help"]
-    assert "joins" in guidance.CHECK_GUIDE
+def test_the_old_joins_check_is_no_longer_made():
+    # Replaced by limb_joins (vgac/limbjoins.py, tests/test_limbjoins.py): it counted forearm and hand triangles only.
+    assert not hasattr(rig, "joins_check") and "joins" not in guidance.CHECK_GUIDE
+    assert "limb_joins" not in guidance.CHECK_GUIDE  # carries its own words, like fingers
