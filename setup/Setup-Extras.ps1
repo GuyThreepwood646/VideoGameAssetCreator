@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   First-time setup, part 2 for Video Game Asset Creator: models and add-ons, ComfyUI node packs, Blender, animation and
-  hair packs, and proposed settings files. Looks first; downloads only when asked.
+  hair packs (the hair library is built here from them), and proposed settings files. Looks first; downloads only when asked.
 
 .DESCRIPTION
   Default mode CHANGES NOTHING. It prints what each part would offer and one table (Ready, Missing or Needs you).
@@ -14,6 +14,8 @@
   -ComfyRoot     the ComfyUI folder that holds "models" and "custom_nodes" (ask your ComfyUI install). Models and
                  node packs need it. No models folder is ever listed: only exact file paths are looked at.
   -ComfyInstall  the ComfyUI install folder that holds ComfyUI\main.py (used for the proposed start scripts only).
+  -HairPacks     with -Packs -Install: keep only these hair pack ids (for example -HairPacks quaternius_ubc,makehuman_system) without asking;
+                 -QuaterniusZip, -MakeHumanZip and -Hair01Zip give the downloaded zips (or unpacked folders) instead of a download or a question.
   -Only          with -Models: only these ids (for example -Only pixel_art,birefnet); ids are in the first column of downloads.json
   -ProjectRoot   defaults to the folder above this script (for tests against a throwaway copy).
 
@@ -33,11 +35,12 @@
 param(
     [switch]$Models, [switch]$Nodes, [switch]$Blender, [switch]$Packs, [switch]$Settings,
     [string]$ComfyRoot = '', [string]$ComfyInstall = '', [string]$ProjectRoot = '',
-    [string]$ModelPathsConfig = '', [string[]]$Only = @(), [string]$Ual1Zip = '', [string]$Ual2Zip = '',
+    [string]$ModelPathsConfig = '', [string[]]$Only = @(), [string]$Ual1Zip = '', [string]$Ual2Zip = '', [string]$QuaterniusZip = '', [string]$MakeHumanZip = '', [string]$Hair01Zip = '', [string[]]$HairPacks = @(),
     [switch]$Install, [switch]$Yes, [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Continue'
+$HairPacks = @($HairPacks | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })   # -File passes a comma list as one string
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 $Root = if ($ProjectRoot) { (Resolve-Path $ProjectRoot).Path } else { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
@@ -488,15 +491,19 @@ if ($Packs -and $dl) {
     }
     ''
     '== Hair packs (all CC0 except the app''s own rule-built styles) =='
-    'The whole hair library (26 styles) ships inside the project, so every pack below is present; your pick decides which ones the app offers and credits.'
-    'You can record which packs you want credited; the choice is written to library\hair-packs.json.'
+    'The hair library is not kept in the project. This step gets the free hairstyle packs you keep (the MakeHuman ones by direct link,'
+    'the Quaternius one from a zip you download yourself, because itch.io needs a click-through) and builds the library on this PC into'
+    'library\hairlib (about 16 MB, about a minute; needs Blender 5 and the backend venv). It is safe to run again: what is built is skipped.'
+    'Your pick also decides which packs the app offers and credits; it is written to library\hair-packs.json.'
     'The app and the credits page follow this file after the backend restarts: styles from packs you did not keep are hidden. Delete the file to get them all back.'
     $chosen = @()
     foreach ($hp in $dl.hair_packs) {
         ''
         "- $($hp.name): $($hp.styles) styles. $($hp.what)  ($($hp.author), $($hp.licence))"
-        if ($hp.no_download) { Write-Host '  Made by the app; always on.'; $chosen += $hp; continue }
-        if ($Install) { if (Ask-YesNo '  Keep this pack in your credits?') { $chosen += $hp } else { Write-Host '  [left] not kept.' } }
+        if ($hp.no_download) { Write-Host '  Made by the app (needs the Quaternius pack for its reference figure); always on.'; $chosen += $hp; continue }
+        if ($Install -and $HairPacks.Count -gt 0) { if ($HairPacks -contains $hp.id) { Write-Host '  Kept (-HairPacks).'; $chosen += $hp } else { Write-Host '  [left] not kept (-HairPacks).' } }
+        elseif ($Install) { if (Ask-YesNo '  Keep this pack in your credits?') { $chosen += $hp } else { Write-Host '  [left] not kept.' } }
+        else { $chosen += $hp }
     }
     if ($Install) {
         $out = Join-Path $Root 'library\hair-packs.json'
@@ -504,9 +511,122 @@ if ($Packs -and $dl) {
         elseif ($DryRun) { Write-Host "[dry run] would write $out with $($chosen.Count) packs." }
         else {
             New-Item -ItemType Directory -Path (Split-Path -Parent $out) -Force | Out-Null
-            $obj = [ordered]@{ note = 'Written by setup\Setup-Extras.ps1. Not read by the app yet.'; packs = @($chosen | ForEach-Object { [ordered]@{ id = $_.id; catalogue_pack = $_.catalogue_pack; catalogue_author = $_.catalogue_author } }) }
+            $obj = [ordered]@{ note = 'Written by setup\Setup-Extras.ps1. The app hides styles from packs that are not listed here. Delete this file to show every built style.'; packs = @($chosen | ForEach-Object { [ordered]@{ id = $_.id; catalogue_pack = $_.catalogue_pack; catalogue_author = $_.catalogue_author } }) }
             [IO.File]::WriteAllText($out, ($obj | ConvertTo-Json -Depth 5))
             Write-Host "[done] wrote $out"
+        }
+    }
+
+    # --- the library itself: which downloaded packs are needed, what is built already --------------------------------------
+    ''
+    '- Hair library (built on this PC from the packs above)'
+    $hairOut = Join-Path $Root 'library\hairlib'
+    $hairCat = Join-Path $hairOut 'catalogue.json'
+    $packsRoot = Join-Path $Root 'runtime\hairpacks'
+    $srcById = @{}; foreach ($s in $dl.hair_sources) { $srcById[$s.id] = $s }
+    $builtPacks = @(); $builtCount = 0
+    if (Test-Path -LiteralPath $hairCat) {
+        try {
+            $bc = Get-Content -LiteralPath $hairCat -Raw | ConvertFrom-Json
+            foreach ($sp in $bc.styles.PSObject.Properties) { $builtCount++; $builtPacks += [string]$sp.Value.pack }
+        } catch { $builtCount = 0 }
+    }
+    $needIds = New-Object System.Collections.ArrayList
+    foreach ($hp in $chosen) {
+        if ($hp.no_download -or -not $hp.source) { continue }
+        if ($builtPacks -contains $hp.catalogue_pack) { continue }
+        foreach ($sid in @((Get-Prop $srcById[$hp.source] 'needs')) + @($hp.source)) { if ($sid -and -not $needIds.Contains($sid)) { [void]$needIds.Add($sid) } }
+    }
+    $needIds = @($needIds | Sort-Object { if ($srcById[$_].needs) { 1 } else { 0 } })
+    $hairRow = $null
+    if ($needIds.Count -eq 0 -and $builtCount -gt 0) {
+        Add-Row 'Hair library' 'Ready' "$builtCount styles built in library\hairlib"
+        Write-Host "  Already built: $builtCount styles in library\hairlib."
+    } elseif ($needIds.Count -eq 0) {
+        Add-Row 'Hair library' 'Needs you' 'No hair pack kept, so no library was built.' 'Run again with -Packs -Install and keep at least one hair pack.'
+        Write-Host '  No hair pack kept, so there is nothing to build.'
+    } else {
+        $needNames = ($needIds | ForEach-Object { "$($srcById[$_].name) ($(Fmt-Size $srcById[$_].zip_size))" }) -join '; '
+        Add-Row 'Hair library' 'Missing' "library\hairlib is not built (or lacks a pack you kept). Needs: $needNames" 'Run setup\Setup-Extras.ps1 -Packs -Install.'
+        $hairRow = $script:lastRow
+        Write-Host "  Not built yet. Needs these packs: $needNames"
+        foreach ($sid in $needIds) {
+            $sr = $srcById[$sid]
+            if ($sr.zip) { Write-Host "    $($sr.name): direct link $($sr.zip) (page $($sr.page))" }
+            else { Write-Host "    $($sr.name): download the zip yourself from $($sr.page)  (click-through)" }
+        }
+    }
+    if ($Install -and $needIds.Count -gt 0) {
+        $zipArg = @{ quaternius_ubc = $QuaterniusZip; makehuman_system = $MakeHumanZip; makehuman_hair01 = $Hair01Zip }
+        foreach ($sid in $needIds) {
+            $sr = $srcById[$sid]
+            $pdir = Join-Path $packsRoot $sid
+            $unp = Join-Path $pdir 'unpacked'
+            if (Test-Path -LiteralPath (Join-Path $unp $sr.check_dir)) { Write-Host "  $($sr.name): already unpacked."; continue }
+            $z = $zipArg[$sid]
+            $placed = Join-Path $pdir $sr.zip_name
+            if (-not $z -and (Test-Path -LiteralPath $placed)) { $z = $placed }
+            if (-not $z -and $sr.zip) {
+                if (-not (Ask-YesNo "  Download $($sr.name) ($(Fmt-Size $sr.zip_size))?")) { Write-Host '  [left] skipped.'; continue }
+                if ($DryRun) { Write-Host "  [dry run] would download $($sr.zip) to $placed and unpack it into $unp"; continue }
+                $ok = $false
+                foreach ($u in @($sr.zip, $sr.zip_alt) | Where-Object { $_ }) {
+                    try { $ok = Save-Download $u $placed ([long]$sr.zip_size); if ($ok) { break } } catch { Write-Host "    [fail] $u : $($_.Exception.Message)" }
+                }
+                if (-not $ok) { Write-Host '  [fail] could not download; download it from the page yourself and give its path with -MakeHumanZip or -Hair01Zip.'; continue }
+                $z = $placed
+            }
+            if (-not $z) {
+                if (-not $Yes) { try { $z = (Read-Host "  Path to the downloaded zip or unpacked folder for $($sr.name) (Enter to skip)").Trim('"', ' ') } catch { $z = '' } }
+                if (-not $z) { Write-Host "  [left] $($sr.name) not given. Download it from $($sr.page) and run again (-QuaterniusZip, -MakeHumanZip or -Hair01Zip)."; continue }
+            }
+            if (-not (Test-Path -LiteralPath $z)) { Write-Host "  [fail] $z not found."; continue }
+            if ($DryRun) { Write-Host "  [dry run] would unpack $z into $unp (no file replaced)"; continue }
+            try {
+                New-Item -ItemType Directory -Path $unp -Force | Out-Null
+                if ((Get-Item -LiteralPath $z).PSIsContainer) {
+                    Get-ChildItem -LiteralPath $z -Recurse -File | ForEach-Object {
+                        $rel = $_.FullName.Substring((Resolve-Path -LiteralPath $z).Path.TrimEnd('\').Length + 1); $t = Join-Path $unp $rel
+                        if (-not (Test-Path -LiteralPath $t)) { New-Item -ItemType Directory -Path (Split-Path -Parent $t) -Force | Out-Null; Copy-Item -LiteralPath $_.FullName -Destination $t }
+                    }
+                } else { [void](Expand-Safe $z $unp) }
+            } catch { Write-Host "  [fail] $($_.Exception.Message)" }
+            if (Test-Path -LiteralPath (Join-Path $unp $sr.check_dir)) { Write-Host "  [done] $($sr.name) unpacked into $unp" }
+            else { Write-Host "  [fail] unpacked, but $($sr.check_dir) is not inside. Wrong pack?" }
+        }
+        # Build with every pack that is there: a pack that is missing only leaves its styles out.
+        $anyThere = $false
+        foreach ($s in $dl.hair_sources) { if (Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $packsRoot $s.id) 'unpacked') $s.check_dir)) { $anyThere = $true } }
+        if (-not $anyThere) { Write-Host '  Nothing to build from yet.' }
+        elseif ($DryRun) { Write-Host '  [dry run] would build the library into library\hairlib (tools\hairlib_build.py), check it, then swap it in.' }
+        else {
+            $py = Join-Path $Root 'backend\.venv\Scripts\python.exe'
+            $fb = Find-Blender; $bv = $null; if ($fb) { $bv = Get-BlenderVersion $fb.Path }
+            if (-not (Test-Path -LiteralPath $py)) { Write-Host '  [fail] backend\.venv is missing. Run setup\Check-Setup.ps1 -Install first.' }
+            elseif (-not $fb -or -not $bv -or [int]$bv.Groups[1].Value -lt 5) { Write-Host '  [fail] Blender 5 or newer not found. Install it, or set blender_exe in backend\config.yaml, then run again.' }
+            else {
+                $new = "$hairOut.new"; $work = "$hairOut.work"
+                foreach ($d in @($new, $work)) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
+                Write-Host "  Building the hair library with $($fb.Path) (about a minute)..."
+                & $py -I (Join-Path $Root 'tools\hairlib_build.py') --packs $packsRoot --out $new --scratch $work --blender $fb.Path 2>&1 | ForEach-Object { Write-Host "    $_" }
+                $buildOk = ($LASTEXITCODE -eq 0)
+                if ($buildOk) {
+                    & $py -I (Join-Path $Root 'tools\hairlib_verify.py') $new 2>&1 | ForEach-Object { Write-Host "    $_" }
+                    $buildOk = ($LASTEXITCODE -eq 0)
+                }
+                if (-not $buildOk) { Write-Host "  [fail] the build or its check failed; library\hairlib was left as it was. Log: $work\build_blender.log" }
+                else {
+                    $old = "$hairOut.old"
+                    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
+                    if (Test-Path -LiteralPath $hairOut) { Move-Item -LiteralPath $hairOut -Destination $old }
+                    Move-Item -LiteralPath $new -Destination $hairOut
+                    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
+                    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+                    $n = (@((Get-Content -LiteralPath $hairCat -Raw | ConvertFrom-Json).styles.PSObject.Properties)).Count
+                    Mark-Done $hairRow "$n styles built in library\hairlib"
+                    Write-Host "  [done] $n styles in library\hairlib. Restart the app to use it. The unpacked packs in runtime\hairpacks (about 1 GB) can be deleted; keep them to rebuild."
+                }
+            }
         }
     }
     ''

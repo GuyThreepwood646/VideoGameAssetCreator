@@ -337,9 +337,17 @@ foreach ($id in 'ual1', 'ual2') {
     elseif ($hit) { Add-Row "Animation pack $id" 'Needs you' "Found in data\animations\$id, but clips_libraries in backend\config.yaml points elsewhere." 'Set clips_libraries to the found path (-Install writes a proposed copy).' }
     else { Add-Row "Animation pack $id" 'Missing' "$($packFiles[$id]) not found under data\animations\$id." 'Download the free CC0 pack (see docs\FIRST-TIME-SETUP.md) into data\animations, keeping its folder names.' }
 }
-$hair = Join-Path $Root 'backend\vgac\data\hairlib\catalogue.json'
-if (Test-Path -LiteralPath $hair) { Add-Row 'Hair library' 'Ready' 'backend\vgac\data\hairlib is present' }
-else { Add-Row 'Hair library' 'Missing' 'backend\vgac\data\hairlib\catalogue.json not found.' 'It ships with the project. Re-download or restore the project folder.' }
+$hairBuilt = Join-Path $Root 'library\hairlib\catalogue.json'
+$hairShipped = Join-Path $Root 'backend\vgac\data\hairlib\catalogue.json'
+$hairHow = 'Run setup\Setup-Extras.ps1 -Packs -Install: it downloads the free hairstyle packs (two by direct link; the Quaternius one is a zip you download yourself from https://quaternius.itch.io/universal-base-characters) and builds the library on this PC (about a minute, needs Blender 5). Your own hairstyles work without it.'
+function Count-Styles([string]$Cat) { try { return @((Get-Content -LiteralPath $Cat -Raw | ConvertFrom-Json).styles.PSObject.Properties).Count } catch { return -1 } }
+if (Test-Path -LiteralPath $hairBuilt) {
+    $n = Count-Styles $hairBuilt
+    if ($n -gt 0) { Add-Row 'Hair library' 'Ready' "$n styles built in library\hairlib" }
+    else { Add-Row 'Hair library' 'Needs you' 'library\hairlib\catalogue.json is there but cannot be read.' $hairHow }
+}
+elseif (Test-Path -LiteralPath $hairShipped) { Add-Row 'Hair library' 'Ready' 'Using the copy inside the project folder (backend\vgac\data\hairlib). Later versions build the library on this PC instead.' }
+else { Add-Row 'Hair library' 'Missing' 'No built hair library (library\hairlib\catalogue.json not found).' $hairHow }
 
 # --- 10. Report ---------------------------------------------------------------------------------------------------------
 ''
