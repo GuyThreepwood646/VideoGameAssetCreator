@@ -8,14 +8,14 @@ A local Windows app that turns one picture into a rigged, game-ready 3D model in
 
 | Part | Where | Notes |
 |---|---|---|
-| Launcher | `desktop/` (`services.js` supervises, `main.js` windows) | Electron. Probes ComfyUI A, ComfyUI B, backend and UI every 2 s, starts what it may own, builds `frontend/dist` if missing, stops only what it started. Settings: `desktop/config.json`. |
+| Launcher | `desktop/` (`services.js` supervises, `main.js` windows) | Electron. Probes ComfyUI A, ComfyUI B, backend and UI every 2 s, starts what it may own, builds `frontend/dist` if missing, stops only what it started. Settings: `desktop/config.json` (defaults; `projectRoot` `..`, also found by searching upward) with the `desktop` section of `local/machine.json` laid over it (`machine.js`). |
 | Backend | `backend/vgac/`, entry `main.py`, port 8765 | FastAPI, SQLAlchemy, SQLite. Serves `frontend/dist` at `/`, REST at `/api`, events at `/api/ws/events`. Starts the job queue and resumes autopilot runs at startup. |
 | Frontend | `frontend/` (React 19, Vite, Three.js) | `src/api.ts` is the only code that calls the backend; `src/pipeline/` holds the step screens; `npm run dev:mock` runs it with no backend (`src/mock/`). |
-| ComfyUI engines | outside the repo; `runtime/start-comfy-a.ps1`, `start-comfy-b.ps1` | Run the AI models over HTTP (`comfy.py`). Graphs are built in `graphs/`; `python -m vgac.workflows` writes reference copies to `workflows/`. Own node pack: `comfy-nodes/vgac-nodes`. The backend starts an instance itself when a job needs it (`instances.py`, `start_script`, `process_match`, `discover`), records it in `library/engines.json`, and stops only copies it started. |
+| ComfyUI engines | outside the repo; started from `instances.<name>.engine` in the settings (`instances.engine_command`; sets `CUDA_DEVICE_ORDER=PCI_BUS_ID` and `SKINTOKEN_BLENDER_BIN`); an untracked `start_script` is used only where no engine is set | Run the AI models over HTTP (`comfy.py`). Graphs are built in `graphs/`; `python -m vgac.workflows` writes reference copies to `workflows/`. Own node pack: `comfy-nodes/vgac-nodes`. The backend starts an instance itself when a job needs it (`instances.py`, `start_script`, `process_match`, `discover`), records it in `library/engines.json`, and stops only copies it started. |
 | Blender | `blender_exe`; scripts in `backend/vgac/blender/` | Headless, run by `tools.py` from host-lane jobs. |
 | Unity | `unity_exe`, `unity-sandbox/` | Step 6 only: batch import of the FBX, or hand-off to the person's own project (`unity_project_path`). Skipped, with the reason recorded, when not configured. |
 
-Settings: `backend/config.yaml` (`config.py`; `VGAC_CONFIG` names another file, which tests use). Preferences set in the app: `library/prefs.json` (`prefs.py`).
+Settings: `backend/config.yaml` (defaults, true on any machine) with the `backend` section of `local/machine.json` (this PC, untracked) laid over it (`config.py`; `write_machine` writes atomically and keeps `.bak`). `VGAC_CONFIG` names another defaults file, and then no machine file is used unless `VGAC_MACHINE` names one (tests). Preferences set in the app: `library/prefs.json` (`prefs.py`).
 
 ## 2. Data model (`db.py`, `library.py`)
 
@@ -92,7 +92,8 @@ The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VG
 | Not tracked | Source |
 |---|---|
 | `library/`, `exports/` | created at run time |
-| `runtime/` except the two start scripts | logs, ComfyUI folders, `models/face_landmarker.task` |
+| `runtime/` | logs, ComfyUI folders, any start scripts, `models/face_landmarker.task` |
+| `local/` | this PC's settings (`machine.json`, `.bak`) |
 | `backend/.venv/`, `node_modules/`, `frontend/dist/`, `desktop/dist/` | `setup/Check-Setup.ps1 -Install` and the build commands |
 | AI models, ComfyUI node packs, Blender, Unity | each user; `setup/Setup-Extras.ps1` with `setup/downloads.json` (licence confirmations are typed by the user) |
 | `data/animations/` (two CC0 clip packs, `clips_libraries`) | downloaded by the user |
@@ -106,5 +107,5 @@ Licences: the app is GPL-3.0-or-later; the files copied into a person's Unity pr
 - One source per fact (the table in section 5); do not copy it.
 - A pass that is skipped records its reason in metrics and says it in plain words; it does not fail the step.
 - Code with tests but not yet seen on a graphics card is marked `UNTESTED ON A CARD` in the comment and commit message, with a per-version switch (see `stages/turnaround.py`).
-- Tests: from `backend/`, `.venv\Scripts\python -m pytest -q tests` (temporary library, no ComfyUI needed; a few need Blender, `VGAC_TEST_BLENDER`). Launcher bridge: `node desktop/appbridge.test.js`. Frontend: `npm run build`, `npm run lint`.
+- Tests: from `backend/`, `.venv\Scripts\python -m pytest -q tests` (temporary library, no ComfyUI needed; a few need Blender, found by `tests/machine_tools.py`). Launcher: `node desktop/appbridge.test.js`, `node desktop/machine.test.js`. Frontend: `npm run build`, `npm run lint`.
 - Loading a change: frontend, `npm run build` in `frontend/` and reload; backend, restart the process (reopening the app does not restart a backend the launcher did not start; check the queue is empty first); launcher, `npm run dist` in `desktop/` with all VGAC processes closed. Ship frontend and backend together.
