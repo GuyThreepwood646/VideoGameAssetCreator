@@ -136,8 +136,14 @@ def reference_prompt(instruction: str) -> str:
             "subject, pose, framing and background of Picture 1.")
 
 
+# UNTESTED (written 2026-11-13 with no graphics card to try it): the realistic test's drawn front and side views came out
+# with the arms hanging although the picture held them out. The angles LoRA is trained on the bare tags in VIEWS, so
+# this sentence may be ignored or may shift the look; try it on a few pictures before keeping it. To undo, empty it.
+POSE_KEEP = "Keep the exact pose, with the arms and legs where they are in the picture."
+
+
 def view_prompt(view: str, extra: str = "") -> str:
     if view not in VIEWS:
         raise ValueError(f"unknown view {view!r}; known: {sorted(VIEWS)}")
-    p = VIEWS[view]
+    p = (VIEWS[view] + " " + POSE_KEEP).strip()
     return (p + " " + extra.strip()) if extra and extra.strip() else p
