@@ -27,19 +27,47 @@ from .base import StageContext, random_seed
 from .concept import stage_recipe
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
-# The three-quarter view from the other side: drawn for these categories whenever the three-quarter view is, because
-# the texture is painted from the views (prep) and one three-quarter view leaves the other cheek and flank to a full
-# side view alone. `second_quarter: false` on the version leaves it out.
+# The three-quarter view from the other side: drawn whenever the clean-up paints the texture from the views, because
+# one three-quarter view leaves the other cheek and flank to a full side view alone. Clean-up does that by itself for
+# these categories (srcproject.AUTO_CATEGORIES: humanoid, on a smooth look), and for any category on which the person
+# turned it on (source_project, in this step's settings or copied from the clean-up's). `second_quarter: false` on the
+# version leaves it out; the step then warns (second_quarter_check) and offers to draw just that view (add_views).
 SECOND_QUARTER = "quarter2"
 SECOND_QUARTER_CATEGORIES = ("humanoid",)
 
 
+def wants_second_quarter(category: str | None, params: dict[str, Any]) -> bool:
+    """Whether this asset's clean-up paints from both three-quarter views: a character, or any asset on which the
+    person turned the paint-from-the-views pass on."""
+    return category in SECOND_QUARTER_CATEGORIES or params.get("source_project") is True
+
+
 def with_second_quarter(views: list[str], category: str | None, params: dict[str, Any]) -> list[str]:
-    if (category in SECOND_QUARTER_CATEGORIES and "quarter" in views and SECOND_QUARTER not in views
+    if (wants_second_quarter(category, params) and "quarter" in views and SECOND_QUARTER not in views
             and params.get("second_quarter") is not False):
         i = views.index("quarter") + 1
         return views[:i] + [SECOND_QUARTER] + views[i:]
     return views
+
+
+def second_quarter_check(category: str | None, params: dict[str, Any], views: Any) -> dict[str, Any] | None:
+    """second_quarter (warn): the failed check when the clean-up would paint from the views but this step holds no
+    second three-quarter view (switched off, or an older version made without it); None when it is there or the
+    asset does not need it."""
+    if not wants_second_quarter(category, params) or SECOND_QUARTER in views:
+        return None
+    switched_off = params.get("second_quarter") is False
+    return quality.check("second_quarter", False, 0, 1, vars={"switched_off": switched_off})
+
+
+def set_step_checks(sc: StageContext, new: list[dict[str, Any]], drop: tuple[str, ...] = ()) -> None:
+    """Add checks to the step's own (the bald picture's, the second three-quarter view's), each replacing an older one of
+    its name (and `drop` names removed), and write the summary."""
+    names = {c["name"] for c in new} | set(drop)
+    kept = [c for c in ((getattr(sc.version, "metrics", None) or {}).get("checks") or []) if c.get("name") not in names]
+    sc.set_metrics(**quality.summarise(kept + list(new)))
+
+
 MAX_REROLLS = 2
 # Views drawn from opposite sides of the figure. The later-drawn one of a pair is checked against the earlier one
 # (same_side): mirror images of each other when right, the same way round when one was drawn from the wrong side.
@@ -765,6 +793,17 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method,
                    cutout_in_view_graph=cutout_in_graph(sc), zero_negative=zero_negative_on(sc))
     _publish_views(sc, results)
+    _note_second_quarter(sc, results)
+
+
+def _note_second_quarter(sc: StageContext, results: dict[str, dict[str, Any]]) -> None:
+    """Once the step's views are all in: the second_quarter warning when the second three-quarter view is missing, and
+    a parent's warning taken away when it is there now."""
+    missing = second_quarter_check(_category(sc), sc.version.params or {}, results)
+    if missing is not None:
+        set_step_checks(sc, [missing])
+    elif any(c.get("name") == "second_quarter" for c in ((sc.version.metrics or {}).get("checks") or [])):
+        set_step_checks(sc, [], drop=("second_quarter",))
 
 
 def _publish_views(sc: StageContext, results: dict[str, dict[str, Any]]) -> None:
@@ -879,7 +918,41 @@ def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, 
         base.pop("lora_strength", None)
     if "bald_only" not in params:
         base.pop("bald_only", None)  # the marker belongs to the adjust that asked for it
+    if "add_views" not in params:
+        base.pop("add_views", None)  # likewise
     return {**base, **params}
+
+
+async def _add_views(sc: StageContext, parent: Version | None, source: Version | None, params: dict[str, Any]) -> None:
+    """The add_views adjust (the second_quarter check's fix): every view is copied forward from the parent turnaround and
+    only the views asked for, that it lacks, are drawn. The bald pictures go forward unchanged."""
+    if parent is None or parent.stage != "turnaround":
+        raise ValueError("the missing view needs a turnaround version to add it to")
+    wanted = [v for v in dict.fromkeys(params.get("add_views") or []) if v in reference.TURNAROUND_VIEWS]
+    have = turnaround_views(parent)
+    targets = [v for v in wanted if v not in (parent.metrics.get("views") or {})]
+    keep: dict[str, dict[str, Any]] = {}
+    for v, info in (parent.metrics.get("views") or {}).items():
+        for key in (v, f"{v}_cutout", f"{v}_white", f"supplied_{v}"):
+            p = library.version_file(parent, key, sc.settings)
+            if p is not None:
+                sc.register(key, sc.copy_in(p, p.name))
+        keep[v] = info
+    known = list(reference.TURNAROUND_VIEWS)
+    all_views = sorted(dict.fromkeys(have + targets), key=lambda x: known.index(x) if x in known else len(known))
+    merged = {**params, "views": all_views, "second_quarter": True if SECOND_QUARTER in targets else params.get("second_quarter")}
+    if merged["second_quarter"] is None:
+        merged.pop("second_quarter")
+    merged.pop("add_views", None)  # the marker belongs to the adjust that asked for it
+    sc.set_params(**merged)
+    sc.set_metrics(**{k: v for k, v in (parent.metrics or {}).items() if k not in ("checks", "checks_passed", "checks_failed", "gate_ok", "models", "cards")})
+    _copy_bald(sc, parent)
+    if not targets:
+        _publish_views(sc, keep)
+        _note_second_quarter(sc, keep)
+        return
+    await _run_views(sc, targets, merged, source, keep=keep)
+    sc.set_params(views=all_views)
 
 
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
@@ -896,6 +969,10 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     if merged.get("bald_only"):
         await _bald_only(sc, parent, source, merged)
         return
+    if merged.get("add_views"):
+        await _add_views(sc, parent, source, merged)
+        return
+    merged.pop("add_views", None)
     bald = _bald_on(sc, merged)
     if bald:
         _start_bald(sc, merged)
@@ -979,6 +1056,7 @@ async def _bald_only(sc: StageContext, parent: Version | None, source: Version |
     sc.set_params(**{**params, "bald_only": True})
     sc.set_metrics(**{k: v for k, v in (parent.metrics or {}).items() if k not in BALD_METRIC_KEYS and k != "models"})
     _publish_views(sc, keep)
+    _note_second_quarter(sc, keep)
     _start_bald(sc, params)
     await _run_bald(sc, source, params)
 
@@ -1200,7 +1278,7 @@ async def _run_bald(sc: StageContext, source: Version | None, params: dict[str, 
     if meas.get("error"):
         record["error"] = meas["error"]
     sc.set_metrics(bald=record)
-    sc.set_metrics(**quality.summarise([bald_check(record)]))
+    set_step_checks(sc, [bald_check(record)])
 
 
 def bald_check(record: dict[str, Any]) -> dict[str, Any]:
