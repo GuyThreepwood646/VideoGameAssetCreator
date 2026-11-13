@@ -190,7 +190,11 @@ def set_layout(k, pin_rest, k_hair=1.0):
     mesh.data.update()
 
 
+PACK_SECONDS = [0.0, 0]  # time spent in the packer, and how many packs (logged, so a run shows what the relayout cost)
+
+
 def pack(**kw):
+    t_pack = time.time()
     bpy.ops.object.select_all(action="DESELECT")
     mesh.select_set(True)
     bpy.context.view_layer.objects.active = mesh
@@ -203,6 +207,8 @@ def pack(**kw):
         print("FACEUV concave packing unavailable:", e)
         bpy.ops.uv.pack_islands(rotate=True, margin=margin, **{k: v for k, v in kw.items() if k == "scale"})
     bpy.ops.object.mode_set(mode="OBJECT")
+    PACK_SECONDS[0] += time.time() - t_pack
+    PACK_SECONDS[1] += 1
 
 
 def layout_ok():
@@ -295,6 +301,29 @@ bm_tris.free()
 #    each pack and k corrected (at most four packs); the best layout within the loss limit is kept.
 
 
+def snapshot():
+    b = bmesh.new()
+    b.from_mesh(mesh.data)
+    b.faces.ensure_lookup_table()
+    lay = b.loops.layers.uv.active
+    s = {(f.index, i): l[lay].uv.copy() for f in b.faces for i, l in enumerate(f.loops)}
+    b.free()
+    return s
+
+
+def restore(s):
+    b = bmesh.new()
+    b.from_mesh(mesh.data)
+    b.faces.ensure_lookup_table()
+    lay = b.loops.layers.uv.active
+    for f in b.faces:
+        for i, l in enumerate(f.loops):
+            l[lay].uv = s[(f.index, i)]
+    b.to_mesh(mesh.data)
+    b.free()
+    mesh.data.update()
+
+
 def measure():
     b = bmesh.new()
     b.from_mesh(mesh.data)
@@ -318,14 +347,14 @@ if mode is None and gain_target > 1.0:
         g -= 0.05
     g = max(1.0, g)
     k = math.sqrt(g * g * (1 - share) / max(1 - share * g * g, 1e-6)) if g > 1.0 else 1.0
-    best = None  # (gain, k)
+    best = None  # (gain, k, the layout as packed)
     for _ in range(4):
         set_layout(k, pin_rest=False)
         pack(scale=True)
         got, rest = measure()
         print("FACEUV repack k", round(k, 3), "gain", round(got, 3), "rest", round(rest, 3))
         if rest >= 1 - max_loss and (best is None or got > best[0]):
-            best = (got, k)
+            best = (got, k, snapshot())
         if rest < 1 - max_loss:
             k = 1.0 + (k - 1.0) * 0.7
         elif got >= 0.97 * gain_target:
@@ -337,8 +366,9 @@ if mode is None and gain_target > 1.0:
         set_layout(1.0, pin_rest=False)
     else:
         k, mode = best[1], "repack"
-        set_layout(k, pin_rest=False)
-        pack(scale=True)
+        # the best layout as it was packed: put it back instead of packing the same thing a second time (the packer
+        # is exact and takes about 19 s on a 20,000-triangle character; same k, same layout, same result)
+        restore(best[2])
 if mode is None:
     k, mode = 1.0, "unchanged"
     set_layout(1.0, pin_rest=False)
@@ -363,29 +393,6 @@ def measure_all():
     return (math.sqrt(fa / face_area_before) if face_area_before > 0 else 1.0,
             math.sqrt(ha / hair_only_before) if hair_only_before > 0 else 1.0,
             math.sqrt(ra / rest0) if rest0 > 0 else 1.0)
-
-
-def snapshot():
-    b = bmesh.new()
-    b.from_mesh(mesh.data)
-    b.faces.ensure_lookup_table()
-    lay = b.loops.layers.uv.active
-    s = {(f.index, i): l[lay].uv.copy() for f in b.faces for i, l in enumerate(f.loops)}
-    b.free()
-    return s
-
-
-def restore(s):
-    b = bmesh.new()
-    b.from_mesh(mesh.data)
-    b.faces.ensure_lookup_table()
-    lay = b.loops.layers.uv.active
-    for f in b.faces:
-        for i, l in enumerate(f.loops):
-            l[lay].uv = s[(f.index, i)]
-    b.to_mesh(mesh.data)
-    b.free()
-    mesh.data.update()
 
 
 hair_mode, k_hair, hair_try = "none", 1.0, []
@@ -431,6 +438,7 @@ if hair_islands and hair_gain_target > 1.0:
         hair_mode = "no_room"
         restore(phase1)
 uv = None
+print("FACEUV packs", PACK_SECONDS[1], "pack seconds", round(PACK_SECONDS[0], 1))
 print("FACEUV islands", len(face_islands), "faces", len(face_set), "share", round(share, 5), "gain asked", gain_target,
       "mode", mode, "planned", round(g, 3), "k", round(k, 3))
 # clear the pins
