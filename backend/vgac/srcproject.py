@@ -1480,7 +1480,26 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
         for m in used:
             sc.use_model("upscale_photo" if m == concept.UPSCALE_PHOTO_MODEL else "upscale_art")
     info["seconds"] = round(time.time() - t0, 1)
+    note = upscale_note(info)
+    if note:  # shown as the clean-up's pictures_sharpened warning (stages/prep.py upscale_check)
+        info["note"] = note
     return out, info
+
+
+def upscale_note(info: dict[str, Any]) -> str | None:
+    """A plain sentence when pictures were not made bigger before painting (the upscaler failed, or no card could run
+    it), else None. Before this the failure was only in the metrics, and the model was painted from the small pictures
+    with nothing said (one stored test run: all 8 pictures, "All connection attempts failed", after a reboot)."""
+    failed = info.get("failed") or {}
+    if failed:
+        first = next(iter(failed.values()))
+        n, m = len(failed), len(failed) + len(info.get("upscaled") or [])
+        return (f"{n} of {m} pictures could not be made sharper before painting ({first}); "
+                "the model was painted from the smaller pictures, so its texture is softer than it could be.")
+    if info.get("skipped"):
+        return (f"The pictures were not made sharper before painting ({info['skipped']}); "
+                "the model was painted from the smaller pictures, so its texture is softer than it could be.")
+    return None
 
 
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
@@ -1512,6 +1531,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         raise
     except Exception as e:  # noqa: BLE001  (the pictures are used as they are)
         up = {"upscaled": [], "skipped": f"failed: {str(e)[:160]}"}
+        up["note"] = upscale_note(up)
     sc.set_metrics(srcproject_upscale=up)
     big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
     picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]

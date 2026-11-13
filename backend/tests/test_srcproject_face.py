@@ -266,3 +266,18 @@ def test_the_local_finder_answers_without_a_card(monkeypatch: pytest.MonkeyPatch
         assert facemarks.find(img, info) is None
     finally:
         facemarks.done_local(tok)
+
+
+def test_a_failed_upscale_is_said_and_shown_as_a_warning() -> None:
+    from vgac.stages import prep
+
+    fail = {"upscaled": [], "failed": {k: "All connection attempts failed" for k in ("picture", "source", "left")}}
+    note = srcproject.upscale_note(fail)
+    assert note.startswith("3 of 3 pictures could not be made sharper") and "smaller pictures" in note
+    c = prep.upscale_check(fail)
+    assert c["passed"] is False and c["severity"] == "warn" and c["help"] == note
+    assert srcproject.upscale_note({"upscaled": [], "skipped": "no card to draw on"}).startswith("The pictures were not")
+    assert prep.upscale_check({"upscaled": ["picture", "source"], "model": ["x"]}) is None
+    assert prep.upscale_check(None) is None
+    checks = prep.prep_checks({}, {}, {"srcproject_upscale": fail}, "humanoid", None)
+    assert any(ch["name"] == "pictures_sharpened" and not ch["passed"] for ch in checks)
