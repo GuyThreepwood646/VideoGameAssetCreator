@@ -523,6 +523,11 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
   const name = String(body.name ?? '').trim()
   if (!name) throw new HttpError(422, 'name is required')
   if (!body.category) throw new HttpError(422, 'category is required')
+  // As the backend: a look other than the project's is refused unless it was chosen on purpose.
+  const want = p.style_lock.preset
+  if (want && body.style_preset !== want && body.different_look !== true) {
+    throw new HttpError(400, `This project's look is ${want}, but this asset was sent with the look ${String(body.style_preset)}. Use ${want} for the asset, or choose "Use a different look for this asset" to make it on purpose.`)
+  }
   const a: Asset = {
     id: uid('a'),
     project_id: p.id,
