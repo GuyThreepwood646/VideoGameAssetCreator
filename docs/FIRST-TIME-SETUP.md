@@ -227,7 +227,14 @@ heavy for a game character (see `CREDITS.txt` in the library folder, "Left out")
 The hair library is not stored in the project's source. It is built on your PC from the packs you keep, so the packs are
 the only download and the credits follow what you took.
 
-What to do: run `powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Packs -Install`. It lists each hair pack
+In the app (the way for most people): open the System page and, under "Is everything ready?", press "Get the hair library"
+(the hair panel of a character offers the same link while the library is missing). A short panel says what it is, what is
+downloaded and from whom (about 640 MB; about 1 GB of space while it builds; 16 MB kept), lets you choose the packs, downloads
+them with a progress bar (you can stop and carry on later), asks you for the itch.io zip (it opens the page, you click through,
+then choose or drop the zip), builds the library, and the hairstyles appear without a restart. It can then remove the downloaded
+packs to free the space. The code is `backend/vgac/packs.py` (routes under `/api/packs`) and `backend/vgac/hairlib_builder.py`.
+
+From a terminal instead: run `powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Packs -Install`. It lists each hair pack
 and asks which to keep (the choice is written to `library/hair-packs.json`), then for each pack needed:
 
 | Pack zip | Where it comes from | Size |
