@@ -22,7 +22,7 @@ What is checked:
 - engines: every ComfyUI node class the graphs use (read from the graph sources, so a new node is picked up without an
   edit here), asked one at a time through /object_info/<NodeName>, grouped by the stage that needs it, on the
   instance that runs that stage.
-- models: every model file of data/models.yaml the instance should have, found by asking the loader node's
+- models: every model file of data/models.yaml (`models:` and `companions:`) the instance should have, found by asking the loader node's
   /object_info for its file choices and testing whether the one expected file name is among them. The list of
   choices is never returned, logged or kept: only found or missing is reported.
 - tools: rigging needs Blender visible to the SkinToken node: the start script of the instance that rigs sets
@@ -102,6 +102,22 @@ MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
     "trellis2": ("UNETLoader", "unet_name", "mesh", True),
     "hy3d_mv": ("ImageOnlyCheckpointLoader", "ckpt_name", "mesh", False),
     "skintoken": ("SkinTokenRigTrimesh", "ckpt_name", "rig", True),
+    "upscale_photo": ("UpscaleModelLoader", "model_name", "concept", False),
+    "upscale_art": ("UpscaleModelLoader", "model_name", "concept", False),
+    # companions (models.yaml `companions:`): the other files a graph loads next to its main model
+    "qwen_te": ("CLIPLoader", "clip_name", "turnaround", True),
+    "qwen_vae": ("VAELoader", "vae_name", "turnaround", True),
+    "trellis2_dino": ("CLIPVisionLoader", "clip_name", "mesh", True),
+    "trellis2_shape_vae": ("VAELoader", "vae_name", "mesh", True),
+    "trellis2_texture_vae": ("VAELoader", "vae_name", "mesh", True),
+    "zimage_te": ("CLIPLoader", "clip_name", "concept", False),
+    "flux_ae": ("VAELoader", "vae_name", "concept", False),
+    "flux2_vae": ("VAELoader", "vae_name", "concept", False),
+    "chroma_te": ("CLIPLoader", "clip_name", "concept", False),
+    "anima_te": ("CLIPLoader", "clip_name", "concept", False),
+    "gemma3_12b": ("CLIPLoader", "clip_name", "judge", False),
+    # Not asked of an engine: skintoken_vae (models.yaml companions) is fetched and listed by the SkinToken node pack
+    # itself, which offers no list of it; face_model is an optional route that falls back to the mediapipe package.
 }
 
 _CLASS_RE = re.compile(r'"class_type"\s*:\s*"([^"]+)"')
@@ -160,10 +176,12 @@ def stage_instance(settings: Settings, stage: str, disabled: Any = ()) -> str | 
 
 
 def load_models() -> dict[str, dict[str, Any]]:
+    """models.yaml `models:` plus its `companions:` (the files a graph loads next to a model), by id."""
     try:
-        return (yaml.safe_load((DATA_DIR / "models.yaml").read_text(encoding="utf-8")) or {}).get("models", {}) or {}
+        data = yaml.safe_load((DATA_DIR / "models.yaml").read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return {}
+    return {**(data.get("companions") or {}), **(data.get("models") or {})}
 
 
 def combo_choices(info: dict[str, Any] | None, input_name: str) -> list[Any] | None:
