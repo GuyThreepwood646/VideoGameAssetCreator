@@ -784,6 +784,10 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: {
             "no_card": "The face was not painted from the picture: no graphics card that draws pictures was free.",
             "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",
+            "poor_fit": ("The face was left as it was, not painted from the picture, because the picture could not be lined up with "
+                         "the model's face well enough (fit {value:n} of 1, needs {limit:n}). Painting it anyway would have put the eyes "
+                         "and mouth in the wrong place. Try the clean-up again, or use a clearer picture of the face looking straight "
+                         "at the camera."),
             "error": "The face was not painted from the picture: something went wrong on the way.",
             "misplaced": ("The face was painted onto the wrong part of the head: the app could not find where the model's eyes are, "
                           "so the eyes kept the 3D step's blurred look. Painting the face again rarely helps; building the 3D model again usually does."),

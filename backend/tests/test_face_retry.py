@@ -108,3 +108,20 @@ def test_a_fixed_seed_stays_reproducible(tmp_path, stubbed, monkeypatch):
     _run(sc, glb, maps, {"face_closeup_seed": 7, "face_closeup_seed_2": 8})
     assert [s for k, s in calls["redraw"] if k.startswith("face_closeup")] == [7, 8, 9]
     assert sc.params["face_closeup_seed_3"] == 9
+
+
+def test_a_held_face_through_the_pass_changes_nothing_and_fails_the_check(tmp_path, stubbed, monkeypatch):
+    """Item 9 through run(): a poor fit leaves the model's face as it was (no files, nothing replaced)."""
+    calls, glb, maps = stubbed
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: _guard(None, 0.97))
+    _fake_source(monkeypatch)
+    monkeypatch.setattr(fd, "fit_and_paint", lambda *a, **k: {"ok": False, "reason": "poor_fit", "alignment": {"score": 0.31, "how": "whole"}})
+    replaced = []
+    monkeypatch.setattr(fd.imaging, "glb_replace_images", lambda *a, **k: replaced.append(1))
+    before = glb.read_bytes()
+    out = _run(_SC(tmp_path, 2048), glb, maps)
+    r = out["metrics"]["face_detail"]
+    assert r["ran"] is False and r["skipped"] == "poor_fit" and out["files"] == {} and out["relayout"] is False
+    assert not replaced and glb.read_bytes() == before
+    c = fd.face_checks(out["metrics"])[0]
+    assert not c["ok"] and c["value"] == 0.31 and c["limit"] == 0.65 and "left as it was" in c["help"]

@@ -45,7 +45,11 @@ TARGET_FRACTION = 0.125  # texels wanted across the face: an eighth of the textu
 GAIN_MIN = 1.15  # below this the layout is left alone (the repack and the re-bake take about 30 s)
 SHARP_MIN = 1.0  # face sharpness after the pass (face.sharpness of the front render); smeared faces score 0.6 to 0.8
 MATCH_MIN = 0.6  # the model's face against the fitted picture (face.feature_match)
-ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the face
+ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the face (the fit's own search uses it)
+# The face is painted only when the picture was lined up with the model's face at least this well (alignment.score).
+# The 2026-11-13 test: the four worst faces scored 0.23, 0.31, 0.40 and 0.57 and were painted onto the wrong place
+# (doubled eyes and mouths); every face scoring 0.75 or more was placed correctly. Under it the face is left as it was.
+FIT_HOLD_MIN = 0.65
 RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the inner face, as a share of the picture
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
@@ -75,7 +79,7 @@ REDRAW_KEEP_MIN = 0.5  # the sharpened picture against the crop: under it the re
 COVERED_WIDTH_MIN = 0.35
 DEFAULT_STRENGTH = 1.0
 # Reasons the person can do something about: the check fails softly with a Fix (run the clean-up step again).
-ACTIONABLE = ("no_card", "not_lined_up", "error")
+ACTIONABLE = ("no_card", "not_lined_up", "poor_fit", "error")
 
 REDRAW_PROMPT = ("Redraw this picture at high quality with crisp, sharp detail: clear eyes with irises, eyelids and lashes, "
                  "defined eyebrows, nose and lips, fine hair strands. Keep everything else exactly the same: the same "
@@ -327,6 +331,9 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
         reason = fd.get("skipped")
         if reason not in ACTIONABLE:
             return []
+        if reason == "poor_fit":
+            score = float((fd.get("alignment") or {}).get("score") or 0.0)
+            return [quality.check("face_matches_picture", False, round(score, 3), FIT_HOLD_MIN, vars={"reason": reason})]
         return [quality.check("face_matches_picture", False, reason, SHARP_MIN, vars={"reason": reason})]
     sharp = float(fd.get("sharpness_after") or 0.0)
     match = float(fd.get("feature_match_after") or 0.0)
@@ -342,7 +349,8 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
                               else "off_picture" if match < MATCH_MIN else "eye_colour")
     cu = fd.get("closeup") or {}
     dens = fd.get("density") or {}
-    return [quality.check("face_matches_picture", ok, round(sharp, 3), SHARP_MIN,
+    value, limit = failure_measure(reason, fd, sharp, match, shift) if not ok else (round(sharp, 3), SHARP_MIN)
+    return [quality.check("face_matches_picture", ok, value, limit,
                           vars={"reason": reason, "eye_shift": shift, "sides": side_words(fd.get("sides_used") or []),
                                 **eye_words(bad_eyes if reason == eye_reason else []),
                                 "before": fd.get("sharpness_before"), "match": round(match, 3), "texels": fd.get("face_texels_after"),
@@ -350,6 +358,28 @@ def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
                                 if cu.get("wanted") and not cu.get("used") else "",
                                 "closeup_own": bool(cu.get("own")), "closeup_notes": "; ".join(cu.get("notes") or []) if cu.get("used") else "",
                                 "density_note": dens.get("note") or "", "level": dens.get("level") or "standard"})]
+
+
+def failure_measure(reason: str | None, fd: dict[str, Any], sharp: float, match: float, shift: Any) -> tuple[Any, Any]:
+    """The number and the limit that belong to the reason a face_matches_picture check failed, so the check's value reads
+    "1.678 (limit 1.0)" only when sharpness is the reason (it showed sharpness against 1.0 for every failure)."""
+    if reason == "blurry":
+        return round(sharp, 3), SHARP_MIN
+    if reason == "off_picture":
+        return round(match, 3), MATCH_MIN
+    if reason == "eye_colour":
+        return round(float(shift), 2), EYE_COLOUR_MAX
+    if reason == "misplaced":
+        return round(float(fd["eyes_moved"]), 3), EYES_MOVED_MAX
+    if reason in ("eye_under_hair", "eye_missing", "eye_blurry"):
+        bad = [e for e in (fd.get("eyes") or []) if eye_state(e) == reason]
+        if bad and reason == "eye_blurry":
+            return round(min(float(e.get("sharp") or 0.0) for e in bad), 3), EYE_SHARP_MIN
+        if bad and reason == "eye_missing" and all(float(e.get("painted") or 0.0) >= EYE_PAINTED_MIN for e in bad):
+            return round(min(float(e.get("match") or 0.0) for e in bad), 3), EYE_MATCH_MIN
+        if bad:
+            return round(min(float(e.get("painted") or 0.0) for e in bad), 3), EYE_PAINTED_MIN
+    return round(sharp, 3), SHARP_MIN
 
 
 def eye_state(e: dict[str, Any]) -> str | None:
@@ -754,8 +784,10 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     a = fit_picture(crop_img if fit_from_crop else src, view["image"], info, inner)
     if a["how"] != "eyes and mouth" and require_landmarks:
         return {"ok": False, "reason": "closeup_off_model"}
-    if a["score"] < ALIGN_MIN:
-        return {"ok": False, "reason": "not_lined_up", "alignment": a}
+    if a["score"] < FIT_HOLD_MIN:
+        # held: nothing is painted and the model keeps the face it had before the pass (the caller returns before it
+        # replaces the model's texture)
+        return {"ok": False, "reason": "poor_fit", "alignment": a}
     # No local warping after this: block matching against the blurred model face moved the brows into a frown on the
     # knight (tried and dropped); one scale and shift keeps the painted face as it was drawn.
     fitted = face.apply_alignment(src, a)

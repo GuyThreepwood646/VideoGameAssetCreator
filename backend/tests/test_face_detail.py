@@ -522,3 +522,73 @@ def test_the_face_pass_looks_where_the_face_is(monkeypatch):
     off = face.render_view(turned, tex, fd.head_cam(head, 128))["mask"]
     iou = lambda m, n: (m & n).sum() / (m | n).sum()  # noqa: E731
     assert iou(seen, straight) > 0.97 and iou(off, straight) < 0.9
+
+
+# --- item 9: hold the face paint when the fit is poor, and say so ---------------------------------------------------
+
+
+def _held_pass(monkeypatch, score):
+    """fit_and_paint up to its fit, with the heavy steps faked: what it returns for a fit of this score."""
+    z = np.zeros((16, 16, 3))
+    monkeypatch.setattr(fd.face, "load_mesh", lambda p: {"verts": None})
+    monkeypatch.setattr(fd.face, "read_rgb", lambda *a, **k: z)
+    monkeypatch.setattr(fd.face, "find_head", lambda v: None)
+    monkeypatch.setattr(fd, "head_cam", lambda *a, **k: None)
+    monkeypatch.setattr(fd.face, "render_view", lambda *a, **k: {"image": z})
+    monkeypatch.setattr(fd.face, "find_face", lambda *a, **k: {"found": True, "region": np.ones((16, 16), bool)})
+    monkeypatch.setattr(fd.face, "inner_face", lambda info: info["region"])
+    monkeypatch.setattr(fd, "fit_picture", lambda *a, **k: {"how": "eyes and mouth", "score": score})
+    crop = Path("crop.png")
+    return fd.fit_and_paint(Path("a.glb"), Path("b.png"), crop, Path("a.glb"), Path("b.png"), crop, Path("."), 1.0)
+
+
+def test_the_limit_is_one_named_constant_at_065():
+    assert fd.FIT_HOLD_MIN == 0.65 and fd.ALIGN_MIN == 0.15
+
+
+def test_a_fit_under_the_limit_holds_the_paint(monkeypatch):
+    for score in (0.23, 0.31, 0.40, 0.57, 0.649):
+        out = _held_pass(monkeypatch, score)
+        assert out["ok"] is False and out["reason"] == "poor_fit" and out["alignment"]["score"] == score
+
+
+def test_a_fit_at_the_limit_is_not_held(monkeypatch):
+    # at 0.65 and above the pass goes on past the fit (it then fails on the faked pictures, not on the hold)
+    for score in (0.65, 0.75):
+        try:
+            out = _held_pass(monkeypatch, score)
+        except Exception:  # noqa: BLE001
+            continue
+        assert out.get("reason") != "poor_fit"
+
+
+def test_a_held_face_fails_the_check_with_the_reason_and_what_to_do():
+    m = {"face_detail": {"ran": False, "skipped": "poor_fit", "alignment": {"score": 0.4}}}
+    c = fd.face_checks(m)[0]
+    assert not c["ok"] and c["value"] == 0.4 and c["limit"] == fd.FIT_HOLD_MIN and c["message"] == "0.4 (limit 0.65)"
+    assert c["help"].startswith("The face was left as it was")
+    assert "could not be lined up" in c["help"] and "0.40 of 1" in c["help"] and "needs 0.65" in c["help"]
+    assert "try the clean-up again" in c["help"].lower() and "clearer picture" in c["help"]
+    assert c["severity"] == "warn" and c["fix_label"] == "Paint the face again"
+
+
+def test_each_failed_check_shows_its_own_measure_not_sharpness_against_one():
+    base = {"ran": True, "sharpness_before": 0.9, "sharpness_after": 1.678, "feature_match_after": 0.9}
+    # sharp enough, but the features do not follow the picture: it used to read "1.678 (limit 1.0)"
+    c = fd.face_checks({"face_detail": {**base, "feature_match_after": 0.3}})[0]
+    assert not c["ok"] and c["value"] == 0.3 and c["limit"] == fd.MATCH_MIN and c["message"] == "0.3 (limit 0.6)"
+    c = fd.face_checks({"face_detail": {**base, "eye_colour_shift": 12.0}})[0]
+    assert (c["value"], c["limit"]) == (12.0, fd.EYE_COLOUR_MAX)
+    c = fd.face_checks({"face_detail": {**base, "eyes_moved": 0.63}})[0]
+    assert (c["value"], c["limit"]) == (0.63, fd.EYES_MOVED_MAX)
+    c = fd.face_checks({"face_detail": {**base, "sharpness_after": 0.7}})[0]
+    assert (c["value"], c["limit"]) == (0.7, fd.SHARP_MIN) and "still blurry" in c["help"]
+    eyes = [{"side": "right", "painted": 0.9, "match": 0.9, "sharp": 0.2}, {"side": "left", "painted": 0.9, "match": 0.9, "sharp": 0.9}]
+    c = fd.face_checks({"face_detail": {**base, "eyes": eyes}})[0]
+    assert (c["value"], c["limit"]) == (0.2, fd.EYE_SHARP_MIN)
+    eyes = [{"side": "left", "painted": 0.0, "match": 0.1, "sharp": 0.1, "hair": 0.8}]
+    c = fd.face_checks({"face_detail": {**base, "eyes": eyes}})[0]
+    assert (c["value"], c["limit"]) == (0.0, fd.EYE_PAINTED_MIN)
+    # a pass still reads sharpness against its limit
+    ok = fd.face_checks({"face_detail": base})[0]
+    assert ok["ok"] and (ok["value"], ok["limit"]) == (1.678, fd.SHARP_MIN)
