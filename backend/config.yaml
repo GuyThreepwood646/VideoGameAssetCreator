@@ -1,54 +1,40 @@
-# Video Game Asset Creator backend configuration.
-# Paths are Windows paths on this machine; forward slashes also work.
+# Video Game Asset Creator backend settings: the defaults, true on any machine.
+#
+# This machine's own values (its ComfyUI install, graphics cards, Blender, Unity, folders) live in
+# local/machine.json, which git ignores. Its "backend" section has the same keys as this file and is laid over it
+# key by key (backend/vgac/config.py). Change this machine's settings there, not here.
+#
+# Relative paths are relative to the project folder. Forward slashes work everywhere.
 
 instances:
   a:
     url: http://127.0.0.1:8188
-    gpu: RTX 3060
     role: 3d
-    # Normally run by ComfyUI Desktop (GameDevComfy). When nothing answers on 8188 and no copy is running, the
-    # backend starts its own with this script; it only ever stops a copy it started itself.
-    start_script: runtime/start-comfy-a.ps1
+    # The backend starts this ComfyUI itself when a step needs it and nothing answers, if local/machine.json gives
+    # it an `engine` (the ComfyUI folder, card and folders; see EngineConfig in config.py). It only ever stops a
+    # copy it started.
     start_timeout_seconds: 180
-    # ComfyUI Desktop starts it without --port, so the CUDA device is what identifies it.
-    process_match: "--cuda-device 1"
-    external_owner: ComfyUI Desktop
-    # ComfyUI Desktop picks its own port (it has used 8188 and 8189). When 8188 does not answer from the 3060, the
-    # backend looks for the ComfyUI running on the 3060 on these ports and uses it for the session. It never takes
-    # a ComfyUI running on the 3080 (instance b).
-    discover: {gpu_match: "3060", ports: [8188, 8189, 8190, 8191, 8000]}
   b:
     url: http://127.0.0.1:8189
-    gpu: RTX 3080
     role: images
-    # Instance B's --output-directory (runtime/start-comfy-b.ps1). SkinToken writes its rigged
-    # GLB there and reports the path as text, so the backend copies it from this folder.
-    output_dir: F:/Projects/VideoGameAssetCreator/runtime/comfy-b-output
-    # Started on demand by the backend when a step needs it (the desktop launcher uses the same script and match).
-    start_script: runtime/start-comfy-b.ps1
+    # Instance B's --output-directory. SkinToken writes its rigged GLB there and reports the path as text, so the
+    # backend copies it from this folder.
+    output_dir: runtime/comfy-b-output
     start_timeout_seconds: 180
-    process_match: ComfyUI\main.py --port 8189
-    # Only checks the card: a ComfyUI on 8189 that runs on the 3060 (ComfyUI Desktop taking the port) is reported as
-    # a setup problem, and no 3080 work is sent to it.
-    discover: {gpu_match: "3080", ports: []}
 
-library_path: F:\Projects\VideoGameAssetCreator\library
+library_path: library
 
-blender_exe: F:/Tools/blender-5.2.3-windows-x64/blender.exe
-unity_exe: C:/Program Files/Unity/Hub/Editor/6000.4.3f1/Editor/Unity.exe
-unity_project: F:/Projects/VideoGameAssetCreator/unity-sandbox
+unity_project: unity-sandbox
 
-# Shared ComfyUI input directory (both instances use it). LoadImage reads from here.
-comfy_input_dir: C:/Projects/Comfy/input
-
-# ComfyUI's loras folder. Your own add-ons are kept in its VGAC/mine/ folder; the app never lists anything else in it.
-loras_dir: F:/Projects/ComfyUI/models/loras
+# Set in local/machine.json: blender_exe, unity_exe, comfy_input_dir (the input folder every ComfyUI instance
+# shares; LoadImage reads from it) and loras_dir (ComfyUI's loras folder; your own add-ons are kept in its
+# VGAC/mine/ folder and the app never lists anything else in it).
 
 # CC0 humanoid clip libraries, by id used in export params clips_library.
 clips_libraries:
-  ual1: "F:/Projects/VideoGameAssetCreator/data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"
+  ual1: "data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"
   # Pack 2 (CC0, License.txt checked): Unreal mannequin bone names, mapped by blender/gait.py; "Add a move" offers it.
-  ual2: "F:/Projects/VideoGameAssetCreator/data/animations/ual2/Universal Animation Library 2 [Standard]/Unity/UAL2_Standard.fbx"
+  ual2: "data/animations/ual2/Universal Animation Library 2 [Standard]/Unity/UAL2_Standard.fbx"
 
 # A job is not dispatched to any instance while free system RAM is below this.
 min_free_ram_gb: 24
@@ -68,8 +54,8 @@ job_timeout_seconds: 3600
 # local picture judge) and material (every graphics-card step of the material category). prep and export run on
 # the host and never need a card.
 # Rig stays on b only: the SkinToken node finds Blender only through the SKINTOKEN_BLENDER_BIN environment
-# variable, which runtime/start-comfy-b.ps1 sets for instance B. Instance A (Comfy Desktop) does not have it, so a
-# rig job waits for b to be turned back on instead of moving.
+# variable. The backend sets it on every engine it starts itself, but a ComfyUI started by someone else (ComfyUI
+# Desktop) may not have it, so a rig job waits for b to be turned back on instead of moving.
 # instance_capabilities:
 #   a: [concept, turnaround, mesh, material, judge]
 #   b: [concept, turnaround, mesh, rig, judge, material]

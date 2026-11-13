@@ -11,8 +11,9 @@ frontend/dist/
 # Asset storage (generated content, large)
 library/
 runtime/*
-!runtime/start-comfy-b.ps1
-!runtime/start-comfy-a.ps1
+
+# This machine's settings (backend/vgac/config.py, desktop/main.js): local/machine.json and its backup
+local/
 
 # Unity sandbox generated folders
 unity-sandbox/Library/
