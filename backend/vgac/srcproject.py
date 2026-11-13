@@ -102,6 +102,9 @@ FACE_ZONE_N = 1024        # size of the head picture the face region is found on
 FACE_ZONE_FEATHER = 0.02  # of that picture: how far past the face region's edge the side views fade back in
 GLASSES_JUMP_M = 0.004    # a step in depth of this much inside the face is the rim of a solid piece in front of it (glasses)
 SKIN_TOL = 14.0           # Lab distance (lightness half) from the painted face's middle colour that still counts as skin
+HEAD_VIEW = "head"        # the first picture fitted on the head alone, by its eyes and mouth (item 6)
+HEAD_NECK = (0.95, 0.75)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
+                          # nose tip (the chin is at about 0.65): the hand-over to the body's own fit lies on the neck
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
@@ -747,6 +750,9 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
     base = v.weight * cos_weight(cosv) * f0 * visible
+    zi = getattr(v, "zone_img", None)  # the head view: the head above the neck only
+    if zi is not None:
+        base = base * face.sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
     zt = getattr(atlas, "zone", None)
     fz = (1.0 - zt["face"]) if (zt is not None and v.name in OFF_FACE_VIEWS) else np.ones_like(base)
     w = base * fd * st * ga * gf * fz
@@ -888,6 +894,7 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
     cam = face.head_camera(head, float(head_yaw), size)
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
+    info = nose_by_landmarks(view, mesh, cam, head, info)
     out: dict[str, Any] = {"found": bool(info.get("found")), "reason": info.get("reason"), "head": head, "cam": cam,
                            "view": view, "info": info, "z": view["raster"]["z"]}
     if not info.get("found"):
@@ -896,6 +903,38 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
     out["weight"] = np.clip(face.blur(info["region"].astype(np.float64), r) * 2.0, 0.0, 1.0)
     out["keep"] = never_skin(view, info, cam)
     return out
+
+
+def nose_by_landmarks(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: face.Camera, head: face.Head,
+                      info: dict[str, Any]) -> dict[str, Any]:
+    """The face found again from MediaPipe's eyes and mouth when the nose tip the shape gave is not between them (on
+    the stored W2-clothed run the shape put it 60 mm to one side, beside the loose curls; on P1-photo on the chin):
+    the nose tip taken as the nearest surface point around 60 percent of the way from the eyes' middle to the mouth.
+    Only while a MediaPipe finder is set (facemarks); the first finding otherwise, or when the new one does not hold
+    up either. Records "nose_from" in the face info."""
+    from . import facemarks
+
+    m = facemarks.points(view["image"])
+    if m is None or (info.get("found") and facemarks.plausible(m, info)):
+        return info
+    eyes = np.array(m["eyes"], dtype=np.float64)
+    mid, mouth = eyes.mean(axis=0), np.array(m["mouth"], dtype=np.float64)
+    guess = mid + 0.6 * (mouth - mid)
+    gap = float(np.linalg.norm(eyes[1] - eyes[0]))
+    S = cam.size
+    r = max(2, int(0.15 * gap))
+    x0, x1 = int(max(0, guess[0] - r)), int(min(S, guess[0] + r + 1))
+    y0, y1 = int(max(0, guess[1] - r)), int(min(S, guess[1] + r + 1))
+    z = np.where(view["mask"], view["raster"]["z"], np.inf)[y0:y1, x0:x1]
+    if z.size == 0 or not np.isfinite(z).any():
+        return info
+    iy, ix = np.unravel_index(int(np.argmin(z)), z.shape)
+    again = face.find_face(view, mesh, cam, head, nose=(int(x0 + ix), int(y0 + iy)))
+    if not again.get("found") or not facemarks.plausible(m, again):
+        return info
+    again["nose_from"] = "mediapipe"
+    again["nose_by_shape"] = info.get("nose")
+    return again
 
 
 def never_skin(view: dict[str, Any], info: dict[str, Any], cam: face.Camera) -> np.ndarray:
@@ -911,6 +950,97 @@ def never_skin(view: dict[str, Any], info: dict[str, Any], cam: face.Camera) -> 
     glasses = face.fill_holes(ring) & ~ring
     glasses = face.dilate_mask(glasses, 3) & face.dilate_mask(info["region"], 4) if glasses.any() else glasses
     return face.dilate_mask(seg["old_hair"], 2) | glasses
+
+
+def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[tuple[str, Any]], body_px_m: float,
+             pic_n: int | None = None, log: Callable[[str], None] | None = None) -> tuple[View | None, dict[str, Any]]:
+    """The first picture fitted to the head on its own, by its eyes and mouth (docs/AFTER-TEST-CHANGES.md D2 item 6): the
+    face pass's own framing (face.painted_head: the picture's head cut out as the model's head is framed from where its
+    face looks) and fit (face_detail.fit_picture: eyes and mouth found by MediaPipe when facemarks has a finder set, else
+    the darkest spots). Tried on each of `pictures` ((name, picture) in order, the original first) whatever its
+    whole-body fit said; the first whose eyes and mouth land on the model's is the head view: its camera is the head
+    picture's, it paints the head above the neck (HEAD_NECK), and it comes first in priority. Returns (the view or
+    None, its record for the metrics)."""
+    from .stages import face_detail
+
+    rec: dict[str, Any] = {"name": HEAD_VIEW}
+    if not zone.get("found"):
+        rec["refused"] = f"the model's face was not found ({zone.get('reason')})"
+        return None, rec
+    head, cam, view, info = zone["head"], zone["cam"], zone["view"], zone["info"]
+    S = cam.size
+    inner = face.inner_face(info)
+    tried: dict[str, str] = {}
+    for name, src in pictures:
+        if src is None:
+            continue
+        pic, alpha = prepare_picture(src, pic_n)
+        crop = face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, cam, size=S)
+        if crop is None:
+            tried[name] = "no figure in the picture"
+            continue
+        a = face_detail.fit_picture(crop["image"], view["image"], info, inner)
+        err = head_fit_error(crop["image"], view["image"], info, a)
+        if err is None or err > face_detail.LANDMARK_RESIDUAL_MAX or a.get("score", 0) < face_detail.ALIGN_MIN:
+            tried[name] = ("its eyes and mouth could not be found on both" if err is None else
+                           f"its eyes land {err:.2f} of the face's width from the model's") + f" (fit: {a.get('how')}, score {a.get('score', 0):.2f})"
+            continue
+        v = View(HEAD_VIEW, 1.0)
+        v.cam, v.raster = cam, Raster(mesh, cam)
+        v.pic_aligned = v.pic_affine = np.clip(face.apply_alignment(crop["image"], a), 0.0, 1.0)
+        v.alpha_img = face.apply_alignment(crop["alpha"], a)
+        v.render = view["image"]
+        v.valid = v.raster.mask & (v.alpha_img > 0.5)
+        r = max(2, S // 340)
+        v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+        pos = face.interpolate(mesh["verts"], mesh["faces"], view["raster"])
+        nx, ny = info["nose"]
+        nose_y = float(pos[ny, nx, 1])
+        L = max(head.top - nose_y, 1e-3)
+        v.zone_img = face.smoothstep(nose_y - HEAD_NECK[0] * L, nose_y - HEAD_NECK[1] * L, pos[..., 1]) * view["mask"]
+        v.size = S
+        k = 0.5 * (float(a["sx"]) + float(a["sy"]))
+        v.pic_px_m = 1.0 / float(crop["px_per_m"]) / max(k, 1e-6) * pic.shape[0] / float(PIC_N)
+        v.flow_u, v.flow_cap = np.zeros((8, 8, 2)), 1.0
+        # depth steps as the body's views see them: the same jump in metres, the same reach around them
+        px_m = cam.scale / S
+        disc = depth_discontinuities(view["raster"]["z"], body_px_m, 10.0)
+        v.disc = face.dilate_mask(disc, max(0, int(round(DISC_PX * body_px_m / px_m)) - DISC_PX))
+        # the structure gate compares the picture with the model's own face, which is what the head fit already did
+        prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+        v.ok = True
+        rec.update(picture=name, yaw=round(float(cam.yaw_deg), 1), how=a.get("how"), score=round(float(a.get("score", 0)), 3),
+                   eye_error=round(float(err), 3), fit={kk: a.get(kk) for kk in ("sx", "sy", "tx", "ty")},
+                   head_px=crop.get("head_px"), nose_from=info.get("nose_from", "shape"))
+        if tried:
+            rec["passed_over"] = tried
+        v.info = rec
+        if log:
+            log(f"view head: from {name}, {a.get('how')}, score {a.get('score', 0):.2f}, eye error {err:.3f} of the face's width")
+        return v, rec
+    rec["refused"] = "; ".join(f"{k}: {why}" for k, why in tried.items()) or "no picture to fit"
+    if log:
+        log(f"view head: refused, {rec['refused']}")
+    return None, rec
+
+
+def head_fit_error(crop: np.ndarray, render: np.ndarray, info: dict[str, Any], a: dict[str, Any]) -> float | None:
+    """How far the fitted picture's eyes sit from the model's, as a share of the face's width (the larger of the two
+    eyes' distances in x or y), by MediaPipe on both when a finder is set and finds both, else the fit's own residual
+    when it is the eye-and-mouth fit; None when neither is known. The face pass's fit keeps its whole-face fit when that
+    already lands the eyes within a margin of the eye-and-mouth fit, so its "how" alone does not say whether the eyes
+    are on the model's."""
+    from . import facemarks
+
+    w = float(info["width_px"])
+    if facemarks.active():
+        lp = facemarks.find(face.apply_alignment(crop, a), info)
+        lr = facemarks.find(render, info)
+        if lp is not None and lr is not None:
+            return float(np.abs(np.array(lp["eyes"]) - np.array(lr["eyes"])).max()) / w
+    if a.get("how") == "eyes and mouth" and a.get("residual_px") is not None:
+        return float(a["residual_px"]) / w
+    return None
 
 
 def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -1090,7 +1220,12 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
-        zone_job = pool.submit(contextvars.copy_context().run, face_zone, mesh, tex, head_yaw)
+        def zone_and_head() -> tuple[dict[str, Any], View | None, dict[str, Any]]:
+            z = face_zone(mesh, tex, head_yaw)
+            hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log)
+            return z, hv, hrec
+
+        zone_job = pool.submit(contextvars.copy_context().run, zone_and_head)
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
         fitted = {n: j.result() for n, j in jobs.items()}
         front = fitted["picture"]
@@ -1123,12 +1258,19 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         other = fitted.get(SECOND_QUARTER)
         if views and other is not None and other.ok:
             views.append(other)
+        body = bool(views)
+        zone, head_v, head_rec = zone_job.result()
+        infos[HEAD_VIEW] = head_rec
+        if head_v is not None:  # the head on its own comes first, also when every whole-body fit was refused
+            views.insert(0, head_v)
         n_primary = len(views)
         if not views:
             res["reason"] = front.info.get("refused", "the picture was refused")
             res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
             return res
         for name in TURN_VIEWS:
+            if not body:  # the drawn views paint only around a picture the whole body was fitted to
+                break
             if name in fitted:
                 infos[name] = fitted[name].info
                 if fitted[name].ok and fitted[name] not in views:
@@ -1144,20 +1286,22 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
 
         def ready(i: int) -> np.ndarray:
             v = views[i]
+            if v.name == HEAD_VIEW:  # its gates were set when it was fitted
+                return v.pic_aligned
             full = i < n_primary or mode == "full"
             drawn = i >= n_primary or v.name == SECOND_QUARTER  # a view drawn from the picture, not the picture itself
             prepare_gates(v, {**GATES, "agree": False} if (drawn and full and not TURN_AGREE) else None)
             return v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px)
 
         images = list(pool.map(ready, range(len(views))))
-        zone = zone_job.result()
     c = compose(atlas, views, images, n_primary, tex, zone)
     paint_, alpha_, dom, new = c["paint"], c["alpha"], c["dom"], c["base_color"]
     for v in views:
         infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
-    before, after = front_measures(views[0], tex), front_measures(views[0], new)  # against the first source that fitted
+    mv = next((v for v in views if v.name != HEAD_VIEW), views[0])
+    before, after = front_measures(mv, tex), front_measures(mv, new)  # against the first source that fitted
     painted = alpha_ > 0.5
-    m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_measured_against": views[0].name, "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
+    m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_measured_against": mv.name, "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
@@ -1372,12 +1516,30 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
     picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]
     turn = {v: srcs.get(v) for v in TURN_VIEWS}
+    # The head is fitted by its eyes and mouth (fit_head): MediaPipe on the processor (the mediapipe package), else on
+    # the card that draws pictures, as the face pass asks it; else the darkest-spot finder.
+    from . import facemarks
+
+    local_tok = facemarks.use_local() if params.get("face_marks") is not False else None
+    card_tok = None
+    try:
+        from .stages import face_detail
+
+        inst = face_detail.image_instance(sc)
+        if inst is not None and params.get("face_marks") is not False:
+            client = sc.client(inst)
+            card_tok = facemarks.use(getattr(client, "base_url", None), getattr(client, "input_dir", None))
+    except Exception:  # noqa: BLE001  (no card: the local finder or the darkest spots)
+        card_tok = None
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
                                     front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
+    finally:
+        facemarks.done(card_tok)
+        facemarks.done_local(local_tok)
     sc.set_metrics(**r["metrics"], srcproject_applied=bool(r["applied"]), srcproject_reason=r["reason"])
     if r["applied"]:
         await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=r["base_color"])

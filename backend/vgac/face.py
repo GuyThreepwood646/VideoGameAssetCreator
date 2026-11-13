@@ -416,15 +416,16 @@ def face_bounds(z: np.ndarray, pos: np.ndarray, head: Head, nose: tuple[int, int
 
 
 def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, head: Head,
-              skin_tolerance: float = 16.0) -> dict[str, Any]:
-    """The face in a front render: the nose tip (the nearest visible point in the upper head), the skin colour around
-    it, and the skin-coloured area joined to it with its holes (eyes, mouth) filled. Returns {found, reason,
-    nose (x, y), skin (Lab), region (S,S) bool, box (x0, y0, x1, y1), width_px}."""
+              skin_tolerance: float = 16.0, nose: tuple[int, int] | None = None) -> dict[str, Any]:
+    """The face in a front render: the nose tip (the nearest visible point in the upper head, or `nose` when given),
+    the skin colour around it, and the skin-coloured area joined to it with its holes (eyes, mouth) filled. Returns
+    {found, reason, nose (x, y), skin (Lab), region (S,S) bool, box (x0, y0, x1, y1), width_px}."""
     S = cam.size
     ras = view["raster"]
     m = view["mask"]
     pos = interpolate(mesh["verts"], mesh["faces"], ras)
-    nose = find_nose(ras["z"], m, pos, cam, head)
+    if nose is None:
+        nose = find_nose(ras["z"], m, pos, cam, head)
     if nose is None:
         return {"found": False, "reason": "no_head"}
     ix, iy = nose

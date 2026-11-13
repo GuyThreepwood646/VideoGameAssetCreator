@@ -6,9 +6,10 @@ moustache it puts the mouth on the moustache (the T-pose man: one eye 50 px high
 crop), so a good close-up was refused as "its eyes and mouth could not be found" and the paint was fitted by the
 whole face instead. MediaPipe finds each eye's outline and the lips as a face model, whatever the brows and beard do.
 
-face.landmarks asks here first. Only while a face pass has set a card (use()); otherwise, or when MediaPipe finds no
-face or a face that is not where the model's is, the darkest-spot finder is used as before, so tests and a missing
-model change nothing. Model: Comfy-Org/mediapipe detection/mediapipe_face_fp32.safetensors (Apache-2.0, Google
+face.landmarks asks here first. Only while a face pass has set a card (use()), or the picture projection has asked for
+the local finder (use_local(): the same MediaPipe face model through the `mediapipe` Python package on the processor,
+vgac/lipmarks.py, no card needed); otherwise, or when MediaPipe finds no face or a face that is not where the model's
+is, the darkest-spot finder is used as before, so tests and a missing model change nothing. Model: Comfy-Org/mediapipe detection/mediapipe_face_fp32.safetensors (Apache-2.0, Google
 MediaPipe), in ComfyUI's models/detection folder.
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import io
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,8 @@ from PIL import Image
 MODEL = "mediapipe_face_fp32.safetensors"
 TIMEOUT_S = 60.0
 _card: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar("facemarks_card", default=None)
+_local: contextvars.ContextVar[bool] = contextvars.ContextVar("facemarks_local", default=False)
+_local_lock = threading.Lock()  # one MediaPipe landmarker is shared by the threads that ask
 _cache: dict[str, dict[str, Any] | None] = {}
 _CACHE_MAX = 64
 stats = {"asked": 0, "found": 0, "failed": 0}
@@ -45,8 +49,32 @@ def done(token: contextvars.Token | None) -> None:
         _card.reset(token)
 
 
+def use_local() -> contextvars.Token:
+    """Find the eyes and mouth on the processor (the mediapipe package) while the returned token is set; it is asked
+    before a card. Threads started with contextvars.copy_context() see it."""
+    return _local.set(True)
+
+
+def done_local(token: contextvars.Token | None) -> None:
+    if token is not None:
+        _local.reset(token)
+
+
 def active() -> bool:
-    return _card.get() is not None
+    return _card.get() is not None or _local.get()
+
+
+def local(img: np.ndarray) -> dict[str, Any] | None:
+    """Eyes, mouth and mouth corners from the mediapipe package's 478 points (vgac/lipmarks.py), in the same shape as a
+    card's answer. None when the package or its model is missing or no face is found."""
+    from . import lipmarks
+
+    with _local_lock:
+        lp = lipmarks.find(img)
+    if lp is None:
+        return None
+    return {"eyes": sorted(lp["eyes"]), "mouth": lp["mouth"], "how": "mediapipe", "finder": "local",
+            "mouth_corners": [lp["left"], lp["right"]]}
 
 
 def graph(name: str) -> dict[str, Any]:
@@ -152,13 +180,31 @@ def plausible(m: dict[str, Any], info: dict[str, Any]) -> bool:
     return 0.2 * w < gap < 0.8 * w
 
 
+def points(img: np.ndarray) -> dict[str, Any] | None:
+    """Eyes and mouth by whichever MediaPipe finder is set (local first, then the card), without checking that the face
+    is the model's; None when none is set or no face is found."""
+    from . import lipmarks
+
+    card = _card.get()
+    if _local.get() and lipmarks.available():
+        return local(img)
+    if card is not None:
+        return ask(img, *card)
+    return None
+
+
 def find(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
     """Eyes and mouth by MediaPipe for a face picture framed like the model's render, or None (no card set, no face,
     or not the model's face)."""
+    from . import lipmarks
+
     card = _card.get()
-    if card is None:
+    if _local.get() and lipmarks.available():
+        m = local(img)
+    elif card is not None:
+        m = ask(img, *card)
+    else:
         return None
-    m = ask(img, *card)
     if m is None or not plausible(m, info):
         return None
     return m
