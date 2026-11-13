@@ -36,3 +36,14 @@ desktop/node_modules/
 
 # Animation packs: each user downloads these at setup (setup/downloads.json, setup/Setup-Extras.ps1 -Packs)
 data/animations/
+
+# Research, plans, audits, reviews and test write-ups stay on the owner's computer. Only the guides the readme links
+# to are checked in. A new document under docs/ is ignored unless it is added to this list.
+docs/*
+!docs/FIRST-TIME-SETUP.md
+!docs/ADVANCED.md
+!docs/API.md
+!docs/BACKEND.md
+!docs/BUILD-THE-EXE.md
+!docs/images/
+bakeoff/BAKEOFF.md
