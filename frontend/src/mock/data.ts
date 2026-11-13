@@ -720,6 +720,13 @@ export function fabricate(asset: Asset, version: Version) {
       m.model = version.params.model ?? 'zturbo'
       m.seed = seed
       m.recipe = recipeRecord(recipe, 'concept', 'addons')
+      // Like stages/concept.build_prompt: the description first, then what the app adds (Brief.tsx shows it).
+      {
+        const desc = String(version.params.prompt_override ?? asset.prompt ?? '').trim()
+        const block = store.projects.find((p) => p.id === asset.project_id)?.style_lock.prompt_block ?? ''
+        const pose = asset.category === 'humanoid' ? 'Full body, standing in a relaxed A-pose, arms slightly away from the body, facing the viewer, plain light grey background.' : 'Whole object in view, plain light grey background.'
+        m.prompt_final = [desc ? desc.replace(/[.\s]+$/, '') + '.' : '', block, pose].filter(Boolean).join(' ')
+      }
       // Like the backend: style-lock add-ons the registry does not know are reported, never a failure.
       {
         const lock = store.projects.find((p) => p.id === asset.project_id)?.style_lock.loras ?? []
@@ -788,6 +795,28 @@ export function fabricate(asset: Asset, version: Version) {
       m.recipe = recipeRecord(recipe, 'mesh')
       m.gate_ok = true
       m.elapsed_seconds = 180 + (seed % 40)
+      // Your own 3D model (backend vgac/model_import.py): pictures of it fill steps 1 and 2 and all three are kept.
+      if (version.params.engine === 'upload') {
+        const turn = Number(version.params.turn ?? 0)
+        m.engine = 'upload'
+        m.imported = { triangles: 48_210, vertices: 25_004, materials: 3, texture_mode: 'baked', texture_size: 2048, uv_made: true, bones: 53, armature: true, dims: [0.6, 0.35, 1.8], warnings: ['skeleton_set_aside'], seconds: 6.2, turn }
+        m.import_notes = ['It had a skeleton; the model is used in its rest pose and step 5 rigs it again.']
+        m.triangles = 48_210
+        m.texture_fidelity = { skipped: 'your model' }
+        const common = { source: 'from_model', from_model_version: version.id }
+        const c = newVersion(asset, 'concept', null, { ...common, model: null, seed: turn + 1 })
+        fabricate(asset, c)
+        delete c.metrics.prompt_final // a picture of the model, not painted
+        c.metrics.addons_unknown = []
+        c.status = 'done'
+        setSelected(asset, c)
+        const t = newVersion(asset, 'turnaround', c.id, { ...common, views: ['front', 'left', 'back', 'right', 'quarter', 'quarter2'], seed: turn + 1 })
+        fabricate(asset, t)
+        t.status = 'done'
+        setSelected(asset, t)
+        version.parent_version_id = t.id
+        setSelected(asset, version)
+      }
       break
     }
     case 'prep': {

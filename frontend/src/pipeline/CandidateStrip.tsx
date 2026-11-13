@@ -181,6 +181,16 @@ function CandidateCard({
             Your picture
           </span>
         )}
+        {stage === 'mesh' && version.params.source === 'upload' && (
+          <span className="chip chip-accent" title="A 3D model you added, not built by the app">
+            Your model
+          </span>
+        )}
+        {version.params.source === 'from_model' && (
+          <span className="chip chip-accent" title="Pictures the app took of the 3D model you added">
+            From your model
+          </span>
+        )}
         {version.status === 'done' ? (
           good === null || good === undefined ? null : (
             <span className={'traffic-line ' + (good === false ? 'bad' : 'ok')} title={reason ?? 'Every check passed'}>

@@ -5,6 +5,7 @@ import { SetupBadge } from './SetupCheck'
 import { useEventMode } from './events'
 import { closeGuide, openGuide, useGuide } from './guide'
 import { notifyEnabled, setNotifyEnabled, Toasts } from './notify'
+import { PictureZoom } from './components/PictureViewer'
 
 export default function App() {
   const mode = useEventMode()
@@ -46,6 +47,7 @@ export default function App() {
         <Outlet />
       </main>
       <Toasts />
+      <PictureZoom />
       {guideOpen && <FirstRunOverlay />}
     </div>
   )

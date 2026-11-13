@@ -46,7 +46,9 @@ function ConfirmDialog({ opts, onDone }: { opts: ConfirmOptions; onDone: (ok: bo
         <div className="small">{opts.body}</div>
         {opts.typeToConfirm && (
           <label className="field">
-            <span className="field-label">Type {opts.typeToConfirm} to confirm</span>
+            <span className="field-label">
+              Type <span className="confirm-word">{opts.typeToConfirm}</span> to confirm, exactly as shown
+            </span>
             <input value={typed} onChange={(e) => setTyped(e.target.value)} aria-label={`Type ${opts.typeToConfirm} to confirm`} />
           </label>
         )}

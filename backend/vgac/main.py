@@ -60,6 +60,7 @@ app.include_router(__import__("vgac.compose", fromlist=["router"]).router)  # st
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
+app.include_router(__import__("vgac.model_import", fromlist=["router"]).router)  # your own 3D model on step 3 (model_import.py)
 app.include_router(my_hair.router)  # your own hairstyles: add, rename, remove (my_hair.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
 

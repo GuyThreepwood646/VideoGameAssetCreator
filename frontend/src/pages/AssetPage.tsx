@@ -5,12 +5,13 @@ import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { COMPOSE_CATEGORIES, ComposePanel } from '../pipeline/ComposePanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
+import { DescriptionEdit } from '../pipeline/Brief'
 import { ViewerLookContext, ViewerPausedContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
@@ -377,7 +378,7 @@ export default function AssetPage() {
           <Link to={`/projects/${asset.project_id}`} className="crumb">
             Back to assets
           </Link>
-          <RailEdit asset={asset} field="name" onSaved={reload} onError={setError} />
+          <DescriptionEdit asset={asset} field="name" onSaved={reload} onError={setError} />
           {asset.base_asset_id && (
             <div className="variant-of">
               variant of <Link to={`/assets/${asset.base_asset_id}`}>{baseName ?? 'the original'}</Link>
@@ -468,7 +469,7 @@ export default function AssetPage() {
             Prompt (description)
             <Info term="term.prompt" />
           </div>
-          <RailEdit asset={asset} field="prompt" onSaved={reload} onError={setError} />
+          <DescriptionEdit asset={asset} field="prompt" onSaved={reload} onError={setError} emptyText="None yet" />
         </div>
       </aside>
       <section className="stage-main">
@@ -584,70 +585,6 @@ function newerAutopilot(cur: AutopilotState | null, next: AutopilotState | null)
 }
 
 // "Make a variant": a sibling asset with one change that keeps this one's identity.
-// The asset's name or description, editable in place (UI-04, UI-26). A changed description offers a new step 1 picture.
-function RailEdit({ asset, field, onSaved, onError }: { asset: Asset; field: 'name' | 'prompt'; onSaved: () => Promise<unknown> | void; onError: (e: unknown) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [text, setText] = useState('')
-  const [asked, setAsked] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const current = field === 'name' ? asset.name : asset.prompt
-  const isName = field === 'name'
-  const save = async (thenRun: boolean) => {
-    setBusy(true)
-    try {
-      await api.updateAsset(asset.id, { [field]: text.trim() })
-      if (thenRun) await api.runStage(asset.id, 'concept', {})
-      await onSaved()
-      setEditing(false)
-      setAsked(false)
-    } catch (e) {
-      onError(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-  if (!editing) {
-    return (
-      <div className={isName ? 'asset-title rail-edit' : 'small rail-edit'}>
-        <span>{current}</span>
-        <button type="button" className="link small rail-edit-btn" aria-label={isName ? 'Rename this asset' : 'Edit the description'} onClick={() => { setText(current ?? ''); setEditing(true) }}>
-          Edit
-        </button>
-      </div>
-    )
-  }
-  if (asked) {
-    return (
-      <div className="col-tight small">
-        <div>Make a new step 1 picture from this description?</div>
-        <div className="row-gap">
-          <button type="button" className="primary small-btn" disabled={busy} onClick={() => save(true)}>Make it</button>
-          <button type="button" className="small-btn" disabled={busy} onClick={() => save(false)}>Just save the text</button>
-        </div>
-      </div>
-    )
-  }
-  const ok = text.trim().length > 0
-  const submit = () => {
-    if (!ok || text.trim() === (current ?? '').trim()) return setEditing(false)
-    if (isName) void save(false)
-    else setAsked(true)
-  }
-  return (
-    <div className="col-tight">
-      {isName ? (
-        <input value={text} autoFocus aria-label="Asset name" maxLength={200} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setEditing(false) }} />
-      ) : (
-        <textarea value={text} rows={4} autoFocus aria-label="Description" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false) }} />
-      )}
-      <div className="row-gap">
-        <button type="button" className="primary small-btn" disabled={busy || !ok} onClick={submit}>Save</button>
-        <button type="button" className="small-btn" onClick={() => setEditing(false)}>Cancel</button>
-      </div>
-    </div>
-  )
-}
-
 function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () => void; onError: (e: unknown) => void }) {
   const navigate = useNavigate()
   const [change, setChange] = useState('')
@@ -725,7 +662,9 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
   if (job) {
     const s = stageOfJob(job, asset)
     const step = s ? `step ${STAGES.indexOf(s) + 1} of ${STAGES.length}` : ''
-    if (job.status === 'queued') return { text: `${s ? stageGerund(s) : 'Working'}: waiting for the graphics card${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    const importing = job.kind === 'mesh.upload'
+    if (job.status === 'queued') return { text: `${importing ? 'Reading your 3D model' : s ? stageGerund(s) : 'Working'}: waiting ${importing ? 'its turn' : 'for the graphics card'}${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    if (importing) return { text: `Reading your 3D model, ${fmtDuration(MODEL_IMPORT_SECONDS * (1 - (job.progress ?? 0)))} left${step ? `, ${step}` : ''}.`, tone: 'ok' }
     const est = s ? stageEstimate(s, ref?.stages.find((x) => x.id === s), suggestion?.estimates) : 120
     const left = est * (1 - (job.progress ?? 0))
     return { text: `${s ? stageGerund(s) : 'Working'}, ${fmtDuration(left)} left${step ? `, ${step}` : ''}.`, tone: 'ok' }

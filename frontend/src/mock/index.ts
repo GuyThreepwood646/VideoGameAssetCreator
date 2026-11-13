@@ -689,6 +689,30 @@ function uploadConcept(a: Asset, img: string, note: string | null) {
 on('POST', '/api/assets/:id/stages/concept/upload', (m, body) =>
   uploadConcept(findAsset(m.groups!.id), String(body.image ?? ''), typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null),
 )
+// Your own 3D model on step 3 (backend vgac/model_import.py). The file is not read in the demo: the model is the sample.
+const MODEL_EXT = ['.glb', '.gltf', '.fbx', '.obj', '.zip']
+on('POST', '/api/assets/:id/stages/mesh/upload', (m, _b, query) => {
+  const asset = findAsset(m.groups!.id)
+  if (asset.category === 'material') throw new HttpError(400, 'A tileable material has no 3D model, so a model cannot be added to it.')
+  const name = query.get('name') ?? ''
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+  if (!MODEL_EXT.includes(ext)) throw new HttpError(400, 'Use a GLB, glTF, FBX or OBJ file, or a zip with the model and its pictures.')
+  if (Number(query.get('bytes') ?? 0) > 400 * 1024 * 1024) throw new HttpError(413, 'This file is larger than 400 MB.')
+  const v = newVersion(asset, 'mesh', null, { source: 'upload', engine: 'upload', file_name: name, turn: 0, hair_source: 'model' })
+  const job = startJob(asset, v, 'mesh.upload')
+  job.instance = 'host' // Blender on this computer, as in the real app
+  return { job: clone(job), version: clone(v) }
+})
+on('POST', '/api/versions/:vid/turn-model', (m, body) => {
+  const { asset, version } = findVersion(m.groups!.vid)
+  const turn = Number(body.turn)
+  if (![90, 180, 270].includes(turn)) throw new HttpError(400, 'turn must be 90, 180 or 270')
+  if (version.stage !== 'mesh' || version.params.engine !== 'upload') throw new HttpError(400, 'only a model you added can be turned this way')
+  const v = newVersion(asset, 'mesh', null, { ...version.params, turn: (Number(version.params.turn ?? 0) + turn) % 360 })
+  const job = startJob(asset, v, 'mesh.upload')
+  job.instance = 'host' // Blender on this computer, as in the real app
+  return { job: clone(job), version: clone(v) }
+})
 on('POST', '/api/versions/:vid/views/:view/upload', (m, body) => {
   const { asset, version } = findVersion(m.groups!.vid)
   const view = m.groups!.view

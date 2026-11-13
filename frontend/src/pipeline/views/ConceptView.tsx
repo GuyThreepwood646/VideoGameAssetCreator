@@ -5,6 +5,7 @@ import { PictureViewer, Zoomable } from '../../components/PictureViewer'
 import { modelLabel } from '../../help'
 import { useRefData } from '../../refdata'
 import { addonsNotUsed } from '../Addons'
+import { PromptSent } from '../Brief'
 
 export function ConceptView({ version }: { version: Version }) {
   const [cutout, setCutout] = useState(false)
@@ -32,13 +33,18 @@ export function ConceptView({ version }: { version: Version }) {
               {version.params.source === 'upload' ? 'Your picture' : 'Your picture, changed'}
               <Info term="term.your_picture" />
             </>
+          ) : version.params.source === 'from_model' ? (
+            <>
+              a picture of your 3D model
+              <Info term="term.own_model" />
+            </>
           ) : version.params.model ? (
             <>
               painted by {modelLabel(String(version.params.model))}
               <Info term={'model.' + String(version.params.model)} />
             </>
           ) : null}
-          {version.params.source !== 'upload' && version.params.seed !== undefined && version.params.seed !== null ? (
+          {version.params.source !== 'upload' && version.params.source !== 'from_model' && version.params.seed !== undefined && version.params.seed !== null ? (
             <>
               , picture number {String(version.params.seed)} <small className="muted">(seed)</small>
               <Info term="term.seed" />
@@ -59,6 +65,7 @@ export function ConceptView({ version }: { version: Version }) {
         )}
       </div>
       {full && src && <PictureViewer items={[{ src, label: cutout ? 'Cutout' : 'Picture' }]} checker={cutout} onClose={() => setFull(false)} />}
+      <PromptSent version={version} />
       {notUsed && (
         <div className="muted small">
           {notUsed}
