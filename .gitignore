@@ -25,6 +25,7 @@ unity-sandbox/Assets/VGAC.meta
 
 # Experiment outputs and scratch
 bakeoff/out/
+bakeoff/realistic_test/
 bakeoff/__pycache__/
 tools/e2e_report.json
 exports/
@@ -32,3 +33,6 @@ exports/
 # Desktop launcher build output
 desktop/dist/
 desktop/node_modules/
+
+# Animation packs: each user downloads these at setup (setup/downloads.json, setup/Setup-Extras.ps1 -Packs)
+data/animations/
