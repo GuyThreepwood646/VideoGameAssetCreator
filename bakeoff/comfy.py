@@ -6,13 +6,17 @@ Instance B (images, RTX 3080) is http://127.0.0.1:8189.
 import json
 import os
 import shutil
+import sys
 import time
 import urllib.parse
 import urllib.request
 
 A = "http://127.0.0.1:8188"
 B = "http://127.0.0.1:8189"
-INPUT_DIR = r"C:\Projects\Comfy\input"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from local_paths import comfy_input  # noqa: E402
+
+INPUT_DIR = comfy_input() or ""  # VGAC_COMFY_INPUT, else comfy_input_dir in the app's settings
 BS = chr(92)
 
 

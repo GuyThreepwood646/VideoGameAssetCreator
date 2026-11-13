@@ -18,7 +18,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from comfy import A, BS, run, download, files_of, stage_input
 
 OUT = os.path.join(os.path.dirname(__file__), "out", "mesh")
-SKILL_WF = r"C:\Users\evanr\.claude\skills\comfyui-game-art\workflows\trellis2_image_to_mesh_api.json"
+# The comfyui-game-art skill's TRELLIS.2 workflow (outside this repository); VGAC_TRELLIS_WF names another copy.
+SKILL_WF = os.environ.get("VGAC_TRELLIS_WF") or os.path.expanduser(
+    os.path.join("~", ".claude", "skills", "comfyui-game-art", "workflows", "trellis2_image_to_mesh_api.json"))
 
 
 def trellis_graph(image_name, prefix, seed=42):

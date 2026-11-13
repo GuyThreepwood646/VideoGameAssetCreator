@@ -1,7 +1,7 @@
 """Phase 0 bake-off, step 2: turnaround views from a picked concept, on instance B (RTX 3080).
 
 Qwen-Image-Edit-2511 fp8 + Lightning 4-step + the fal multiple-angles LoRA, following the recipe proven in
-F:\\Projects\\ComfyUI\\training\\smuggins_lora\\LORA_PLAN.md. Each view is one job. Every output is background-removed
+an earlier LoRA training plan (outside this repository). Each view is one job. Every output is background-removed
 with BiRefNet and saved as RGBA, plus a copy composited over white for Hunyuan3D.
 
 Usage: python turnaround.py <subject> <concept.png>

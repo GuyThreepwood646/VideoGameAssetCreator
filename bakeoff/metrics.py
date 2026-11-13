@@ -14,7 +14,10 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BLENDER = r"F:\Tools\blender-5.2.3-windows-x64\blender.exe"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from local_paths import blender  # noqa: E402
+
+BLENDER = blender() or "blender"  # VGAC_BLENDER, else blender_exe in the app's settings
 OUT = os.path.join(HERE, "out")
 VIEW_YAW = {"front": 0, "left": 90, "back": 180, "right": 270}
 

@@ -7,7 +7,6 @@ on a temporary library (skipped when Blender is not installed); nothing reaches 
 from __future__ import annotations
 
 import io
-import json
 import time
 import zipfile
 from pathlib import Path
@@ -16,9 +15,10 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.machine_tools import blender as machine_blender
 from vgac import model_import as mi
 
-BLENDER = Path("F:/Tools/blender-5.2.3-windows-x64/blender.exe")
+BLENDER = machine_blender() or Path("blender-not-found")  # tests/machine_tools.py: VGAC_TEST_BLENDER, settings, PATH
 
 # Two boxes side by side, one red and one blue material: the bake path (several materials, no pictures).
 OBJ = """# two boxes
@@ -131,7 +131,7 @@ def test_view_yaws_match_the_facing_words():
 
 # --- through the API, with real Blender ----------------------------------------------------------------------------
 
-needs_blender = pytest.mark.skipif(not BLENDER.is_file(), reason="Blender 5.2.3 not installed at the usual place")
+needs_blender = pytest.mark.skipif(not BLENDER.is_file(), reason="Blender is not set up on this machine")
 
 
 def wait_job(client: TestClient, job_id: str, timeout: float = 240.0) -> dict[str, Any]:

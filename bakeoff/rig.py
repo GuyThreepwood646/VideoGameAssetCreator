@@ -15,7 +15,9 @@ from comfy import B, run, stage_input
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out", "rig")
-COMFY_B_OUTPUT = r"F:\Projects\VideoGameAssetCreator\runtime\comfy-b-output"
+from local_paths import comfy_b_output  # noqa: E402
+
+COMFY_B_OUTPUT = comfy_b_output() or ""  # VGAC_COMFY_B_OUT, else instances.b.output_dir in the app's settings
 
 
 def rig_graph(mesh_name, prefix, target_faces, ckpt="experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt", template="Keep model names"):

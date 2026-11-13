@@ -6,7 +6,7 @@ from pathlib import Path
 
 from vgac import folders
 
-F = Path(r"F:\Projects\VideoGameAssetCreator\exports\Hollow Keep\Knight")
+F = Path(r"D:\Games\VGAC\exports\Hollow Keep\Knight")
 
 
 def test_title_matches_the_folder_name_the_full_path_and_the_explorer_suffix():
@@ -25,12 +25,13 @@ def test_pick_window_prefers_the_new_window_then_one_already_open():
     assert folders.pick_window({2: "Downloads"}, F, before=set()) is None
 
 
-def test_open_folder_endpoints_pass_the_front_result_on(settings, monkeypatch):
+def test_open_folder_endpoints_pass_the_front_result_on(settings, monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
     from vgac import user_addons
     from vgac.main import app
 
+    monkeypatch.setattr(settings, "loras_dir", tmp_path / "loras")  # never this PC's own ComfyUI folder
     monkeypatch.setattr(folders, "open_in_explorer", lambda p: {"front": False})
     with TestClient(app) as c:
         r = c.post("/api/my-addons/open-folder")
