@@ -20,8 +20,9 @@ from typing import Any
 
 from . import hairpic
 
-DATA_DIR = Path(__file__).resolve().parent / "data" / "hairlib"
-_dir = [DATA_DIR]
+DATA_DIR = Path(__file__).resolve().parent / "data" / "hairlib"  # the library that still ships inside the project
+BUILT_NAME = "hairlib"  # <library_path>/hairlib: the library setup\Setup-Extras.ps1 -Packs builds from the downloaded packs
+_dir: list[Path | None] = [None]
 
 FAMILIES = ("bob", "short", "long", "ponytail", "bun", "braid", "afro")
 PHONE_PLATFORMS = ("mobile_low",)
@@ -40,14 +41,48 @@ FAMILY_WORDS: list[tuple[str, list[str]]] = [
 ]
 
 
+def built_dir() -> Path | None:
+    """The locally built library (<library_path>/hairlib), when it has a catalogue; it lives outside the source tree, so a
+    project update leaves it alone."""
+    try:
+        from .config import get_settings
+
+        d = Path(get_settings().library_path) / BUILT_NAME
+    except Exception:  # no settings (a test, a tool): the app has no built library
+        return None
+    return d if (d / "catalogue.json").is_file() else None
+
+
+def default_dir() -> Path:
+    """The app's own library folder: the built one first, else the tracked one while it still exists."""
+    return built_dir() or DATA_DIR
+
+
+def is_app_dir(d: Path | str) -> bool:
+    """True for the app's own library folders (built or tracked): the person's pack picks and own hairstyles apply there."""
+    try:
+        p = Path(d).resolve()
+        if p == DATA_DIR.resolve():
+            return True
+        b = built_dir()
+        return b is not None and p == b.resolve()
+    except OSError:
+        return False
+
+
 def use_dir(path: Path | str | None) -> None:
     """Point the loader at another library folder (tests); None goes back to the app's own."""
-    _dir[0] = Path(path) if path else DATA_DIR
+    _dir[0] = Path(path) if path else None
     _load.cache_clear()
 
 
 def library_dir() -> Path:
-    return _dir[0]
+    return _dir[0] or default_dir()
+
+
+def installed() -> bool:
+    """True when a built-in library (a catalogue with styles) is there to read. The person's own hairstyles do not count."""
+    return bool(_load(str(library_dir())).get("styles"))
 
 
 @lru_cache(maxsize=4)
@@ -56,7 +91,7 @@ def _load(d: str) -> dict[str, Any]:
     if not p.is_file():
         return {"styles": {}, "refused": [], "left_out": {}, "version": 0}
     data = json.loads(p.read_text(encoding="utf-8"))
-    if Path(d) == DATA_DIR:
+    if is_app_dir(d):
         data = _only_chosen(data)
     return data
 
@@ -90,8 +125,9 @@ def _only_chosen(data: dict[str, Any]) -> dict[str, Any]:
 def catalogue() -> dict[str, Any]:
     """The built-in library, with the person's own hairstyles (my_hair.py) added when it is the app's own library. An own
     style never shadows a built-in id."""
-    base = _load(str(_dir[0]))
-    if _dir[0] != DATA_DIR:
+    d = library_dir()
+    base = _load(str(d))
+    if not is_app_dir(d):
         return base
     try:
         from . import my_hair
@@ -160,7 +196,7 @@ def wants_fringe(prompt: str | None) -> bool:
 
 def paths(style_id: str) -> dict[str, Path | None]:
     e = style(style_id)
-    d = _dir[0]
+    d = library_dir()
 
     def p(rel: str | None) -> Path | None:
         if not rel:
@@ -181,7 +217,7 @@ def credit(style_id: str) -> dict[str, Any]:
 
 def file_path(rel: str) -> Path:
     """A library file by its path relative to the library folder, refused when it would leave the folder."""
-    d = _dir[0].resolve()
+    d = library_dir().resolve()
     p = (d / rel).resolve()
     if d not in p.parents and p != d:
         raise ValueError("path outside the hair library")

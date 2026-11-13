@@ -39,6 +39,9 @@ HAIR_SHARE_MAX = 0.25  # the hair (with its cap) may take at most this share of 
 CAP_MARGIN = 400
 ALLOWANCE_STEP = 250
 PHONE_PLATFORM = "mobile_low"
+NOT_INSTALLED = ("The hair library is not installed in this copy of the app. To get it, run setup\\Setup-Extras.ps1 -Packs -Install "
+                 "(it downloads the free hairstyle packs and builds the library on this computer; the steps are in docs\\FIRST-TIME-SETUP.md), "
+                 "then restart the app. Hairstyles you added yourself still work without it.")
 PHONE_TRIANGLES_MAX = 750  # on Phone only shell styles at or under this many triangles
 FIT_GOOD = 0.6  # hair_fit: under this nothing fits well
 COVERS = ("normal", "more")
@@ -92,6 +95,13 @@ def _hairstyles():
     return hairstyles
 
 
+def _installed(hs: Any) -> bool:
+    try:
+        return bool(hs.installed()) if hasattr(hs, "installed") else True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _look_of(asset: Asset) -> str:
     return str(getattr(asset, "style_preset", "") or "")
 
@@ -114,7 +124,9 @@ def available(asset: Asset, look: str | None = None, platform: str | None = None
         platform = platform or getattr(asset, "platform_target", None)
         styles = [s for s in hs.styles_for(None, platform, look) or []]
     except Exception:  # noqa: BLE001  (no library installed or it could not be read)
-        return "The hair library is not installed in this copy of the app."
+        return NOT_INSTALLED
+    if not styles and not _installed(hs):
+        return NOT_INSTALLED  # no built-in library and none of the person's own hairstyles either
     if platform == PHONE_PLATFORM:
         styles = [s for s in styles if phone_ok(s)]
         if not styles:
@@ -655,7 +667,8 @@ def hair_library(platform: str | None = None, asset_id: str | None = None, db: S
                        "own": bool(s.get("own")),
                        "credit": _credit(str(s.get("id")))})
     families = sorted({str(s["family"]) for s in styles if s.get("family")})
-    return {"styles": styles, "families": families, "installed": True, "platform": platform}
+    return {"styles": styles, "families": families, "installed": _installed(hs), "platform": platform,
+            "how_to_install": None if _installed(hs) else NOT_INSTALLED}
 
 
 @router.get("/api/hair-library/files/{path:path}")
