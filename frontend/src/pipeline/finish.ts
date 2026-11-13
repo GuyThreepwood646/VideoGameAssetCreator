@@ -73,7 +73,7 @@ const ATTENTION_ORDER: RegExp[] = [
   /^(face_|hair_|eyes?_|bald_picture|straight_on|look_applied$)/,
   /^(metal_mixed|materials_connected|albedo_range|normal_map_upright|textures_full_size)$/,
   /^(texture_sharp|texture_colour_matches_picture|texture_matches_picture|bake_matches|baked_light|even_lighting|soft_light|hist_dist|texture_padding|atlas_used|coverage|mirror_iou)$/,
-  /^(bones|single_root|weight_coverage|max_influences|weights_normalised|rig_restore|clips|library_clips|clips_loop|controller_ready|springs|springs_shipped|joins|legs_moved|wings_found|movement_shape|placement_exact|unity_humanoid_avatar|hitbox_.+)$/,
+  /^(bones|single_root|weight_coverage|max_influences|weights_normalised|rig_restore|clips|library_clips|clips_loop|controller_ready|springs|springs_shipped|joins|limb_joins|legs_moved|wings_found|movement_shape|placement_exact|unity_humanoid_avatar|hitbox_.+)$/,
 ]
 
 export function attentionRank(id: string): number {

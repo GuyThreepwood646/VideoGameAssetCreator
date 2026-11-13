@@ -485,19 +485,6 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # Spring bones (vgac/springs.py, blender/springs.py), checked in rig: what sways, or why nothing does. Passes when
     # the pass stood back with its reason; fails softly on an error, a looping move that jumps at its seam or a part
     # that passes into the body.
-    # Parts the 3D build joined (stages/rig.py _joins, blender/joins.py).
-    "joins": {
-        "severity": "warn",
-        "ok": lambda c: ("No forearm or hand is grown into the body."
-                         + (" The legs were joined low down (a strand between the feet) and have been parted, so they move apart freely." if _var(c, "legs_parted") else "")
-                         + (" The legs are joined low down; parting them is turned off." if _var(c, "measured_only") and _var(c, "legs_found") else "")),
-        "fail": lambda c: ("The " + ("forearms and hands are" if _var(c, "both") else "{sides} forearm or hand is") + " grown into the body in the 3D model "
-                           "(they touched or nearly touched in the pictures), so the body's surface is pulled along when the arm moves. "
-                           "Making the first picture again with the arms held clear of the body, then building the 3D model again, fixes it."
-                           + (" The legs were joined low down and have been parted." if _var(c, "legs_parted") else "")),
-        "fix": lambda c: {"stage": "concept", "params": {}},
-        "fix_label": lambda c: "Make the first picture again",
-    },
     "springs": {
         "severity": "warn",
         "ok": lambda c: ("No spring bones (small extra bones that sway on their own) were added: {why}"
