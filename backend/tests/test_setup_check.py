@@ -47,7 +47,7 @@ class NodeClient:
             return None
         choices = [PERSONAL, *self.files]
         spec = ["COMBO", {"options": choices}] if self.new_combo else [choices, {}]
-        inputs = {k: spec for k in ("ckpt_name", "unet_name", "lora_name", "bg_removal_name")}
+        inputs = {k: spec for k in ("ckpt_name", "unet_name", "lora_name", "bg_removal_name", "clip_name", "vae_name", "model_name")}
         return {"input": {"required": inputs}, "name": cls}
 
 

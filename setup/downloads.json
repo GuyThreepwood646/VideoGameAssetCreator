@@ -1,13 +1,13 @@
 {
- "_comment": "Download sources for setup/Setup-Extras.ps1. Each url, size and sha256 was read from the Hugging Face file list on 2026-11-06. 'publisher' is true when the repository belongs to the model's own publisher (or ComfyUI's Comfy-Org for ComfyUI-format files); false means a community upload. Edit a link here when it changes; no code change needed. Your own additions go in setup/downloads.local.json (same shape).",
- "verified": "2026-11-06",
+ "_comment": "Download sources for setup/Setup-Extras.ps1. Each url, size and sha256 was read from the Hugging Face file list on 2026-11-06 (companion files, the two Qwen LoRAs, the upscalers, the SkinToken VAE, the face models and Anima on 2026-11-13). 'publisher' is true when the repository belongs to the model's own publisher (or ComfyUI's Comfy-Org for ComfyUI-format files); false means a community upload. Edit a link here when it changes; no code change needed. Your own additions go in setup/downloads.local.json (same shape).",
+ "verified": "2026-11-13",
  "models": {
   "zturbo": {
    "url": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio/resolve/main/z-image-turbo-fp8-aio.safetensors",
    "page": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio",
    "size": 10345190658,
    "sha256": "f569c42b6797a89e65e80c743d6dfd230ed9318237aa242c92777deb22fad660",
-   "dest": "checkpoints",
+   "dest": "checkpoints/Z-Image",
    "save_as": "z-image-turbo-fp8-aio.safetensors",
    "publisher": false,
    "note": "Uploaded by a community member, not by the model's publisher (Tongyi-MAI). Check the page before you accept."
@@ -17,7 +17,7 @@
    "page": "https://huggingface.co/Winnougan/Z-Image-Base-Turbo-INT8-Convrot",
    "size": 6299127240,
    "sha256": "bb74db6afc4b895415d915b245d2142c9aad420cf1698d6ade3d4cbcc450a3df",
-   "dest": "diffusion_models",
+   "dest": "diffusion_models/Z-Image",
    "save_as": "z_image_int8_convrot.safetensors",
    "publisher": false,
    "note": "Uploaded by a community member (an int8 conversion of Z-Image Base), not by the publisher. Check the page before you accept."
@@ -27,7 +27,7 @@
    "page": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8",
    "size": 4070624520,
    "sha256": "97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6",
-   "dest": "diffusion_models",
+   "dest": "diffusion_models/Flux2",
    "save_as": "flux-2-klein-4b-fp8.safetensors",
    "publisher": true
   },
@@ -36,7 +36,7 @@
    "page": "https://huggingface.co/Comfy-Org/Chroma1-HD",
    "size": 9193379316,
    "sha256": "a2928ca6075f308f4d5e2182e2b96120fa8ad270ec6ea9b1b5c724c85c49a575",
-   "dest": "diffusion_models",
+   "dest": "diffusion_models/Chroma",
    "save_as": "Chroma1-HD-fp8mixed.safetensors",
    "publisher": true
   },
@@ -45,7 +45,7 @@
    "page": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI",
    "size": 20533762817,
    "sha256": "c9fdc158e46d3b61ef75f21ae866ca2fe808bf4a53643120d1c1e87c19280a4e",
-   "dest": "diffusion_models",
+   "dest": "diffusion_models/Qwen",
    "save_as": "qwen_image_edit_2511_fp8mixed.safetensors",
    "publisher": true
   },
@@ -72,7 +72,7 @@
    "page": "https://huggingface.co/tencent/Hunyuan3D-2mv",
    "size": 4928151562,
    "sha256": "d36f5881bcdc56726b73e517cd444c13c60732431622da7268145355c8d38e9c",
-   "dest": "checkpoints",
+   "dest": "checkpoints/3D Rendering",
    "save_as": "Hunyuan3D-2mv.fp16.safetensors",
    "publisher": true,
    "optin": "hunyuan",
@@ -101,7 +101,7 @@
    "licence": "See the Comfy-Org/TRELLIS.2 page",
    "extra": true,
    "required": true,
-   "note": "The TRELLIS.2 graph loads dino_v3_vit_l.safetensors (backend/vgac/graphs/trellis.py). It is not in models.yaml, so the app's own check does not look for it."
+   "note": "The TRELLIS.2 graph loads dino_v3_vit_l.safetensors (backend/vgac/graphs/trellis.py). It is listed in models.yaml (companions), so the app's own check looks for it."
   },
   "gemma3_12b": {
    "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it.safetensors",
@@ -119,13 +119,198 @@
    "licence_page": "https://ai.google.dev/gemma/terms",
    "note": "Optional. A ComfyUI-format copy of Google's Gemma 3 12B hosted by Comfy-Org. The terms are Google's; you accept them yourself."
   },
-  "anima": {
-   "name": "Anima Turbo v1.1",
-   "by_hand": true,
-   "optin": "anima",
-   "dest": "diffusion_models",
+  "qwen_te": {
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI",
+   "size": 9384670680,
+   "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4",
+   "dest": "text_encoders/Qwen",
+   "save_as": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "publisher": true,
+   "name": "Qwen 2.5 VL 7B text encoder (Qwen edit companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": true,
+   "note": "Loaded by the side-view and picture-edit graph (backend/vgac/graphs/qwen_edit.py) next to qwen_edit."
+  },
+  "qwen_vae": {
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI",
+   "size": 253806246,
+   "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+   "dest": "vae/Qwen",
+   "save_as": "qwen_image_vae.safetensors",
+   "publisher": true,
+   "name": "Qwen image VAE (Qwen edit and Anima companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": true,
+   "note": "Loaded by the side-view graph and by the Anima concept graph."
+  },
+  "trellis2_shape_vae": {
+   "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/TRELLIS.2",
+   "size": 1095844024,
+   "sha256": "de0cb4949a76c59ee5c091a995a69bcc8c51d5aeda939f0c641a50d2a72341f4",
+   "dest": "vae",
+   "save_as": "trellis_2_shape_vae_bf16.safetensors",
+   "publisher": true,
+   "name": "TRELLIS.2 shape VAE",
+   "licence": "MIT",
+   "extra": true,
+   "required": true,
+   "note": "Loaded by the TRELLIS.2 graph (backend/vgac/graphs/trellis.py)."
+  },
+  "trellis2_texture_vae": {
+   "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/vae/trellis_2_texture_vae_bf16.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/TRELLIS.2",
+   "size": 948461364,
+   "sha256": "714e5ebf094a610e12a8e3b5175c18a62f37f6ea4218acb6073644456b73ab0e",
+   "dest": "vae",
+   "save_as": "trellis_2_texture_vae_bf16.safetensors",
+   "publisher": true,
+   "name": "TRELLIS.2 texture VAE",
+   "licence": "MIT",
+   "extra": true,
+   "required": true,
+   "note": "Loaded by the TRELLIS.2 graph (backend/vgac/graphs/trellis.py)."
+  },
+  "zimage_te": {
+   "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/z_image_turbo",
+   "size": 8044982048,
+   "sha256": "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a",
+   "dest": "text_encoders",
+   "save_as": "qwen_3_4b.safetensors",
+   "publisher": true,
+   "name": "Qwen 3 4B text encoder (Z-Image Base and FLUX.2 Klein companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": false,
+   "note": "One file for both: the Z-Image Base graph and the FLUX.2 Klein graph load it by this name. The Comfy-Org/flux2-klein-4b repository holds the same file (same SHA-256)."
+  },
+  "flux_ae": {
+   "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/z_image_turbo",
+   "size": 335304388,
+   "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+   "dest": "vae",
+   "save_as": "ae.safetensors",
+   "publisher": true,
+   "name": "FLUX autoencoder ae (Z-Image Base and Chroma companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": false,
+   "note": "One file for both: the Z-Image Base graph and the Chroma graph load it by this name. Licence as stated on the Comfy-Org page."
+  },
+  "flux2_vae": {
+   "url": "https://huggingface.co/Comfy-Org/flux2-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/flux2-klein-4b",
+   "size": 336211292,
+   "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+   "dest": "vae/Flux",
+   "save_as": "flux2-vae.safetensors",
+   "publisher": true,
+   "name": "FLUX.2 VAE (FLUX.2 Klein companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": false,
+   "note": "Taken from the Klein repository. The Comfy-Org/flux2-dev repository holds a different build of the same name (336213556 bytes, FLUX.1-dev non-commercial licence); do not use that one."
+  },
+  "chroma_te": {
+   "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors",
+   "page": "https://huggingface.co/comfyanonymous/flux_text_encoders",
+   "size": 5157348688,
+   "sha256": "a498f0485dc9536735258018417c3fd7758dc3bccc0a645feaa472b34955557a",
+   "dest": "text_encoders",
+   "save_as": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+   "publisher": true,
+   "name": "T5-XXL fp8 scaled text encoder (Chroma companion)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": false
+  },
+  "anima_te": {
+   "url": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
    "page": "https://huggingface.co/circlestone-labs/Anima",
-   "reason": "The exact file anima-turbo-v1.1.safetensors was not found in the publisher's repository (it holds the base models, not the Turbo build). Find the Turbo v1.1 file yourself and put it in models/diffusion_models."
+   "size": 1192135096,
+   "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+   "dest": "text_encoders",
+   "save_as": "qwen_3_06b_base.safetensors",
+   "publisher": true,
+   "name": "Qwen 3 0.6B base text encoder (Anima companion)",
+   "licence": "Anima licence (non-commercial model, outputs usable commercially)",
+   "extra": true,
+   "required": false,
+   "optin": "anima"
+  },
+  "skintoken_vae": {
+   "url": "https://huggingface.co/VAST-AI/SkinTokens/resolve/main/experiments/skin_vae_2_10_32768/last.ckpt",
+   "page": "https://huggingface.co/VAST-AI/SkinTokens",
+   "size": 487311745,
+   "sha256": "4843f49e58afff88345806b94ca82e6cc9d8def6e7432e2853c677b154de0ed4",
+   "dest": "skintoken/experiments/skin_vae_2_10_32768",
+   "save_as": "last.ckpt",
+   "publisher": true,
+   "name": "SkinToken skin VAE (rigging companion)",
+   "licence": "MIT",
+   "extra": true,
+   "required": true,
+   "note": "The ComfyUI-SkinToken node pack loads this next to grpo_1400.ckpt and fetches it itself on first use. It also fetches the small Qwen3-0.6B tokenizer and config files (no weights) from Qwen/Qwen3-0.6B into models/skintoken/Qwen3-0.6B."
+  },
+  "face_model": {
+   "url": "https://huggingface.co/Comfy-Org/mediapipe/resolve/main/detection/mediapipe_face_fp32.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/mediapipe",
+   "size": 5423900,
+   "sha256": "a98c4806081d40eba35102a0f6dc0000c2e1388b72cf24e691703d0605bd888a",
+   "dest": "detection",
+   "save_as": "mediapipe_face_fp32.safetensors",
+   "publisher": true,
+   "name": "MediaPipe face landmarker (ComfyUI route of the eye and mouth finder)",
+   "licence": "Apache-2.0",
+   "extra": true,
+   "required": false,
+   "note": "Optional. backend/vgac/facemarks.py asks a ComfyUI card for this file first and falls back to the mediapipe Python package (runtime/models/face_landmarker.task) and then to a darkest-spot finder. Not on the owner's disk."
+  },
+  "upscale_photo": {
+   "url": "https://huggingface.co/Phips/4xRealWebPhoto_v4_dat2/resolve/main/4xRealWebPhoto_v4.pth",
+   "page": "https://huggingface.co/Phips/4xRealWebPhoto_v4_dat2",
+   "size": 140299118,
+   "sha256": "9b82f8f60826e59b9d2e56a6e6ad9a842b84d57a9ec5ed7377bf120032b2c4c9",
+   "dest": "upscale_models",
+   "save_as": "4xRealWebPhoto_v4_dat2.pth",
+   "publisher": true,
+   "name": "4xRealWebPhoto v4 (DAT2) upscaler",
+   "licence": "CC-BY-4.0",
+   "extra": true,
+   "required": false,
+   "note": "Saved under the name the app expects (4xRealWebPhoto_v4_dat2.pth); the publisher's file is 4xRealWebPhoto_v4.pth in the Phips/4xRealWebPhoto_v4_dat2 repository (same bytes as the file the app was built with)."
+  },
+  "upscale_art": {
+   "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+   "page": "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.1",
+   "size": 67061725,
+   "sha256": "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb",
+   "dest": "upscale_models",
+   "save_as": "RealESRGAN_x2plus.pth",
+   "publisher": true,
+   "name": "Real-ESRGAN x2plus upscaler",
+   "licence": "BSD-3-Clause",
+   "extra": true,
+   "required": false,
+   "note": "Size from the GitHub release asset; GitHub gives no checksum for it, so the SHA-256 is that of the owner's copy, which is the file the app was built with."
+  },
+  "anima": {
+   "url": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+   "page": "https://huggingface.co/circlestone-labs/Anima",
+   "size": 4182230656,
+   "sha256": "fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb",
+   "dest": "diffusion_models/Anima",
+   "save_as": "anima-turbo-v1.1.safetensors",
+   "publisher": true,
+   "optin": "anima",
+   "name": "Anima Turbo v1.1",
+   "note": "Found in the publisher's repository under split_files/diffusion_models (an earlier note here said it was missing; that was wrong). Non-commercial model; what it makes may be used commercially. Needs the Anima companions anima_te and qwen_vae."
   }
  },
  "addons": {
@@ -155,6 +340,26 @@
    "dest": "loras/Qwen/qwen-image-edit-2511-multiple-angles-lora.safetensors",
    "save_as": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
    "publisher": true
+  },
+  "turnaround_sheet": {
+   "url": "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511/resolve/main/character_turnaround_sheet_v3_qwen_image_edit_2511_000000400.safetensors",
+   "page": "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511",
+   "size": 295146344,
+   "sha256": "8f8b2a6f0d416d8a871806ce4a398f55b24a24f11c42f4e69d88b472f4478705",
+   "dest": "loras/VGAC/qie2511_turnaround_sheet_tarn59.safetensors",
+   "save_as": "qie2511_turnaround_sheet_tarn59.safetensors",
+   "publisher": true,
+   "note": "Saved under the name the app expects; the publisher's file is character_turnaround_sheet_v3_qwen_image_edit_2511_000000400.safetensors. Apache-2.0."
+  },
+  "turnaround_white": {
+   "url": "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora/resolve/main/qwen_edit_2511_camera_angle_lora.safetensors",
+   "page": "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora",
+   "size": 590057184,
+   "sha256": "611e4631790716ebab2ddf795b17dc959b244237cfb7fea7a62a5f844f807c3d",
+   "dest": "loras/VGAC/qie2511_camera_angle_berkerdooo.safetensors",
+   "save_as": "qie2511_camera_angle_berkerdooo.safetensors",
+   "publisher": true,
+   "note": "Saved under the name the app expects; the publisher's file is qwen_edit_2511_camera_angle_lora.safetensors. Apache-2.0."
   },
   "stylised_3d": {
    "url": "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE/resolve/main/%5BZImage.Turbo%5D3DRenderStyle_Redmond.safetensors",
@@ -191,6 +396,22 @@
    "dest": "loras/VGAC/zit_pixelart_redmond.safetensors",
    "save_as": "zit_pixelart_redmond.safetensors",
    "publisher": true
+  }
+ },
+ "project_files": {
+  "face_landmarker": {
+   "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+   "page": "https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker",
+   "size": 3758596,
+   "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+   "md5_base64": "sOcnSQehZEQE/vZrKN1thQ==",
+   "dest": "runtime/models",
+   "save_as": "face_landmarker.task",
+   "publisher": true,
+   "name": "MediaPipe face landmarker (lip points)",
+   "licence": "Apache-2.0",
+   "required": false,
+   "note": "Lives in the project's runtime/models folder, not in ComfyUI. Used by backend/vgac/lipmarks.py through the mediapipe Python package; without it the mouth is placed by the older finder. Size and MD5 are Google's (HTTP headers on 2026-11-13); the SHA-256 is that of the owner's copy, whose MD5 matches Google's."
   }
  },
  "node_packs": {

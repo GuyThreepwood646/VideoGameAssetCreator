@@ -39,3 +39,23 @@ models:
   ual1: {name: Universal Animation Library Standard (CC0), file: AnimationLibrary_Unity_Standard.fbx, licence: CC0, version: "1"}
   ual2: {name: Universal Animation Library 2 Standard (CC0), file: UAL2_Standard.fbx, licence: CC0, version: "1"}
   hair_library: {name: "VGAC hair library (Quaternius Universal Base Characters, MakeHuman hair, rule-built styles)", file: "", licence: CC0, version: "1"}
+#
+# Companions: files a graph loads next to the models above (text encoders, VAEs, the DINOv3 image encoder, the
+# SkinToken skin VAE, the optional face model and the picture judge's text encoder). They are not concept painters or
+# credit entries (credits.py reads only `models:`), but the setup check (preflight.py) looks for each one on the engine
+# that runs the stage, and setup/downloads.json says where each comes from. `used_by` names the models that need it.
+# A test (tests/test_model_list.py) fails when a graph names a model file that neither this file nor downloads.json lists.
+companions:
+  qwen_te: {name: Qwen 2.5 VL 7B text encoder (fp8 scaled), file: qwen_2.5_vl_7b_fp8_scaled.safetensors, licence: Apache-2.0, version: "2.5", used_by: [qwen_edit]}
+  qwen_vae: {name: Qwen image VAE, file: qwen_image_vae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [qwen_edit, anima]}
+  trellis2_dino: {name: DINOv3 ViT-L image encoder (TRELLIS.2), file: dino_v3_vit_l.safetensors, licence: MIT, version: "1.0", used_by: [trellis2]}
+  trellis2_shape_vae: {name: TRELLIS.2 shape VAE, file: trellis_2_shape_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
+  trellis2_texture_vae: {name: TRELLIS.2 texture VAE, file: trellis_2_texture_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
+  zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zbase, klein]}
+  flux_ae: {name: FLUX autoencoder (ae), file: ae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [zbase, chroma]}
+  flux2_vae: {name: FLUX.2 VAE, file: flux2-vae.safetensors, licence: Apache-2.0, version: "2", used_by: [klein]}
+  chroma_te: {name: T5-XXL text encoder (fp8 scaled), file: t5xxl_fp8_e4m3fn_scaled.safetensors, licence: Apache-2.0, version: "1.1", used_by: [chroma]}
+  anima_te: {name: Qwen 3 0.6B base text encoder, file: qwen_3_06b_base.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "3", used_by: [anima]}
+  skintoken_vae: {name: SkinToken skin VAE, file: last.ckpt, licence: MIT, version: skin_vae_2_10_32768, used_by: [skintoken]}
+  gemma3_12b: {name: Gemma 3 12B text encoder (picture judge), file: gemma_3_12B_it.safetensors, licence: Gemma Terms of Use, version: "3", used_by: [judge]}
+  face_model: {name: MediaPipe face landmarker (ComfyUI route), file: mediapipe_face_fp32.safetensors, licence: Apache-2.0, version: "1.0", used_by: [lip points]}
