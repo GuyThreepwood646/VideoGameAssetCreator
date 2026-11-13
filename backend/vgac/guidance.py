@@ -950,6 +950,19 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _redraw_fix,
         "fix_label": "Redraw it in even light",
     },
+    # A picture combined from the person's own pictures (step 0.5, stages/concept.compose_check): the clothes or the hair
+    # colour drifted from the pictures. A warning only; the Fix combines the same pictures again.
+    "compose_match": {
+        "severity": "warn",
+        "ok": "The clothes and the hair in the combined picture look like the ones in your pictures.",
+        "fail": lambda c: ("The combined picture does not keep " + (_var(c, "changed") or "the clothes or the hair") + " from your pictures: "
+                           "the colours came out clearly different. The 3D model is built from this picture, so the character would wear "
+                           "or show what it draws, not what your pictures show. You can carry on with it. \"Combine them again\" "
+                           "draws a new picture from the same pictures; if it keeps happening, describe the clothes and the hair "
+                           "in the words box."),
+        "fix": lambda c: {"stage": "concept", "op": "adjust", "params": {}},
+        "fix_label": "Combine them again",
+    },
     # Hair-friendly pictures (vgac/hairpic.py): hair over the eyes on a character's concept picture, found by colour.
     # The Fix runs the concept refine with vars.redraw, which asks the picture editor to move the hair off the face.
     "hair_off_eyes": {
@@ -997,6 +1010,16 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         + (" It was drawn twice and this is the closer one." if _var(c, "rerolled") and _var(c, "reason") != "error" else ""),
         "fix": lambda c: {"stage": "turnaround", "params": {"bald_only": True, "bald_seed": None}},
         "fix_label": "Make the bald picture again",
+    },
+    # The other three-quarter view (stages/turnaround.py second_quarter_check): a character is painted from both of them.
+    "second_quarter": {
+        "severity": "warn",
+        "ok": "Both three-quarter views are drawn, so both cheeks and flanks are painted from a picture.",
+        "fail": lambda c: ("The far side of the face and body will be painted with less to go on: the second three-quarter view "
+                           + ("was switched off" if _var(c, "switched_off") else "was not drawn for this version")
+                           + ", so that side is painted from the full side view alone and may look flatter or blurrier."),
+        "fix": lambda c: {"stage": "turnaround", "params": {"add_views": ["quarter2"], "second_quarter": True}},
+        "fix_label": "Draw the other three-quarter view",
     },
     "head_build": {
         "severity": "warn",
