@@ -78,3 +78,52 @@ def test_the_front_and_three_quarter_views_still_paint_the_face() -> None:
 def test_no_head_no_face_region() -> None:
     z = srcproject.face_zone(model(), soft_base())
     assert z["found"] is False and z["reason"] == "no_head"
+
+
+def turned(**yaws: float) -> dict:
+    out = {}
+    for n, y in yaws.items():
+        v = srcproject.View(n, 1.0)
+        v.ok, v.info = True, {"name": n, "yaw": y}
+        out[n] = v
+    return out
+
+
+def test_a_back_view_fitted_near_the_front_is_refused() -> None:
+    f = turned(source=0.0, back=140.0)
+    assert srcproject.refuse_contradicting_turns(f, 0.0) == {}
+    f = turned(source=60.0, back=160.0)
+    out = srcproject.refuse_contradicting_turns(f, *srcproject.front_turn(f)[:1])
+    assert set(out) == {"back"} and not f["back"].ok
+    assert "contradicts the front" in f["back"].info["refused"] and f["back"].info["turn_from_front_deg"] == 100.0
+
+
+def test_left_and_right_on_one_side_refuse_the_one_that_belongs_on_the_other() -> None:
+    f = turned(left=95.0, right=102.5)  # the stored M1-shorts run: both side views drawn facing the same way
+    assert set(srcproject.refuse_contradicting_turns(f, 0.0)) == {"right"}
+    assert f["left"].ok and not f["right"].ok
+    f = turned(left=-80.0, right=-100.0)
+    assert set(srcproject.refuse_contradicting_turns(f, 0.0)) == {"left"}
+    f = turned(left=65.0, right=-105.0)  # turned with the model: judged against the front's own turn
+    assert srcproject.refuse_contradicting_turns(f, -27.5) == {}
+    f = turned(left=20.0, right=-90.0)
+    assert set(srcproject.refuse_contradicting_turns(f, 0.0)) == {"left"}  # a side view seen from the front
+
+
+def test_three_quarter_views_take_their_sides_from_the_built_from_picture() -> None:
+    pic = turned(picture=-45.0)["picture"]
+    pic.info["front_view"] = False
+    f = turned(quarter=-42.5, quarter2=-20.0)  # the stored M1-clothed run: both drawn from the picture's side
+    out = srcproject.refuse_contradicting_turns(f, 0.0, pic)
+    assert set(out) == {"quarter2"} and f["quarter"].ok
+    f = turned(quarter=40.0, quarter2=-30.0)  # no built-from three-quarter picture: the usual sides, nothing refused
+    assert srcproject.refuse_contradicting_turns(f, 0.0) == {}
+
+
+def test_the_front_turn_comes_from_the_first_frontal_picture() -> None:
+    f = turned(source=332.5, front=-2.5, picture=40.0)
+    assert srcproject.front_turn(f, 5.0) == (332.5, "source")
+    f["source"].ok = False
+    assert srcproject.front_turn(f, 5.0) == (-2.5, "front")
+    f["front"].ok = False
+    assert srcproject.front_turn(f, 5.0) == (5.0, "head")  # a three-quarter picture is not a front

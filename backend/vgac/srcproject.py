@@ -100,6 +100,12 @@ TURN_VIEWS = ("quarter", SECOND_QUARTER, "left", "right", "back")
 OFF_FACE_VIEWS = ("left", "right", "back")   # views that never paint the face region (item 5)
 FACE_ZONE_N = 1024        # size of the head picture the face region is found on
 FACE_ZONE_FEATHER = 0.02  # of that picture: how far past the face region's edge the side views fade back in
+# The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
+# character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
+# side view may sit at, and the least for the back.
+TURN_SIDE = {"quarter": 1, SECOND_QUARTER: -1, "left": 1, "right": -1}
+SIDE_MIN_TURN = 45.0
+BACK_MIN_TURN = 120.0
 
 
 # --- image helpers ----------------------------------------------------------------------------------------------
@@ -936,6 +942,66 @@ def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
 # --- the pass ---------------------------------------------------------------------------------------------------
 
 
+def _signed(a: float) -> float:
+    return float((a + 180.0) % 360.0 - 180.0)
+
+
+def front_turn(fitted: dict[str, View], head_yaw: float = 0.0) -> tuple[float, str]:
+    """The camera yaw the model's front is seen from, and what says so: the first frontal picture that fitted (the
+    original, the drawn front view, or the built-from picture when it is a front view), else the head's turn."""
+    for name in ("source", "front", "picture"):
+        v = fitted.get(name)
+        if v is not None and v.ok and (name != "picture" or v.info.get("front_view")):
+            return float(v.info["yaw"]), name
+    return float(head_yaw), "head"
+
+
+def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, picture_view: View | None = None) -> dict[str, str]:
+    """Refuse the drawn views whose fitted turn contradicts the front (docs/AFTER-TEST-CHANGES.md D2 item 8): a back view
+    fitted less than BACK_MIN_TURN from the front, a full side view less than SIDE_MIN_TURN from it, and of two views
+    that belong on opposite sides (left and right; the two three-quarter views) but were fitted on the same side, the
+    one on the side its partner belongs on. The three-quarter views take their sides from the picture the model was
+    built from when that is a three-quarter view itself, 10 to 80 degrees from the front (the model was built from it, so
+    its side is the model's).
+    Each refused view gets "refused" and "turn_from_front_deg" in its info and ok False. Returns {view: reason}."""
+    out: dict[str, str] = {}
+    rel = {n: _signed(v.info["yaw"] - front_yaw) for n, v in fitted.items() if v.ok and n in TURN_VIEWS and "yaw" in v.info}
+    side = dict(TURN_SIDE)
+    anchored = False
+    if picture_view is not None and picture_view.ok and not picture_view.info.get("front_view"):
+        pr = _signed(picture_view.info["yaw"] - front_yaw)
+        if 10.0 <= abs(pr) <= 80.0:
+            side["quarter"], side[SECOND_QUARTER] = (1, -1) if pr > 0 else (-1, 1)
+            anchored = True
+
+    def refuse(n: str, why: str) -> None:
+        if n in out:
+            return
+        v = fitted[n]
+        v.ok = False
+        v.info["refused"] = why
+        v.info["turn_from_front_deg"] = round(rel[n], 1)
+        out[n] = why
+
+    if "back" in rel and abs(rel["back"]) < BACK_MIN_TURN:
+        refuse("back", f"its turn contradicts the front: the back view fits {abs(rel['back']):.0f} degrees from the front")
+    for n in ("left", "right"):
+        if n in rel and abs(rel[n]) < SIDE_MIN_TURN:
+            refuse(n, f"its turn contradicts the front: the {n} side view fits {abs(rel[n]):.0f} degrees from the front")
+    for a, b in (("left", "right"), ("quarter", SECOND_QUARTER)):
+        if a in rel and b in rel and a not in out and b not in out and np.sign(rel[a]) == np.sign(rel[b]) != 0:
+            wrong = a if np.sign(rel[a]) != side[a] else b
+            refuse(wrong, f"its turn contradicts the front: {a} and {b} both fit on the same side, and this one belongs on the other")
+    # with the built-from picture to say which side is which, a three-quarter view on the wrong side of it is refused
+    # on its own too (a second three-quarter view on the picture's side paints a second version of that side's face)
+    if anchored:
+        for n in ("quarter", SECOND_QUARTER):
+            if n in rel and n not in out and abs(rel[n]) >= 10.0 and np.sign(rel[n]) != side[n]:
+                refuse(n, "its turn contradicts the front: it fits on the other side from where the picture the model was "
+                          "built from puts it")
+    return out
+
+
 def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround: dict[str, Any] | None = None, *,
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
@@ -979,6 +1045,11 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                 front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
                 front.info["turn_source"] = "texfidelity"
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
+        # a drawn view fitted at a turn that contradicts the front is refused like one that does not fit (item 8)
+        front_yaw, front_by = front_turn({**fitted, "picture": front}, head_yaw)
+        for n, why in refuse_contradicting_turns(fitted, front_yaw, front).items():
+            if log:
+                log(f"view {n}: refused, {why}")
         infos = {"picture": front.info}
         views: list[View] = []
         for name in ("source", "front"):
@@ -1033,6 +1104,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
+         "srcproject_front_turn": {"yaw": round(front_yaw, 1), "from": front_by},
          "srcproject_seconds": round(time.time() - t0, 1)}
     res["metrics"] = m
     worse = after["lab_diff"] == after["lab_diff"] and before["lab_diff"] == before["lab_diff"] and after["lab_diff"] > before["lab_diff"] - 0.5
