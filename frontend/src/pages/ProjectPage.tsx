@@ -11,7 +11,7 @@ import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
-import { baseLookId, lookLabelForStyle, presetById, usePresets } from '../presets'
+import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook, usePresets, type LookChoice } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
 
@@ -244,7 +244,9 @@ function CreateAssetForm({ project }: { project: Project }) {
   const { ref, error: refError } = useRefData()
   const [name, setName] = useState('')
   const [category, setCategory] = useState('')
-  const [style, setStyle] = useState('')
+  const [look, setLook] = useState<LookChoice>({ style: '', chosen: false })
+  const style = look.style
+  const setStyle = (id: string) => setLook({ style: id, chosen: true })
   const [platform, setPlatform] = useState<PlatformId>(project.platform_target)
   const [prompt, setPrompt] = useState('')
   const [parts, setParts] = useState<string[]>([])
@@ -265,13 +267,15 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [hairChoice, setHairChoice] = useState<'model' | 'library'>('model')
   // "The face matters": on unless the person says the face is hidden or too simple to gain from the face pass.
   const [faceMatters, setFaceMatters] = useState(true)
-  const { presets } = usePresets()
+  const { presets, unavailable: presetsUnavailable, error: presetsError } = usePresets()
   const [lookOpen, setLookOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [poseFirst, setPoseFirst] = useState(false)
-  // The project's ready-made look names the asset style new assets default to.
+  // The project's ready-made look names the asset style new assets default to. It stays unknown until the looks have
+  // loaded, so the form never starts on the first look in the list.
   const projectLook = presetById(presets, project.style_lock.preset)
-  const projectStyleId = baseLookId(presets, project.style_lock) ?? ref?.styles[0]?.id
+  const projectStyleId = projectStyleFor(presets, presets !== null || presetsUnavailable || presetsError !== null, project.style_lock, ref?.styles[0]?.id)
+  const differs = differentLook(look, projectStyleId)
 
   useEffect(() => {
     if (!ref) return
@@ -280,8 +284,12 @@ function CreateAssetForm({ project }: { project: Project }) {
       setCategory(first.id)
       setParts(first.parts_default ?? [])
     }
-    if (!style && projectStyleId) setStyle(projectStyleId)
-  }, [ref, category, style, projectStyleId])
+  }, [ref, category])
+
+  // The look follows the project's unless the person has picked one; it is set when the looks arrive, not before.
+  useEffect(() => {
+    setLook((cur) => syncLook(cur, projectStyleId))
+  }, [projectStyleId])
 
   // Suggestion updates as category, style or platform change.
   useEffect(() => {
@@ -351,6 +359,8 @@ function CreateAssetForm({ project }: { project: Project }) {
         name: finalName,
         category,
         style_preset: style,
+        // Sent only when the person chose a look other than the project's, so the backend knows it is on purpose.
+        ...(differs ? { different_look: true } : {}),
         platform_target: platform,
         prompt: prompt.trim(),
         parts,
@@ -519,11 +529,20 @@ function CreateAssetForm({ project }: { project: Project }) {
           {settingsOpen ? 'Hide' : 'Change'}
         </button>
       </div>
+      {differs && (
+        <div className="notice small" role="status">
+          This asset will use the <strong>{lookLabelForStyle(presets, style, 'Custom look')}</strong> look, not this project's look (
+          <strong>{projectLook?.label ?? lookLabelForStyle(presets, projectStyleId, 'Custom look')}</strong>).{' '}
+          <button type="button" className="link small" onClick={() => setLook({ style: projectStyleId!, chosen: false })}>
+            Use the project's look
+          </button>
+        </div>
+      )}
       {settingsOpen && (
         <>
       <div className="grid-2">
         {projectLook && style === projectStyleId && !lookOpen ? (
-          <Field label="Look" term="term.look" hint="Every asset in this project follows it.">
+          <Field label="Look" term="term.look" hint="New assets start with this look. You can pick another for one asset.">
             <div className="look-default">
               <strong>{projectLook.label}</strong> <span className="muted">(this project's look)</span>{' '}
               <button type="button" className="link small" onClick={() => setLookOpen(true)}>

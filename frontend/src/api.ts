@@ -634,7 +634,7 @@ export const api = {
   createAsset: (
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; different_look?: boolean },
   ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
 
   // Your own pictures

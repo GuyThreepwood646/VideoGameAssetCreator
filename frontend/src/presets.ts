@@ -78,3 +78,25 @@ export function baseLookId(presets: LookPreset[] | null | undefined, lock: Style
   if (lock.based_on && list.some((p) => p.id === lock.based_on)) return lock.based_on
   return (list.find((p) => p.style_lock.model === lock.model) ?? list[0])?.id ?? null
 }
+
+// The look the new asset form should start with: the project's, once the looks have loaded (or are known not to be
+// coming). Before that it is null, so the form never holds a look the person did not choose (a list's first entry).
+export function projectStyleFor(presets: LookPreset[] | null, settled: boolean, lock: StyleLock, firstStyle: string | null | undefined): string | null {
+  if (presets) return baseLookId(presets, lock) ?? firstStyle ?? null
+  return settled ? (lock.preset ?? firstStyle ?? null) : null
+}
+
+// The look on the new asset form and whether the person picked it themselves.
+export type LookChoice = { style: string; chosen: boolean }
+
+// What the form's look should be now: the person's own pick stays; otherwise it follows the project's look, whenever
+// that becomes known or changes.
+export function syncLook(cur: LookChoice, projectStyleId: string | null): LookChoice {
+  if (cur.chosen || !projectStyleId || cur.style === projectStyleId) return cur
+  return { style: projectStyleId, chosen: false }
+}
+
+// Whether the asset is being made in a look other than its project's, on the person's choice.
+export function differentLook(cur: LookChoice, projectStyleId: string | null): boolean {
+  return cur.chosen && !!projectStyleId && !!cur.style && cur.style !== projectStyleId
+}
