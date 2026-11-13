@@ -953,6 +953,93 @@ def springs_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
     return quality.check("springs", v["ok"], v["value"], v["limit"], vars=v["vars"])
 
 
+PREFIX = "mixamorig:"
+FINGER_NAMES = ("Thumb", "Index", "Middle", "Ring", "Pinky")
+FINGER_WORDS = {"Thumb": "thumb", "Index": "index finger", "Middle": "middle finger", "Ring": "ring finger", "Pinky": "little finger"}
+FINGER_BONES = 3  # bones per finger the game's humanoid skeleton uses; a fourth bone on a chain is spare
+FINGERS_FULL = FINGER_BONES * len(FINGER_NAMES)
+
+
+def finger_counts(bone_names: list[str] | None) -> dict[str, dict[str, int]] | None:
+    """Finger bones per hand and per finger, from the mapped bone names: {"Left": {"Thumb": 3, "Index": 3, ...}, "Right": ...}.
+    Only bones 1 to 3 of a finger count (a fourth is spare). None when the skeleton has no LeftHand and RightHand bone
+    (not a mapped humanoid: the check does not apply)."""
+    names = set(bone_names or [])
+    if f"{PREFIX}LeftHand" not in names or f"{PREFIX}RightHand" not in names:
+        return None
+    out: dict[str, dict[str, int]] = {}
+    for side in ("Left", "Right"):
+        out[side] = {f: sum(1 for k in range(1, FINGER_BONES + 1) if f"{PREFIX}{side}Hand{f}{k}" in names) for f in FINGER_NAMES}
+    return out
+
+
+def _hand_chains(segments: list[dict[str, Any]] | None, side: str) -> int | None:
+    """How many chains hang below one wrist bone in the stored skeleton (None when unknown). One chain means the
+    skeleton saw the hand as a single lump (a mitten or fused fingers)."""
+    if not segments:
+        return None
+    wrist = f"{PREFIX}{side}Hand"
+    kids = [s for s in segments if s.get("parent") == wrist]
+    return len(kids)
+
+
+def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+    """The rig check `fingers` (warn): every hand has all five fingers of three bones. None when the skeleton is not a
+    mapped humanoid. The check carries its own help text (it is not in guidance.CHECK_GUIDE)."""
+    counts = finger_counts(bone_names)
+    if counts is None:
+        return None
+    total = sum(sum(h.values()) for h in counts.values())
+    lacking: dict[str, list[str]] = {}
+    for side, h in counts.items():
+        miss = [f for f in FINGER_NAMES if h[f] < FINGER_BONES]
+        if miss:
+            lacking[side] = miss
+    c = quality.check("fingers", not lacking, total, 2 * FINGERS_FULL,
+                      vars={"left": counts["Left"], "right": counts["Right"], "lacking": {k.lower(): v for k, v in lacking.items()}})
+    c["severity"] = "warn"
+    if not lacking:
+        c["help"] = "Both hands have all five fingers (thumb, index, middle, ring and little finger), so a hand can close, grip and point in the game."
+        return c
+    parts = []
+    for side, miss in lacking.items():
+        have = [f for f in FINGER_NAMES if f not in miss]
+        if not have:
+            parts.append(f"the {side.lower()} hand has no finger bones")
+        else:
+            parts.append(f"the {side.lower()} hand has only the {_join_words([FINGER_WORDS[f] for f in have])} "
+                         f"(missing the {_join_words([FINGER_WORDS[f] for f in miss])})")
+    what = " and ".join(parts)
+    one = len(lacking) == 1
+    what = what[0].upper() + what[1:] + "."
+    lumps = [s for s in lacking if _hand_chains(segments, s) == 1]
+    if lumps:
+        cause = ("The cause is the model's hands, not the skeleton: the model's " + ("hand is a single lump" if one else "hands are single lumps") + " (mittens or fingers fused together), "
+                 "and no skeleton can place finger bones inside a lump. ")
+        todo = ("Making the 3D model again with \"Open the hands first (hands only)\" turned on, or making the side views again with \"Pose for 3D first\" "
+                "turned on, gives the hands separate fingers; then rig again.")
+        fix = {"stage": "mesh", "params": {"hand_edit": True}}
+        label = "Make the 3D model again with open hands"
+    else:
+        cause = ("The skeleton step did not place every finger bone, although the model's hand may have enough shape for it. "
+                 "Where the fingers are pressed together or small in the model, the skeleton step leaves them out. ")
+        todo = ("Rigging again sometimes gives a fuller hand, but in our tests it usually came out the same. "
+                "A model with clearly separate fingers (\"Pose for 3D first\" in the side views step, or \"Open the hands first (hands only)\" in the 3D model step) "
+                "is the dependable fix; then rig again.")
+        fix = {"stage": "rig", "params": {}}
+        label = "Rig again"
+    c["help"] = (f"{what} In the game {'that hand cannot' if one else 'those hands cannot'} close into a fist, grip an item with {'its' if one else 'their'} fingers or point, "
+                 "and the missing fingers stay stiff when the hand moves. The character still passes Unity's humanoid check and moves normally. "
+                 f"{cause}{todo}")
+    c["fix"] = {**fix, "label": label}
+    c["fix_label"] = label
+    return c
+
+
+def _join_words(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def _faithful_max(rep: dict[str, Any]) -> float | None:
     """Largest angle between a source limb segment and the same target segment over every library clip (the IK
     that plants the feet accounts for most of it)."""
@@ -1007,6 +1094,11 @@ async def judge(sc: StageContext) -> None:
         hb = hair_bound_check(m)
         if hb is not None:
             checks.append(hb)
+    if not sc.version.metrics.get("rigid") and info_path is not None:
+        info = json.loads(Path(info_path).read_text())
+        fc = fingers_check(info.get("bone_names"), info.get("bone_segments"))
+        if fc is not None:
+            checks.append(fc)
     jc = joins_check(sc.version.metrics.get("joins"))
     if jc is not None:
         checks.append(jc)
