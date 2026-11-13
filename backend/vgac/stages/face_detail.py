@@ -633,6 +633,36 @@ OWN_FILE = "own_face_closeup.png"
 CLOSEUP_REASONS["not_found"] = "the face in it could not be lined up with the painted face"
 CLOSEUP_REASONS["own_error"] = "it could not be read"
 
+# The close-up shown on the step's card while the clean-up step is still working (the card reads files[LIVE_KEY] and
+# metrics["face_closeup_live"] = {state, caption} of the running version). state: checking, again, used, refused.
+LIVE_KEY = "face_closeup_draft"
+
+
+def live_caption(n: int, total: int, guard: dict[str, Any] | None, again: bool) -> tuple[str, str]:
+    """(state, plain caption) for draw n of total: just drawn (guard None), or its verdict."""
+    if guard is None:
+        return "checking", f"The close-up of the face (draw {n} of {total}) has just been drawn. It is being checked against the painted face."
+    if guard.get("ok"):
+        return "used", f"The close-up of the face (draw {n} of {total}) passed its checks. The face is being painted from it."
+    why = CLOSEUP_REASONS.get(str(guard.get("reason")), "it did not pass the checks")
+    if again:
+        return "again", f"This close-up (draw {n} of {total}) is not used, because {why}. Drawing it again."
+    return "refused", f"This close-up (draw {n} of {total}) was not used, because {why}."
+
+
+def show_closeup(sc: StageContext, path: Path, state: str, caption: str) -> None:
+    """Put a close-up on the running step's card now, with its caption. Never fails the pass: a picture on the card is a
+    courtesy."""
+    register = getattr(sc, "register", None)
+    if register is None or not Path(path).is_file():
+        return
+    try:
+        register(LIVE_KEY, path)
+        sc.set_metrics(face_closeup_live={"state": state, "caption": caption})
+        sc.publish()
+    except Exception:  # noqa: BLE001
+        pass
+
 
 def own_closeup_file(sc: StageContext, params: dict[str, Any]) -> Path | None:
     """The person's own close-up for this asset, or None (none added, or face_closeup_own is false on the run)."""
@@ -1321,8 +1351,11 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             closeup.setdefault("margins", {})["guided" if reference is not None else "plain"] = k
             cu = await redraw(sc, instance, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
                               reference=reference, margin=k)
+            show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), None, False))
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
                                             reference is not None)
+            again = not guard["ok"] and n + 1 < len(plan) and (reference is not None or retry_wanted(guard))
+            show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), guard, again))
             kind = "guided" if reference is not None else "plain" if prompt == CLOSEUP_PROMPT else "look"
             tries.append({**guard, "file": name, "prompt": kind, "seed": seed_c})
             if guard["ok"]:
@@ -1483,6 +1516,13 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         picture, method, redraw_seconds = await sharpen()
         done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
                                        crop, out_dir, strength, sides, None, False, False, *over)
+    if closeup.get("used") and source == "closeup":
+        shown = out_dir / (OWN_FILE if closeup.get("own") else closeup.get("file") or "painted_head_closeup.png")
+        if done.get("ok"):
+            show_closeup(sc, shown, "used", "This close-up was used: the face is painted from it.")
+        else:
+            show_closeup(sc, shown, "refused", "This close-up passed its checks, but it was not used: the picture could not be lined up with "
+                                               "the model's face well enough, so the face was left as it was.")
     if not done.get("ok"):
         return _skipped(done.get("reason") or "error", t0, {**record, "closeup": closeup, "alignment": done.get("alignment")})
     files: dict[str, Path] = {k: p for k, p in work_maps.items() if k != "base_color"} if relayout else {}
