@@ -4356,3 +4356,14 @@ button.preset-card:hover:not(:disabled) {
     flex-direction: column;
   }
 }
+
+/* Guided pack panel (components/PackInstall.tsx): the hair library and, later, the animation packs */
+.pack-panel { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s3); padding: var(--s3); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.pack-title { margin: 0; font-size: 1.05rem; }
+.pack-block { display: flex; flex-direction: column; gap: var(--s2); }
+.pack-hand { padding: var(--s2); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); }
+.pack-facts, .pack-choices { margin: 0; padding-left: var(--s4, 20px); display: flex; flex-direction: column; gap: var(--s1, 4px); }
+.pack-choices { list-style: none; padding-left: 0; }
+.pack-choice-what { margin-left: 1.6em; }
+.setup-extras { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); }
+.hair-offer { margin-bottom: var(--s2); }
