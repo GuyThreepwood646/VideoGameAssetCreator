@@ -26,6 +26,7 @@ SAMPLES = {
     "degenerate_faces": ((0, 0), (3, 0)),
     "size_m": ((1.8, 1.8), (1.2, 1.8)),
     "facing": ((0, 0), (90, 0)),
+    "facing_tests": ((5, 60), (179, 60)),
     "uv_set": ((1, 1), (0, 1)),
     "lod_count": ((4, 4), (2, 4)),
     "collider_present": ((54, ">0"), (0, ">0")),
@@ -314,11 +315,13 @@ def test_prep_resolves_size_and_facing():
 
     f = prep_stage.resolve_facing
     wolf = reference.category("quadruped")
-    assert f(wolf, "auto", None) == {"face_yaw_applied": 0, "face_best_turn": None, "facing_source": "as built"}
+    none = f(wolf, "auto", None)
+    assert (none["face_yaw_applied"], none["face_best_turn"], none["facing_source"], none["face_remainder_deg"]) == (0, None, "as built", None)
     assert f(wolf, "auto", {"silhouette_offset": 90, "silhouette_sign": 1, "silhouette_iou": 0.8})["face_yaw_applied"] == 270
     low = f(wolf, "auto", {"silhouette_offset": 90, "silhouette_sign": 1, "silhouette_iou": 0.3})
     assert low["face_best_turn"] is None and low["face_yaw_applied"] == 0
-    assert f(wolf, 180, {"silhouette_offset": 0, "silhouette_sign": 1, "silhouette_iou": 0.8}) == {"face_yaw_applied": 180, "face_best_turn": 0, "facing_source": "chosen"}
+    chosen = f(wolf, 180, {"silhouette_offset": 0, "silhouette_sign": 1, "silhouette_iou": 0.8})
+    assert (chosen["face_yaw_applied"], chosen["face_best_turn"], chosen["facing_source"]) == (180, 0, "chosen")
 
     report = {"dims_m": [0.42, 1.5, 1.21], "triangles": 19000}
     checks = prep_stage.prep_checks(report, {"size_m": 1.5, "size_axis": "horizontal", "size_word": "long"},

@@ -67,7 +67,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import facing, guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, srcproject, texcolour
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -133,22 +133,33 @@ def _num(x: float) -> int | float:
     return int(x) if float(x).is_integer() else float(x)
 
 
-def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[str, Any] | None) -> dict[str, Any]:
-    """{face_yaw_applied, face_best_turn, facing_source}. face_best_turn is None when the mesh audit has no fit or
-    its silhouette match is below the category floor (then nothing is checked)."""
+def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[str, Any] | None,
+                   toes: dict[str, Any] | None = None) -> dict[str, Any]:
+    """{face_yaw_applied, face_best_turn, facing_source, face_remainder_deg, and the two tests' numbers (facing.metrics_of)}.
+    face_best_turn is None when the mesh audit has no fit or its silhouette match is below the category floor (then
+    nothing is checked). The outline test (the mesh audit) decides, with the toes test (`toes`, facing.toes_of_file on
+    the 3D model) as tie-break and second opinion; without toes (not a person, no feet found) it is as it always was.
+    face_remainder_deg is how far the model still faces from straight ahead after the applied turn (the quarter-turn
+    snap leaves up to 45 degrees), for the face pass."""
     m = mesh_metrics or {}
-    best = None
+    outline = None
     offset, iou = m.get("silhouette_offset"), m.get("silhouette_iou")
     floor = float(category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
     if offset is not None and iou is not None and float(iou) >= floor:
-        best = quality.best_turn(offset, int(m.get("silhouette_sign") or 1))
+        outline = quality.best_turn(offset, int(m.get("silhouette_sign") or 1))
+    d = facing.decide(outline, m.get("silhouette_turn_scores"), toes)
+    best = d["turn"]
     if face_yaw in (None, "", "auto"):
         applied = quality.auto_turn(best)
-        source = "audit" if best is not None else "as built"
+        source = ("toes" if d["source"] == "toes" else "audit") if best is not None else "as built"
     else:
         applied = int(float(face_yaw)) % 360
         source = "chosen"
-    return {"face_yaw_applied": applied, "face_best_turn": best, "facing_source": source}
+    # The head's turn left over after the applied turn. The feet give a finer reading than the outline's 15 degree steps,
+    # so they are used when they were found and agree with the decision; else the decided turn itself.
+    basis = d["toes_turn"] if d["toes_found"] and d["agree"] else best
+    remainder = None if basis is None else round(max(-45.0, min(45.0, facing.signed(basis - applied))), 1)
+    return {"face_yaw_applied": applied, "facing_source": source, "face_remainder_deg": remainder, **facing.metrics_of(d)}
 
 
 async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
@@ -160,7 +171,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         raise FileNotFoundError("no mesh glb in lineage")
     size = resolve_size(sc.asset.category, params, sc.asset.prompt)
     mesh_v = sc.stage_version("mesh")
-    facing = resolve_facing(sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None)
+    toes = await asyncio.to_thread(facing.toes_of_file, src, sc.asset.category)
+    facing_ = resolve_facing(sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None, toes)
     # G05 (b): mirroring halves the texture space the model uses and changes the surface the maps were painted for,
     # so it runs only when the version asks (the Fine-tune switch, or a Fix).
     symmetric = bool(params.get("symmetric") or False)
@@ -190,10 +202,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                       hair_allowance=hair["allowance"], hair_cover=hair["cover"])
     sc.set_metrics(size_source=size["size_source"], shading_applied=shading["shading"], shading_source=shading["source"],
                    triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"],
-                   recipe=reference.recipe_record(rec, "mesh", "surface"), **facing)
+                   recipe=reference.recipe_record(rec, "mesh", "surface"), **facing_)
     sc.use_model("blender")
     out = sc.dir / "prep.glb"
-    args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing["face_yaw_applied"],
+    args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
                        "--pivot", pivot, "--smooth-angle", smooth, "--shading", shading["shading"]]
     if tri_limit["limit"]:
         args += ["--budget", int(tri_limit["limit"])]
@@ -824,6 +836,9 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     best = metrics.get("face_best_turn")
     if best is not None:
         checks.append(quality.facing_check(best, metrics.get("face_yaw_applied") or 0))
+    if metrics.get("face_toes_found") and metrics.get("face_tests_differ_deg") is not None:
+        checks.append(quality.facing_tests_check(metrics["face_outline_turn"], metrics["face_toes_turn"], metrics["face_tests_differ_deg"],
+                                                 metrics.get("face_best_turn"), metrics.get("face_yaw_applied") or 0))
     return checks
 
 

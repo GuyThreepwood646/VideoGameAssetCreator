@@ -48,7 +48,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import colourmatch, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
+from .. import colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.qwen_edit import edit_graph
@@ -67,7 +67,10 @@ def _silhouette_match(views_dir: Path, yaws, refs: dict[str, Path]) -> dict[str,
     """Rendered silhouettes against the reference cutouts, best yaw alignment. Pure CPU work, run in a thread."""
     rendered = {yaw: silhouette(views_dir / f"shade_{yaw}.png") for yaw in yaws}
     ref_sils = {v: silhouette(p) for v, p in refs.items()}
-    return best_alignment(ref_sils, rendered)
+    best = best_alignment(ref_sils, rendered)
+    # every turn's score, so the facing decision can see how narrowly the best turn won (facing.margin)
+    best["turn_scores"] = facing.turn_scores(ref_sils, rendered)
+    return best
 
 
 def _input_image(sc: StageContext, input_view: str) -> Path:
@@ -464,7 +467,8 @@ async def audit(sc: StageContext) -> None:
         if refs:
             best = await asyncio.to_thread(_silhouette_match, views_dir, info.get("yaws", range(0, 360, 15)), refs)
             sc.set_metrics(silhouette_iou=best["mean"], views={v: {"silhouette_iou": x} for v, x in best["views"].items()},
-                           silhouette_offset=best["offset"], silhouette_sign=best["sign"])
+                           silhouette_offset=best["offset"], silhouette_sign=best["sign"],
+                           silhouette_turn_scores={str(k): v for k, v in best.get("turn_scores", {}).items()})
         front = views_dir / "shade_0.png"
         if front.is_file():
             sc.register("preview", front)
