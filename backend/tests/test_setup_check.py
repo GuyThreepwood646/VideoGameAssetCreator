@@ -222,6 +222,23 @@ def test_skintoken_blender_bin(settings, tmp_path):
     assert preflight.check_skintoken_blender(settings, tmp_path)["state"] == "warn"  # no start script: cannot tell
 
 
+def test_skintoken_blender_from_engine_settings(settings, tmp_path):
+    """An engine the backend starts from its settings gets SKINTOKEN_BLENDER_BIN = blender_exe; no script is read."""
+    from vgac.config import EngineConfig
+
+    blender = tmp_path / "blender.exe"
+    eng = EngineConfig(comfy_dir=tmp_path)
+    b = settings.instances["b"].model_copy(update={"engine": eng, "start_script": tmp_path / "gone.ps1"})
+    s = settings.model_copy(update={"instances": {**settings.instances, "b": b}, "blender_exe": None})
+    r = preflight.check_skintoken_blender(s, tmp_path)
+    assert r["state"] == "fail" and "blender_exe" in r["fix"]
+    s = s.model_copy(update={"blender_exe": blender})
+    assert preflight.check_skintoken_blender(s, tmp_path)["state"] == "fail"  # set, but not there
+    blender.write_bytes(b"x")
+    r = preflight.check_skintoken_blender(s, tmp_path)
+    assert r["state"] == "ok" and "engine" in r["technical"]
+
+
 def test_disk_and_memory_thresholds(settings, tmp_path):
     class U:
         def __init__(self, gb: float) -> None:
