@@ -79,7 +79,11 @@ def registry_path() -> Path:
 
 def mine_dir(create: bool = False) -> Path:
     """VGAC/mine/ under ComfyUI's loras folder: the one folder of the model folders the app may list."""
-    d = Path(get_settings().loras_dir).joinpath(*MINE_PARTS)
+    root = get_settings().loras_dir
+    if root is None:
+        raise AddonFileError("ComfyUI's LoRA folder is not set up yet (loras_dir in this machine's settings, "
+                             "local/machine.json), so your own add-ons cannot be kept.", status=409)
+    d = Path(root).joinpath(*MINE_PARTS)
     if create:
         d.mkdir(parents=True, exist_ok=True)
     return d
@@ -468,13 +472,16 @@ def listing() -> dict[str, Any]:
     from . import reference
 
     builtin = _builtin_ids()
-    return {"addons": [public(a) for a in entries() if a["id"] not in builtin], "folder": str(mine_dir()),
-            "folder_exists": mine_dir().is_dir(), "strengths": dict(STRENGTHS),
+    folder = mine_dir() if get_settings().loras_dir is not None else None
+    return {"addons": [public(a) for a in entries() if a["id"] not in builtin], "folder": str(folder or ""),
+            "folder_exists": bool(folder and folder.is_dir()), "strengths": dict(STRENGTHS),
             "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()]}
 
 
 def unregistered() -> list[dict[str, Any]]:
     """Files in VGAC/mine/ (that folder only) that are not set up yet, each with its prefill or a plain error."""
+    if get_settings().loras_dir is None:
+        return []
     d = mine_dir()
     if not d.is_dir():
         return []

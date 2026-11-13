@@ -1,15 +1,16 @@
 """Start ComfyUI instances on demand and stop the ones the backend started.
 
-A card whose instance has a `start_script` in the config (config.InstanceConfig) is started when a job needs it and
-nothing answers its /system_stats. ensure_running(name):
+A card whose instance has an `engine` (config.EngineConfig) or a `start_script` in the settings is started when a job
+needs it and nothing answers its /system_stats. ensure_running(name):
 
 1. it answers: running, nothing to do;
 2. the backend already started it and that process is alive, or a process whose command line contains
    `process_match` exists, or something listens on its port: someone is starting it, so wait for it to answer;
-3. otherwise run the script detached (powershell -NoProfile -ExecutionPolicy Bypass -File, no window, output to
-   runtime/logs/comfy-<name>.out.log and .err.log), record that the backend owns it (the pid, also saved in
-   <library_path>/engines.json so a backend restart still knows), and wait until it answers or start_timeout_seconds
-   pass.
+3. otherwise start it detached and hidden, output to runtime/logs/comfy-<name>.out.log and .err.log: with an
+   `engine`, the ComfyUI command built from the settings (engine_command(): CUDA_DEVICE_ORDER=PCI_BUS_ID and
+   SKINTOKEN_BLENDER_BIN set); otherwise the start script (powershell -NoProfile -ExecutionPolicy Bypass -File).
+   Record that the backend owns it (the pid, also saved in <library_path>/engines.json so a backend restart still
+   knows), and wait until it answers or start_timeout_seconds pass.
 
 stop(name) only ever stops a process tree the backend started itself (taskkill /PID <pid> /T /F on Windows); for
 anything else it raises NotOwned. An instance run by ComfyUI Desktop or the desktop launcher is never stopped.
@@ -138,6 +139,36 @@ async def probe_url(url: str) -> dict[str, Any] | None:
     return {"reachable": True, "devices": [{"name": d.get("name")} for d in stats["devices"] if isinstance(d, dict)]}
 
 
+def engine_command(settings: Settings, name: str) -> tuple[list[str], Path, dict[str, str]]:
+    """The command that starts instance `name`'s ComfyUI from its `engine` settings: (argv, working folder,
+    environment variables to add). ValueError when the instance has no engine. Paths are already absolute
+    (config.resolve_paths)."""
+    inst = settings.instances[name]
+    e = inst.engine
+    if e is None:
+        raise ValueError(f"instance {name} has no engine settings")
+    port = e.port if e.port is not None else port_of(inst.url)
+    main = e.main.replace("/", os.sep)
+    argv = [str(e.python), "-s", main]
+    if port is not None:
+        argv += ["--port", str(port)]
+    if e.listen:
+        argv += ["--listen", e.listen]
+    if e.cuda_device is not None:
+        argv += ["--cuda-device", str(e.cuda_device)]
+    input_dir = e.input_dir if e.input_dir is not None else settings.comfy_input_dir
+    output_dir = e.output_dir if e.output_dir is not None else inst.output_dir
+    for flag, value in (("--extra-model-paths-config", e.extra_model_paths), ("--input-directory", input_dir),
+                        ("--user-directory", e.user_dir), ("--output-directory", output_dir)):
+        if value is not None:
+            argv += [flag, str(value)]
+    argv += [str(a) for a in e.extra_args]
+    env = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
+    if settings.blender_exe is not None:
+        env["SKINTOKEN_BLENDER_BIN"] = str(settings.blender_exe)
+    return argv, Path(e.comfy_dir), env
+
+
 class StartFailed(Exception):
     """The instance could not be started; the message is a plain reason ("it did not answer within 180 seconds")."""
 
@@ -170,6 +201,23 @@ class ProcessOps:
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
                  "-File", str(script)],
                 cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out, stderr=err, creationflags=flags, close_fds=True)
+        self._popen[proc.pid] = proc  # kept so Python does not warn about a child it forgot
+        return proc.pid
+
+    def launch(self, argv: list[str], cwd: Path, env: dict[str, str], out_log: Path, err_log: Path) -> int:
+        """Run a command detached and hidden with `env` added to this process's environment, output to the two logs.
+        Returns the pid."""
+        out_log.parent.mkdir(parents=True, exist_ok=True)
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        with open(out_log, "ab") as out, open(err_log, "ab") as err:
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            shown = " ".join(f"{k}={v}" for k, v in env.items())
+            out.write(f"\n[{stamp}] VGAC backend: starting {subprocess.list2cmdline(argv)} in {cwd} ({shown})\n".encode())
+            out.flush()
+            proc = subprocess.Popen(argv, cwd=str(cwd), env={**os.environ, **env}, stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=err, creationflags=flags, close_fds=True)
         self._popen[proc.pid] = proc  # kept so Python does not warn about a child it forgot
         return proc.pid
 
@@ -268,7 +316,7 @@ class Supervisor:
 
     def can_start(self, name: str) -> bool:
         inst = self.settings.instances.get(name)
-        return inst is not None and inst.start_script is not None
+        return inst is not None and (inst.engine is not None or inst.start_script is not None)
 
     def script_path(self, name: str) -> Path | None:
         inst = self.settings.instances.get(name)
@@ -459,22 +507,37 @@ class Supervisor:
                     log.info("graphics engine %s: already being started outside the app (%s); waiting for it", name,
                              f"pid {others[0]}" if others else "its port is open")
                 else:
-                    script = self.script_path(name)
-                    if script is None:
-                        raise StartFailed("no start script is set up for it")
-                    if not script.is_file():
-                        raise StartFailed(f"the start script {script} was not found")
                     out_log, err_log = self.log_paths(name)
-                    try:
-                        pid = self.ops.spawn(script, script.parent, out_log, err_log)
-                    except OSError as err:
-                        raise StartFailed(f"Windows could not run the start script ({err})") from err
+                    if inst.engine is not None:
+                        argv, cwd, env = engine_command(self.settings, name)
+                        if not cwd.is_dir():
+                            raise StartFailed(f"its ComfyUI folder {cwd} was not found (instances.{name}.engine."
+                                              "comfy_dir in local/machine.json)")
+                        if not Path(argv[0]).is_file():
+                            raise StartFailed(f"its ComfyUI Python {argv[0]} was not found (instances.{name}.engine."
+                                              "python in local/machine.json)")
+                        try:
+                            pid = self.ops.launch(argv, cwd, env, out_log, err_log)
+                        except OSError as err:
+                            raise StartFailed(f"Windows could not start its ComfyUI ({err})") from err
+                        what = f"{argv[0]} in {cwd}"
+                    else:
+                        script = self.script_path(name)
+                        if script is None:
+                            raise StartFailed("no way to start it is set up (no engine settings and no start script)")
+                        if not script.is_file():
+                            raise StartFailed(f"the start script {script} was not found")
+                        try:
+                            pid = self.ops.spawn(script, script.parent, out_log, err_log)
+                        except OSError as err:
+                            raise StartFailed(f"Windows could not run the start script ({err})") from err
+                        what = str(script)
                     e.owned_pid = pid
                     e.owned_created = self.ops.create_time(pid)
                     e.last_busy = self.clock()
                     self._save_owned()
                     spawned = True
-                    log.info("graphics engine %s: started %s as pid %s (logs %s, %s)", name, script, pid, out_log, err_log)
+                    log.info("graphics engine %s: started %s as pid %s (logs %s, %s)", name, what, pid, out_log, err_log)
             deadline = self.clock() + inst.start_timeout_seconds
             _, err_log = self.log_paths(name)
             while True:
