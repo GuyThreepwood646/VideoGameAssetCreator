@@ -39,9 +39,8 @@ HAIR_SHARE_MAX = 0.25  # the hair (with its cap) may take at most this share of 
 CAP_MARGIN = 400
 ALLOWANCE_STEP = 250
 PHONE_PLATFORM = "mobile_low"
-NOT_INSTALLED = ("The hair library is not installed in this copy of the app. To get it, run setup\\Setup-Extras.ps1 -Packs -Install "
-                 "(it downloads the free hairstyle packs and builds the library on this computer; the steps are in docs\\FIRST-TIME-SETUP.md), "
-                 "then restart the app. Hairstyles you added yourself still work without it.")
+NOT_INSTALLED = ("The hair library is not installed yet. Open the System page and press \"Get the hair library\" (free, about 640 MB to "
+                 "download, a few minutes). Hairstyles you added yourself still work without it.")
 PHONE_TRIANGLES_MAX = 750  # on Phone only shell styles at or under this many triangles
 FIT_GOOD = 0.6  # hair_fit: under this nothing fits well
 COVERS = ("normal", "more")
@@ -432,7 +431,7 @@ def panel(db: Session, a: Asset) -> dict[str, Any]:
         sentence = "The hairstyles are tried on the bald 3D model when it is built."
     else:
         sentence = "The hair is built with the 3D model."
-    return {"source": src, "available": reason is None, "unavailable_reason": reason, "family": family, "family_words": list(words or []),
+    return {"source": src, "available": reason is None, "unavailable_reason": reason, "library_installed": _installed(_hairstyles()), "family": family, "family_words": list(words or []),
             "pick": pick, "candidates": cands, "mesh_version_id": mesh_v.id if mesh_v is not None else None,
             "best": hl.get("best"), "nothing_fits": bool(hl.get("nothing_fits")) if hl else False, "applied": applied,
             "allowance": kept_allowance(a, mesh_v, prep_v, pick),
