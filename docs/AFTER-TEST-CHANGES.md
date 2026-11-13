@@ -277,6 +277,13 @@ Body (added after the W1-bikini rerun, where clean-up streaked the sides and bac
     exists (`source_project_mode`, `srcproject.MODES`) but is not the default and has no control in the app; the
     agreement gate exists but removed nothing in any run. Decide after the comparison clean-up of the W1-bikini
     rerun (version cdc48e26): default for realistic characters, a control in the fine-tune panel, or a finer gate.
+    Result of that comparison (2026-11-13, same model, same face): detail only removes the streaks on the arms and
+    torso and the costume colour on the hand and hip, and keeps the front and the face. It leaves two faults: the
+    sides and back keep the step 3 skin tone (redder), so there is a tone step against the pale front; and a drawn
+    detail that the model does not have shows as a pale embossed outline (the tied bow on the back), with soft
+    greenish hair. So neither mode is right alone. Build: step 3 colour on the sides and back with its tone matched
+    to the front picture per material (skin, cloth, hair), and a view's detail added only where the view agrees
+    with the model.
 15. Items 5 to 8 have body counterparts and should be built as one rule, not a face-only one: a view never paints a
     region that a better-placed view owns, unpainted skin takes the tone of the painted skin beside it, and a view
     whose fitted turn or pose contradicts the front is refused.
@@ -290,8 +297,17 @@ Parallel work (A3 to A5; not in the face list before):
     two are free, then the back. First find out why 2 of 3 side-view jobs moved onto the 3080 timed out once.
 18. A second clean-up lane, with each lane's card bursts sent through the app's queue to a different card and
     exports allowed to overtake a waiting clean-up.
-19. The guardrails for 10, 17 and 18 (A5): order enforced with a plain message when a dependency is missing; check
+19. The guardrails for 10, 17, 18 and 20 (A5): order enforced with a plain message when a dependency is missing; check
     free card memory, busy cards, processor cores and system memory before going parallel, else run one at a time.
+20. Clean-up uses both cards for a single asset (owner, 2026-11-13). Clean-up's card work is independent draws
+    with no order between them, so the guardrails in 19 are enough:
+    a. Sharpening the pictures (about 8, today one after another on one card): split across the cards that are free.
+    b. The face close-up: when two cards are free, draw two candidates at once with different seeds and keep the
+       better one by the guard's own scores (likeness, feature scores). Costs no extra time and raises the odds of
+       a sharp face on the first pass. Builds on item 16 (the retry): a retry round draws two more.
+    One draw per card at a time. Two draws at once on one card is not a gain here: a drawing card is already fully
+    busy, the drawing model is larger than either card's memory, and the engine runs one job per card. Drawing two
+    pictures in one pass (batching) is a possible later experiment; unmeasured on these cards.
 
 Test plan after building: rerun the same 11 pictures on PC mid, plus the tall rows once item 4 is in, and score
 them with the same scorecard (`bakeoff/realistic_test/analysis/scorecard/`).
