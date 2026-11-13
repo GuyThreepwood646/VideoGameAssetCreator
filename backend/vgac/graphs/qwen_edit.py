@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import BS
+from .birefnet import cutout_graph
 
 Q = "Qwen" + BS
 
@@ -48,6 +49,28 @@ def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_stren
         "dec": {"class_type": "VAEDecode", "inputs": {"samples": ["ks", 0], "vae": ["vae", 0]}},
         "save": {"class_type": "SaveImage", "inputs": {"images": ["dec", 0], "filename_prefix": prefix}},
     }
+
+
+# UNTESTED ON A CARD. The view's picture and its cut-out in ONE graph (docs/SPEED-AUDIT.md O2 a): the cut-out nodes of
+# birefnet.cutout_graph hang on the decoded picture instead of a picture loaded from disk by a separate job. Two jobs in a
+# row used to swap each other's loader nodes out of the engine's cache (the drawing model's loaders ran again for every
+# view); now consecutive views share every loader node. Every node of angle_graph is unchanged (so the picture is
+# computed the same way from the same seed); every cut-out node is cutout_graph's with the loaded picture replaced by the
+# decoder's output, saved under CUT_NODE. What differs from the two-job path: the cut-out model sees the decoder's
+# floating point picture, not its 8-bit PNG copy read back from disk, so the mask can differ in a few edge pixels.
+CUT_NODE = "cut_save"
+
+
+def angle_cutout_graph(image_name: str, prompt: str, seed: int, prefix: str, cutout_prefix: str,
+                       lora_strength: float = 0.9) -> dict[str, Any]:
+    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength)
+    for key, node in cutout_graph("unused.png", cutout_prefix).items():
+        if key == "img":
+            continue  # the picture comes from the decoder
+        inputs = {k: (["dec", 0] if v == ["img", 0] else ([f"co_{v[0]}", v[1]] if isinstance(v, list) else v))
+                  for k, v in node["inputs"].items()}
+        g[CUT_NODE if key == "save" else f"co_{key}"] = {"class_type": node["class_type"], "inputs": inputs}
+    return g
 
 
 # The two other ways to turn the views (docs/RECIPES-BAKEOFF.md sections 5.1 and 5.2, bakeoff/recipes/turn_ab.py).

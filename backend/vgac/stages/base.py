@@ -213,6 +213,11 @@ class StageContext:
         entry = await self.comfy(cutout_graph(src_name, self.prefix(name)), instance=instance, message=f"cutout {name}", base=base, span=span)
         dest = self.dir / f"{name}.png"
         await self.download_image(entry, "save", dest, instance)
+        return await self.finish_cutout(dest)
+
+    async def finish_cutout(self, dest: Path) -> dict[str, Path]:
+        """The white copy and the outline numbers of a cut-out already written to `dest` (by cutout(), or downloaded from
+        a graph that holds the cut-out nodes itself)."""
         # Pure image work off the event loop; the session stays on this side.
         white = await asyncio.to_thread(white_composite, dest)
         stats = await asyncio.to_thread(alpha_bbox, dest)

@@ -20,7 +20,8 @@ from PIL import Image
 
 from .. import hairlib, library, quality, reference
 from ..db import Version
-from ..graphs.qwen_edit import CAMERA_TURNS, SHEET_INPUT, SHEET_ORDER, angle_graph, camera_graph, edit_graph, sheet_graph, view_prompt
+from ..graphs.qwen_edit import (CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
+                                edit_graph, sheet_graph, view_prompt)
 from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
@@ -202,13 +203,33 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
     return out
 
 
+# UNTESTED ON A CARD (docs/SPEED-AUDIT.md O2 a). True: each view's cut-out nodes are in the view's own graph
+# (graphs/qwen_edit.angle_cutout_graph), so the engine keeps the drawing model's loader nodes from one view to the next
+# instead of a separate cut-out job evicting them. False, or `cutout_in_graph: false` in a version's settings: the old
+# two jobs per view. metrics.cutout_in_view_graph records which one a version used.
+CUTOUT_IN_VIEW_GRAPH = True
+
+
+def cutout_in_graph(sc: StageContext) -> bool:
+    chosen = (getattr(getattr(sc, "version", None), "params", None) or {}).get("cutout_in_graph")
+    return CUTOUT_IN_VIEW_GRAPH if chosen is None else bool(chosen)
+
+
 async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, lora_strength: float, extra: str, base: float, span: float,
                          name: str | None = None, instance: str | None = None) -> dict[str, Path]:
     """One drawn view. `name` (default the view) names its files: the bald pictures use bald_<view>. `instance`: the
     card it is drawn and cut out on (default the job's own card); the graph is the same on every card."""
     name = name or view
-    graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength)
     on = {"instance": instance} if instance else {}
+    if cutout_in_graph(sc):
+        graph = angle_cutout_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
+                                   lora_strength=lora_strength)
+        entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span, **on)
+        raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
+        await sc.download_image(entry, CUT_NODE, sc.dir / f"{name}.png", **on)
+        res = await sc.finish_cutout(sc.dir / f"{name}.png")
+        return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
+    graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength)
     entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
     raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
     res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3, **on)
@@ -728,7 +749,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             sc.use_model(METHOD_ADDON[m][1])
             addons.append({"id": METHOD_ADDON[m][0], "value": lora_strength if m == "standard" else METHOD_STRENGTH,
                            "required": m == "standard"})
-    sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method)
+    sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method,
+                   cutout_in_view_graph=cutout_in_graph(sc))
     _publish_views(sc, results)
 
 
