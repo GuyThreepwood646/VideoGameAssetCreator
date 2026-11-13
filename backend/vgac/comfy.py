@@ -28,6 +28,14 @@ import httpx
 # lets the timeout through (the job queue counts it as the engine lost). A connection that is refused or reset still
 # raises at once, so a dead engine is noticed as fast as before.
 ENGINE_STALL_SECONDS = 600.0
+# How often wait() asks for the result. A job that finishes is noticed on average half a poll late, so a poll of one
+# second cost about 0.5 s on each of the 30 or so card jobs of one asset. The first POLL_FAST_FOR seconds of a job are
+# polled every POLL_FAST_SECONDS whatever the caller asked for (a local GET that costs the engine nothing: an unfinished
+# job answers with an empty object); after that the caller's own interval applies, at most POLL_SLOW_MAX. The checks
+# the poll feeds (progress, stop) run at the same rate, which also makes Stop answer sooner.
+POLL_FAST_SECONDS = 0.25
+POLL_FAST_FOR = 120.0
+POLL_SLOW_MAX = 1.0
 # The read timeout of POST /prompt. A submit is never repeated (a second try would draw the picture twice), so it
 # waits as long as a poll may stall instead.
 SUBMIT_READ_TIMEOUT = ENGINE_STALL_SECONDS
@@ -268,7 +276,7 @@ class ComfyClient:
                 on_poll(elapsed)
             if timeout is not None and elapsed > timeout:
                 raise ComfyError(f"prompt {prompt_id} timed out after {timeout}s")
-            await asyncio.sleep(poll_seconds)
+            await asyncio.sleep(POLL_FAST_SECONDS if elapsed < POLL_FAST_FOR else min(poll_seconds, POLL_SLOW_MAX))
 
     async def run(self, graph: dict[str, Any], poll_seconds: float = 1.0, timeout: float | None = None,
                   on_poll: Callable[[float], None] | None = None) -> dict[str, Any]:
