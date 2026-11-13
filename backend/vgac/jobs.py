@@ -452,6 +452,30 @@ def _publish_version(version: Version) -> None:
     bus.publish_threadsafe({"type": "version", "version": version_to_dict(version)})
 
 
+def _host_next(db: Any) -> str | None:
+    """The host lane's next job. First come, first served, except that an export (about 35 s of work) goes ahead of the
+    clean-ups and other long jobs waiting before it (in the realistic test one waited 10 minutes behind a clean-up),
+    unless something it depends on is still to do: an export waits (and is skipped) while any other job of the same asset that was
+    created before it is queued or running, on any card (its clean-up, its rig). Exports among themselves stay in
+    order."""
+    rows = db.execute(select(Job.id, Job.kind, Job.asset_id, Job.created_at).where(Job.instance == HOST, Job.status == "queued")
+                      .order_by(Job.created_at, Job.id).limit(500)).all()
+    if not rows:
+        return None
+    def blocked(r: Any) -> bool:
+        return r.kind.startswith("export.") and r.asset_id is not None and bool(db.scalar(
+            select(func.count()).select_from(Job).where(
+                Job.asset_id == r.asset_id, Job.id != r.id, Job.status.in_(("queued", "running")),
+                Job.created_at < r.created_at, ~Job.kind.startswith("export."))))
+
+    exports = [r for r in rows if r.kind.startswith("export.")]
+    for r in exports:
+        if not blocked(r):
+            return r.id
+    # No export can go: the oldest job that is not a (blocked) export. A blocked export waits for its asset's job.
+    return next((r.id for r in rows if not r.kind.startswith("export.")), None)
+
+
 @dataclass
 class InstanceWorker:
     name: str
@@ -508,6 +532,8 @@ class InstanceWorker:
 
     def _next_queued(self) -> str | None:
         with session_factory()() as db:
+            if self.name == HOST:
+                return _host_next(db)
             if self.allows is None:
                 job = db.scalar(select(Job).where(Job.instance == self.name, Job.status == "queued").order_by(Job.created_at, Job.id).limit(1))
                 return job.id if job else None
