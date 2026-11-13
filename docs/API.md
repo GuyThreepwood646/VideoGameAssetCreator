@@ -249,3 +249,30 @@ Hair from the library (ready-made hairstyles fitted to the head) is an opt-in ch
 - Internal version params (not Adjust knobs): turnaround `bald_views`, `bald_seed` (carried by Resume), `bald_only`; mesh `hair_source`; prep `hair_source`, `hair_style`, `hair_style_source` (`chosen|picked|best`), `hair_allowance`, `hair_cover` (`normal|more`). An explicit `hair_source` on the 3D step wins over the asset setting, and `"model"` also sets the asset back to today's hair (`changed_by: "fix"`).
 - Version files: turnaround `bald_front`, `bald_quarter`, `bald_left`, `bald_right` with `_cutout` and `_white`, `hair_outline_front`, `hair_picture`, `bald_sheet`; mesh `hair_candidates`, `hair_cand_1` to `hair_cand_4`; prep `hair_mesh`, `hair_parts`, `hair_glb`, `with_hair_glb`, `hair_base_color`, `hair_normal`, `hair_roughness`, `hair_flow`, `hair_fit_sheet` (prep `glb` stays the bald body).
 - Metrics: turnaround `bald` (with `face_dark`, the share of the lower face drawn darker, a beard; `face_change`; both decide `bald_picture` reason `face_changed`; when the description names facial hair, `bearded` is true, `face_dark` is null, `face_change` is measured on the upper face only and `beard_change` is the share of the original's beard pixels the edit changed); mesh `hair_library` `{family, family_source, candidates, best, best_score, nothing_fits, seconds, error}`; prep `hair_library` (the attach record, with `allowance`, `budget`, `style_source`, `reused_body_of`) and `body_glb_hash` (sha1 of prep.glb). With library hair the Clean up's `triangle_budget` check (the body against the body's limit) also has vars `hair_allowance` and `platform_triangles`. New checks, all warn: `bald_picture` (turnaround), `hair_fit` (mesh and prep), `hair_skin_through` and `hair_triangles` (prep). With library hair the hair detail pass stands back (reason `library`), and `hair_matches_picture` and `hair_material` are not emitted.
+
+## Additions (2026-11-12, your own 3D model on step 3)
+
+Backend `vgac/model_import.py`, Blender `blender/modelimport.py`; design in docs/PROMPT-AND-IMPORT-SPEC.md (item 3, phase A).
+
+- `POST /api/assets/{aid}/stages/mesh/upload?name=<file name>` with the raw file as the body (`application/octet-stream`).
+  GLB, glTF (self-contained), FBX, OBJ, or a zip holding one model and its pictures; at most 400 MB, a zip at most
+  400 files and 1 GB unpacked. The first bytes must match the kind the name gives. 400 with a plain `detail` for a
+  wrong kind, a folder in the name, a zip member that points outside the zip or is a link, two models of the same kind
+  in a zip, a glTF that points at other files, or a tileable material; 413 when too large. No version is left behind
+  on a refusal. -> `{job, version}`: a queued step 3 version with `params {source: "upload", engine: "upload",
+  file_name, turn: 0, hair_source: "model"}` and a `mesh.upload` job on the host (Blender on the processor; no
+  graphics card). The file is kept under the version folder's `source/`.
+- The job: the model becomes one mesh with one material and one texture layout (`files.glb`, `base_color`, and
+  `metallic`, `roughness`, `normal` when the model has them; `import_report`), then the usual 3D audit (`preview`,
+  `sheet`, `views_dir`, silhouette match) and checks. New kept step 1 and step 2 versions with
+  `params.source = "from_model"` hold renders of the model (step 1: `image`, `cutout`, `cutout_white`; step 2: `front`,
+  `left`, `back`, `right`, `quarter`, `quarter2`, each with `_cutout` and `_white`); the step 3 version's parent is
+  the new step 2 version, and it is kept. `metrics.imported {triangles, vertices, materials, texture_mode
+  (kept|baked|none), texture_size, uv_made, bones, armature, dims, warnings, seconds, turn}` and `metrics.import_notes`
+  (plain sentences). A file Blender cannot use fails the job with a plain sentence (no mesh, over 2 million
+  triangles, unreadable).
+- `POST /api/versions/{vid}/turn-model` `{turn: 90 | 180 | 270}`: a new step 3 version from the same file, turned that
+  many degrees more (counter-clockwise seen from above), with new step 1 and 2 pictures. 400 for another step, a built
+  model or another turn; 409 when the file is gone.
+- A Fine-tune or described change of an imported version builds a new model from the step 1 and 2 pictures: the
+  import's own settings (`IMPORT_PARAMS` in stages/mesh.py) are not inherited.

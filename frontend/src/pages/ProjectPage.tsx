@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
@@ -249,7 +249,10 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [error, setError] = useState<unknown>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
   const [autopilot, setAutopilot] = useState(autopilotDefault())
-  const [startFrom, setStartFrom] = useState<'words' | 'picture'>('words')
+  const [startFrom, setStartFrom] = useState<'words' | 'picture' | 'model'>('words')
+  // A 3D model the person has (step 3 "Use my own 3D model"): sent after the asset is made.
+  const [modelFile, setModelFile] = useState<File | null>(null)
+  const [modelProgress, setModelProgress] = useState<number | null>(null)
   const [picture, setPicture] = useState<PickedImage | null>(null)
   // Carried items in the description (a sword, a quiver): made separately unless the person keeps them on the body.
   const [found, setFound] = useState<ItemDetect | null>(null)
@@ -328,9 +331,10 @@ function CreateAssetForm({ project }: { project: Project }) {
   const optionLabel = (m: string) => (suggestion && m === suggestion.model && !(STYLE_MODELS as readonly string[]).includes(m) ? suggestion.model_label : modelLabel(m))
 
   const fromPicture = startFrom === 'picture'
-  const hairOffered = (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
-  const ready = !!category && (fromPicture ? !!picture : !!prompt.trim())
-  const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || 'Untitled'
+  const fromModel = startFrom === 'model'
+  const hairOffered = !fromModel && (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
+  const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
+  const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || (fromModel && modelFile ? nameFromFile(modelFile.name) : '') || 'Untitled'
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -346,13 +350,24 @@ function CreateAssetForm({ project }: { project: Project }) {
         platform_target: platform,
         prompt: prompt.trim(),
         parts,
-        ...(chosenModel && !fromPicture ? { concept_model: chosenModel } : {}),
+        ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
         ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
+      if (fromModel && modelFile) {
+        // The model is read on step 3; Autopilot can carry on from there once the model is in.
+        setModelProgress(0)
+        try {
+          await api.uploadModel(a.id, modelFile, setModelProgress)
+        } finally {
+          setModelProgress(null)
+        }
+        navigate(`/assets/${a.id}/mesh`)
+        return
+      }
       rememberAutopilotDefault(autopilot)
       if (autopilot) {
         // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
@@ -388,8 +403,29 @@ function CreateAssetForm({ project }: { project: Project }) {
             <input type="radio" name="start-from" checked={fromPicture} onChange={() => setStartFrom('picture')} />
             <span>A picture I have</span>
           </label>
+          <label className="check-item">
+            <input type="radio" name="start-from" checked={fromModel} onChange={() => setStartFrom('model')} />
+            <span>A 3D model I have</span>
+          </label>
         </div>
       </div>
+      {fromModel && (
+        <label className="field">
+          <span className="field-label">
+            Your model
+            <Info term="term.own_model" />
+          </span>
+          <input type="file" accept={MODEL_KINDS.join(',')} onChange={(e) => setModelFile(e.target.files?.[0] ?? null)} />
+          <span className="field-hint">
+            GLB, glTF, FBX or OBJ, up to {MODEL_MAX_MB} MB; for an OBJ, or a model whose pictures are separate files, a zip with all of them. The asset opens on step 3 while Blender reads it, and steps 1 and 2 get pictures of it. Autopilot does not start: start it from step 3 once your model is in.
+          </span>
+          {modelProgress !== null && (
+            <span className="small" role="status">
+              Sending {Math.round(modelProgress * 100)}% <progress value={modelProgress} max={1} aria-label="Sending your model" />
+            </span>
+          )}
+        </label>
+      )}
       {fromPicture && (
         <ImageDrop
           value={picture}
@@ -408,9 +444,9 @@ function CreateAssetForm({ project }: { project: Project }) {
           ))}
         </div>
       </Field>
-      {fromPicture ? (
-        <Field label="Describe your picture (optional)" term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
-          <SubmitTextarea ctrlEnter rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="A few words about your picture" aria-label="Describe your picture" />
+      {fromPicture || fromModel ? (
+        <Field label={fromModel ? 'Describe your model (optional)' : 'Describe your picture (optional)'} term="term.what_is_it_note" hint="For example: a knight in red armour with a round shield.">
+          <SubmitTextarea ctrlEnter rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={fromModel ? 'A few words about your model' : 'A few words about your picture'} aria-label={fromModel ? 'Describe your model' : 'Describe your picture'} />
         </Field>
       ) : (
         <Field label="2. Describe it" term="term.prompt" hint="One sentence is enough. Enter adds a line; Ctrl+Enter creates the asset.">
@@ -460,7 +496,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <ItemsLine found={found} choice={itemChoice} onChoice={setItemChoice} />
         </ExtraChip>
       )}
-      {!fromPicture && (
+      {!fromPicture && !fromModel && (
         <div className="examples">
           <span className="muted small">Examples:</span>
           {examples.map((ex) => (
@@ -591,10 +627,10 @@ function CreateAssetForm({ project }: { project: Project }) {
       </label>
       <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
-          {busy ? 'Creating...' : autopilot ? 'Create and make it' : 'Create asset'}
+          {busy ? (fromModel && modelProgress !== null ? 'Sending your model...' : 'Creating...') : fromModel ? 'Create and read my model' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>
         <span className="muted small">
-          {autopilot ? 'Next: every step runs by itself.' : fromPicture ? 'Next: we cut out your picture and check it is ready for 3D.' : 'Next: we paint the first picture.'}
+          {fromModel ? 'Next: Blender reads your model and takes pictures of it for steps 1 and 2.' : autopilot ? 'Next: every step runs by itself.' : fromPicture ? 'Next: we cut out your picture and check it is ready for 3D.' : 'Next: we paint the first picture.'}
         </span>
         <ErrorText error={error} />
       </div>

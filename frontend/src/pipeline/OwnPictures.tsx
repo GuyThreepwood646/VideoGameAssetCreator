@@ -7,6 +7,7 @@ import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { Disclosure, PanelClose } from '../components/ui'
 import { useRefData } from '../refdata'
+import { isOwnModel, ModelFacing, OwnModel } from './OwnModel'
 
 type Act = (fn: () => Promise<unknown>) => Promise<void> | void
 
@@ -72,6 +73,13 @@ export function OwnPictures({
   onCreated: (versionId: string) => void
 }) {
   if (stage === 'concept') return <ConceptUpload asset={asset} busy={busy} act={act} onCreated={onCreated} />
+  if (stage === 'mesh' && asset.category !== 'material')
+    return (
+      <>
+        <OwnModel asset={asset} busy={busy} act={act} onCreated={onCreated} />
+        {active && isOwnModel(active) && active.status === 'done' && <ModelFacing version={active} busy={busy} act={act} onCreated={onCreated} />}
+      </>
+    )
   if (stage === 'turnaround' && asset.category !== 'material' && canRun) return <OwnViews asset={asset} active={active} busy={busy} act={act} onCreated={onCreated} />
   if (stage === 'prep' && asset.category === 'humanoid')
     return (

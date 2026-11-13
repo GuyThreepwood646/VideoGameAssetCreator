@@ -32,6 +32,8 @@ import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { OwnPictures, ReferencePicture } from './OwnPictures'
+import { BriefCard } from './Brief'
+import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
 import { opensInView, readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
@@ -295,6 +297,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
           </span>
         </div>
+        {stage === 'concept' && <BriefCard asset={asset} onSaved={onChanged} onError={onError} />}
         <OwnPictures asset={asset} stage={stage} active={active} canRun={canRun} busy={busy} act={act} onCreated={(id) => setActiveId(id)} />
         <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
         {failedRemovable.length > 1 && (
@@ -451,24 +454,33 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
   const parent = version.parent_version_id ? Object.values(asset.stages ?? {}).flatMap((l) => l ?? []).find((v) => v.id === version.parent_version_id) : undefined
   const from = parent ? libraryUrl(parent.files.front_cutout ?? parent.files.cutout ?? parent.files.image ?? parent.files.front) : undefined
   const redraw = libraryUrl(version.files.pose_ready_picture ?? undefined)
+  // Either picture opens full size (double-click or its corner button), both in one viewer to step between.
+  const [full, setFull] = useState<number | null>(null)
+  const items: PictureItem[] = [...(from ? [{ src: from, label: 'Working from this' }] : []), ...(redraw ? [{ src: redraw, label: 'Redrawn for 3D' }] : [])]
+  const fromCutout = !!(parent?.files.front_cutout ?? parent?.files.cutout)
   return (
     <div className="placeholder-box running-placeholder" role="status">
       {(from || redraw) && (
         <div className="running-pictures">
           {from && (
             <figure className="running-from">
-              <img src={from} alt="The picture this step is working from" />
+              <Zoomable className={fromCutout ? 'checker' : ''} label="the picture this step is working from" onOpen={() => setFull(0)}>
+                <img src={from} alt="The picture this step is working from" />
+              </Zoomable>
               <figcaption className="muted small">Working from this</figcaption>
             </figure>
           )}
           {redraw && (
             <figure>
-              <img src={redraw} alt="The redrawn picture for 3D" />
+              <Zoomable label="the redrawn picture" onOpen={() => setFull(from ? 1 : 0)}>
+                <img src={redraw} alt="The redrawn picture for 3D" />
+              </Zoomable>
               <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
             </figure>
           )}
         </div>
       )}
+      {full !== null && <PictureViewer items={items} start={full} checker={fromCutout && full === 0} onClose={() => setFull(null)} />}
       <span>{version.status === 'queued' ? 'Waiting for the graphics card...' : 'Working on it. The result appears here when it is ready.'}</span>
     </div>
   )

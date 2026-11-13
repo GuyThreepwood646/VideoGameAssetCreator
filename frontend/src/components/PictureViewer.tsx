@@ -112,3 +112,28 @@ export function Zoomable({ label, onOpen, children, className = '', style }: { l
     </div>
   )
 }
+
+// Every other picture in the app opens full size on a double-click too (owner, 2026-11-12: "pretty much all the images
+// should pop open"). One listener for the whole page instead of a wrapper at each of the twenty-odd places a picture is
+// shown. Left alone: pictures that already open themselves (inside a .zoomable), pictures inside a dialog or overlay
+// (this viewer, the face crop tool), and anything marked data-no-zoom. Keyboard and touch users keep the corner buttons
+// of the Zoomable pictures; this is the mouse shortcut for the rest.
+export function PictureZoom() {
+  const [open, setOpen] = useState<{ items: PictureItem[]; checker: boolean } | null>(null)
+  useEffect(() => {
+    const onDouble = (e: MouseEvent) => {
+      if (e.defaultPrevented) return
+      const img = e.target instanceof HTMLImageElement ? e.target : null
+      if (!img || !(img.currentSrc || img.src)) return
+      if (img.closest('.zoomable, .overlay, [data-no-zoom], [role="dialog"]')) return
+      e.preventDefault()
+      const src = img.currentSrc || img.src
+      const label = (img.alt || 'Picture').replace(/\.$/, '')
+      setOpen({ items: [{ src, label }], checker: /cutout|_alpha|transparent/i.test(src) || !!img.closest('.checker') })
+    }
+    document.addEventListener('dblclick', onDouble)
+    return () => document.removeEventListener('dblclick', onDouble)
+  }, [])
+  if (!open) return null
+  return <PictureViewer items={open.items} checker={open.checker} onClose={() => setOpen(null)} />
+}

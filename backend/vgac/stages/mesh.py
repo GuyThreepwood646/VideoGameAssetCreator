@@ -708,10 +708,26 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
     await audit(sc)
 
 
+async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:
+    """Your own 3D model ("Use my own 3D model", POST /api/assets/{aid}/stages/mesh/upload): vgac/model_import.py."""
+    from .. import model_import
+
+    await model_import.run_job(sc)
+
+
+# Settings of a step 3 version made from your own model (vgac/model_import.py), never carried into a build.
+IMPORT_PARAMS = ("source", "engine", "file_name", "turn", "texture_size", "hair_source")
+
+
 def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """Parent params under the new ones, without the triangle target and texture size the parent took from the recipe
     (only a chosen value carries over, so a new run follows the recipe as it is now)."""
     base = dict(parent_params or {})
+    if base.get("engine") == "upload":
+        # A Fine-tune or a described change of your own model builds a new model from the pictures of steps 1 and 2
+        # (renders of yours): none of the import's own settings apply to a build.
+        for key in IMPORT_PARAMS:
+            base.pop(key, None)
     if "hair_source" not in params:
         base.pop("hair_source", None)  # upstream follows the asset's hair setting unless the new params name one
     for key, src in (("target_faces", "target_faces_source"), ("texture_size", "texture_source")):

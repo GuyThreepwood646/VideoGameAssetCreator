@@ -7,8 +7,9 @@ import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, ve
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { failingCheckCount, findCheckStage, finishLines } from './finish'
-import { fmtDuration, humanError, looksGood, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
+
 
 export type GuideState = 'blocked' | 'empty' | 'running' | 'stopped' | 'error' | 'review' | 'selected' | 'finished'
 
@@ -208,10 +209,17 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
     case 'running': {
       const job = activeJobFor(jobs, versions)
       const progress = job?.progress ?? 0
-      const left = job?.status === 'running' ? est * (1 - progress) : est
+      // Your own 3D model is read by Blender on this computer: seconds to a minute, not a build's minutes.
+      const importing = job ? job.kind === 'mesh.upload' : versions.some((v) => (v.status === 'queued' || v.status === 'running') && v.params?.engine === 'upload')
+      const runEst = importing ? MODEL_IMPORT_SECONDS : est
+      const left = job?.status === 'running' ? runEst * (1 - progress) : runEst
       const isVariantRepaint = stage === 'concept' && !!asset.base_asset_id && (job?.kind.includes('refine') || versions.length <= 2)
-      happened = isVariantRepaint ? `We are repainting ${baseName ?? 'the original'} with your change${asset.variant_change ? ` ("${asset.variant_change}")` : ''}.` : `${stageGerund(stage)}.`
-      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? `Waiting for the graphics card, then ${fmtDuration(est)}.` : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
+      happened = importing
+        ? 'Reading your 3D model and taking pictures of it for steps 1 and 2.'
+        : isVariantRepaint
+          ? `We are repainting ${baseName ?? 'the original'} with your change${asset.variant_change ? ` ("${asset.variant_change}")` : ''}.`
+          : `${stageGerund(stage)}.`
+      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? (importing ? `Waiting its turn, then ${fmtDuration(runEst)}.` : `Waiting for the graphics card, then ${fmtDuration(est)}.`) : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
       extra = (
         <div className="guide-progress">
           <div className="progress" aria-label={`progress ${Math.round(progress * 100)} percent`}>

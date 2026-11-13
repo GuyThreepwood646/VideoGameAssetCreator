@@ -113,6 +113,10 @@ export function stagePlaceholder(stage: StageId, category?: string): string {
   return (group && CHANGE_EXAMPLES[group]?.[stage]) || STAGE_TEXT[stage].placeholder
 }
 
+// About how long Blender takes to read your own 3D model and take its pictures (measured 2 to 30 s on test files; a
+// heavy model can take a minute or more).
+export const MODEL_IMPORT_SECONDS = 45
+
 export function stageGerund(stage: StageId): string {
   return STAGE_TEXT[stage].gerund
 }
@@ -550,6 +554,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   straight_on: H('Taken straight on', 'Whether the photo looks at the surface square on, not at an angle.', 'A photo taken at an angle has finer detail at the far side, and the texture looks stretched.', 'local detail in opposite thirds of the photo'),
   face_matters: H('The face matters', 'Whether this character\'s face should be sharpened and matched to the picture on the 3D model.', 'On (the default), each clean-up paints the face from the picture and, when the face is small, draws a close-up for more detail: a few minutes per run. Turn it off for a character whose face is hidden or too simple to gain from it (a hood with glowing eyes, a mask, a helmet, a robot); the face then stays as the 3D step made it. A run can still turn the face pass on in its own settings.', 'asset.face_matters; prep param face_detail when not set on the run'),
   own_face_closeup: H('Your own face close-up', 'A close-up picture of the face of this character that you already have, used instead of the one the app draws.', 'The clean-up step draws a close-up of the painted face with your picture\'s features (the painting\'s pose, expression and light, your picture\'s eyes, nose, mouth and skin); the colours and light stay those of the painting, so the face matches the body. If that close-up does not pass the checks, your picture is lined up with the painted face directly; if that fails too it is not used, and the quality checks say why. It is kept with the asset, so every later clean-up uses it until you remove it.', 'POST /api/assets/{id}/face-closeup, prep param face_closeup_own'),
+  own_model: H('Use my own 3D model', 'Start step 3 from a 3D model you already have (GLB, glTF, FBX or OBJ) instead of building one.', 'Blender joins its parts, puts its colours in one set of texture maps and takes pictures of it for steps 1 and 2; then clean-up, rigging and the hand-off work on it as on a built model.', 'POST /api/assets/{id}/stages/mesh/upload, blender/modelimport.py'),
+  model_front: H('Which side is the front', 'Files from other programs face different ways; the app treats the side in the step 1 picture as the front.', 'Clean-up turns the model to face that way, and the rig and the game rely on it. Choosing another side makes a new version from the same file, turned.', 'POST /api/versions/{id}/turn-model, params.turn'),
   own_views: H('Your own side or back views', 'Pictures you already have of the other sides of the same subject.', 'The app uses yours as they are and draws only the sides you leave out. A picture that does not match the front gets a warning but is kept.', 'turnaround provided_views, POST /api/versions/{id}/views/{view}/upload'),
   supplied_view: H('Your view', 'A side you supplied yourself, not drawn by the app.', 'It is cut out and checked against the front like a drawn one, but never redrawn on its own.', 'metrics.views.<view>.supplied'),
   match_picture: H('Match a picture', 'Take the colours or the look of a picture you like and use them for this project.', 'Nothing changes until you press Apply, and you can edit the result first.', 'POST /api/palette-from-image, POST /api/projects/{id}/style-from-image'),

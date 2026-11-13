@@ -642,6 +642,10 @@ export const api = {
   // Step 0.5: one or more concept candidates combined from several of your own pictures (backend vgac/compose.py).
   composeConcept: (aid: string, body: ComposeBody) => post<{ versions: RunResult[] }>(`/api/assets/${aid}/stages/concept/compose`, body),
   uploadView: (vid: string, view: string, image: string) => post<RunResult>(`/api/versions/${vid}/views/${view}/upload`, { image }),
+  // Your own 3D model on step 3 (backend vgac/model_import.py): GLB, glTF, FBX, OBJ or a zip with its pictures.
+  uploadModel: (aid: string, file: File, onProgress?: (fraction: number) => void) => uploadModelFile(aid, file, onProgress),
+  // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
+  turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.
   getFaceCloseup: (aid: string) => get<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
   setFaceCloseup: (aid: string, image: string) => post<FaceCloseup>(`/api/assets/${aid}/face-closeup`, { image }),
@@ -1210,6 +1214,38 @@ export type MyHairStyle = {
 export type MyHairListing = { styles: MyHairStyle[]; responsibility: string; max_mb: number; kinds: string[]; families: { id: string; label: string }[]; licences: string[] }
 export type MyHairForm = { label: string; family: string; fringe: boolean; curly: boolean; source: string; licence: string }
 export type MyHairUpdate = { label?: string; family?: string; fringe?: boolean; curly?: boolean; source?: string; licence?: string }
+
+// POST /api/assets/{aid}/stages/mesh/upload: the model file is the body. The answer comes once the last byte is in;
+// Blender then reads it in a job (the version starts queued).
+export const MODEL_KINDS = ['.glb', '.gltf', '.fbx', '.obj', '.zip']
+export const MODEL_MAX_MB = 400
+function uploadModelFile(aid: string, file: File, onProgress?: (fraction: number) => void): Promise<RunResult> {
+  const path = `/api/assets/${aid}/stages/mesh/upload?` + new URLSearchParams({ name: file.name }).toString()
+  if (isMock()) return request<RunResult>('POST', path + '&bytes=' + file.size)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as RunResult)
+      else {
+        const d = (body as { detail?: unknown } | null)?.detail
+        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The model could not be added (HTTP ${xhr.status}).`, body))
+      }
+    }
+    xhr.send(file)
+  })
+}
 
 // POST /api/my-hair/upload: the file is the body, the form fields are in the query (as for your own animation files).
 // The backend reads the mesh in Blender and draws its pictures, so the answer comes some seconds after the last byte.
