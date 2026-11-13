@@ -4,7 +4,7 @@
 // (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
-import { creditText, selectedVersion, type Asset, type Check, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
+import { creditText, selectedVersion, STAGES, type Asset, type Check, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
 import { checkFix, checkPassed, checkSentence, joinAnd, measuredSize, metres, movesPlain, sizeAxisOf, type FixAction } from '../help'
 
 export type UnityClip = { name: string; loop?: boolean }
@@ -59,12 +59,55 @@ export function findCheck(asset: Asset, id: string): Check | null {
   return null
 }
 
-// Every failing check on the kept versions of the finishing steps, counted one way everywhere (UI-12): the same number
-// the step pages list as red or amber.
+// Every failing check on the kept versions of all six steps, counted one way everywhere: the finish card's "needs a
+// look" list, the finished bar on the earlier step pages and this number are the same set.
 export function failingCheckCount(asset: Asset): number {
-  let n = 0
-  for (const s of STAGES_WITH_FINISH_CHECKS) n += checksOf(selectedVersion(asset, s)).filter((c) => !checkPassed(c)).length
-  return n
+  return attentionItems(asset).length
+}
+
+export type AttentionItem = { stage: StageId; check: Check; id: string; text: string; rank: number }
+
+// What changes the finished character comes first: which way it faces, the face, materials, paint, the rig; then the rest.
+const ATTENTION_ORDER: RegExp[] = [
+  /^(facing|facing_tests|clips_face_forward)$/,
+  /^(face_|hair_|eyes?_|bald_picture|straight_on|look_applied$)/,
+  /^(metal_mixed|materials_connected|albedo_range|normal_map_upright|textures_full_size)$/,
+  /^(texture_sharp|texture_colour_matches_picture|texture_matches_picture|bake_matches|baked_light|even_lighting|soft_light|hist_dist|texture_padding|atlas_used|coverage|mirror_iou)$/,
+  /^(bones|single_root|weight_coverage|max_influences|weights_normalised|rig_restore|clips|library_clips|clips_loop|controller_ready|springs|springs_shipped|joins|legs_moved|wings_found|movement_shape|placement_exact|unity_humanoid_avatar|hitbox_.+)$/,
+]
+
+export function attentionRank(id: string): number {
+  const i = ATTENTION_ORDER.findIndex((re) => re.test(id))
+  return i < 0 ? ATTENTION_ORDER.length : i
+}
+
+// Every failed check on the version kept for each step. A failure on a version that is not the kept one does not count.
+export function attentionItems(asset: Asset): AttentionItem[] {
+  const ctx = { platform: asset.platform_target, category: asset.category }
+  const out: AttentionItem[] = []
+  for (const stage of STAGES) {
+    for (const c of checksOf(selectedVersion(asset, stage))) {
+      if (checkPassed(c)) continue
+      const id = c.id ?? c.name
+      out.push({ stage, check: c, id, text: checkSentence(c, ctx), rank: attentionRank(id) })
+    }
+  }
+  return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
+}
+
+const FACING_IDS = ['facing_tests', 'clips_face_forward', 'facing']
+
+// The facing checks that exist on the kept versions.
+export function facingChecks(asset: Asset): Check[] {
+  const out: Check[] = []
+  for (const stage of STAGES) for (const c of checksOf(selectedVersion(asset, stage))) if (FACING_IDS.includes(c.id ?? c.name)) out.push(c)
+  return out
+}
+
+// True only when a facing check exists and every one that exists passed. Never says more than the checks do.
+export function facesForward(asset: Asset): boolean {
+  const fc = facingChecks(asset)
+  return fc.length > 0 && fc.every(checkPassed)
 }
 
 // The step whose kept version holds a check, so a message can say where it is (UI-12).
@@ -125,7 +168,14 @@ function sanitize(raw: unknown): FinishLine[] {
     .slice(0, 6)
 }
 
+// The card's lines. The words "front facing forward" are taken off any line when a facing check failed, whoever wrote it.
 export function finishLines(asset: Asset): FinishLine[] {
+  const lines = baseFinishLines(asset)
+  if (!facingChecks(asset).some((c) => !checkPassed(c))) return lines
+  return lines.map((l) => ({ ...l, text: l.text.replace(/,? ?front facing forward/i, '') }))
+}
+
+function baseFinishLines(asset: Asset): FinishLine[] {
   const exp = selectedVersion(asset, 'export')
   if (!exp) return []
   if (Array.isArray(exp.metrics.finish_lines)) return sanitize(exp.metrics.finish_lines)
@@ -145,7 +195,7 @@ export function finishLines(asset: Asset): FinishLine[] {
     const bad = failed(sc) ? sc : failed(facing) ? facing : null
     lines.push({
       id: 'size',
-      text: `Real size: ${metres(size.value)} m ${size.word}${facing && checkPassed(facing) ? ', front facing forward' : ''}.`,
+      text: `Real size: ${metres(size.value)} m ${size.word}${facing && facesForward(asset) ? ', front facing forward' : ''}.`,
       state: bad ? 'warn' : 'ok',
       term: 'size_m',
       check: bad ? (bad.id ?? bad.name) : undefined,
