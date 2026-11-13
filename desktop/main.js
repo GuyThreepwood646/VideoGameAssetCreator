@@ -7,6 +7,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { Supervisor } = require('./services');
 const bridge = require('./appbridge');
+const machine = require('./machine');
 
 // ---- config ---------------------------------------------------------------------------------------------------
 
@@ -24,10 +25,10 @@ function configPath() {
 
 function loadConfig() {
   const file = configPath();
-  const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const exeDir = app.isPackaged ? (process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath)) : null;
+  // This machine's values (local/machine.json "desktop") laid over config.json; projectRoot made absolute.
+  const cfg = machine.applyMachine(JSON.parse(fs.readFileSync(file, 'utf8')), path.dirname(file), [exeDir]);
   cfg.file = file;
-  const cfgDir = path.dirname(file);
-  cfg.projectRoot = path.isAbsolute(cfg.projectRoot) ? cfg.projectRoot : path.resolve(cfgDir, cfg.projectRoot);
   cfg.resolve = (p) => (path.isAbsolute(p) ? p : path.resolve(cfg.projectRoot, p));
   return cfg;
 }
@@ -229,7 +230,7 @@ function openFolder(p) {
 function openComfyDesktop() {
   const exe = cfg.comfyA.desktopExe;
   if (!exe || !fs.existsSync(exe)) {
-    dialog.showMessageBox({ type: 'info', message: 'ComfyUI Desktop was not found', detail: `Expected it at:\n${exe}\n\nEdit desktop/config.json (comfyA.desktopExe) if it lives elsewhere.` });
+    dialog.showMessageBox({ type: 'info', message: 'ComfyUI Desktop was not found', detail: `Expected it at:\n${exe || '(not set)'}\n\nSet desktop.comfyA.desktopExe in local/machine.json if it lives elsewhere.` });
     return;
   }
   try {
