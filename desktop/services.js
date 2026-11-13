@@ -148,7 +148,7 @@ class Supervisor extends EventEmitter {
     if (eng.state === 'starting') return this._set('comfyA', 'starting', 'The app is starting it (about a minute)');
     const exe = this.cfg.comfyA.desktopExe;
     const actions = exe && fs.existsSync(exe) ? [{ id: 'openComfyDesktop', label: 'Open ComfyUI Desktop' }] : [];
-    this._set('comfyA', 'down', (this.gpuOff('a') ? 'Not running' : 'Open ComfyUI Desktop and start the GameDevComfy instance') + off, this.gpuOff('a') ? [] : actions);
+    this._set('comfyA', 'down', (this.gpuOff('a') ? 'Not running' : 'Open ComfyUI Desktop and start the instance that runs on this card') + off, this.gpuOff('a') ? [] : actions);
   }
 
   // ---- graphics cards turned off in the app ------------------------------------------------------------------
