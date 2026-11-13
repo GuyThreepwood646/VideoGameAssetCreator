@@ -851,7 +851,7 @@ on('POST', '/api/versions/:vid/reject', (m) => {
   return version
 })
 on('GET', '/api/versions/:vid', (m) => findVersion(m.groups!.vid).version)
-on('POST', '/api/versions/:vid/open-folder', () => ({ opened: true, folder: 'F:\\VGAC\\exports\\Hollow Keep\\Archer', front: true }))
+on('POST', '/api/versions/:vid/open-folder', () => ({ opened: true, folder: 'D:\\VGAC\\exports\\Hollow Keep\\Archer', front: true }))
 on('POST', '/api/versions/:vid/feedback', (m, body) => {
   const { version } = findVersion(m.groups!.vid)
   const thumbs = body.thumbs === 'up' || body.thumbs === 'down' ? body.thumbs : body.thumbs === null || body.thumbs === undefined ? null : undefined
@@ -887,7 +887,7 @@ on('GET', '/api/gallery', () => {
       finished_at: finished,
       thumbnail: concept?.files.cutout ?? concept?.files.image ?? null,
       preview: ex.files.glb ?? null,
-      delivered_to: `F:/Projects/VideoGameAssetCreator/exports/${folderName(project?.name ?? 'project')}/${folderName(a.name)}`,
+      delivered_to: `D:/VGAC/exports/${folderName(project?.name ?? 'project')}/${folderName(a.name)}`,
       fbx: ex.files.fbx ?? null,
       glb: ex.files.glb ?? null,
     }
@@ -1224,7 +1224,7 @@ const MOCK_PAINTERS = [
   { id: 'chroma', label: 'Chroma1-HD' },
 ]
 const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
-const MOCK_ADDON_FOLDER = 'F:\\Projects\\ComfyUI\\models\\loras\\VGAC\\mine'
+const MOCK_ADDON_FOLDER = 'D:\\ComfyUI\\models\\loras\\VGAC\\mine'
 const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill }[] = [
   { file_name: 'ink_wash_style.safetensors', bytes: 170_000_000, prefill: { label: 'Ink wash style', base_models: ['zbase'], trigger: 'ink wash painting', family: 'Z-Image', painter_note: '' } },
 ]

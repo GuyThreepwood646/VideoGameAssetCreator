@@ -1471,8 +1471,8 @@ export function setupReport(): SetupReport {
   const it = (id: string, group: SetupItem['group'], label: string, state: SetupItem['state'], detail: string, fix: string, needed_for: string[], technical: string): SetupItem =>
     ({ id, group, label, state, detail, fix, needed_for, technical })
   const items: SetupItem[] = [
-    it('blender', 'tools', 'Blender', 'ok', 'Blender 5.2.3 is ready.', '', ['mesh', 'prep', 'rig', 'export'], 'blender_exe in backend/config.yaml: F:/Tools/blender-5.2.3-windows-x64/blender.exe (version 5.2.3)'),
-    it('unity', 'tools', 'Unity editor', 'warn', 'The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything else works; the hand-off still makes the files.', 'Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of backend/config.yaml.', ['export'], 'unity_exe in backend/config.yaml: C:/Program Files/Unity/Hub/Editor/6000.4.3f1/Editor/Unity.exe'),
+    it('blender', 'tools', 'Blender', 'ok', 'Blender 5.2.3 is ready.', '', ['mesh', 'prep', 'rig', 'export'], 'blender_exe in local/machine.json: D:/Tools/blender/blender.exe (version 5.2.3)'),
+    it('unity', 'tools', 'Unity editor', 'warn', 'The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything else works; the hand-off still makes the files.', 'Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe in unity_exe in local/machine.json.', ['export'], 'unity_exe in backend/config.yaml: C:/Program Files/Unity/Hub/Editor/6000.4.3f1/Editor/Unity.exe'),
     it('unity_project', 'tools', 'Unity test project', 'ok', 'The Unity test project is there.', '', ['export'], 'unity_project in backend/config.yaml'),
     it('clips.ual1', 'tools', 'Shared animation library', 'ok', 'The shared animations (walk, run, idle and more) are there.', '', ['export'], 'clips_libraries.ual1 in backend/config.yaml'),
     it('skintoken_blender', 'tools', 'Blender for rigging', 'ok', 'The rigging engine knows where Blender is.', '', ['rig'], 'SKINTOKEN_BLENDER_BIN in runtime/start-comfy-b.ps1'),
@@ -1482,7 +1482,7 @@ export function setupReport(): SetupReport {
     it('nodes.b.rig.0', 'engines', 'Parts for rigging (SkinToken)', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['rig'], 'instance b: SkinTokenRigTrimesh, VGACLoadTrimesh, PreviewAny'),
     it('model.a.trellis2', 'models', 'TRELLIS.2', 'ok', 'Installed.', '', ['mesh'], 'instance a: trellis_2_int8_convrot.safetensors (UNETLoader.unet_name; models.yaml trellis2)'),
     it('model.b.zturbo', 'models', 'Z-Image Turbo', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['concept'], 'instance b: z-image-turbo-fp8-aio.safetensors (CheckpointLoaderSimple.ckpt_name; models.yaml zturbo)'),
-    it('disk.F:', 'storage', 'Free space on F:', 'ok', '412 GB is free on F:.', '', [], 'library_path on F:\: 412.0 GB free'),
+    it('disk.D:', 'storage', 'Free space on D:', 'ok', '412 GB is free on D:.', '', [], 'library_path on D:\: 412.0 GB free'),
     it('memory', 'storage', 'Free memory', 'ok', '28 GB of memory is free.', '', [], 'min_free_ram_gb in backend/config.yaml: 8; 28.0 GB free now'),
   ]
   const fails = items.filter((i) => i.state === 'fail').length
