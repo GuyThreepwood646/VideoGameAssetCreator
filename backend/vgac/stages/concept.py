@@ -201,6 +201,9 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     hair = await asyncio.to_thread(_hair_check, sc, cutout)
     if hair is not None:
         checks.append(hair)
+    light = await asyncio.to_thread(light_check, cutout, sc.category, _style_id(sc))
+    if light is not None:
+        checks.append(light)
     drawn = await _face_check(sc, cutout)
     if drawn is not None:
         checks.append(drawn)
@@ -218,6 +221,83 @@ def _hair_check(sc: StageContext, cutout: Path) -> dict[str, Any] | None:
         return hairpic.eyes_check(cutout, text, getattr(sc, "category", None), getattr(sc, "style", None))
     except Exception:  # noqa: BLE001  a readiness extra must never break the concept step
         return None
+
+
+# --- hard light on the person (readiness check soft_light) ---------------------------------------------------------
+# The 3D step bakes the light of the picture into the colour of the model: half a face in cast shadow, or legs in
+# shadow under a bright chest, come out as dark paint that no game lighting can lift. Measured on the cut-out alone,
+# in well under a second: the skin pixels (the warm hues hairpic.eye_cover looks for, any brightness) are split into
+# 8 bands down the figure and two halves across, each cell with enough skin gets its mean lightness (CIE L, the
+# conversion of face.to_lab), and the ratio of the darkest cell to the brightest is the measure. Flat light keeps the
+# ratio above 0.4 on every test picture (dark skin and dark clothes included, because the ratio compares skin with
+# skin of the same person); the two hard-light pictures give 0.15 and 0.17. Over the 28 stored Realistic pictures the
+# next lowest is 0.41.
+LIGHT_RATIO_MIN = 0.29  # darkest skin cell over brightest skin cell; under this the light is hard
+LIGHT_STYLE = "realistic_pbr"  # only the Realistic look: the painted looks have shading of their own (14 of 89 stored pictures fall under the limit)
+LIGHT_SIDE = 256
+LIGHT_BANDS = 8
+LIGHT_CELL_MIN_PX = 25  # skin pixels (at LIGHT_SIDE) a cell needs to count
+LIGHT_CELLS_MIN = 4  # fewer cells with skin (a fully covered person): no verdict
+
+
+def light_measure(cutout: Any) -> dict[str, Any] | None:
+    """{ratio, cells, bright, dark} for a standing person's cut-out (RGBA path or PIL image), or None when too little
+    skin shows to tell (fewer than LIGHT_CELLS_MIN cells with skin)."""
+    import numpy as np
+    from PIL import Image
+
+    from .. import face
+
+    im = (cutout if isinstance(cutout, Image.Image) else Image.open(cutout)).convert("RGBA")
+    w, h = im.size
+    sc = LIGHT_SIDE / max(w, h)
+    if sc < 1:
+        im = im.resize((max(1, round(w * sc)), max(1, round(h * sc))), Image.Resampling.BOX)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    fg = a[..., 3] > 0.5
+    if fg.sum() < 200:
+        return None
+    lab = face.to_lab(a[..., :3])
+    lum, ca, cb = lab[..., 0], lab[..., 1], lab[..., 2]
+    skin = fg & (ca > 4) & (ca < 30) & (cb > 6) & (cb > 0.6 * ca) & (lum > 8)
+    ys, xs = np.nonzero(fg)
+    top, bot, lo, hi = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    cells: list[float] = []
+    for b in range(LIGHT_BANDS):
+        y0 = top + (bot - top + 1) * b // LIGHT_BANDS
+        y1 = top + (bot - top + 1) * (b + 1) // LIGHT_BANDS
+        for k in range(2):
+            x0 = lo + (hi - lo + 1) * k // 2
+            x1 = lo + (hi - lo + 1) * (k + 1) // 2
+            m = skin[y0:y1, x0:x1]
+            if int(m.sum()) >= LIGHT_CELL_MIN_PX:
+                cells.append(float(lum[y0:y1, x0:x1][m].mean()))
+    if len(cells) < LIGHT_CELLS_MIN or max(cells) <= 0:
+        return None
+    return {"ratio": min(cells) / max(cells), "cells": len(cells), "bright": max(cells), "dark": min(cells)}
+
+
+def _style_id(sc: StageContext) -> str:
+    style = getattr(sc, "style", None) or {}
+    return style.get("id") or getattr(getattr(sc, "asset", None), "style_preset", None) or ""
+
+
+def light_check(cutout: Any, category: dict[str, Any] | None, style_id: str | None = LIGHT_STYLE) -> dict[str, Any] | None:
+    """The readiness check `soft_light` (a warning only) for a person's cut-out, or None for anything but a person in
+    the Realistic look, an unreadable picture, or one that shows too little skin to tell. Never breaks the concept step."""
+    from .. import quality, readiness
+
+    cat = category or {}
+    if (cat.get("id") or "humanoid") != "humanoid" or style_id != LIGHT_STYLE:
+        return None
+    try:
+        m = light_measure(cutout)
+    except Exception:  # noqa: BLE001  a readiness extra must never break the concept step
+        return None
+    if m is None:
+        return None
+    return quality.check("soft_light", m["ratio"] >= LIGHT_RATIO_MIN, round(m["ratio"], 2), LIGHT_RATIO_MIN,
+                         vars={"redraw": readiness.redraw_instruction(cat)})
 
 
 async def _face_check(sc: StageContext, cutout: Path) -> dict[str, Any] | None:

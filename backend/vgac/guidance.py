@@ -937,6 +937,19 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _redraw_fix,
         "fix_label": REDRAW_LABEL,
     },
+    # Hard light in a Realistic picture of a person (stages/concept.light_check): the darkest skin on the figure is far
+    # darker than the brightest. A warning only; the Fix asks the picture editor for even light.
+    "soft_light": {
+        "severity": "warn",
+        "ok": "The light on the person is soft and even, so the 3D model will not get painted-in shadows.",
+        "fail": ("The picture has hard, high-contrast light: some of the skin sits in strong shadow while the rest is lit bright. "
+                 "The 3D step paints that light into the character as if it were its colour, so half the face, the legs or the back "
+                 "can come out nearly black, and no game lighting can lift it. A picture in flat, even light (soft studio or "
+                 "cloudy-day light, no strong shadows) gives a character that looks right in any scene. You can carry on with this "
+                 "picture. \"Redraw it in even light\" asks the picture editor to redraw it with the same person in flat light."),
+        "fix": _redraw_fix,
+        "fix_label": "Redraw it in even light",
+    },
     # Hair-friendly pictures (vgac/hairpic.py): hair over the eyes on a character's concept picture, found by colour.
     # The Fix runs the concept refine with vars.redraw, which asks the picture editor to move the hair off the face.
     "hair_off_eyes": {
