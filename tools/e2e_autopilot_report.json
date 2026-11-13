@@ -214,7 +214,7 @@
       ],
       "collider_count": 1,
       "collider_shape": "hull",
-      "delivered_to": "F:\\Projects\\VideoGameAssetCreator\\exports\\Live_check_11_04_1910\\Ranger",
+      "delivered_to": "exports\\Live_check_11_04_1910\\Ranger",
       "unity": {
        "ok": true,
        "humanoidValid": true,
@@ -416,7 +416,7 @@
       "clips": [],
       "collider_count": 8,
       "collider_shape": "decompose",
-      "delivered_to": "F:\\Projects\\VideoGameAssetCreator\\exports\\Live_check_11_04_1910\\Market_cart",
+      "delivered_to": "exports\\Live_check_11_04_1910\\Market_cart",
       "unity": {
        "ok": true,
        "humanoidValid": false,

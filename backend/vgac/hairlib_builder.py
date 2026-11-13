@@ -188,6 +188,16 @@ def _rule_names() -> dict:
     return rb.RULE_STYLES
 
 
+def _pack_relative(path: str | None, packs: Path) -> str | None:
+    """A source file as a path inside the packs folder (forward slashes), so the catalogue holds no machine path."""
+    if not path:
+        return path
+    try:
+        return Path(path).resolve().relative_to(packs).as_posix()
+    except ValueError:
+        return Path(path).name
+
+
 def build(packs: Path | str, out: Path | str, *, blender: str | None = None, scratch: Path | str | None = None,
           curation: Path | str | None = None, only: list[str] | None = None, tex: int = 1024, normal: int = 512,
           cap_check: bool = True, progress=None, cancel=None) -> dict:
@@ -326,7 +336,7 @@ def build(packs: Path | str, out: Path | str, *, blender: str | None = None, scr
         lite_ok = bool(m.get("lite_triangles") and m["lite_triangles"] <= 750)
         catalogue["styles"][sid] = dict(
             id=sid, name=name, pack_name=pack_name, pack=SOURCES[c["pack"]]["pack"], source_url=SOURCES[c["pack"]]["url"], author=k["author"],
-            licence="CC0-1.0", licence_line=k["line"], source_file=k["src_files"].get("obj"),
+            licence="CC0-1.0", licence_line=k["line"], source_file=_pack_relative(k["src_files"].get("obj"), packs),
             family=c["family"], fringe=bool(c["fringe"]), curly=bool(c.get("curly", False)), parting=c["parting"], length_rel_head=m["length_rel_head"],
             kind=c["kind"], alpha="cutout" if cards else "opaque", two_sided=bool(cards or c.get("two_sided", False)),
             triangles=m["triangles"], source_triangles=m["source_triangles"], vertices=m["vertices"],
