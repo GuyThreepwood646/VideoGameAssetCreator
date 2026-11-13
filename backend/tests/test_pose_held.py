@@ -85,3 +85,23 @@ def test_view_checks_adds_pose_held_only_to_front_and_back(tmp_path):
     assert left["passed"] and "pose_held" not in {c["id"] for c in left["checks"]}
     nopose = turnaround.view_checks("front", STATS, None, None, None, None)
     assert nopose["passed"] and "pose_held" not in {c["id"] for c in nopose["checks"]}
+
+
+# Three-quarter views (the build view of the 3D step): a 45 degree turn narrows the outline, so a held pose reads about 0.7.
+def test_three_quarter_limits_pass_a_turned_held_pose_and_fail_arms_down(tmp_path):
+    ref = imaging.pose_extents(figure(tmp_path / "ref.png", True))
+    held = {"arm": ref["arm"] * 0.7, "leg": ref["leg"] * 0.8}
+    down = {"arm": ref["arm"] * 0.46, "leg": ref["leg"] * 0.75}
+    assert turnaround.pose_check("quarter", held, ref)["ok"]
+    assert turnaround.pose_check("quarter2", held, ref)["ok"]
+    c = turnaround.pose_check("quarter", down, ref)
+    assert not c["ok"] and "three-quarter view" in c["help"] and c["limit"] == [0.55, 1.25]
+    # the same ratios are not enough for a front view, which keeps its own limits
+    assert not turnaround.pose_check("front", held, ref)["ok"]
+
+
+def test_three_quarter_views_are_checked_in_view_checks(tmp_path):
+    ref = imaging.pose_extents(figure(tmp_path / "ref.png", True))
+    ext = imaging.pose_extents(figure(tmp_path / "v.png", False))
+    out = turnaround.view_checks("quarter2", STATS, None, None, None, None, pose=(ext, ref))
+    assert any(c["id"] == "pose_held" for c in out["checks"])
