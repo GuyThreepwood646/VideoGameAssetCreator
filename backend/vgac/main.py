@@ -63,6 +63,7 @@ app.include_router(items.router)  # items: empty-handed characters and "Add an i
 app.include_router(__import__("vgac.model_import", fromlist=["router"]).router)  # your own 3D model on step 3 (model_import.py)
 app.include_router(my_hair.router)  # your own hairstyles: add, rename, remove (my_hair.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
+app.include_router(__import__("vgac.packs", fromlist=["router"]).router)  # get the hair library (and later the animation packs) from inside the app (packs.py)
 
 # Exact origins the app is served from: the backend itself (the launcher and the built UI) and the Vite dev server
 # (frontend/vite.config.ts, port 5173, proxying /api to this backend). Any other local port is a foreign page.
