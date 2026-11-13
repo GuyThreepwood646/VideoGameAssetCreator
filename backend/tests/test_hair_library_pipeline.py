@@ -393,8 +393,9 @@ GOLDEN_OFF = {
                    "files": ["back", "back_cutout", "back_white", "front", "front_cutout", "front_white", "left",
                              "left_cutout", "left_white", "quarter", "quarter_cutout", "quarter_white", "right",
                              "right_cutout", "right_white"],
-                   # turn_method (how the views were turned) was added later, on 2026-11-06, for every turnaround.
-                   "metrics": ["addons", "consistency_ok", "flagged_views", "models", "recipe", "supplied_views",
+                   # turn_method (how the views were turned) was added later, on 2026-11-06, for every turnaround;
+                   # cards (which cards drew the views, and why one or two) on 2026-11-13.
+                   "metrics": ["addons", "cards", "consistency_ok", "flagged_views", "models", "recipe", "supplied_views",
                                "turn_method", "views", "views_passed", "views_total"],
                    "params": ["auto_reroll", "lora_strength", "lora_strength_source", "seed", "supplied_views",
                               "turn_method", "views"]}}
