@@ -1,15 +1,16 @@
 // "Is everything ready?" card at the top of the Health page, and the "Setup needs attention" header link. Both read
 // GET /api/setup (backend/vgac/preflight.py; the backend keeps a result for a minute, Check again asks afresh).
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import { api, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
 import { Info, Term } from './components/Info'
+import PackInstall from './components/PackInstall'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
 
 const GROUP_ORDER: SetupGroup[] = ['tools', 'engines', 'models', 'storage']
 const GROUP_LABEL: Record<SetupGroup, string> = { tools: 'Tools', engines: 'ComfyUI instances (graphics engines)', models: 'Models', storage: 'Storage' }
-const STATE_WORD: Record<SetupState, string> = { ok: 'Ready', warn: 'Worth a look', fail: 'Needs fixing', unknown: 'Not checked' }
-const STATE_DOT: Record<SetupState, string> = { ok: 'ok', warn: 'warn', fail: 'bad', unknown: 'off' }
+const STATE_WORD: Record<SetupState, string> = { ok: 'Ready', warn: 'Worth a look', fail: 'Needs fixing', unknown: 'Not checked', optional: 'Optional' }
+const STATE_DOT: Record<SetupState, string> = { ok: 'ok', warn: 'warn', fail: 'bad', unknown: 'off', optional: 'off' }
 
 export function useSetup(intervalMs = 60000) {
   const [report, setReport] = useState<SetupReport | null>(null)
@@ -58,12 +59,17 @@ function Problem({ item }: { item: SetupItem }) {
   )
 }
 
-function Row({ item }: { item: SetupItem }) {
+function Row({ item, onManage }: { item: SetupItem; onManage?: (kit: string) => void }) {
   return (
     <li className="setup-row">
       <span className={'dot ' + STATE_DOT[item.state]} />
       <span className="setup-row-label">{item.label}</span>
       <span className="muted small setup-row-detail">{item.detail}</span>
+      {item.kit && onManage && (
+        <button type="button" className="link small" onClick={() => onManage(item.kit!)}>
+          {item.state === 'ok' ? 'Manage' : 'Get it'}
+        </button>
+      )}
       {item.state === 'unknown' ? <Info term="setup_not_checked" /> : <Info entry={setupItemHelp(item)} />}
     </li>
   )
@@ -74,6 +80,17 @@ export default function SetupCheck() {
   const problems = report ? report.items.filter((i) => i.state === 'fail' || i.state === 'warn') : []
   problems.sort((a, b) => (a.state === b.state ? 0 : a.state === 'fail' ? -1 : 1))
   const allGood = report != null && problems.length === 0
+  // Optional extras (the hair library): offered, never a fault. The button opens the guided panel (PackInstall).
+  const extras = report ? report.items.filter((i) => i.state === 'optional' && i.offer) : []
+  const [openKit, setOpenKit] = useState<string | null>(null)
+  const hash = useLocation().hash
+  useEffect(() => {
+    if (hash.startsWith('#get-')) setOpenKit(hash.slice(5))
+  }, [hash])
+  useEffect(() => {
+    if (openKit && hash === '#get-' + openKit) document.getElementById('get-' + openKit)?.scrollIntoView({ block: 'center' })
+  }, [openKit, hash, report])
+  const panel = openKit ? <PackInstall kit={openKit} onChanged={() => void reload(true)} onClose={() => setOpenKit(null)} /> : null
   return (
     <div className="card setup-card">
       <h2 className="card-title">
@@ -97,6 +114,24 @@ export default function SetupCheck() {
           </ul>
         </>
       )}
+      {extras.length > 0 && (
+        <div className="setup-extras">
+          <div className="field-label">Optional extras</div>
+          <ul className="setup-rows">
+            {extras.map((i) => (
+              <li key={i.id} className="setup-row">
+                <span className="dot off" />
+                <span className="setup-row-label">{i.label}</span>
+                <span className="muted small setup-row-detail">{i.detail}</span>
+                <button type="button" className="small-btn" onClick={() => setOpenKit(i.offer!.kit)}>
+                  {i.offer!.button}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {panel}
       {report && (
         <div className="row-gap">
           <button type="button" className="small-btn" disabled={checking} onClick={() => void reload(true)}>
@@ -125,7 +160,7 @@ export default function SetupCheck() {
                 </h3>
                 <ul className="setup-rows">
                   {rows.map((i) => (
-                    <Row key={i.id} item={i} />
+                    <Row key={i.id} item={i} onManage={setOpenKit} />
                   ))}
                 </ul>
               </div>

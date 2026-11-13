@@ -193,8 +193,13 @@ export function HairSettingPanel({ asset, panel, onClose, onSaved, onError }: { 
         </div>
         <PanelClose onClose={onClose} />
       </div>
+      {panel.library_installed === false && (
+        <div className="muted small hair-offer">
+          The hair library is not installed yet. <Link to="/health#get-hair">Get the hair library</Link> (free, a few minutes). Hairstyles you added yourself still work.
+        </div>
+      )}
       {!panel.available && panel.source !== 'library' ? (
-        <div className="muted small">Not offered for this character. {panel.unavailable_reason || 'Its hair cannot be replaced.'} The hair stays built with the 3D model.</div>
+        <div className="muted small">Not offered for this character. {panel.library_installed === false ? 'The hair library is not installed.' : panel.unavailable_reason || 'Its hair cannot be replaced.'} The hair stays built with the 3D model.</div>
       ) : (
         <>
           <HairOptions name="hair-page" value={choice} onChange={setChoice} disabled={busy} />

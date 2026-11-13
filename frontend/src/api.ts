@@ -501,7 +501,8 @@ export type Gpu = {
 }
 
 // GET /api/setup: "Is everything ready?" (backend/vgac/preflight.py).
-export type SetupState = 'ok' | 'warn' | 'fail' | 'unknown'
+// 'optional': an extra the app works without (never a fault); the item may carry an offer that opens a guided panel.
+export type SetupState = 'ok' | 'warn' | 'fail' | 'unknown' | 'optional'
 export type SetupGroup = 'tools' | 'engines' | 'models' | 'storage'
 export type SetupItem = {
   id: string
@@ -512,6 +513,9 @@ export type SetupItem = {
   fix: string
   needed_for: string[]
   technical: string
+  // Optional extras (vgac/packs.py kit id): `kit` is set whenever the item has a guided panel; `offer` only while it is missing.
+  kit?: string
+  offer?: { kit: string; button: string }
 }
 export type SetupReport = {
   summary: { ok: boolean; fails: number; warns: number; unknown: number; affected: string[] }
@@ -704,6 +708,11 @@ export const api = {
   unregisteredAddons: () => get<UnregisteredAddon[]>('/api/my-addons/unregistered'),
   openAddonFolder: () => post<{ opened: boolean; folder: string; front?: boolean | null }>('/api/my-addons/open-folder'),
   uploadAddon: (file: File, onProgress?: (fraction: number) => void) => uploadAddonFile(file, onProgress),
+  pack: (kit: string) => get<PackKit>(`/api/packs/${encodeURIComponent(kit)}`),
+  packStart: (kit: string, choices: string[]) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/start`, { choices }),
+  packCancel: (kit: string) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/cancel`),
+  packClean: (kit: string) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/clean`),
+  packZip: (kit: string, source: string, file: File, onProgress?: (fraction: number) => void) => uploadPackZipFile(kit, source, file, onProgress),
 }
 
 // POST /api/my-addons/upload: the file itself is the body, streamed from disk by the browser (never read into the
@@ -730,6 +739,67 @@ function uploadAddonFile(file: File, onProgress?: (fraction: number) => void): P
       else {
         const d = (body as { detail?: unknown } | null)?.detail
         reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The upload failed (HTTP ${xhr.status}).`, body))
+      }
+    }
+    xhr.send(file)
+  })
+}
+
+// GET /api/packs: the optional content packs the app can get for the person (backend/vgac/packs.py).
+export type PackSource = { id: string; name: string; size: number; page: string; direct: boolean; needs: string[]; what: string; click_text: string; state: 'missing' | 'downloaded' | 'unpacked' }
+export type PackChoice = { id: string; name: string; what: string; styles: number; sources: string[]; requires: string[]; built: boolean }
+export type PackRun = {
+  state: 'idle' | 'working' | 'waiting' | 'done' | 'failed' | 'cancelled'
+  phase: string
+  text: string
+  fraction: number
+  error: { code: string; message: string; fix: string } | null
+  waiting_for: string[]
+  choices: string[]
+  bytes_done: number
+  bytes_total: number
+  seconds: number
+}
+export type PackKit = {
+  id: string
+  label: string
+  summary: string
+  run: PackRun
+  sources: PackSource[]
+  choices: PackChoice[]
+  installed?: boolean
+  count?: number
+  where?: 'built' | 'project'
+  packs_built?: string[]
+  download_bytes: number
+  free_bytes: number
+  cleanable_bytes: number
+  freed_bytes?: number
+}
+
+// POST /api/packs/{kit}/zip/{source}: the zip is the body, streamed from disk by the browser (as uploadAddonFile does).
+function uploadPackZipFile(kit: string, source: string, file: File, onProgress?: (fraction: number) => void): Promise<PackKit> {
+  const path = `/api/packs/${encodeURIComponent(kit)}/zip/${encodeURIComponent(source)}`
+  if (isMock()) return request<PackKit>('POST', path)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as PackKit)
+      else {
+        const d = (body as { detail?: unknown } | null)?.detail
+        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The file could not be used (HTTP ${xhr.status}).`, body))
       }
     }
     xhr.send(file)
@@ -1096,6 +1166,8 @@ export type HairPanel = {
   // Where the bald pictures of the kept Check all sides version stand; "Rebuild from the 3D model" only when ready.
   bald_state?: BaldState
   sentence?: string | null
+  // False when the built-in hairstyles are not installed (the person's own hairstyles may still be); the panel offers to get them.
+  library_installed?: boolean
 }
 // One catalogue entry (backend/vgac/data/hairlib/catalogue.json), as GET /api/hair-library lists it.
 export type HairStyleEntry = {

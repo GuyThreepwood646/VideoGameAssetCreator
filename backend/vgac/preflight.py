@@ -295,6 +295,7 @@ def optional_item(id: str, group: str, label: str, installed: bool, ok_detail: s
     as a button that opens the guided panel for `kit` (vgac/packs.py)."""
     it = item(id, group, label, "ok" if installed else "optional", ok_detail if installed else offer_detail,
               "" if installed else button, [], technical)
+    it["kit"] = kit
     if not installed:
         it["offer"] = {"kit": kit, "button": button}
     return it
