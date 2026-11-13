@@ -905,10 +905,10 @@ def version_open_folder(vid: str, where: str = "files", db: Session = Depends(ge
     if folder is None:
         raise HTTPException(404, "This version has no folder yet.")
     try:
-        user_addons._launch_explorer(folder)
+        shown = user_addons._launch_explorer(folder)
     except OSError as e:
         raise HTTPException(500, f"The folder could not be opened: {e.strerror or e}")
-    return {"opened": True, "folder": str(folder)}
+    return {"opened": True, "folder": str(folder), **(shown or {})}
 
 
 @app.post("/api/versions/{vid}/feedback")

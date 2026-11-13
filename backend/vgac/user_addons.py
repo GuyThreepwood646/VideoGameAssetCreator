@@ -26,8 +26,6 @@ import json
 import os
 import re
 import struct
-import subprocess
-import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -502,17 +500,15 @@ def unregistered() -> list[dict[str, Any]]:
 def open_folder() -> dict[str, Any]:
     """Open VGAC/mine/ in the file explorer (made first if it is missing)."""
     d = mine_dir(create=True)
-    _launch_explorer(d)
-    return {"opened": True, "folder": str(d)}
+    shown = _launch_explorer(d)
+    return {"opened": True, "folder": str(d), **(shown or {})}
 
 
-def _launch_explorer(folder: Path) -> None:
-    if sys.platform == "win32":
-        os.startfile(str(folder))  # type: ignore[attr-defined]  # Explorer, on this folder only
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(folder)])
-    else:
-        subprocess.Popen(["xdg-open", str(folder)])
+def _launch_explorer(folder: Path) -> dict[str, Any]:
+    """Open the folder and bring its window to the front (vgac/folders.py). -> {"front": bool | None}."""
+    from . import folders
+
+    return folders.open_in_explorer(folder)
 
 
 # --- Upload (streamed) -------------------------------------------------------------------------------------------

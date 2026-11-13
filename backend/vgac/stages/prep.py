@@ -918,9 +918,31 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     await _prep(sc, merged)
 
 
+# "Try a different face" (owner, 2026-11-12): a clean-up again with the same settings but new seeds for the face pass
+# only. Without it an adjust inherits the parent's face seeds and draws nearly the same face. A one-off marker: never
+# kept on the version.
+FACE_FRESH = "face_fresh"
+FACE_SEED_KEYS = ("face_detail_seed", "face_seed", "face_closeup_seed", "face_closeup_seed_2")
+
+
+def fresh_face(sc: StageContext, merged: dict[str, Any]) -> dict[str, Any]:
+    """Drop the face pass's seeds (and the marker) from the run's params and from the new version's own params, so the
+    pass picks new ones and writes them on the version."""
+    out = {k: v for k, v in merged.items() if k not in FACE_SEED_KEYS and k != FACE_FRESH}
+    own = dict(sc.version.params or {})
+    for k in (*FACE_SEED_KEYS, FACE_FRESH):
+        own.pop(k, None)
+    sc.version.params = own
+    sc.save()
+    return out
+
+
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
     merged = _merge(parent.params if parent else {}, params)
+    if params.get(FACE_FRESH):
+        await _prep(sc, _hair_merge(fresh_face(sc, merged), params))
+        return
     if parent is not None and parent.stage == "prep" and hairlib.is_library(sc):
         mesh_v = sc.stage_version("mesh")
         style = params.get("hair_style") or parent.params.get("hair_style")

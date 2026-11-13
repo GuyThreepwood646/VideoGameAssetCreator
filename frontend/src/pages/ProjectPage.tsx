@@ -1,3 +1,4 @@
+import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
@@ -184,7 +185,10 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
               Rename
             </button>
             {selectedVersion(asset, 'export')?.status === 'done' && (
-              <button type="button" className="link small" onClick={() => void api.openVersionFolder(selectedVersion(asset, 'export')!.id).catch(() => undefined)}>
+              <button type="button" className="link small" onClick={(e) => {
+                  e.currentTarget.closest('details')?.removeAttribute('open')
+                  void openFolderAndSay(() => api.openVersionFolder(selectedVersion(asset, 'export')!.id))
+                }}>
                 Open folder
               </button>
             )}

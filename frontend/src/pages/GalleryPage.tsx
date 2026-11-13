@@ -1,5 +1,6 @@
 // Gallery: every finished asset across projects (GET /api/gallery), newest first.
 // Each card opens the asset and shows the folder its files were saved to.
+import { openFolderAndSay } from '../notify'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { api, ApiError, libraryUrl, type GalleryItem } from '../api'
@@ -186,7 +187,7 @@ function DeliveredRow({ path, versionId }: { path: string | null; versionId?: st
       </div>
       <div className="delivered-row">
         {versionId && (
-          <button type="button" className="small-btn" title={path} onClick={() => void api.openVersionFolder(versionId).catch(() => undefined)}>
+          <button type="button" className="small-btn" title={path} onClick={() => void openFolderAndSay(() => api.openVersionFolder(versionId))}>
             Open folder
           </button>
         )}

@@ -821,6 +821,11 @@ on('POST', '/api/projects/:id/style-from-image', (m, body) => {
 on('POST', '/api/versions/:vid/adjust', (m, body) => {
   const { asset, version } = findVersion(m.groups!.vid)
   const params = { ...version.params, ...((body.params as Record<string, unknown>) ?? {}) }
+  // "Try a different face" (backend stages/prep.py FACE_FRESH): new face seeds, the marker is not kept.
+  if (params.face_fresh) {
+    for (const k of ['face_fresh', 'face_detail_seed', 'face_seed', 'face_closeup_seed', 'face_closeup_seed_2']) delete params[k]
+    params.face_seed = Math.floor(Math.random() * 1e9)
+  }
   const v = newVersion(asset, version.stage, version.id, params)
   const job = startJob(asset, v, `${version.stage}.adjust`)
   return { job: clone(job), version: clone(v) }
@@ -841,7 +846,7 @@ on('POST', '/api/versions/:vid/reject', (m) => {
   return version
 })
 on('GET', '/api/versions/:vid', (m) => findVersion(m.groups!.vid).version)
-on('POST', '/api/versions/:vid/open-folder', () => ({ opened: true, folder: 'demo/exports' }))
+on('POST', '/api/versions/:vid/open-folder', () => ({ opened: true, folder: 'F:\\VGAC\\exports\\Hollow Keep\\Archer', front: true }))
 on('POST', '/api/versions/:vid/feedback', (m, body) => {
   const { version } = findVersion(m.groups!.vid)
   const thumbs = body.thumbs === 'up' || body.thumbs === 'down' ? body.thumbs : body.thumbs === null || body.thumbs === undefined ? null : undefined

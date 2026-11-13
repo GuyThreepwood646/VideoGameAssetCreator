@@ -86,6 +86,7 @@ export function OwnPictures({
       <>
         <FaceMatters asset={asset} busy={busy} act={act} />
         {asset.face_matters !== false && <OwnFaceCloseup asset={asset} active={active} busy={busy} act={act} onCreated={onCreated} />}
+        {asset.face_matters !== false && <DifferentFace active={active} busy={busy} act={act} onCreated={onCreated} />}
       </>
     )
   return null
@@ -102,12 +103,32 @@ export function FaceMatters({ asset, busy, act }: { asset: Asset; busy: boolean;
         The face matters
         <span className="muted small">
           {on
-            ? ' (each clean-up sharpens the face and matches it to the picture, a few minutes more)'
+            ? ' (every clean-up includes a face pass that sharpens the face and matches it to the picture; it adds a few minutes to each run)'
             : ' (off: the face is left as the 3D step made it; turn on for a character whose face should look like the picture)'}
         </span>
       </span>
       <Info term="term.face_matters" />
     </label>
+  )
+}
+
+// "Try a different face" (owner, 2026-11-12): the clean-up again on the version shown, same settings, but new seeds for
+// the face pass only (backend stages/prep.py FACE_FRESH). A plain rerun reuses the face seeds, so it draws nearly the
+// same face; this is the way to see another attempt at the face without changing anything else.
+function DifferentFace({ active, busy, act, onCreated }: { active: Version | undefined; busy: boolean; act: Act; onCreated: (id: string) => void }) {
+  if (!active || active.stage !== 'prep' || active.status !== 'done' || active.params?.face_detail === false) return null
+  const go = () =>
+    act(async () => {
+      const r = await api.adjust(active.id, { face_fresh: true })
+      onCreated(r.version.id)
+    })
+  return (
+    <div className="row-gap">
+      <button type="button" disabled={busy} onClick={go} title="Runs the clean-up again on the version shown with the same settings; only the face is drawn anew">
+        Try a different face
+      </button>
+      <Info term="term.different_face" />
+    </div>
   )
 }
 

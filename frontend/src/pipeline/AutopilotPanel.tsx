@@ -363,7 +363,9 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
     setFolderBusy(true)
     setFolderMsg('')
     try {
-      await api.openVersionFolder(exp.id, unity?.folder ? 'unity' : 'files')
+      const r = await api.openVersionFolder(exp.id, unity?.folder ? 'unity' : 'files')
+      // The Explorer window is brought to the front (backend vgac/folders.py); when Windows refuses, say where it is.
+      if (r.front === false) setFolderMsg('Opened in File Explorer. Windows kept it behind this window: click its flashing button on the taskbar.')
     } catch {
       setFolderMsg('The folder could not be opened. The files are under the library folder for this asset.')
     } finally {

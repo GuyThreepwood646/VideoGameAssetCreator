@@ -28,7 +28,26 @@ export function setNotifyEnabled(on: boolean) {
   if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') void Notification.requestPermission()
 }
 
-type Toast = { id: number; text: string; to: string }
+type Toast = { id: number; text: string; to?: string }
+
+// Short messages from anywhere in the app (say(), e.g. "Opened ... in File Explorer"), shown with the Autopilot toasts.
+const sayListeners = new Set<(text: string) => void>()
+export function say(text: string) {
+  sayListeners.forEach((fn) => fn(text))
+}
+
+// "Open folder" everywhere (owner, 2026-11-12: the folder opened behind the app, so nothing seemed to happen). The
+// backend brings the Explorer window to the front (vgac/folders.py) and says whether Windows let it; either way a
+// short message says where the folder is.
+export async function openFolderAndSay(open: () => Promise<{ folder: string; front?: boolean | null }>): Promise<void> {
+  try {
+    const r = await open()
+    const name = r.folder.split(/[\\/]/).filter(Boolean).pop() ?? r.folder
+    say(r.front === false ? `Opened "${name}" in File Explorer. Windows kept it behind this window: click its flashing button on the taskbar.` : `Opened "${name}" in File Explorer.`)
+  } catch {
+    say('The folder could not be opened. Is the app still running?')
+  }
+}
 
 // What an autopilot change means to the person, or null when it is not an ending worth telling.
 export function endingMessage(name: string, prev: string | undefined, ap: AutopilotState): string | null {
@@ -57,6 +76,16 @@ export function Toasts() {
   const last = useRef(new Map<string, string>())
   const names = useRef(new Map<string, string>())
   const next = useRef(1)
+  useEffect(() => {
+    const onSay = (text: string) => {
+      const id = next.current++
+      setToasts((t) => [...t, { id, text }])
+    }
+    sayListeners.add(onSay)
+    return () => {
+      sayListeners.delete(onSay)
+    }
+  }, [])
   useEvents((ev) => {
     if (ev.type !== 'autopilot') return
     const prev = last.current.get(ev.asset_id)
@@ -94,9 +123,13 @@ export function Toasts() {
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div key={t.id} className="toast">
-          <Link to={t.to} onClick={() => setToasts((l) => l.filter((x) => x.id !== t.id))}>
-            {t.text}
-          </Link>
+          {t.to ? (
+            <Link to={t.to} onClick={() => setToasts((l) => l.filter((x) => x.id !== t.id))}>
+              {t.text}
+            </Link>
+          ) : (
+            <span>{t.text}</span>
+          )}
           <button type="button" className="link small" aria-label="Dismiss" onClick={() => setToasts((l) => l.filter((x) => x.id !== t.id))}>
             Dismiss
           </button>
