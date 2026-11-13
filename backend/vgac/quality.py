@@ -1,4 +1,4 @@
-"""Quality gate: the ARCHITECTURE.md section 2.1 and 2.2 criteria that are measurable from files.
+"""Quality gate: the geometry, LOD, collider, texture, rig and facing criteria that are measurable from files.
 
 Each check is {id, ok, value, limit}. Stage modules call the functions for the data they have and attach the
 list as metrics.checks. Criteria that need a renderer or a human (edge flow, seam placement, delit albedo)
@@ -30,7 +30,7 @@ FACING_TOLERANCE_DEG = 45
 
 
 def check(id_: str, ok: bool, value: Any, limit: Any, vars: dict[str, Any] | None = None) -> Check:
-    """{name, passed, message} as the frontend renders them, plus {id, ok, value, limit} as ARCHITECTURE.md names them.
+    """{name, passed, message} as the frontend renders them, plus {id, ok, value, limit}, the names the checks use everywhere else.
     vars are extra values for the check sentence (guidance.CHECK_GUIDE), kept on the check."""
     from . import guidance
     c = {"name": id_, "passed": bool(ok), "message": f"{value} (limit {limit})", "id": id_, "ok": bool(ok), "value": value, "limit": limit}

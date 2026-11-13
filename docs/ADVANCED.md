@@ -31,7 +31,7 @@ Work is split into three queues: `a`, `b` and `host` (Blender and Unity on the P
 
 The **Health** page shows each card, lets you switch one off, and picks a default card. With **"Use the other card when one is busy"** ticked, a waiting step moves to an idle card that can do it.
 
-On quit, the launcher stops only the processes it started. ComfyUI A belongs to ComfyUI Desktop and is never touched.
+The backend also starts a ComfyUI itself, with its `start_script`, when a step needs one and nothing answers. On quit, the launcher stops only the processes it started, and the backend stops only the ComfyUI copies it started. A ComfyUI started by ComfyUI Desktop is never stopped by the app.
 
 ---
 
@@ -87,10 +87,9 @@ Data files in `backend/vgac/data/` drive these; editing them needs a backend res
 
 | File | What it holds |
 |---|---|
-| `style_presets.yaml` | The looks offered in **New project** (Painted fantasy, Clean cartoon, Pixel retro, Realistic, Clay toy): model, prompt block, negative prompt, palette |
-| `styles.yaml` | Style data the picture steps use |
+| `styles.yaml` | The looks offered in **New project** (Painted, Cel shaded, Pixel art, Retro 64, Low-poly flat, Photoreal, Clay): picture model, prompt block, and the recipe that carries the look through the later steps |
 | `models.yaml` | Every model file the app knows, with its exact file name, engine, licence line and whether it is required |
-| `addons.yaml` | LoRA add-ons (pixel art, clay, PS1 look, and the two the side views need) |
+| `addons.yaml` | LoRA add-ons (the looks' pixel art, clay, low-poly and stylised 3D finishes, and the ones the side views need) |
 | `platforms.yaml` | Triangle and texture budgets per platform (Phone, PC and console, and so on) |
 | `categories/` | Per-category rules: height, whether it gets a skeleton, which steps it skips |
 | `items.yaml` | Item kinds for **Add an item** and where they attach |
@@ -108,11 +107,11 @@ Picture models available: Z-Image Turbo (default, fast painted), Z-Image Base, F
 | Step | Technical name | Engine | What runs |
 |---|---|---|---|
 | 1. Describe | `concept` | B | Z-Image Turbo (or the project's model) plus a BiRefNet cutout. **Change something** is a Qwen-Image-Edit-2511 instruction edit |
-| 2. Check all sides | `turnaround` | B | Qwen-Image-Edit-2511 with the multiple-angles LoRA: five views with cutouts and consistency checks (height ratio, colour histogram, left/right mirror overlap). Re-rolls up to twice by itself |
+| 2. Check all sides | `turnaround` | B | Qwen-Image-Edit-2511 with the multiple-angles LoRA: five views (six for humanoids) with cutouts and consistency checks (height ratio, colour histogram, left/right mirror overlap, drawn from the right side, pose held). Re-rolls up to twice by itself. The two sides can be drawn at once on two cards |
 | 3. Build the 3D model | `mesh` | A | TRELLIS.2 shape and texture, then ComfyUI's remesh, decimate, unwrap and bake to the platform budget (or Hunyuan3D-2mv from four views). A Blender silhouette audit every 15 degrees |
-| 4. Clean up for the game | `prep` | host | Blender: scale to the category height, base pivot, weld, symmetrize, smooth shading, manifold report; face detail pass and hair fitting |
-| 5. Make it move | `rig` | B, then host | SkinToken (Mixamo template for humanoids), bend tests at 35 and 90 degrees, idle and walk clips with a rendered strip. Skipped for rigid props |
-| 6. Hand off to the game | `export` | host | Blender pack (LODs, convex collider under 255 vertices, FBX with clips, GLB), Unity sandbox import with the CC0 clip library, optional sprite sheets, `manifest.json`, quality checks |
+| 4. Clean up for the game | `prep` | host | Blender: face forward, scale to the category size, base pivot, weld, decimate to the budget, smooth or flat shading, manifold report. Then the picture itself is painted onto the texture, followed by the face detail pass, hair detail and hair fitting |
+| 5. Make it move | `rig` | B, then host | SkinToken (Mixamo template for humanoids), bend tests at 35 and 90 degrees, hit boxes, spring bones for hanging parts, and moves (hand-made ones from the animation packs for humanoids, made-by-rule ones otherwise) with a rendered strip. Skipped for rigid props |
+| 6. Hand off to the game | `export` | host | Blender pack (LODs, collision shapes, sockets, FBX with clips, GLB), Unity sandbox import, optional sprite sheets, `manifest.json`, quality checks |
 
 The `material` category (tileable surfaces) runs Describe, a seamless blend with derived maps in place of the 3D step, and an export of the texture set; clean-up and rigging are skipped.
 
@@ -120,7 +119,7 @@ The `material` category (tileable surfaces) runs Describe, a seamless blend with
 
 Every result is a **version** in `library/projects/<project>/assets/<asset>/<stage>/<version>/`, with its files and metrics. Changing an early step makes a new version there; the finished files stay until you rebuild the later steps.
 
-More detail: [ARCHITECTURE.md](../ARCHITECTURE.md) and [BACKEND.md](BACKEND.md).
+More detail: [ARCHITECTURE.md](../ARCHITECTURE.md) (how the application is built) and [BACKEND.md](BACKEND.md).
 
 ---
 
@@ -218,7 +217,9 @@ The full contract is [API.md](API.md). In short:
 | Projects | `GET\|POST /api/projects`, `GET\|PUT\|DELETE /api/projects/{id}` |
 | Assets | `GET\|POST /api/projects/{pid}/assets`, `GET\|PUT\|DELETE /api/assets/{id}` |
 | Steps | `POST /api/assets/{id}/stages/{stage}/run`, `POST /api/versions/{vid}/refine\|adjust\|select\|reject\|judge`, `GET /api/versions/{vid}` |
-| Jobs | `GET /api/jobs?asset_id=&status=`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/queue/{instance}/pause?paused=`, `WS /api/ws/events` |
+| Jobs | `GET /api/jobs?asset_id=&status=`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/queue/{instance}/pause?paused=`, `POST /api/assets/{id}/stop` and `/resume`, `WS /api/ws/events` |
+| Graphics cards | `GET /api/gpus`, `PUT /api/gpus` (default card, share when busy), `PUT /api/gpus/{instance}`, `POST /api/gpus/{instance}/start` and `/stop` |
+| Autopilot | `POST\|GET /api/assets/{id}/autopilot`, `POST .../autopilot/stop` |
 | Files | `GET /api/library/{path}` serves files from the library folder |
 
 ---
@@ -238,4 +239,4 @@ The full contract is [API.md](API.md). In short:
 | `library/` | Your projects, assets and versions, plus `vgac.sqlite` (not in Git) |
 | `exports/` | Finished deliverables, one folder per project and asset |
 | `runtime/` | ComfyUI start scripts, engine B's folders and logs |
-| `bakeoff/` | The phase 0 experiments that chose the engines ([BAKEOFF.md](../bakeoff/BAKEOFF.md)) |
+| `bakeoff/` | The early experiments that chose the engines, and trial scripts |
