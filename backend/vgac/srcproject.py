@@ -214,6 +214,38 @@ def prepare_picture(src: Path | str | Image.Image | np.ndarray, n: int | None = 
     return rgb, alpha
 
 
+class Prepared:
+    """prepare_picture once per picture and size within one paint() call: the original, the drawn front and both
+    three-quarter pictures are each wanted again by the head views after their whole-body fit (docs/SPEED-AUDIT.md O4
+    a0, picture loading). The arrays are handed out read-only, so no caller can change what another one reads. Thread
+    safe: a picture asked for twice at once is prepared once."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._done: dict[Any, Any] = {}
+
+    def __call__(self, src: Any, n: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        from concurrent.futures import Future
+
+        key = (str(src) if isinstance(src, (str, Path)) else id(src), n)
+        with self._lock:
+            fut = self._done.get(key)
+            mine = fut is None
+            if mine:
+                fut = self._done[key] = Future()
+        if mine:
+            try:
+                rgb, alpha = prepare_picture(src, n)
+                rgb.setflags(write=False)
+                alpha.setflags(write=False)
+                fut.set_result((rgb, alpha))
+            except BaseException as e:  # noqa: BLE001  (the asker sees the same error)
+                fut.set_exception(e)
+        return fut.result()
+
+
 # --- camera, raster ---------------------------------------------------------------------------------------------
 
 
@@ -1093,7 +1125,8 @@ def limit_squash(crop: np.ndarray, render: np.ndarray, a: dict[str, Any], size: 
 
 
 def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[tuple[str, Any]], body_px_m: float,
-             pic_n: int | None = None, log: Callable[[str], None] | None = None) -> tuple[View | None, dict[str, Any]]:
+             pic_n: int | None = None, log: Callable[[str], None] | None = None,
+             prep: Callable[..., tuple[np.ndarray, np.ndarray]] = prepare_picture) -> tuple[View | None, dict[str, Any]]:
     """The first picture fitted to the head on its own, by its eyes and mouth (docs/AFTER-TEST-CHANGES.md D2 item 6): the
     face pass's own framing (face.painted_head: the picture's head cut out as the model's head is framed from where its
     face looks) and fit (face_detail.fit_picture: eyes and mouth found by MediaPipe when facemarks has a finder set, else
@@ -1114,7 +1147,7 @@ def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[t
     for name, src in pictures:
         if src is None:
             continue
-        pic, alpha = prepare_picture(src, pic_n)
+        pic, alpha = prep(src, pic_n)
         crop = face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, cam, size=S)
         if crop is None:
             tried[name] = "no figure in the picture"
@@ -1143,7 +1176,8 @@ def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[t
 
 def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndarray, zone: dict[str, Any], name: str,
                   src: Any, yaw: float, body_px_m: float, pic_n: int | None = None,
-                  log: Callable[[str], None] | None = None) -> tuple[View | None, dict[str, Any]]:
+                  log: Callable[[str], None] | None = None,
+                  prep: Callable[..., tuple[np.ndarray, np.ndarray]] = prepare_picture) -> tuple[View | None, dict[str, Any]]:
     """A three-quarter view's head view (the chain of head views, docs/AFTER-TEST-CHANGES.md D2 item 10 for the head):
     the picture's head framed from `yaw` (face.painted_head), its eyes and mouth found by MediaPipe and fitted with one
     scale onto the model's own (the model's colour seen from there), then checked against where the front head view
@@ -1161,7 +1195,7 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
     head, w = zone["head"], float(zone["info"]["width_px"])
     S = zone["cam"].size
     cam = face.head_camera(head, float(yaw), S)
-    pic, alpha = prepare_picture(src, pic_n)
+    pic, alpha = prep(src, pic_n)
     crop = face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, cam, size=S)
     if crop is None:
         return refuse("no figure in the picture")
@@ -1419,9 +1453,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     centre, scale = model_frame(mesh)
     outlines: dict[tuple[float, int], np.ndarray] = {}
+    prepared = Prepared()  # each picture prepared once in this call
 
     def fit(name: str, src: Any, yaws: list[float]) -> View:
-        p_, a_ = prepare_picture(src, pic_n)
+        p_, a_ = prepared(src, pic_n)
         bar = min(min_iou, SOURCE_MIN_IOU) if name == "source" else min_iou
         return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
 
@@ -1436,7 +1471,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
         def zone_and_head() -> tuple[dict[str, Any], View | None, dict[str, Any]]:
             z = face_zone(mesh, tex, head_yaw)
-            hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log)
+            hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log, prepared)
             return z, hv, hrec
 
         zone_job = pool.submit(contextvars.copy_context().run, zone_and_head)
@@ -1447,7 +1482,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             # a box fits the outline at any turn: take the turn the fidelity score (texfidelity) finds, and say so
             hint = yaw_hint()
             if hint is not None:
-                pic, alpha = prepare_picture(picture, pic_n)
+                pic, alpha = prepared(picture, pic_n)
                 front = fit_view(mesh, tex, pic, alpha, "picture", [float(hint)], centre, scale, size, min_iou, log=log)
                 front.info["turn_source"] = "texfidelity"
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
@@ -1498,7 +1533,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                     infos[f"{HEAD_VIEW}_{n}"] = {"refused": dropped[n]}
                     continue
                 side_jobs[n] = pool.submit(contextvars.copy_context().run, fit_side_head, mesh, tex, painted, zone, n, src_,
-                                           y_, scale / size, pic_n, log)
+                                           y_, scale / size, pic_n, log, prepared)
             for n, j in side_jobs.items():
                 sv, srec = j.result()
                 infos[f"{HEAD_VIEW}_{n}"] = srec
