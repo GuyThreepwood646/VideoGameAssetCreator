@@ -38,6 +38,7 @@ chest (bakeoff/source_project_trial.py, bakeoff/out/source_project/results.md).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import math
 import os
 import time
@@ -94,6 +95,11 @@ MAX_SHARED = 0.15        # share of the texture layout used by more than one tri
 WORKERS = max(1, min(6, (os.cpu_count() or 2) - 1))   # views fitted at the same time
 SECOND_QUARTER = "quarter2"
 TURN_VIEWS = ("quarter", SECOND_QUARTER, "left", "right", "back")
+# The face region (docs/AFTER-TEST-CHANGES.md D2 items 5 to 8): the face as the face pass finds it (face.find_face on the
+# model's own colour, seen from where the face looks), carried to the texels.
+OFF_FACE_VIEWS = ("left", "right", "back")   # views that never paint the face region (item 5)
+FACE_ZONE_N = 1024        # size of the head picture the face region is found on
+FACE_ZONE_FEATHER = 0.02  # of that picture: how far past the face region's edge the side views fade back in
 
 
 # --- image helpers ----------------------------------------------------------------------------------------------
@@ -712,9 +718,11 @@ def cos_weight(cosv: np.ndarray) -> np.ndarray:
     return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(COS_CUT, COS_CUT + 0.12, cosv)
 
 
-def project_view(atlas: Atlas, v: View, size: int, pitch_m: float | None = None) -> dict[str, np.ndarray]:
-    """The texels this view sees squarely: index into atlas.idx, screen position, weight."""
+def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float | None = None) -> dict[str, np.ndarray]:
+    """The texels this view sees squarely: index into atlas.idx, screen position, weight. A left, right or back view
+    stays off the face region (atlas.zone, set by compose). `size` is ignored: the view's camera has its own."""
     cam = v.cam
+    size = cam.size
     pitch_m = atlas.pitch_m if pitch_m is None else pitch_m
     sp, sd = cam.project(atlas.pos)
     xi = np.clip(sp[:, 0].astype(int), 0, size - 1)
@@ -731,12 +739,15 @@ def project_view(atlas: Atlas, v: View, size: int, pitch_m: float | None = None)
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
     base = v.weight * cos_weight(cosv) * f0 * visible
-    w = base * fd * st * ga * gf
+    zt = getattr(atlas, "zone", None)
+    fz = (1.0 - zt["face"]) if (zt is not None and v.name in OFF_FACE_VIEWS) else np.ones_like(base)
+    w = base * fd * st * ga * gf * fz
     wsum = max(float(base.sum()), 1e-12)
     v.stats = {"removed_by_depth_edge": round(float((base * (1 - fd)).sum() / wsum), 4),
                "removed_by_stretch": round(float((base * (1 - st)).sum() / wsum), 4),
                "removed_by_agreement": round(float((base * (1 - ga)).sum() / wsum), 4),
                "removed_by_flow_cap": round(float((base * (1 - gf)).sum() / wsum), 4),
+               "removed_by_face_region": round(float((base * (1 - fz)).sum() / wsum), 4),
                "removed_any": round(float(1.0 - w.sum() / wsum), 4)}
     keep = np.flatnonzero(w > 1e-5)
     return {"sel": keep, "sp": sp[keep], "w": w[keep]}
@@ -820,6 +831,64 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray)
     return imaging.dilate(res.reshape(T, T, 3), atlas.cover_ext, imaging.dilation_px(T))
 
 
+# --- the face region ----------------------------------------------------------------------------------------------
+
+
+def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.0, size: int = FACE_ZONE_N) -> dict[str, Any]:
+    """The face region in a picture of the head seen from where the face looks (head_yaw, the face pass's HEAD_YAW): the
+    face pass's own face finding (face.find_face) on the model's colour, feathered outward by FACE_ZONE_FEATHER. Kept
+    as a picture with its camera and depth, so it can be carried to any texture layout of the model (zone_texels).
+    Returns {found, reason, head, cam, view, info, weight (S,S), z}; nothing else when the face is not found."""
+    head = face.find_head(mesh["verts"])
+    if head is None:
+        return {"found": False, "reason": "no_head"}
+    cam = face.head_camera(head, float(head_yaw), size)
+    view = face.render_view(mesh, tex, cam)
+    info = face.find_face(view, mesh, cam, head)
+    out: dict[str, Any] = {"found": bool(info.get("found")), "reason": info.get("reason"), "head": head, "cam": cam,
+                           "view": view, "info": info, "z": view["raster"]["z"]}
+    if not info.get("found"):
+        return out
+    r = max(2, int(round(FACE_ZONE_FEATHER * size)))
+    out["weight"] = np.clip(face.blur(info["region"].astype(np.float64), r) * 2.0, 0.0, 1.0)
+    return out
+
+
+def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
+    """The face region on this layout: {face (N,) 0..1, keep (N,) bool} for atlas.idx; face is the region's weight
+    where the head picture sees the texel (depth tested, facing the camera), keep the texels whose colour is never
+    replaced by a skin fill (zone["keep"], when there is one). None without a face."""
+    if not zone or not zone.get("found") or zone.get("weight") is None:
+        return None
+    cam = zone["cam"]
+    S = cam.size
+    sp, sd = cam.project(atlas.pos)
+    xi = np.clip(sp[:, 0].astype(int), 0, S - 1)
+    yi = np.clip(sp[:, 1].astype(int), 0, S - 1)
+    cosv = -(atlas.nrm @ cam.basis[2])
+    tol = 2.5 * (cam.scale / S) / np.maximum(np.abs(cosv), 0.15)
+    inb = (sp[:, 0] >= 0) & (sp[:, 0] < S) & (sp[:, 1] >= 0) & (sp[:, 1] < S)
+    z = zone["z"][yi, xi]
+    vis = inb & np.isfinite(z) & (sd <= np.where(np.isfinite(z), z, -np.inf) + tol) & (cosv > 0.0)
+    w = face.sample(zone["weight"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis
+    keep = zone["keep"][yi, xi] & vis if zone.get("keep") is not None else np.zeros(w.shape, dtype=bool)
+    return {"face": np.clip(w, 0.0, 1.0), "keep": keep}
+
+
+def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
+            zone: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Project the fitted views onto this layout, blend them and finish the atlas, with the face region when there is
+    one. Returns {projs, paint, alpha, dom, base_color, zone (zone_texels), fill}."""
+    atlas.zone = zone_texels(atlas, zone)
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        projs = list(pool.map(lambda v: project_view(atlas, v), views))
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
+    extra: dict[str, Any] = {}
+    new = finish(atlas, tex, paint_, alpha_)
+    return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
+            "fill": extra.get("fill")}
+
+
 # --- measures ---------------------------------------------------------------------------------------------------
 
 
@@ -828,6 +897,25 @@ def _lap_var(img: np.ndarray, mask: np.ndarray) -> float:
     lap = 4 * lum - np.roll(lum, 1, 0) - np.roll(lum, -1, 0) - np.roll(lum, 1, 1) - np.roll(lum, -1, 1)
     inner = face.erode(mask, 4)
     return float(lap[inner].var()) if inner.sum() > 50 else 0.0
+
+
+def zone_record(zone: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What of the face region is kept to paint again on another layout (repaint): the head picture's camera and maps."""
+    if not zone or not zone.get("found"):
+        return None
+    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep")}
+
+
+def zone_metrics(zone: dict[str, Any] | None, c: dict[str, Any]) -> dict[str, Any]:
+    """The face region's numbers for the stage metrics: found or why not, texels in it, and what the side and back views
+    lost to it."""
+    if not zone or not zone.get("found"):
+        return {"found": False, "reason": (zone or {}).get("reason")}
+    zt = c.get("zone")
+    m: dict[str, Any] = {"found": True, "head_yaw_deg": round(float(zone["cam"].yaw_deg), 1)}
+    if zt is not None:
+        m["texels"] = int((zt["face"] > 0.5).sum())
+    return m
 
 
 def front_measures(v: View, tex: np.ndarray) -> dict[str, float]:
@@ -852,13 +940,14 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           pic_n: int | None = None, log: Callable[[str], None] | None = None,
-          keep: dict[str, Any] | None = None) -> dict[str, Any]:
+          keep: dict[str, Any] | None = None, head_yaw: float = 0.0) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
     model was built from. `source` is the original picture when that is a different one (a character is built from the
     three-quarter view drawn from it): it paints first, in full colour, at whatever turn it fits; `front_view` (the
-    front view drawn from the original) stands in for it when the original does not fit the model."""
+    front view drawn from the original) stands in for it when the original does not fit the model. head_yaw: the camera
+    yaw the model's face is seen straight on from (face_detail.HEAD_YAW); the face region is found from there."""
     t0 = time.time()
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     centre, scale = model_frame(mesh)
@@ -878,6 +967,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
+        zone_job = pool.submit(contextvars.copy_context().run, face_zone, mesh, tex, head_yaw)
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
         fitted = {n: j.result() for n, j in jobs.items()}
         front = fitted["picture"]
@@ -924,26 +1014,26 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             return res
         pitch_px = atlas.pitch_m * size / scale
 
-        def ready(i: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
+        def ready(i: int) -> np.ndarray:
             v = views[i]
             full = i < n_primary or mode == "full"
             drawn = i >= n_primary or v.name == SECOND_QUARTER  # a view drawn from the picture, not the picture itself
             prepare_gates(v, {**GATES, "agree": False} if (drawn and full and not TURN_AGREE) else None)
-            proj = project_view(atlas, v, size)
-            return proj, (v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px))
+            return v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px)
 
-        done = list(pool.map(ready, range(len(views))))
-    projs, images = [d[0] for d in done], [d[1] for d in done]
+        images = list(pool.map(ready, range(len(views))))
+        zone = zone_job.result()
+    c = compose(atlas, views, images, n_primary, tex, zone)
+    paint_, alpha_, dom, new = c["paint"], c["alpha"], c["dom"], c["base_color"]
     for v in views:
         infos.setdefault(v.name, v.info)["gates"] = {**v.stats, **v.info.get("gate_pixels", {})}
-    paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
-    new = finish(atlas, tex, paint_, alpha_)
     before, after = front_measures(views[0], tex), front_measures(views[0], new)  # against the first source that fitted
     painted = alpha_ > 0.5
     m = {"srcproject_picture_is_front_view": front.info["front_view"], "srcproject_measured_against": views[0].name, "srcproject_views": infos, "srcproject_mode": mode, "srcproject_painted_share": round(float(painted[~atlas.is_gut].mean()), 4),
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
-         "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_seconds": round(time.time() - t0, 1)}
+         "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
+         "srcproject_seconds": round(time.time() - t0, 1)}
     res["metrics"] = m
     worse = after["lab_diff"] == after["lab_diff"] and before["lab_diff"] == before["lab_diff"] and after["lab_diff"] > before["lab_diff"] - 0.5
     if worse:
@@ -951,7 +1041,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         return res
     res.update(applied=True, base_color=new)
     if keep is not None:  # the fitted views, to paint again on another layout of the same model (repaint)
-        keep.update(views=views, images=images, n_primary=n_primary, size=size)
+        keep.update(views=views, images=images, n_primary=n_primary, size=size, zone=zone_record(zone))
     return res
 
 
@@ -963,17 +1053,15 @@ def repaint(mesh: dict[str, np.ndarray], tex: np.ndarray, kept: dict[str, Any]) 
     atlas = Atlas(mesh, tex.shape[0])
     if atlas.shared > MAX_SHARED:
         return {"applied": False, "base_color": tex, "reason": "the new layout is mirrored"}
-    views, size = kept["views"], kept["size"]
-    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        projs = list(pool.map(lambda v: project_view(atlas, v, size), views))
-    paint_, alpha_, _ = blend(atlas, projs, kept["images"], kept["n_primary"])
-    return {"applied": True, "base_color": finish(atlas, tex, paint_, alpha_), "reason": None}
+    c = compose(atlas, kept["views"], kept["images"], kept["n_primary"], tex, kept.get("zone"))
+    return {"applied": True, "base_color": c["base_color"], "reason": None}
 
 
 def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, turnaround: dict[str, Path | None] | None,
                 out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
                 front_view: Path | str | None = None, pic_n: int | None = None,
-                log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None) -> dict[str, Any]:
+                log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None,
+                head_yaw: float = 0.0) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -989,7 +1077,8 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
             return None
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
-              mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep)
+              mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep,
+              head_yaw=head_yaw)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -1122,10 +1211,11 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
 
 
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
-                    keep: dict[str, Any] | None = None) -> dict[str, Path]:
+                    keep: dict[str, Any] | None = None, head_yaw: float = 0.0) -> dict[str, Path]:
     """The pass inside the prep stage (stages/prep.py), after the last rebake and before the face pass: paints the picture
     the asset started from, the picture the 3D step was given and the turnaround views into the current base colour; replaces it in the GLB and in
-    `current` when it applies, and records the before and after numbers in the stage metrics. Returns `current`."""
+    `current` when it applies, and records the before and after numbers in the stage metrics. head_yaw: the camera yaw
+    the face is seen straight on from (as the face pass is given it). Returns `current`."""
     mode = mode_of(params)
     sc.set_params(**{"source_project_mode": mode})
     base = current.get("base_color")
@@ -1155,7 +1245,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     turn = {v: srcs.get(v) for v in TURN_VIEWS}
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
-                                    front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep)
+                                    front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
