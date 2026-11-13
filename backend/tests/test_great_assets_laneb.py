@@ -90,6 +90,7 @@ SAMPLES = {
     "joins": ((0, 20), (144, 20)),
     "arms_away": ((0.4, 0.2), (0.0, 0.2)),
     "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
+    "soft_light": ((0.55, 0.29), (0.15, 0.29)),
     "face_drawn": ((1, 1), (0, 1)),  # the vision model sees eyes on the face (1) or not, or the back of the head (0)
     # Hair from the library: the bald picture, the fit, skin through, triangles with the hair, the hair on the skeleton.
     "bald_picture": ((0.97, 0.9), (0.7, 0.9)),
