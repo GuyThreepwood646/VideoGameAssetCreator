@@ -491,3 +491,34 @@ def test_the_check_names_the_sides_used():
     assert c["ok"] and "the three-quarter view and the right side" in c["help"]
     c = fd.face_checks({"face_detail": {"ran": True, "sharpness_before": 0.8, "sharpness_after": 1.3, "feature_match_after": 0.8}})[0]
     assert "side" not in c["help"]
+
+
+def test_head_yaw_from_the_facing_remainder():
+    # a head that still needs a turn of +30 (counter-clockwise from above) to face forward is seen straight on from -30
+    assert fd.head_yaw_from_remainder(30.0) == -30.0
+    assert fd.head_yaw_from_remainder(None) == 0.0 and fd.head_yaw_from_remainder(0.0) == 0.0
+    assert fd.head_yaw_from_remainder(-120.0) == 45.0 and fd.head_yaw_from_remainder(120.0) == -45.0
+
+
+def test_the_face_pass_looks_where_the_face_is(monkeypatch):
+    """A head turned 33 degrees: found from straight ahead it is a worse, narrower face; with the pass's HEAD_YAW set to
+    where the face points, the same render as the straight head comes back, and a side view is relative to it."""
+    mesh, tex = synthetic_head(False)
+    head = face.Head(centre=np.array([0.0, 1.62, 0.0]), width=0.2, top=HEAD_TOP, height=1.2)
+    yaw = -33.0
+    a = np.radians(yaw)
+    v = mesh["verts"]
+    turned = {**mesh, "verts": np.stack([np.cos(a) * v[:, 0] + np.sin(a) * v[:, 2], v[:, 1], -np.sin(a) * v[:, 0] + np.cos(a) * v[:, 2]], axis=1)}
+    turned["vnormals"] = face.smooth_normals(turned["verts"], mesh["faces"])
+    straight = face.render_view(mesh, tex, face.head_camera(head, 0, 128))["mask"]
+    token = fd.HEAD_YAW.set(yaw)
+    try:
+        c = fd.head_cam(head, 128)
+        assert c.yaw_deg == yaw and fd.head_cam(head, 128, 40.0).yaw_deg == yaw + 40.0
+        seen = face.render_view(turned, tex, c)["mask"]
+    finally:
+        fd.HEAD_YAW.reset(token)
+    assert fd.head_cam(head, 128).yaw_deg == 0.0               # reset: straight ahead again
+    off = face.render_view(turned, tex, fd.head_cam(head, 128))["mask"]
+    iou = lambda m, n: (m & n).sum() / (m | n).sum()  # noqa: E731
+    assert iou(seen, straight) > 0.97 and iou(off, straight) < 0.9

@@ -24,6 +24,7 @@ mask). Metrics under "face_detail"; the before and after picture is the version 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import shutil
 import time
@@ -145,6 +146,28 @@ HIGH_TEXELS = 512  # "High": about this many texels across the face, or what the
 HIGH_GAIN_MOST = 4.0  # how many times its texels across the face may grow in one relayout for "High"
 MAX_LOSS = 0.12  # what the rest of the body may lose, at most, in texels across (faceuv.py --max-loss)
 SHIP_4096 = 4096
+
+
+# The head's own turn: the camera yaw the model's face is seen straight on from. 0 for a model that faces forward; a model
+# built turned (the clean-up turns it by the nearest quarter turn only, which leaves up to 45 degrees) has its face
+# there, and the pass painted as if it were at 0 (the W1-clothed test run: the face painted onto a head turned 27 degrees).
+# A context variable, so every camera of the pass (find, fit, paint, sides, the before-and-after sheet) agrees, including
+# those in worker threads (asyncio.to_thread copies the context). Set by run().
+HEAD_YAW: contextvars.ContextVar[float] = contextvars.ContextVar("face_head_yaw", default=0.0)
+HEAD_YAW_MAX = 45.0
+
+
+def head_yaw_from_remainder(remainder_deg: float | None) -> float:
+    """The camera yaw for a head that still needs to be turned by remainder_deg (counter-clockwise from above) to face
+    forward: a front is seen straight on from the yaw minus that turn. Clamped to a quarter turn's half."""
+    if remainder_deg is None:
+        return 0.0
+    return float(max(-HEAD_YAW_MAX, min(HEAD_YAW_MAX, -float(remainder_deg))))
+
+
+def head_cam(head: Any, size: int = 1024, extra: float = 0.0) -> Any:
+    """face.head_camera looking at the head from where its face is (HEAD_YAW), plus `extra` degrees (a side view)."""
+    return face.head_camera(head, HEAD_YAW.get() + extra, size)
 
 
 def skip_reason(category_id: str, rec: dict[str, Any] | None, params: dict[str, Any], has_picture: bool) -> str | None:
@@ -374,7 +397,7 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
     head = face.find_head(mesh["verts"])
     if head is None:
         return {"found": False, "reason": "no_face"}
-    cam = face.head_camera(head, 0, 1024)
+    cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
@@ -404,7 +427,7 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     mesh = face.load_mesh(glb)
     tex = face.read_rgb(base_color)
     head = face.find_head(mesh["verts"])
-    cam = face.head_camera(head, 0, 1024)
+    cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
@@ -623,7 +646,7 @@ def frame_own(glb: Path, base_color: Path, crop: Path, own: Path, dest: Path) ->
     head = face.find_head(mesh["verts"]) if mesh is not None else None
     if head is None:
         return {"ok": False, "reason": "no_features"}
-    cam = face.head_camera(head, 0, 1024)
+    cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
@@ -697,7 +720,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     tex = face.read_rgb(base_color)
     T = tex.shape[0]
     head = face.find_head(mesh["verts"])
-    cam = face.head_camera(head, 0, 1024)
+    cam = head_cam(head, 1024)
     view = face.render_view(mesh, tex, cam)
     info = face.find_face(view, mesh, cam, head)
     if not info.get("found"):
@@ -787,7 +810,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     old_mesh = face.load_mesh(before_glb)
     old_tex = face.read_rgb(before_tex)
     old_head = face.find_head(old_mesh["verts"])
-    before = face.render_view(old_mesh, old_tex, face.head_camera(old_head, 0, 1024))
+    before = face.render_view(old_mesh, old_tex, head_cam(old_head, 1024))
     metrics = {
         "sharpness_before": face.sharpness(before["image"], region), "sharpness_after": face.sharpness(after["image"], region),
         "feature_match_before": face.feature_match(before["image"], toned, region),
@@ -879,7 +902,7 @@ def paint_sides(mesh: dict[str, Any], old_tex: np.ndarray, tex: np.ndarray, cove
         if first is not None:
             yaws = (-float(first),)  # the side the first three-quarter view was not fitted to
         for yaw in yaws:
-            cam = face.head_camera(head, yaw, 1024)
+            cam = head_cam(head, 1024, yaw)
             crop = face.painted_head(rgba, head, cam)
             if crop is None:
                 continue
@@ -1009,7 +1032,7 @@ def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell
     views = ((0, "From the front"), (35, "From the left"), (-35, "From the right"), (90, "Left side"), (-90, "Right side"))
     rows = []
     for yaw, label in views:
-        imgs = [face.render_view(m, t, face.head_camera(h, yaw, 768))["image"] for m, t, h in (before, after)]
+        imgs = [face.render_view(m, t, head_cam(h, 768, yaw))["image"] for m, t, h in (before, after)]
         rows.append((label, imgs))
     pad = 24
     n_close = 2
@@ -1142,8 +1165,10 @@ async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
               hair_plan: dict[str, Any] | None = None, face_detail_seed: int | None = None,
-              after_relayout: Any = None, body_painted: bool = False) -> dict[str, Any]:
-    """_run with the image card's MediaPipe face landmarker finding the eyes and mouth (vgac/facemarks.py)."""
+              after_relayout: Any = None, body_painted: bool = False, head_yaw: float = 0.0) -> dict[str, Any]:
+    """_run with the image card's MediaPipe face landmarker finding the eyes and mouth (vgac/facemarks.py). head_yaw: the
+    camera yaw the model's face is seen straight on from (HEAD_YAW), from the clean-up's facing decision."""
+    yaw_token = HEAD_YAW.set(float(head_yaw))
     token = None
     try:
         inst = image_instance(sc)
@@ -1157,8 +1182,10 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
         out = await _run(sc, glb, maps, rec, params, hair_plan, face_detail_seed, after_relayout, body_painted)
     finally:
         facemarks.done(token)
+        HEAD_YAW.reset(yaw_token)
     fd = (out.get("metrics") or {}).get("face_detail")
     if isinstance(fd, dict):
+        fd["head_yaw_deg"] = round(float(head_yaw), 1)
         fd["landmarks"] = {"mediapipe": token is not None, **{k: facemarks.stats[k] - before.get(k, 0) for k in facemarks.stats}}
     return out
 
