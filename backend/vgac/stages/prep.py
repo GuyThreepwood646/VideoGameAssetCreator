@@ -843,7 +843,25 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     if metrics.get("face_toes_found") and metrics.get("face_tests_differ_deg") is not None:
         checks.append(quality.facing_tests_check(metrics["face_outline_turn"], metrics["face_toes_turn"], metrics["face_tests_differ_deg"],
                                                  metrics.get("face_best_turn"), metrics.get("face_yaw_applied") or 0))
+    up = upscale_check(metrics.get("srcproject_upscale"))
+    if up is not None:
+        checks.append(up)
     return checks
+
+
+def upscale_check(up: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A warning when the pictures painted onto the model were not made sharper first (srcproject.upscale_sources: the
+    upscaler failed, or no card could run it); None when they were, or when the pass did not run."""
+    if not up:
+        return None
+    note = up.get("note") or srcproject.upscale_note(up)
+    if not note:
+        return None
+    failed = len(up.get("failed") or {})
+    c = quality.check("pictures_sharpened", False, f"{failed} failed" if failed else "skipped", "all sharpened",
+                      vars={"reason": note})
+    c.setdefault("help", note)
+    return c
 
 
 async def picture_colour(sc: StageContext) -> dict[str, Any] | None:
