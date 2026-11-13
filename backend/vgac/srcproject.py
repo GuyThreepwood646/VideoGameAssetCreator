@@ -101,6 +101,7 @@ OFF_FACE_VIEWS = ("left", "right", "back")   # views that never paint the face r
 FACE_ZONE_N = 1024        # size of the head picture the face region is found on
 FACE_ZONE_FEATHER = 0.02  # of that picture: how far past the face region's edge the side views fade back in
 GLASSES_JUMP_M = 0.004    # a step in depth of this much inside the face is the rim of a solid piece in front of it (glasses)
+FILL_FEATHER = 0.05       # of the face's width: how softly the skin fill ends round the eyes-nose-mouth box
 SKIN_TOL = 14.0           # Lab distance (lightness half) from the painted face's middle colour that still counts as skin
 HEAD_VIEW = "head"        # the first picture fitted on the head alone, by its eyes and mouth (item 6)
 HEAD_NECK = (0.95, 0.75)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
@@ -867,7 +868,7 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray,
         corr, reach = surface_correction(atlas, np.where(sel[:, None], paint - kept, 0.0), np.where(sel, alpha, 0.0))
         out = np.clip(kept + corr * reach[:, None], 0, 1)
     if zt is not None:
-        fw = zt["face"] * ~zt["keep"]
+        fw = zt.get("fill", zt["face"]) * ~zt["keep"]
         if (fw * (1 - alpha) > 0.5).any():
             out = out * (1 - fw[:, None]) + skin_tone(atlas, kept, paint, alpha, zt) * fw[:, None]
         else:
@@ -902,6 +903,11 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
     r = max(2, int(round(FACE_ZONE_FEATHER * size)))
     out["weight"] = np.clip(face.blur(info["region"].astype(np.float64), r) * 2.0, 0.0, 1.0)
     out["keep"] = never_skin(view, info, cam)
+    # where a skin fill may go: the eyes, nose and mouth (face.features_box), feathered. The model's own features all
+    # lie there; on the rest of the face (cheeks, jaw, temples) a fill showed as a flat band round the face on the
+    # stored W1-clothed and P1-photo runs, and the old colour with its tone shifted (finish) reads better there.
+    box = (face.features_box(info) & info["region"]).astype(np.float64)
+    out["fill"] = np.clip(face.blur(box, max(2.0, FILL_FEATHER * float(info["width_px"]))) * 2.0, 0.0, 1.0) * info["region"]
     return out
 
 
@@ -1062,7 +1068,10 @@ def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarr
     vis = inb & np.isfinite(z) & (sd <= np.where(np.isfinite(z), z, -np.inf) + tol) & (cosv > 0.0)
     w = face.sample(zone["weight"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis
     keep = zone["keep"][yi, xi] & vis if zone.get("keep") is not None else np.zeros(w.shape, dtype=bool)
-    return {"face": np.clip(w, 0.0, 1.0), "keep": keep}
+    out = {"face": np.clip(w, 0.0, 1.0), "keep": keep}
+    if zone.get("fill") is not None:
+        out["fill"] = np.clip(face.sample(zone["fill"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis, 0.0, 1.0)
+    return out
 
 
 def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
@@ -1093,7 +1102,7 @@ def zone_record(zone: dict[str, Any] | None) -> dict[str, Any] | None:
     """What of the face region is kept to paint again on another layout (repaint): the head picture's camera and maps."""
     if not zone or not zone.get("found"):
         return None
-    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep")}
+    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep", "fill")}
 
 
 def zone_metrics(zone: dict[str, Any] | None, c: dict[str, Any]) -> dict[str, Any]:
