@@ -251,6 +251,27 @@ class Supervisor extends EventEmitter {
     }
   }
 
+  // POST /api/gpus/{instance}/start: the backend starts the card's ComfyUI from its settings (and owns it).
+  async startViaBackend(instance) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${this.cfg.backend.url}/api/gpus/${encodeURIComponent(instance)}/start`, { method: 'POST', signal: ctl.signal });
+      this.log(`card ${instance}: asked the backend to start its ComfyUI -> HTTP ${res.status}`);
+      if (!res.ok) {
+        let why = `HTTP ${res.status}`;
+        try { why = (await res.json()).detail || why; } catch (_) { /* not JSON */ }
+        this._set(instance === 'b' ? 'comfyB' : 'comfyA', 'error', `The app could not start it: ${why}`);
+      }
+      return res.ok;
+    } catch (e) {
+      this.log(`card ${instance}: could not reach the backend to start its ComfyUI: ${e.message}`);
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   async _applyStartable(key, r, startFn, okFn) {
     const s = this.services[key];
     const cfg = this.cfg[key];
@@ -360,6 +381,16 @@ class Supervisor extends EventEmitter {
       }
     }
     const cfg = this.cfg.comfyB;
+    if (!cfg.startScript) {
+      // No start script on this machine (local/machine.json desktop.comfyB.startScript): the backend starts ComfyUI B
+      // from its own engine settings. Ask it once it answers; until then try again on the next check.
+      if (!this.backendUp) {
+        this.autoStarted.comfyB = false;
+        return this._set('comfyB', 'down', 'Waiting for the backend, which starts it');
+      }
+      this.startViaBackend('b');
+      return;
+    }
     const script = this.resolve(cfg.startScript);
     if (!fs.existsSync(script)) return this._set('comfyB', 'error', `Start script not found: ${script}`);
     const log = this._openLog(this.resolve(cfg.log));

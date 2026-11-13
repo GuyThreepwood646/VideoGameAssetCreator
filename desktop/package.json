@@ -24,6 +24,7 @@
       "preload.js",
       "preload-app.js",
       "appbridge.js",
+      "machine.js",
       "services.js",
       "procs.js",
       "status.html",

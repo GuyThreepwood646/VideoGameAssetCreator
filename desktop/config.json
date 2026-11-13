@@ -1,15 +1,13 @@
 {
-  "_comment": "Paths are absolute or relative to projectRoot. projectRoot itself is absolute or relative to this file. Edit and restart the launcher.",
-  "projectRoot": "F:\\Projects\\VideoGameAssetCreator",
+  "_comment": "Defaults, true on any machine. Paths are absolute or relative to projectRoot; projectRoot is relative to this file (the launcher also looks upward for the project folder). This machine's values (for example comfyA.desktopExe, card names, comfyB.startScript) go in local/machine.json under \"desktop\", in the same shape as this file, and are laid over it. Edit, then restart the launcher.",
+  "projectRoot": "..",
   "comfyA": {
-    "name": "ComfyUI A (GameDevComfy, RTX 3060)",
-    "url": "http://127.0.0.1:8188",
-    "desktopExe": "C:\\Users\\evanr\\AppData\\Local\\Programs\\Comfy Desktop\\Comfy Desktop.exe"
+    "name": "ComfyUI A",
+    "url": "http://127.0.0.1:8188"
   },
   "comfyB": {
-    "name": "ComfyUI B (images and rigging, RTX 3080)",
+    "name": "ComfyUI B (images and rigging)",
     "url": "http://127.0.0.1:8189",
-    "startScript": "runtime/start-comfy-b.ps1",
     "log": "runtime/logs/comfy-b.log",
     "processName": "python.exe",
     "processMatch": "ComfyUI\\main.py --port 8189",
