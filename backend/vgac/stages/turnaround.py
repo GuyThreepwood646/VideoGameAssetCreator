@@ -203,13 +203,15 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
 
 
 async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, lora_strength: float, extra: str, base: float, span: float,
-                         name: str | None = None) -> dict[str, Path]:
-    """One drawn view. `name` (default the view) names its files: the bald pictures use bald_<view>."""
+                         name: str | None = None, instance: str | None = None) -> dict[str, Path]:
+    """One drawn view. `name` (default the view) names its files: the bald pictures use bald_<view>. `instance`: the
+    card it is drawn and cut out on (default the job's own card); the graph is the same on every card."""
     name = name or view
     graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength)
-    entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7)
-    raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png")
-    res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3)
+    on = {"instance": instance} if instance else {}
+    entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
+    raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
+    res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3, **on)
     return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
 
 
@@ -437,10 +439,112 @@ def supplied_files(sc: StageContext, views: list[str] | None = None) -> dict[str
     return out
 
 
-async def _supplied_view(sc: StageContext, view: str, path: Path, base: float, span: float) -> dict[str, Any]:
+# Two cards (docs/AFTER-TEST-CHANGES.md A3, A5, D2 items 17 and 19). When the job's queue lends a second card that is
+# free (jobs.JobQueue.lend: on, allowed to draw pictures, idle, nothing waiting, engine running, memory for the
+# drawing model), the views are drawn in this order: the front; then the left side (quarter, then left) on the job's
+# own card and the right side (quarter2, then right) on the lent card at the same time; then the back, on the job's
+# card once both sides are done, after the lent card is handed back. Each view keeps its seed (the base seed plus its
+# place in the usual order), prompt and settings, so the same seeds give the same pictures as one after another (on
+# the same kind of card). A redraw stays on its side's card. The pair checks run on the right side's view once its
+# left partner is finished, as one after another runs them on the later view of each pair. When the lent card's
+# engine stops answering, or the person turns it off, the rest of the right side is drawn on the job's card after the
+# left side; when the job is stopped the lent card is interrupted and handed back. No second card free: one after
+# another on one card, in the usual order, exactly as before. The sheet and the shadow-free turn always run one after
+# another: the sheet draws every side in one picture, and the shadow-free turn is for rigid props, whose four views
+# are drawn by another model add-on that was never tried on the second card.
+LEFT_SIDE = ("quarter", "left")
+RIGHT_SIDE = (SECOND_QUARTER, "right")
+
+
+def _home_card(sc: StageContext) -> str | None:
+    """The card the step's job runs on (None in tests without a job)."""
+    return getattr(getattr(sc, "ctx", None), "instance", None)
+
+
+def _gpu(sc: StageContext, card: str | None) -> str:
+    """The card's plain name ("RTX 3080") for messages."""
+    settings = getattr(sc, "settings", None)
+    if card and settings is not None and card in getattr(settings, "instances", {}):
+        from ..jobs import gpu_name
+        return gpu_name(card, settings)
+    return f"graphics card {card}" if card else "graphics card"
+
+
+async def _borrow_for_sides(sc: StageContext, method: str, left: list[str], right: list[str]) -> tuple[Any, str]:
+    """(the lent card's Lease, "") when the two sides can be drawn at once on two cards, else (None, why not)."""
+    if not left or not right:
+        return None, "only one side of the figure is drawn in this step"
+    if method == "sheet":
+        return None, "the turnaround sheet draws every side in one picture"
+    if method != "standard":
+        return None, "the shadow-free turn draws its views one after another"
+    borrow = getattr(getattr(sc, "ctx", None), "borrow", None)
+    if borrow is None:
+        return None, "this step cannot ask for a second card"
+    return await borrow()
+
+
+async def _both_sides(sc: StageContext, lease: Any, left: list[str], right: list[str], do_view) -> str | None:
+    """Draw the left side on the job's card and the right side on the lent card at the same time, and hand the lent
+    card back. Returns a plain note when the right side had to be finished on the job's card, else None. A failure on
+    either side stops the other and is raised; stopping the job stops both (the caller interrupts the lent card)."""
+    from ..jobs import is_engine_lost
+
+    notes: list[str] = []
+
+    async def left_side() -> None:
+        for v in left:
+            await do_view(v, None, "skip")
+
+    left_task = asyncio.create_task(left_side())
+
+    async def right_side() -> None:
+        for v in right:
+            if not lease.ended and not lease.revoked:
+                try:
+                    await do_view(v, lease.instance, "wait")
+                    continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    if not (lease.revoked or is_engine_lost(e)):
+                        raise
+                    why = lease.revoked_reason or f"the graphics engine on {lease.gpu} stopped answering"
+                    notes.append(f"{why}, so the right side was finished on the {_gpu(sc, _home_card(sc))}")
+                    await lease.end()
+            elif not lease.ended:
+                notes.append(f"{lease.revoked_reason}, so the right side was finished on the {_gpu(sc, _home_card(sc))}")
+                await lease.end()
+            # The job's card is free once the left side is done (waiting does not stop the left side).
+            await asyncio.wait({left_task})
+            if left_task.cancelled() or left_task.exception() is not None:
+                return   # the left side failed: that failure is the one reported
+            await do_view(v, None, "wait")
+
+    right_task = asyncio.create_task(right_side())
+    tasks = {left_task, right_task}
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        failed = [t for t in (left_task, right_task) if t.done() and not t.cancelled() and t.exception() is not None]
+        if failed:
+            raise failed[0].exception()  # type: ignore[misc]
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.wait(tasks)
+        for t in tasks:
+            if not t.cancelled():
+                t.exception()  # retrieved, so a second failure is not reported as never retrieved
+    await lease.end()
+    return "; ".join(notes) or None
+
+
+async def _supplied_view(sc: StageContext, view: str, path: Path, base: float, span: float,
+                         instance: str | None = None) -> dict[str, Any]:
     """A view the person supplied: kept as it is (copied as the view picture) and cut out like a drawn one."""
     raw = sc.copy_in(path, f"{view}_raw.png")
-    res = await sc.cutout(raw, view, base=base, span=span)
+    res = await sc.cutout(raw, view, base=base, span=span, **({"instance": instance} if instance else {}))
     return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
 
 
@@ -504,7 +608,11 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             library.version_file(source, "cutout", sc.settings) if source is not None else None)
         pose_ref = Path(stored) if stored is not None and Path(stored).is_file() else None   # no cut-out yet: no check, no new job
 
-    async def draw(view: str, seed: int, attempts: int, at: float) -> tuple[dict[str, Any], str]:
+    # The cards (see LEFT_SIDE): the job's own card draws everything, unless a second card is lent for the right side.
+    home = _home_card(sc)
+    src_names: dict[str | None, str] = {None: src_name}
+
+    async def draw(view: str, seed: int, attempts: int, at: float, card: str | None = None) -> tuple[dict[str, Any], str]:
         if sheet is not None and attempts == 0 and view in sheet:
             return dict(sheet[view]), "sheet"
         if cam is not None and method_draws("shadow_free", view):
@@ -513,28 +621,47 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n), "shadow_free"
         sc.use_model("qwen_angles_lora")
         used.add("standard")
-        return await _generate_view(sc, src_name, view, seed, lora_strength, extra, at, width / n), "standard"
+        if card is None:
+            return await _generate_view(sc, src_name, view, seed, lora_strength, extra, at, width / n), "standard"
+        if card not in src_names:
+            # Its own copy of the start picture, so the job's card never reads a file while it is being copied.
+            src_names[card] = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept_{card}.png", instance=card)
+        return await _generate_view(sc, src_names[card], view, seed, lora_strength, extra, at, width / n,
+                                    instance=card), "standard"
 
-    for i, view in enumerate(todo):
+    finished = [0]   # views done, for the progress bar when two cards draw at once
+    parallel = [False]
+    index = {v: i for i, v in enumerate(todo)}
+    view_done: dict[str, asyncio.Event] = {v: asyncio.Event() for v in todo}
+
+    async def do_view(view: str, card: str | None = None, partner: str = "check") -> None:
+        """Draw (or cut out) one view, check it and redraw it on the same card until it passes or runs out of
+        redraws. card: a lent card (None: the job's own). partner: "check" compares it with its partner view as today;
+        "skip" leaves that to the partner (two cards: the left side's views are drawn while their partners are);
+        "wait" waits until the partner is finished first (the right side's views)."""
+        i = index[view]
         attempts = 0
         seed = int(base_seed) + i if base_seed else random_seed()
+        where = f" on the {_gpu(sc, card or home)}" if parallel[0] else ""
         while True:
-            at = lo + width * i / n
+            at = lo + width * (finished[0] if parallel[0] else i) / n
             drew = "supplied"
             if view in supplied:
-                sc.progress(at, f"your {view} view")
-                files = await _supplied_view(sc, view, supplied[view], at, width / n)
+                sc.progress(at, f"your {view} view{where}")
+                files = await _supplied_view(sc, view, supplied[view], at, width / n, instance=card)
             else:
-                sc.progress(at, f"view {view} attempt {attempts + 1}")
-                files, drew = await draw(view, seed, attempts, at)
+                sc.progress(at, f"view {view} attempt {attempts + 1}{where}")
+                files, drew = await draw(view, seed, attempts, at, card)
             sc.register(view, files["raw"])
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
             hist_cache.pop(view, None)
             front_stats = results.get("front", {}).get("bbox") if view != "front" else None
             other = PARTNER.get(view)
+            if partner == "wait" and other in view_done:
+                await view_done[other].wait()
             # File lookups read the version row, so they stay on the event loop; the image work goes to a thread.
-            other_cutout = sc.file(f"{other}_cutout") if other else None
+            other_cutout = sc.file(f"{other}_cutout") if other and partner != "skip" else None
             front_cutout = sc.file("front_cutout") if view != "front" else None
             want: dict[str, Path | None] = {view: sc.file(f"{view}_cutout")}
             if front_cutout and "front" not in hist_cache:
@@ -548,6 +675,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew
+            if card or home:
+                info["card"] = card or home
             if view in supplied:
                 info["supplied"] = True
             results[view] = info
@@ -558,7 +687,34 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                 break
             attempts += 1
             seed = random_seed()
+        finished[0] += 1
+        view_done[view].set()
         _publish_views(sc, results)
+
+    left = [v for v in LEFT_SIDE if v in todo]
+    right = [v for v in RIGHT_SIDE if v in todo]
+    lease, why = await _borrow_for_sides(sc, method, left, right)
+    cards: dict[str, Any] = {"mode": "one after another", "why": why, "card": home}
+    try:
+        if lease is None:
+            for view in todo:
+                await do_view(view)
+        else:
+            cards = {"mode": "two cards", "card": home, "second_card": lease.instance}
+            parallel[0] = True
+            for view in [v for v in todo if v == "front"]:
+                await do_view(view)
+            sc.progress(lo + width * finished[0] / n, f"drawing the left side on the {_gpu(sc, home)} and the right side "
+                                                      f"on the {lease.gpu} at the same time")
+            fallback = await _both_sides(sc, lease, left, right, do_view)
+            if fallback:
+                cards["fallback"] = fallback
+            for view in [v for v in todo if v != "front" and v not in left and v not in right]:
+                await do_view(view)   # the back (and any other view) after both sides
+    finally:
+        if lease is not None and not lease.ended:
+            await lease.end(interrupt=True)   # stopped or failed part-way: stop what is left on the lent card
+        sc.set_metrics(cards=cards)
     sc.set_params(views=list(views), lora_strength=lora_strength, auto_reroll=auto_reroll, seed=base_seed,
                   **({"pose_ready": True} if posed is not None else {}),
                   lora_strength_source="chosen" if chosen is not None else "recipe", turn_method=chosen_method,

@@ -18,6 +18,13 @@ the only card that can rig). With sharing on, a card with nothing to do takes th
 is busy, when it can run that step and is allowed to (JobQueue.take_shared). A job is never split across cards, and a
 running job never moves for sharing.
 
+Lending a card to a running step (step 2 on both cards; docs/AFTER-TEST-CHANGES.md D2 items 17 and 19): a running
+job may borrow a second card for part of its work (JobQueue.lend). The card is lent only when it is on, allowed that
+kind of work, idle, has nothing waiting (on it, or, with sharing on, anywhere it would take over), its engine already
+answers and has the memory the work needs. While lent, the card's worker picks nothing and sharing gives it nothing;
+the job hands it back when it ends, fails or is stopped (Lease.end), and the worker hands back anything left over
+when the job finishes. Turning the lent card off takes it back from the job (Lease.revoked).
+
 On-demand start (instances.py): before a job runs on a card whose instance has a start script, the worker calls
 Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
 <gpu> (about a minute)"; if the start fails the card counts as unavailable (like a card that is off) until Try again
@@ -351,6 +358,58 @@ class JobCancelled(Exception):
     pass
 
 
+# Lending a card (JobQueue.lend). The memory a card must have for drawing: what its engine could use if it unloaded
+# its own models (free memory plus what its own models hold), so a card that still holds the drawing model from the
+# last step counts as having room. The 10 GB card had 8.8 GB free at start in the test (the desktop and drivers hold
+# the rest); the drawing model runs on it by loading in parts. Not measured below that: a guess with margin.
+LEND_MIN_ROOM_GB = 7.0
+
+
+def engine_room_gb(summary: dict[str, Any] | None) -> float | None:
+    """GB the engine could use on its card: free memory plus the memory its own models hold (torch_vram_total minus
+    torch_vram_free). None when the answer has no device figures."""
+    devs = (summary or {}).get("devices") or []
+    if not devs:
+        return None
+    d = devs[0] or {}
+    free, ttotal, tfree = d.get("vram_free"), d.get("torch_vram_total"), d.get("torch_vram_free")
+    if not isinstance(free, (int, float)):
+        return None
+    held = (ttotal - tfree) if isinstance(ttotal, (int, float)) and isinstance(tfree, (int, float)) else 0
+    return (free + max(0, held)) / GB
+
+
+@dataclass
+class Lease:
+    """A card lent to a running job (JobQueue.lend). `revoked` is set when the person turns the card off or forbids
+    the work on it: the job stops using it and draws the rest on its own card."""
+    instance: str
+    job_id: str
+    client: ComfyClient
+    gpu: str
+    _give_back: Callable[["Lease"], None]
+    revoked: bool = False
+    revoked_reason: str = ""
+    ended: bool = False
+
+    async def end(self, interrupt: bool = False) -> None:
+        """Hand the card back. interrupt: stop what this job left running on it first (the job was stopped), so the
+        next job on the card does not wait behind it. Safe to call twice."""
+        if self.ended:
+            return
+        if interrupt:
+            try:
+                await asyncio.wait_for(self.client.interrupt(), timeout=6.0)
+            except BaseException:  # noqa: BLE001  (never keep the card because the interrupt failed)
+                pass
+        self.give_back()
+
+    def give_back(self) -> None:
+        if not self.ended:
+            self.ended = True
+            self._give_back(self)
+
+
 @dataclass
 class JobContext:
     job_id: str
@@ -366,6 +425,9 @@ class JobContext:
     rerouted: bool = False
     reroute_to: str | None = None
     reroute_message: str = ""
+    # Borrow a second card for part of this job (JobQueue.lend): awaited with nothing, returns (Lease or None, the
+    # plain reason when None). None: this job cannot borrow (the host, tests).
+    borrow: Callable[[], Awaitable[tuple["Lease | None", str]]] | None = None
 
     @property
     def client(self) -> ComfyClient | None:
@@ -415,6 +477,12 @@ class InstanceWorker:
     # Sharing (prefs share_when_busy): with nothing queued here, called to take a waiting job from a busy card;
     # returns the job id now on this card, or None.
     share: Callable[[], str | None] | None = None
+    # The job this card is lent to (JobQueue.lend): while set the worker picks nothing.
+    lent_to: str | None = None
+    # Lending: called with (this card, job id, job kind) to borrow another card for a running job; and with the job
+    # id when the job ends, to hand back anything it still holds.
+    lend: Callable[[str, str, str], Awaitable[tuple["Lease | None", str]]] | None = None
+    after_job: Callable[[str], None] | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task | None = None
     _job_task: asyncio.Task | None = None
@@ -451,7 +519,7 @@ class InstanceWorker:
         log.info("worker %s started", self.name)
         while True:
             try:
-                if self.paused or self.disabled or (self.blocked is not None and self.blocked()):
+                if self.paused or self.disabled or self.lent_to is not None or (self.blocked is not None and self.blocked()):
                     await self._sleep(2.0)
                     continue
                 job_id = self._next_queued()
@@ -551,7 +619,8 @@ class InstanceWorker:
         with Session() as db:
             job = db.get(Job, job_id)
             # The job may have moved to another card, or this card been turned off, since the worker picked it.
-            if job is None or job.status != "queued" or job.instance != self.name or self.disabled or not self._allowed(job.kind):
+            if (job is None or job.status != "queued" or job.instance != self.name or self.disabled
+                    or self.lent_to is not None or not self._allowed(job.kind)):
                 return
             job.status = "running"
             job.started_at = utcnow()
@@ -606,6 +675,9 @@ class InstanceWorker:
 
         ctx = JobContext(job_id=job_id, instance=self.name, payload=payload, settings=self.settings, clients=self.clients,
                          _progress_cb=progress)
+        if self.lend is not None:
+            lend = self.lend
+            ctx.borrow = lambda: lend(self.name, job_id, kind)
         self.current_ctx = ctx
         error: str | None = None
         cancelled = False
@@ -652,6 +724,11 @@ class InstanceWorker:
                 error = f"{type(e).__name__}: {e}"
                 log.error("job %s failed: %s\n%s", job_id, e, traceback.format_exc()[-4000:])
         finally:
+            if self.after_job is not None:
+                try:
+                    self.after_job(job_id)  # any card still lent to this job goes back now
+                except Exception:  # noqa: BLE001
+                    log.exception("worker %s: handing back the cards lent to job %s", self.name, job_id)
             self.current_job_id = None
             self.current_ctx = None
             target = self.name
@@ -762,6 +839,8 @@ class JobQueue:
         self.default_instance: str | None = None
         self.share_when_busy: bool = False
         self.supervisor: Supervisor | None = None
+        # Cards lent to running jobs, by card (lend).
+        self.leases: dict[str, Lease] = {}
         self._idle_task: asyncio.Task | None = None
         self._locate_task: asyncio.Task | None = None
 
@@ -800,7 +879,8 @@ class JobQueue:
                 free_after_job=self.free_after_job.get(name, False),
                 prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
                 blocked=(lambda n=name: self._start_failed(n)) if gpu else None,
-                share=(lambda n=name: self.take_shared(n)) if gpu else None)
+                share=(lambda n=name: self.take_shared(n)) if gpu else None,
+                lend=self.lend if gpu else None, after_job=self.end_leases)
         if self.disabled or any(k != set(KIND_GROUPS) for k in self.allowed_kinds.values()):
             log.info("graphics cards turned off in the app: %s; allowed kinds: %s", sorted(self.disabled),
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
@@ -1098,6 +1178,12 @@ class JobQueue:
                 target = None
             message = moved_message(instance, target, self.settings) if target else waiting_message(instance, self.settings)
             w.reroute_current(running, target, message)
+        lease = self.leases.get(instance)
+        if lease is not None and (instance in self.disabled or not self.kind_allowed_here(instance, "turnaround.run")):
+            lease.revoked = True
+            lease.revoked_reason = (f"{gpu_name(instance, self.settings)} was turned off" if instance in self.disabled
+                                    else f"{gpu_name(instance, self.settings)} is no longer allowed to draw pictures")
+            log.info("graphics card %s: taken back from job %s (%s)", instance, lease.job_id[:8], lease.revoked_reason)
         if turned_off:
             self._release(instance)
         self.wake(instance)
@@ -1228,7 +1314,7 @@ class JobQueue:
         """Whether a card may be given work now: on, its engine not failed, its queue not paused."""
         w = self.workers.get(instance)
         return (instance not in self.disabled and not self._start_failed(instance)
-                and not (w is not None and w.paused))
+                and not (w is not None and (w.paused or w.lent_to is not None)))
 
     def _can_take(self, instance: str, kind: str) -> bool:
         """Whether `instance` can run a job of `kind` and is allowed to (capabilities and the person's kinds)."""
@@ -1244,7 +1330,7 @@ class JobQueue:
         if not self.share_when_busy or not self._card_takes(instance):
             return None
         busy = [n for n, w in self.workers.items() if n in self.settings.instances and n != instance
-                and w.current_job_id is not None]
+                and (w.current_job_id is not None or w.lent_to is not None)]
         if not busy:
             return None
         with session_factory()() as db:
@@ -1263,6 +1349,96 @@ class JobQueue:
                 self.publish_gpus()
                 return j.id
         return None
+
+    # --- lending a card to a running job ----------------------------------------------------------------------------
+
+    def _lend_refusal(self, name: str, kind: str) -> str | None:
+        """Why `name` cannot be lent now for a job of `kind` (a plain sentence), or None. No awaits: the caller decides
+        and marks the card lent in one step on the queue's loop."""
+        gpu = gpu_name(name, self.settings)
+        w = self.workers.get(name)
+        if name in self.disabled:
+            return f"{gpu} is turned off"
+        if self._start_failed(name):
+            return f"the graphics engine on {gpu} could not be started"
+        if w is None or w.paused:
+            return f"the queue of {gpu} is paused"
+        if not self._can_take(name, kind):
+            return f"{gpu} is not allowed to draw pictures"
+        if w.current_job_id is not None:
+            return f"{gpu} is busy with another step"
+        if w.lent_to is not None or name in self.leases:
+            return f"{gpu} is already helping another step"
+        if self.supervisor is not None and self.supervisor.starting(name):
+            return f"the graphics engine on {gpu} is starting"
+        with session_factory()() as db:
+            if db.scalar(select(func.count()).select_from(Job).where(Job.instance == name, Job.status == "queued")):
+                return f"{gpu} has work waiting"
+            if self.share_when_busy:
+                # With sharing on, this card would take over waiting work from busy cards: that work goes first.
+                others = [n for n in self.settings.instances if n != name]
+                rows = db.execute(select(Job.kind).where(Job.status == "queued", Job.instance.in_(others)).limit(200)).all()
+                if any(self._can_take(name, r.kind) for r in rows):
+                    return f"work is waiting that {gpu} would take over"
+        return None
+
+    async def lend(self, borrower: str, job_id: str, kind: str) -> tuple[Lease | None, str]:
+        """Lend a second card to the running job `job_id` (on card `borrower`, of `kind`), when one is free: on,
+        allowed the work, idle, nothing waiting it would take, its engine already answering (never started for this:
+        a start and a first model load take longer than they save) and LEND_MIN_ROOM_GB of memory for the engine.
+        Returns (Lease, "") or (None, the plain reason why not, for the step's record)."""
+        others = [n for n in self.settings.instances if n != borrower]
+        if not others:
+            return None, "this computer has one graphics card"
+        reasons: list[str] = []
+        for name in others:
+            why = self._lend_refusal(name, kind)
+            if why is None:
+                client = self.clients.get(name)
+                summary = await client.cached_vram_summary(5.0) if client is not None else None
+                gpu = gpu_name(name, self.settings)
+                room = engine_room_gb(summary)
+                if not (summary and summary.get("reachable")):
+                    why = f"the graphics engine on {gpu} is not running"
+                elif room is not None and room < LEND_MIN_ROOM_GB:
+                    why = f"{gpu} has {room:.1f} GB of memory for drawing, {LEND_MIN_ROOM_GB:.0f} GB are needed"
+                else:
+                    # The answer took a moment: look again, then mark it lent with no await in between.
+                    why = self._lend_refusal(name, kind)
+            if why is not None:
+                reasons.append(why)
+                continue
+            w = self.workers[name]
+            lease = Lease(instance=name, job_id=job_id, client=self.clients[name], gpu=gpu_name(name, self.settings),
+                          _give_back=self._give_back)
+            w.lent_to = job_id
+            self.leases[name] = lease
+            if self.supervisor is not None:
+                self.supervisor.touch(name)
+            log.info("graphics card %s lent to job %s on %s", name, job_id[:8], borrower)
+            self.publish_gpus()
+            return lease, ""
+        return None, "; ".join(reasons)
+
+    def _give_back(self, lease: Lease) -> None:
+        if self.leases.get(lease.instance) is lease:
+            del self.leases[lease.instance]
+        w = self.workers.get(lease.instance)
+        if w is not None and w.lent_to == lease.job_id:
+            w.lent_to = None
+        if self.supervisor is not None:
+            self.supervisor.touch(lease.instance)
+        log.info("graphics card %s handed back by job %s", lease.instance, lease.job_id[:8])
+        self.wake(lease.instance)
+        self.publish_gpus()
+
+    def end_leases(self, job_id: str) -> None:
+        """Hand back every card still lent to `job_id` (the job ended; the step normally does this itself)."""
+        for lease in [le for le in self.leases.values() if le.job_id == job_id]:
+            if not lease.ended:
+                log.warning("graphics card %s was still lent to job %s when it ended; handed back", lease.instance,
+                            job_id[:8])
+            lease.give_back()
 
     def _after_reroute(self, target: str) -> None:
         self.wake(target)
@@ -1351,7 +1527,7 @@ class JobQueue:
             raise ValueError(f"The graphics engine on {gpu} was not started by the app, so the app will not stop it. "
                              f"{owner_note(instance, self.settings)}")
         w = self.workers.get(instance)
-        if w is not None and w.current_job_id is not None:
+        if w is not None and (w.current_job_id is not None or w.lent_to is not None):
             raise ValueError(f"{gpu} is busy with a step. Wait for it to finish, or turn the card off to hand the step "
                              f"to another card.")
         try:
@@ -1370,7 +1546,7 @@ class JobQueue:
         stopped = []
         for name in self.settings.instances:
             s = st.get(name, {})
-            if s.get("current_job_id") or int(s.get("queued", 0)) > 0 or sup.starting(name):
+            if s.get("current_job_id") or s.get("lent_to") or int(s.get("queued", 0)) > 0 or sup.starting(name):
                 sup.touch(name)
                 continue
             minutes = self.stop_when_idle_minutes.get(name, 0)
@@ -1472,7 +1648,9 @@ class JobQueue:
         """One entry per graphics card for GET /api/gpus and the "gpus" event. `summaries` are vram_summary() answers
         by instance; without them the last cached answer is used (no request)."""
         st = self.status()
-        current_ids = [st[n]["current_job_id"] for n in self.settings.instances if n in st and st[n]["current_job_id"]]
+        # A card lent to another card's job shows that job as its current one.
+        current_ids = [st[n]["current_job_id"] or st[n].get("lent_to") for n in self.settings.instances
+                       if n in st and (st[n]["current_job_id"] or st[n].get("lent_to"))]
         current: dict[str, dict[str, Any]] = {}
         if current_ids:
             from .db import Asset
@@ -1495,7 +1673,7 @@ class JobQueue:
             if reachable and inst.discover is not None and (setup_problem or (sup is not None and not sup.identity_ok(name, summary))):
                 reachable = False
             s = st.get(name, {})
-            cur = s.get("current_job_id")
+            cur = s.get("current_job_id") or s.get("lent_to")
             allowed = self.allowed_kinds.get(name, set(KIND_GROUPS))
             possible = possible_kinds(name, self.settings)
             entry: dict[str, Any] = {
@@ -1553,5 +1731,5 @@ class JobQueue:
         for name, w in self.workers.items():
             next_id, n = heads.get(name, (None, 0))
             out[name] = {"paused": w.paused, "enabled": not w.disabled, "current_job_id": w.current_job_id, "queued": n,
-                         "next_job_id": next_id}
+                         "next_job_id": next_id, "lent_to": w.lent_to}
         return out
