@@ -21,7 +21,7 @@ from PIL import Image
 from .. import hairlib, library, quality, reference
 from ..db import Version
 from ..graphs.qwen_edit import CAMERA_TURNS, SHEET_INPUT, SHEET_ORDER, angle_graph, camera_graph, edit_graph, sheet_graph, view_prompt
-from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, white_composite
+from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
 
@@ -49,6 +49,17 @@ MIRROR_PAIRS = ("left", "right")
 # same from both sides (a barrel, a figure standing square to the camera) has the two overlaps equal, and noise would
 # decide. The realistic test's two faulty pairs sit at +0.285 and +0.150, its 20 good pairs at -0.017 and below.
 SAME_SIDE_MARGIN = 0.05
+# pose_held: the views seen straight from the front or the back must keep the picture's pose. Their arm reach (outline
+# width from shoulder to wrist height) and leg reach (width over the lower 40 percent), each as a share of the figure's
+# height, are compared with the same of the picture's cut-out; a ratio outside the range means arms or legs are in a
+# different place. The realistic test (17 runs): front views 0.34 to 0.62 of the picture's arm and leg reach in 16
+# runs where the drawn arms hung down or the legs closed, 1.00 in the 1 run that held the pose; back views 0.95 to
+# 1.03 (arms) and 0.87 to 0.96 (legs) in all 17. The gap between 0.62 and 0.87 holds the limits. Side and
+# three-quarter views are not checked: a side outline hides arm spread, and no stored view of either kind has a
+# known-held pose to calibrate against.
+POSE_VIEWS = ("front", "back")
+POSE_ARM_RANGE = (0.8, 1.25)
+POSE_LEG_RANGE = (0.75, 1.3)
 PARTNER_WORDS = {"left": "left side", "right": "right side", "quarter": "three-quarter", SECOND_QUARTER: "other three-quarter"}
 LIMITS = {"height_ratio": (0.75, 1.3), "hist_distance": 0.35, "mirror_iou": 0.55, "min_coverage": 0.02}
 
@@ -131,11 +142,36 @@ def same_side_check(view: str, as_drawn: float, mirror: float) -> dict[str, Any]
             "help": text}
 
 
+def pose_check(view: str, ext: dict[str, float], ref: dict[str, float]) -> dict[str, Any]:
+    """pose_held: fails when this front or back view's arms or legs reach sideways a different amount than the
+    picture's (ext and ref are imaging.pose_extents of the view and of the picture's cut-out). value is the arm ratio,
+    leg_ratio the other; a warning, with a sentence saying which view and what differs."""
+    arm = ext["arm"] / max(1e-6, ref["arm"])
+    leg = ext["leg"] / max(1e-6, ref["leg"])
+    arm_ok = POSE_ARM_RANGE[0] <= arm <= POSE_ARM_RANGE[1]
+    leg_ok = POSE_LEG_RANGE[0] <= leg <= POSE_LEG_RANGE[1]
+    ok = arm_ok and leg_ok
+    if ok:
+        text = f"The arms and legs of this {view} view are where they are in your picture."
+    else:
+        what = []
+        if not arm_ok:
+            what.append(f"the arms reach {arm:.0%} as far out as in your picture ({'closer to the body' if arm < 1 else 'further out'})")
+        if not leg_ok:
+            what.append(f"the legs are {leg:.0%} as far apart as in your picture ({'closer together' if leg < 1 else 'further apart'})")
+        text = (f"In this {view} view " + " and ".join(what) + ". The pose changed when it was drawn, so painting it onto "
+                "the model can streak the arms and body. Draw this view again, or edit it so the arms and legs are where they are in your picture.")
+    return {"id": "pose_held", "ok": ok, "value": round(arm, 4), "leg_ratio": round(leg, 4),
+            "limit": [POSE_ARM_RANGE[0], POSE_ARM_RANGE[1]], "leg_limit": [POSE_LEG_RANGE[0], POSE_LEG_RANGE[1]],
+            "severity": "warn", "help": text}
+
+
 def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, hist_front, hist_view, mirror: float | None,
-                as_drawn: float | None = None) -> dict[str, Any]:
+                as_drawn: float | None = None, pose: tuple[dict[str, float], dict[str, float]] | None = None) -> dict[str, Any]:
     """The checks of one view. mirror and as_drawn are its outline's overlap with its partner view's (mirrored, and as
     drawn; imaging.pair_overlap), given when the partner exists: left and right take the mirror_iou limit, and every
-    pair takes same_side when as_drawn is given."""
+    pair takes same_side when as_drawn is given. pose is (the view's pose_extents, the picture's) for a front or back view
+    of a humanoid; it adds pose_held."""
     checks: list[dict[str, Any]] = []
     checks.append({"id": "coverage", "ok": stats["coverage"] >= LIMITS["min_coverage"], "value": stats["coverage"], "limit": LIMITS["min_coverage"]})
     out: dict[str, Any] = {"bbox": stats}
@@ -156,6 +192,10 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
     if mirror is not None and as_drawn is not None:
         out["pair_as_drawn"], out["pair_mirrored"] = round(as_drawn, 4), round(mirror, 4)
         checks.append(same_side_check(view, as_drawn, mirror))
+    if pose is not None and view in POSE_VIEWS:
+        pc = pose_check(view, *pose)
+        out["pose_arm_ratio"], out["pose_leg_ratio"] = pc["value"], pc["leg_ratio"]
+        checks.append(pc)
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)
     out["ok"] = out["passed"]
@@ -174,14 +214,16 @@ async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, 
 
 
 def _measure(cutout: Path, stats: dict[str, Any] | None, other_cutout: Path | None,
-             hist_paths: dict[str, Path | None]) -> tuple[dict[str, Any], tuple[float, float] | None, dict[str, Any]]:
+             hist_paths: dict[str, Path | None], ref_cutout: Path | None = None):
     """CPU part of a view's checks (no database access, so it runs in a worker thread): bbox stats, the outline's
-    overlap with the partner view's (as drawn, mirrored), and colour histograms for the views in `hist_paths`."""
+    overlap with the partner view's (as drawn, mirrored), colour histograms for the views in `hist_paths`, and, given the
+    picture's cut-out, the arm and leg reach of this view and of the picture (pose_held)."""
     if stats is None:
         stats = alpha_bbox(cutout)
     pair = pair_overlap(cutout, other_cutout) if other_cutout is not None else None
     hists = {v: (colour_histogram(p) if p else None) for v, p in hist_paths.items()}
-    return stats, pair, hists
+    pose = (pose_extents(cutout), pose_extents(ref_cutout)) if ref_cutout is not None else None
+    return stats, pair, hists, pose
 
 
 def sheet_input(cutout: Path, dest: Path) -> Path:
@@ -454,6 +496,14 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     # The sheet's figures fill the rest of the bar quickly; the per-view jobs share it otherwise.
     lo, width = (0.6, 0.35) if sheet else (0.05, 0.9)
 
+    # The picture's cut-out the front and back views' arm and leg reach is held to (pose_held); humanoids only.
+    pose_ref: Path | None = None
+    if _category(sc) == "humanoid" and any(v in POSE_VIEWS for v in todo):
+        posed_cut = sc.file("pose_ready_cutout")
+        stored = Path(posed_cut) if posed_cut is not None and Path(posed_cut).is_file() else (
+            library.version_file(source, "cutout", sc.settings) if source is not None else None)
+        pose_ref = Path(stored) if stored is not None and Path(stored).is_file() else None   # no cut-out yet: no check, no new job
+
     async def draw(view: str, seed: int, attempts: int, at: float) -> tuple[dict[str, Any], str]:
         if sheet is not None and attempts == 0 and view in sheet:
             return dict(sheet[view]), "sheet"
@@ -489,11 +539,12 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             want: dict[str, Path | None] = {view: sc.file(f"{view}_cutout")}
             if front_cutout and "front" not in hist_cache:
                 want["front"] = front_cutout
-            stats, pair, new_hists = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want)
+            stats, pair, new_hists, pose = await asyncio.to_thread(_measure, files["cutout"], files.get("stats"), other_cutout, want,
+                                                                    pose_ref if view in POSE_VIEWS else None)
             hist_cache.update(new_hists)
             as_drawn, mirror = pair if pair is not None else (None, None)
             info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
-                               as_drawn)
+                               as_drawn, pose)
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew

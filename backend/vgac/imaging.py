@@ -145,6 +145,24 @@ def pair_overlap(a_path: Path | str, b_path: Path | str) -> tuple[float, float]:
     return iou(a, b), iou(a, b[:, ::-1])
 
 
+def pose_extents(path: Path | str) -> dict[str, float]:
+    """How far a figure's arms and legs reach sideways, as fractions of its height (so a picture and a drawn view of a
+    different size compare). arm: the outline's width over the 15 to 55 percent band of its height (shoulders to
+    wrists, hands held out or hanging); leg: its width over the lower 40 percent. Seen from the front or the back."""
+    sil = silhouette(path, 512)
+    ys, xs = np.where(sil)
+    if not len(ys):
+        return {"arm": 0.0, "leg": 0.0}
+    sil = sil[ys.min():ys.max() + 1]
+    h = sil.shape[0]
+
+    def reach(rows: np.ndarray) -> float:
+        cols = np.where(rows.any(axis=0))[0]
+        return float(cols.max() - cols.min() + 1) / h if len(cols) else 0.0
+
+    return {"arm": reach(sil[int(0.15 * h):int(0.55 * h)]), "leg": reach(sil[int(0.6 * h):])}
+
+
 def white_composite(rgba_path: Path | str, dest: Path | str | None = None) -> Path:
     src = Path(rgba_path)
     im = Image.open(src).convert("RGBA")
