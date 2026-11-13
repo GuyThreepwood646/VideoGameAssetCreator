@@ -28,7 +28,23 @@ VIEWS = {
 }
 
 
-def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9) -> dict[str, Any]:
+def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9,
+                zero_negative: bool = False) -> dict[str, Any]:
+    """The view graph. zero_negative (UNTESTED ON A CARD, docs/SPEED-AUDIT.md O7): the negative is the positive with its
+    values zeroed (ConditioningZeroOut) instead of a second pass of the picture through the 7B text encoder. The sampler
+    here runs at cfg 1.0, and at cfg 1.0 ComfyUI 0.45.3 never evaluates the negative: comfy/samplers.py
+    sampling_function sets uncond_ = None when math.isclose(cond_scale, 1.0) and the model options do not carry
+    disable_cfg1_optimization (only the cfg++ samplers set it, comfy/k_diffusion/sampling.py; this graph uses euler), and
+    _calc_cond_batch then returns zeros for the missing cond. CFGNorm's default (pre_cfg false) post function reads only
+    args["cond_denoised"] and args["denoised"] (comfy_extras/nodes_cfg.py). So the picture cannot depend on the negative."""
+    g = _angle_graph(image_name, prompt, seed, prefix, lora_strength)
+    if zero_negative:
+        del g["neg"]
+        g["negr"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["posr", 0]}}
+    return g
+
+
+def _angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9) -> dict[str, Any]:
     return {
         "u": {"class_type": "UNETLoader", "inputs": {"unet_name": Q + "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default"}},
         "l1": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["u", 0], "lora_name": Q + "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0}},
@@ -62,8 +78,8 @@ CUT_NODE = "cut_save"
 
 
 def angle_cutout_graph(image_name: str, prompt: str, seed: int, prefix: str, cutout_prefix: str,
-                       lora_strength: float = 0.9) -> dict[str, Any]:
-    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength)
+                       lora_strength: float = 0.9, zero_negative: bool = False) -> dict[str, Any]:
+    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength, zero_negative=zero_negative)
     for key, node in cutout_graph("unused.png", cutout_prefix).items():
         if key == "img":
             continue  # the picture comes from the decoder
