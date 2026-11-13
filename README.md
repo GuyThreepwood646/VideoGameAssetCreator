@@ -149,7 +149,7 @@ A project is one game, or one art style. Every asset in it shares the same **loo
 
 On the **Projects** page, click **New project**. Give it a name, pick the **platform** (Phone, PC and console, and so on: this sets how detailed the models are) and pick a **look**.
 
-<p align="center"><img src="docs/images/new-project.png" alt="The New project window with five looks: Painted fantasy, Clean cartoon, Pixel retro, Realistic, Clay toy" width="720"></p>
+<p align="center"><img src="docs/images/new-project.png" alt="The New project window with the looks to choose from" width="720"></p>
 
 ### 2. Describe your asset
 
@@ -288,7 +288,7 @@ Builds lower-detail copies, a collision shape and the final FBX and GLB, imports
 - [Running from source, mock mode and tests](docs/ADVANCED.md#running-from-source)
 - [The API](docs/ADVANCED.md#the-api)
 
-Other documents: [ARCHITECTURE.md](ARCHITECTURE.md) (design, and the definition of done), [STATUS.md](STATUS.md) (build state and decisions), [docs/API.md](docs/API.md) (the full API contract), [docs/BACKEND.md](docs/BACKEND.md) (backend code map), [docs/BUILD-THE-EXE.md](docs/BUILD-THE-EXE.md) (building the launcher).
+Other documents: [ARCHITECTURE.md](ARCHITECTURE.md) (how the application is built), [docs/API.md](docs/API.md) (the full API contract), [docs/BACKEND.md](docs/BACKEND.md) (backend code map), [docs/BUILD-THE-EXE.md](docs/BUILD-THE-EXE.md) (building the launcher).
 
 ---
 
