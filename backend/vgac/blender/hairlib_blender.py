@@ -1,6 +1,6 @@
-"""Hair library builder, Blender part (run by tools/hairlib_build.py; not by hand).
+"""Hair library builder, Blender part (run by backend/vgac/hairlib_builder.py; not by hand).
 
-    blender -b --python tools/hairlib_blender.py -- <job.json>
+    blender -b --python backend/vgac/blender/hairlib_blender.py -- <job.json>
 
 For every style in the job: import the pack mesh (OBJ or glTF, read as data only) or generate a rule-built style,
 scale it together with its reference head so the reference figure is 1.7 m with the feet at 0 (Z up, facing -y),
@@ -24,8 +24,6 @@ import numpy as np
 import bpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(ROOT, "backend", "vgac", "blender"))
 sys.path.insert(0, HERE)
 import hairfit as hf  # noqa: E402
 import hairlib_rulebuilt as rb  # noqa: E402

@@ -261,6 +261,7 @@
    "page": "https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html",
    "zip_size": 280737770,
    "check_dir": "hair",
+   "zip_expect": ["hair/", "proxymeshes/"],
    "licence": "CC0 1.0",
    "note": "Direct link. Also holds the reference bodies every MakeHuman style is fitted on, so the hair01 styles need it too."
   },
@@ -273,6 +274,7 @@
    "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
    "zip_size": 227775853,
    "check_dir": "hair",
+   "zip_expect": ["hair/", "packs/hair01.json"],
    "licence": "CC0 1.0",
    "needs": ["makehuman_system"],
    "note": "Direct link. One zip for the Cortu, Faydaen and MargaretToigo styles."
@@ -284,6 +286,8 @@
    "page": "https://quaternius.itch.io/universal-base-characters",
    "zip_size": 128968391,
    "check_dir": "Universal Base Characters[Standard]",
+   "zip_expect": ["Universal Base Characters[Standard]/License_Standard.txt"],
+   "click_text": "On that page click Download Now, then No thanks, just take me to the downloads, and download the file called Universal Base Characters[Standard].zip (the smaller one, about 122 MB).",
    "licence": "CC0 1.0",
    "note": "itch.io click-through (Download Now, then No thanks, just take me to the downloads): the app cannot fetch it, so you download the zip yourself. It also holds the reference figures the rule-built styles are fitted on."
   }

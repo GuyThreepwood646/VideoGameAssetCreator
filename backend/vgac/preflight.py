@@ -289,6 +289,33 @@ def check_clips(settings: Settings) -> list[dict[str, Any]]:
     return out
 
 
+def optional_item(id: str, group: str, label: str, installed: bool, ok_detail: str, offer_detail: str, kit: str, button: str,
+                  technical: str = "") -> dict[str, Any]:
+    """An extra the app works without: "ok" when it is there, else "optional" (never a fault) with an offer the page shows
+    as a button that opens the guided panel for `kit` (vgac/packs.py)."""
+    it = item(id, group, label, "ok" if installed else "optional", ok_detail if installed else offer_detail,
+              "" if installed else button, [], technical)
+    if not installed:
+        it["offer"] = {"kit": kit, "button": button}
+    return it
+
+
+def check_hair_library(settings: Settings) -> dict[str, Any]:
+    """The ready-made hairstyles (vgac/hairstyles.py). Optional: without them the hair is built with the 3D model."""
+    from . import hairstyles
+
+    try:
+        installed = hairstyles.installed()
+        n = len(hairstyles.catalogue().get("styles") or {}) if installed else 0
+    except Exception:  # noqa: BLE001
+        installed, n = False, 0
+    return optional_item("hair_library", "tools", "Hair library (ready-made hairstyles)", installed,
+                         f"{n} ready-made hairstyles are installed.",
+                         "Not installed. It is optional: without it the hair is built with the 3D model. The library has 26 free "
+                         "ready-made hairstyles you can fit to a character.",
+                         "hair", "Get the hair library", "library/hairlib, built by vgac/packs.py")
+
+
 def check_skintoken_blender(settings: Settings, project_dir: Path = PROJECT_DIR) -> dict[str, Any] | None:
     rigger = settings.stage_instances.get("rig")
     inst = settings.instances.get(rigger or "")
@@ -559,6 +586,7 @@ async def run_checks(settings: Settings, clients: dict[str, Any], disabled: set[
     items.append(await asyncio.to_thread(check_blender, settings, blender_runner))
     items.extend(check_unity(settings))
     items.extend(check_clips(settings))
+    items.append(check_hair_library(settings))
     sk = check_skintoken_blender(settings)
     if sk is not None:
         items.append(sk)

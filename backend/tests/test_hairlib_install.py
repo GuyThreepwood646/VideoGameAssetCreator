@@ -84,7 +84,7 @@ def test_no_library_says_how_to_get_it(monkeypatch, tmp_path):
     assert not hairstyles.installed()
     reason = hairlib.available(_asset())
     assert reason == hairlib.NOT_INSTALLED
-    assert "not installed" in reason and "Setup-Extras.ps1 -Packs -Install" in reason and "FIRST-TIME-SETUP.md" in reason
+    assert "not installed" in reason and "Get the hair library" in reason and "System page" in reason
     lib = hairlib.hair_library(db=None)
     assert lib["installed"] is False and lib["styles"] == [] and lib["how_to_install"] == hairlib.NOT_INSTALLED
 
@@ -112,33 +112,25 @@ def test_own_hairstyles_still_merge_with_a_built_library(monkeypatch, tmp_path):
     assert my_hair._builtin_ids() == {"fake_a"}
 
 
-# --- tools/hairlib_verify.py: the check setup runs before it swaps a freshly built library in -------------------------
-
-
-def _verify_module():
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("hairlib_verify", Path(__file__).resolve().parents[2] / "tools" / "hairlib_verify.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# --- hairlib_builder.verify / compare: the check run before a freshly built library is swapped in -------------------------
 
 
 def test_verify_accepts_the_project_library_and_refuses_a_damaged_copy(tmp_path):
     import shutil
 
-    v = _verify_module()
+    from vgac import hairlib_builder as hb
+
     lib = Path(hairstyles.DATA_DIR)
     if not (lib / "catalogue.json").is_file():
         pytest.skip("the project copy of the library has been removed")
-    _cat, bad = v.check(lib)
+    _cat, bad = hb.verify(lib)
     assert bad == []
     copy = tmp_path / "copy"
     shutil.copytree(lib, copy)
     victim = next((copy / "tex").glob("*.png"))
     victim.write_bytes(victim.read_bytes() + b"x")
     (copy / "styles" / "q_buns.npz").unlink()
-    _cat, bad = v.check(copy)
+    _cat, bad = hb.verify(copy)
     assert any("q_buns" in b and "missing" in b for b in bad)
     assert any(victim.name in b and "checksum" in b for b in bad)
-    assert v.compare(copy, lib)  # and it no longer equals the original
+    assert hb.compare(copy, lib)  # and it no longer equals the original
