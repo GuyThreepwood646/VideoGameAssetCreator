@@ -125,3 +125,72 @@ def test_a_held_face_through_the_pass_changes_nothing_and_fails_the_check(tmp_pa
     assert not replaced and glb.read_bytes() == before
     c = fd.face_checks(out["metrics"])[0]
     assert not c["ok"] and c["value"] == 0.31 and c["limit"] == 0.65 and "left as it was" in c["help"]
+
+
+# --- the close-up shown on the step's card while clean-up still works ---------------------------------------------
+
+
+class _Card(_SC):
+    """A step context that keeps what the card would be told: each registered picture and metrics, in order."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.shown: list[tuple[str, dict]] = []
+        self._live: dict = {}
+
+    def register(self, key, path):
+        self._file = (key, str(path))
+        return str(path)
+
+    def set_metrics(self, **kw):
+        self._live = kw.get("face_closeup_live", self._live)
+
+    def publish(self):
+        self.shown.append((self._file[1].replace("\\", "/").rsplit("/", 1)[-1], dict(self._live)))
+
+
+def _card_run(tmp_path, stubbed, monkeypatch, verdicts):
+    calls, glb, maps = stubbed
+    it = iter(verdicts)
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: next(it))
+    _fake_source(monkeypatch)
+
+    sc = _Card(tmp_path, 2048)
+    out = _run(sc, glb, maps)
+    return sc, out
+
+
+def test_each_close_up_is_shown_when_drawn_and_again_with_its_verdict(tmp_path, stubbed, monkeypatch):
+    sc, _ = _card_run(tmp_path, stubbed, monkeypatch, [_guard("likeness", 0.88), _guard(None, 0.97)])
+    states = [(f, m["state"]) for f, m in sc.shown]
+    assert states[:4] == [("painted_head_closeup.png", "checking"), ("painted_head_closeup.png", "again"),
+                          ("painted_head_closeup_2.png", "checking"), ("painted_head_closeup_2.png", "used")]
+    again = sc.shown[1][1]["caption"]
+    assert "draw 1 of 3" in again and "did not look enough like the painted face" in again and "Drawing it again" in again
+    assert sc.shown[-1][1]["state"] == "used" and "was used" in sc.shown[-1][1]["caption"]  # and at the end of the pass
+
+
+def test_a_refused_close_up_says_why_and_a_held_face_says_so(tmp_path, stubbed, monkeypatch):
+    sc, _ = _card_run(tmp_path, stubbed, monkeypatch, [_guard("likeness"), _guard("likeness"), _guard("features")])
+    last = sc.shown[-1][1]
+    assert last["state"] == "refused" and "draw 3 of 3" in last["caption"] and "eyes or mouth" in last["caption"]
+    assert "Drawing it again" not in last["caption"]
+    # a good close-up whose paint was held for a poor fit
+    sc2 = _Card(tmp_path, 2048)
+    calls, glb, maps = stubbed
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: _guard(None, 0.97))
+    monkeypatch.setattr(fd, "fit_and_paint", lambda *a, **k: {"ok": False, "reason": "poor_fit", "alignment": {"score": 0.3}})
+    _run(sc2, glb, maps)
+    assert sc2.shown[-1][1]["state"] == "refused" and "left as it was" in sc2.shown[-1][1]["caption"]
+
+
+def test_a_failing_card_never_fails_the_pass(tmp_path, stubbed, monkeypatch):
+    class Broken(_Card):
+        def publish(self):
+            raise RuntimeError("no bus")
+
+    calls, glb, maps = stubbed
+    monkeypatch.setattr(fd, "closeup_guard", lambda *a: _guard(None, 0.97))
+    _fake_source(monkeypatch)
+    r = _run(Broken(tmp_path, 2048), glb, maps)["metrics"]["face_detail"]
+    assert r["ran"] and r["closeup"]["used"]

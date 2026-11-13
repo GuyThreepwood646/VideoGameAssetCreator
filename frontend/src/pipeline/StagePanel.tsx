@@ -454,13 +454,21 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
   const parent = version.parent_version_id ? Object.values(asset.stages ?? {}).flatMap((l) => l ?? []).find((v) => v.id === version.parent_version_id) : undefined
   const from = parent ? libraryUrl(parent.files.front_cutout ?? parent.files.cutout ?? parent.files.image ?? parent.files.front) : undefined
   const redraw = libraryUrl(version.files.pose_ready_picture ?? undefined)
+  // The clean-up step's face close-up, shown while the step goes on (face_detail.show_closeup), with what is known of it.
+  const closeup = libraryUrl(version.files.face_closeup_draft ?? undefined)
+  const closeupCaption = ((version.metrics?.face_closeup_live ?? null) as { caption?: string } | null)?.caption
   // Either picture opens full size (double-click or its corner button), both in one viewer to step between.
   const [full, setFull] = useState<number | null>(null)
-  const items: PictureItem[] = [...(from ? [{ src: from, label: 'Working from this' }] : []), ...(redraw ? [{ src: redraw, label: 'Redrawn for 3D' }] : [])]
+  const items: PictureItem[] = [
+    ...(from ? [{ src: from, label: 'Working from this' }] : []),
+    ...(redraw ? [{ src: redraw, label: 'Redrawn for 3D' }] : []),
+    ...(closeup ? [{ src: closeup, label: closeupCaption ?? 'Close-up of the face' }] : []),
+  ]
+  const closeupAt = (from ? 1 : 0) + (redraw ? 1 : 0)
   const fromCutout = !!(parent?.files.front_cutout ?? parent?.files.cutout)
   return (
     <div className="placeholder-box running-placeholder" role="status">
-      {(from || redraw) && (
+      {(from || redraw || closeup) && (
         <div className="running-pictures">
           {from && (
             <figure className="running-from">
@@ -476,6 +484,14 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
                 <img src={redraw} alt="The redrawn picture for 3D" />
               </Zoomable>
               <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
+            </figure>
+          )}
+          {closeup && (
+            <figure>
+              <Zoomable label="the close-up of the face" onOpen={() => setFull(closeupAt)}>
+                <img src={closeup} alt="The close-up of the face drawn for the clean-up step" />
+              </Zoomable>
+              <figcaption className="muted small">{closeupCaption ?? 'The close-up of the face.'}</figcaption>
             </figure>
           )}
         </div>
