@@ -47,7 +47,7 @@ The **material** category (tileable surface) uses `stages/material.py` for steps
 2. normal-map repair for old 3D versions (`normalfix.py`)
 3. Blender `prep.py`: turn, size, pivot, weld, weighted decimation to the budget, shading, optional symmetrize, grid snap for scenery, rebake
 4. texture pass: delight, physically based fix, look applied
-5. picture projection into the base colour (`srcproject.py`)
+5. picture projection into the base colour (`srcproject.py`). The head is painted first by a chain of head views: the front picture fitted on the head by eyes and mouth (`facemarks.use_local`, MediaPipe on the processor), then each three-quarter view fitted the same way and lined up to what the front painted (refused when over 0.12 of the face width away). Whole-body fits do not paint where a head view paints; they hand over on the neck. Left, right and back views never paint the face; a view whose turn contradicts the front is refused. Unpainted skin inside the eyes-nose-mouth box takes the painted skin tone.
 6. hair found (`stages/hair_detail.py`)
 7. face detail: close-up, fit, paint; held back when the fit scores under 0.65 (`stages/face_detail.py`, `face.py`, `facecloseup.py`, `facemarks.py`)
 8. skin never metal (`skinmetal.py`)
