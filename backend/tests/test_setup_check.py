@@ -270,7 +270,7 @@ def test_setup_endpoint_shape_cache_and_refresh(settings, monkeypatch):
         assert set(r) >= {"summary", "items", "groups", "checked_at"}
         assert [g["id"] for g in r["groups"]] == ["tools", "engines", "models", "storage"]
         for it in r["items"]:
-            assert set(it) == {"id", "group", "label", "state", "detail", "fix", "needed_for", "technical"}
+            assert set(it) - {"kit", "offer"} == {"id", "group", "label", "state", "detail", "fix", "needed_for", "technical"}  # kit and offer: optional extras
             assert it["state"] in ("ok", "warn", "fail", "unknown")
         ids = by_id(r["items"])
         assert ids["blender"]["state"] == "fail"  # the test config has no Blender
