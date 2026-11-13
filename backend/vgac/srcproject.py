@@ -107,7 +107,7 @@ HEAD_VIEW = "head"        # the first picture fitted on the head alone, by its e
 HEAD_NECK = (0.95, 0.75)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
                           # nose tip (the chin is at about 0.65): the hand-over to the body's own fit lies on the neck
 HEAD_SIDES = ("quarter", SECOND_QUARTER)  # the three-quarter views that get a head view of their own, after the front's
-SIDE_HEAD_TURN = (15.0, 80.0)  # turn from the face a three-quarter head view must be seen from
+SIDE_HEAD_TURN = (15.0, 80.0)  # a three-quarter view's whole-body fit beyond the second is not of the face
 SIDE_HEAD_YAW = 40.0      # the turn from the face a three-quarter head view is seen from when its body fit gives none
 HEAD_HANDOVER = 0.1       # where a head view's weight reaches this, no whole-body fit paints (they hand over at the neck)
 SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this share is fitted again with one scale
@@ -1163,18 +1163,22 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
 
 
 def side_head_yaw(name: str, body: View | None, head_yaw: float) -> tuple[float | None, str]:
-    """The yaw a three-quarter view's head is framed from: its whole-body fit's turn (also when that fit was refused for its
-    outline match, which says nothing about the head), else SIDE_HEAD_YAW to its side of the face. None when its turn
-    was refused as contradicting the front (item 8): that side keeps to today's painting."""
+    """The yaw a three-quarter view's head is framed from: SIDE_HEAD_YAW from the head's own turn, to the side its
+    whole-body fit puts it on (also when that fit was refused for its outline match, which says nothing about the head),
+    else to its usual side. The whole-body turn itself is not used: on the stored W1-clothed run it sat 12 degrees from
+    the turned face and the side was skipped. None when its turn was refused as contradicting the front (item 8), or
+    when the whole-body fit put it more than SIDE_HEAD_TURN[1] from the face (looking at the back of the head): that
+    side keeps to today's painting."""
     if body is not None and "contradicts" in str(body.info.get("refused")):
         return None, "its turn contradicts the front"
+    side, why = TURN_SIDE[name], "its usual side"
     if body is not None and body.info.get("yaw") is not None:
-        y = float(body.info["yaw"])
-        rel = abs(_signed(y - head_yaw))
-        if not SIDE_HEAD_TURN[0] <= rel <= SIDE_HEAD_TURN[1]:
-            return None, f"its whole-body fit is {rel:.0f} degrees from the face"
-        return y, "its whole-body fit"
-    return float(head_yaw + TURN_SIDE[name] * SIDE_HEAD_YAW), "its usual side"
+        rel = _signed(float(body.info["yaw"]) - head_yaw)
+        if abs(rel) > SIDE_HEAD_TURN[1]:
+            return None, f"its whole-body fit is {abs(rel):.0f} degrees from the face"
+        if abs(rel) >= 5.0:
+            side, why = (1 if rel > 0 else -1), "the side of its whole-body fit"
+    return float(head_yaw + side * SIDE_HEAD_YAW), why
 
 
 def one_head_per_side(yaws: dict[str, float], head_yaw: float) -> dict[str, str]:

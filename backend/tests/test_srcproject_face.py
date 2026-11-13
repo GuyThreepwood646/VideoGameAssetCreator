@@ -346,10 +346,14 @@ def test_no_body_fit_paints_where_a_head_view_paints() -> None:
     assert dom2[5] == 1 and dom2[0] == 0  # no head paint at all: the body paints there
 
 
-def test_a_three_quarter_head_takes_its_body_turn_unless_that_contradicts_the_front() -> None:
+def test_a_three_quarter_head_is_framed_from_the_heads_turn_to_its_bodys_side() -> None:
     v = srcproject.View("quarter", 0.5)
     v.info = {"yaw": 47.5, "refused": "silhouette match 0.827 is under 0.85"}
-    assert srcproject.side_head_yaw("quarter", v, 0.0) == (47.5, "its whole-body fit")
+    assert srcproject.side_head_yaw("quarter", v, 0.0) == (srcproject.SIDE_HEAD_YAW, "the side of its whole-body fit")
+    v.info = {"yaw": -45.0}  # the stored W1-clothed run: 12 degrees from the turned face, still framed 40 round
+    assert srcproject.side_head_yaw("quarter2", v, -33.4)[0] == -33.4 - srcproject.SIDE_HEAD_YAW
+    v.info = {"yaw": -42.5}  # drawn on the other side from its usual one: framed on the side it fits
+    assert srcproject.side_head_yaw("quarter", v, 0.0)[0] == -srcproject.SIDE_HEAD_YAW
     v.info = {"yaw": 20.0, "refused": "its turn contradicts the front: ..."}
     assert srcproject.side_head_yaw("quarter2", v, 0.0)[0] is None
     assert srcproject.side_head_yaw("quarter2", None, 5.0)[0] == 5.0 - srcproject.SIDE_HEAD_YAW
