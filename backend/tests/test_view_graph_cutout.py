@@ -106,7 +106,7 @@ def test_one_graph_one_job_per_view_by_default(tmp_path):
 
 
 def test_the_old_two_job_path_is_one_setting_away(tmp_path):
-    sc, files = draw(tmp_path, {"cutout_in_graph": False})
+    sc, files = draw(tmp_path, {"cutout_in_graph": False, "zero_negative": False})
     assert "cut_save" not in sc.graphs[0] and sc.cutouts == ["left"] and sc.downloads == ["save"]
     assert sc.graphs[0] == qwen_edit.angle_graph("in.png", qwen_edit.view_prompt("left", ""), 7, "vgac/a/turnaround/v/left_7", lora_strength=0.9)
     assert files["cutout"].name == "left.png"
@@ -118,3 +118,25 @@ def test_the_switch_can_also_be_flipped_for_every_version(tmp_path, monkeypatch)
     assert sc.cutouts == ["left"]
     sc, _ = draw(tmp_path, {"cutout_in_graph": True})      # a version's own setting wins
     assert "cut_save" in sc.graphs[0]
+
+
+# --- the negative at cfg 1.0 (UNTESTED ON A CARD) ----------------------------------------------------------------------
+
+
+def test_zero_negative_changes_exactly_the_negative_nodes():
+    old = qwen_edit.angle_graph("in.png", PROMPT, 7, "p", lora_strength=0.8)
+    new = qwen_edit.angle_graph("in.png", PROMPT, 7, "p", lora_strength=0.8, zero_negative=True)
+    changed = {k for k in old if k not in new or new[k] != old[k]}
+    assert changed == {"neg", "negr"} and set(new) == set(old) - {"neg"}
+    assert new["negr"] == {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["posr", 0]}}
+    assert new["ks"] == old["ks"] and new["ks"]["inputs"]["negative"] == ["negr", 0] and old["ks"]["inputs"]["cfg"] == 1.0
+    assert new["pos"] == old["pos"] and new["posr"] == old["posr"]
+
+
+def test_zero_negative_is_a_setting_and_the_default_graph_is_untouched(tmp_path):
+    sc, _ = draw(tmp_path, {})
+    assert sc.graphs[0]["negr"]["class_type"] == "ConditioningZeroOut" and "neg" not in sc.graphs[0]
+    sc, _ = draw(tmp_path, {"zero_negative": False, "cutout_in_graph": False})
+    assert sc.graphs[0] == qwen_edit.angle_graph("in.png", qwen_edit.view_prompt("left", ""), 7, "vgac/a/turnaround/v/left_7", lora_strength=0.9)
+    # the bake-off's graph builder is still compared with the unchanged default (tests/test_graphs.py)
+    assert qwen_edit.angle_graph("i", "p", 1, "x")["neg"]["class_type"] == "TextEncodeQwenImageEditPlus"

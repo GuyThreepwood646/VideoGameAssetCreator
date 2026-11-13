@@ -210,6 +210,18 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
 CUTOUT_IN_VIEW_GRAPH = True
 
 
+# UNTESTED ON A CARD (docs/SPEED-AUDIT.md O7). True: the view graph's negative is the positive with zeroed values, not a
+# second pass of the picture through the text encoder (the sampler runs at cfg 1.0 and never uses the negative: the
+# evidence is quoted at graphs/qwen_edit.angle_graph). False, or `zero_negative: false` in a version's settings: as
+# before. metrics.zero_negative records which a version used.
+ZERO_NEGATIVE = True
+
+
+def zero_negative_on(sc: StageContext) -> bool:
+    chosen = (getattr(getattr(sc, "version", None), "params", None) or {}).get("zero_negative")
+    return ZERO_NEGATIVE if chosen is None else bool(chosen)
+
+
 def cutout_in_graph(sc: StageContext) -> bool:
     chosen = (getattr(getattr(sc, "version", None), "params", None) or {}).get("cutout_in_graph")
     return CUTOUT_IN_VIEW_GRAPH if chosen is None else bool(chosen)
@@ -223,13 +235,14 @@ async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, 
     on = {"instance": instance} if instance else {}
     if cutout_in_graph(sc):
         graph = angle_cutout_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
-                                   lora_strength=lora_strength)
+                                   lora_strength=lora_strength, zero_negative=zero_negative_on(sc))
         entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span, **on)
         raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
         await sc.download_image(entry, CUT_NODE, sc.dir / f"{name}.png", **on)
         res = await sc.finish_cutout(sc.dir / f"{name}.png")
         return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
-    graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength)
+    graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength,
+                        zero_negative=zero_negative_on(sc))
     entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
     raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
     res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3, **on)
@@ -750,7 +763,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             addons.append({"id": METHOD_ADDON[m][0], "value": lora_strength if m == "standard" else METHOD_STRENGTH,
                            "required": m == "standard"})
     sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method,
-                   cutout_in_view_graph=cutout_in_graph(sc))
+                   cutout_in_view_graph=cutout_in_graph(sc), zero_negative=zero_negative_on(sc))
     _publish_views(sc, results)
 
 

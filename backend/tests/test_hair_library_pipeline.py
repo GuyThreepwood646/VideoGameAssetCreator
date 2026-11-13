@@ -396,7 +396,7 @@ GOLDEN_OFF = {
                    # turn_method (how the views were turned) was added later, on 2026-11-06, for every turnaround;
                    # cards (which cards drew the views, and why one or two) on 2026-11-13.
                    "metrics": ["addons", "cards", "consistency_ok", "cutout_in_view_graph", "flagged_views", "models", "recipe", "supplied_views",
-                               "turn_method", "views", "views_passed", "views_total"],
+                               "turn_method", "views", "views_passed", "views_total", "zero_negative"],
                    "params": ["auto_reroll", "lora_strength", "lora_strength_source", "seed", "supplied_views",
                               "turn_method", "views"]}}
 
