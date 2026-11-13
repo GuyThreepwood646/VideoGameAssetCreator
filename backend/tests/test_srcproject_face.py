@@ -284,3 +284,22 @@ def test_a_failed_upscale_is_said_and_shown_as_a_warning() -> None:
     assert prep.upscale_check(None) is None
     checks = prep.prep_checks({}, {}, {"srcproject_upscale": fail}, "humanoid", None)
     assert any(ch["name"] == "pictures_sharpened" and not ch["passed"] for ch in checks)
+
+
+def test_the_fill_stays_inside_its_own_area_when_there_is_one() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    x, y = atlas.pos[:, 0], atlas.pos[:, 1]
+    base = np.full((T, T, 3), 0.45)
+    alpha = (x < 0.0).astype(np.float64)
+    paint = np.tile(SKIN, (atlas.idx.size, 1))
+    face_w = (np.hypot(x, y) < 0.3).astype(np.float64)
+    box = ((np.abs(x - 0.1) < 0.08) & (np.abs(y) < 0.08)).astype(np.float64)
+    info: dict = {}
+    zt = {"face": face_w, "keep": np.zeros(atlas.idx.size, dtype=bool), "fill": box}
+    new = srcproject.finish(atlas, base, paint, alpha, zt, info).reshape(-1, 3)[atlas.idx]
+    plain = srcproject.finish(atlas, base, paint, alpha).reshape(-1, 3)[atlas.idx]
+    inner = ~atlas.is_gut
+    assert np.abs(new[(box > 0) & inner] - SKIN).max() < 0.05
+    rim = (face_w > 0) & (box == 0) & (alpha < 0.5) & inner  # the rest of the face keeps the old colour, as before
+    assert np.allclose(new[rim], plain[rim])
