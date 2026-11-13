@@ -127,3 +127,73 @@ def test_the_front_turn_comes_from_the_first_frontal_picture() -> None:
     assert srcproject.front_turn(f, 5.0) == (-2.5, "front")
     f["front"].ok = False
     assert srcproject.front_turn(f, 5.0) == (5.0, "head")  # a three-quarter picture is not a front
+
+
+SKIN = np.array([0.82, 0.62, 0.52])
+
+
+def test_unpainted_face_texels_take_the_painted_skin_tone() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    x, y = atlas.pos[:, 0], atlas.pos[:, 1]
+    base = np.full((T, T, 3), 0.45)
+    flat = base.reshape(-1, 3)
+    eye = (np.hypot(x - 0.12, y - 0.05) < 0.06)  # a dark feature of the model's own colour, right of the middle
+    flat[atlas.idx[eye]] = (0.1, 0.08, 0.06)
+    alpha = (x < 0.0).astype(np.float64)  # the picture painted the left half only, in skin
+    paint = np.tile(SKIN, (atlas.idx.size, 1)) * (1 + 0.02 * np.sin(40 * y))[:, None]
+    face_w = (np.hypot(x, y) < 0.3).astype(np.float64)
+    hair = (y > 0.2) & (np.abs(x) < 0.1)  # the model's hair inside the face region: never filled
+    zt = {"face": face_w, "keep": hair}
+    info: dict = {}
+    new = srcproject.finish(atlas, base, paint, alpha, zt, info).reshape(-1, 3)[atlas.idx]
+    plain = srcproject.finish(atlas, base, paint, alpha).reshape(-1, 3)[atlas.idx]
+    inner = ~atlas.is_gut
+    assert np.abs(new[eye & inner] - SKIN).max() < 0.05  # the model's own eye is gone under skin
+    assert np.abs(plain[eye & inner] - SKIN).max() > 0.3  # (it stayed before)
+    assert np.allclose(new[hair & inner & (alpha < 0.5)], plain[hair & inner & (alpha < 0.5)])
+    out = (face_w == 0) & inner
+    assert np.allclose(new[out], plain[out])
+    assert info["fill"][eye & inner].min() > 0.99 and info["fill"][alpha > 0.5].max() == 0.0
+
+
+def test_skin_comes_from_the_model_when_the_face_was_not_painted() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    x, y = atlas.pos[:, 0], atlas.pos[:, 1]
+    base = np.full((T, T, 3), 0.0)
+    flat = base.reshape(-1, 3)
+    flat[atlas.idx] = SKIN
+    eye = np.hypot(x - 0.12, y - 0.05) < 0.05
+    flat[atlas.idx[eye]] = (0.1, 0.08, 0.06)
+    alpha = np.zeros(atlas.idx.size)
+    zt = {"face": (np.hypot(x, y) < 0.3).astype(np.float64), "keep": np.zeros(atlas.idx.size, dtype=bool)}
+    new = srcproject.finish(atlas, base, np.zeros((atlas.idx.size, 3)), alpha, zt).reshape(-1, 3)[atlas.idx]
+    assert np.abs(new[eye & ~atlas.is_gut] - SKIN).max() < 0.05
+
+
+def head_view(z: np.ndarray, img: np.ndarray, region: np.ndarray) -> tuple[dict, dict, face.Camera]:
+    S = z.shape[0]
+    ys, xs = np.where(region)
+    info = {"region": region, "skin": list(face.to_lab(SKIN[None, None])[0, 0]), "nose": (S // 2, S // 2 + 10),
+            "box": (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())), "width_px": float(xs.max() - xs.min())}
+    view = {"image": img, "mask": np.isfinite(z), "raster": {"z": z}}
+    return view, info, face.Camera(target=np.zeros(3), yaw_deg=0.0, scale=0.25, size=S)
+
+
+def test_glasses_and_hair_keep_their_colour() -> None:
+    S = 256
+    Y, X = np.mgrid[0:S, 0:S] + 0.5
+    head = np.hypot(X - S / 2, (Y - S / 2) / 1.3) < 100
+    z = np.where(head, 0.0, np.inf)
+    lens = np.hypot(X - 95, Y - 120) < 22  # a solid lens 1 cm in front of the face
+    z = np.where(lens, -0.01, z)
+    region = head & (Y > 70)
+    img = np.where(head[..., None], SKIN, 0.25)
+    img = np.where((head & (Y <= 70))[..., None], np.array([0.15, 0.1, 0.05]), img)  # dark hair on top
+    view, info, cam = head_view(z, img, region)
+    keep = srcproject.never_skin(view, info, cam)
+    assert keep[lens].mean() > 0.95
+    assert keep[head & (Y <= 60)].mean() > 0.95  # the hair
+    other_eye = np.hypot(X - 161, Y - 120) < 15
+    assert keep[other_eye].mean() == 0.0  # bare skin around the other eye is free to fill
