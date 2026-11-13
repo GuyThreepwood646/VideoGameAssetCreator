@@ -47,3 +47,7 @@ docs/*
 !docs/BUILD-THE-EXE.md
 !docs/images/
 bakeoff/BAKEOFF.md
+
+# Working logs and reviews stay on the owner's computer
+/STATUS.md
+/REVIEW.md
