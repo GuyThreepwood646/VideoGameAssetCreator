@@ -100,6 +100,8 @@ TURN_VIEWS = ("quarter", SECOND_QUARTER, "left", "right", "back")
 OFF_FACE_VIEWS = ("left", "right", "back")   # views that never paint the face region (item 5)
 FACE_ZONE_N = 1024        # size of the head picture the face region is found on
 FACE_ZONE_FEATHER = 0.02  # of that picture: how far past the face region's edge the side views fade back in
+GLASSES_JUMP_M = 0.004    # a step in depth of this much inside the face is the rim of a solid piece in front of it (glasses)
+SKIN_TOL = 14.0           # Lab distance (lightness half) from the painted face's middle colour that still counts as skin
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
@@ -816,9 +818,36 @@ def surface_correction(atlas: Atlas, delta: np.ndarray, alpha: np.ndarray, cell:
     return corr, np.clip(face.smoothstep(0.03, 0.4, face._trilinear(frac, fc)), 0, 1)
 
 
-def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+def skin_tone(atlas: Atlas, kept: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray]) -> np.ndarray:
+    """A plain skin colour for every texel, from the painted skin of the face beside it: the painted texels of the face
+    region whose colour is within SKIN_TOL of the painted face's middle colour (eyes, brows, lips and hair are not),
+    spread along the surface (surface_correction), and their middle colour where none is near. When too little of the
+    face was painted, the model's own face colour gives it the same way."""
+    fz = zt["face"]
+    base_ok = (fz > 0.3) & ~atlas.is_gut & ~zt["keep"]
+    painted = base_ok & (alpha > 0.5)
+    col, cand = (paint, painted) if painted.sum() >= 50 else (kept, base_ok)
+    if cand.sum() < 10:
+        return kept
+    lab = face.to_lab(col[cand][None])[0]
+    mid = np.median(lab, axis=0)
+    near = np.linalg.norm((lab - mid) * np.array([0.5, 1.0, 1.0]), axis=1) < SKIN_TOL
+    ci = np.flatnonzero(cand)[near] if near.sum() >= 10 else np.flatnonzero(cand)
+    ref = np.median(col[ci], axis=0)
+    wsel = np.zeros(alpha.shape)
+    wsel[ci] = 1.0
+    field, reach = surface_correction(atlas, np.where(wsel[:, None] > 0, col, 0.0), wsel)
+    return np.clip(field * reach[:, None] + ref[None] * (1 - reach[:, None]), 0, 1)
+
+
+def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray] | None = None,
+           out_info: dict[str, Any] | None = None) -> np.ndarray:
     """The new atlas: painted texels take the painted colour; the others keep base with its low frequencies shifted to agree
-    with the painted colour near them; the islands are then grown into the gutter."""
+    with the painted colour near them; the islands are then grown into the gutter. With the face region (zt, from
+    zone_texels), what no picture painted inside the face takes a plain skin tone from the painted skin beside it
+    (skin_tone) instead of the model's own colour, so none of the model's own features is left beside a painted one
+    (docs/AFTER-TEST-CHANGES.md D2 item 7); the model's hair and glasses there (zt["keep"]) keep their colour.
+    out_info gets "fill": each texel's share of skin."""
     T = atlas.T
     if atlas.is_gut.any():  # a border texel the views do not reach takes its island neighbour's painted colour
         need = atlas.is_gut & (alpha < 0.5) & (alpha[atlas.src] >= 0.5)
@@ -831,6 +860,14 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray)
     if sel.sum() > 100:
         corr, reach = surface_correction(atlas, np.where(sel[:, None], paint - kept, 0.0), np.where(sel, alpha, 0.0))
         out = np.clip(kept + corr * reach[:, None], 0, 1)
+    if zt is not None:
+        fw = zt["face"] * ~zt["keep"]
+        if (fw * (1 - alpha) > 0.5).any():
+            out = out * (1 - fw[:, None]) + skin_tone(atlas, kept, paint, alpha, zt) * fw[:, None]
+        else:
+            fw = np.zeros_like(alpha)
+        if out_info is not None:
+            out_info["fill"] = fw * (1 - alpha)
     out = out * (1 - alpha[:, None]) + paint * alpha[:, None]
     res = base.copy().reshape(-1, 3)
     res[atlas.idx] = np.clip(out, 0, 1)
@@ -857,7 +894,23 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
         return out
     r = max(2, int(round(FACE_ZONE_FEATHER * size)))
     out["weight"] = np.clip(face.blur(info["region"].astype(np.float64), r) * 2.0, 0.0, 1.0)
+    out["keep"] = never_skin(view, info, cam)
     return out
+
+
+def never_skin(view: dict[str, Any], info: dict[str, Any], cam: face.Camera) -> np.ndarray:
+    """Where the face region must keep the model's own colour rather than take a skin fill: the model's hair (the face
+    pass's face.hair_and_skin: hair-coloured surface joined to the hair above the face, so a fringe, sideburns and a
+    beard that joins them) and glasses (a solid piece in front of the face: what a ring of depth steps of GLASSES_JUMP_M
+    or more encloses). A moustache or beard not joined to the hair, or glasses whose rim is not a closed ring of steps,
+    are not found."""
+    seg = face.hair_and_skin(view["image"], view["image"], info, view["mask"])
+    px_m = cam.scale / cam.size
+    steps = depth_discontinuities(view["raster"]["z"], px_m, jump_px=GLASSES_JUMP_M / px_m)
+    ring = face.dilate_mask(steps, 2)
+    glasses = face.fill_holes(ring) & ~ring
+    glasses = face.dilate_mask(glasses, 3) & face.dilate_mask(info["region"], 4) if glasses.any() else glasses
+    return face.dilate_mask(seg["old_hair"], 2) | glasses
 
 
 def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -890,7 +943,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
     paint_, alpha_, dom = blend(atlas, projs, images, n_primary)
     extra: dict[str, Any] = {}
-    new = finish(atlas, tex, paint_, alpha_)
+    new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
             "fill": extra.get("fill")}
 
@@ -920,7 +973,11 @@ def zone_metrics(zone: dict[str, Any] | None, c: dict[str, Any]) -> dict[str, An
     zt = c.get("zone")
     m: dict[str, Any] = {"found": True, "head_yaw_deg": round(float(zone["cam"].yaw_deg), 1)}
     if zt is not None:
-        m["texels"] = int((zt["face"] > 0.5).sum())
+        face_ = zt["face"] > 0.5
+        m["texels"] = int(face_.sum())
+        m["kept_hair_or_glasses"] = round(float((zt["keep"] & face_).sum() / max(face_.sum(), 1)), 4)
+        if c.get("fill") is not None:
+            m["skin_filled"] = round(float(((c["fill"] > 0.5) & face_).sum() / max(face_.sum(), 1)), 4)
     return m
 
 
