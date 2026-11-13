@@ -117,6 +117,13 @@ SIDE_AGREE_MAX = 0.12     # of the face's width: how far a three-quarter head vi
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
 TURN_SIDE = {"quarter": 1, SECOND_QUARTER: -1, "left": 1, "right": -1}
+QUARTERS = ("quarter", SECOND_QUARTER)
+
+
+def other_quarter(built_from: str | None) -> str:
+    """The three-quarter view that is not the one the 3D model was built from (the mesh version's input_view: "quarter"
+    unless step 3 built from the second one, when the first lost the pose)."""
+    return "quarter" if built_from == SECOND_QUARTER else SECOND_QUARTER
 SIDE_MIN_TURN = 45.0
 BACK_MIN_TURN = 120.0
 
@@ -1390,13 +1397,15 @@ def front_turn(fitted: dict[str, View], head_yaw: float = 0.0) -> tuple[float, s
     return float(head_yaw), "head"
 
 
-def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, picture_view: View | None = None) -> dict[str, str]:
+def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, picture_view: View | None = None,
+                               built_from: str | None = None) -> dict[str, str]:
     """Refuse the drawn views whose fitted turn contradicts the front (docs/AFTER-TEST-CHANGES.md D2 item 8): a back view
     fitted less than BACK_MIN_TURN from the front, a full side view less than SIDE_MIN_TURN from it, and of two views
     that belong on opposite sides (left and right; the two three-quarter views) but were fitted on the same side, the
     one on the side its partner belongs on. The three-quarter views take their sides from the picture the model was
     built from when that is a three-quarter view itself, 10 to 80 degrees from the front (the model was built from it, so
-    its side is the model's).
+    its side is the model's): the view it was drawn as (built_from, "quarter" unless the model was built from the second)
+    takes the picture's side, the other three-quarter view the other side.
     Each refused view gets "refused" and "turn_from_front_deg" in its info and ok False. Returns {view: reason}."""
     out: dict[str, str] = {}
     rel = {n: _signed(v.info["yaw"] - front_yaw) for n, v in fitted.items() if v.ok and n in TURN_VIEWS and "yaw" in v.info}
@@ -1405,7 +1414,9 @@ def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, pictur
     if picture_view is not None and picture_view.ok and not picture_view.info.get("front_view"):
         pr = _signed(picture_view.info["yaw"] - front_yaw)
         if 10.0 <= abs(pr) <= 80.0:
-            side["quarter"], side[SECOND_QUARTER] = (1, -1) if pr > 0 else (-1, 1)
+            sgn = 1 if pr > 0 else -1
+            mine = built_from if built_from in QUARTERS else "quarter"
+            side[mine], side[other_quarter(mine)] = sgn, -sgn
             anchored = True
 
     def refuse(n: str, why: str) -> None:
@@ -1440,7 +1451,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           pic_n: int | None = None, log: Callable[[str], None] | None = None,
-          keep: dict[str, Any] | None = None, head_yaw: float = 0.0) -> dict[str, Any]:
+          keep: dict[str, Any] | None = None, head_yaw: float = 0.0, built_from: str | None = None) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
@@ -1487,7 +1498,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
         # a drawn view fitted at a turn that contradicts the front is refused like one that does not fit (item 8)
         front_yaw, front_by = front_turn({**fitted, "picture": front}, head_yaw)
-        for n, why in refuse_contradicting_turns(fitted, front_yaw, front).items():
+        for n, why in refuse_contradicting_turns(fitted, front_yaw, front, built_from).items():
             if log:
                 log(f"view {n}: refused, {why}")
         infos = {"picture": front.info}
@@ -1503,7 +1514,14 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         # The three-quarter view from the other side stands where the built-from picture stands on its own side: ahead of
         # the full side views. As one of them it got a thin strip between the front and the side view, which took the
         # whole cheek (and painted the side view's own mouth beside the photo's).
-        other = fitted.get(SECOND_QUARTER)
+        other_name = other_quarter(built_from)
+        other = fitted.get(other_name)
+        if other_name != SECOND_QUARTER:
+            # built from the second three-quarter view: the first one is the other side's, and takes its weight
+            if other is not None:
+                other.weight = VIEW_WEIGHT[SECOND_QUARTER]
+            if fitted.get(SECOND_QUARTER) is not None:
+                fitted[SECOND_QUARTER].weight = VIEW_WEIGHT["quarter"]
         if views and other is not None and other.ok:
             views.append(other)
         body = bool(views)
@@ -1566,7 +1584,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             if v.name.startswith(HEAD_VIEW):  # its gates were set when it was fitted
                 return v.pic_aligned
             full = i < n_primary or mode == "full"
-            drawn = i >= n_primary or v.name == SECOND_QUARTER  # a view drawn from the picture, not the picture itself
+            drawn = i >= n_primary or v.name == other_name  # a view drawn from the picture, not the picture itself
             prepare_gates(v, {**GATES, "agree": False} if (drawn and full and not TURN_AGREE) else None)
             return v.pic_aligned if full else detail_only(v, DETAIL_TEXELS * pitch_px)
 
@@ -1611,7 +1629,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
                 out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
                 front_view: Path | str | None = None, pic_n: int | None = None,
                 log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None,
-                head_yaw: float = 0.0) -> dict[str, Any]:
+                head_yaw: float = 0.0, built_from: str | None = None) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -1628,7 +1646,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
               mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep,
-              head_yaw=head_yaw)
+              head_yaw=head_yaw, built_from=built_from)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -1789,6 +1807,11 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     sc.set_params(**{"source_project_mode": mode})
     base = current.get("base_color")
     picture = sc.lineage_file("input", ("mesh",)) or sc.lineage_file("cutout", ("concept",))
+    try:
+        mv = sc.stage_version("mesh")
+        built_from = ((mv.params or {}) if mv is not None else {}).get("input_view")
+    except Exception:  # noqa: BLE001  (no lineage to read: the first three-quarter view, as before)
+        built_from = None
     if base is None or picture is None:
         sc.set_metrics(srcproject_applied=False, srcproject_reason="no base colour or no picture to paint from")
         return current
@@ -1830,7 +1853,8 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         card_tok = None
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
-                                    front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw)
+                                    front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw,
+                                    built_from=built_from)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
