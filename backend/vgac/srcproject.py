@@ -111,6 +111,9 @@ SIDE_HEAD_TURN = (15.0, 80.0)  # turn from the face a three-quarter head view mu
 SIDE_HEAD_YAW = 40.0      # the turn from the face a three-quarter head view is seen from when its body fit gives none
 HEAD_HANDOVER = 0.1       # where a head view's weight reaches this, no whole-body fit paints (they hand over at the neck)
 SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this share is fitted again with one scale
+HEAD_FRAME_MARGIN = (0.03, 0.10)  # of the head picture's frame: a head view's weight is zero this close to the frame's edge,
+                                 # full from the second; and zero where its fit reaches past the frame (face.apply_alignment
+                                 # repeats the last row there: on the live W2-clothed run the bottom 18 mm of the neck)
 SIDE_AGREE_MAX = 0.12     # of the face's width: how far a three-quarter head view's own fit may put the eyes and mouth from
                           # where the front head view painted them before it is refused
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
@@ -1084,6 +1087,20 @@ def moved_points(pts: np.ndarray, a: dict[str, Any]) -> np.ndarray:
     return c + (pts - c) * np.array([a["sx"], a["sy"]]) + np.array([a["tx"], a["ty"]])
 
 
+def frame_weight(a: dict[str, Any], size: int) -> np.ndarray:
+    """(size, size) weight of a head picture moved by the alignment a (face.apply_alignment): 0 where the moved picture
+    takes its colour from outside the picture's own frame or within HEAD_FRAME_MARGIN[0] of its edge, 1 from
+    HEAD_FRAME_MARGIN[1] inward, so a head view never paints its picture's outermost rows."""
+    cx, cy = a["centre"]
+    p = np.arange(size) + 0.5
+    qx = cx + (p - cx - float(a["tx"])) / float(a["sx"])
+    qy = cy + (p - cy - float(a["ty"])) / float(a["sy"])
+    dx = np.minimum(qx, size - qx)
+    dy = np.minimum(qy, size - qy)
+    d = np.minimum(dy[:, None], dx[None, :])
+    return face.smoothstep(HEAD_FRAME_MARGIN[0] * size, HEAD_FRAME_MARGIN[1] * size, d) * (d > 0)
+
+
 def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, render: dict[str, Any], crop: dict[str, Any],
                    a: dict[str, Any], zone: dict[str, Any], body_px_m: float, pic_n0: int) -> View:
     """A head view: the picture's head (crop, framed by face.painted_head for cam) moved by the alignment a, painting the
@@ -1099,7 +1116,7 @@ def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, ren
     v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
     pos = face.interpolate(mesh["verts"], mesh["faces"], render["raster"])
     y0, y1 = zone["neck"]
-    v.zone_img = face.smoothstep(y0, y1, pos[..., 1]) * render["mask"]
+    v.zone_img = face.smoothstep(y0, y1, pos[..., 1]) * render["mask"] * frame_weight(a, S)
     v.size = S
     k = 0.5 * (float(a["sx"]) + float(a["sy"]))
     v.pic_px_m = 1.0 / float(crop["px_per_m"]) / max(k, 1e-6) * pic_n0 / float(PIC_N)

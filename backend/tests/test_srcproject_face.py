@@ -464,3 +464,20 @@ def test_the_projection_records_its_face_finder() -> None:
     assert r["metrics"]["srcproject_face_finder"] == {"finder": "none"}
     r = srcproject.paint(model(), soft_base(), picture(), mode="off", size=SIZE, picture_yaws=[0.0], min_iou=1.01)
     assert r["metrics"]["srcproject_face_finder"] == {"finder": "none"}  # also when every picture is refused
+
+
+def test_a_head_view_never_paints_its_pictures_outermost_rows() -> None:
+    S = 1000
+    a = {"sx": 0.88, "sy": 0.88, "tx": 0.0, "ty": 0.0, "centre": (500.0, 500.0)}  # shrunk: the edges reach past the frame
+    w = srcproject.frame_weight(a, S)
+    img = np.zeros((S, S))
+    img[-1, :] = 1.0  # the picture's last row, which face.apply_alignment repeats past the frame
+    moved = face.apply_alignment(img, a)
+    assert moved[-30:].max() > 0.9  # the repeated rows are there ...
+    assert w[moved > 0.5].max() == 0.0  # ... and get no weight
+    assert w[500, 500] == 1.0
+    edge = int(S * 0.5 - (S * 0.5 - srcproject.HEAD_FRAME_MARGIN[0] * S) * 0.88)  # 3 percent in from the frame
+    assert w[500, :edge].max() == 0.0
+    grown = {**a, "sx": 1.2, "sy": 1.2}  # enlarged: nothing reaches past the frame, only the margin
+    g = srcproject.frame_weight(grown, S)
+    assert g[500, 500] == 1.0 and 0.0 < g[500, 0] < 1.0  # its edge pixel takes colour 8 percent in: partly weighted
