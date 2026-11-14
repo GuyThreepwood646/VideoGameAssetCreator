@@ -87,6 +87,19 @@ def shoulder_row(opaque: np.ndarray) -> int:
     return int(0.2 * h)
 
 
+def _half_end(m: np.ndarray) -> float:
+    """The row (share of the figure's height) where the hair's width first falls under half of its width higher up (the
+    75th percentile over rows 5 to 16 percent). Unlike the lowest hair pixel it ignores single strands, so it says where the mass of the hair
+    stops."""
+    w = m.sum(axis=1).astype(float)
+    h = len(w)
+    plateau = float(np.percentile(w[int(.05 * h):int(.16 * h)], 75))
+    for y in range(int(.08 * h), int(ZONE * h)):
+        if w[y] < 0.5 * plateau:
+            return y / h
+    return ZONE
+
+
 def measure(path: Path | str) -> dict[str, Any] | None:
     fig = load_figure(path)
     if fig is None:
@@ -104,15 +117,19 @@ def measure(path: Path | str) -> dict[str, Any] | None:
     sil = float(opaque[rows].sum(axis=1).mean()) / h
     lo, hi = max(0, end - int(0.06 * h)), max(1, end - int(0.02 * h))
     band = float(m[lo:hi].sum(axis=1).mean()) / h if hi > lo else 0.0
-    return {"ok": True, "band": round(band, 4), "end": round(end / h, 4), "shoulder": round(sh / h, 4), "end_below_shoulder": round((end - sh) / h, 4),
+    return {"ok": True, "band": round(band, 4), "end": round(end / h, 4), "half_end": round(_half_end(m), 4), "shoulder": round(sh / h, 4), "end_below_shoulder": round((end - sh) / h, 4),
             "cover": round(cover, 4), "sil": round(sil, 4), "share": round(cover / max(1e-6, sil), 4),
             "area": round(float(m.sum()) / (h * h), 4), "hair": info, "_mask": m, "_rgb": rgb}
 
 
-# Limits, set on the stored step 2 sets (docs notes: validation table). end_gap: how much higher the back's hair ends than the
-# side views' average, as a share of the head-to-shoulder height. width_ratio: for loose hair (deep in both side views, so
-# not a ponytail or a braid), the hair's width just above its end in the back view over its depth in the side views: seen
-# from behind, loose hair is at least as wide as it is deep; a narrow column down the back is much less.
+# Limits, set on the stored step 2 sets (see the validation table in the work notes).
+# Loose hair (deep in both side views, so not a ponytail or a braid): where the mass of the hair stops (half_end) in the back
+# against the side views' average, as a share of the head-to-shoulder height. Backs judged consistent (5 sets of 2 women) stop
+# 0.045 to 0.092 LOWER than the sides'; the two backs the owner reported stop 0.065 and 0.075 HIGHER, so the limit sits between.
+# Also, the hair's width just above its end in the back over its depth in the side views: from behind loose hair is at least
+# as wide as it is deep; a narrow column down the back is much less.
+# Other hair (a ponytail, a braid): only a gross shortfall counts, by the lowest hair pixel: 0.25.
+LOOSE_END_GAP = 0.03
 MAX_END_GAP = 0.25
 MIN_WIDTH_RATIO = 0.8
 LOOSE_DEPTH = 0.06         # a side view's hair this deep (share of the figure's height, just above its end) is loose hair
@@ -139,10 +156,14 @@ def compare(back: Path | str, front: Path | str, left: Path | str, right: Path |
     sh = f["shoulder"]
     if sh < SHOULDER_MIN or min(lf["end"], rt["end"]) < sh - 0.015:
         return None   # short hair or none: nothing hangs to the shoulders
-    ref_end = (lf["end"] + rt["end"]) / 2
-    gap = (ref_end - bk["end"]) / sh
     depth = (lf["band"] + rt["band"]) / 2
-    ratio = bk["band"] / depth if min(lf["band"], rt["band"]) >= LOOSE_DEPTH else None
-    ok = gap <= MAX_END_GAP and (ratio is None or ratio >= MIN_WIDTH_RATIO)
-    return {"ok": ok, "end_gap": round(gap, 4), "width_ratio": None if ratio is None else round(ratio, 4),
-            "back_end": bk["end"], "side_end": round(ref_end, 4), "shoulder": sh, "back_width": bk["band"], "side_depth": round(depth, 4)}
+    loose = min(lf["band"], rt["band"]) >= LOOSE_DEPTH
+    if loose:
+        gap, limit = ((lf["half_end"] + rt["half_end"]) / 2 - bk["half_end"]) / sh, LOOSE_END_GAP
+    else:
+        gap, limit = ((lf["end"] + rt["end"]) / 2 - bk["end"]) / sh, MAX_END_GAP
+    ratio = bk["band"] / depth if loose else None
+    ok = gap <= limit and (ratio is None or ratio >= MIN_WIDTH_RATIO)
+    return {"ok": ok, "end_gap": round(gap, 4), "limit": limit, "width_ratio": None if ratio is None else round(ratio, 4),
+            "loose": loose, "back_end": bk["end"], "back_half_end": bk["half_end"], "shoulder": sh, "back_width": bk["band"],
+            "side_depth": round(depth, 4)}

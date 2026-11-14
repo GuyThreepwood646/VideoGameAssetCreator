@@ -74,7 +74,7 @@ def test_a_back_that_matches_the_sides_passes(tmp_path):
 def test_a_narrow_column_down_the_back_fails(tmp_path):
     res = _compare(_set(tmp_path, back_width=30))
     assert res is not None and res["ok"] is False and res["width_ratio"] < hair_sides.MIN_WIDTH_RATIO
-    assert res["end_gap"] <= hair_sides.MAX_END_GAP   # the length matched; the width did not
+    assert res["end_gap"] <= res["limit"]   # the length matched; the width did not
     c = turnaround.hair_check(res)
     assert c["ok"] is False and c["severity"] == "warn" and "narrow strip down the middle of the back" in c["help"]
 
@@ -83,7 +83,7 @@ def test_hair_that_stops_higher_up_the_back_fails(tmp_path):
     p = _set(tmp_path)
     _figure(p["back"], "back", end=62)
     res = _compare(p)
-    assert res is not None and res["ok"] is False and res["end_gap"] > hair_sides.MAX_END_GAP
+    assert res is not None and res["ok"] is False and res["end_gap"] > res["limit"]
     assert "shorter than the side views show it" in turnaround.hair_check(res)["help"]
 
 

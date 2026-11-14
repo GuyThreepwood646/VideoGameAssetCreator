@@ -88,12 +88,12 @@ def hair_check(res: dict[str, Any]) -> dict[str, Any]:
     if res["ok"]:
         text = "The hair in this back view is as long and as wide as the side views show it."
     else:
-        short = res["end_gap"] > hair_sides.MAX_END_GAP
-        what = ("is shorter than the side views show it: it stops higher up, at the neck" if short else
+        short = res["end_gap"] > res["limit"]
+        what = ("is shorter than the side views show it: it stops higher up, at the neck, where they show it falling to the shoulders" if short else
                 "is a narrow strip down the middle of the back, where the side views show it falling wider")
         text = (f"The hair in this back view {what}. The 3D model and its texture take the back of the hair from this "
                 "picture, so the hair would look different from behind. Draw this view again.")
-    return {"id": "hair_matches_sides", "ok": res["ok"], "value": res["end_gap"], "limit": hair_sides.MAX_END_GAP,
+    return {"id": "hair_matches_sides", "ok": res["ok"], "value": res["end_gap"], "limit": res["limit"],
             "width_ratio": res["width_ratio"], "severity": "warn", "help": text}
 
 
