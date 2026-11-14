@@ -116,7 +116,7 @@ def test_prep_decides_with_both_tests_and_records_them():
     assert r["face_remainder_deg"] == pytest.approx(0.0)   # they disagree: the decided turn is the basis
     checks = prep.prep_checks({}, {}, r, "humanoid", None)
     by = {c["name"]: c for c in checks}
-    assert not by["facing_tests"]["passed"] and by["facing"]["passed"]
+    assert not by["facing_tests"]["passed"] and "facing" not in by  # the old circular check is gone
     # a chosen turn is applied as chosen, and the two tests are still recorded
     chosen = prep.resolve_facing(CAT, 90, m, TOES_FRONT)
     assert chosen["face_yaw_applied"] == 90 and chosen["facing_source"] == "chosen" and chosen["face_tests_agree"] is False
@@ -126,7 +126,12 @@ def test_prep_without_toes_is_unchanged_and_adds_no_check():
     m = {"silhouette_offset": 180, "silhouette_sign": 1, "silhouette_iou": 0.78}
     r = prep.resolve_facing(CAT, "auto", m, {"found": False, "reason": "no"})
     assert r["face_yaw_applied"] == 180 and r["facing_source"] == "audit" and r["face_toes_found"] is False
-    assert "facing_tests" not in {c["name"] for c in prep.prep_checks({}, {}, r, "humanoid", None)}
+    # one test only: the check is there, as "not measured", never a pass; the outline's turn is named in it
+    c = {c["name"]: c for c in prep.prep_checks({}, {}, r, "humanoid", None)}["facing_tests"]
+    assert not c["passed"] and c["vars"]["measured"] is False and c["value"] == "not measured" and "fix" not in c
+    assert c["help"].startswith("Not measured: ") and "toes" in c["help"] and "180 degrees" in c["help"] and "no" in c["help"]
+    # a model with no toes test at all (not a person) has no facing check
+    assert "facing_tests" not in {c["name"] for c in prep.prep_checks({}, {}, r, "quadruped", None)}
 
 
 def test_the_remainder_after_the_quarter_turn_comes_from_the_feet():

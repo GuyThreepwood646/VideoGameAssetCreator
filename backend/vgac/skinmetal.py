@@ -12,6 +12,12 @@ the clean-up step right after the face pass, on the final layout, for humanoids:
 4. metal goes to 0 on the face triangles and on the skin-coloured texels of the joined skin triangles. Armour,
    helmets, jewellery and metal collars are other colours, or not joined to the face, and keep their metal.
 
+5. the rest of the body's bare skin (arms, hands, legs, torso, feet) is cleared the same way: skin-coloured texels (the
+   face's own skin colour, tightly) on pieces of skin that are either joined to the head's skin or large enough to be a
+   limb (BODY_MIN_AREA of the surface). A small skin-coloured piece (a bronze bracelet, a copper pendant) is not a limb
+   and keeps its metal. Left as it was (head and neck only) when the description names armour or metal clothing,
+   because bronze and copper armour sits close to a skin tone.
+
 The hair pass clears metal on hair and on skin-coloured texels near the hair (hair.clear_hair_metal); this is the
 rest of the skin. Skipped when the description makes the character itself metal (a robot, a golem, a statue).
 """
@@ -33,6 +39,24 @@ SKIN_TOLERANCE = 18.0  # weighted Lab distance to the face's skin colour (face.f
 SKIN_TRIANGLE_SHARE = 0.5  # a triangle is skin when at least this share of its texels is skin-coloured
 SKIN_RED_MIN = 6.0  # Lab a: skin is reddish; leather, steel and cloth hoods sit under it
 METAL_LIMIT = 0.5  # the measure: texels over this count as metal
+BODY_HUE_TOL = 22.0  # degrees: the body's skin has the face's hue (Lab angle of a and b), lit or in shadow
+BODY_CHROMA_MIN = 0.3  # of the face's colourfulness: greyer than this is not skin (grey cloth, steel)
+BODY_CHROMA_MAX = 1.8  # and redder or yellower than this is paint or cloth
+BODY_L_MIN = 8.0  # shadowed skin is dark: lower than this is black
+# When the builder marked the face itself as metal (BLANKET_SHARE of its skin), its metal map says nothing about the
+# character: it is metal everywhere (clothes, hair, skin, the shadow side). Then only small metal-looking pieces keep
+# their metal: grey or gold coloured, separate from each other, each smaller than KEEP_MAX_AREA of the surface
+# (earrings, glasses frames, buckles, a pendant). Large pieces (a whole jacket, a head of hair) are cleared.
+BLANKET_SHARE = 0.5
+KEEP_MAX_AREA = 0.015
+METAL_GREY_CHROMA = 14.0  # Lab chroma under this is grey (steel, silver, chrome)
+METAL_GOLD_HUE = (65.0, 105.0)  # Lab hue angle of gold and brass (skin is at about 45 to 60)
+METAL_GOLD_CHROMA = 22.0
+BODY_MIN_AREA = 0.004  # a piece of body skin not joined to the head is a limb when it covers this share of the surface
+# A description that puts metal on the body (armour, plate, mail, bronze or gold trim): the body's skin tone is then
+# not told from metal by colour, so only the head and neck are cleared.
+ARMOURED = re.compile(r"\b(armou?r(ed)?|plate|chain ?mail|mail|gauntlets?|greaves|cuirass|breastplate|bracers?|vambraces?|"
+                      r"pauldrons?|bronze|brass|copper|gold(en)?|silver|steel|iron|metal(lic)?)\b", re.I)
 # Descriptions where the character itself is metal: its skin keeps the builder's metal.
 METAL_BODY = re.compile(r"\b(robot|robotic|android|cyborg|golem|automaton|mech|clockwork|statue|"
                         r"(metal|metallic|steel|iron|bronze|golden|gold|silver|copper|brass)[ -](skin|skinned|body|bodied|face)|"
@@ -42,6 +66,11 @@ METAL_BODY = re.compile(r"\b(robot|robotic|android|cyborg|golem|automaton|mech|c
 def metal_body(description: str | None) -> bool:
     """Whether the description makes the character itself metal."""
     return bool(description and METAL_BODY.search(description))
+
+
+def armoured(description: str | None) -> bool:
+    """Whether the description puts metal on the body, so that only the head and neck are cleared."""
+    return bool(description and ARMOURED.search(description))
 
 
 def skin_like(lab: Any) -> bool:
@@ -81,9 +110,11 @@ def face_from_skin(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Any, 
     return {"found": True, "skin": [round(float(v), 2) for v in skin], "region": region, "nose": (int(ix), int(iy))}
 
 
-def skin_texels(mesh: dict[str, np.ndarray], base: np.ndarray, T: int) -> dict[str, Any] | None:
-    """The visible skin of the head and neck at texture size T. -> {ys, xs (texels), face_texels, skin_lab, region
-    (the texel region of the head and neck)} or None when no face is found."""
+def skin_texels(mesh: dict[str, np.ndarray], base: np.ndarray, T: int, body: bool = False) -> dict[str, Any] | None:
+    """The visible skin of the head and neck at texture size T, and with body the rest of the bare skin too.
+    -> {ys, xs (texels), face_texels, skin_lab, region (the texel region of the head and neck), body_texels,
+    body_pieces, body_small_pieces (skin-coloured pieces too small to be a limb, left alone)} or None when no face
+    is found."""
     head = face.find_head(mesh["verts"])
     if head is None:
         return None
@@ -127,8 +158,120 @@ def skin_texels(mesh: dict[str, np.ndarray], base: np.ndarray, T: int) -> dict[s
         frontier = nxt
     on_face = face_tris[reg["tri"]]
     take = on_face | (joined[reg["tri"]] & is_skin)
-    return {"ys": reg["ys"][take], "xs": reg["xs"][take], "face_texels": int(on_face.sum()), "skin_lab": skin.round(2).tolist(),
-            "region": reg}
+    ys, xs = reg["ys"][take], reg["xs"][take]
+    out = {"ys": ys, "xs": xs, "face_texels": int(on_face.sum()), "skin_lab": skin.round(2).tolist(), "region": reg,
+           "body_texels": 0, "body_pieces": 0, "body_small_pieces": 0, "head_texels": int(len(ys)),
+           "left_ys": np.zeros(0, dtype=np.int64), "left_xs": np.zeros(0, dtype=np.int64), "covered": None}
+    if body:
+        by, bx, info = body_skin(mesh, b, T, skin, joined, nb)
+        out.update(ys=np.concatenate([ys, by]), xs=np.concatenate([xs, bx]), **info)
+    return out
+
+
+def skin_hue(lab: np.ndarray, skin: np.ndarray) -> np.ndarray:
+    """Whether Lab colours (n,3) are the face's skin, lit or in shadow: the hue angle of a and b within BODY_HUE_TOL of the
+    face's, a colourfulness near it, and not black or white. Light changes the lightness of skin far more than its
+    hue, so a figure lit from one side (its shadow side is dark) still reads as skin. Gold and brass sit at a far more
+    yellow hue, and steel and silver are grey."""
+    sa, sb = float(skin[1]), float(skin[2])
+    c0 = max(float(np.hypot(sa, sb)), 1e-6)
+    h0 = np.degrees(np.arctan2(sb, sa))
+    chroma = np.hypot(lab[:, 1], lab[:, 2])
+    dh = np.abs((np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) - h0 + 180.0) % 360.0 - 180.0)
+    return ((dh <= BODY_HUE_TOL) & (chroma >= BODY_CHROMA_MIN * c0) & (chroma <= BODY_CHROMA_MAX * c0)
+            & (lab[:, 0] >= BODY_L_MIN) & (lab[:, 0] <= 94))
+
+
+def small_metal_pieces(mesh: dict[str, np.ndarray], base: np.ndarray, met: np.ndarray, T: int) -> np.ndarray:
+    """Texels of the small metal-looking pieces of a model whose metal map cannot be trusted (BLANKET_SHARE): triangles
+    whose texels are mostly grey or gold coloured and marked metal, joined through shared edges into pieces, the
+    pieces smaller than KEEP_MAX_AREA of the surface. -> bool (T, T) of the texels that keep their metal."""
+    n_tri = len(mesh["faces"])
+    v, f = mesh["verts"], mesh["faces"]
+    area = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    reg = hair.texel_region(mesh, T, np.ones(n_tri, dtype=bool))
+    lab = face.to_lab(np.clip(base[reg["ys"], reg["xs"]], 0, 1))
+    chroma = np.hypot(lab[:, 1], lab[:, 2])
+    hue = np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) % 360.0
+    colour = (chroma < METAL_GREY_CHROMA) | ((hue >= METAL_GOLD_HUE[0]) & (hue <= METAL_GOLD_HUE[1]) & (chroma >= METAL_GOLD_CHROMA))
+    cand = colour & (met[reg["ys"], reg["xs"]] > METAL_LIMIT)
+    total = np.bincount(reg["tri"], minlength=n_tri)
+    cnt = np.bincount(reg["tri"], weights=cand.astype(np.float64), minlength=n_tri)
+    tri = (total > 0) & (cnt >= SKIN_TRIANGLE_SHARE * np.maximum(total, 1))
+    nb = hair.triangle_neighbours(f, v)
+    piece = np.full(n_tri, -1, dtype=np.int64)
+    sizes: list[float] = []
+    for t0 in np.nonzero(tri)[0]:
+        if piece[t0] >= 0:
+            continue
+        k = len(sizes)
+        piece[t0] = k
+        stack, a = [int(t0)], 0.0
+        while stack:
+            t = stack.pop()
+            a += float(area[t])
+            for u in nb[t]:
+                if tri[u] and piece[u] < 0:
+                    piece[u] = k
+                    stack.append(int(u))
+        sizes.append(a)
+    keep = np.zeros((T, T), dtype=bool)
+    if not sizes:
+        return keep
+    small = np.asarray(sizes) < KEEP_MAX_AREA * float(area.sum())
+    in_piece = piece[reg["tri"]]
+    take = cand & (in_piece >= 0) & small[np.maximum(in_piece, 0)]
+    keep[reg["ys"][take], reg["xs"][take]] = True
+    return keep
+
+
+def body_skin(mesh: dict[str, np.ndarray], base: np.ndarray, T: int, skin: np.ndarray, joined: np.ndarray,
+              nb: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """The skin-coloured texels of the pieces of body skin outside the head and neck. A piece (triangles joined through
+    shared edges, most of whose texels are skin-coloured) counts when it is joined to the head's skin or covers
+    BODY_MIN_AREA of the model's surface. -> (ys, xs, {body_texels, body_pieces, body_small_pieces})."""
+    n_tri = len(mesh["faces"])
+    v, f = mesh["verts"], mesh["faces"]
+    area = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    reg = hair.texel_region(mesh, T, ~joined)
+    lab = face.to_lab(np.clip(base[reg["ys"], reg["xs"]], 0, 1))
+    is_skin = skin_hue(lab, skin)
+    total = np.bincount(reg["tri"], minlength=n_tri)
+    skin_count = np.bincount(reg["tri"], weights=is_skin.astype(np.float64), minlength=n_tri)
+    skin_tri = (total > 0) & (skin_count >= SKIN_TRIANGLE_SHARE * np.maximum(total, 1)) & ~joined
+    # the pieces: skin triangles joined through shared edges
+    piece = np.full(n_tri, -1, dtype=np.int64)
+    sizes: list[float] = []
+    touches_head: list[bool] = []
+    for t0 in np.nonzero(skin_tri)[0]:
+        if piece[t0] >= 0:
+            continue
+        k = len(sizes)
+        piece[t0] = k
+        stack, a, head = [int(t0)], 0.0, False
+        while stack:
+            t = stack.pop()
+            a += float(area[t])
+            for u in nb[t]:
+                if joined[u]:
+                    head = True
+                elif skin_tri[u] and piece[u] < 0:
+                    piece[u] = k
+                    stack.append(int(u))
+        sizes.append(a)
+        touches_head.append(head)
+    if not sizes:
+        left = is_skin
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), {"body_texels": 0, "body_pieces": 0, "body_small_pieces": 0,
+                                                                          "left_ys": reg["ys"][left], "left_xs": reg["xs"][left], "covered": reg["covered"]}
+    sizes_a = np.asarray(sizes)
+    keep = np.asarray(touches_head) | (sizes_a >= BODY_MIN_AREA * float(area.sum()))
+    in_piece = piece[reg["tri"]]
+    take = is_skin & (in_piece >= 0) & keep[np.maximum(in_piece, 0)]
+    left = is_skin & ~take  # skin-coloured, but on a piece too small to be a limb or not on a skin piece at all
+    return reg["ys"][take], reg["xs"][take], {"body_texels": int(take.sum()), "body_pieces": int(keep.sum()),
+                                              "body_small_pieces": int((~keep).sum()),
+                                              "left_ys": reg["ys"][left], "left_xs": reg["xs"][left], "covered": reg["covered"]}
 
 
 def clear(glb: Path | str, maps: dict[str, Path], category: str | None, description: str | None, out_dir: Path) -> dict[str, Any]:
@@ -151,7 +294,8 @@ def clear(glb: Path | str, maps: dict[str, Path], category: str | None, descript
             else:
                 T = met.shape[0]
                 base = face.read_rgb(maps["base_color"])
-                found = skin_texels(mesh, base, T)
+                with_body = not armoured(description)
+                found = skin_texels(mesh, base, T, body=with_body)
                 if found is None:
                     rec["skipped"] = "no face found"
                 else:
@@ -161,11 +305,32 @@ def clear(glb: Path | str, maps: dict[str, Path], category: str | None, descript
                     out[ys, xs] = 0.0
                     written = np.zeros((T, T), dtype=bool)
                     written[ys, xs] = True
-                    out = hair.spill(out, written, found["region"]["covered"] & ~written)
-                    rec.update(ran=True, skin_texels=int(len(ys)), face_texels=found["face_texels"],
+                    written_skin = written.copy()
+                    covered = found["region"]["covered"] | found["covered"] if found.get("covered") is not None else found["region"]["covered"]
+                    head_before = before[: found["head_texels"]]  # the head and neck: the part that is certainly not metal
+                    share = float((head_before > METAL_LIMIT).mean()) if len(head_before) else 0.0
+                    rec["blanket"] = bool(with_body and share >= BLANKET_SHARE)
+                    if rec["blanket"]:
+                        # metal everywhere: nothing in the map is evidence. Clear it all but the small metal-looking pieces.
+                        keep = small_metal_pieces(mesh, base, met, T)
+                        every = hair.texel_region(mesh, T, np.ones(len(mesh["faces"]), dtype=bool))["covered"]
+                        wipe = every & (met > 0.0) & ~keep
+                        out[wipe] = 0.0
+                        written |= wipe
+                        covered = covered | every
+                        rec["kept_metal_texels"] = int((keep & (met > METAL_LIMIT)).sum())
+                        rec["blanket_cleared_texels"] = int((wipe & (met > METAL_LIMIT)).sum())
+                    out = hair.spill(out, written, covered & ~written)
+                    left = out[found["left_ys"], found["left_xs"]]  # after the clearing: what is left on small skin-coloured pieces
+                    changed = int((before > 0.0).sum()) + (int((wipe & ~written_skin).sum()) if rec["blanket"] else 0)
+                    rec.update(ran=True, skin_texels=int(len(ys)), face_texels=found["face_texels"], body=with_body,
+                               left_skin_coloured=int(len(left)), left_metal=int((left > METAL_LIMIT).sum()),
+                               skin_coloured_texels=int(len(left)) + int(found["body_texels"]) + int(found["head_texels"]),
+                               body_texels=found["body_texels"], body_pieces=found["body_pieces"],
+                               body_small_pieces=found["body_small_pieces"],
                                metal_before=round(float(before.mean()), 3) if len(before) else 0.0,
-                               metal_share_before=round(float((before > METAL_LIMIT).mean()), 4) if len(before) else 0.0,
-                               metal_after=0.0, texels_changed=int((before > 0.0).sum()))
+                               metal_share_before=round(share, 4), metal_share_before_all=round(float((before > METAL_LIMIT).mean()), 4) if len(before) else 0.0,
+                               metal_after=0.0, texels_changed=changed)
                     if rec["texels_changed"]:
                         out_dir = Path(out_dir)
                         out_dir.mkdir(parents=True, exist_ok=True)

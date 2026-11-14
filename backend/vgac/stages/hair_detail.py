@@ -195,8 +195,11 @@ def room_note(hd: dict[str, Any]) -> str:
 # --- the pass ------------------------------------------------------------------------------------------------------
 
 
-async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    """Step 1, before the face pass. Returns {plan: {points (Path), gain} or None, record (metrics so far), found}."""
+async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],
+               skin_metal: float | None = None) -> dict[str, Any]:
+    """Step 1, before the face pass. Returns {plan: {points (Path), gain} or None, record (metrics so far), found}.
+    skin_metal: the share of the face's skin the 3D builder marked as metal (skinmetal.clear), which says whether a metal
+    crown means a helmet."""
     t0 = time.time()
     reason = skip_reason(sc.asset.category, rec, params)
     if reason:
@@ -209,7 +212,7 @@ async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     seed = seed_of(params, sc.asset.id)
     sc.progress(0.72, "Finding the hair")
     try:
-        found = await asyncio.to_thread(hair.find_hair, glb, Path(base), maps.get("metallic"), pictures(sc), seed)
+        found = await asyncio.to_thread(hair.find_hair, glb, Path(base), maps.get("metallic"), pictures(sc), seed, skin_metal=skin_metal)
     except Exception as e:  # noqa: BLE001  (never fails the clean-up step)
         return {"plan": None, "record": {"ran": False, "skipped": "error", "error": str(e)[:300]}, "t0": t0}
     measures = {k: v for k, v in found.items() if k not in ("tris", "centres", "tri_label", "found", "reason", "hair_i", "skin_i")}

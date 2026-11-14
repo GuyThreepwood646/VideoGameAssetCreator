@@ -23,7 +23,6 @@ SAMPLES = {
     "watertight": ((0, 4), (90, 4)),
     "degenerate_faces": ((0, 0), (3, 0)),
     "size_m": ((1.8, 1.8), (1.2, 1.8)),
-    "facing": ((0, 0), (90, 0)),
     "facing_tests": ((5, 60), (179, 60)),
     "uv_set": ((1, 1), (0, 1)),
     "lod_count": ((4, 4), (2, 4)),
@@ -99,6 +98,8 @@ SAMPLES = {
     "hair_triangles": ((19800, 20000), (21500, 20000)),
     "hair_bound": ((1.0, 1.0), (0.8, 1.0)),
     "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
+    "skin_not_metal": ((0.0, 0.05), (0.4, 0.05)),
+    "picture_projection": ((0.8, None), ("refused", None)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }
 
@@ -294,11 +295,6 @@ def test_facing_turns():
     assert quality.best_turn(90, 1) == 270 and quality.best_turn(345, 1) == 15 and quality.best_turn(150, -1) == 30
     assert quality.auto_turn(15) == 0 and quality.auto_turn(270) == 270 and quality.auto_turn(255) == 270
     assert quality.auto_turn(30) == 0 and quality.auto_turn(None) == 0
-    assert quality.facing_check(30, 0)["passed"]
-    bad = quality.facing_check(60, 0)
-    assert not bad["passed"] and bad["fix"] == {"stage": "prep", "params": {"face_yaw": 90}, "label": "Turn it to face forward"}
-    assert bad["help"] == "The model may face the wrong way: it matches the front picture best when turned 60 degrees."
-    assert quality.facing_check(270, 270)["help"] == "The front of the model faces forward in the game."
 
 
 def test_prep_resolves_size_and_facing():
@@ -328,7 +324,7 @@ def test_prep_resolves_size_and_facing():
                                     {"face_best_turn": 0, "face_yaw_applied": 180}, "quadruped", 20000)
     by = {c["name"]: c for c in checks}
     assert by["size_m"]["passed"] and by["size_m"]["help"] == "The model is 1.5 m long, as intended."
-    assert not by["facing"]["passed"] and by["facing"]["fix"]["params"] == {"face_yaw": 0}
+    assert "facing" not in by and "facing_tests" not in by  # no second test for a four-legged model, and no circular check
     # An old version with only height_m is judged on the height.
     old = prep_stage.prep_checks({"dims_m": [0.42, 1.49, 1.2]}, {"height_m": 1.2}, {}, "quadruped", None)
     assert old[0]["passed"] and old[0]["help"] == "The model is 1.2 m tall, as intended."

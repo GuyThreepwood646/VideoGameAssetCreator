@@ -363,22 +363,35 @@ def save_comparison(result: dict[str, Any], dest: Path | str) -> Path | None:
 
 
 def fidelity_checks(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """texture_sharp and texture_colour_matches_picture from a score() result. Nothing is returned when the render did
-    not line up with the picture (silhouette IoU under IOU_FIT_MIN) or has no overlap: a wrong fit would blame the texture
-    for a misregistration. Both checks are severity warn, so they are shown and never block a run."""
+    """texture_sharp and texture_colour_matches_picture from a score() result. When the render did not line up with the
+    picture (silhouette IoU under IOU_FIT_MIN), has no overlap, or could not be made, a wrong fit would blame the
+    texture for a misregistration, so neither number is judged; both checks come back as "not measured"
+    (quality.not_measured) with the reason, never silently missing. Both are severity warn, so they are shown and never
+    block a run."""
     from . import quality
 
+    names = (("texture_sharp", "how sharp the colour texture is"),
+             ("texture_colour_matches_picture", "whether the colours match the picture"))
     if result.get("error") or not result.get("fit_ok"):
-        return []
+        iou = result.get("silhouette_iou")
+        why = ("the model could not be drawn from the picture's side to compare with it" if result.get("error")
+               else "the model drawn from the picture's side did not line up with the picture"
+                    + (f" (outline overlap {float(iou):.2f}, it needs {IOU_FIT_MIN:.2f})" if iou is not None else "")
+                    + ", so any difference would be the fit's fault, not the texture's")
+        return [quality.not_measured(i, what, why) for i, what in names]
     out: list[dict[str, Any]] = []
     ratio = result.get("sharpness_ratio")
     if ratio is not None:
         out.append(quality.check("texture_sharp", ratio >= SHARP_RATIO_MIN, ratio, SHARP_RATIO_MIN,
                                  vars={"ssim": result.get("ssim"), "iou": result.get("silhouette_iou")}))
+    else:
+        out.append(quality.not_measured(names[0][0], names[0][1], "the picture and the model had no overlap to compare"))
     de = result.get("delta_e")
     if de is not None:
         out.append(quality.check("texture_colour_matches_picture", de <= DELTA_E_MAX, de, DELTA_E_MAX,
                                  vars={"delta_l": result.get("delta_l"), "delta_chroma": result.get("delta_chroma")}))
+    else:
+        out.append(quality.not_measured(names[1][0], names[1][1], "the picture and the model had no overlap to compare"))
     return out
 
 

@@ -99,13 +99,19 @@ def test_checks_pass_and_fail_report_only(base):
     assert not quality.summarise(bad)["gate_ok"] or all(c["severity"] == "warn" for c in bad)
 
 
-def test_no_checks_when_the_fit_is_poor(base):
+def test_not_measured_checks_when_the_fit_is_poor(base):
     d, tex, glb, pic = base
     half = pic.copy()
     half[:, : half.shape[1] // 2, 3] = 0  # half the silhouette missing
     r = _score(glb, half)
-    assert texfidelity.fidelity_checks({**r, "fit_ok": False}) == []
-    assert texfidelity.fidelity_checks({"error": "x"}) == []
+    for res in ({**r, "fit_ok": False}, {"error": "x"}):
+        got = texfidelity.fidelity_checks(res)
+        # never silently missing and never a pass
+        assert {c["id"] for c in got} == {"texture_sharp", "texture_colour_matches_picture"}
+        assert all(not c["passed"] and c["vars"]["measured"] is False and c["help"].startswith("Not measured:") and "fix" not in c
+                   for c in got)
+    assert "line up" in texfidelity.fidelity_checks({**r, "fit_ok": False})[0]["help"]
+    assert "could not be drawn" in texfidelity.fidelity_checks({"error": "x"})[0]["help"]
 
 
 def test_checks_for_never_raises(tmp_path):

@@ -86,7 +86,8 @@ FACE_HELD_STOP_REASON = (
     "accurate face. Look at the clean-up step (step 4); you can try it again, or use a clearer picture of the face looking "
     "straight at the camera; or press Resume to carry on as it is.")
 STOP_AND_ASK: tuple[tuple[str, str, Any, str], ...] = (
-    ("prep", "facing_tests", lambda c: True, FACING_STOP_REASON),
+    # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
+    ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, FACING_STOP_REASON),
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
 )
 

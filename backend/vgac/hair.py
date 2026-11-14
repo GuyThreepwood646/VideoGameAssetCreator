@@ -167,6 +167,11 @@ SEPARATION_MIN = 14.0  # hair's colour against skin and against the nearest othe
 CROWN_SHARE_MIN = 0.55  # share of the crown in the hair colour group: under it the top of the head is not one colour
 HELMET_METAL = 0.6  # median metallic of a colourless crown above this: a helmet
 HELMET_CHROMA = 12.0  # Lab chroma under this is grey (steel, silver)
+# Black hair is grey too (Lab chroma 0 to 2) and the 3D builder often marks it metal: of 12 stored builds the hair pass
+# stood back from as "helmet", every one was hair (black, dark brown, silver). Steel is lighter than black hair, and a
+# builder that marked the face itself as metal marked everything, so a metal crown says nothing then.
+HELMET_L_MIN = 30.0  # median Lab lightness of a helmet's crown: under this it is black or dark hair
+HELMET_SKIN_METAL_MAX = 0.5  # share of the face's skin marked metal above which the metal map is not evidence of a helmet
 REACH_BELOW = 0.42  # hair reaching lower than this share of the height from the top joins the clothing (a cloak, a hood)
 BODY_SHARE_MAX = 1.0  # hair surface below the shoulders against hair surface on the head: more is clothing
 AGREE_MIN = 0.6  # the model's vote and the pictures' vote agree on at least this share of the seen hair candidates
@@ -281,8 +286,14 @@ def picture_votes(mesh: dict[str, np.ndarray], views: dict[str, dict[str, Any]],
     return {"hair": hair_v, "seen": seen_v, "used": used}
 
 
+def helmet_possible(crown_lab: Any, skin_metal: float | None = None) -> bool:
+    """Whether a grey, metal crown can be a helmet at all: light enough to be steel (black hair is grey too) and the
+    metal map is not marking the face's own skin as metal (then it marks everything and says nothing)."""
+    return float(crown_lab[0]) >= HELMET_L_MIN and (skin_metal is None or skin_metal <= HELMET_SKIN_METAL_MAX)
+
+
 def find_hair(glb: Path, base_color: Path, metallic: Path | None = None, pictures: dict[str, Path] | None = None,
-              seed: int = 0, size: int = 384) -> dict[str, Any]:
+              seed: int = 0, size: int = 384, skin_metal: float | None = None) -> dict[str, Any]:
     """Which triangles are hair (humanoid). Returns {found, reason, tris (m,) bool, centres, hair_lab, skin_lab,
     separation, agreement, ...measures}. found is False with a REASONS key when the hair cannot be found with
     confidence."""
@@ -315,7 +326,8 @@ def find_hair(glb: Path, base_color: Path, metallic: Path | None = None, picture
     # helmet: the crown is grey and metal. The 3D builder often marks hair as metal too (the knight's red hair is 0.86),
     # so metal alone says nothing; a colourless metal crown does.
     crown_chroma = float(np.hypot(crown_lab[1], crown_lab[2]))
-    if metallic is not None and Path(metallic).is_file() and crown_chroma < HELMET_CHROMA:
+    # (skin_metal: the share of the face's skin the builder marked as metal, from skinmetal.clear; None when not measured)
+    if metallic is not None and Path(metallic).is_file() and crown_chroma < HELMET_CHROMA and helmet_possible(crown_lab, skin_metal):
         met = face.read_rgb(metallic)[..., 0]
         T = met.shape[0]
         uvc = face.uv_pixels(mesh["uv"], T)[faces[crown]].mean(axis=1)
