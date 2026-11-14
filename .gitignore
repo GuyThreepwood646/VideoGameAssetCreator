@@ -53,3 +53,6 @@ bakeoff/BAKEOFF.md
 # Working logs and reviews stay on the owner's computer
 /STATUS.md
 /REVIEW.md
+
+# Starter build output
+starter/obj/
