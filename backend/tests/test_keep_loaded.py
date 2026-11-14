@@ -24,9 +24,9 @@ from test_lend_frees_memory import HoldingClient, running_job, no_settle  # noqa
 
 def test_the_thresholds_follow_the_pcs_memory():
     f = instances.cache_ram_gb
-    assert f(96, 24) == (9, 24)    # this PC: kept until free RAM falls under the app's own 24 GB floor
-    assert f(64, 24) == (6, 16)
-    assert f(32, 24) == (3, 8)     # a smaller PC: a quarter of its RAM, not 24 GB
+    assert f(96, 24) == (9, 14)    # this PC: kept until free RAM falls under 14 GB (24 GB dropped them too often)
+    assert f(64, 24) == (6, 9)
+    assert f(32, 24) == (3, 6)     # a smaller PC: 15 percent of its RAM, at least 6 GB
     assert f(16, 24) == (2, 6)
     assert f(8, 24) == (2, 6)
     assert f(96, 10) == (9, 10)    # a lower floor in machine.json lowers it
@@ -60,7 +60,7 @@ def test_off_adds_nothing_and_on_adds_the_flag_after_the_rest(settings, engine):
     off, _, _ = instances.engine_command(settings, "b")
     assert "--cache-ram" not in off and off[-1] == "--lowvram"
     on, _, _ = instances.engine_command(settings, "b", keep_loaded=True)
-    assert on[: len(off)] == off and on[len(off):] == ["--cache-ram", "9", "24"]
+    assert on[: len(off)] == off and on[len(off):] == ["--cache-ram", "9", "14"]
 
 
 def test_the_person_s_own_cache_choice_wins_and_an_old_comfyui_gets_no_flag(settings, engine):
@@ -101,7 +101,7 @@ def test_the_card_row_says_how_it_applies(settings, engine):
     q = make_queue(settings)
     rows = {r["instance"]: r for r in q.gpus()}
     assert rows["b"]["keep_loaded"] is True and rows["b"]["keep_loaded_how"] == "app"
-    assert rows["b"]["keep_loaded_flag"] == "--cache-ram 9 24"
+    assert rows["b"]["keep_loaded_flag"] == "--cache-ram 9 14"
     assert rows["a"]["keep_loaded_how"] == "none" and rows["a"]["keep_loaded_flag"] == ""  # no engine settings
 
 
@@ -109,7 +109,7 @@ def test_the_row_of_an_engine_started_without_it_says_so(settings, engine):
     q = make_queue(settings)
     q.clients["b"].last_argv = lambda: ["ComfyUI\\main.py", "--port", "8189"]
     assert {r["instance"]: r for r in q.gpus()}["b"]["keep_loaded_applied"] is False
-    q.clients["b"].last_argv = lambda: ["ComfyUI\\main.py", "--cache-ram", "9", "24"]
+    q.clients["b"].last_argv = lambda: ["ComfyUI\\main.py", "--cache-ram", "9", "14"]
     assert {r["instance"]: r for r in q.gpus()}["b"]["keep_loaded_applied"] is True
 
 
@@ -142,3 +142,60 @@ def test_free_after_each_step_still_wins(settings):
     q = make_queue(settings)
     q.configure("b", free_after_job=True, keep_loaded=True)
     assert q.workers["b"].free_after_job is True and q.keep_loaded["b"] is True
+
+
+# --- it never holds back a job that waits for RAM -------------------------------------------------------------------
+
+
+def test_a_job_held_for_ram_makes_idle_engines_give_back_their_cached_models(settings, monkeypatch):
+    a = HoldingClient("a", free_gb=8.0, own_gb=0.0)
+    b = HoldingClient("b", free_gb=8.0, own_gb=0.0)
+    q = make_queue(settings, a=a, b=b)
+    b.queue = {"queue_running": [{"x": 1}], "queue_pending": []}   # b is drawing: never asked
+    asyncio.run(q.release_cached_ram())
+    assert a.frees == 1 and b.frees == 0
+    asyncio.run(q.release_cached_ram())                           # at most once a minute
+    assert a.frees == 1
+    q._ram_released_at = -1e9
+    q.keep_loaded["a"] = False                                    # the person turned it off: nothing is cached to give back
+    asyncio.run(q.release_cached_ram())
+    assert a.frees == 1
+
+
+def test_a_lent_or_working_card_is_left_alone(settings):
+    a = HoldingClient("a", free_gb=8.0)
+    q = make_queue(settings, a=a)
+    q.workers["a"].lent_to = "some-job"
+    asyncio.run(q.release_cached_ram())
+    assert a.frees == 0
+
+
+def test_the_worker_asks_for_it_while_it_holds_a_job_for_ram(settings, monkeypatch):
+    from vgac.db import Asset, Project
+    with session_factory()() as db:
+        p = Project(name="P")
+        db.add(p)
+        db.flush()
+        asset = Asset(project_id=p.id, name="x", category="humanoid")
+        db.add(asset)
+        db.flush()
+        db.add(Job(instance="host", kind="prep.run", asset_id=asset.id, status="queued", payload_json="{}", message=""))
+        db.commit()
+    monkeypatch.setattr(settings, "min_free_ram_gb", 1e6)         # never enough
+    calls = []
+
+    async def ram_short():
+        calls.append(1)
+
+    async def main():
+        w = jobs.InstanceWorker(name=jobs.HOST, settings=settings, clients={}, ram_short=ram_short)
+        w.start()
+        w.wake.set()
+        for _ in range(60):
+            if calls:
+                break
+            await asyncio.sleep(0.05)
+        await w.stop()
+
+    asyncio.run(main())
+    assert calls

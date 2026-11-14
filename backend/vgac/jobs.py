@@ -63,6 +63,7 @@ from .reference import STAGE_ORDER
 
 log = logging.getLogger("vgac.jobs")
 MESSAGE_THROTTLE_SECONDS = 5.0
+RAM_RELEASE_MIN_SECONDS = 60.0  # at most this often an idle engine is asked to give back its cached models
 WAIT_PREFIX = "Waiting for "  # the start of the message note_waits writes on a queued job
 IDLE_CHECK_SECONDS = 15.0  # how often the queue checks for idle engines to stop and engines that went away
 STARTING_PREFIX = "Starting the graphics engine on "
@@ -541,6 +542,9 @@ class InstanceWorker:
     share: Callable[[], str | None] | None = None
     # The job this card is lent to (JobQueue.lend): while set the worker picks nothing.
     lent_to: str | None = None
+    # Awaited when the worker holds a job because free RAM is under the floor: lets idle engines give back the models
+    # they keep cached (JobQueue.release_cached_ram).
+    ram_short: Callable[[], Awaitable[None]] | None = None
     # Lending: called with (this card or the host, job id, kind of work, card to avoid) to borrow another card for a
     # running job; and with the job id when the job ends, to hand back anything it still holds.
     lend: Callable[..., Awaitable[tuple["Lease | None", str]]] | None = None
@@ -595,6 +599,11 @@ class InstanceWorker:
                 free = free_ram_gb()
                 if free < self.settings.min_free_ram_gb:
                     log.info("worker %s holding job %s: free RAM %.1f GB < %.1f GB", self.name, job_id, free, self.settings.min_free_ram_gb)
+                    if self.ram_short is not None:
+                        try:
+                            await self.ram_short()
+                        except Exception:  # noqa: BLE001
+                            log.debug("worker %s: releasing cached RAM failed", self.name, exc_info=True)
                     await self._sleep(5.0)
                     continue
                 if self.prepare is not None and not await self.prepare(job_id):
@@ -933,6 +942,7 @@ class JobQueue:
         # Per card, start its engine with the picture models kept in memory between graphs (prefs.json
         # keep_models_loaded; on by default). Read when the app starts the engine.
         self.keep_loaded: dict[str, bool] = {n: True for n in self.settings.instances}
+        self._ram_released_at = -1e9
         # Per card, minutes without work before an engine the app started is shut down (prefs.json; 0 = never).
         self.stop_when_idle_minutes: dict[str, int] = {n: 0 for n in self.settings.instances}
         # The card work goes to first (prefs.json default_instance; None: each step's usual card), and whether an idle
@@ -991,7 +1001,7 @@ class JobQueue:
                 prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
                 blocked=(lambda n=name: self._start_failed(n)) if gpu else None,
                 share=(lambda n=name: self.take_shared(n)) if gpu else None,
-                lend=self.lend, after_job=self.end_leases)
+                lend=self.lend, after_job=self.end_leases, ram_short=self.release_cached_ram)
         if self.disabled or any(k != set(KIND_GROUPS) for k in self.allowed_kinds.values()):
             log.info("graphics cards turned off in the app: %s; allowed kinds: %s", sorted(self.disabled),
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
@@ -1389,6 +1399,26 @@ class JobQueue:
                      sorted(self.allowed_kinds[instance]), self.free_after_job[instance],
                      self.stop_when_idle_minutes[instance])
         self.publish_gpus()
+
+    async def release_cached_ram(self) -> None:
+        """Free RAM is under the floor and a job waits for it: each engine that is idle (no job, not lent, nothing in
+        its own queue) and keeps its models cached for the next draw (keep_loaded) is asked to let them go, at most
+        once a minute. So keeping the models never holds back a clean-up or the 3D model step."""
+        now = time.monotonic()
+        if now - self._ram_released_at < RAM_RELEASE_MIN_SECONDS:
+            return
+        self._ram_released_at = now
+        for name, client in list(self.clients.items()):
+            if not self.keep_loaded.get(name, True) or self.card_in_use(name):
+                continue
+            try:
+                q = await client.queue_state()
+            except Exception:  # noqa: BLE001
+                continue
+            if q is None or q.get("queue_running") or q.get("queue_pending"):
+                continue
+            if await client.free():
+                log.info("free RAM is short: the idle engine on %s let go of the models it kept cached", name)
 
     def keep_loaded_info(self, name: str) -> dict[str, Any]:
         """For the card's row: how the "keep the picture models loaded" setting reaches this engine.

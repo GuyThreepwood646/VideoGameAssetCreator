@@ -153,10 +153,11 @@ CACHE_RAM_FLAG = "--cache-ram"
 
 def cache_ram_gb(total_ram_gb: float, floor_gb: float) -> tuple[int, int]:
     """(active, inactive) free-RAM thresholds in GB for --cache-ram. Active: ComfyUI's own default, a tenth of the
-    RAM between 2 and 10 GB. Inactive: a quarter of the RAM, at least 6 GB and at most the app's free-RAM floor (24 GB
-    on a 96 GB PC, 8 GB on a 32 GB one), never below the active one."""
+    RAM between 2 and 10 GB. Inactive: 15 percent of the RAM, at least 6 GB and at most the app's free-RAM floor (14 GB
+    on a 96 GB PC, 6 GB on a 32 GB one), never below the active one. Measured 2026-11-14 on the 96 GB PC: with 24 GB the
+    models were dropped again whenever other programs and the second engine took the free RAM down to 21 to 27 GB."""
     active = int(min(10.0, max(2.0, total_ram_gb * 0.10)))
-    inactive = int(min(max(floor_gb, 6.0), max(6.0, total_ram_gb * 0.25)))
+    inactive = int(min(max(floor_gb, 6.0), max(6.0, total_ram_gb * 0.15)))
     return active, max(active, inactive)
 
 
