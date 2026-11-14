@@ -88,8 +88,8 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
         # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
-        _param("pose_ready", "boolean", None, categories=["humanoid"], label="Pose for 3D first (A-pose, open empty hands)",
-               description="The step 1 picture is redrawn once so each hand is open with the fingers apart, nothing held, hands out of pockets, arms slightly away from the body (A-pose); every side is then drawn from it and the 3D build uses it. Removes held things and designed extra arms or tools, and can change colours. About a minute; off when empty"),
+        _param("pose_ready", "boolean", None, categories=["humanoid"], label="Pose for 3D first (wide A-pose, open empty hands)",
+               description="The step 1 picture is redrawn once into a wide A-pose: arms held out about 45 degrees from the body, feet apart, each hand open with the fingers apart and nothing held; every side is then drawn from it and the 3D build uses it. The redraw is compared with your picture and not used when it changed the character (colours, gloves added, parts removed, face); one more try, then your own picture is used. Removes held things and designed extra arms or tools. About a minute, two with the second try; off when empty"),
         _param("neutral_mouth", "boolean", None, categories=["humanoid"], label="Close the mouth too",
                description="Added to the Pose for 3D first redraw: a relaxed closed mouth, same face. Only with pose_ready; off when empty"),
     ],

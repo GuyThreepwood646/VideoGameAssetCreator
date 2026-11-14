@@ -12,9 +12,10 @@ GREY = (235, 235, 235)
 BIG = {"size": (800, 1150), "scale": 1.5}
 
 
-def figure(arms: str = "a", size=(512, 768), bg=GREY, offset=(0, 0), scale: float = 1.0) -> Image.Image:
-    """A standing person: head, torso, legs, and arms in an A-pose ("a"), down against the body ("down") or held
-    straight out ("t")."""
+def figure(arms: str = "a", size=(512, 768), bg=GREY, offset=(0, 0), scale: float = 1.0, legs: str = "together") -> Image.Image:
+    """A standing person: head, torso, legs, and arms in a narrow A-pose ("a", about 17 degrees from the body), a
+    wide one ("wide", about 45 degrees), down against the body ("down") or held straight out ("t"); legs side by side
+    ("together") or with the feet a quarter of the height apart ("apart")."""
     im = Image.new("RGB", size, bg)
     d = ImageDraw.Draw(im)
     ox, oy = offset
@@ -26,9 +27,16 @@ def figure(arms: str = "a", size=(512, 768), bg=GREY, offset=(0, 0), scale: floa
     skin = (230, 190, 150)
     d.ellipse([*p(216, 70), *p(296, 150)], fill=skin)
     d.rectangle([*p(216, 150), *p(296, 430)], fill=body)
-    d.rectangle([*p(222, 430), *p(250, 700)], fill=(40, 40, 120))
-    d.rectangle([*p(262, 430), *p(290, 700)], fill=(40, 40, 120))
-    if arms == "a":
+    if legs == "apart":
+        d.line([p(236, 430), p(160, 700)], fill=(40, 40, 120), width=max(1, int(28 * scale)))
+        d.line([p(276, 430), p(352, 700)], fill=(40, 40, 120), width=max(1, int(28 * scale)))
+    else:
+        d.rectangle([*p(222, 430), *p(250, 700)], fill=(40, 40, 120))
+        d.rectangle([*p(262, 430), *p(290, 700)], fill=(40, 40, 120))
+    if arms == "wide":
+        d.line([p(212, 165), p(60, 330)], fill=skin, width=max(1, int(18 * scale)))
+        d.line([p(300, 165), p(452, 330)], fill=skin, width=max(1, int(18 * scale)))
+    elif arms == "a":
         d.line([p(212, 165), p(140, 400)], fill=skin, width=max(1, int(18 * scale)))
         d.line([p(300, 165), p(372, 400)], fill=skin, width=max(1, int(18 * scale)))
     elif arms == "down":

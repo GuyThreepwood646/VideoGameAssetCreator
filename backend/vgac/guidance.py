@@ -73,9 +73,9 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "lora_strength": {"simple": False, "help": {"meaning": "How strongly the multiple-angles LoRA is applied (the standard way of turning the views only).", "why": "Lower keeps more of the original look; higher turns more reliably.", "technical": "lora_strength (Qwen-Image-Edit-2511 multiple-angles LoRA)"}},
     # Pose for 3D first (docs/HANDS-PLAN.md, "Pose ready results"): off by default. It removed a robot's four tool arms
     # and colourised a black-and-white photo, so the visible hint carries both warnings.
-    "pose_ready": {"simple": True, "help": {"meaning": "Redraws your picture once with both hands open and empty and the arms slightly away from the body (A-pose), so the 3D model gets separate fingers; adds about a minute. Leave it off when extra arms, claws or tools are part of the design (it removes them), and check the result: it can recolour a black-and-white photo and add gloves.",
+    "pose_ready": {"simple": True, "help": {"meaning": "Redraws your picture once in a wide A-pose (arms well away from the body, feet apart, hands open and empty), so the 3D model gets free arms, legs and fingers; about a minute. A redraw that changed your character (colours, a black-and-white photo coloured in, gloves added, parts removed) is not used. Leave it off when extra arms, claws or tools are part of the design (it removes them).",
                                             "why": "Best for photos and drawings where a hand is in a pocket, holds something such as a cane, or is hidden in a sleeve: a soldier with a cane and a knight in gauntlets both came out with four separate fingers. Anything held is removed on purpose; give it back later with Add an item. Your step 1 picture is not changed, and the redrawn picture is shown first in this step.",
-                                            "technical": "pose_ready: one Qwen-Image-Edit pass on the step 1 picture before any view is drawn (files pose_ready_picture, pose_ready_cutout); every view and the 3D build start from it"}},
+                                            "technical": "pose_ready: one Qwen-Image-Edit pass on the step 1 picture before any view is drawn (files pose_ready_picture, pose_ready_cutout), guarded by buildpose.guard (one retry; refused: files pose_refused_picture, pose_refused_cutout); every view and the 3D build start from it"}},
     "neutral_mouth": {"simple": True, "help": {"meaning": "In the same redraw, gives the face a relaxed, closed mouth. Works only with Pose for 3D first.",
                                                "why": "A grin or an open mouth is painted into the face and shows in every move; a closed mouth suits all of them. New and little tried: compare the face in the redrawn picture with yours.",
                                                "technical": "neutral_mouth: one more sentence in the pose_ready edit prompt"}},
@@ -1081,6 +1081,27 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: _var(c, "words") or "Both three-quarter views have the arms or legs in a different place from your picture, so the model can grow the arms into the body.",
         "fix": lambda c: {"stage": "turnaround", "params": {}},
         "fix_label": "Draw the side views again",
+    },
+    # The person's picture's pose for the 3D build (vgac/buildpose.py; step 1 readiness and step 2): arms close to the
+    # body, feet together or fists. The fix runs step 2 with the guarded pose redraw; never offered for designs it
+    # would break (vars.offer). Braces doubled: the words are filled as a template.
+    "pose_for_3d": {
+        "severity": "warn",
+        "ok": lambda c: _braces(_var(c, "words") or "The pose suits the 3D model: arms away from the body, feet apart, hands open."),
+        "fail": lambda c: _braces(" ".join([_var(c, "words") or "The pose will join parts of the 3D model.",
+                                            *((_var(c, "cautions") or []) if _var(c, "offer") else [])])),
+        "fix": lambda c: {"stage": "turnaround", "params": {"pose_ready": True}} if _var(c, "offer") else None,
+        "fix_label": "Pose it for 3D, then draw the sides",
+    },
+    # The guard after the pose redraw (buildpose.guard): refused redraws keep the person's picture; the fix keeps the
+    # refused redraw anyway (vars.version: the step 2 version holding it).
+    "pose_guard": {
+        "severity": "warn",
+        "ok": lambda c: _braces(_var(c, "words") or "The pose redraw kept your character."),
+        "fail": lambda c: _braces(_var(c, "words") or "The pose redraw changed your character, so your own picture was used."),
+        "fix": lambda c: ({"stage": "turnaround", "params": {"pose_ready": True, "pose_keep_refused": _var(c, "version")}}
+                          if _var(c, "version") and not _var(c, "kept_anyway") else None),
+        "fix_label": "Use the redraw anyway",
     },
     "head_build": {
         "severity": "warn",

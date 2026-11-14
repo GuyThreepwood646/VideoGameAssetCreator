@@ -5,8 +5,9 @@ Concept readiness (each a quality.check, severity warn, sentences in guidance.CH
   one_subject   connected areas of the cutout: one subject, no second figure or loose pieces of any size
   in_frame      a margin on every side, so nothing is cut off at the edge
   big_enough    the subject's height (its longest side for anything but a person) in pixels
-  arms_away     people only: rows between the shoulders and the hips where an arm stands clear of the body,
-                or a T-pose (arms straight out, far wider than the waist)
+  pose_for_3d   people only: will the pose join the arms or thighs or lose the fingers in the 3D model
+                (buildpose.py; arm angle, ankle gap, hands). Its fix runs step 2 with the guarded pose redraw.
+                Replaces arms_away (rows with an arm clear of the body), whose guide entry stays for stored versions.
 A failing check carries the redraw instruction (vars.redraw) its Fix sends to the concept refine.
 
 Material photos: even_lighting (brightness change across the photo, from a fitted plane) and straight_on (how much
@@ -25,7 +26,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from . import quality
+from . import buildpose, quality
 
 ANALYSE_SIDE = 256  # the cutout is measured at this size (longest side)
 MIN_PART_SHARE = 0.03  # a separate area smaller than this share of the subject is a speck, not a second subject
@@ -41,9 +42,9 @@ TPOSE_RATIO = 2.5  # arm span over waist width that counts as arms held out
 EVEN_LIGHT_MAX = 0.25  # brightness change across a material photo, 0 to 1
 DETAIL_RATIO_MAX = 2.0  # finer detail on one side than the other
 
-HUMANOID_REDRAW = ("Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose with each hand "
-                   "open and empty, back of the hand toward the camera, fingers straight and slightly spread, nothing held in "
-                   "either hand and no hand in a pocket or hidden, whole body in frame, plain light grey background, even lighting")
+# The A pose is buildpose.A_POSE, the same words as step 2's pose redraw.
+HUMANOID_REDRAW = ("Redraw this same character with the same design, colours and outfit, standing in a wide A pose: "
+                   + buildpose.A_POSE + " Whole body in frame, plain light grey background, even lighting.")
 SUBJECT_WORDS = {"quadruped": "animal", "multileg": "creature", "winged": "creature", "serpent": "creature",
                  "vehicle": "vehicle", "prop_rigid": "object", "prop_articulated": "object", "environment": "structure",
                  "foliage": "plant"}
@@ -133,9 +134,11 @@ def arms_measure(mask: np.ndarray) -> dict[str, float]:
     return {"gap_share": round(gap_rows / max(1, band.shape[0]), 3), "span_ratio": round(span, 2)}
 
 
-def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | None) -> list[dict[str, Any]]:
+def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | None,
+                   held_item: str | None = None) -> list[dict[str, Any]]:
     """Readiness checks for a concept picture's cutout (RGBA). Every check is severity warn; failing ones carry the
-    redraw instruction their Fix sends."""
+    redraw instruction their Fix sends (pose_for_3d: step 2's guarded pose redraw). held_item: the label of an item the
+    asset holds, named in the pose check's caution."""
     cat = category or {}
     cid = cat.get("id") or "humanoid"
     redraw = {"redraw": redraw_instruction(cat)}
@@ -161,9 +164,7 @@ def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | 
     out.append(quality.check("detail_size", size_px >= DETAIL_SUBJECT_PX, size_px, DETAIL_SUBJECT_PX,
                              vars={"measure": "tall" if cid == "humanoid" else "across", "target": UPSCALE_TARGET_PX}))
     if cid == "humanoid":
-        m = arms_measure(mask)
-        ok = m["gap_share"] >= ARMS_GAP_SHARE or m["span_ratio"] >= TPOSE_RATIO
-        out.append(quality.check("arms_away", ok, m["gap_share"], ARMS_GAP_SHARE, vars={**redraw, "span_ratio": m["span_ratio"]}))
+        out.append(buildpose.pose_check(buildpose.measure(cutout), held_item))
     return out
 
 

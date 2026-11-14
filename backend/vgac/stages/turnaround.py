@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import hairlib, library, quality, reference
+from .. import buildpose, hairlib, library, quality, reference
 from ..db import Version
 from ..graphs.qwen_edit import (CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
@@ -372,17 +372,18 @@ def split_sheet(raw: Path, cutout: Path, out_dir: Path) -> dict[str, dict[str, P
 
 # --- the pose-ready picture (docs/HANDS-PLAN.md, "Pose ready results") --------------------------------------------------
 
-# One edit of the front picture before any angle is drawn, so every view and the 3D build agree about the hands. The
-# concept version itself is never touched. Unlike the 3D step's hand_edit, a held object is removed on purpose.
-POSE_READY = ("Redraw the character ready for 3D: each hand open with the back of the hand toward the camera, all five fingers "
-              "straight, long and slightly spread apart with clear gaps between them, thumb out to the side; nothing held in "
-              "either hand, so remove any cane, tool, bag or toy from the hands; no hand in a pocket, behind the body or hidden "
-              "by clothing; arms hanging down and slightly away from the body in an A pose; standing upright with both feet "
-              "on the ground. Gloves, gauntlets and claws keep their design but are open and spread.")
+# One edit of the front picture before any angle is drawn, so every view and the 3D build agree about the pose and the
+# hands. The concept version itself is never touched. Unlike the 3D step's hand_edit, a held object is removed on
+# purpose. The wording is buildpose's (a wide A pose, feet apart, hands open; sentences for bare or gloved hands and a
+# black-and-white picture when the person's picture shows them). The guard (buildpose.guard) compares the redraw with
+# the person's picture; a refused redraw is tried once more with a new seed, and when that is refused too the views are
+# drawn from the person's own picture (files pose_refused_picture, pose_refused_cutout; the pose_guard check offers to
+# keep it anyway: param pose_keep_refused = the version holding it). UNTESTED ON A CARD: the new wording and the guard.
+POSE_READY = buildpose.POSE_READY
 POSE_MOUTH = " Give the face a relaxed, closed mouth with the lips together; keep the same face, eyes, nose and features."
-POSE_SUFFIX = (" Keep everything else exactly the same: the same character, face, hair, clothes, outfit design, colours, materials, "
-               "body proportions, camera angle, size and framing, the whole body in frame, on a plain white background.")
 POSE_KEYS = ("pose_ready_picture", "pose_ready_cutout")
+REFUSED_KEYS = ("pose_refused_picture", "pose_refused_cutout")
+POSE_GUARD_RETRIES = 1
 
 
 def pose_ready_on(params: dict[str, Any], category: str | None) -> bool:
@@ -390,8 +391,8 @@ def pose_ready_on(params: dict[str, Any], category: str | None) -> bool:
     return bool(params.get("pose_ready")) and category == "humanoid"
 
 
-def pose_ready_prompt(neutral_mouth: bool = False) -> str:
-    return POSE_READY + (POSE_MOUTH if neutral_mouth else "") + POSE_SUFFIX
+def pose_ready_prompt(neutral_mouth: bool = False, measure: dict[str, Any] | None = None) -> str:
+    return buildpose.pose_prompt(measure, POSE_MOUTH if neutral_mouth else "")
 
 
 def _pose_parent_files(sc: StageContext, neutral_mouth: bool) -> dict[str, Path] | None:
@@ -406,41 +407,55 @@ def _pose_parent_files(sc: StageContext, neutral_mouth: bool) -> dict[str, Path]
     return {k: Path(p) for k, p in out.items() if p is not None and Path(p).is_file()} if all(out.values()) else None
 
 
-async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Path) -> Path | None:
-    """The concept picture edited once so the hands are open and apart (files pose_ready_picture, pose_ready_cutout);
-    None when the param is off or the asset is not a humanoid. Reuses the parent's edit or this version's own (Resume)."""
-    if not pose_ready_on(params, _category(sc)):
+def _refused_files(sc: StageContext, vid: Any) -> dict[str, Path] | None:
+    """The refused pose redraw of step 2 version `vid` of this asset (for "Use the redraw anyway"), or None."""
+    db = getattr(sc, "db", None)
+    if db is None or not isinstance(vid, str):
         return None
-    mouth = bool(params.get("neutral_mouth"))
-    own = {k: sc.file(k) for k in POSE_KEYS}
-    if all(own.values()):
-        return Path(own["pose_ready_picture"])
-    kept = _pose_parent_files(sc, mouth)
-    if kept:
-        for k, p in kept.items():
-            sc.register(k, sc.copy_in(p, p.name))
-        sc.set_params(pose_ready=True, neutral_mouth=mouth)
-        return Path(sc.file("pose_ready_picture"))
-    from . import mesh  # the mesh step's picture-edit helpers (it does not import this module at load time)
-    from ..imaging import image_size
+    v = db.get(Version, vid)
+    if v is None or v.stage != "turnaround" or v.asset_id != getattr(sc.asset, "id", None):
+        return None
+    out = {k: library.version_file(v, k, sc.settings) for k in REFUSED_KEYS}
+    return {k: Path(p) for k, p in out.items() if p is not None and Path(p).is_file()} if all(out.values()) else None
 
-    seed = random_seed()
-    white = await asyncio.to_thread(white_composite, src, sc.dir / "pose_source.png")
-    w, h = mesh.edit_size(*image_size(white))
-    cards = mesh._picture_cards(sc)
+
+def _person_cutout(sc: StageContext) -> Path | None:
+    """The person's own step 1 cut-out the redraw is measured and guarded against, or None."""
+    find = getattr(sc, "lineage_file", None)
+    p = find("cutout", ("concept",)) if find is not None else None
+    return Path(p) if p is not None and Path(p).is_file() else None
+
+
+def _guard_check(sc: StageContext, g: dict[str, Any], retried: bool, kept_anyway: bool = False) -> None:
+    """The pose_guard check on this version (warn): passed when the redraw kept the character."""
+    ok = bool(g.get("ok")) and not kept_anyway
+    vars_ = {"words": buildpose.guard_words(g, kept_anyway=kept_anyway, retried=retried), "reasons": g.get("reasons") or [],
+             "not_compared": g.get("not_compared") or [], "kept_anyway": kept_anyway,
+             **({"version": sc.version.id} if not ok and not kept_anyway else {})}
+    set_step_checks(sc, [quality.check("pose_guard", ok, "kept" if g.get("ok") else "changed", "kept", vars=vars_)])
+
+
+def mesh_stage() -> Any:
+    from . import mesh  # the mesh step's picture-edit helpers (it does not import this module at load time)
+
+    return mesh
+
+
+async def _pose_edit(sc: StageContext, white: Path, prompt: str, seed: int, n: int, w: int, h: int) -> dict[str, Any]:
+    """One pose redraw on the first picture card that works: {picture, cutout, card, entry}."""
+    cards = mesh_stage()._picture_cards(sc)
     if not cards:
         raise RuntimeError("no graphics card can edit the picture")
-    sc.use_model("qwen_edit")
-    sc.use_model("qwen_lightning_lora")
-    prompt = pose_ready_prompt(mouth)
+    name = "pose_ready_picture" if n == 0 else f"pose_ready_picture_{n + 1}"
+    cut_name = "pose_ready_cutout" if n == 0 else f"pose_ready_cutout_{n + 1}"
     last: Exception | None = None
     for card in cards:
         try:
-            name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_pose_src.png", card)
-            entry = await sc.comfy(edit_graph(name, prompt, seed, sc.prefix("pose"), w, h), instance=card, poll=1.0,
-                                   message="Posing the character for 3D", base=0.0, span=0.04)
-            edited = await sc.download_image(entry, "save", sc.dir / "pose_ready_picture.png", card)
-            cut = await sc.cutout(Path(edited), "pose_ready_cutout", instance=card, base=0.04, span=0.01)
+            src_name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_pose_src.png", card)
+            entry = await sc.comfy(edit_graph(src_name, prompt, seed, sc.prefix("pose"), w, h), instance=card, poll=1.0,
+                                   message="Posing the character for 3D" + (", second try" if n else ""), base=0.0, span=0.04)
+            edited = await sc.download_image(entry, "save", sc.dir / f"{name}.png", card)
+            cut = await sc.cutout(Path(edited), cut_name, instance=card, base=0.04, span=0.01)
             break
         except Exception as e:  # noqa: BLE001  (try the next card; a cancelled job stops at once)
             if type(e).__name__ == "JobCancelled":
@@ -451,13 +466,96 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     stats = cut.get("stats") or {}
     if stats.get("empty") or float(stats.get("coverage") or 0) < 0.02:
         raise RuntimeError("the posed picture came out without the character; run it again")
-    sc.register("pose_ready_picture", edited)
-    sc.register("pose_ready_cutout", cut["cutout"])
-    sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=seed)
-    sc.set_metrics(pose_ready={"seed": seed, "card": card, "size": [w, h], "neutral_mouth": mouth, "prompt": prompt,
-                               "elapsed_seconds": entry.get("elapsed_seconds")})
+    return {"picture": Path(edited), "cutout": Path(cut["cutout"]), "card": card, "entry": entry}
+
+
+async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Path) -> Path | None:
+    """The concept picture edited once into a wide A pose (files pose_ready_picture, pose_ready_cutout), guarded
+    against changing the character; None when the param is off, the asset is not a humanoid, or the guard refused the
+    redraw twice (the views are then drawn from the person's picture). Reuses the parent's edit or this version's own
+    (Resume)."""
+    if not pose_ready_on(params, _category(sc)):
+        return None
+    mouth = bool(params.get("neutral_mouth"))
+    own = {k: sc.file(k) for k in POSE_KEYS}
+    if all(own.values()):
+        return Path(own["pose_ready_picture"])
+    if all(sc.file(k) for k in REFUSED_KEYS):
+        return None  # Resume after a refusal: the views are drawn from the person's picture, as before
+    kept = _pose_parent_files(sc, mouth)
+    if kept:
+        for k, p in kept.items():
+            sc.register(k, sc.copy_in(p, p.name))
+        sc.set_params(pose_ready=True, neutral_mouth=mouth)
+        return Path(sc.file("pose_ready_picture"))
+    refused = _refused_files(sc, params.get("pose_keep_refused")) if params.get("pose_keep_refused") else None
+    if refused:
+        for old, new in zip(REFUSED_KEYS, POSE_KEYS):
+            sc.register(new, sc.copy_in(refused[old], f"{new}.png"))
+        sc.set_params(pose_ready=True, neutral_mouth=mouth)
+        source_v = sc.db.get(Version, params["pose_keep_refused"])
+        prior = (source_v.metrics or {}).get("pose_guard") or {}
+        g = {"ok": False, "reasons": prior.get("reasons") or ["it changed the character"], "not_compared": prior.get("not_compared") or []}
+        sc.set_metrics(pose_guard={**prior, "kept_anyway": True, "from_version": params["pose_keep_refused"]})
+        _guard_check(sc, g, retried=int(prior.get("tries") or 0) > 1, kept_anyway=True)
+        return Path(sc.file("pose_ready_picture"))
+    from ..imaging import image_size
+
+    person = _person_cutout(sc)
+    measure = await asyncio.to_thread(buildpose.measure, person) if person is not None else None
+    white = await asyncio.to_thread(white_composite, src, sc.dir / "pose_source.png")
+    w, h = mesh_stage().edit_size(*image_size(white))
+    sc.use_model("qwen_edit")
+    sc.use_model("qwen_lightning_lora")
+    prompt = pose_ready_prompt(mouth, measure)
+    tries: list[dict[str, Any]] = []
+    for n in range(1 + POSE_GUARD_RETRIES):
+        seed = random_seed()
+        made = await _pose_edit(sc, white, prompt, seed, n, w, h)
+        if person is not None:
+            g = await asyncio.to_thread(buildpose.guard, person, made["cutout"])
+        else:
+            g = {"ok": True, "reasons": [], "not_compared": ["the whole redraw (your picture's cut-out was not found)"], "measures": {}}
+        tries.append({**made, "seed": seed, "guard": g})
+        if g["ok"]:
+            break
+    last = tries[-1]
+    sc.set_metrics(pose_guard={"tries": len(tries), "ok": last["guard"]["ok"], "reasons": last["guard"]["reasons"],
+                               "not_compared": last["guard"]["not_compared"], "seeds": [t["seed"] for t in tries],
+                               "measures": [t["guard"].get("measures") for t in tries]})
+    if not last["guard"]["ok"]:
+        sc.register("pose_refused_picture", last["picture"])
+        sc.register("pose_refused_cutout", last["cutout"])
+        sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_refused=True)
+        _guard_check(sc, last["guard"], retried=len(tries) > 1)
+        sc.publish()
+        return None
+    sc.register("pose_ready_picture", last["picture"])
+    sc.register("pose_ready_cutout", last["cutout"])
+    sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=last["seed"])
+    sc.set_metrics(pose_ready={"seed": last["seed"], "card": last["card"], "size": [w, h], "neutral_mouth": mouth,
+                               "prompt": prompt, "elapsed_seconds": last["entry"].get("elapsed_seconds")})
+    _guard_check(sc, last["guard"], retried=len(tries) > 1)
     sc.publish()  # the redraw exists about 40 seconds in; show it now, not when the whole step ends (UI-18)
     return Path(sc.file("pose_ready_picture"))
+
+
+def _pose_for_3d(sc: StageContext, source: Version | None, posed: Path | None) -> None:
+    """The pose_for_3d check on this version, measured on the picture the views are drawn from (the pose redraw when
+    there is one, else the person's picture); humanoids only. Never fails the step."""
+    if _category(sc) != "humanoid":
+        return
+    cut = sc.file("pose_ready_cutout") if posed is not None else (
+        library.version_file(source, "cutout", sc.settings) if source is not None else None)
+    if cut is None or not Path(cut).is_file():
+        return
+    held = getattr(sc.asset, "held_item", None) or {}
+    try:
+        m = buildpose.measure(cut)
+        set_step_checks(sc, [buildpose.pose_check(m, (held.get("label") or "item") if held else None,
+                                                  after_redraw=posed is not None)])
+    except Exception as e:  # noqa: BLE001  (a readiness extra never breaks the step)
+        sc.set_metrics(pose_for_3d_error=str(e)[:200])
 
 
 async def _concept_cutout(sc: StageContext, source: Version | None, src: Path) -> Path:
@@ -638,6 +736,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     posed = await _pose_ready_picture(sc, params, src)
     if posed is not None:
         src = posed  # every drawn view starts from the pose-ready picture; the concept stays as it is
+    await asyncio.to_thread(_pose_for_3d, sc, source, posed)
     src_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept.png")
     rec = stage_recipe(sc)
     # The camera-angle helper's strength: the version's, else the recipe's (the add-on's normal step, 0.9, unless the
