@@ -99,6 +99,7 @@ SAMPLES = {
     "hair_bound": ((1.0, 1.0), (0.8, 1.0)),
     "even_lighting": ((0.05, 0.25), (0.4, 0.25)),
     "skin_not_metal": ((0.0, 0.05), (0.4, 0.05)),
+    "face_finder": (("mediapipe", "found"), ("the mediapipe package", "found")),
     "picture_projection": ((0.8, None), ("refused", None)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
 }
