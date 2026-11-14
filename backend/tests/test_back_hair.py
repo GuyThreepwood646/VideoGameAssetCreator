@@ -244,12 +244,60 @@ def test_a_back_redrawn_alone_takes_the_side_views_it_already_has(tmp_path, draw
     assert sc.metrics["views"]["back"]["checks"][-1]["name"] == "hair_matches_sides"
 
 
-def test_a_side_view_missing_means_no_references_and_no_check(tmp_path, drawn):
+def test_a_side_view_missing_means_no_references_and_a_check_that_says_it_was_not_measured(tmp_path, drawn):
     concept, ta, new = _lineage(tmp_path)
     sc = StagedSC(tmp_path, new, FakeDB(concept, ta, new))
     asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100, "back_references": True}, concept))
     assert calls_by_view(drawn)["back"][0]["references"] is None
-    assert all(c["name"] != "hair_matches_sides" for c in sc.metrics["views"]["back"]["checks"])
+    c = [x for x in sc.metrics["views"]["back"]["checks"] if x["name"] == "hair_matches_sides"]
+    assert len(c) == 1 and c[0]["passed"] is True and c[0]["help"].startswith("Not measured")
+
+
+def hair_entries(sc):
+    return [x for x in sc.metrics["views"]["back"]["checks"] if x["name"] == "hair_matches_sides"]
+
+
+def test_on_one_card_the_back_is_checked_once_the_right_view_is_in_and_a_failure_redraws_it(tmp_path, drawn):
+    """The usual order on one card is front, left, back, right: the right view does not exist when the back finishes."""
+    drawn["back_fails"] = 1
+    sc = run(tmp_path)
+    assert [c["view"] for c in drawn["calls"]] == ["front", "left", "back", "right", "back", "quarter"]
+    info = sc.metrics["views"]["back"]
+    assert info["rerolls"] == 1 and info["passed"] is True and info["flagged"] is False
+    assert len(hair_entries(sc)) == 1 and hair_entries(sc)[0]["passed"] is True and "hair_end_gap" in info
+    assert [c["seed"] for c in calls_by_view(drawn)["back"]][0] == 102   # its place in the usual order, as before
+
+
+def test_on_one_card_a_back_that_never_matches_is_flagged_after_two_redraws(tmp_path, drawn):
+    drawn["back_fails"] = 5
+    sc = run(tmp_path)
+    assert len(calls_by_view(drawn)["back"]) == 1 + turnaround.MAX_REROLLS
+    info = sc.metrics["views"]["back"]
+    assert info["flagged"] is True and info["rerolls"] == turnaround.MAX_REROLLS
+    assert [c["name"] for c in info["checks"] if not c["passed"]] == ["hair_matches_sides"]
+
+
+def test_a_back_that_matches_is_not_redrawn_in_either_order(tmp_path, drawn):
+    for order in (ORDER, ["front", "left", "right", "back", "quarter"]):
+        drawn["calls"].clear()
+        (tmp_path / "-".join(order)).mkdir(exist_ok=True)
+        sc = run(tmp_path / "-".join(order), views=order)
+        assert len(calls_by_view(drawn)["back"]) == 1
+        assert len(hair_entries(sc)) == 1 and hair_entries(sc)[0]["passed"] is True
+
+
+def test_with_the_right_view_drawn_first_a_failing_back_is_redrawn_as_before(tmp_path, drawn):
+    drawn["back_fails"] = 1
+    sc = run(tmp_path, views=["front", "left", "right", "back", "quarter"])
+    assert [c["view"] for c in drawn["calls"]] == ["front", "left", "right", "back", "back", "quarter"]
+    assert sc.metrics["views"]["back"]["rerolls"] == 1 and sc.metrics["views"]["back"]["passed"] is True
+
+
+def test_a_run_that_never_draws_the_right_view_says_the_hair_was_not_measured(tmp_path, drawn):
+    sc = run(tmp_path, views=["front", "left", "back"])
+    c = hair_entries(sc)
+    assert len(c) == 1 and c[0]["passed"] is True and c[0]["help"].startswith("Not measured")
+    assert "could not be read" in c[0]["help"]
 
 
 def test_a_back_with_nothing_to_compare_says_not_measured_and_is_not_redrawn(tmp_path, drawn):

@@ -876,18 +876,25 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                                     instance=card, **({"references": refs} if refs else {})), "standard"
 
     finished = [0]   # views done, for the progress bar when two cards draw at once
+    # The back's hair check needs the front, left and right cut-outs. When the back finishes before they do (one card
+    # draws it before the right view) the check waits in hair_open and settle_hair runs it as soon as the last one is in.
+    hair_open = [False]
+    check_args: dict[str, tuple] = {}
+    back_card: dict[str, str | None] = {}
     parallel = [False]
     index = {v: i for i, v in enumerate(todo)}
     view_done: dict[str, asyncio.Event] = {v: asyncio.Event() for v in todo}
 
-    async def do_view(view: str, card: str | None = None, partner: str = "check") -> None:
+    async def do_view(view: str, card: str | None = None, partner: str = "check", attempts0: int = 0) -> None:
         """Draw (or cut out) one view, check it and redraw it on the same card until it passes or runs out of
         redraws. card: a lent card (None: the job's own). partner: "check" compares it with its partner view as today;
         "skip" leaves that to the partner (two cards: the left side's views are drawn while their partners are);
-        "wait" waits until the partner is finished first (the right side's views)."""
+        "wait" waits until the partner is finished first (the right side's views). attempts0: a redraw of a view that
+        already passed through here (the back, once its hair could be compared) carries on from that many redraws."""
         i = index[view]
-        attempts = 0
-        seed = int(base_seed) + i if base_seed else random_seed()
+        attempts = attempts0
+        seed = int(base_seed) + i if base_seed and not attempts0 else random_seed()
+        back_card[view] = card
         where = f" on the {_gpu(sc, card or home)}" if parallel[0] else ""
         while True:
             at = lo + width * (finished[0] if parallel[0] else i) / n
@@ -919,12 +926,14 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             hair = None
             if view == "back" and view not in supplied and _category(sc) == "humanoid" and not _bald_on(sc, params):
                 others = [sc.file(f"{v}_cutout") for v in ("front", "left", "right")]
+                hair_open[0] = not all(others)   # one card: the right view is not drawn yet; settle_hair measures it then
                 if all(others):
                     hair, why = await asyncio.to_thread(hair_sides.compare_with_reason, files["cutout"], *others)
                     if hair is None:
                         hair = {"measured": False, "why": why}
-            info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
-                               as_drawn, pose, hair)
+            check_args[view] = (view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
+                                as_drawn, pose)
+            info = view_checks(*check_args[view], hair)
             if view in with_refs and drew == "standard":
                 info["references"] = ["left", "right"]
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
@@ -942,9 +951,35 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                 break
             attempts += 1
             seed = random_seed()
-        finished[0] += 1
+        if not attempts0:
+            finished[0] += 1
         view_done[view].set()
         _publish_views(sc, results)
+        if view != "back":
+            await settle_hair(False)
+
+    async def settle_hair(force: bool) -> None:
+        """The back's hair check once the front, left and right cut-outs all exist (force: now, with what there is, so the
+        back's card never lacks the entry: it then says why it was not measured). A failing back is redrawn as it would
+        have been had the check been ready when it was drawn."""
+        if not hair_open[0] or "back" not in results:
+            return
+        others = [sc.file(f"{v}_cutout") for v in ("front", "left", "right")]
+        if not all(others) and not force:
+            return
+        hair_open[0] = False
+        cut = sc.file("back_cutout")
+        if all(others) and cut:
+            hair, why = await asyncio.to_thread(hair_sides.compare_with_reason, cut, *others)
+        else:
+            hair, why = None, "pictures"
+        info = results["back"]
+        info.update(view_checks(*check_args["back"], hair if hair is not None else {"measured": False, "why": why}))
+        if info["passed"] or not auto_reroll or info.get("rerolls", 0) >= MAX_REROLLS:
+            info["flagged"] = not info["passed"]
+            _publish_views(sc, results)
+            return
+        await do_view("back", back_card.get("back"), "check", info.get("rerolls", 0) + 1)
 
     left = [v for v in LEFT_SIDE if v in todo]
     right = [v for v in RIGHT_SIDE if v in todo]
@@ -967,6 +1002,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                 cards["fallback"] = fallback
             for view in [v for v in todo if v != "front" and v not in left and v not in right]:
                 await do_view(view)   # the back (and any other view) after both sides
+        await settle_hair(True)
     finally:
         if lease is not None and not lease.ended:
             await lease.end(interrupt=True)   # stopped or failed part-way: stop what is left on the lent card
