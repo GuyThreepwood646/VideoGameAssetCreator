@@ -544,3 +544,25 @@ def test_body_fits_hand_over_by_where_the_head_views_cover_not_by_their_weight()
     assert abs(paint[0, 0] - 0.9) < 1e-9  # the cheek: no body colour, though the head view's weight is only 0.03
     assert 0.1 < paint[2, 0] < paint[1, 0] < 0.9  # down the neck: more of the body the further down
     assert abs(paint[3, 0] - 0.1) < 1e-9  # the chest: the body alone
+
+
+def test_the_neck_tone_match_shifts_the_body_paint_in_the_band_only() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    N = atlas.idx.size
+    y = atlas.pos[:, 1]
+    head_c, body_c = np.array([0.8, 0.6, 0.5]), np.array([0.6, 0.45, 0.4])  # the body fit a little darker
+    detail = (0.03 * np.sin(60 * atlas.pos[:, 0]))[:, None]  # fine detail in the body paint (stubble, say)
+    dh = np.clip((y - 0.0) / 0.2, 0, 1) ** 2  # the head views fade out downward from y 0.2 to 0
+    db = np.where(y < 0.15, 0.25, 0.0)  # the body fits come in below 0.15
+    parts = {"head": (head_c * dh[:, None], dh), "body": ((body_c + detail) * db[:, None], db)}
+    paint = (parts["head"][0] + parts["body"][0]) / np.maximum(dh + db, 1e-12)[:, None]
+    zone = {"neck": (0.0, 0.2), "chin": {"centre": [0.0, 0.0], "width": 2.0}}
+    out = srcproject.neck_tone_match(atlas, parts, zone, paint)
+    band = (y > -0.05) & (y < 0.1) & ~atlas.is_gut
+    far = (y < -0.3) & ~atlas.is_gut  # well below the band (the chest)
+    assert np.abs(out[band] - head_c).mean() < np.abs(paint[band] - head_c).mean()  # toward the head views' tone
+    assert np.array_equal(out[far], paint[far])  # the chest untouched
+    d_in = out[band] - out[band].mean(axis=0)
+    d_was = paint[band] - paint[band].mean(axis=0)
+    assert np.corrcoef(d_in[:, 0], d_was[:, 0])[0, 1] > 0.9  # the fine detail is kept, only the tone moved
