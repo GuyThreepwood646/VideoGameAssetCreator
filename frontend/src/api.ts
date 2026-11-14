@@ -602,6 +602,12 @@ export type ModelItem = {
   renamed?: boolean // the published file is here under another name (its checksum matched)
   covered?: boolean // not here, but an earlier copy stands in: the published file is optional
 }
+// What a chosen folder holds of one set (nothing is saved by looking).
+export type FolderScan = {
+  folder: string
+  found: { id: string; name: string; path: string; how: 'name' | 'size'; size_matches: boolean; problem: string; readable: boolean; already: boolean; ok: boolean }[]
+  missing: { id: string; name: string }[]
+}
 export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
 export type ModelSet = {
   id: string; name: string; what: string; required: boolean; gate: string; items: ModelItem[]; total: number; remaining: number
@@ -758,6 +764,9 @@ export const api = {
   acceptModel: (id: string) => post<unknown>('/api/model-sets/accept', { id }),
   chooseModel: (id: string, path: string) => post<{ warning: string }>('/api/model-sets/choose', { id, path }),
   unchooseModel: (id: string) => post<unknown>('/api/model-sets/unchoose', { id }),
+  scanModelFolder: (setId: string, path: string) => post<FolderScan>(`/api/model-sets/${setId}/scan-folder`, { path }),
+  useModelFolder: (setId: string, path: string, ids: string[]) =>
+    post<{ taken: { id: string; name: string; path: string }[]; left: { id: string; name: string; reason: string }[] }>(`/api/model-sets/${setId}/use-folder`, { path, ids }),
   recordTestCharacter: (asset_id: string, passed: boolean | null) => post<unknown>('/api/model-sets/test_character', { asset_id, passed }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),

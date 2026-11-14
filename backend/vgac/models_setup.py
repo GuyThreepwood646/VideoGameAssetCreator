@@ -590,6 +590,11 @@ class ChooseIn(BaseModel):
     path: str
 
 
+class FolderIn(BaseModel):
+    path: str
+    ids: list[str] | None = None  # the entries to take (the preview's matches); all of them when left out
+
+
 @router.post("/api/model-sets/choose")
 def post_choose(body: ChooseIn) -> dict[str, Any]:
     """"I already have this": use the file at `path` for this entry instead of downloading it. Refused with a reason when it is
@@ -608,6 +613,92 @@ def post_choose(body: ChooseIn) -> dict[str, Any]:
     if p.stat().st_size == spec.size:
         verify_all([(spec, p)])
     return {"item": item_state(spec, root, roots), "verify": dict(_verify_state), "warning": got.get("warning", "")}
+
+
+def scan_folder(set_id: str, folder_text: str) -> dict[str, Any]:
+    """"I already have these": look in a folder the person chose (to six levels, model files only) for the files of one set. A file
+    matches an entry by its name (any size: a different size is warned about later), or, failing that, by its exact size when only
+    one file of that size is there (a renamed copy; the hash settles it). Nothing is saved: the person sees the matches first."""
+    root = downloader.models_root()
+    st = next((s for s in sets_list() if s["id"] == set_id), None)
+    if st is None or root is None:
+        raise DownloadError("no_set", "There is no such set, or no ComfyUI is linked yet.", "Press Look again.")
+    folder = Path(folder_text.strip().strip('"'))
+    if not folder.is_dir():
+        raise DownloadError("no_folder", "That is not a folder.", "Choose the folder your model files are in.")
+    roots = read_roots(root)
+    by_id = all_specs_by_id(root)
+    files = _listing(folder, depth=6, limit=200000)
+    by_size: dict[int, list[Path]] = {}
+    for paths in files.values():
+        for fp in paths:
+            if fp.suffix.lower() in model_choices.EXTENSIONS:
+                try:
+                    by_size.setdefault(fp.stat().st_size, []).append(fp)
+                except OSError:
+                    continue
+    found, missing = [], []
+    for sid in st.get("items") or []:
+        spec = by_id.get(sid)
+        if spec is None or not model_choices.can_choose(spec):
+            continue
+        named = [x for x in files.get(spec.dest.name.casefold(), []) if x.suffix.lower() in model_choices.EXTENSIONS]
+        same = [x for x in by_size.get(spec.size, []) if x not in named]
+        pick, how = (None, "")
+        if named:
+            pick, how = next((x for x in named if x.stat().st_size == spec.size), named[0]), "name"
+        elif len(same) == 1:
+            pick, how = same[0], "size"
+        if pick is None:
+            missing.append({"id": sid, "name": spec.name})
+            continue
+        problem = model_choices.refusal(spec, pick)
+        readable = model_choices.readable_by_engine(pick, root, roots)
+        already = _item_state_quiet(spec, root, roots)
+        found.append({"id": sid, "name": spec.name, "path": str(pick), "how": how, "size_matches": pick.stat().st_size == spec.size,
+                      "problem": problem, "readable": readable, "already": already in ("present",), "ok": not problem and readable})
+    return {"folder": str(folder), "found": found, "missing": missing}
+
+
+def _item_state_quiet(spec: Spec, root: Path, roots: dict[str, Any]) -> str:
+    return item_state(spec, root, roots)["state"]
+
+
+@router.post("/api/model-sets/{set_id}/scan-folder")
+def post_scan_folder(set_id: str, body: FolderIn) -> dict[str, Any]:
+    """The preview for "I already have these": which files of the set the chosen folder holds. Saves nothing."""
+    try:
+        return scan_folder(set_id, body.path)
+    except DownloadError as e:
+        raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
+
+
+@router.post("/api/model-sets/{set_id}/use-folder")
+def post_use_folder(set_id: str, body: FolderIn) -> dict[str, Any]:
+    """Take the matches of a folder (all, or the entries in `ids`) as the person's files, each like a single choice: refused ones
+    are reported with their reason, the rest are hashed in the background."""
+    try:
+        scan = scan_folder(set_id, body.path)
+    except DownloadError as e:
+        raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
+    root = downloader.models_root()
+    roots = read_roots(root)
+    by_id = all_specs_by_id(root)
+    taken, left = [], []
+    for f in scan["found"]:
+        if body.ids is not None and f["id"] not in body.ids:
+            continue
+        spec = by_id[f["id"]]
+        try:
+            model_choices.choose(spec, f["path"], root, roots)
+        except DownloadError as e:
+            left.append({"id": f["id"], "name": f["name"], "reason": f"{e.message} {e.fix}".strip()})
+            continue
+        taken.append({"id": f["id"], "name": f["name"], "path": f["path"]})
+    exact = [(by_id[x["id"]], Path(x["path"])) for x in taken if Path(x["path"]).stat().st_size == by_id[x["id"]].size]
+    if exact:
+        verify_all(exact)
+    return {"taken": taken, "left": left, "verify": dict(_verify_state)}
 
 
 @router.post("/api/model-sets/unchoose")

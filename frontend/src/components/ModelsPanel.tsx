@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type ModelItem, type ModelSet, type ModelSets } from '../api'
 import ModelFileChoice from './ModelFileChoice'
+import ModelFolderChoice from './ModelFolderChoice'
 
 function size(n: number): string {
   return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`
@@ -142,6 +143,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
             {isOpen ? 'Hide the files' : 'Show the files'}
           </button>
         </div>
+        {s.items.some((i) => i.can_choose) && <ModelFolderChoice setId={s.id} onChanged={load} />}
         {job?.state === 'failed' && job.error && (
           <div className="error small">
             {job.error.message} {job.error.fix}

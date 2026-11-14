@@ -369,3 +369,59 @@ def test_another_engines_own_models_folder_counts(world, monkeypatch):
     monkeypatch.setattr(models_setup, "engine_models_folders", lambda: [second])
     it, _ = setrow("model:sk")
     assert it["state"] == "present" and str(second) in it["path"]
+
+
+# --- "I already have these": a folder for a whole set ------------------------------------------------------------------------------------------
+
+
+def test_a_folder_is_looked_through_and_the_matches_are_shown_before_anything_is_saved(world):
+    tmp, models, folder = world
+    mine = folder / "deeper" / "x"
+    mine.mkdir(parents=True)
+    (mine / BASE_NAME).write_bytes(PIN)
+    (mine / "notes.txt").write_text("not a model", encoding="utf-8")
+    r = client().post("/api/model-sets/s/scan-folder", json={"path": str(folder)})
+    assert r.status_code == 200
+    got = r.json()
+    assert [f["id"] for f in got["found"]] == ["model:zbase"] and got["found"][0]["how"] == "name" and got["found"][0]["ok"]
+    assert got["found"][0]["path"] == str(mine / BASE_NAME) and got["missing"] == []  # "other" has no loader: not offered at all
+    assert not model_choices.load()  # a preview saves nothing
+
+
+def test_a_renamed_copy_is_matched_by_its_exact_size_when_only_one_file_has_it(world):
+    tmp, models, folder = world
+    (folder / "my_copy.safetensors").write_bytes(PIN)
+    got = client().post("/api/model-sets/s/scan-folder", json={"path": str(folder)}).json()
+    assert got["found"][0]["how"] == "size" and got["found"][0]["path"].endswith("my_copy.safetensors")
+    (folder / "another.safetensors").write_bytes(PIN)  # a second file of that size: no guessing
+    got = client().post("/api/model-sets/s/scan-folder", json={"path": str(folder)}).json()
+    assert got["found"] == [] and [m["id"] for m in got["missing"]] == ["model:zbase"]
+
+
+def test_using_a_folder_takes_the_matches_like_single_choices_and_reports_the_ones_it_cannot(world):
+    tmp, models, folder = world
+    (folder / BASE_NAME).write_bytes(PIN)
+    out = client().post("/api/model-sets/s/use-folder", json={"path": str(folder)}).json()
+    assert [x["id"] for x in out["taken"]] == ["model:zbase"] and out["left"] == []
+    settle()
+    assert item()["state"] == "present" and item()["chosen"] and not item()["yours"]
+    # a folder the engine does not read: found, but not takeable, with the reason
+    elsewhere = tmp / "Downloads"
+    elsewhere.mkdir()
+    (elsewhere / BASE_NAME).write_bytes(PIN)
+    client().post("/api/model-sets/unchoose", json={"id": "model:zbase"})
+    seen = client().post("/api/model-sets/s/scan-folder", json={"path": str(elsewhere)}).json()["found"][0]
+    assert seen["readable"] is False and seen["ok"] is False
+    out = client().post("/api/model-sets/s/use-folder", json={"path": str(elsewhere)}).json()
+    assert out["taken"] == [] and "does not read that folder" in out["left"][0]["reason"]
+
+
+def test_a_file_that_cannot_work_is_flagged_in_the_preview_and_left_out_and_bad_folders_are_refused(world):
+    tmp, models, folder = world
+    (folder / BASE_NAME).write_bytes(b"n" * len(PIN))  # the right name, not a model
+    seen = client().post("/api/model-sets/s/scan-folder", json={"path": str(folder)}).json()["found"][0]
+    assert seen["problem"] and not seen["ok"]
+    out = client().post("/api/model-sets/s/use-folder", json={"path": str(folder), "ids": ["model:zbase"]}).json()
+    assert out["taken"] == [] and out["left"]
+    assert client().post("/api/model-sets/s/scan-folder", json={"path": str(tmp / "nope")}).status_code == 400
+    assert client().post("/api/model-sets/nope/scan-folder", json={"path": str(folder)}).status_code == 400
