@@ -311,6 +311,45 @@ def _var(c: dict[str, Any], name: str) -> Any:
     return (c.get("vars") or {}).get(name)
 
 
+LIGHT_LEFT_WORDS = {  # lightfix.left_alone keys
+    "black": "black and very dark colours (a shadow cannot be told from a dark colour there)",
+    "hair": "the hair",
+    "cast_shadows": "sharp shadow edges, such as under the nose, the chin and the arms",
+    "limit": "the deepest shadows and brightest parts, which are moved one stop at most",
+}
+
+
+def _light_after_text(c: dict[str, Any], passed: bool) -> str:
+    """baked_light measured after the pictures were painted on (vgac/lightfix.py): stops of light across one material,
+    before and after, and what was left as it was. Braces are doubled: the text is filled as a template after this."""
+    def stops(v: Any) -> str:
+        return f"{float(v):.1f}" if v is not None else "?"
+
+    after, before = c.get("value"), _var(c, "before")
+    left = [LIGHT_LEFT_WORDS[k] for k in (_var(c, "left") or []) if k in LIGHT_LEFT_WORDS]
+    left_text = (" Left as it was: " + ", ".join(left[:-1]) + (" and " if len(left) > 1 else "") + left[-1] + ".") if left else ""
+    how = (" The colours as painted are kept as base_color_lit.png in this version's files; to keep the picture's light, "
+           "set Delight to Keep in Fine-tune and run clean-up again.")
+    if passed and _var(c, "removed"):
+        text = (f"The light from the picture was taken out of the colours (it varied {stops(before)} stops across one material, "
+                f"now {stops(after)}), so your game's lights shade the model." + left_text + how)
+    elif passed:
+        text = f"No strong light from the picture in the colours ({stops(after)} stops across one material), so they were left as painted."
+    elif _var(c, "removed"):
+        text = (f"Light from the picture is still painted into the colours: {stops(after)} stops across one material, reduced from "
+                f"{stops(before)}. Your game's lights will shade it a second time." + left_text
+                + " Best fix: a picture taken in soft, even light." + how)
+    else:
+        text = (f"Light from the picture is painted into the colours ({stops(after)} stops across one material), too little to "
+                "remove safely, so your game's lights will shade it a second time. Best fix: a picture taken in soft, even light.")
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def _braces(text: str) -> str:
+    """Text that is filled as a check template afterwards, with its braces doubled."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def _head_line(c: dict[str, Any]) -> str:
     """The clean-up step's line on the head's triangles after the weighted decimation (vars head_weighted,
     head_triangles, head_share, head_even; headtris.head_vars), or nothing."""
@@ -876,12 +915,16 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # Phase 5 (G07, G08).
     "baked_light": {
         "severity": "warn",
-        "ok": lambda c: ("Painted shading is kept on purpose for this look." if _var(c, "kept")
+        "ok": lambda c: (_light_after_text(c, True) if _var(c, "after_painting")
+                         else "Painted shading is kept on purpose for this look." if _var(c, "kept")
                          else "Painted-on shadows removed, so it reacts to your game's lights." if _var(c, "removed")
                          else "No painted-on shadows found in the colours."),
-        "fail": "The colours still carry shadows from the picture, so they will fight your game's lights.",
-        "fix": lambda c: None if _var(c, "removed") else {"stage": "prep", "params": {"delight": "remove"}},
-        "fix_label": "Remove painted-on shadows",
+        "fail": lambda c: (_light_after_text(c, False) if _var(c, "after_painting")
+                           else "The colours still carry shadows from the picture, so they will fight your game's lights."),
+        # measured after painting: the fix turns the light pass off (Delight: Keep), only when it changed the colours
+        "fix": lambda c: (({"stage": "prep", "params": {"delight": "keep"}} if _var(c, "removed") else None) if _var(c, "after_painting")
+                          else None if _var(c, "removed") else {"stage": "prep", "params": {"delight": "remove"}}),
+        "fix_label": lambda c: "Keep the picture's light" if _var(c, "after_painting") else "Remove painted-on shadows",
     },
     "albedo_range": {
         "severity": "warn",
