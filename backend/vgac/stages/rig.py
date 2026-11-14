@@ -1080,11 +1080,36 @@ def _hand_chains(segments: list[dict[str, Any]] | None, side: str) -> int | None
     return len(kids)
 
 
+FINGER_OFF_SKIN_CM = 3.0  # a finger chain with a joint farther than this from the hand's skin is not on the hand (real thumb tips reach 2.8)
+
+
+def finger_order_found(segments: list[dict[str, Any]] | None, side: str) -> list[str] | None:
+    """The four fingers of one hand in lane order from the thumb, re-derived from the skeleton's own geometry (blender/rig_fix.py
+    finger_lane_order), as the finger names; None when the hand has no thumb and four finger chains."""
+    if not segments:
+        return None
+    from ..blender import rig_fix
+
+    by = {s["name"]: s for s in segments}
+    hand = f"{PREFIX}{side}Hand"
+    chains = {f: [f"{hand}{f}{i}" for i in (1, 2, 3)] for f in FINGER_NAMES}
+    if hand not in by or not all(n in by for ch in chains.values() for n in ch):
+        return None
+    import numpy as np
+
+    bs = rig_fix.Bones([{"name": s["name"], "parent": s.get("parent"), "head": s["head"], "tail": s.get("tail", s["head"])} for s in segments])
+    rest = [chains[f][0] for f in FINGER_NAMES if f != "Thumb"]
+    order = rig_fix.finger_lane_order(bs, bs.pos[hand], chains["Thumb"][0], rest, {c[0]: c for c in chains.values()}, np.array([0.0, -1.0, 0.0]))
+    return [next(f for f in FINGER_NAMES if chains[f][0] == b) for b in order]
+
+
 def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] | None = None,
-                  build: dict[str, Any] | None = None) -> dict[str, Any] | None:
+                  build: dict[str, Any] | None = None, chains: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The rig check `fingers` (warn): every hand has all five fingers of three bones. None when the skeleton is not a
-    mapped humanoid. `build` is metrics.finger_build (what the finger build did per hand). The check carries its own help
-    text (it is not in guidance.CHECK_GUIDE)."""
+    mapped humanoid. `build` is metrics.finger_build (what the finger build did per hand). A hand that has all five fingers must
+    also have them named in lane order from the thumb (re-derived from the segments) and every chain on the hand's skin (`chains`
+    is rig_info's finger_chains: the worst joint's distance from skin in cm per finger). The check carries its own help text (it
+    is not in guidance.CHECK_GUIDE)."""
     counts = finger_counts(bone_names)
     if counts is None:
         return None
@@ -1100,6 +1125,35 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
     paths = {side: (((build or {}).get(side) or {}).get("path")) for side in ("Left", "Right")}
     made = [side for side, pth in paths.items() if pth in ("tips", "proportion") and int(((build or {}).get(side) or {}).get("built") or 0)]
     c["vars"]["finger_build"] = paths
+    # Five fingers on each hand, but named in the wrong order, or a chain off the hand's skin: still a fault.
+    wrong_order: dict[str, list[str]] = {}
+    off_skin: dict[str, dict[str, float]] = {}
+    if not lacking:
+        for side in ("Left", "Right"):
+            found = finger_order_found(segments, side)
+            if found is not None and found != [f for f in FINGER_NAMES if f != "Thumb"]:
+                wrong_order[side] = found
+            far = {f: cm for f, cm in (((chains or {}).get(side)) or {}).items() if cm is not None and cm > FINGER_OFF_SKIN_CM}
+            if far:
+                off_skin[side] = far
+    if wrong_order or off_skin:
+        c["passed"], c["ok"] = False, False
+        c["vars"].update(wrong_order={k.lower(): v for k, v in wrong_order.items()}, off_skin={k.lower(): v for k, v in off_skin.items()})
+        parts = []
+        if wrong_order:
+            sides = " and ".join(s.lower() for s in wrong_order)
+            parts.append(f"The fingers on the {sides} {'hands are' if len(wrong_order) == 2 else 'hand are'} named out of order (counting from the thumb they are "
+                         "not index, middle, ring, little finger). All the bones are there and the hand still closes, but anything that treats the fingers "
+                         "one by one, such as Unity's finger settings or a move that curls one finger, would bend the wrong one.")
+        if off_skin:
+            sides = " and ".join(s.lower() for s in off_skin)
+            worst = max(cm for d in off_skin.values() for cm in d.values())
+            parts.append(f"A finger bone chain on the {sides} {'hands lies' if len(off_skin) == 2 else 'hand lies'} outside the hand's skin (up to {worst:.0f} cm away), "
+                         "so that finger would not move with the skin it belongs to.")
+        c["help"] = " ".join(parts) + " Rigging again names and places them again; if it comes back the same, the model's hand is the cause."
+        c["fix"] = {"stage": "rig", "params": {}, "label": "Rig again"}
+        c["fix_label"] = "Rig again"
+        return c
     if not lacking and made:
         both = len(made) == 2
         c["help"] = (f"{'Both hands have' if both else 'The ' + made[0].lower() + ' hand has'} all five fingers. The skeleton step left some finger "
@@ -1204,7 +1258,7 @@ async def judge(sc: StageContext) -> None:
             checks.append(hb)
     if not sc.version.metrics.get("rigid") and info_path is not None:
         info = json.loads(Path(info_path).read_text())
-        fc = fingers_check(info.get("bone_names"), info.get("bone_segments"), sc.version.metrics.get("finger_build"))
+        fc = fingers_check(info.get("bone_names"), info.get("bone_segments"), sc.version.metrics.get("finger_build"), info.get("finger_chains"))
         if fc is not None:
             checks.append(fc)
     lj = limb_joins_check(sc.version.metrics.get("limb_joins"), sc.version.metrics.get("joins"))

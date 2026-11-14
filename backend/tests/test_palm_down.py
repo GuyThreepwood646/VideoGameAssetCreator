@@ -270,5 +270,8 @@ def test_a_palm_forward_arm_is_turned_palm_down_with_twist_bones_and_keeps_its_t
     info = tmp_path / "info"
     rig_info = str(pd.__file__).replace("palm_down.py", "rig_info.py")
     subprocess.run([str(BLENDER), "-b", "--threads", "2", "--python", rig_info, "--", str(out), str(info), "35"], check=True, capture_output=True, timeout=300)
-    bent = json.loads((info / "rig_info.json").read_text())["bent"]
+    doc = json.loads((info / "rig_info.json").read_text())
+    bent = doc["bent"]
+    # rig_info also measures how far each finger chain lies from the hand skin (the fingers check reads it): all five here are on the hand
+    assert set(doc["finger_chains"]["Left"]) == {"Thumb", "Index", "Middle", "Ring", "Pinky"} and max(doc["finger_chains"]["Left"].values()) < 3.0
     assert "mixamorig:LeftForeArm" in bent and not [b for b in bent if "Extra_" in b]

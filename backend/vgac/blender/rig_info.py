@@ -48,6 +48,29 @@ for m in [m for m in meshes if m.vertex_groups] or meshes:
         if ws and abs(total_w - 1.0) > 0.02:
             info["unnormalised_verts"] += 1
 info["weight_coverage"] = (info["weighted_verts"] / info["verts"]) if info["verts"] else 0.0
+# How far each finger chain lies from the hand's skin: for every joint of a finger's three bones (and the last bone's end), the distance to the
+# nearest skin vertex within 28 cm of the wrist; the worst joint, in cm. A chain that lies in the hand has joints within 3 cm of skin (thumb tips
+# reach 2.8 cm); one outside it is not on the hand. {side: {finger: cm}}; the rig check `fingers` reads it.
+info["finger_chains"] = {}
+if arms and any(m.vertex_groups for m in meshes):
+    import numpy as _np
+
+    _pts = _np.array([list(m.matrix_world @ v.co) for m in meshes if m.vertex_groups for v in m.data.vertices])
+    for _side in ("Left", "Right"):
+        _hand = arm.data.bones.get("mixamorig:" + _side + "Hand")
+        if _hand is None:
+            continue
+        _w = _np.array(list(arm.matrix_world @ _hand.head_local))
+        _near = _pts[_np.linalg.norm(_pts - _w, axis=1) < 0.28]
+        if not len(_near):
+            continue
+        for _f in ("Thumb", "Index", "Middle", "Ring", "Pinky"):
+            _ch = [arm.data.bones.get("mixamorig:" + _side + "Hand" + _f + str(_i)) for _i in (1, 2, 3)]
+            if not all(_ch):
+                continue
+            _joints = [_np.array(list(arm.matrix_world @ b.head_local)) for b in _ch] + [_np.array(list(arm.matrix_world @ _ch[2].tail_local))]
+            _d = max(float(_np.min(_np.linalg.norm(_near - j, axis=1))) for j in _joints)
+            info["finger_chains"].setdefault(_side, {})[_f] = round(_d * 100, 1)
 # Same segments in glTF space (Y up, -Z forward) for the web viewer: Blender (x, y, z) -> (x, z, -y).
 info["bone_segments_gltf"] = [{"name": b["name"], "parent": b["parent"],
                                "head": [b["head"][0], b["head"][2], -b["head"][1]],
