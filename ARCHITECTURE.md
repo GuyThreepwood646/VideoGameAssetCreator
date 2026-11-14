@@ -33,11 +33,11 @@ Each is `backend/vgac/stages/<stage>.py` with `run`, `refine`, `adjust`, `judge`
 
 | Step (stage id) | In | Out | Work | Main modules |
 |---|---|---|---|---|
-| 1 Describe (`concept`) | description, or the person's own picture(s) | picture and cut-out | card B: one of six painters by look, BiRefNet cut-out; refine = Qwen-Image-Edit | `stages/concept.py`, `own_images.py`, `compose.py`, `readiness.py` |
-| 2 Check all sides (`turnaround`) | kept picture | front, left, back, right, three-quarter views (two for humanoids) with cut-outs; bald copy for library hair | card B: Qwen-Image-Edit with a LoRA by `turn_method`; can borrow the other card to draw both sides at once; per-view checks incl. `same_side`, `pose_held`; redraws a failing view up to twice | `stages/turnaround.py`, `baldpic.py` |
+| 1 Describe (`concept`) | description, or the person's own picture(s) | picture and cut-out | card B: one of six painters by look, BiRefNet cut-out; refine = Qwen-Image-Edit | `stages/concept.py`, `own_images.py`, `compose.py`, `readiness.py`, `buildpose.py` |
+| 2 Check all sides (`turnaround`) | kept picture | front, left, back, right, three-quarter views (two for humanoids) with cut-outs; bald copy for library hair | card B: Qwen-Image-Edit with a LoRA by `turn_method`; can borrow the other card to draw both sides at once; per-view checks incl. `same_side`, `pose_held`; redraws a failing view up to twice; pose check for the 3D build (`pose_for_3d`) and an optional guarded pose redraw (`pose_ready`: wide A pose, `buildpose.guard`, one retry, else the person's picture) | `stages/turnaround.py`, `baldpic.py` |
 | 3 Build the 3D model (`mesh`) | kept views | `glb`, texture maps | card A: TRELLIS.2 (or Hunyuan3D-2mv); normal fix, colour match, rebuild when too dark; optional head built on its own; silhouette audit in Blender; or the person's own model | `stages/mesh.py`, `graphs/trellis.py`, `headgraft.py`, `texcolour.py`, `colourmatch.py`, `normalfix.py`, `model_import.py` |
 | 4 Clean up (`prep`) | kept 3D model | `prep.glb`, final maps, report | host (Blender) plus CPU and an image card for the face pass | `stages/prep.py` and the list below |
-| 5 Make it move (`rig`) | clean-up model | rigged `glb`, `anim_glb`, hit boxes | card B: SkinToken by category `rig_engine` (`none` = rigid, passes through); then Blender: bend renders, hit boxes, moves, spring bones, hair bind | `stages/rig.py`, `moves.py`, `springs.py`, `blender/` |
+| 5 Make it move (`rig`) | clean-up model | rigged `glb`, `anim_glb`, hit boxes | card B: SkinToken by category `rig_engine` (`none` = rigid, passes through); then Blender: bend renders, hit boxes, moves, spring bones, hair bind; checks `fingers` (finger bones found) and `limb_joins` (cuts across each limb on the rig model) | `stages/rig.py`, `limbjoins.py`, `moves.py`, `springs.py`, `blender/` |
 | 6 Hand off (`export`) | rig (or clean-up) model | FBX, GLBs (LODs, Godot), texture packs, `sockets.json`, `manifest.json`, optional sprites, Unity report | host: collision shapes, Blender pack, Unity import, delivery | `stages/export.py`, `colliders.py`, `sockets.py`, `blender/pack.py` |
 
 The **material** category (tileable surface) uses `stages/material.py` for steps 1, 3 and 6 on card B and skips 2, 4 and 5.
@@ -46,14 +46,16 @@ The **material** category (tileable surface) uses `stages/material.py` for steps
 1. facing decision, outline test then a toes test as tie-break (`facing.py`)
 2. normal-map repair for old 3D versions (`normalfix.py`)
 3. Blender `prep.py`: turn, size, pivot, weld, weighted decimation to the budget, shading, optional symmetrize, grid snap for scenery, rebake
-4. texture pass: delight, physically based fix, look applied
-5. picture projection into the base colour (`srcproject.py`). The head is painted first by a chain of head views: the front picture fitted on the head by eyes and mouth (`facemarks.use_local`, MediaPipe on the processor), then each three-quarter view fitted the same way and lined up to what the front painted (refused when over 0.12 of the face width away). Whole-body fits do not paint where a head view paints; they hand over on the neck. Left, right and back views never paint the face; a view whose turn contradicts the front is refused. Unpainted skin inside the eyes-nose-mouth box takes the painted skin tone.
-6. hair found (`stages/hair_detail.py`)
-7. face detail: close-up, fit, paint; held back when the fit scores under 0.65 (`stages/face_detail.py`, `face.py`, `facecloseup.py`, `facemarks.py`)
-8. skin never metal (`skinmetal.py`)
+4. texture pass: measure, physically based fix, look applied; light removed here only when no picture will be painted
+5. picture projection into the base colour (`srcproject.py`). The head is painted first by a chain of head views: the front picture fitted on the head by eyes and mouth (`facemarks.use_local`, MediaPipe on the processor), then each three-quarter view fitted the same way and lined up to what the front painted (refused when over 0.12 of the face width away). Whole-body fits do not paint where a head view paints; they hand over gradually down about 6 cm of neck, their tone matched to the head views' in that band. A head view never paints its frame margin or surface seen beyond about 70 degrees; the chin underside takes the painted colour around it. Left, right and back views never paint the face; a view whose turn contradicts the front is refused. Unpainted skin inside the eyes-nose-mouth box takes the painted skin tone.
+6. skin never metal (`skinmetal.py`): head, neck and the rest of the bare skin; armour in the description limits it to head and neck
+7. hair found (`stages/hair_detail.py`); a grey metal crown is a helmet only when light enough to be steel and the face skin was not marked metal
+8. face detail: close-up, fit, paint; held back when the fit scores under 0.65 (`stages/face_detail.py`, `face.py`, `facecloseup.py`, `facemarks.py`); skin never metal runs again when it laid the texture out anew
 9. hair detail painted, optional own hair material (`hair.py`, `hairmat.py`)
-10. library hairstyle fitted to the body (`hairfit.attach`)
-11. checks computed
+10. light removed after painting (`lightfix.py`): Realistic look with pictures painted, only where same-coloured texels show a light gradient, at most one stop; `base_color_lit.png` keeps the original
+11. physically based figures measured again on the finished maps
+12. library hairstyle fitted to the body (`hairfit.attach`)
+13. checks computed, incl. `picture_projection`, `skin_not_metal`, `facing_tests`, `face_finder`, `baked_light`; a texture check that cannot be measured says so (`quality.not_measured`)
 
 Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat looks, when off, or when nothing is found.
 
@@ -63,7 +65,8 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 - **Routing** (`route()`): the person's default card if it can run the work; else the step's card from `stage_instances` (`material_stage_instances`, `judge_instance`); else the first card that is on, allowed that kind (`allowed_kinds`) and capable (`instance_capabilities`; rigging is `b` only); else the job waits with a message. Host steps always run on the host.
 - **Card off**: queued jobs move, the running job is stopped and requeued, never cancelled.
 - **Share when busy**: an idle card takes the oldest waiting job from a busy card; a job is never split and a running job never moves.
-- **Borrowing**: a running step may `lend` another card for part of its work (step 2; the host's clean-up for its face close-up, naming the work `kind` and the card to `avoid`). Lent only if on, allowed, idle, nothing waiting, engine already answering, enough free memory (`LEND_MIN_ROOM_GB`); the host borrows nothing while a step 2 job waits. Handed back at end, failure or stop; turning it off revokes it.
+- **Borrowing**: a running step may `lend` another card for part of its work (step 2; the host's clean-up for its face close-up, naming the work `kind` and the card to `avoid`). Lent only if on, allowed, idle, nothing waiting, engine already answering, enough free memory (`LEND_MIN_ROOM_GB`); the host borrows nothing while a step 2 job waits. Handed back at end, failure or stop; turning it off revokes it. An idle engine short of memory is told to let go of its models and is measured again. The face pass holds the card of its first close-up as a lease.
+- **Engine address**: an engine's port is never looked up again while it has a job (`instances.py`, `comfy.py`).
 - **Host lane**: first come first served, except an export goes first unless an earlier job of the same asset is still queued or running.
 - **Stop** kills the task and child processes and interrupts ComfyUI; the version becomes "stopped"; **Resume** requeues with the same settings and seeds. **Timeout** (`job_timeout_seconds` 3600, `blender_timeout_seconds` 1800) is an ordinary failure. **Engine lost** mid-job: requeued once, then fails. **Backend restart**: running jobs return to queued.
 - Websocket events: `job`, `version`, `gpus`, `autopilot` (`events.py`).
@@ -81,6 +84,7 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 | Step order and ids | `reference.STAGE_ORDER` |
 | Check wording, severity (`block` or `warn`) and fixes | `guidance.CHECK_GUIDE`, filled when the check is made (`quality.check`; geometry, LOD, texture and rig checks in `quality.py`) |
 | Plain stage names, parameter help | `guidance.STAGE_GUIDE`, `guidance.PARAM_HELP` |
+| Pose check and the A-pose wording | `buildpose.py` |
 | Setup check | `preflight.py` (`GET /api/setup`) |
 
 Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and metrics pick; a version is kept when it has no failed check at the `stop_on` level (`block` default, `warn`, `never`), otherwise it pauses and offers the check's fix.
@@ -92,7 +96,7 @@ The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VG
 | Not tracked | Source |
 |---|---|
 | `library/`, `exports/` | created at run time |
-| `runtime/` | logs, ComfyUI folders, any start scripts, `models/face_landmarker.task` |
+| `runtime/` | logs, ComfyUI folders, any start scripts, `models/face_landmarker.task` (required), `pose_landmarker_heavy.task`, `hand_landmarker.task` (optional) |
 | `local/` | this PC's settings (`machine.json`, `.bak`) |
 | `backend/.venv/`, `node_modules/`, `frontend/dist/`, `desktop/dist/` | `setup/Check-Setup.ps1 -Install` and the build commands |
 | AI models, ComfyUI node packs, Blender, Unity | each user; `setup/Setup-Extras.ps1` with `setup/downloads.json` (licence confirmations are typed by the user) |
