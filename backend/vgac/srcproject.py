@@ -1199,6 +1199,10 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
             log(f"view {rec['name']}: refused, {why}")
         return None, rec
 
+    from . import facemarks
+
+    if facemarks.finder()["finder"] == "none":
+        return refuse("no face finder: " + facemarks.finder().get("missing", "none was set up"))
     head, w = zone["head"], float(zone["info"]["width_px"])
     S = zone["cam"].size
     cam = face.head_camera(head, float(yaw), S)
@@ -1459,8 +1463,13 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     three-quarter view drawn from it): it paints first, in full colour, at whatever turn it fits; `front_view` (the
     front view drawn from the original) stands in for it when the original does not fit the model. head_yaw: the camera
     yaw the model's face is seen straight on from (face_detail.HEAD_YAW); the face region is found from there."""
+    from . import facemarks
+
     t0 = time.time()
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
+    # which finder reads the eyes and mouth for the head views: without one the front head view can only be fitted by
+    # the darkest spots and the three-quarter head views are refused, which the record has to say
+    finder = facemarks.finder()
     centre, scale = model_frame(mesh)
     outlines: dict[tuple[float, int], np.ndarray] = {}
     prepared = Prepared()  # each picture prepared once in this call
@@ -1561,7 +1570,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         n_primary = len(views)
         if not views:
             res["reason"] = front.info.get("refused", "the picture was refused")
-            res["metrics"] = {"srcproject_views": infos, "srcproject_seconds": round(time.time() - t0, 1)}
+            res["metrics"] = {"srcproject_views": infos, "srcproject_face_finder": finder,
+                              "srcproject_seconds": round(time.time() - t0, 1)}
             return res
         for name in TURN_VIEWS:
             if not body:  # the drawn views paint only around a picture the whole body was fitted to
@@ -1600,7 +1610,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
          "srcproject_share_by_view": {views[i].name: round(float(((dom == i) & painted)[~atlas.is_gut].mean()), 4) for i in range(len(views))},
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
-         "srcproject_front_turn": {"yaw": round(front_yaw, 1), "from": front_by},
+         "srcproject_front_turn": {"yaw": round(front_yaw, 1), "from": front_by}, "srcproject_face_finder": finder,
          "srcproject_seconds": round(time.time() - t0, 1)}
     res["metrics"] = m
     worse = after["lab_diff"] == after["lab_diff"] and before["lab_diff"] == before["lab_diff"] and after["lab_diff"] > before["lab_diff"] - 0.5
