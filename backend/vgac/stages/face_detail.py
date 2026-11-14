@@ -285,6 +285,27 @@ async def borrow_card(sc: StageContext, home: str | None) -> tuple[Any, str]:
         return None, f"a second card could not be asked ({str(e)[:100]})"
 
 
+async def claim_card(sc: StageContext, home: str | None) -> Any:
+    """A lease from the queue on `home`, the card the first close-up is drawn on, while the close-ups are drawn, so the
+    queue does not start other work on it or lend it meanwhile (the clean-up job runs on the host, not on a card).
+    None when it cannot be had (a job runs on it, work waits for it, a step 2 waits, a ctx.borrow without `only`): the
+    close-up is drawn there all the same, as before."""
+    import inspect
+
+    ask = getattr(getattr(sc, "ctx", None), "borrow", None)
+    if ask is None or home is None:
+        return None
+    try:
+        if "only" not in inspect.signature(ask).parameters:
+            return None
+        lease, _ = await ask(kind=LEND_KIND, only=home)
+        return lease
+    except (JobCancelled, asyncio.CancelledError):
+        raise
+    except Exception:  # noqa: BLE001  (never fail the pass because a card could not be asked)
+        return None
+
+
 def retry_wanted(first: dict[str, Any]) -> bool:
     """Another close-up is drawn (up to CLOSEUP_TRIES_MAX in all, each with its own seed) only when the last one was not
     the painting's face or look (likeness, features, style): the editor's drift, which a new seed or the look's own words
@@ -1440,6 +1461,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         from ..jobs import is_engine_lost
 
         tries: list[dict[str, Any]] = []
+        home = await claim_card(sc, instance)
         lease, why = await borrow_card(sc, instance)
         if lease is not None and spare is not None:
             plan = [*plan, spare]
@@ -1507,9 +1529,13 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         except BaseException:
             if lease is not None:
                 await lease.end(interrupt=True)
+            if home is not None:
+                await home.end()  # the job's own stop takes its prompt off the card (redraw)
             raise
         if lease is not None:
             await lease.end()
+        if home is not None:
+            await home.end()
         sc.use_model("qwen_edit")
         sc.use_model("qwen_lightning_lora")
         return tries

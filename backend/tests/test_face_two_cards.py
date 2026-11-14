@@ -206,3 +206,37 @@ def test_a_queue_that_takes_a_kind_and_a_card_to_avoid_is_asked_for_a_picture_ca
     monkeypatch.setattr(fd, "closeup_guard", _guard({}))
     _run(sc, glb, maps)
     assert asked == {"kind": "turnaround.run", "avoid": "b"} and state["peak"] == 2
+
+
+def test_the_card_of_the_first_close_up_is_claimed_and_handed_back(tmp_path, draws, monkeypatch):
+    """A queue that takes `only`: the first close-up's card is taken as a lease before drawing, the second card asked
+    for beside it, and both handed back at the end (and on a stop)."""
+    state, glb, maps = draws
+    home, second, asked = Lease(), Lease(), []
+    home.instance = "b"
+
+    async def borrow(kind=None, avoid=None, only=None):
+        asked.append((kind, avoid, only))
+        return (home, "") if only is not None else (second, "")
+
+    sc = Card(tmp_path, None)
+    sc.ctx = SimpleNamespace(borrow=borrow)
+    monkeypatch.setattr(fd, "closeup_guard", _guard({}))
+    _run(sc, glb, maps)
+    assert asked[0] == ("turnaround.run", None, "b") and asked[1] == ("turnaround.run", "b", None)
+    assert home.ended and second.ended and state["peak"] == 2
+
+
+def test_no_claim_is_todays_drawing(tmp_path, draws, monkeypatch):
+    """The queue cannot give the card (busy with a job): drawn there all the same, as before."""
+    state, glb, maps = draws
+
+    async def borrow(kind=None, avoid=None, only=None):
+        return None, "RTX 3080 is busy with another step"
+
+    sc = Card(tmp_path, None)
+    sc.ctx = SimpleNamespace(borrow=borrow)
+    monkeypatch.setattr(fd, "closeup_guard", _guard({}))
+    r = _run(sc, glb, maps)["metrics"]["face_detail"]
+    assert state["log"] and all(card == "b" for _, _, card in state["log"]) and state["peak"] == 1
+    assert r["closeup"]["cards"]["two"] is False
