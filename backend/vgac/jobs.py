@@ -23,7 +23,9 @@ job may borrow a second card for part of its work (JobQueue.lend). The card is l
 kind of work, idle, has nothing waiting (on it, or, with sharing on, anywhere it would take over), its engine already
 answers and has the memory the work needs. While lent, the card's worker picks nothing and sharing gives it nothing;
 the job hands it back when it ends, fails or is stopped (Lease.end), and the worker hands back anything left over
-when the job finishes. Turning the lent card off takes it back from the job (Lease.revoked).
+when the job finishes. Turning the lent card off takes it back from the job (Lease.revoked). The host lane borrows
+too (item 20b: the clean-up's face pass draws a second close-up at once): its job runs on no card, so it names the
+kind of work the card must be allowed (`kind`, pictures) and the card already drawing its first close-up (`avoid`).
 
 On-demand start (instances.py): before a job runs on a card the backend can start (engine settings or a start
 script), the worker calls Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
@@ -368,6 +370,7 @@ class JobCancelled(Exception):
 # last step counts as having room. The 10 GB card had 8.8 GB free at start in the test (the desktop and drivers hold
 # the rest); the drawing model runs on it by loading in parts. Not measured below that: a guess with margin.
 LEND_MIN_ROOM_GB = 7.0
+STEP2_PREFIX = "turnaround."  # step 2's jobs, which borrow a card for their whole run
 
 
 def engine_room_gb(summary: dict[str, Any] | None) -> float | None:
@@ -430,9 +433,10 @@ class JobContext:
     rerouted: bool = False
     reroute_to: str | None = None
     reroute_message: str = ""
-    # Borrow a second card for part of this job (JobQueue.lend): awaited with nothing, returns (Lease or None, the
-    # plain reason when None). None: this job cannot borrow (the host, tests).
-    borrow: Callable[[], Awaitable[tuple["Lease | None", str]]] | None = None
+    # Borrow a second card for part of this job (JobQueue.lend): awaited with nothing, or with kind= (the work the
+    # card must be allowed, default this job's kind) and avoid= (a card not to lend, the one the job already draws
+    # on); returns (Lease or None, the plain reason when None). None: this job cannot borrow (tests).
+    borrow: Callable[..., Awaitable[tuple["Lease | None", str]]] | None = None
 
     @property
     def client(self) -> ComfyClient | None:
@@ -508,9 +512,9 @@ class InstanceWorker:
     share: Callable[[], str | None] | None = None
     # The job this card is lent to (JobQueue.lend): while set the worker picks nothing.
     lent_to: str | None = None
-    # Lending: called with (this card, job id, job kind) to borrow another card for a running job; and with the job
-    # id when the job ends, to hand back anything it still holds.
-    lend: Callable[[str, str, str], Awaitable[tuple["Lease | None", str]]] | None = None
+    # Lending: called with (this card or the host, job id, kind of work, card to avoid) to borrow another card for a
+    # running job; and with the job id when the job ends, to hand back anything it still holds.
+    lend: Callable[..., Awaitable[tuple["Lease | None", str]]] | None = None
     after_job: Callable[[str], None] | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task | None = None
@@ -707,8 +711,12 @@ class InstanceWorker:
         ctx = JobContext(job_id=job_id, instance=self.name, payload=payload, settings=self.settings, clients=self.clients,
                          _progress_cb=progress)
         if self.lend is not None:
-            lend = self.lend
-            ctx.borrow = lambda: lend(self.name, job_id, kind)
+            lend, here, job_kind = self.lend, self.name, kind
+
+            def borrow(kind: str | None = None, avoid: str | None = None) -> Awaitable[tuple[Lease | None, str]]:
+                return lend(here, job_id, kind or job_kind, avoid)
+
+            ctx.borrow = borrow
         self.current_ctx = ctx
         error: str | None = None
         cancelled = False
@@ -911,7 +919,7 @@ class JobQueue:
                 prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
                 blocked=(lambda n=name: self._start_failed(n)) if gpu else None,
                 share=(lambda n=name: self.take_shared(n)) if gpu else None,
-                lend=self.lend if gpu else None, after_job=self.end_leases)
+                lend=self.lend, after_job=self.end_leases)
         if self.disabled or any(k != set(KIND_GROUPS) for k in self.allowed_kinds.values()):
             log.info("graphics cards turned off in the app: %s; allowed kinds: %s", sorted(self.disabled),
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
@@ -1416,14 +1424,24 @@ class JobQueue:
                     return f"work is waiting that {gpu} would take over"
         return None
 
-    async def lend(self, borrower: str, job_id: str, kind: str) -> tuple[Lease | None, str]:
-        """Lend a second card to the running job `job_id` (on card `borrower`, of `kind`), when one is free: on,
-        allowed the work, idle, nothing waiting it would take, its engine already answering (never started for this:
-        a start and a first model load take longer than they save) and LEND_MIN_ROOM_GB of memory for the engine.
-        Returns (Lease, "") or (None, the plain reason why not, for the step's record)."""
-        others = [n for n in self.settings.instances if n != borrower]
+    async def lend(self, borrower: str, job_id: str, kind: str, avoid: str | None = None) -> tuple[Lease | None, str]:
+        """Lend a second card to the running job `job_id` (on card `borrower`, or the host, needing `kind` of work), when
+        one is free: on, allowed the work, idle, nothing waiting it would take, its engine already answering (never
+        started for this: a start and a first model load take longer than they save) and LEND_MIN_ROOM_GB of memory
+        for the engine. `avoid`: a card not to lend (the host job already draws on it). Returns (Lease, "") or (None,
+        the plain reason why not, for the step's record)."""
+        others = [n for n in self.settings.instances if n != borrower and n != avoid]
         if not others:
-            return None, "this computer has one graphics card"
+            if len(self.settings.instances) <= 1:
+                return None, "this computer has one graphics card"
+            return None, f"the only other card, {gpu_name(avoid, self.settings)}, is already drawing for this step"
+        if borrower == HOST:
+            # A step that borrows for its whole run (step 2) gains more from a card than the host's short borrow
+            # (two face close-ups, a minute or two): while one waits to start, the host borrows nothing.
+            with session_factory()() as db:
+                if db.scalar(select(func.count()).select_from(Job).where(
+                        Job.status == "queued", Job.kind.startswith(STEP2_PREFIX))):
+                    return None, "the side views of another character are waiting and may need the second card"
         reasons: list[str] = []
         for name in others:
             why = self._lend_refusal(name, kind)
@@ -1449,7 +1467,7 @@ class JobQueue:
             self.leases[name] = lease
             if self.supervisor is not None:
                 self.supervisor.touch(name)
-            log.info("graphics card %s lent to job %s on %s", name, job_id[:8], borrower)
+            log.info("graphics card %s lent to job %s on %s (%s)", name, job_id[:8], borrower, kind)
             self.publish_gpus()
             return lease, ""
         return None, "; ".join(reasons)
