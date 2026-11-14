@@ -145,7 +145,7 @@ def _arm_roles(bs, start, side, forward):
         order = list(kids)
         if len(order) >= 2:
             thumb = min(order, key=lambda k: float(np.linalg.norm(bs.pos[k] - wrist)))
-            rest = sorted([k for k in order if k != thumb], key=lambda k: -float(np.dot(bs.pos[k] - wrist, forward)))
+            rest = finger_lane_order(bs, wrist, thumb, [k for k in order if k != thumb], fingers, forward)
             named = [("Thumb", thumb)] + list(zip(FINGERS, rest))
         else:
             named = [("Index", order[0])]
@@ -153,6 +153,30 @@ def _arm_roles(bs, start, side, forward):
             for i, b in enumerate(fingers[k][:4]):
                 roles[f"{side}Hand{fname}{i + 1}"] = b
     return roles, None
+
+
+def finger_lane_order(bs, wrist, thumb, rest, fingers, forward):
+    """The finger chains (their first bones) ordered from the thumb across the hand: index first, little finger last. The order
+    is where each chain lies across the hand, measured from the thumb's base along the direction from the thumb to the middle of
+    the fingers (square to the hand's own direction), so it holds whatever way the hand is held. The first version ordered the
+    chains by how far forward their bases sat, which is noise when the hand's width runs up and down (a palm-forward hand): about
+    half of the stored rigs had their fingers named out of order."""
+    if len(rest) < 2:
+        return list(rest)
+    last = {k: fingers[k][-1] for k in rest}
+    tip = {k: (bs.tail[last[k]] if float(np.linalg.norm(bs.tail[last[k]] - bs.pos[last[k]])) > 1e-9 else bs.pos[last[k]]) for k in rest}
+    mid = {k: (bs.pos[k] + tip[k]) / 2 for k in rest}
+    along = np.mean([tip[k] for k in rest], axis=0) - wrist
+    n = float(np.linalg.norm(along))
+    across = np.mean([mid[k] for k in rest], axis=0) - bs.pos[thumb]
+    if n > 1e-9:
+        along = along / n
+        across = across - along * float(np.dot(across, along))
+    m = float(np.linalg.norm(across))
+    if m < 1e-9:  # the fingers sit on the thumb's line: nothing to order by, keep the old rule
+        return sorted(rest, key=lambda k: -float(np.dot(bs.pos[k] - wrist, forward)))
+    across = across / m
+    return sorted(rest, key=lambda k: float(np.dot(mid[k] - bs.pos[thumb], across)))
 
 
 def _first_walk(bs, start):
