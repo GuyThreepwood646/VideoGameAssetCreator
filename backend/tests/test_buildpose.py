@@ -195,7 +195,7 @@ def test_a_fist_warns_with_no_finger_bones():
 
 def test_the_wording_asks_for_a_wide_a_pose_and_keeps_the_rest():
     text = buildpose.pose_prompt()
-    assert "about 45 degrees" in text and "a quarter of the body's height apart" in text
+    assert "about 45 degrees" in text and "a third of the body's height apart" in text
     assert "spread apart" in text and "Change only the pose" in text
     assert "glove" not in text.lower()  # gloves are never named unless the picture has them
     bare = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 3.0}, "right": {"skin_gap": 4.0}}, "grey": True})
@@ -451,3 +451,45 @@ def test_step_two_carries_the_pose_check(step):
 def test_guide_entries():
     for name in ("pose_for_3d", "pose_guard"):
         assert guidance.CHECK_GUIDE[name]["severity"] == "warn"
+
+
+# --- choose_try: keep the better try of the pose redraw ---------------------------------------------------------------
+
+
+def _t(ok, gap):
+    return {"guard_ok": ok, "gap": gap}
+
+
+def test_choose_try_keeps_the_only_good_try_and_stops():
+    r = buildpose.choose_try([_t(True, 0.3)], 1)
+    assert r["keep"] == 0 and r["another"] is False
+
+
+def test_choose_try_asks_for_another_while_the_gap_is_under_the_limit():
+    r = buildpose.choose_try([_t(True, 0.222)], 1)
+    assert r["keep"] == 0 and r["another"] is True and "0.222" in r["why"]
+    assert buildpose.choose_try([_t(True, 0.222)], 0) == {"keep": 0, "another": False, "why": r["why"]}
+
+
+def test_choose_try_prefers_the_guard_then_the_larger_gap():
+    # the first was wide but refused, the second kept the character: the second, even with the smaller gap
+    r = buildpose.choose_try([_t(False, 0.34), _t(True, 0.222)], 0)
+    assert r["keep"] == 1
+    # both kept: the wider one, whichever came first
+    assert buildpose.choose_try([_t(True, 0.21), _t(True, 0.26)], 0)["keep"] == 1
+    assert buildpose.choose_try([_t(True, 0.26), _t(True, 0.21)], 0)["keep"] == 0
+    # a tie keeps the earlier
+    assert buildpose.choose_try([_t(True, 0.25), _t(True, 0.25)], 0)["keep"] == 0
+
+
+def test_choose_try_with_no_try_kept_keeps_nothing_and_retries_only_if_it_can():
+    assert buildpose.choose_try([_t(False, 0.3)], 1) == {"keep": None, "another": True, "why": "no try kept the character"}
+    assert buildpose.choose_try([_t(False, 0.3), _t(False, 0.4)], 0)["keep"] is None
+    assert buildpose.choose_try([_t(False, 0.3), _t(False, 0.4)], 0)["another"] is False
+    assert buildpose.choose_try([], 2)["keep"] is None
+
+
+def test_choose_try_an_unread_gap_counts_least_and_asks_for_nothing_more():
+    assert buildpose.choose_try([_t(True, None), _t(True, 0.1)], 0)["keep"] == 1
+    r = buildpose.choose_try([_t(True, None)], 1)
+    assert r["keep"] == 0 and r["another"] is False

@@ -660,10 +660,12 @@ def pose_check(m: dict[str, Any], held_item: str | None = None, after_redraw: bo
 # (readiness.HUMANOID_REDRAW) both use it.
 A_POSE = ("both arms straight and held out from the body at about 45 degrees, halfway between hanging down and straight "
           "out to the sides, with empty space between each arm and the body from the armpit to the hand; the legs apart "
-          "with the feet about a quarter of the body's height apart and empty space between the legs from the crotch "
+          "with the feet about a third of the body's height apart and empty space between the legs from the crotch "
           "down; standing upright with both feet flat on the ground. Each hand open with the back of the hand toward the "
           "camera, all five fingers straight and spread apart with clear gaps between them, thumb out to the side; "
           "nothing held in either hand; no hand in a pocket, behind the body or hidden by a sleeve.")
+# The feet's gap the redraw is asked for, over the height; the "may join" limit is ANKLE_MAY. A quarter of the height was asked
+# before and the kept redraw of the boy came out at 0.222, under the limit; a third gives room.
 POSE_READY = "Redraw the character ready for 3D in a wide A pose: " + A_POSE
 POSE_SUFFIX = (" Change only the pose. Keep everything else exactly the same: the same character, face, hair, skin colour, "
                "every garment and its colours and materials, everything worn on the arms, hands and legs, the body "
@@ -818,3 +820,30 @@ def guard_words(g: dict[str, Any], kept_anyway: bool = False, retried: bool = Fa
     return ("The pose redraw changed your character (" + _list(g["reasons"]) + ")"
             + (", also on a second try" if retried else "") + ", so it was not used. The sides were drawn from your own "
             "picture. You can look at the redraw and keep it anyway." + nc)
+
+
+# --- which try of the pose redraw to keep ---------------------------------------------------------------------------
+
+
+def choose_try(tries: list[dict[str, Any]], retries_left: int) -> dict[str, Any]:
+    """Which try of the pose redraw to keep, and whether another is wanted. Each try is {"guard_ok": bool, "gap": float | None}
+    (the character guard's ok, and the feet's gap over the height from measure(redraw)["legs"]["gap"], None when it could
+    not be read). Returns {"keep": index of the try to keep or None, "another": bool, "why": plain words}.
+    Keep order: a try the guard passed beats one it refused, then the larger gap (an unread gap counts as the smallest;
+    the earlier try wins a tie). Another try is wanted while retries are left and either none passed the guard or the kept
+    gap is under ANKLE_MAY (the redraw would still join the thighs); an unread gap on a passing try asks for nothing more."""
+    def key(i: int) -> tuple[int, float, int]:
+        t = tries[i]
+        g = t.get("gap")
+        return (1 if t.get("guard_ok") else 0, float(g) if g is not None else -1.0, -i)
+
+    best = max(range(len(tries)), key=key) if tries else None
+    passed = best is not None and bool(tries[best].get("guard_ok"))
+    keep = best if passed else None
+    gap = tries[best].get("gap") if passed else None
+    if not passed:
+        return {"keep": None, "another": retries_left > 0, "why": "no try kept the character"}
+    if gap is not None and gap < ANKLE_MAY:
+        return {"keep": keep, "another": retries_left > 0,
+                "why": f"the feet are {gap:.3f} of the height apart, under {ANKLE_MAY}: the thighs may still join"}
+    return {"keep": keep, "another": False, "why": "the character was kept and the feet are far enough apart"}
