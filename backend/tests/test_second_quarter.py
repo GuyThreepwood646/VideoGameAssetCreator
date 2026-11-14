@@ -73,13 +73,16 @@ class MetricsSC(FakeSC):
     def prefix(self, name):
         return name
 
+    async def stage_input(self, src, name, instance=None):
+        return await super().stage_input(src, name)
+
 
 @pytest.fixture
 def drawn(monkeypatch):
     monkeypatch.setattr(turnaround.library, "version_file", lambda v, key, settings: v.image if key == "image" else None)
     calls: list[tuple[str, int]] = []
 
-    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None):
+    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None, references=None):
         calls.append((view, seed))
         raw, cut = _rgba(sc.dir / f"{view}_raw.png"), _rgba(sc.dir / f"{view}.png")
         return {"raw": raw, "cutout": cut, "white": imaging.white_composite(cut), "stats": None}

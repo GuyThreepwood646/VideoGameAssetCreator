@@ -18,9 +18,9 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import buildpose, hairlib, library, quality, reference
+from .. import buildpose, hair_sides, hairlib, library, quality, reference
 from ..db import Version
-from ..graphs.qwen_edit import (CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
+from ..graphs.qwen_edit import (BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
 from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
@@ -66,6 +66,35 @@ def set_step_checks(sc: StageContext, new: list[dict[str, Any]], drop: tuple[str
     names = {c["name"] for c in new} | set(drop)
     kept = [c for c in ((getattr(sc.version, "metrics", None) or {}).get("checks") or []) if c.get("name") not in names]
     sc.set_metrics(**quality.summarise(kept + list(new)))
+
+
+# UNTESTED ON A CARD (2026-11-13). True: a character's back view is drawn last, with the two finished side views as pictures
+# 2 and 3 (the kept picture stays picture 1) and words asking the hair to match them (graphs/qwen_edit.BACK_SIDES_SENTENCE),
+# because the back came out with a narrower, shorter column of hair than the sides show. False, or `back_references: false`
+# in a version's settings: as before. Always off where the hair comes from the library (the bald pictures have no hair to
+# match and the haired views are replaced) and for any turn method but the standard one. metrics.back_references records it.
+BACK_REFERENCES = True
+
+
+def back_references_on(sc: StageContext, params: dict[str, Any], method: str) -> bool:
+    chosen = params.get("back_references")
+    on = BACK_REFERENCES if chosen is None else bool(chosen)
+    return bool(on and method == "standard" and _category(sc) == "humanoid" and not _bald_on(sc, params))
+
+
+def hair_check(res: dict[str, Any]) -> dict[str, Any]:
+    """hair_matches_sides (warn) from hair_sides.compare: the back view's hair against the side views'. value is how much
+    higher the back's hair ends than theirs (a share of the head-to-shoulder height); the sentence is the check's own."""
+    if res["ok"]:
+        text = "The hair in this back view is as long and as wide as the side views show it."
+    else:
+        short = res["end_gap"] > hair_sides.MAX_END_GAP
+        what = ("is shorter than the side views show it: it stops higher up, at the neck" if short else
+                "is a narrow strip down the middle of the back, where the side views show it falling wider")
+        text = (f"The hair in this back view {what}. The 3D model and its texture take the back of the hair from this "
+                "picture, so the hair would look different from behind. Draw this view again.")
+    return {"id": "hair_matches_sides", "ok": res["ok"], "value": res["end_gap"], "limit": hair_sides.MAX_END_GAP,
+            "width_ratio": res["width_ratio"], "severity": "warn", "help": text}
 
 
 MAX_REROLLS = 2
@@ -211,11 +240,12 @@ def pose_check(view: str, ext: dict[str, float], ref: dict[str, float]) -> dict[
 
 
 def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, hist_front, hist_view, mirror: float | None,
-                as_drawn: float | None = None, pose: tuple[dict[str, float], dict[str, float]] | None = None) -> dict[str, Any]:
+                as_drawn: float | None = None, pose: tuple[dict[str, float], dict[str, float]] | None = None,
+                hair: dict[str, Any] | None = None) -> dict[str, Any]:
     """The checks of one view. mirror and as_drawn are its outline's overlap with its partner view's (mirrored, and as
     drawn; imaging.pair_overlap), given when the partner exists: left and right take the mirror_iou limit, and every
     pair takes same_side when as_drawn is given. pose is (the view's pose_extents, the picture's) for a front or back view
-    of a humanoid; it adds pose_held."""
+    of a humanoid; it adds pose_held. hair is hair_sides.compare's answer for a back view; it adds hair_matches_sides."""
     checks: list[dict[str, Any]] = []
     checks.append({"id": "coverage", "ok": stats["coverage"] >= LIMITS["min_coverage"], "value": stats["coverage"], "limit": LIMITS["min_coverage"]})
     out: dict[str, Any] = {"bbox": stats}
@@ -240,6 +270,9 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
         pc = pose_check(view, *pose)
         out["pose_arm_ratio"], out["pose_leg_ratio"] = pc["value"], pc["leg_ratio"]
         checks.append(pc)
+    if hair is not None and view == "back":
+        out["hair_end_gap"], out["hair_width_ratio"] = hair["end_gap"], hair["width_ratio"]
+        checks.append(hair_check(hair))
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)
     out["ok"] = out["passed"]
@@ -271,21 +304,21 @@ def cutout_in_graph(sc: StageContext) -> bool:
 
 
 async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, lora_strength: float, extra: str, base: float, span: float,
-                         name: str | None = None, instance: str | None = None) -> dict[str, Path]:
+                         name: str | None = None, instance: str | None = None, references: list[str] | None = None) -> dict[str, Path]:
     """One drawn view. `name` (default the view) names its files: the bald pictures use bald_<view>. `instance`: the
     card it is drawn and cut out on (default the job's own card); the graph is the same on every card."""
     name = name or view
     on = {"instance": instance} if instance else {}
     if cutout_in_graph(sc):
         graph = angle_cutout_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
-                                   lora_strength=lora_strength, zero_negative=zero_negative_on(sc))
+                                   lora_strength=lora_strength, zero_negative=zero_negative_on(sc), references=references)
         entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span, **on)
         raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
         await sc.download_image(entry, CUT_NODE, sc.dir / f"{name}.png", **on)
         res = await sc.finish_cutout(sc.dir / f"{name}.png")
         return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
     graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength,
-                        zero_negative=zero_negative_on(sc))
+                        zero_negative=zero_negative_on(sc), references=references)
     entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
     raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
     res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3, **on)
@@ -788,6 +821,24 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     home = _home_card(sc)
     src_names: dict[str | None, str] = {None: src_name}
 
+    back_refs = back_references_on(sc, params, method)
+    side_pictures: dict[str | None, list[str]] = {}
+    with_refs: set[str] = set()
+
+    async def side_references(card: str | None) -> list[str]:
+        """The two finished side views, staged on the card that draws the back (none when either is missing)."""
+        if card not in side_pictures:
+            names: list[str] = []
+            for side in ("left", "right"):
+                p = sc.file(f"{side}_white")
+                if p is None or not Path(p).is_file():
+                    names = []
+                    break
+                tag = f"_{card}" if card else ""
+                names.append(await sc.stage_input(Path(p), f"vgac_{sc.version.id[:8]}_back_ref_{side}{tag}.png", instance=card))
+            side_pictures[card] = names
+        return side_pictures[card]
+
     async def draw(view: str, seed: int, attempts: int, at: float, card: str | None = None) -> tuple[dict[str, Any], str]:
         if sheet is not None and attempts == 0 and view in sheet:
             return dict(sheet[view]), "sheet"
@@ -797,13 +848,21 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n), "shadow_free"
         sc.use_model("qwen_angles_lora")
         used.add("standard")
+        refs = await side_references(card) if view == "back" and back_refs else []
+        if refs:
+            with_refs.add(view)
+            extra_v = " ".join(p for p in (extra, BACK_SIDES_SENTENCE) if p)
+        else:
+            with_refs.discard(view)
+            extra_v = extra
         if card is None:
-            return await _generate_view(sc, src_name, view, seed, lora_strength, extra, at, width / n), "standard"
+            return await _generate_view(sc, src_name, view, seed, lora_strength, extra_v, at, width / n,
+                                        **({"references": refs} if refs else {})), "standard"
         if card not in src_names:
             # Its own copy of the start picture, so the job's card never reads a file while it is being copied.
             src_names[card] = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept_{card}.png", instance=card)
-        return await _generate_view(sc, src_names[card], view, seed, lora_strength, extra, at, width / n,
-                                    instance=card), "standard"
+        return await _generate_view(sc, src_names[card], view, seed, lora_strength, extra_v, at, width / n,
+                                    instance=card, **({"references": refs} if refs else {})), "standard"
 
     finished = [0]   # views done, for the progress bar when two cards draw at once
     parallel = [False]
@@ -846,8 +905,15 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                                                                     pose_ref if view in POSE_CHECKED else None)
             hist_cache.update(new_hists)
             as_drawn, mirror = pair if pair is not None else (None, None)
+            hair = None
+            if view == "back" and view not in supplied and _category(sc) == "humanoid" and not _bald_on(sc, params):
+                others = [sc.file(f"{v}_cutout") for v in ("front", "left", "right")]
+                if all(others):
+                    hair = await asyncio.to_thread(hair_sides.compare, files["cutout"], *others)
             info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
-                               as_drawn, pose)
+                               as_drawn, pose, hair)
+            if view in with_refs and drew == "standard":
+                info["references"] = ["left", "right"]
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew
@@ -873,7 +939,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     cards: dict[str, Any] = {"mode": "one after another", "why": why, "card": home}
     try:
         if lease is None:
-            for view in todo:
+            # With the side views as references the back is drawn after them (its seed stays its place in the usual order).
+            for view in ([v for v in todo if v != "back"] + ["back"] if back_refs and "back" in todo else todo):
                 await do_view(view)
         else:
             cards = {"mode": "two cards", "card": home, "second_card": lease.instance}
@@ -905,7 +972,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             addons.append({"id": METHOD_ADDON[m][0], "value": lora_strength if m == "standard" else METHOD_STRENGTH,
                            "required": m == "standard"})
     sc.set_metrics(recipe=reference.recipe_record(rec, "turnaround"), addons=addons, turn_method=chosen_method,
-                   cutout_in_view_graph=cutout_in_graph(sc), zero_negative=zero_negative_on(sc))
+                   cutout_in_view_graph=cutout_in_graph(sc), zero_negative=zero_negative_on(sc),
+                   **({"back_references": True} if any(r.get("references") for r in results.values()) else {}))
     _publish_views(sc, results)
     _note_second_quarter(sc, results)
 

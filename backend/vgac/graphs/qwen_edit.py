@@ -28,8 +28,22 @@ VIEWS = {
 }
 
 
+def add_references(g: dict[str, Any], names: list[str]) -> None:
+    """Extra pictures for the text encoder: names[0] becomes image2 and names[1] image3 (the node takes image1 to image3,
+    each shown to the model as "Picture N" and added as a reference latent). The same loader, scale and encoder nodes as
+    the graph already has, so the engine reloads no model for them."""
+    if not 0 <= len(names) <= COMPOSE_MAX - 1:
+        raise ValueError(f"a view takes up to {COMPOSE_MAX - 1} reference pictures, got {len(names)}")
+    for i, name in enumerate(names, start=2):
+        g[f"img{i}"] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        g[f"sc{i}"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": [f"img{i}", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}}
+        for enc in ("pos", "neg"):
+            if enc in g:
+                g[enc]["inputs"][f"image{i}"] = [f"sc{i}", 0]
+
+
 def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9,
-                zero_negative: bool = False) -> dict[str, Any]:
+                zero_negative: bool = False, references: list[str] | None = None) -> dict[str, Any]:
     """The view graph. zero_negative (UNTESTED ON A CARD, docs/SPEED-AUDIT.md O7): the negative is the positive with its
     values zeroed (ConditioningZeroOut) instead of a second pass of the picture through the 7B text encoder. The sampler
     here runs at cfg 1.0, and at cfg 1.0 ComfyUI 0.45.3 never evaluates the negative: comfy/samplers.py
@@ -41,6 +55,8 @@ def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_stren
     if zero_negative:
         del g["neg"]
         g["negr"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["posr", 0]}}
+    if references:
+        add_references(g, references)
     return g
 
 
@@ -78,8 +94,8 @@ CUT_NODE = "cut_save"
 
 
 def angle_cutout_graph(image_name: str, prompt: str, seed: int, prefix: str, cutout_prefix: str,
-                       lora_strength: float = 0.9, zero_negative: bool = False) -> dict[str, Any]:
-    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength, zero_negative=zero_negative)
+                       lora_strength: float = 0.9, zero_negative: bool = False, references: list[str] | None = None) -> dict[str, Any]:
+    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength, zero_negative=zero_negative, references=references)
     for key, node in cutout_graph("unused.png", cutout_prefix).items():
         if key == "img":
             continue  # the picture comes from the decoder
@@ -179,6 +195,15 @@ def reference_prompt(instruction: str) -> str:
 # with the arms hanging although the picture held them out. The angles LoRA is trained on the bare tags in VIEWS, so
 # this sentence may be ignored or may shift the look; try it on a few pictures before keeping it. To undo, empty it.
 POSE_KEEP = "Keep the exact pose, with the arms and legs where they are in the picture."
+
+
+# UNTESTED ON A CARD (2026-11-13). The back view's hair came out unlike the other views' (a narrow column down the back
+# where the sides show hair to the collarbones). The back is drawn last, so the two finished side views ride along as
+# Picture 2 (the character's left side) and Picture 3 (the right), the kept picture staying Picture 1, and this sentence
+# names them. To undo, empty it and turn `back_references` off.
+BACK_SIDES_SENTENCE = ("Picture 2 shows this character's left side and Picture 3 the right side. The hair, seen from behind, "
+                       "must match them: the same length, ending at the same place against the shoulders, and falling as wide. "
+                       "Do not copy the pose or the turn of Pictures 2 and 3; show the back of Picture 1.")
 
 
 def view_prompt(view: str, extra: str = "") -> str:
