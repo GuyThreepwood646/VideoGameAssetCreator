@@ -260,3 +260,66 @@ def test_entries_the_app_cannot_swap_names_for_offer_no_button(world):
     st = models_setup.set_status(downloader.models_root())
     flags = {i["id"]: i["can_choose"] for s in st["sets"] for i in s["items"]}
     assert flags == {"model:zbase": True, "model:other": False}  # only entries a loader of the graphs is known for
+
+
+# --- an earlier copy that stands in: never "to get", and the publisher's file under another name is not missing -----------------------------
+
+
+def put_old(folder: Path, data: bytes) -> Path:
+    old = folder / "z_image_int8_convrot.safetensors"  # the earlier file the list names for this entry
+    old.write_bytes(data)
+    return old
+
+
+def setrow(spec_id="model:zbase"):
+    st = models_setup.set_status(downloader.models_root())
+    s = st["sets"][0]
+    return next(i for i in s["items"] if i["id"] == spec_id), s
+
+
+def test_an_earlier_copy_that_is_the_publishers_file_under_another_name_is_not_missing(world):
+    tmp, models, folder = world
+    old = put_old(folder, PIN)
+    first, _ = setrow()  # the hash is not known yet: being read in the background
+    assert first["state"] == "checking" and first["older"] == str(old) and first["covered"]
+    settle()
+    it, s = setrow()
+    assert it["state"] == "present" and it["renamed"] and it["path"] == str(old) and it["check"] == "ok" and not it["covered"]
+    # the answer is kept: after a restart (nothing in memory) it is known at once
+    models_setup.VERIFIED.clear()
+    models_setup._loaded_from[0] = None
+    again, _ = setrow()
+    assert again["state"] == "present" and again["renamed"]
+    assert (tmp / "local" / "models_verified.json").is_file()
+
+
+def test_an_earlier_copy_that_is_a_different_file_stands_in_and_is_optional_not_to_get(world):
+    tmp, models, folder = world
+    put_old(folder, st_file(len(PIN), fill=b"q"))  # same size, other content
+    settle()
+    setrow()
+    settle()
+    it, s = setrow()
+    assert it["state"] == "missing" and it["covered"] and it["older"]
+    other = next(i for i in s["items"] if i["id"] == "model:other")
+    assert s["remaining"] == other["size"] and s["covered"] == 1 and s["covered_size"] == it["size"]  # only the really missing file is "to get"
+    assert not s["complete"]  # "other" is still missing
+    # take "other" away from the set: now nothing is to get and the set is not unfinished
+    lst = json.loads((tmp / "setup" / "downloads.json").read_text(encoding="utf-8"))
+    lst["sets"][0]["items"] = ["model:zbase"]
+    (tmp / "setup" / "downloads.json").write_text(json.dumps(lst), encoding="utf-8")
+    _, s = setrow()
+    assert s["remaining"] == 0 and s["need"] == 0 and s["complete"]
+
+
+def test_getting_a_set_skips_the_covered_file_unless_it_is_asked_for(world, monkeypatch):
+    tmp, models, folder = world
+    put_old(folder, st_file(len(PIN) - 3))
+    taken = []
+    monkeypatch.setattr(downloader, "start_job", lambda name, todo, accepted, opener, wait: taken.append([s.id for s in todo]) or "job")
+    models_setup.start_set("s", {})
+    assert taken[-1] == ["model:other"]
+    models_setup.start_set("s", {}, only=["model:zbase"])
+    assert taken[-1] == ["model:zbase"]
+    models_setup.start_set("s", {}, only=["model:other"])
+    assert taken[-1] == ["model:other"]

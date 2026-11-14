@@ -599,11 +599,14 @@ export type ModelItem = {
   can_choose?: boolean // the person may point the app at a file of their own for this entry
   chosen?: boolean // the file at `path` is one the person pointed at
   yours?: boolean // ... and it is not the published file
+  renamed?: boolean // the published file is here under another name (its checksum matched)
+  covered?: boolean // not here, but an earlier copy stands in: the published file is optional
 }
 export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
 export type ModelSet = {
   id: string; name: string; what: string; required: boolean; gate: string; items: ModelItem[]; total: number; remaining: number
   need: number; free: number | null; enough_space: boolean; job: ModelJob | null; complete: boolean
+  covered: number; covered_size: number // files an earlier copy stands in for (optional, not counted in `remaining`)
 }
 export type ModelSets = {
   sets: ModelSet[]
@@ -749,7 +752,7 @@ export const api = {
   comfyPacksReport: (id: string) => post<ComfyPacksReport>('/api/comfy/packs/report', { id }),
   comfyPacksApply: (id: string) => post<{ added: string[] }>('/api/comfy/packs/apply', { id, confirm: true }),
   modelSets: () => get<ModelSets>('/api/model-sets'),
-  startModelSet: (id: string, phrases: Record<string, string>) => post<ModelJob>(`/api/model-sets/${id}/start`, { phrases }),
+  startModelSet: (id: string, phrases: Record<string, string>, only?: string[]) => post<ModelJob>(`/api/model-sets/${id}/start`, { phrases, only }),
   stopModelSet: (id: string) => post<unknown>(`/api/model-sets/${id}/stop`),
   verifyModels: () => post<unknown>('/api/model-sets/verify'),
   acceptModel: (id: string) => post<unknown>('/api/model-sets/accept', { id }),

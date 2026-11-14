@@ -170,12 +170,44 @@ def _lower_priority() -> None:
         pass
 
 
+_loaded_from: list[Path | None] = [None]
+
+
+def verified_file() -> Path:
+    return downloader.project_dir() / "local" / "models_verified.json"
+
+
+def _load_verified() -> None:
+    """The checksums read in earlier runs (kept in local/models_verified.json with the file's size and modified time, so a changed
+    file is read again): a 6 to 20 GB file is read once, not every time the app starts."""
+    f = verified_file()
+    if _loaded_from[0] == f:
+        return
+    _loaded_from[0] = f
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    for k, v in (d.items() if isinstance(d, dict) else []):
+        if isinstance(v, dict) and k not in VERIFIED and {"mtime", "size", "ok"} <= set(v):
+            VERIFIED[k] = v
+
+
+def _save_verified() -> None:
+    try:
+        verified_file().parent.mkdir(parents=True, exist_ok=True)
+        verified_file().write_text(json.dumps(VERIFIED), encoding="utf-8")
+    except OSError as e:
+        log.debug("could not keep the checked checksums: %s", e)
+
+
 def check_state(path: Path, spec: Spec) -> str:
     """'ok' or 'differs' once its checksum was read; 'unchecked' before."""
     try:
         st = path.stat()
     except OSError:
         return "unchecked"
+    _load_verified()
     v = VERIFIED.get(os.path.normcase(str(path)))
     if v and v["mtime"] == st.st_mtime and v["size"] == st.st_size:
         return "ok" if v["ok"] else "differs"
@@ -201,6 +233,7 @@ def verify_all(specs: list[tuple[Spec, Path]], wait: bool = False) -> dict[str, 
                     st = p.stat()
                     ok = downloader.sha256_of(p) == s.sha256.lower()
                     VERIFIED[os.path.normcase(str(p))] = {"mtime": st.st_mtime, "size": st.st_size, "ok": ok}
+                    _save_verified()
                 except OSError:
                     pass
                 _verify_state["done"] += 1
@@ -304,6 +337,17 @@ def _item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]
     older = _older_copy(spec, root, roots)
     if older is not None:
         out["older"] = str(older)  # not here, but an earlier copy is, and the app uses it (zimage_fallback)
+        try:
+            same_size = older.stat().st_size == spec.size
+        except OSError:
+            same_size = False
+        if same_size:
+            chk = check_state(older, spec)
+            if chk == "ok":  # the checksum says it is the publisher's file, only under another name
+                return {"state": "present", "path": str(older), "reused": True, "check": "ok", "accepted": False, "renamed": True}
+            if chk == "unchecked":
+                out["pending"] = str(older)  # being read in the background (set_status starts it)
+                out["state"] = "checking"
     return out
 
 
@@ -327,31 +371,45 @@ def set_status(root: Path | None) -> dict[str, Any]:
     roots = read_roots(root) if root else {"typed": {}, "bases": []}
     by_id = all_specs_by_id(root)
     out = []
+    pending: list[tuple[Spec, Path]] = []
     for st in sets_list():
         items = []
         remaining = 0
+        covered_n = covered_size = 0
         for sid in st.get("items") or []:
             spec = by_id.get(sid)
             if spec is None:
                 continue
             s = item_state(spec, root, roots) if root else {"state": "missing", "path": str(spec.dest), "reused": False, "check": "", "accepted": False}
-            if s["state"] == "missing":
+            # An earlier copy the app uses stands in for the publisher's file: that file is optional, never "to get" and never what
+            # makes a set look unfinished.
+            covered = s["state"] in ("missing", "checking") and bool(s.get("older"))
+            if s.get("pending"):
+                pending.append((spec, Path(s["pending"])))
+            if s["state"] == "missing" and not covered:
                 remaining += spec.size
+            if covered:
+                covered_n += 1
+                covered_size += spec.size
             items.append({"id": sid, "name": spec.name, "size": spec.size, "gate": gate_of(sid), "page": spec.page, "licence": spec.licence,
-                          "publisher": spec.publisher, "note": spec.note, "can_choose": model_choices.can_choose(spec), **s})
+                          "publisher": spec.publisher, "note": spec.note, "can_choose": model_choices.can_choose(spec), "covered": covered, **s})
         job = downloader.job_status("set-" + st["id"])
         need = int(remaining * 1.1) + WORKING_SPACE if remaining else 0
         free = downloader.free_bytes(root) if root and root.exists() else None
         out.append({"id": st["id"], "name": st.get("name", st["id"]), "what": st.get("what", ""), "required": bool(st.get("required")),
                     "gate": st.get("gate", ""), "items": items, "total": sum(i["size"] for i in items), "remaining": remaining,
                     "need": need, "free": free, "enough_space": free is None or not need or free >= need, "job": job,
-                    "complete": bool(items) and all(i["state"] in ("present",) for i in items)})
+                    "covered": covered_n, "covered_size": covered_size,
+                    "complete": bool(items) and all(i["state"] == "present" or i["covered"] for i in items)})
+    if pending and _verify_state["state"] != "working":
+        verify_all(pending)  # read in the background, once; the answer is kept for next time
     return {"sets": out, "gates": {k: {"notice": v.get("notice", []), "phrase": v.get("phrase", "")} for k, v in gates().items()},
             "models_folder": str(root) if root else "", "reads": [str(p) for p in roots["bases"]] if root else [],
             "verify": dict(_verify_state)}
 
 
-def start_set(set_id: str, typed: dict[str, str], opener: Callable[[str, int], Any] | None = None, wait: bool = False) -> downloader.Job:
+def start_set(set_id: str, typed: dict[str, str], opener: Callable[[str, int], Any] | None = None, wait: bool = False,
+              only: list[str] | None = None) -> downloader.Job:
     root = downloader.models_root()
     if root is None:
         raise DownloadError("no_comfy", "No ComfyUI is linked yet, so there is nowhere to put the models.", "Link your ComfyUI first (Find or use my ComfyUI).")
@@ -361,7 +419,16 @@ def start_set(set_id: str, typed: dict[str, str], opener: Callable[[str, int], A
     roots = read_roots(root)
     by_id = all_specs_by_id(root)
     want = [by_id[i] for i in st.get("items") or [] if i in by_id]
-    todo = [s for s in want if item_state(s, root, roots)["state"] == "missing"]
+    todo = []
+    for s in want:
+        got = item_state(s, root, roots)
+        if got["state"] not in ("missing", "checking") or (got["state"] == "checking" and not got.get("older")):
+            continue
+        if only is not None and s.id not in only:
+            continue  # asked for particular files (the optional "get the publisher's file")
+        if only is None and got.get("older"):
+            continue  # an earlier copy stands in: not fetched unless asked for
+        todo.append(s)
     ok_gates = accepted_for(typed)
     for s in todo:
         g = gate_of(s.id)
@@ -408,6 +475,7 @@ router = APIRouter()
 
 class StartIn(BaseModel):
     phrases: dict[str, str] = Field(default_factory=dict)
+    only: list[str] | None = None  # the entries to get (the optional publisher's files), instead of the whole set
 
 
 class IdIn(BaseModel):
@@ -427,7 +495,7 @@ def get_sets() -> dict[str, Any]:
 @router.post("/api/model-sets/{set_id}/start")
 def post_start(set_id: str, body: StartIn) -> dict[str, Any]:
     try:
-        return start_set(set_id, body.phrases).public()
+        return start_set(set_id, body.phrases, only=body.only).public()
     except DownloadError as e:
         raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
 

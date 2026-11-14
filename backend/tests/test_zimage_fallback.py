@@ -161,8 +161,8 @@ def test_panel_only_the_older_copy_present_the_originals_show_as_not_here_and_th
     old.parent.mkdir(parents=True)
     old.write_bytes(b"old")
     it, s = _item()
-    assert it["state"] == "missing" and it["older"] == str(old) and not s["complete"]
-    assert s["remaining"] == it["size"]  # still offered: the originals are what the set is
+    assert it["state"] == "missing" and it["older"] == str(old) and it["covered"]
+    assert s["remaining"] == 0 and s["complete"] and s["covered"] == 1 and s["covered_size"] == it["size"]  # optional, not "to get"
 
 
 def test_panel_neither_present_it_is_missing_with_no_older_copy(panel):

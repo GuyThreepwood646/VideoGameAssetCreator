@@ -97,6 +97,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
           <strong>{s.name}</strong>
           <span className="muted small">
             {s.complete ? 'all there' : `${size(s.remaining)} to get, ${size(s.total)} in all`}
+            {s.covered > 0 ? ` (${s.covered} earlier cop${s.covered === 1 ? 'y stands' : 'ies stand'} in for the publisher's file${s.covered === 1 ? '' : 's'}; getting ${s.covered === 1 ? 'it is' : 'them is'} optional, ${size(s.covered_size)})` : ''}
             {s.required ? ' - needed' : ' - optional'}
           </span>
         </div>
@@ -162,12 +163,24 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                   {i.chosen && i.state === 'differs' ? ` - your own file at ${i.path}. This is not the file the app was tested with. Results may differ or the step may fail. It is not used until you press Use it anyway.` : ''}
                   {!i.chosen && i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the published size' : ''}
                   {!i.chosen && i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the published one' : ''}
-                  {i.state === 'missing' && i.older ? ` - the publisher's file is not here; the app is using the older copy at ${i.older}` : ''}
+                  {i.renamed ? ` - the publisher's file, which you have as ${i.path}` : ''}
+                  {i.covered && i.state === 'checking' ? ` - checking whether ${i.older} is the publisher's file; the app uses it meanwhile` : ''}
+                  {i.covered && i.state === 'missing' ? ` - the publisher's file is not here; the app is using an earlier copy at ${i.older} (getting the publisher's file is optional)` : ''}
                   {!i.publisher ? ' - community upload, check the page' : ''}
                 </span>
                 {i.state === 'differs' && (
                   <button type="button" className="link small" disabled={busy} onClick={() => void run(async () => void (await api.acceptModel(i.id)))}>
                     Use it anyway
+                  </button>
+                )}
+                {i.covered && i.state === 'missing' && job?.state !== 'working' && (
+                  <button
+                    type="button"
+                    className="link small"
+                    disabled={busy || !data?.models_folder}
+                    onClick={() => void run(async () => void (await api.startModelSet(s.id, typed, [i.id])))}
+                  >
+                    Get the publisher&apos;s file ({size(i.size)})
                   </button>
                 )}
                 {i.can_choose && <ModelFileChoice specId={i.id} name={i.name} chosen={!!i.chosen} onChanged={load} />}
