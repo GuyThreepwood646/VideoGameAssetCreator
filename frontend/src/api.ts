@@ -528,6 +528,10 @@ export type SetupItem = {
   offer?: { kit: string; button: string }
   // The setting that fixes this item (a key of PUT /api/setup/settings), or '' when it is not one the person can give.
   setting?: string
+  // A model or LoRA row: the entry of the download list it is (for "Set model location") and which file is in use.
+  spec_id?: string
+  can_choose?: boolean
+  in_use?: { kind: 'app' | 'renamed' | 'own'; path?: string }
 }
 // What the app has and lacks on a machine that may be new (backend/vgac/firstrun.py).
 export type FirstRunItem = { id: string; label: string; detail: string; fix: string; setting: string; needed_for: string[] }
@@ -590,8 +594,11 @@ export type ComfyPacksReport = {
 
 export type ModelItem = {
   id: string; name: string; size: number; gate: string; page: string; licence: string; publisher: boolean; note: string
-  state: 'present' | 'missing' | 'differs'; path: string; reused: boolean; check: string; accepted: boolean
+  state: 'present' | 'missing' | 'differs' | 'checking'; path: string; reused: boolean; check: string; accepted: boolean
   older?: string // missing here, but an earlier copy is there and the app uses it
+  can_choose?: boolean // the person may point the app at a file of their own for this entry
+  chosen?: boolean // the file at `path` is one the person pointed at
+  yours?: boolean // ... and it is not the published file
 }
 export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
 export type ModelSet = {
@@ -746,6 +753,8 @@ export const api = {
   stopModelSet: (id: string) => post<unknown>(`/api/model-sets/${id}/stop`),
   verifyModels: () => post<unknown>('/api/model-sets/verify'),
   acceptModel: (id: string) => post<unknown>('/api/model-sets/accept', { id }),
+  chooseModel: (id: string, path: string) => post<{ warning: string }>('/api/model-sets/choose', { id, path }),
+  unchooseModel: (id: string) => post<unknown>('/api/model-sets/unchoose', { id }),
   recordTestCharacter: (asset_id: string, passed: boolean | null) => post<unknown>('/api/model-sets/test_character', { asset_id, passed }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),

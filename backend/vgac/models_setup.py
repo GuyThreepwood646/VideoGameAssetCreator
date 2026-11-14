@@ -25,7 +25,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import downloader
+from . import downloader, model_choices
 from .config import get_settings
 from .downloader import DownloadError, Spec
 
@@ -227,9 +227,64 @@ def item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]:
         return {"state": "missing", "path": str(spec.dest), "reused": False, "check": "", "accepted": False, "error": str(e)}
 
 
+def _chosen_state(spec: Spec, acc: set[str]) -> dict[str, Any] | None:
+    """The state of the file the person pointed at for this entry ("I already have this"), or None when there is none (or it has
+    gone, in which case the ordinary search goes on). present: the publisher's file (hash matched) or one the person said to use
+    anyway; checking: the hash is still being read; differs: not the published file."""
+    p = model_choices.chosen(spec.id)
+    if p is None:
+        return None
+    try:
+        size = p.stat().st_size if p.is_file() else -1
+    except OSError:
+        size = -1
+    if size < 0:
+        return None
+    key = os.path.normcase(str(p))
+    chk = check_state(p, spec) if size == spec.size else "size"
+    anyway = key in acc
+    state = "present" if chk == "ok" or anyway else ("checking" if chk == "unchecked" else "differs")
+    return {"state": state, "path": str(p), "reused": True, "check": chk, "accepted": anyway, "chosen": True,
+            "yours": chk in ("differs", "size")}
+
+
+def choice_usable(path: Path) -> bool:
+    """Whether a chosen file may be used by the graphs now: its hash matched, or the person said to use it anyway."""
+    return check_state(path, None) == "ok" or os.path.normcase(str(path)) in accepted_paths()  # type: ignore[arg-type]
+
+
+def current_alias_table() -> dict[str, list[model_choices.Alt]]:
+    return model_choices.alias_table(choice_usable)
+
+
+def row_info(file_name: str) -> dict[str, Any]:
+    """What a model or LoRA row of the System page needs to show next to the panel's: the list entry the file belongs to (so the
+    "Set model location" button works the same there) and which file is in use: the app's own, the publisher's file under another
+    name, or the person's own file. {} when the file is not in the list."""
+    cat = downloader.catalogue()
+    for section, kind in (("models", "model"), ("addons", "addon")):
+        for key, d in (cat.get(section) or {}).items():
+            if not isinstance(d, dict):
+                continue
+            name = str(d.get("save_as") or Path(str(d.get("dest") or "")).name)
+            if name.casefold() != str(file_name).casefold():
+                continue
+            spec_id = f"{kind}:{key}"
+            out: dict[str, Any] = {"spec_id": spec_id, "can_choose": model_choices.loader_of_file(name) is not None, "in_use": {"kind": "app"}}
+            p = model_choices.chosen(spec_id)
+            if p is not None and p.is_file() and choice_usable(p):
+                same = check_state(p, None) == "ok"  # type: ignore[arg-type]
+                out["in_use"] = {"kind": "renamed" if same else "own", "path": str(p)}
+            return out
+    return {}
+
+
 def _item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]:
     """Where this file is and in what state: present (own place), reused (elsewhere ComfyUI reads), differs, or missing."""
     acc = accepted_paths()
+    mine = _chosen_state(spec, acc)
+    if mine is not None:
+        return mine
     found_size_wrong: Path | None = None
     for p in candidates(spec, root, roots):
         try:
@@ -283,7 +338,7 @@ def set_status(root: Path | None) -> dict[str, Any]:
             if s["state"] == "missing":
                 remaining += spec.size
             items.append({"id": sid, "name": spec.name, "size": spec.size, "gate": gate_of(sid), "page": spec.page, "licence": spec.licence,
-                          "publisher": spec.publisher, "note": spec.note, **s})
+                          "publisher": spec.publisher, "note": spec.note, "can_choose": model_choices.can_choose(spec), **s})
         job = downloader.job_status("set-" + st["id"])
         need = int(remaining * 1.1) + WORKING_SPACE if remaining else 0
         free = downloader.free_bytes(root) if root and root.exists() else None
@@ -395,6 +450,37 @@ def post_verify() -> dict[str, Any]:
         if s["state"] != "missing" and s["check"] != "size":
             pairs.append((spec, Path(s["path"])))
     return verify_all(pairs)
+
+
+class ChooseIn(BaseModel):
+    id: str
+    path: str
+
+
+@router.post("/api/model-sets/choose")
+def post_choose(body: ChooseIn) -> dict[str, Any]:
+    """"I already have this": use the file at `path` for this entry instead of downloading it. Refused with a reason when it is
+    the wrong kind of file, far from the right size, or in a folder the engine does not read. Its hash is checked in the
+    background."""
+    root = downloader.models_root()
+    spec = all_specs_by_id(root).get(body.id) if root else None
+    if spec is None:
+        raise HTTPException(404, "That file is not in the list.")
+    roots = read_roots(root)
+    try:
+        got = model_choices.choose(spec, body.path, root, roots)
+    except DownloadError as e:
+        raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
+    p = Path(body.path.strip().strip('"'))
+    if p.stat().st_size == spec.size:
+        verify_all([(spec, p)])
+    return {"item": item_state(spec, root, roots), "verify": dict(_verify_state), "warning": got.get("warning", "")}
+
+
+@router.post("/api/model-sets/unchoose")
+def post_unchoose(body: IdIn) -> dict[str, Any]:
+    """Stop using the file that was pointed at; the person's file is never touched."""
+    return {"removed": model_choices.unchoose(body.id)}
 
 
 @router.post("/api/model-sets/accept")

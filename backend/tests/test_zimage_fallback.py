@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from vgac import downloader, models_setup, zimage_fallback as zf
+from vgac import downloader, model_choices, models_setup, zimage_fallback as zf
 from vgac.comfy import ComfyClient
 from vgac.graphs import concept, material
 
@@ -36,8 +36,15 @@ def test_originals_present_the_graph_is_not_touched_and_a_listed_subfolder_is_fo
     assert moved["1"]["inputs"]["unet_name"] == "Elsewhere/sub/z_image_turbo_int8_convrot.safetensors"
     assert g["1"]["inputs"]["unet_name"] == TURBO_SPLIT  # the caller's graph is never changed in place
     base = concept.zbase_graph("a knight", 7, "x")
-    same, note = zf.adapt(base, [BASE_SPLIT, OLD_BASE], None)
-    assert same is base and note == ""
+    same, notes = via_aliases(base, [BASE_SPLIT, OLD_BASE])
+    assert same is base and notes == []
+
+
+def via_aliases(graph, unets):
+    """The general name swap (model_choices) with the real list's `older` files and what the engine's UNETLoader lists."""
+    table = model_choices.alias_table(lambda p: False)
+    lists = {k: unets for k in model_choices.wanted_classes(graph, table)}
+    return model_choices.apply_aliases(graph, table, lists)
 
 
 def test_only_the_earlier_files_present_turbo_becomes_the_all_in_one_checkpoint_and_base_names_the_earlier_file():
@@ -58,8 +65,8 @@ def test_only_the_earlier_files_present_turbo_becomes_the_all_in_one_checkpoint_
         assert folded["1"]["class_type"] == "CheckpointLoaderSimple" and "1c" not in folded
         assert not any(isinstance(v, list) and v[0] in ("1c", "1v") for n in folded.values() for v in n["inputs"].values())
     base = concept.zbase_graph("a knight", 7, "x")
-    swapped, note = zf.adapt(base, [OLD_BASE], [])
-    assert swapped["1"]["inputs"]["unet_name"] == OLD_BASE and "earlier" in note
+    swapped, notes = via_aliases(base, [OLD_BASE])
+    assert swapped["1"]["inputs"]["unet_name"] == OLD_BASE and notes
     assert base["1"]["inputs"]["unet_name"] == BASE_SPLIT
 
 
@@ -69,7 +76,7 @@ def test_neither_present_the_graph_is_left_for_the_engine_to_refuse_and_an_engin
         new, note = zf.adapt(g, unets, ckpts)
         assert new is g and note == ""
     base = concept.zbase_graph("a knight", 7, "x")
-    assert zf.adapt(base, [], [OLD_AIO])[0] is base
+    assert via_aliases(base, [])[0] is base and via_aliases(base, ["Anima\\x.safetensors"])[0] is base
     assert not zf.wants({"1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": OLD_AIO}}})
 
 
@@ -91,18 +98,18 @@ class FakeEngine(ComfyClient):
 
 def test_the_client_asks_the_engine_for_its_lists_just_before_it_queues(monkeypatch):
     engine = FakeEngine([OLD_BASE], [OLD_AIO])
-    new = asyncio.run(engine._adapt_zimage(turbo()))
+    new = asyncio.run(engine._adapt_names(turbo()))
     assert new["1"]["class_type"] == "CheckpointLoaderSimple"
-    asyncio.run(engine._adapt_zimage(turbo()))
+    asyncio.run(engine._adapt_names(turbo()))
     assert engine.asked == 2  # one question per loader, kept for a while
     # a graph that has nothing to do with Z-Image never asks
     quiet = FakeEngine([], [])
     other = {"1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "x.safetensors"}}}
-    assert asyncio.run(quiet._adapt_zimage(other)) is other and quiet.asked == 0
+    assert asyncio.run(quiet._adapt_names(other)) is other and quiet.asked == 0
     # an engine that does not answer: the graph goes as it is
     down = FakeEngine(None, None)
     g = turbo()
-    assert asyncio.run(down._adapt_zimage(g)) is g
+    assert asyncio.run(down._adapt_names(g)) is g
 
 
 # --- the models panel ----------------------------------------------------------------------------------------------------

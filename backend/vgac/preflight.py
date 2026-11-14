@@ -641,12 +641,17 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
             continue
         found = has_file(choices, expected)
         earlier = ""
-        if not found and mid in ("zturbo", "zbase"):  # the earlier Z-Image files stand in (zimage_fallback)
+        if not found:
+            # A file the person pointed the app at, or an earlier copy the same loader can load, stands in (model_choices).
+            from . import models_setup
             from . import zimage_fallback as zf
 
-            if mid == "zbase":
-                earlier = zf.listed(choices, zf.OLD_BASE_UNET) or ""
-            else:
+            try:
+                alts = models_setup.current_alias_table().get(expected.casefold(), [])
+            except Exception:  # noqa: BLE001
+                alts = []
+            earlier = next((c for a in alts if a[0] == cls and (c := zf.listed(choices, a[2]))), "")
+            if not earlier and mid == "zturbo":  # the earlier all-in-one checkpoint (zimage_fallback)
                 cinfo = await _node_info(client, "CheckpointLoaderSimple", cache)
                 cchoices = combo_choices(cinfo, "ckpt_name") if not isinstance(cinfo, Exception) else None
                 earlier = next((c for w in zf.OLD_TURBO_CHECKPOINTS if (c := zf.listed(cchoices, w))), "")
@@ -655,7 +660,7 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
             out.append(item(f"model.{name}.{mid}", "models", label, "ok", "Installed.", "", [stage], mtech))
         elif earlier:
             out.append(item(f"model.{name}.{mid}", "models", label, "ok",
-                            "The publisher's file is not installed; the earlier copy is used instead.", "", [stage],
+                            "The app's own file is not installed; a file you chose or an earlier copy is used instead.", "", [stage],
                             mtech + f"; using {earlier}"))
         else:
             state = "fail" if required else "warn"
@@ -665,6 +670,16 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
             out.append(item(f"model.{name}.{mid}", "models", label, state, detail,
                             f"Download {expected} and put it in that ComfyUI's models folder (the {cls} loader's "
                             "folder), then restart it.", [stage], mtech))
+    # Each model row says which entry of the download list it is and which file is in use (the same as the models panel shows),
+    # so the System page can offer "Set model location" on it.
+    from . import models_setup
+
+    for it in out:
+        if it["id"].startswith(f"model.{name}."):
+            try:
+                it.update(models_setup.row_info(str(models.get(it["id"].split(".", 2)[2], {}).get("file") or "")))
+            except Exception as e:  # noqa: BLE001  (a row without the button is better than no checks)
+                log.debug("row info for %s: %s", it["id"], e)
     return out
 
 

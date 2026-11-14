@@ -3,12 +3,13 @@
 // is downloaded without the button, and a licence is accepted only by typing its sentence.
 import { useCallback, useEffect, useState } from 'react'
 import { api, type ModelItem, type ModelSet, type ModelSets } from '../api'
+import ModelFileChoice from './ModelFileChoice'
 
 function size(n: number): string {
   return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`
 }
 
-const STATE_WORD: Record<ModelItem['state'], string> = { present: 'there', missing: 'missing', differs: 'differs' }
+const STATE_WORD: Record<ModelItem['state'], string> = { present: 'there', missing: 'missing', differs: 'differs', checking: 'being checked' }
 
 export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => void; onClose?: () => void }) {
   const [data, setData] = useState<ModelSets | null>(null)
@@ -154,9 +155,13 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                 <span className="setup-row-label">{i.name}</span>
                 <span className="muted small setup-row-detail">
                   {size(i.size)} - {STATE_WORD[i.state]}
-                  {i.reused ? ` (used where it is: ${i.path})` : ''}
-                  {i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the published size' : ''}
-                  {i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the published one' : ''}
+                  {i.reused && !i.chosen ? ` (used where it is: ${i.path})` : ''}
+                  {i.chosen && i.state === 'present' && !i.yours ? ` - your file at ${i.path}; it is the same as the published one` : ''}
+                  {i.chosen && i.state === 'present' && i.yours ? ` - your own file at ${i.path}, not the one this app was tested with (you chose to use it)` : ''}
+                  {i.chosen && i.state === 'checking' ? ` - your file at ${i.path}; checking it against the published one in the background` : ''}
+                  {i.chosen && i.state === 'differs' ? ` - your own file at ${i.path}. This is not the file the app was tested with. Results may differ or the step may fail. It is not used until you press Use it anyway.` : ''}
+                  {!i.chosen && i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the published size' : ''}
+                  {!i.chosen && i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the published one' : ''}
                   {i.state === 'missing' && i.older ? ` - the publisher's file is not here; the app is using the older copy at ${i.older}` : ''}
                   {!i.publisher ? ' - community upload, check the page' : ''}
                 </span>
@@ -165,6 +170,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                     Use it anyway
                   </button>
                 )}
+                {i.can_choose && <ModelFileChoice specId={i.id} name={i.name} chosen={!!i.chosen} onChanged={load} />}
               </li>
             ))}
           </ul>

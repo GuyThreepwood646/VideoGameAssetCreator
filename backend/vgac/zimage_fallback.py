@@ -1,17 +1,13 @@
-"""Z-Image: use the earlier files when the publisher's are not in the engine's lists.
+"""Z-Image Turbo: the all-in-one checkpoint when the engine does not list the publisher's split file.
 
-The graphs name Comfy-Org's split int8 files (graphs/concept.py). A machine that has not got them yet but has the earlier
-copies (the all-in-one fp8 or bf16 checkpoint for Turbo, the earlier base diffusion file) keeps working: just before a graph is
-queued, comfy.ComfyClient.queue_prompt asks the engine what its loaders list (object_info, which is the truth for what a
-graph can load, whatever folder or drive the file is in) and calls adapt().
+The graphs name Comfy-Org's split int8 files (graphs/concept.py). A machine that has not got the Turbo diffusion file but has the
+earlier all-in-one fp8 or bf16 checkpoint keeps working: just before a graph is queued, comfy.ComfyClient.queue_prompt asks the
+engine what its loaders list (object_info, the truth for what a graph can load, whatever folder or drive the file is in) and calls
+adapt(), which turns the three split loaders into one CheckpointLoaderSimple (the layout of the earlier route), whose model, text
+encoder and VAE outputs feed the same nodes.
 
-  - the publisher's file is listed (in any subfolder): the graph names it as listed;
-  - Turbo, and only the earlier all-in-one checkpoint is listed: the three split loaders become one CheckpointLoaderSimple
-    (the layout of the earlier route), whose model, text encoder and VAE outputs feed the same nodes;
-  - Base, and only the earlier diffusion file is listed: the same loader, naming the earlier file;
-  - neither is listed: the graph is left alone and the engine says what is missing, as before.
-
-The models panel shows the publisher's files as not there and says the earlier copy is in use (models_setup, `older`).
+Swapping one file name for another that the same loader can load (the earlier Z-Image base file, or a file the person pointed
+the app at) is not special to Z-Image: that is model_choices.apply_aliases. Only the change of layout lives here.
 """
 
 from __future__ import annotations
@@ -19,11 +15,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from .graphs.concept import ZBASE_UNET, ZTURBO_UNET
+from .graphs.concept import ZTURBO_UNET
 
-# The earlier all-in-one Turbo checkpoints, best first, and the earlier base diffusion file.
+# The earlier all-in-one Turbo checkpoints, best first.
 OLD_TURBO_CHECKPOINTS = ("z-image-turbo-fp8-aio.safetensors", "z-image-turbo-bf16-aio.safetensors")
-OLD_BASE_UNET = "z_image_int8_convrot.safetensors"
 
 
 def _base(name: str) -> str:
@@ -39,9 +34,8 @@ def listed(choices: list[Any] | None, wanted: str) -> str | None:
 
 
 def wants(graph: dict[str, Any]) -> bool:
-    """Whether the graph loads one of the publisher's Z-Image diffusion files (so the lists are worth asking for)."""
-    names = {_base(ZTURBO_UNET), _base(ZBASE_UNET)}
-    return any(isinstance(n, dict) and n.get("class_type") == "UNETLoader" and _base((n.get("inputs") or {}).get("unet_name", "")) in names
+    """Whether the graph loads the publisher's Z-Image Turbo diffusion file (so the lists are worth asking for)."""
+    return any(isinstance(n, dict) and n.get("class_type") == "UNETLoader" and _base((n.get("inputs") or {}).get("unet_name", "")) == _base(ZTURBO_UNET)
                for n in graph.values())
 
 
@@ -76,21 +70,13 @@ def adapt(graph: dict[str, Any], unets: list[Any] | None, checkpoints: list[Any]
         if not isinstance(node, dict) or node.get("class_type") != "UNETLoader":
             continue
         name = (node.get("inputs") or {}).get("unet_name", "")
-        is_turbo, is_base = _base(name) == _base(ZTURBO_UNET), _base(name) == _base(ZBASE_UNET)
-        if not (is_turbo or is_base):
+        if _base(name) != _base(ZTURBO_UNET):
             continue
         mine = listed(unets, name)
         if mine is not None:
             if mine != name:  # the publisher's file is there, in another folder
                 out = copy.deepcopy(out) if out is graph else out
                 out[node_id]["inputs"]["unet_name"] = mine
-            continue
-        if is_base:
-            old = listed(unets, OLD_BASE_UNET)
-            if old is not None:
-                out = copy.deepcopy(out) if out is graph else out
-                out[node_id]["inputs"]["unet_name"] = old
-                notes.append(f"Z-Image base: using the earlier file {old}")
             continue
         for want in OLD_TURBO_CHECKPOINTS:
             ckpt = listed(checkpoints, want)

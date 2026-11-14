@@ -116,6 +116,15 @@ def test_the_publishers_zimage_file_missing_but_the_earlier_copy_listed_is_ok_an
     assert z["state"] == "fail"
 
 
+def test_model_and_lora_rows_name_their_list_entry_and_the_file_in_use_for_the_system_page_button(settings):
+    client = NodeClient("http://127.0.0.1:10", DEV_3080, files=all_model_files())
+    ids = by_id(asyncio.run(preflight.check_instance(settings, "b", client, set())))
+    z = ids["model.b.zturbo"]
+    assert z["spec_id"] == "model:zturbo" and z["can_choose"] and z["in_use"] == {"kind": "app"}
+    lora = ids["model.b.qwen_angles_lora"]  # a LoRA row gets the same
+    assert lora["spec_id"].startswith("addon:") and lora["can_choose"] and lora["in_use"] == {"kind": "app"}
+
+
 def test_missing_nodes_and_models_fail_or_warn(settings):
     files = [f for f in all_model_files() if "qwen-image-edit-2511-multiple-angles" not in f and "Chroma1-HD" not in f]
     client = NodeClient("http://127.0.0.1:10", DEV_3080, missing={"SkinTokenRigTrimesh", "PixelArtDetectorToImage"}, files=files)

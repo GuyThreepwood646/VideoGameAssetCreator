@@ -6,6 +6,7 @@ import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, 
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import ComfyPanel from './components/ComfyPanel'
+import ModelFileChoice from './components/ModelFileChoice'
 import ModelsPanel from './components/ModelsPanel'
 import ToolPanel from './components/ToolPanel'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
@@ -153,12 +154,26 @@ function FirstRunBanner({ firstRun }: { firstRun: FirstRun }) {
   )
 }
 
-function Row({ item, onManage }: { item: SetupItem; onManage?: (kit: string) => void }) {
+// Which file a model or LoRA row uses, in plain words (the models panel says the same about the same entry).
+function inUse(item: SetupItem): string {
+  const u = item.in_use
+  if (!u || u.kind === 'app') return ''
+  if (u.kind === 'renamed') return `In use: the publisher's file, which you have as ${u.path}.`
+  return `In use: your own file at ${u.path}. It is not the file the app was tested with, so results may differ or a step may fail.`
+}
+
+function Row({ item, onManage, onChanged }: { item: SetupItem; onManage?: (kit: string) => void; onChanged?: () => void }) {
   return (
     <li className="setup-row">
       <span className={'dot ' + STATE_DOT[item.state]} />
       <span className="setup-row-label">{item.label}</span>
-      <span className="muted small setup-row-detail">{item.detail}</span>
+      <span className="muted small setup-row-detail">
+        {item.detail}
+        {inUse(item) ? ' ' + inUse(item) : ''}
+      </span>
+      {item.spec_id && item.can_choose && onChanged && (
+        <ModelFileChoice specId={item.spec_id} name={item.label} chosen={item.in_use?.kind === 'own' || item.in_use?.kind === 'renamed'} onChanged={onChanged} />
+      )}
       {item.kit && onManage && (
         <button type="button" className="link small" onClick={() => onManage(item.kit!)}>
           {item.state === 'ok' ? 'Manage' : 'Get it'}
@@ -303,7 +318,7 @@ export default function SetupCheck() {
                 </h3>
                 <ul className="setup-rows">
                   {rows.map((i) => (
-                    <Row key={i.id} item={i} onManage={setOpenKit} />
+                    <Row key={i.id} item={i} onManage={setOpenKit} onChanged={() => void reload(true)} />
                   ))}
                 </ul>
               </div>

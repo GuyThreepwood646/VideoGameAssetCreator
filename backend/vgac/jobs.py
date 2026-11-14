@@ -51,7 +51,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from sqlalchemy import func, select
 
-from . import cardmem, comfy_inputs, estimates, prefs
+from . import cardmem, comfy_inputs, estimates, model_choices, prefs
 from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
@@ -710,6 +710,7 @@ class InstanceWorker:
                     _publish_version(v)
 
         self.current_job_id = job_id
+        own_files = model_choices.start_tracking()  # which of the person's own model files this job's graphs end up using
         log.info("worker %s running job %s (%s)", self.name, job_id, kind)
         last: dict[str, Any] = {"fraction": -1.0, "message": "", "at": 0.0}
         # A clean-up's own phases say little about the time (the sharpening is a minute, the projection ten), so its
@@ -811,7 +812,7 @@ class InstanceWorker:
                     error = f"{engine_lost_message(self.name, self.settings)}\n{technical}"
                     log.error("job %s failed: the graphics engine on %s went away again (%s)", job_id, self.name, technical)
             else:
-                error = f"{type(e).__name__}: {e}"
+                error = f"{type(e).__name__}: {e}" + model_choices.used_message(own_files)  # a bad pick is never a mystery
                 log.error("job %s failed: %s\n%s", job_id, e, traceback.format_exc()[-4000:])
         finally:
             ticker.cancel()

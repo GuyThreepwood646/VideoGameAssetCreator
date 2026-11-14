@@ -252,21 +252,33 @@ class ComfyClient:
         self._listings[node_class] = (time.monotonic(), choices)
         return choices
 
-    async def _adapt_zimage(self, graph: dict[str, Any]) -> dict[str, Any]:
-        """Use the earlier Z-Image files when the publisher's are not in this engine's lists (zimage_fallback)."""
-        from . import zimage_fallback
+    async def _adapt_names(self, graph: dict[str, Any]) -> dict[str, Any]:
+        """Name the files this engine really lists: another file the person pointed the app at, or an earlier copy, when the
+        publisher's is not there (model_choices.apply_aliases), and Z-Image Turbo's all-in-one checkpoint when its split file is
+        not there (zimage_fallback). Nothing is changed when the engine lists the publisher's file or cannot be asked."""
+        from . import model_choices, models_setup, zimage_fallback
 
-        if not zimage_fallback.wants(graph):
-            return graph
-        unets = await self._listing("UNETLoader", "unet_name")
-        checkpoints = await self._listing("CheckpointLoaderSimple", "ckpt_name")
-        new, note = zimage_fallback.adapt(graph, unets, checkpoints)
-        if note:
-            log.info("instance %s: %s", self.name, note)
-        return new
+        try:
+            table = models_setup.current_alias_table()
+        except Exception as e:  # noqa: BLE001  (a broken choice file must never stop a draw)
+            log.warning("instance %s: could not read the model choices: %s", self.name, e)
+            table = {}
+        wanted = model_choices.wanted_classes(graph, table) if table else set()
+        if wanted:
+            lists = {(c, i): await self._listing(c, i) for c, i in wanted}
+            graph, notes = model_choices.apply_aliases(graph, table, lists)
+            for n in notes:
+                log.info("instance %s: %s", self.name, n)
+        if zimage_fallback.wants(graph):
+            new, note = zimage_fallback.adapt(graph, await self._listing("UNETLoader", "unet_name"),
+                                              await self._listing("CheckpointLoaderSimple", "ckpt_name"))
+            if note:
+                log.info("instance %s: %s", self.name, note)
+            graph = new
+        return graph
 
     async def queue_prompt(self, graph: dict[str, Any], client_id: str | None = None) -> str:
-        graph = await self._adapt_zimage(graph)
+        graph = await self._adapt_names(graph)
         body: dict[str, Any] = {"prompt": graph}
         if client_id:
             body["client_id"] = client_id
