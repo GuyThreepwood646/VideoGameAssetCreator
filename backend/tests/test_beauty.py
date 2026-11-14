@@ -80,6 +80,7 @@ def test_a_failed_render_is_noted_and_does_not_raise(tmp_path):
     sc = FakeSC(tmp_path, glb, boom)
     assert asyncio.run(beauty.render_beauty(sc)) is None
     assert "Eevee could not start" in sc.metrics["beauty_error"]
+    assert "complete" in sc.metrics["beauty_note"] and beauty.BEAUTY_TIMEOUT_S <= 120
     assert "beauty" not in sc.files
 
 

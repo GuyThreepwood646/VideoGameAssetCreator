@@ -22,7 +22,7 @@ OUTDOORS_HDRI = HDRI_DIR / "kloofendal_48d_partly_cloudy_1k.hdr"
 # Where the sun sits across that picture (0 to 1, left to right), measured once from its brightest pixel.
 OUTDOORS_SUN_U = 0.6
 BEAUTY_SIZE = 1024
-BEAUTY_TIMEOUT_S = 300
+BEAUTY_TIMEOUT_S = 90  # a render takes 2 s (about 15 s with Blender starting); the one stored hang held the export 5 minutes
 # The Unity showcase gets the same picture with the sun taken out (its own Sun light stands in): Unity blurs a sky
 # for rough surfaces with a plain average, and the sun (tens of thousands of times brighter than the sky in a few
 # pixels) would otherwise turn into a bright grey sheen on cloth and leather.
@@ -122,7 +122,8 @@ async def render_beauty(sc: Any) -> Path | None:
     try:
         await sc.blender("beauty.py", beauty_args(Path(glb), out), log_name="beauty.log", timeout=BEAUTY_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001  (a picture for people; the game files are already done)
-        sc.set_metrics(beauty_error=str(e)[-400:])
+        sc.set_metrics(beauty_error=str(e)[-400:],
+                       beauty_note="The picture in realistic light was skipped because it took too long to draw. The model and its game files are complete.")
         return None
     if not out.is_file():
         sc.set_metrics(beauty_error="Blender wrote no picture")
