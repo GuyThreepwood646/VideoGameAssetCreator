@@ -50,6 +50,7 @@ ALIGN_MIN = 0.15  # the fit's correlation; under it the picture did not find the
 # The 2026-11-13 test: the four worst faces scored 0.23, 0.31, 0.40 and 0.57 and were painted onto the wrong place
 # (doubled eyes and mouths); every face scoring 0.75 or more was placed correctly. Under it the face is left as it was.
 FIT_HOLD_MIN = 0.65
+FIT_BEHIND_MAX = 0.10  # an eyes-and-mouth fit scoring more than this below the whole-face fit is not taken (fit_picture)
 RIM_FRAC = 0.02  # how much of the painted face's edge is dropped outside the inner face, as a share of the picture
 SOFTEN_M = 0.025  # the paint fades over about this much surface wherever it stops short (metres)
 FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from edge-on (old texture) to fully painted
@@ -927,6 +928,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # are), fill that spot from the painted skin around it instead.
     painted_fitted = face.apply_alignment(crop_img, a)  # the eye colour is measured against the painting itself
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
+    seg["old_hair"], released = release_flat_hair(seg["old_hair"], view, info)
     paint = region & ~face.dilate_mask(seg["old_hair"], 2)
     # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
     # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
@@ -1006,6 +1008,30 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     return {"ok": True, "base_color": out, "sheet": sheet, "metrics": metrics}
 
 
+HAIR_STEP_NEAR = 0.08  # of the face's width: how near a depth step a hair pixel in the features area must be to count as a flap
+
+
+def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any]) -> tuple[np.ndarray, int]:
+    """The model's hair mask with the false hair taken out of the eyes, nose and mouth area. The mask is colour only
+    (face.hair_and_skin), and on a dark face a shaded cheek or socket is nearer the hair's colour than the skin's, so the mask
+    flooded the face (the live M1-clothed: 35 000 px, both eyes "hair", little painted). Inside the features area a hair
+    pixel counts only within HAIR_STEP_NEAR of the face's width of a depth step (EYE_COVER_STEP_M per render pixel: the edge of
+    a fringe or flap standing in front of the face); hair there on a smooth surface is released, so the picture's eyes, brows
+    and mouth are painted. Outside that area the mask is unchanged. -> (the mask, pixels released)."""
+    box = face.features_box(info) & info["region"]
+    inside = old_hair & box
+    if not inside.any():
+        return old_hair, 0
+    z = np.where(view["mask"], view["raster"]["z"], np.nan)
+    step = np.zeros(z.shape, dtype=bool)
+    with np.errstate(invalid="ignore"):
+        step[:, :-1] |= np.abs(np.diff(z, axis=1)) >= EYE_COVER_STEP_M
+        step[:-1, :] |= np.abs(np.diff(z, axis=0)) >= EYE_COVER_STEP_M
+    near = face.dilate_mask(step, max(2, int(HAIR_STEP_NEAR * float(info["width_px"]))))
+    released = inside & ~near
+    return old_hair & ~released, int(released.sum())
+
+
 def fit_picture(src: np.ndarray, render: np.ndarray, info: dict[str, Any], inner: np.ndarray) -> dict[str, Any]:
     """The scale and shift that lay the picture on the model's face (see fit_and_paint), with "how" and "score".
 
@@ -1034,7 +1060,12 @@ def fit_picture(src: np.ndarray, render: np.ndarray, info: dict[str, Any], inner
         return err <= float(a["residual_px"]) + EYE_FIT_MARGIN * w
 
     def good(a: dict[str, Any] | None) -> bool:
-        return a is not None and a["residual_px"] <= LANDMARK_RESIDUAL_MAX * w and a["score"] >= ALIGN_MIN
+        if a is None or a["residual_px"] > LANDMARK_RESIDUAL_MAX * w or a["score"] < ALIGN_MIN:
+            return False
+        # An eye-and-mouth fit that matches the picture clearly worse than the whole-face fit is a fit on wrong points (the
+        # W1-bikini that was held at 0.62 while the whole face scored 0.95; P1-photo and W2-underwear after the nose fix):
+        # not used when it is FIT_BEHIND_MAX behind, or when it would be held while the whole-face fit is not.
+        return a["score"] >= whole["score"] - FIT_BEHIND_MAX and not (a["score"] < FIT_HOLD_MIN <= whole["score"])
 
     a = face.fit_landmarks(lm_src, lm_dst, info["nose"]) if lm_src and lm_dst else None
     whole = scored(face.align(src, render, inner), "whole face")

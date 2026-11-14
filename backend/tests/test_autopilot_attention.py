@@ -43,7 +43,7 @@ def test_each_condition_stops_under_block_with_a_plain_message():
     assert "facing the wrong way" in r and "Resume" in r and "step 4" in r
     r = autopilot.attention_reason(_v(checks=[held_face()]), "block")
     assert r.startswith("The face was left as it was") and "fit 0.4 of 1, needs 0.65" in r
-    assert "clearer picture" in r and "try it again" in r and "Resume" in r
+    assert "clearer picture" in r and "will not change this" in r and "Resume" in r
     both = autopilot.attention_reason(_v(checks=[facing_fail(), held_face()]), "block")
     assert "facing the wrong way" in both and "left as it was" in both
 

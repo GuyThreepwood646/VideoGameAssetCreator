@@ -112,3 +112,51 @@ def test_the_finder_is_asked_once_per_head(monkeypatch):
     monkeypatch.setattr(lipmarks, "available", lambda: False)
     assert face.shape_marks(_view()) is None
     face._SHAPE_MARKS.clear()
+
+
+# --- the fit choice and the hair mask release (face_detail) --------------------------------------------------------
+
+
+def test_an_eyes_and_mouth_fit_far_behind_the_whole_face_fit_is_not_taken(monkeypatch):
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    info = {"width_px": 400.0, "nose": (2, 2)}
+    scores = {"whole": 0.95, "lm": 0.69}
+
+    monkeypatch.setattr(fd.face, "landmark_pair", lambda s, r, i: ({"how": "mediapipe", "eyes": []}, {"how": "mediapipe", "eyes": []}))
+    monkeypatch.setattr(fd.face, "align", lambda s, r, inner: {"sx": 1.0, "sy": 1.0, "tx": 0.0, "ty": 0.0})
+    monkeypatch.setattr(fd.face, "fit_landmarks", lambda a, b, nose: {"sx": 1.0, "sy": 1.0, "tx": 5.0, "ty": 0.0, "residual_px": 20.0})
+    monkeypatch.setattr(fd.face, "apply_alignment", lambda src, a: a)
+    monkeypatch.setattr(fd.face, "compose_alignment", lambda first, then: dict(then))
+    monkeypatch.setattr(fd.face, "feature_match", lambda picture, render, inner, lo, hi: scores["whole"] if picture.get("tx") == 0.0 else scores["lm"])
+    monkeypatch.setattr(fd.face, "landmarks", lambda *a: None)  # the whole fit does not place the eyes better
+    a = fd.fit_picture(np.zeros((4, 4, 3)), np.zeros((4, 4, 3)), info, np.ones((4, 4), dtype=bool))
+    assert a["how"] == "whole face" and a["score"] == 0.95  # 0.69 is 0.26 behind and under the hold line
+    scores["lm"] = 0.90  # within the margin: the eyes-and-mouth fit stands, as before
+    a = fd.fit_picture(np.zeros((4, 4, 3)), np.zeros((4, 4, 3)), info, np.ones((4, 4), dtype=bool))
+    assert a["how"] == "eyes and mouth" and a["score"] == 0.90
+    scores.update(whole=0.60, lm=0.55)  # whole is no better than the hold line: the old rule, only the margin applies
+    a = fd.fit_picture(np.zeros((4, 4, 3)), np.zeros((4, 4, 3)), info, np.ones((4, 4), dtype=bool))
+    assert a["how"] == "eyes and mouth"
+
+
+def test_flat_hair_in_the_features_area_is_released_and_a_flap_keeps_its_hair(monkeypatch):
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    S = 200
+    region = np.ones((S, S), dtype=bool)
+    info = {"region": region, "nose": (100, 100), "width_px": 100.0}
+    hair = np.zeros((S, S), dtype=bool)
+    hair[80:120, 60:140] = True  # inside the features area
+    hair[5:20, 5:20] = True  # outside it: never touched
+    z = np.zeros((S, S))
+    view = {"mask": np.ones((S, S), dtype=bool), "raster": {"z": z}}
+    out, n = fd.release_flat_hair(hair, view, info)
+    assert n == int((hair & fd.face.features_box(info)).sum()) and not (out & fd.face.features_box(info)).any()
+    assert out[5:20, 5:20].all()
+    # a flap: a step in depth at the edge of the hair keeps the hair next to it
+    z[:, 100:] = 0.01
+    out, n = fd.release_flat_hair(hair, view, info)
+    assert out[80:120, 96:104].all() and n < int((hair & fd.face.features_box(info)).sum())

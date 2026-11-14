@@ -838,8 +838,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
             "not_lined_up": "The face was not painted from the picture: the picture's face could not be lined up with the model's.",
             "poor_fit": ("The face was left as it was, not painted from the picture, because the picture could not be lined up with "
                          "the model's face well enough (fit {value:n} of 1, needs {limit:n}). Painting it anyway would have put the eyes "
-                         "and mouth in the wrong place. Try the clean-up again, or use a clearer picture of the face looking straight "
-                         "at the camera."),
+                         "and mouth in the wrong place. Painting the face again will not change this: the same picture lines up the same way. "
+                         "Building the 3D model again can give a face the picture fits, or use a clearer picture of the face looking "
+                         "straight at the camera."),
             "error": "The face was not painted from the picture: something went wrong on the way.",
             "misplaced": ("The face was painted onto the wrong part of the head: the app could not find where the model's eyes are, "
                           "so the eyes kept the 3D step's blurred look. Painting the face again rarely helps; building the 3D model again usually does."),
@@ -851,9 +852,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                                "Painting the face again cannot change that; building the 3D model again can give hair that leaves the eye free."),
             "eye_blurry": "The face was painted, but {eye_words} came out blurry, much softer than the picture's.",
         }.get(_var(c, "reason") or "", "The face does not match the picture yet."),
-        "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") in ("eye_under_hair", "misplaced")
+        "fix": lambda c: ({"stage": "mesh", "params": {}} if _var(c, "reason") in ("eye_under_hair", "misplaced", "poor_fit")
                           else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None, "face_closeup_seed_2": None}}),
-        "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") in ("eye_under_hair", "misplaced") else "Paint the face again",
+        "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") in ("eye_under_hair", "misplaced", "poor_fit") else "Paint the face again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the

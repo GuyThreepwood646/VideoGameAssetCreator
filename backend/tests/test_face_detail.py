@@ -568,8 +568,9 @@ def test_a_held_face_fails_the_check_with_the_reason_and_what_to_do():
     assert not c["ok"] and c["value"] == 0.4 and c["limit"] == fd.FIT_HOLD_MIN and c["message"] == "0.4 (limit 0.65)"
     assert c["help"].startswith("The face was left as it was")
     assert "could not be lined up" in c["help"] and "0.40 of 1" in c["help"] and "needs 0.65" in c["help"]
-    assert "try the clean-up again" in c["help"].lower() and "clearer picture" in c["help"]
-    assert c["severity"] == "warn" and c["fix_label"] == "Paint the face again"
+    assert "will not change this" in c["help"] and "clearer picture" in c["help"]
+    # painting again cannot change how the picture lines up: the offered fix is to build the 3D model again
+    assert c["severity"] == "warn" and c["fix_label"] == "Build the 3D model again" and c["fix"]["stage"] == "mesh"
 
 
 def test_each_failed_check_shows_its_own_measure_not_sharpness_against_one():

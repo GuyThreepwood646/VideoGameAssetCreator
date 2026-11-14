@@ -1105,7 +1105,7 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'baked_light' && !vars.removed) return { stage: 'prep', params: { delight: 'remove' }, label }
   if ((id === 'albedo_range' || id === 'metal_mixed') && !vars.pbr_fix_on) return { stage: 'prep', params: { pbr_fix: true }, label }
   if (id === 'look_applied') return { stage: 'prep', params: {}, label }
-  if (id === 'face_matches_picture' && vars.reason === 'eye_under_hair') return { stage: 'mesh', params: {}, label: check.fix?.label || 'Build the 3D model again' }
+  if (id === 'face_matches_picture' && (vars.reason === 'eye_under_hair' || vars.reason === 'poor_fit' || vars.reason === 'misplaced')) return { stage: 'mesh', params: {}, label: check.fix?.label || 'Build the 3D model again' }
   if (id === 'face_matches_picture') return { stage: 'prep', params: { face_detail: true, face_seed: null, face_closeup_seed: null, face_closeup_seed_2: null }, label }
   if (id === 'hair_matches_picture') return { stage: 'prep', params: { hair_detail: true }, label }
   if (id === 'hair_material') return { stage: 'prep', params: { hair_material: 'on' }, label }

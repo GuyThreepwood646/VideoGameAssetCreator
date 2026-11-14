@@ -83,8 +83,9 @@ FACING_STOP_REASON = (
 FACE_HELD_STOP_REASON = (
     "The face was left as it was, not painted from the picture, because the picture could not be lined up with the "
     "model's face well enough (fit {value} of 1, needs {limit}). The character may be left with a blurry or less "
-    "accurate face. Look at the clean-up step (step 4); you can try it again, or use a clearer picture of the face looking "
-    "straight at the camera; or press Resume to carry on as it is.")
+    "accurate face. Painting it again will not change this. Look at the clean-up step (step 4); building the 3D model "
+    "again can give a face the picture fits, or use a clearer picture of the face looking straight at the camera; or "
+    "press Resume to carry on as it is.")
 STOP_AND_ASK: tuple[tuple[str, str, Any, str], ...] = (
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
     ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, FACING_STOP_REASON),
