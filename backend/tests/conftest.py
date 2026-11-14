@@ -124,6 +124,10 @@ def _pillows_pixel_limit_does_not_leak_between_tests():
 
     from vgac import uploads  # noqa: F401  (sets the limit when first imported, before any test can turn it off)
 
+    # The hair builder may have been imported after uploads (at collection), which switches the limit off for the process:
+    # put uploads' limit back before each test, so a test never starts with it off.
+    if Image.MAX_IMAGE_PIXELS is None or Image.MAX_IMAGE_PIXELS > uploads.MAX_PIXELS:
+        Image.MAX_IMAGE_PIXELS = uploads.MAX_PIXELS
     before = Image.MAX_IMAGE_PIXELS
     yield
     Image.MAX_IMAGE_PIXELS = before
