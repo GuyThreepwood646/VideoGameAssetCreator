@@ -38,7 +38,9 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from . import downloader
 from .config import PROJECT_DIR, get_settings
+from .downloader import DownloadError
 
 log = logging.getLogger("vgac.packs")
 router = APIRouter()
@@ -53,16 +55,11 @@ UNPACK_FACTOR = 1.15  # unpacked size, as a multiple of the zip, for the disk ch
 BUILD_MARGIN = 400 * MB
 
 
-class PackError(Exception):
-    """A failure the person can read: `message` says what happened, `fix` what to do."""
-
-    def __init__(self, code: str, message: str, fix: str = ""):
-        super().__init__(message)
-        self.code, self.message, self.fix = code, message, fix
+class PackError(DownloadError):
+    """A failure the person can read: `message` says what happened, `fix` what to do (the shared downloader's error)."""
 
 
-class Stopped(Exception):
-    pass
+Stopped = downloader.Stopped
 
 
 # --- where things are (functions, so tests can point them at a scratch folder) -----------------------------------------
@@ -249,81 +246,30 @@ def check_zip(path: Path, src: Source, kit: Kit) -> str | None:
 
 
 def _open(url: str, start: int):  # replaced in tests
-    headers = {"User-Agent": "VGAC-app"}
-    if start:
-        headers["Range"] = f"bytes={start}-"
-    return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=DOWNLOAD_TIMEOUT)
+    return downloader.default_open(url, start)
 
 
 def _download_one(url: str, src: Source, run: Run, on_bytes: Callable[[int], None]) -> None:
-    src.store.mkdir(parents=True, exist_ok=True)
     part = src.store / (src.zip_name + ".part")
-    have = part.stat().st_size if part.exists() else 0
-    resp = _open(url, have)
-    try:
-        status = getattr(resp, "status", 200)
-        length = int(resp.headers.get("Content-Length") or 0)
-        if have and status != 206:
-            have = 0  # the site ignored the range: start over
-        total = have + length if length else 0
-        with open(part, "ab" if have else "wb") as f:
-            done = have
-            on_bytes(done)
-            while True:
-                if run.cancel.is_set():
-                    raise Stopped()
-                chunk = resp.read(CHUNK)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                on_bytes(done)
-    finally:
-        try:
-            resp.close()
-        except Exception:  # noqa: BLE001
-            pass
-    if total and part.stat().st_size != total:
-        raise PackError("short", f"{src.name} arrived incomplete.", "Press Try again; the download carries on where it stopped.")
+    downloader.stream_to_part(url, part, src.name, run.cancel, on_bytes, lambda u, st: _open(u, st))
     os.replace(part, src.zip_path)
 
 
 def _download(src: Source, run: Run, on_bytes: Callable[[int], None]) -> None:
-    last: PackError | None = None
-    gone = 0
-    for url in src.urls:
-        try:
-            _download_one(url, src, run, on_bytes)
-            return
-        except Stopped:
-            raise
-        except urllib.error.HTTPError as e:
-            if e.code in (404, 410, 403):
-                gone += 1
-                last = PackError("link_gone", f"The download link for {src.name} no longer works (the website answered {e.code}); it may have moved or closed.",
-                                 f"Download the zip yourself from {src.page} and drop it onto this panel.")
-            else:
-                last = PackError("server", f"The website sent an error ({e.code}) while giving {src.name}.", "Try again in a few minutes.")
-        except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError) as e:
-            last = PackError("no_internet", f"The app could not reach the internet to download {src.name}.",
-                             "Check your connection and press Try again. A half-finished download is kept and carries on where it stopped.")
-            log.info("download of %s failed: %s", url, e)
-        except OSError as e:
-            if getattr(e, "errno", None) == 28:
-                raise _no_space(src.store, 0)
-            last = PackError("write", f"The file could not be saved ({e.strerror or e}).", "Check that the disk is not full or locked, then press Try again.")
-    if last is None:
-        last = PackError("no_link", f"There is no download link for {src.name}.", f"Download the zip from {src.page} and drop it onto this panel.")
-    raise last
+    gone_fix = f"Download the zip yourself from {src.page} and drop it onto this panel."
+    try:
+        downloader.try_each(list(src.urls), lambda url: _download_one(url, src, run, on_bytes), src.name, src.page, gone_fix, src.store)
+    except DownloadError as e:
+        if e.code == "no_link":
+            raise PackError("no_link", e.message, f"Download the zip from {src.page} and drop it onto this panel.")
+        if e.code == "no_space":
+            raise PackError(e.code, e.message, e.fix)
+        raise PackError(e.code, e.message, e.fix)
 
 
 def _no_space(where: Path, need: int) -> PackError:
-    try:
-        free = shutil.disk_usage(where if where.exists() else where.parent).free
-    except OSError:
-        free = 0
-    return PackError("no_space", f"There is not enough free space on this drive: about {_fmt_gb(need)} is needed and {_fmt_gb(free)} is free." if need else
-                     "The drive ran out of space.", "Free some space (empty the recycle bin, remove files you do not need), then press Try again.")
+    e = downloader.no_space(where, need)
+    return PackError(e.code, e.message, e.fix)
 
 
 def unpack(src: Source, run: Run, on_progress: Callable[[float], None]) -> None:
