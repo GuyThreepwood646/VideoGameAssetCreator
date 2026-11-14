@@ -481,3 +481,51 @@ def test_a_head_view_never_paints_its_pictures_outermost_rows() -> None:
     grown = {**a, "sx": 1.2, "sy": 1.2}  # enlarged: nothing reaches past the frame, only the margin
     g = srcproject.frame_weight(grown, S)
     assert g[500, 500] == 1.0 and 0.0 < g[500, 0] < 1.0  # its edge pixel takes colour 8 percent in: partly weighted
+
+
+def test_a_head_view_does_not_paint_surface_seen_edge_on() -> None:
+    for yaw, painted in ((60.0, True), (75.0, False)):  # cosine 0.5 and 0.26
+        for name in ("head", "source"):
+            mesh, tex, v = fitted(name, yaw)
+            if not v.ok:
+                continue
+            srcproject.prepare_gates(v, {"disc": True, "stretch": False, "agree": False, "flowsat": False})
+            p = srcproject.project_view(srcproject.Atlas(mesh, T), v)
+            got = float(p["w"].max()) if len(p["w"]) else 0.0
+            if name == "head":
+                assert (got > 0.0) == painted, (yaw, got)
+
+
+class _A:  # a stand-in atlas: positions and normals only
+    def __init__(self, pos, nrm):  # noqa: ANN001
+        self.pos, self.nrm = np.asarray(pos, float), np.asarray(nrm, float)
+
+
+def test_the_chin_underside_is_found_from_the_surface() -> None:
+    chin = {"nose_y": 1.6, "L": 0.12, "centre": [0.0, 0.0], "width": 0.16}
+    a = _A([[0.0, 1.52, 0.03], [0.0, 1.52, 0.03], [0.0, 1.65, 0.05], [0.4, 1.52, 0.0]],
+           [[0.0, -0.9, 0.4], [0.0, 0.2, 1.0], [0.0, -0.9, 0.4], [0.0, -0.9, 0.4]])
+    u = srcproject.chin_underside(a, chin)
+    assert u[0] > 0.99  # under the chin, facing down
+    assert u[1] == 0.0  # facing forward: the head views see it
+    assert u[2] == 0.0  # above the nose
+    assert u[3] == 0.0  # far from the head's middle (a shoulder)
+
+
+def test_the_chin_underside_takes_the_painted_colour_around_it() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    x, y = atlas.pos[:, 0], atlas.pos[:, 1]
+    base = np.full((T, T, 3), 0.1)  # the step 3 colour: dark
+    alpha = (y > 0.0).astype(np.float64)  # the upper half painted, in skin
+    paint = np.tile(SKIN, (atlas.idx.size, 1))
+    under = ((y < 0.0) & (y > -0.06)).astype(np.float64)  # a strip just below the painted part
+    zt = {"face": np.zeros(atlas.idx.size), "keep": np.zeros(atlas.idx.size, dtype=bool), "under": under}
+    info: dict = {}
+    new = srcproject.finish(atlas, base, paint, alpha, zt, info).reshape(-1, 3)[atlas.idx]
+    strip = (under > 0) & ~atlas.is_gut
+    assert np.abs(new[strip] - SKIN).max() < 0.05  # skin, not the step 3 colour
+    assert info["under_fill"][strip].min() > 0.99
+    far = (y < -0.3) & ~atlas.is_gut
+    plain = srcproject.finish(atlas, base, paint, alpha).reshape(-1, 3)[atlas.idx]
+    assert np.allclose(new[far], plain[far])  # outside the underside: as before

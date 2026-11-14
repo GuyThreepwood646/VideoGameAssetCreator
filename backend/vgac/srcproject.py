@@ -114,6 +114,11 @@ SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this
 HEAD_FRAME_MARGIN = (0.03, 0.10)  # of the head picture's frame: a head view's weight is zero this close to the frame's edge,
                                  # full from the second; and zero where its fit reaches past the frame (face.apply_alignment
                                  # repeats the last row there: on the live W2-clothed run the bottom 18 mm of the neck)
+HEAD_FACING = (0.35, 0.45)  # surface-to-camera cosine over which a head view fades in: nothing seen more edge-on than
+                            # about 70 degrees (the underside of the chin from a level camera: the live W2-clothed run had
+                            # the chin's last rows stretched over it as a pale band)
+CHIN = (1.15, 0.45, 0.8)    # the chin's underside and the upper neck: between these shares of (nose tip to top of head)
+                            # below the nose tip, within this share of the head's width of its middle, facing down
 SIDE_AGREE_MAX = 0.12     # of the face's width: how far a three-quarter head view's own fit may put the eyes and mouth from
                           # where the front head view painted them before it is refused
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
@@ -831,6 +836,8 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
     base = v.weight * cos_weight(cosv) * f0 * visible
+    if v.name.startswith(HEAD_VIEW):
+        base = base * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
     zi = getattr(v, "zone_img", None)  # the head view: the head above the neck only
     if zi is not None:
         base = base * face.sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
@@ -966,6 +973,17 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray,
             fw = np.zeros_like(alpha)
         if out_info is not None:
             out_info["fill"] = fw * (1 - alpha)
+        under = zt.get("under")
+        if under is not None and (under * (1 - alpha) > 0.5).any():
+            # the underside of the chin, which the head views no longer paint at a grazing angle: the painted colour
+            # around it, smoothly (skin under a bare chin, the beard's colour under a beard), never the step 3 colour
+            sel_p = (alpha > 0.5) & ~atlas.is_gut
+            # (a wider reach than finish's own shift: the underside lies up to a few centimetres from painted surface)
+            field, reach = surface_correction(atlas, np.where(sel_p[:, None], paint, 0.0), sel_p.astype(np.float64), cell=0.02)
+            took = under * (reach > 0.05)
+            out = out * (1 - took[:, None]) + field * took[:, None]
+            if out_info is not None:
+                out_info["under_fill"] = took * (1 - alpha)
     out = out * (1 - alpha[:, None]) + paint * alpha[:, None]
     res = base.copy().reshape(-1, 3)
     res[atlas.idx] = np.clip(out, 0, 1)
@@ -999,6 +1017,7 @@ def face_zone(mesh: dict[str, np.ndarray], tex: np.ndarray, head_yaw: float = 0.
     nose_y = float(pos[ny, nx, 1])
     L = max(head.top - nose_y, 1e-3)
     out["neck"] = (nose_y - HEAD_NECK[0] * L, nose_y - HEAD_NECK[1] * L)  # heights the head views fade in between
+    out["chin"] = {"nose_y": nose_y, "L": L, "centre": [float(head.centre[0]), float(head.centre[2])], "width": float(head.width)}
     # where a skin fill may go: the eyes, nose and mouth (face.features_box), feathered. The model's own features all
     # lie there; on the rest of the face (cheeks, jaw, temples) a fill showed as a flat band round the face on the
     # stored W1-clothed and P1-photo runs, and the old colour with its tone shifted (finish) reads better there.
@@ -1336,7 +1355,22 @@ def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarr
     out = {"face": np.clip(w, 0.0, 1.0), "keep": keep}
     if zone.get("fill") is not None:
         out["fill"] = np.clip(face.sample(zone["fill"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis, 0.0, 1.0)
+    if zone.get("chin") is not None:
+        out["under"] = chin_underside(atlas, zone["chin"])
     return out
+
+
+def chin_underside(atlas: Atlas, chin: dict[str, Any]) -> np.ndarray:
+    """(N,) 0..1: the underside of the chin and jaw and the upper neck below it (CHIN), the surface no level camera sees
+    squarely: between CHIN[0] and CHIN[1] of (nose tip to top of head) below the nose tip, within CHIN[2] of the head's
+    width of its middle, facing down. From the surface alone, so it is the same on any texture layout."""
+    y = atlas.pos[:, 1]
+    ny, L = float(chin["nose_y"]), float(chin["L"])
+    band = face.smoothstep(ny - CHIN[0] * L - 0.1 * L, ny - CHIN[0] * L, y) * (1.0 - face.smoothstep(ny - CHIN[1] * L, ny - CHIN[1] * L + 0.1 * L, y))
+    cx, cz = chin["centre"]
+    near = 1.0 - face.smoothstep(CHIN[2] * chin["width"], (CHIN[2] + 0.1) * chin["width"], np.hypot(atlas.pos[:, 0] - cx, atlas.pos[:, 2] - cz))
+    down = face.smoothstep(0.2, 0.45, -atlas.nrm[:, 1])
+    return np.clip(band * near * down, 0.0, 1.0)
 
 
 def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
@@ -1350,7 +1384,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
     extra: dict[str, Any] = {}
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
-            "fill": extra.get("fill")}
+            "fill": extra.get("fill"), "under_fill": extra.get("under_fill")}
 
 
 # --- measures ---------------------------------------------------------------------------------------------------
@@ -1367,7 +1401,7 @@ def zone_record(zone: dict[str, Any] | None) -> dict[str, Any] | None:
     """What of the face region is kept to paint again on another layout (repaint): the head picture's camera and maps."""
     if not zone or not zone.get("found"):
         return None
-    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep", "fill")}
+    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep", "fill", "chin")}
 
 
 def zone_metrics(zone: dict[str, Any] | None, c: dict[str, Any]) -> dict[str, Any]:
