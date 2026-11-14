@@ -16,12 +16,14 @@ max_words: 260     # longest the whole instruction may be
 snippets:
   frame:
     checks: [in_frame]
-    change: "Pull the camera back just far enough that the whole {subject}, hands and feet included, fits inside the picture with a thin clear margin (about 3 percent) on all four sides. Keep the {subject} as large as that allows: head near the top edge, feet near the bottom edge, filling almost the full height."
+    change: "Zoom out so the whole {subject} is smaller in the picture: the {subject}'s full height, from the top of the head to the soles of both feet, should be about 92 percent of the picture height, with plain background visible below both feet and above the head, and nothing touching the edges. Both feet must be completely visible."
     keep: ["the same {subject}", "face", "hair", "clothes", "colours", "pose", "the plain light grey background"]
     drops: ["framing", "the whole body in frame"]
     conflicts: []
-    tested: false    # reworded 2026-11-14 (it only shrank the person: one redraw left the subject 744 px tall, under the 860 the detail check wants);
-                     # the first wording passed the check on 2 of 3 pictures, in a redraw that also changed the pose; the third still touched the edge
+    tested: true     # trial 2026-11-14 on the 3060, W1 cropped hard (feet on the bottom edge), 3 draws: wording "keep as large as the frame allows"
+                     # left her the same size, feet still on the edge (in_frame failed); this wording ("about 92 percent of the picture height") passed
+                     # in_frame on 2 of 2 seeds, and detail_size on 1 of 2 (976 px, and 816 px against 860, where the re-check offers Upscale it).
+                     # The earlier "slightly smaller" wording gave 744 px. Cutout-measured with readiness.concept_checks.
 
   pose_a:
     checks: [arms_away, pose_for_3d]

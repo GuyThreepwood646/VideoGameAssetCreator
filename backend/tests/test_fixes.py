@@ -63,7 +63,7 @@ def test_two_ticks_with_one_snippet_are_joined_once():
 
 def test_a_merged_redraw_numbers_its_changes_and_keeps_one_keep_list():
     out = _c(["in_frame", "hair_off_eyes"])["instruction"]
-    assert out.startswith("Make these 2 changes: (1) Pull the camera back just far enough")
+    assert out.startswith("Make these 2 changes: (1) Zoom out so the whole person")
     assert "(2) Move the hair off the face" in out
     assert out.count("Keep everything else exactly the same:") == 1
     keep = out.split("Keep everything else exactly the same: ")[1]
@@ -136,7 +136,7 @@ def test_fix_for_keeps_known_ids_in_order_without_repeats():
 
 def test_each_of_the_six_checks_is_pinned_to_its_own_wording():
     """A tick box must ask for what its label says (the old "Redraw it in even light" button sent the A-pose redraw)."""
-    expect = {"in_frame": ("frame", "margin"), "arms_away": ("pose_a", "A pose"), "pose_for_3d": ("pose_a", "A pose"),
+    expect = {"in_frame": ("frame", "Zoom out"), "arms_away": ("pose_a", "A pose"), "pose_for_3d": ("pose_a", "A pose"),
               "soft_light": ("even_light", "even light"), "hair_off_eyes": ("hair_off", "Move the hair off the face"),
               "face_drawn": ("face_draw", "Draw the face")}
     for check, (sid, words) in expect.items():
@@ -148,9 +148,9 @@ def test_each_of_the_six_checks_is_pinned_to_its_own_wording():
                 assert owords not in text, (check, other)  # no wording carries another check's change
 
 
-def test_the_frame_wording_keeps_the_subject_as_large_as_the_picture_allows():
+def test_the_frame_wording_asks_for_a_named_share_of_the_height_not_just_smaller():
     ins = _c(["in_frame"])["instruction"]
-    assert "as large as that allows" in ins and "almost the full height" in ins and "slightly smaller" not in ins
+    assert "92 percent of the picture height" in ins and "Both feet must be completely visible" in ins and "slightly smaller" not in ins
 
 
 def test_after_a_frame_redraw_a_short_subject_says_so_and_offers_upscale():

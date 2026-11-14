@@ -663,7 +663,7 @@ def test_fix_plan_joins_the_ticked_failed_checks_only(client, fake_execute):
     out = r.json()
     assert out["used"] == ["in_frame", "soft_light"] and out["snippets"] == ["frame", "even_light"]
     assert out["dropped"] == []  # face_drawn passes here, arms_away is not offered a tick, one_subject passed, bogus is unknown
-    assert out["instruction"].startswith("Make these 2 changes: (1) Pull the camera back just far enough") and out["max_changes"] == 3
+    assert out["instruction"].startswith("Make these 2 changes: (1) Zoom out so the whole person") and out["max_changes"] == 3
     assert client.post(f"/api/versions/{vid}/fix-plan", json={"checks": []}).json()["instruction"] is None
 
 
