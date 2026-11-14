@@ -144,6 +144,9 @@ class Settings(BaseModel):
         "b": ["concept", "turnaround", "mesh", "rig", "judge", "material"]})
     # Seconds a routine Blender step (rig repair, rig inspection, clip baking and rendering) may run.
     blender_timeout_seconds: float = Field(default=1800, ge=1)
+    # A step is refused, with a plain sentence saying what is missing and where to set it, while what it needs is not
+    # set up (firstrun.blockers). False lets every step queue regardless (tests that stub the engines).
+    require_setup: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -358,9 +361,34 @@ def update_machine(changes: dict[str, Any], path: Path | str | None = None,
     return write_machine(merge(read_machine(path), changes), path, defaults)
 
 
+_problem = ""
+
+
+def settings_problem() -> str:
+    """Plain words when this machine's settings file could not be used and the app started on the defaults alone
+    (empty when all is well). While it is set, no step runs and no setting is written (firstrun.py)."""
+    get_settings()
+    return _problem
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return load_settings()
+    """The settings, once. A machine settings file that cannot be read, or whose values do not make valid settings,
+    must not stop the app from starting: it starts on the defaults alone and settings_problem() says why."""
+    global _problem
+    _problem = ""
+    try:
+        return load_settings()
+    except ConfigError as err:
+        if machine_path() is None:
+            raise
+        try:
+            fallback = load_settings(machine=False)
+        except ConfigError:
+            raise err from None
+        _problem = str(err)
+        log.error("settings: %s The app started on the defaults alone; no step will run until this is fixed.", err)
+        return fallback
 
 
 def reset_settings() -> None:

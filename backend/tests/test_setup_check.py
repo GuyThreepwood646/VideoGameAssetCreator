@@ -134,7 +134,9 @@ def test_off_and_not_running_are_unknown(settings, tmp_path):
     assert down[0]["state"] == "unknown" and down[0]["detail"] == "Not running now; it starts when needed."
     assert all(i["state"] == "unknown" for i in down)
     bare = asyncio.run(preflight.check_instance(settings, "a", client, set()))
-    assert bare[0]["state"] == "unknown" and "cannot start it" in bare[0]["detail"]
+    # Nothing to start it with and nothing answering: a failure that names the setting, not "not checked".
+    assert bare[0]["state"] == "fail" and "does not know where ComfyUI" in bare[0]["detail"]
+    assert bare[0]["setting"] == "instances.a.engine.comfy_dir" and "setup card" in bare[0]["fix"]
 
 
 def test_b_port_held_by_the_other_card_fails_with_a_fix(settings):
@@ -176,7 +178,7 @@ def test_blender_checks(settings, tmp_path):
     old.parent.mkdir()
     old.write_bytes(b"y")
     r = preflight.check_blender(s.model_copy(update={"blender_exe": old}), lambda p: "Blender 4.2.1 LTS")
-    assert r["state"] == "fail" and "4.2.1 is too old" in r["detail"] and "blender_exe" in r["fix"]
+    assert r["state"] == "fail" and "4.2.1 is too old" in r["detail"] and "setup card" in r["fix"] and r["setting"] == "blender_exe"
     calls: list[Path] = []
 
     def runner(p: Path) -> str:
@@ -191,7 +193,7 @@ def test_blender_checks(settings, tmp_path):
     preflight.check_blender(s3, runner)
     assert len(calls) == 1  # asked once per file
     gone = preflight.check_blender(s.model_copy(update={"blender_exe": tmp_path / "nope.exe"}), runner)
-    assert gone["state"] == "fail" and "blender_exe" in gone["fix"]
+    assert gone["state"] == "fail" and gone["setting"] == "blender_exe" and "setup card" in gone["fix"]
     assert preflight.check_blender(settings, runner)["state"] == "fail"  # not set at all
 
 
@@ -287,11 +289,13 @@ def test_setup_endpoint_shape_cache_and_refresh(settings, monkeypatch):
         assert set(r) >= {"summary", "items", "groups", "checked_at"}
         assert [g["id"] for g in r["groups"]] == ["tools", "engines", "models", "storage"]
         for it in r["items"]:
-            assert set(it) - {"kit", "offer"} == {"id", "group", "label", "state", "detail", "fix", "needed_for", "technical"}  # kit and offer: optional extras
+            assert set(it) - {"kit", "offer"} == {"id", "group", "label", "state", "detail", "fix", "needed_for", "technical", "setting"}  # kit and offer: optional extras
             assert it["state"] in ("ok", "warn", "fail", "unknown")
         ids = by_id(r["items"])
         assert ids["blender"]["state"] == "fail"  # the test config has no Blender
-        assert ids["engine.a"]["state"] == "unknown" and ids["engine.b"]["state"] == "unknown"  # nothing answers
+        # Nothing answers and the test config gives the app no way to start either: a failure that says so.
+        assert ids["engine.a"]["state"] == "fail" and ids["engine.b"]["state"] == "fail"
+        assert r["first_run"]["state"] == "partly_set_up"  # the refusals are off in this config
         assert r["summary"]["fails"] >= 1 and r["summary"]["ok"] is False and "rig" in r["summary"]["affected"]
         c.get("/api/setup")
         assert len(runs) == 1  # kept for 60 s

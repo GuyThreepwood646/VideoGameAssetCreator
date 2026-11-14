@@ -341,6 +341,11 @@ def is_engine_lost(err: BaseException) -> bool:
 
 
 def engine_lost_message(instance: str, settings: Settings | None = None) -> str:
+    inst = (settings or get_settings()).instances.get(instance)
+    if inst is not None and inst.engine is None and inst.start_script is None:
+        return (f"The graphics engine on {gpu_name(instance, settings)} stopped answering, and the app does not know where "
+                "ComfyUI is, so it cannot start it again. Start ComfyUI yourself, or give its folder in the setup card on "
+                "the Health page, then run the step again.")
     return (f"The graphics engine on {gpu_name(instance, settings)} stopped twice while working on this step. Check that "
             f"it starts (the Health page shows it), then run the step again.")
 
@@ -964,7 +969,10 @@ class JobQueue:
     def place(self, stage: str, category: str) -> tuple[str, str | None]:
         """Where a new job for `stage` (or "judge") goes now: (instance, None) from route(), or, when no card that is
         on can run it, (the preferred instance, the waiting message): the job waits there until that card is back."""
-        target = route(stage, category, self.settings, self.unavailable(), self.allowed_kinds, self.default_instance)
+        from . import firstrun
+
+        off = self.unavailable() | firstrun.unusable_cards(self.settings, self.supervisor)
+        target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance)
         if target is not None:
             return target, None
         preferred = preferred_instance(stage, category, self.settings)
@@ -1523,8 +1531,8 @@ class JobQueue:
         if instance in self.disabled:
             raise ValueError(f"{gpu} is turned off. Turn it on first; the app never starts a card that is off.")
         if not sup.can_start(instance):
-            raise ValueError(f"The app does not know how to start the graphics engine on {gpu} (no engine settings and "
-                             "no start script), so it cannot start it.")
+            raise ValueError(f"The app does not know where ComfyUI for {gpu} is, so it cannot start it. On the Health page, "
+                             "in the setup card, give its ComfyUI folder.")
         sup.clear_failed(instance)
         sup.touch(instance)
         self._rebalance()  # jobs parked by the failed start may run here again

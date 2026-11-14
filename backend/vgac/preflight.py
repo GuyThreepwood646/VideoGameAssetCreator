@@ -127,9 +127,10 @@ _SKINTOKEN_RE = re.compile(r"""SKINTOKEN_BLENDER_BIN\s*=\s*["']([^"']+)["']""", 
 
 
 def item(id: str, group: str, label: str, state: str, detail: str, fix: str = "", needed_for: list[str] | None = None,
-         technical: str = "") -> dict[str, Any]:
+         technical: str = "", setting: str = "") -> dict[str, Any]:
+    """`setting`: the key POST /api/setup/settings takes to fix this item ("" when the person cannot fix it there)."""
     return {"id": id, "group": group, "label": label, "state": state, "detail": detail, "fix": fix,
-            "needed_for": list(needed_for or []), "technical": technical}
+            "needed_for": list(needed_for or []), "technical": technical, "setting": setting}
 
 
 # --- what the graphs need ------------------------------------------------------------------------------------------
@@ -245,25 +246,24 @@ def blender_version(exe: Path, runner: Callable[[Path], str] = _run_version) -> 
 def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_version) -> dict[str, Any]:
     exe = settings.blender_exe
     tech = f"blender_exe in the settings: {exe}"
-    if not exe:
-        return item("blender", "tools", "Blender", "fail", "Blender is not set up, so cleaning up, rigging and handing "
-                    "off cannot run.", "Install Blender 5.0 or newer and put the path to blender.exe in blender_exe in "
-                    "local/machine.json.", HOST_BLENDER_STAGES, tech)
+    from .firstrun import blender_problem
+
+    problem = blender_problem(settings)
+    if problem is not None:
+        return item("blender", "tools", "Blender", "fail", problem[0], problem[1], HOST_BLENDER_STAGES, tech, "blender_exe")
     exe = Path(exe)
-    if not exe.is_file():
-        return item("blender", "tools", "Blender", "fail", "Blender was not found where the settings say it is.",
-                    "Install Blender 5.0 or newer, or correct blender_exe in local/machine.json.", HOST_BLENDER_STAGES, tech)
     ver = blender_version(exe, runner)
     if ver is None:
         return item("blender", "tools", "Blender", "warn", "Blender is there, but it did not say which version it is.",
-                    "Open Blender once to check it starts. The app needs version 5.0 or newer (blender_exe in "
-                    "local/machine.json).", HOST_BLENDER_STAGES, tech)
+                    "Open Blender once to check it starts. The app needs version 5.0 or newer; you can give a different "
+                    "blender.exe in the setup card.", HOST_BLENDER_STAGES, tech, "blender_exe")
     v = ".".join(str(x) for x in ver)
     if ver[:2] < BLENDER_MIN:
         return item("blender", "tools", "Blender", "fail", f"Blender {v} is too old: the animation steps need 5.0 or newer.",
-                    "Install Blender 5.0 or newer and point blender_exe in local/machine.json at it.",
-                    HOST_BLENDER_STAGES, f"{tech} (version {v}; action slots need 5.0)")
-    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready.", "", HOST_BLENDER_STAGES, f"{tech} (version {v})")
+                    "Install Blender 5.0 or newer and give the path to its blender.exe in the setup card.",
+                    HOST_BLENDER_STAGES, f"{tech} (version {v}; action slots need 5.0)", "blender_exe")
+    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready.", "", HOST_BLENDER_STAGES, f"{tech} (version {v})",
+                "blender_exe")
 
 
 def check_unity(settings: Settings) -> list[dict[str, Any]]:
@@ -274,7 +274,7 @@ def check_unity(settings: Settings) -> list[dict[str, Any]]:
         out.append(item("unity", "tools", "Unity editor", "warn",
                         "The Unity editor was not found, so the app cannot try the asset in Unity for you. Everything "
                         "else works; the hand-off still makes the files.",
-                        "Install the Unity editor, then press Check again. If it is installed somewhere unusual, put the path to its Unity.exe on the unity_exe line of local/machine.json.", ["export"], tech))
+                        "Install the Unity editor, then press Check again. If it is installed somewhere unusual, give the path to its Unity.exe in the setup card.", ["export"], tech, "unity_exe"))
     else:
         out.append(item("unity", "tools", "Unity editor", "ok", "The Unity editor is ready for the test import.", "",
                         ["export"], tech))
@@ -283,8 +283,8 @@ def check_unity(settings: Settings) -> list[dict[str, Any]]:
     if not proj or not Path(proj).is_dir():
         out.append(item("unity_project", "tools", "Unity test project", "warn",
                         "The Unity project the app imports into for a test was not found.",
-                        "Set unity_project in local/machine.json to a Unity project folder (the app's own is "
-                        "unity-sandbox).", ["export"], tech))
+                        "Give a Unity project folder in the setup card (the app's own is unity-sandbox).",
+                        ["export"], tech, "unity_project"))
     else:
         out.append(item("unity_project", "tools", "Unity test project", "ok", "The Unity test project is there.", "",
                         ["export"], tech))
@@ -534,6 +534,12 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
         return [item(eng_id, "engines", eng_label, "fail", f"{what}, so the app will not send the {gpu}'s work to it.",
                      fix, stages_here, tech)] + not_checked("the engine on its port runs on the other card.")
     if not ok:
+        from .firstrun import card_problem
+
+        cp = card_problem(settings, name, supervisor)
+        if cp is not None:
+            return [item(eng_id, "engines", eng_label, "fail", cp[0], cp[1], stages_here, tech,
+                         f"instances.{name}.engine.comfy_dir")] + not_checked("the app has no ComfyUI to ask.")
         if starts:
             return [item(eng_id, "engines", eng_label, "unknown", "Not running now; it starts when needed.", "",
                          stages_here, tech)] + not_checked("the engine is not running; it starts when needed.")

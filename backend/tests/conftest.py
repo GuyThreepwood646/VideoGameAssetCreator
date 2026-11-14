@@ -28,6 +28,7 @@ def settings_path(tmp_path: Path) -> Path:
         "comfy_input_dir": str(tmp_path / "comfy_in"),
         "min_free_ram_gb": 0,
         "job_timeout_seconds": 60,
+        "require_setup": False,  # tests stub the engines; the refusals have their own tests (test_first_run.py)
     }
     p = tmp_path / "config.yaml"
     p.write_text(yaml.safe_dump(cfg), encoding="utf-8")

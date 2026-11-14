@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import select as sql_select
 from sqlalchemy.orm import Session
 
-from . import reference
+from . import firstrun, reference
 from .db import Asset, Job, Version, job_to_dict, version_to_dict
 from .jobs import JobQueue, active_queue, job_kind
 from .reference import STAGE_ORDER
@@ -103,6 +103,12 @@ def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, An
     q = queue()
     kind = job_kind(v.stage, op, asset.category)
     instance, message = q.place(v.stage, asset.category)
+    found = firstrun.blockers(q.settings, v.stage, asset.category, instance, q.supervisor, disabled=q.disabled)
+    if found:
+        text = firstrun.sentence(found)
+        v.status, v.error = "error", text
+        db.commit()
+        raise Conflict(text)
     body = {"version_id": v.id, "op": op, **payload}
     job = q.submit(instance, kind, asset.id, v.id, body, message=message)
     db.refresh(v)
@@ -142,6 +148,10 @@ def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[st
                 raise Conflict(f"no selected {prev} version to build on")
         if parent.status != "done":
             raise Conflict(f"parent version is {parent.status}, not done")
+    q = queue()
+    found = firstrun.blockers(q.settings, stage, a.category, None, q.supervisor, disabled=q.disabled)
+    if found:
+        raise Conflict(firstrun.sentence(found))
     base_params = validate_params(stage, params, a.category)
     if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
         base_params["model"] = a.concept_model
