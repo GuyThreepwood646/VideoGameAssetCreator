@@ -206,6 +206,9 @@ POSE_KEEP = "Keep the exact pose, with the arms and legs where they are in the p
 # the redraws without it repeated the sweep (2.29, 2.01) because the kept front picture fans out. A woman with straight chestnut
 # hair to the waist came out straight too (0.14 and 0.19, pose ok). NOT tried on tied-up hair (a ponytail or a braid to one side),
 # short hair or hair meant to be styled to a side: see turnaround.BACK_HAIR_WORDS.
+# CARD TEST 2026-11-14 (3080, seed 301, 5 characters): added from the FIRST draw it damaged all five: two short-haired men were
+# drawn with long straight hair down the back, and a braid, a braid-to-ponytail and a cartoon ponytail all became a loose
+# straight curtain. So it is used only on a redraw after the sweep check failed (loose long hair swept to a side).
 BACK_HAIR_SENTENCE = ("The hair hangs straight down the back, as when standing still with no wind. It does not stream out to "
                       "either side.")
 BACK_SIDES_SENTENCE = ("Picture 2 shows this character's left side and Picture 3 the right side. The hair, seen from behind, "

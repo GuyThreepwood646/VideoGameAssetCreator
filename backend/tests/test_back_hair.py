@@ -418,14 +418,49 @@ def test_the_sentence_is_the_one_that_was_tried_on_a_card():
                                             "It does not stream out to either side.")
 
 
-def test_the_back_is_drawn_with_the_hair_words_from_the_first_draw_and_on_every_redraw(tmp_path, drawn):
-    drawn["back_fails"] = 2
+SWEPT = {"ok": False, "end_gap": None, "limit": None, "width_ratio": None, "loose": None, "swept": True,
+         "sweep": {"asym": 1.7, "swept": True, "left_mean": 0.6, "right_mean": 2.3, "left_max": 0.6, "right_max": 2.3, "cover": 0.1}}
+FINE = {**SWEPT, "ok": True, "swept": False, "sweep": {**SWEPT["sweep"], "asym": 0.1, "swept": False}}
+
+
+def _hair_results(monkeypatch, *results):
+    it = iter(results)
+    last = results[-1]
+    monkeypatch.setattr(turnaround.hair_sides, "compare_with_reason", lambda *a: ((next(it, last)), ""))
+
+
+def test_the_first_draw_never_has_the_hair_words_even_when_the_hair_will_be_swept(tmp_path, drawn, monkeypatch):
+    """From the first draw the sentence gave short-haired men long hair and turned braids and ponytails into a loose curtain."""
+    _hair_results(monkeypatch, SWEPT, FINE)
+    run(tmp_path)
+    backs = calls_by_view(drawn)["back"]
+    assert qwen_edit.BACK_HAIR_SENTENCE not in backs[0]["extra"]
+    assert all(qwen_edit.BACK_HAIR_SENTENCE not in c["extra"] for c in drawn["calls"] if c["view"] != "back")
+
+
+def test_a_back_found_swept_is_redrawn_with_the_hair_words_each_time(tmp_path, drawn, monkeypatch):
+    _hair_results(monkeypatch, SWEPT)       # stays swept
     sc = run(tmp_path)
     backs = calls_by_view(drawn)["back"]
-    assert len(backs) == 3 and all(qwen_edit.BACK_HAIR_SENTENCE in b["extra"] for b in backs)
-    assert all(qwen_edit.BACK_HAIR_SENTENCE not in c["extra"] for c in drawn["calls"] if c["view"] != "back")
-    assert sc.metrics["views"]["back"]["hair_words"] is True
-    assert all("hair_words" not in info for v, info in sc.metrics["views"].items() if v != "back")
+    assert len(backs) == 1 + turnaround.MAX_REROLLS
+    assert qwen_edit.BACK_HAIR_SENTENCE not in backs[0]["extra"]
+    assert all(qwen_edit.BACK_HAIR_SENTENCE in b["extra"] for b in backs[1:])
+    assert sc.metrics["views"]["back"]["hair_words"] is True and sc.metrics["views"]["back"]["hair_swept"] is True
+
+
+def test_a_back_that_failed_for_its_length_is_redrawn_without_the_hair_words(tmp_path, drawn):
+    drawn["back_fails"] = 1      # the narrow-column failure of the length measure, not a sweep
+    sc = run(tmp_path)
+    backs = calls_by_view(drawn)["back"]
+    assert len(backs) == 2 and all(qwen_edit.BACK_HAIR_SENTENCE not in b["extra"] for b in backs)
+    assert "hair_words" not in sc.metrics["views"]["back"]
+
+
+def test_a_redraw_that_clears_the_sweep_carries_the_words_and_passes(tmp_path, drawn, monkeypatch):
+    _hair_results(monkeypatch, SWEPT, FINE)
+    sc = run(tmp_path)
+    info = sc.metrics["views"]["back"]
+    assert info["passed"] is True and info["rerolls"] == 1 and info["hair_words"] is True and "hair_swept" not in info
 
 
 @pytest.mark.parametrize("params, category", [
@@ -433,13 +468,15 @@ def test_the_back_is_drawn_with_the_hair_words_from_the_first_draw_and_on_every_
     ({}, "quadruped"),                       # no hair to speak of
     ({"bald_views": True}, "humanoid"),      # library hair: the bald pictures have no hair to hang
 ])
-def test_the_hair_words_stay_off_where_they_do_not_belong(tmp_path, drawn, params, category):
+def test_the_hair_words_stay_off_where_they_do_not_belong(tmp_path, drawn, monkeypatch, params, category):
+    _hair_results(monkeypatch, SWEPT)
     sc = run(tmp_path, params, category=category)
     assert all(qwen_edit.BACK_HAIR_SENTENCE not in c["extra"] for c in drawn["calls"])
     assert "hair_words" not in sc.metrics["views"].get("back", {})
 
 
-def test_the_hair_words_and_the_references_go_together_when_both_are_on(tmp_path, drawn):
+def test_the_hair_words_and_the_references_go_together_on_a_redraw_when_both_are_on(tmp_path, drawn, monkeypatch):
+    _hair_results(monkeypatch, SWEPT, FINE)
     run(tmp_path, {"back_references": True})
-    back = calls_by_view(drawn)["back"][0]
+    back = calls_by_view(drawn)["back"][1]
     assert qwen_edit.BACK_HAIR_SENTENCE in back["extra"] and qwen_edit.BACK_SIDES_SENTENCE in back["extra"]

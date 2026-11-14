@@ -74,10 +74,12 @@ def set_step_checks(sc: StageContext, new: list[dict[str, Any]], drop: tuple[str
 # in a version's settings: as before. Always off where the hair comes from the library (the bald pictures have no hair to
 # match and the haired views are replaced) and for any turn method but the standard one. metrics.back_references records it.
 BACK_REFERENCES = False
-# True: a character's back view is drawn with graphs/qwen_edit.BACK_HAIR_SENTENCE (the hair hangs straight down the back, no
-# wind, nothing streaming out to a side) from the first draw, so a kept front picture with wind-blown hair does not give a back
-# view with it. False, or `back_hair_words: false` in a version's settings: as before. Standard turn method, humanoids that are
-# not bald only (library hair has its own hair). Untested on tied-up hair, short hair and hair meant to be styled to a side.
+# True: when a back view fails hair_matches_sides because its hair is swept to one side, the redraws are drawn with
+# graphs/qwen_edit.BACK_HAIR_SENTENCE (the hair hangs straight down the back, no wind, nothing streaming out to a side). Never on
+# the first draw: from the first draw it gave two short-haired men long hair and turned a braid and two ponytails into a loose
+# curtain (card test 2026-11-14). A sweep verdict exists only for loose long hair below the shoulders, so tied-up and short hair
+# never get the words. False, or `back_hair_words: false` in a version's settings: never. Standard turn method, humanoids that
+# are not bald only (library hair has its own hair).
 BACK_HAIR_WORDS = True
 
 
@@ -310,6 +312,8 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
             out["hair_end_gap"], out["hair_width_ratio"] = hair["end_gap"], hair["width_ratio"]
             if hair.get("sweep"):
                 out["hair_sweep"] = hair["sweep"]["asym"]
+                if hair.get("swept"):
+                    out["hair_swept"] = True
             checks.append(hair_check(hair))
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)
@@ -895,7 +899,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             side_pictures[card] = names
         return side_pictures[card]
 
-    async def draw(view: str, seed: int, attempts: int, at: float, card: str | None = None) -> tuple[dict[str, Any], str]:
+    async def draw(view: str, seed: int, attempts: int, at: float, card: str | None = None, words: bool = False) -> tuple[dict[str, Any], str]:
         if sheet is not None and attempts == 0 and view in sheet:
             return dict(sheet[view]), "sheet"
         if cam is not None and method_draws("shadow_free", view):
@@ -911,7 +915,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         else:
             with_refs.discard(view)
             extra_v = extra
-        if view == "back" and hair_words:
+        if view == "back" and hair_words and words:
             with_words.add(view)
             extra_v = " ".join(p for p in (extra_v, BACK_HAIR_SENTENCE) if p)
         else:
@@ -954,7 +958,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                 files = await _supplied_view(sc, view, supplied[view], at, width / n, instance=card)
             else:
                 sc.progress(at, f"view {view} attempt {attempts + 1}{where}")
-                files, drew = await draw(view, seed, attempts, at, card)
+                # The hair words only on a redraw of a back whose hair was found swept (see BACK_HAIR_WORDS).
+                prev = results.get(view) or {}
+                files, drew = await draw(view, seed, attempts, at, card, words=bool(attempts and prev.get("hair_swept")))
             sc.register(view, files["raw"])
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
