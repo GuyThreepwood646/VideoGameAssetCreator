@@ -187,7 +187,7 @@ def calls_by_view(state):
 
 
 def test_the_back_is_drawn_last_with_the_two_side_views_for_a_character(tmp_path, drawn):
-    sc = run(tmp_path)
+    sc = run(tmp_path, {"back_references": True})
     order = [c["view"] for c in drawn["calls"]]
     assert order == ["front", "left", "right", "quarter", "back"]
     back = calls_by_view(drawn)["back"][0]
@@ -213,7 +213,7 @@ def test_the_references_stay_off_where_there_is_nothing_to_match(tmp_path, drawn
 
 def test_a_failing_back_is_redrawn_with_the_references_each_time(tmp_path, drawn):
     drawn["back_fails"] = 1
-    sc = run(tmp_path)
+    sc = run(tmp_path, {"back_references": True})
     backs = calls_by_view(drawn)["back"]
     assert len(backs) == 2 and all(b["references"] for b in backs)
     assert backs[1]["seed"] != backs[0]["seed"]
@@ -224,7 +224,7 @@ def test_a_failing_back_is_redrawn_with_the_references_each_time(tmp_path, drawn
 
 def test_a_back_that_never_matches_is_flagged_after_two_redraws(tmp_path, drawn):
     drawn["back_fails"] = 5
-    sc = run(tmp_path)
+    sc = run(tmp_path, {"back_references": True})
     assert len(calls_by_view(drawn)["back"]) == 1 + turnaround.MAX_REROLLS
     info = sc.metrics["views"]["back"]
     failed = [c for c in info["checks"] if not c["passed"]]
@@ -238,7 +238,7 @@ def test_a_back_redrawn_alone_takes_the_side_views_it_already_has(tmp_path, draw
         _figure(tmp_path / f"{v}.png", v)
         sc.register(f"{v}_cutout", tmp_path / f"{v}.png")
         sc.register(f"{v}_white", imaging.white_composite(tmp_path / f"{v}.png"))
-    asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100}, concept))
+    asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100, "back_references": True}, concept))
     back = calls_by_view(drawn)["back"][0]
     assert back["references"] and "back" in sc.metrics["views"]
     assert sc.metrics["views"]["back"]["checks"][-1]["name"] == "hair_matches_sides"
@@ -247,6 +247,6 @@ def test_a_back_redrawn_alone_takes_the_side_views_it_already_has(tmp_path, draw
 def test_a_side_view_missing_means_no_references_and_no_check(tmp_path, drawn):
     concept, ta, new = _lineage(tmp_path)
     sc = StagedSC(tmp_path, new, FakeDB(concept, ta, new))
-    asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100}, concept))
+    asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100, "back_references": True}, concept))
     assert calls_by_view(drawn)["back"][0]["references"] is None
     assert all(c["name"] != "hair_matches_sides" for c in sc.metrics["views"]["back"]["checks"])

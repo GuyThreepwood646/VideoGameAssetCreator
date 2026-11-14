@@ -68,12 +68,12 @@ def set_step_checks(sc: StageContext, new: list[dict[str, Any]], drop: tuple[str
     sc.set_metrics(**quality.summarise(kept + list(new)))
 
 
-# UNTESTED ON A CARD (2026-11-13). True: a character's back view is drawn last, with the two finished side views as pictures
+# CARD TRIAL 2026-11-13: OFF. The references zoomed and cropped the back in 7 of 10 draws (legs cut, pose_held fails) and cost about 65 percent more time per back; see the trial notes. True: a character's back view is drawn last, with the two finished side views as pictures
 # 2 and 3 (the kept picture stays picture 1) and words asking the hair to match them (graphs/qwen_edit.BACK_SIDES_SENTENCE),
 # because the back came out with a narrower, shorter column of hair than the sides show. False, or `back_references: false`
 # in a version's settings: as before. Always off where the hair comes from the library (the bald pictures have no hair to
 # match and the haired views are replaced) and for any turn method but the standard one. metrics.back_references records it.
-BACK_REFERENCES = True
+BACK_REFERENCES = False
 
 
 def back_references_on(sc: StageContext, params: dict[str, Any], method: str) -> bool:
