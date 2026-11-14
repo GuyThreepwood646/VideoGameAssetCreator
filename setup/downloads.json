@@ -408,9 +408,9 @@
    "dest": "runtime/models",
    "save_as": "face_landmarker.task",
    "publisher": true,
-   "name": "MediaPipe face landmarker (lip points)",
+   "name": "MediaPipe face landmarker (eyes and mouth)",
    "licence": "Apache-2.0",
-   "required": false,
+   "required": true,
    "note": "Lives in the project's runtime/models folder, not in ComfyUI. Used by backend/vgac/lipmarks.py through the mediapipe Python package; without it the mouth is placed by the older finder. Size and MD5 are Google's (HTTP headers on 2026-11-13); the SHA-256 is that of the owner's copy, whose MD5 matches Google's."
   }
  },

@@ -76,6 +76,7 @@ data:
   - {name: "Light picture: Outdoors (kloofendal_48d_partly_cloudy)", does: "The Outdoors lighting choice in the 3D viewer, the preview picture and the Unity showcase.", author: "Greg Zaal (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/kloofendal_48d_partly_cloudy", attribution_required: false, in_your_assets: false, confirmed: records}
   - {name: "Light picture: Overcast (overcast_soil)", does: "The Overcast lighting choice in the viewer and previews.", author: "Sergej Majboroda (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/overcast_soil", attribution_required: false, in_your_assets: false, confirmed: records}
   - {name: "Light picture: Night (dikhololo_night)", does: "The Night lighting choice in the viewer and previews.", author: "Greg Zaal (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/dikhololo_night", attribution_required: false, in_your_assets: false, confirmed: records}
+  - {name: "MediaPipe face landmarker (face_landmarker.task)", does: "Finds the eyes and mouth on the picture so the face is painted onto the 3D head in the right place. Lives in the project's runtime/models folder, not in ComfyUI.", author: "Google (MediaPipe)", licence: "Apache-2.0", link: "https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker", attribution_required: false, in_your_assets: false, confirmed: lookup}
 
 # Outside programs the app calls. None of them is included in the app.
 tools:
@@ -90,6 +91,7 @@ tools:
 # Direct software libraries (backend/requirements.txt, frontend/package.json, desktop/package.json). Their licence
 # notices must travel with the app if it is passed on.
 libraries:
+  - {name: MediaPipe (Python package), does: "Reads the eyes and mouth on a face picture, on the computer's processor, for placing the face on the 3D head.", author: "Google", licence: "Apache-2.0", link: "https://github.com/google-ai-edge/mediapipe", confirmed: lookup}
   - {name: FastAPI, does: "The web server framework behind the app's backend.", author: "Sebastian Ramirez", licence: MIT, link: "https://fastapi.tiangolo.com", confirmed: records}
   - {name: Uvicorn, does: "Runs the backend and serves it to the browser.", author: "Encode", licence: BSD-3-Clause, link: "https://www.uvicorn.org", confirmed: records}
   - {name: SQLAlchemy, does: "Keeps your projects, assets and versions in the local database.", author: "Mike Bayer and contributors", licence: MIT, link: "https://www.sqlalchemy.org", confirmed: records}
