@@ -37,10 +37,14 @@ from PIL import Image
 # Upper arm against the body, degrees, from the pose landmarks. On DWPose joints 22 to 25 flags all 13 arms under 20
 # degrees on the rig and none of the 6 over 45. MediaPipe: see ARM_LINE_SOURCE.
 # MediaPipe pose (heavy) on the same 36: correlation 0.939 with the rig (1.5 degrees from DWPose on average); lines 22
-# and 23 both flag 13 of 13 and 0 of 6, with Vivi through the outline (pose score 0.02) and TheHeir not measured (no
-# person found). The lowest at-risk arm reads 21.7.
-ARM_LINE = 23.0
-ARM_LINE_SOURCE = "MediaPipe pose heavy and DWPose joints on the 36 stored rigged models (2026-11-13)"
+# to 25 flag 13 of 13 and 0 of 6, with Vivi through the outline (pose score 0.02) and TheHeir not measured (no person
+# found). Against the outcome (upper arm joined on the rig, reach 10 or more) 25 is used, not 23: it catches
+# W2-underwear (24.7 / 27.7, joined 10 / 10; the card test's redraw brought it to 1 / 1) at the cost of three more of the
+# 36 models warned (17 against 14), the other two one cut under joined. 28 would warn six more, clearly free ones among
+# them. Half the joined arms are drawn at 34 degrees or more in the person's picture (joined by step 2's view or the
+# builder): no line here catches those. A warning only offers the guarded redraw.
+ARM_LINE = 25.0
+ARM_LINE_SOURCE = "MediaPipe pose heavy and DWPose joints on the 36 stored rigged models and the card test (2026-11-13)"
 OUTLINE_ARM_LINE = 20.0  # the outline's arm line (12 of 13 flagged, TheHeir's tool arms wrongly)
 TPOSE_RATIO = 2.5  # arm span over waist width that counts as arms held straight out (as readiness.arms_away)
 ANKLE_WILL = 0.21  # under this: the thighs will probably join (7 of 7 under 0.20 on the rig, no other)
