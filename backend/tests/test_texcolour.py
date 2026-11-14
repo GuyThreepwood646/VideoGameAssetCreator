@@ -307,8 +307,10 @@ def test_albedo_range_kept_look_excused_only_while_as_bright_as_the_picture():
     assert not c["ok"] and not c["vars"]["kept"]
     # Nothing to compare (an older version, no cut-out): excused, as before.
     assert _albedo(base)["ok"] and _albedo({**base, "texture_match": None})["ok"]
-    # A look that removes painted light is never excused.
-    assert not _albedo({**base, "delight_mode": "remove", "texture_match": {"ratio": 1.0, "ok": True}})["ok"]
+    # A look that removes painted light is never excused: crushed colour fails there. Dark but not crushed colour passes.
+    crushed = {"pbr": {"albedo_out": 0.6, "albedo_black": 0.2, "albedo_white": 0.0}, "delight_mode": "remove"}
+    assert not _albedo({**crushed, "texture_match": {"ratio": 1.0, "ok": True}})["ok"]
+    assert _albedo({**base, "delight_mode": "remove", "texture_match": {"ratio": 1.0, "ok": True}})["ok"]
 
 
 def test_check_guide_entry_reads_plainly():

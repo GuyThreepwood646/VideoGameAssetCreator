@@ -552,8 +552,8 @@ def delight_strength(score: float, limit: float) -> float:
 
 def pbr_stats(base: np.ndarray, metallic: np.ndarray | None, roughness: np.ndarray | None, mask: np.ndarray) -> dict[str, Any]:
     """Range figures over covered texels: albedo_out (share of non-metal texels darker than 30 or brighter than 240
-    sRGB), albedo_black and albedo_white (shares below 4 and above 250), metal_mixed (share with metallic between 0.2
-    and 0.8), roughness_low (share below 0.04)."""
+    sRGB), albedo_black and albedo_white (shares below 4 and above 250), albedo_dark (share darker than 30: black cloth and
+    dark hair, true to the picture), metal_mixed (share with metallic between 0.2 and 0.8), roughness_low (share below 0.04)."""
     m = mask.astype(bool)
     lum = srgb_luminance(base) * 255.0
     nonmetal = m & (metallic < 0.5) if metallic is not None else m
@@ -563,6 +563,7 @@ def pbr_stats(base: np.ndarray, metallic: np.ndarray | None, roughness: np.ndarr
         "albedo_out": float(((lum < ALBEDO_MIN) | (lum > ALBEDO_MAX))[nonmetal].sum()) / n,
         "albedo_black": float((lum < 4)[nonmetal].sum()) / n,
         "albedo_white": float((lum > 250)[nonmetal].sum()) / n,
+        "albedo_dark": float((lum < ALBEDO_MIN)[nonmetal].sum()) / n,
         "metal_mixed": None if metallic is None else float(((metallic > METAL_MIXED_LO) & (metallic < METAL_MIXED_HI))[m].sum()) / mc,
         "roughness_low": None if roughness is None else float((roughness < ROUGHNESS_FLOOR)[m].sum()) / mc,
     }

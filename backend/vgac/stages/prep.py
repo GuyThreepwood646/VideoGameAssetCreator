@@ -87,7 +87,9 @@ TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 LIGHT_SCORE_LIMIT = 0.2
 ATLAS_USED_MIN = 0.35  # the unwrap normally lands between 0.45 and 0.6; a mirrored, un-rebaked model sat at 0.28
 BAKE_MATCH_MIN = 0.99
-ALBEDO_OUT_MAX = 0.01
+ALBEDO_CLIPPED_MAX = 0.05  # albedo_range: share of non-metal texels that are pure black (under 4 sRGB) or pure white (over 250)
+ALBEDO_DARK_LOOK_FAULT = 0.5  # in a kept look, more than this share outside 30..240 while darker than the picture fails
+ALBEDO_DARK_NOTE = 0.15  # and the share of dark texels (under 30) over which the passing sentence says so; black cloth and dark hair are not a fault
 METAL_MIXED_MAX = 0.05
 METAL_MIXED_AFTER_FIX_MAX = 0.2  # leftover edge texels after the automatic sharpening (ranger: 0.51 before, 0.11 after)
 # The measured gutter passes at three quarters of the padding asked for (rasterising the pieces costs a texel or so).
@@ -834,10 +836,16 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
     match = m.get("texture_match")
     kept_look = m.get("delight_mode") == "keep" and not fix_on and texcolour.kept_look_excused(match)
     if pbr.get("albedo_out") is not None:
-        in_range = float(pbr["albedo_out"]) <= ALBEDO_OUT_MAX
-        out.append(quality.check("albedo_range", in_range or kept_look, float(pbr["albedo_out"]), ALBEDO_OUT_MAX,
-                                 vars={"pbr_fix_on": fix_on, "kept": kept_look and not in_range, "black": pbr.get("albedo_black"),
-                                       "white": pbr.get("albedo_white")}))
+        # Only colour that is crushed to black or blown to white is wrong: nothing is left to light there. Dark cloth and dark hair
+        # that match the picture are not (a game's light shades them less, which is said, not failed).
+        clipped = float(pbr.get("albedo_black") or 0.0) + float(pbr.get("albedo_white") or 0.0)
+        # A look that keeps its painted darks is excused only while its colour is about as bright as the picture's; a texture mostly
+        # near-black from a bright picture (texture_match says it is far darker) is a fault there too, though not pure black.
+        far_darker = m.get("delight_mode") == "keep" and not fix_on and not kept_look and float(pbr["albedo_out"]) > ALBEDO_DARK_LOOK_FAULT
+        in_range = clipped <= ALBEDO_CLIPPED_MAX and not far_darker
+        out.append(quality.check("albedo_range", in_range or kept_look, round(clipped, 4), ALBEDO_CLIPPED_MAX,
+                                 vars={"kept": kept_look and not in_range, "black": pbr.get("albedo_black"),
+                                       "white": pbr.get("albedo_white"), "dark": pbr.get("albedo_dark")}))
     if pbr.get("metal_mixed") is not None:
         # Once metal has been sharpened there is nothing more the person can do, so only a large leftover warns.
         metal_limit = METAL_MIXED_AFTER_FIX_MAX if (fix_on or m.get("metal_sharpened")) else METAL_MIXED_MAX

@@ -797,7 +797,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
     if (vars.removed) return "Painted-on shadows removed, so it reacts to your game's lights."
     return 'No painted-on shadows found in the colours.'
   },
-  albedo_range: (v, _l, ok) => (ok ? 'Colours stay inside the range real materials have.' : `${pct(v)} of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.`),
+  albedo_range: (v, _l, ok) => (ok ? 'No colour is crushed to pure black or blown to pure white.' : `${pct(v)} of the colours are pure black or pure white, so nothing is left there for the game's light to shade and they may look flat or glow.`),
   metal_mixed: (v, _l, ok) => (ok ? 'Metal parts are clearly metal and the rest clearly not.' : `${pct(v)} of the surface is half metal, which looks dull and grey in game engines.`),
   unity_import: (_v, _l, ok) => (ok ? 'Unity imported the asset without errors.' : 'Unity could not import the asset.'),
   unity_humanoid_avatar: (v, _l, ok, _ctx, vars) => {

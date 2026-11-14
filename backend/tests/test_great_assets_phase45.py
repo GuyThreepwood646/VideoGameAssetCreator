@@ -177,13 +177,13 @@ def test_pbr_stats_and_corrections():
     s = imaging.pbr_stats(base, met, rough, mask)
     # Non-metal texels: 80 (the half-metal row counts as metal for the albedo rule, metallic >= 0.5).
     assert s == {"albedo_out": 0.25, "albedo_black": 0.125, "albedo_white": 0.125,
-                 "metal_mixed": 0.1, "roughness_low": 0.05}
+                 "albedo_dark": 0.125, "metal_mixed": 0.1, "roughness_low": 0.05}
     fixed = imaging.clamp_albedo(base, met)
     lum = imaging.srgb_luminance(fixed) * 255
     assert lum[met < 0.5].min() >= imaging.ALBEDO_MIN - 0.5 and lum[met < 0.5].max() <= imaging.ALBEDO_MAX + 0.5
     assert np.allclose(fixed[3], base[3]) and np.allclose(fixed[5], base[5], atol=1e-6)  # metal and mid colours untouched
     assert imaging.pbr_stats(fixed, imaging.sharpen_metallic(met), imaging.clamp_roughness(rough), mask) == {
-        "albedo_out": 0.0, "albedo_black": 0.0, "albedo_white": 0.0, "metal_mixed": 0.1, "roughness_low": 0.0}
+        "albedo_out": 0.0, "albedo_black": 0.0, "albedo_white": 0.0, "albedo_dark": 0.0, "metal_mixed": 0.1, "roughness_low": 0.0}
     assert list(imaging.sharpen_metallic(np.array([0.0, 0.2, 0.45, 0.8, 1.0]))) == pytest.approx([0, 0, 0.3, 1, 1])
 
 
@@ -259,7 +259,7 @@ def test_surface_checks_sentences_and_fixes():
     assert by["baked_light"]["help"] == "No painted-on shadows found in the colours."
 
     bad = {c["name"]: c for c in prep_stage.surface_checks(_metrics(
-        bake_match=0.45, texture_padding_px=1, atlas_used=0.28, light_score=0.3, pbr={"albedo_out": 0.18, "metal_mixed": 0.61}),
+        bake_match=0.45, texture_padding_px=1, atlas_used=0.28, light_score=0.3, pbr={"albedo_out": 0.18, "albedo_black": 0.04, "albedo_white": 0.02, "metal_mixed": 0.61}),
         {"symmetric": True})}
     assert not any(c["passed"] for c in bad.values())
     assert bad["bake_matches"]["fix"] == {"stage": "prep", "params": {"rebake": True}, "label": "Repaint the surface"}
@@ -267,7 +267,7 @@ def test_surface_checks_sentences_and_fixes():
     assert bad["texture_padding"]["help"] == "Texture pieces have only 1 px of space, so thin dark seams may show at a distance."
     assert bad["atlas_used"]["fix"]["params"] == {"symmetric": False} and bad["atlas_used"]["fix"]["label"] == "Repaint the surface"
     assert bad["baked_light"]["fix"] == {"stage": "prep", "params": {"delight": "remove"}, "label": "Remove painted-on shadows"}
-    assert bad["albedo_range"]["help"].startswith("18% of the colours are darker or brighter")
+    assert bad["albedo_range"]["help"].startswith("6% of the colours are pure black or pure white")
     assert bad["metal_mixed"]["fix"] == {"stage": "prep", "params": {"pbr_fix": True}, "label": "Make metal clearly metal"}
     # Padding passes at three quarters of the target (6 of 8).
     assert {c["name"]: c for c in prep_stage.surface_checks(_metrics(texture_padding_px=6))}["texture_padding"]["passed"]

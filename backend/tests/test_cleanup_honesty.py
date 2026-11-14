@@ -190,3 +190,21 @@ def test_face_finder_warns_only_when_the_processor_finder_was_asked_for_and_is_m
     c = names({"srcproject_face_finder": {"missing": "the mediapipe package"}})["face_finder"]
     assert not c["passed"] and c["severity"] == "warn"
     assert "the mediapipe package" in c["help"] and "three-quarter views did not paint the face" in c["help"]
+
+
+def test_albedo_range_fails_only_on_crushed_or_blown_colour_and_says_when_it_is_dark():
+    def got(pbr, **m):
+        return {c["name"]: c for c in prep.surface_checks({
+            "export_mesh_hash": "a", "bake_mesh_hash": "a", "bake_match": 1.0, "rebaked": False, "texture_padding_px": 8, "texture_padding_target_px": 8,
+            "atlas_used": 0.57, "light_score": 0.1, "delight_mode": "remove", "delight_applied": False, "pbr": pbr, "pbr_fix_applied": True, **m})}["albedo_range"]
+
+    # W2 R4: a third of the surface black cloth (under 30), almost none pure black: it passes, and says it is dark
+    dark = got({"albedo_out": 0.31, "albedo_black": 0.006, "albedo_white": 0.002, "albedo_dark": 0.31})
+    assert dark["passed"] and "31% of the colours are very dark, as in the picture" in dark["help"]
+    plain = got({"albedo_out": 0.01, "albedo_black": 0.0, "albedo_white": 0.0, "albedo_dark": 0.01})
+    assert plain["passed"] and plain["help"] == "No colour is crushed to pure black or blown to pure white."
+    crushed = got({"albedo_out": 0.2, "albedo_black": 0.07, "albedo_white": 0.0, "albedo_dark": 0.2})
+    assert not crushed["passed"] and "7% of the colours are pure black or pure white" in crushed["help"]
+    assert "fix" not in crushed and crushed["fix_kind"] == "by_hand" and "Redraw the front picture" in crushed["fix_note"]
+    # stored versions measured before albedo_dark existed: no dark sentence, no error
+    assert got({"albedo_out": 0.4, "albedo_black": 0.0, "albedo_white": 0.0})["passed"]

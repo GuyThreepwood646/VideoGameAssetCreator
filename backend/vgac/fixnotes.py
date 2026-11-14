@@ -72,6 +72,8 @@ NOTES: dict[str, tuple[str, str]] = {
                                                   "under Fine tune in the Clean up for the game step."),
     "seam_error": ("by_hand", "Build the 3D model again with a larger texture size or more space around the pieces, under Fine tune in the 3D model step."),
     "head_build": ("by_hand", "The model still works with the body's own head. Build the 3D model again for another try, or accept it."),
+    "albedo_range": ("by_hand", "Pure black or white comes from the picture. Redraw the front picture a little lighter or darker in the first step "
+                                "(Refine), then run Clean up for the game again."),
     "face_finder": ("by_hand", "Open Setup and check that the face finder is installed, then run Clean up for the game again."),
     "picture_projection": ("by_hand", "The reason is in the sentence. Build the 3D model again from a picture that shows the character from the front, "
                                       "or accept the 3D builder's own colours."),

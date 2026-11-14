@@ -933,10 +933,10 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "albedo_range": {
         "severity": "warn",
         "ok": lambda c: ("Painted darks and lights are kept on purpose for this look." if _var(c, "kept")
-                         else "Colours stay inside the range real materials have."),
-        "fail": "{value:pct} of the colours are darker or brighter than real materials get, so they may look flat or glow under game lights.",
-        "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
-        "fix_label": "Bring colours into range",
+                         else "No colour is crushed to pure black or blown to pure white."
+                         + (f" {round(float(_var(c, 'dark')) * 100)}% of the colours are very dark, as in the picture; a game's light will shade them less."
+                            if _var(c, "dark") is not None and float(_var(c, "dark")) >= 0.15 else "")),
+        "fail": "{value:pct} of the colours are pure black or pure white, so nothing is left there for the game's light to shade and they may look flat or glow.",
     },
     "metal_mixed": {
         "severity": "warn",
