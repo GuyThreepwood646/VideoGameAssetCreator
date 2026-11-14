@@ -305,11 +305,13 @@ def check_clips(settings: Settings) -> list[dict[str, Any]]:
     out = []
     for lib_id, path in settings.clips_libraries.items():
         tech = f"clips_libraries.{lib_id} in the settings: {path}"
+        pack = re.search(r"(\d+)$", lib_id)  # two packs ship (ual1, ual2): name each, so the two rows are not read as one twice
+        label = f"Shared animation library, pack {pack.group(1)}" if pack and len(settings.clips_libraries) > 1 else "Shared animation library"
         if Path(path).is_file():
-            out.append(item(f"clips.{lib_id}", "tools", "Shared animation library", "ok",
+            out.append(item(f"clips.{lib_id}", "tools", label, "ok",
                             "The shared animations (walk, run, idle and more) are there.", "", ["export"], tech))
         else:
-            out.append(item(f"clips.{lib_id}", "tools", "Shared animation library", "warn",
+            out.append(item(f"clips.{lib_id}", "tools", label, "warn",
                             "The shared animation file was not found, so characters are handed off without the shared "
                             "walk, run and idle moves.",
                             f"Put the animation library back, or correct clips_libraries.{lib_id} in local/machine.json.",

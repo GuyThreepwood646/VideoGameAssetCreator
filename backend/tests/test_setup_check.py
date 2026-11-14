@@ -205,6 +205,14 @@ def test_unity_and_clips_warn_when_missing(settings, tmp_path):
     assert preflight.check_clips(s)[0]["state"] == "warn"
     lib.write_bytes(b"fbx")
     assert preflight.check_clips(s)[0]["state"] == "ok"
+    assert preflight.check_clips(s)[0]["label"] == "Shared animation library"  # one pack: no number
+
+
+def test_two_animation_packs_are_named_so_the_rows_are_not_read_as_a_duplicate(settings, tmp_path):
+    (tmp_path / "a.fbx").write_bytes(b"x")
+    (tmp_path / "b.fbx").write_bytes(b"x")
+    s = settings.model_copy(update={"clips_libraries": {"ual1": tmp_path / "a.fbx", "ual2": tmp_path / "b.fbx"}})
+    assert [i["label"] for i in preflight.check_clips(s)] == ["Shared animation library, pack 1", "Shared animation library, pack 2"]
 
 
 def test_skintoken_blender_bin(settings, tmp_path):
