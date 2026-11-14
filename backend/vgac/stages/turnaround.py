@@ -529,6 +529,14 @@ async def _pose_edit(sc: StageContext, white: Path, prompt: str, seed: int, n: i
     return {"picture": Path(edited), "cutout": Path(cut["cutout"]), "card": card, "entry": entry}
 
 
+def _feet_gap(cutout: Path) -> float | None:
+    """The gap between the feet over the height in a redraw's cut-out (buildpose.measure), None when it cannot be read."""
+    try:
+        return float(buildpose.measure(cutout)["legs"]["gap"])
+    except Exception:  # noqa: BLE001  (an unread gap only means no reason to try again for it)
+        return None
+
+
 async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Path) -> Path | None:
     """The concept picture edited once into a wide A pose (files pose_ready_picture, pose_ready_cutout), guarded
     against changing the character; None when the param is off, the asset is not a humanoid, or the guard refused the
@@ -576,26 +584,31 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
             g = await asyncio.to_thread(buildpose.guard, person, made["cutout"])
         else:
             g = {"ok": True, "reasons": [], "not_compared": ["the whole redraw (your picture's cut-out was not found)"], "measures": {}}
-        tries.append({**made, "seed": seed, "guard": g})
-        if g["ok"]:
+        gap = await asyncio.to_thread(_feet_gap, made["cutout"])
+        tries.append({**made, "seed": seed, "guard": g, "gap": gap})
+        # Another try while the character was not kept, or was kept with the feet so close that the 3D model may join the thighs;
+        # the try kept at the end is the best of them, not just the last.
+        pick = buildpose.choose_try([{"guard_ok": t["guard"]["ok"], "gap": t["gap"]} for t in tries], POSE_GUARD_RETRIES - n)
+        if not pick["another"]:
             break
-    last = tries[-1]
-    sc.set_metrics(pose_guard={"tries": len(tries), "ok": last["guard"]["ok"], "reasons": last["guard"]["reasons"],
-                               "not_compared": last["guard"]["not_compared"], "seeds": [t["seed"] for t in tries],
-                               "measures": [t["guard"].get("measures") for t in tries]})
-    if not last["guard"]["ok"]:
-        sc.register("pose_refused_picture", last["picture"])
-        sc.register("pose_refused_cutout", last["cutout"])
+    kept = tries[pick["keep"]] if pick["keep"] is not None else tries[-1]
+    sc.set_metrics(pose_guard={"tries": len(tries), "ok": kept["guard"]["ok"], "reasons": kept["guard"]["reasons"],
+                               "not_compared": kept["guard"]["not_compared"], "seeds": [t["seed"] for t in tries],
+                               "measures": [t["guard"].get("measures") for t in tries], "gaps": [t["gap"] for t in tries],
+                               "kept_try": tries.index(kept) + 1, "why": pick["why"]})
+    if not kept["guard"]["ok"]:
+        sc.register("pose_refused_picture", kept["picture"])
+        sc.register("pose_refused_cutout", kept["cutout"])
         sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_refused=True)
-        _guard_check(sc, last["guard"], retried=len(tries) > 1)
+        _guard_check(sc, kept["guard"], retried=len(tries) > 1)
         sc.publish()
         return None
-    sc.register("pose_ready_picture", last["picture"])
-    sc.register("pose_ready_cutout", last["cutout"])
-    sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=last["seed"])
-    sc.set_metrics(pose_ready={"seed": last["seed"], "card": last["card"], "size": [w, h], "neutral_mouth": mouth,
-                               "prompt": prompt, "elapsed_seconds": last["entry"].get("elapsed_seconds")})
-    _guard_check(sc, last["guard"], retried=len(tries) > 1)
+    sc.register("pose_ready_picture", kept["picture"])
+    sc.register("pose_ready_cutout", kept["cutout"])
+    sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=kept["seed"])
+    sc.set_metrics(pose_ready={"seed": kept["seed"], "card": kept["card"], "size": [w, h], "neutral_mouth": mouth,
+                               "prompt": prompt, "elapsed_seconds": kept["entry"].get("elapsed_seconds")})
+    _guard_check(sc, kept["guard"], retried=len(tries) > 1)
     sc.publish()  # the redraw exists about 40 seconds in; show it now, not when the whole step ends (UI-18)
     return Path(sc.file("pose_ready_picture"))
 

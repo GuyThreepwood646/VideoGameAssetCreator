@@ -23,6 +23,12 @@ def _png(path: Path, size=(64, 64)) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _feet_far_apart(monkeypatch):
+    """The drawn stand-ins are not figures; their feet are taken as far enough apart, so no second try is wanted."""
+    monkeypatch.setattr(turnaround, "_feet_gap", lambda _p: 0.3)
+
+
 class _SC:
     def __init__(self, d: Path, parent=None, category="humanoid", empty=False):
         self.dir = d

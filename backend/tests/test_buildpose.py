@@ -493,3 +493,52 @@ def test_choose_try_an_unread_gap_counts_least_and_asks_for_nothing_more():
     assert buildpose.choose_try([_t(True, None), _t(True, 0.1)], 0)["keep"] == 1
     r = buildpose.choose_try([_t(True, None)], 1)
     assert r["keep"] == 0 and r["another"] is False
+
+
+def _gaps(monkeypatch, *values):
+    it = iter(values)
+    monkeypatch.setattr(turnaround, "_feet_gap", lambda _p: next(it))
+
+
+def test_feet_too_close_on_the_first_try_asks_for_another_and_keeps_the_wider(step, monkeypatch):
+    _gaps(monkeypatch, 0.20, 0.30)
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 2 and out == step.dir / "pose_ready_picture_2.png"
+    m = sc.version.metrics["pose_guard"]
+    assert m["tries"] == 2 and m["gaps"] == [0.20, 0.30] and m["kept_try"] == 2 and m["ok"] is True
+    assert _checks(sc)["pose_guard"]["passed"]
+
+
+def test_feet_far_enough_on_the_first_try_draws_no_second(step, monkeypatch):
+    _gaps(monkeypatch, 0.31)
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 1 and out == step.dir / "pose_ready_picture.png"
+    assert sc.version.metrics["pose_guard"]["kept_try"] == 1
+
+
+def test_both_tries_too_close_keeps_the_wider_not_the_last(step, monkeypatch):
+    _gaps(monkeypatch, 0.22, 0.19)
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 1 + turnaround.POSE_GUARD_RETRIES and out == step.dir / "pose_ready_picture.png"
+    m = sc.version.metrics["pose_guard"]
+    assert m["kept_try"] == 1 and "may still join" in m["why"]
+
+
+def test_an_unread_gap_asks_for_nothing_more(step, monkeypatch):
+    _gaps(monkeypatch, None)
+    sc = _SC(step.dir, step.person)
+    asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 1
+
+
+def test_a_refused_close_first_try_and_a_kept_wide_second_keeps_the_second(step, monkeypatch):
+    verdicts = iter([{"ok": False, "reasons": ["the colours changed"], "not_compared": [], "measures": {}},
+                     {"ok": True, "reasons": [], "not_compared": [], "measures": {}}])
+    monkeypatch.setattr(buildpose, "guard", lambda a, b: next(verdicts))
+    _gaps(monkeypatch, 0.35, 0.25)       # the refused one is wider, but a refused redraw never beats a kept one
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert out == step.dir / "pose_ready_picture_2.png" and sc.version.metrics["pose_guard"]["kept_try"] == 2
