@@ -541,12 +541,12 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
 
 
 def _pose_for_3d(sc: StageContext, source: Version | None, posed: Path | None) -> None:
-    """The pose_for_3d check on this version, measured on the picture the views are drawn from (the pose redraw when
-    there is one, else the person's picture); humanoids only. Never fails the step."""
-    if _category(sc) != "humanoid":
+    """After a pose redraw, the pose_for_3d check on this version, measured on the redraw the views are drawn from;
+    humanoids only. Without a redraw the step 1 version already carries it for the person's picture, so step 2 adds
+    nothing. Never fails the step."""
+    if _category(sc) != "humanoid" or posed is None:
         return
-    cut = sc.file("pose_ready_cutout") if posed is not None else (
-        library.version_file(source, "cutout", sc.settings) if source is not None else None)
+    cut = sc.file("pose_ready_cutout")
     if cut is None or not Path(cut).is_file():
         return
     held = getattr(sc.asset, "held_item", None) or {}

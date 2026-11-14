@@ -404,8 +404,7 @@ def test_step_two_carries_the_pose_check(step):
     sc = _SC(step.dir, step.person)
     source = SimpleNamespace(files_on_disk={"cutout": step.person})
     turnaround._pose_for_3d(sc, source, None)
-    c = _checks(sc)["pose_for_3d"]
-    assert c["passed"]
+    assert "pose_for_3d" not in _checks(sc)  # without a redraw step 1 carries it
     sc.register("pose_ready_cutout", _png(step.dir / "posed.png"))
     turnaround._pose_for_3d(sc, source, step.dir / "posed.png")
     assert _checks(sc)["pose_for_3d"]["help"].startswith("After the pose redraw:")
