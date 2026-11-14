@@ -36,10 +36,10 @@ def test_no_history_keeps_the_stated_default(client):
     assert s["estimate_seconds"] == 20 and s["estimate_basis"] == "default" and s["estimate_runs"] == 0
 
 
-def test_the_median_of_finished_runs_replaces_the_default(client):
+def test_the_upper_quarter_mark_of_finished_runs_replaces_the_default(client):
     add_runs("prep.run", [300, 500, 900])
     s = stage(client)
-    assert s["estimate_seconds"] == 500 and s["estimate_basis"] == "history" and s["estimate_runs"] == 3
+    assert s["estimate_seconds"] == 700 and s["estimate_basis"] == "history" and s["estimate_runs"] == 3
 
 
 def test_too_few_runs_failed_runs_and_instant_passes_do_not_count(client):
@@ -59,7 +59,7 @@ def test_the_assets_category_is_preferred_when_it_has_enough_runs(client):
     add_runs("prep.run", [800, 800, 800], category="humanoid")
     with session_factory()() as db:
         assert estimates.stage_seconds(db, "prep", "prop") == (100, 3)
-        assert estimates.stage_seconds(db, "prep", "creature") == (450, 6)  # falls back to every category
+        assert estimates.stage_seconds(db, "prep", "creature") == (800, 6)  # falls back to every category
 
 
 def test_suggest_uses_history_but_keeps_the_high_platform_build_and_the_skipped_rig(client):

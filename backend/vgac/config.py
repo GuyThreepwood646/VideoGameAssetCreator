@@ -123,6 +123,9 @@ class Settings(BaseModel):
     loras_dir: Path | None = None
     clips_libraries: dict[str, Path] = Field(default_factory=dict)
     min_free_ram_gb: float = Field(default=24, ge=0)
+    # How many clean-ups (and other long host jobs) run at once on this computer. 1: one at a time, as measured safe.
+    # More only after a measurement on this machine (memory, Blender, the cards a clean-up borrows).
+    host_cleanup_workers: int = Field(default=1, ge=1, le=3)
     # Seconds a ComfyUI job may run before the worker gives up on it.
     job_timeout_seconds: float = Field(default=3600, ge=1)
     # Which instance runs each stage ("host" is Blender and Unity on this machine). Concept, turnaround and rig need

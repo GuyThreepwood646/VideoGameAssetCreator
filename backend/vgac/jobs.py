@@ -51,7 +51,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from sqlalchemy import func, select
 
-from . import cardmem, comfy_inputs, prefs
+from . import cardmem, comfy_inputs, estimates, prefs
 from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
@@ -61,6 +61,7 @@ from .reference import STAGE_ORDER
 
 log = logging.getLogger("vgac.jobs")
 MESSAGE_THROTTLE_SECONDS = 5.0
+WAIT_PREFIX = "Waiting for "  # the start of the message note_waits writes on a queued job
 IDLE_CHECK_SECONDS = 15.0  # how often the queue checks for idle engines to stop and engines that went away
 STARTING_PREFIX = "Starting the graphics engine on "
 START_FAILED_PREFIX = "Could not start the graphics engine on "
@@ -471,12 +472,20 @@ def _publish_version(version: Version) -> None:
     bus.publish_threadsafe({"type": "version", "version": version_to_dict(version)})
 
 
-def _host_next(db: Any) -> str | None:
+HOST_QUICK = "quick"  # InstanceWorker.lane of the host's second worker, for exports only
+HOST_MAIN = "main"    # the host's first worker once a quick one exists: it takes everything except exports
+
+
+def _host_next(db: Any, lane: str = "") -> str | None:
     """The host lane's next job. First come, first served, except that an export (about 35 s of work) goes ahead of the
     clean-ups and other long jobs waiting before it (in the realistic test one waited 10 minutes behind a clean-up),
     unless something it depends on is still to do: an export waits (and is skipped) while any other job of the same asset that was
     created before it is queued or running, on any card (its clean-up, its rig). Exports among themselves stay in
-    order."""
+    order.
+
+    `lane`: "" one worker takes everything (the rule above). "quick": the host's second worker, exports only, so an
+    export does not wait for the clean-up another asset has running (in round 4 one waited 24 minutes behind it).
+    "main": the first worker once the quick one exists, everything except exports."""
     rows = db.execute(select(Job.id, Job.kind, Job.asset_id, Job.created_at).where(Job.instance == HOST, Job.status == "queued")
                       .order_by(Job.created_at, Job.id).limit(500)).all()
     if not rows:
@@ -488,11 +497,17 @@ def _host_next(db: Any) -> str | None:
                 Job.created_at < r.created_at, ~Job.kind.startswith("export."))))
 
     exports = [r for r in rows if r.kind.startswith("export.")]
-    for r in exports:
-        if not blocked(r):
-            return r.id
+    if lane != HOST_MAIN:
+        for r in exports:
+            if not blocked(r):
+                return r.id
+    if lane == HOST_QUICK:
+        return None
     # No export can go: the oldest job that is not a (blocked) export. A blocked export waits for its asset's job.
-    return next((r.id for r in rows if not r.kind.startswith("export.")), None)
+    # With several clean-up workers a second job of an asset whose job is already running on the host waits for it.
+    busy = {a for (a,) in db.execute(select(Job.asset_id).where(Job.instance == HOST, Job.status == "running"))
+            if a is not None} if lane == HOST_MAIN else set()
+    return next((r.id for r in rows if not r.kind.startswith("export.") and r.asset_id not in busy), None)
 
 
 @dataclass
@@ -500,6 +515,8 @@ class InstanceWorker:
     name: str
     settings: Settings
     clients: dict[str, ComfyClient]
+    # The host only: "" takes every host job, HOST_MAIN everything but exports, HOST_QUICK only exports (_host_next).
+    lane: str = ""
     paused: bool = False
     # Turned off in the app (Graphics cards): picks no job. Separate from `paused` (POST /api/queue/{i}/pause).
     disabled: bool = False
@@ -552,7 +569,7 @@ class InstanceWorker:
     def _next_queued(self) -> str | None:
         with session_factory()() as db:
             if self.name == HOST:
-                return _host_next(db)
+                return _host_next(db, self.lane)
             if self.allows is None:
                 job = db.scalar(select(Job).where(Job.instance == self.name, Job.status == "queued").order_by(Job.created_at, Job.id).limit(1))
                 return job.id if job else None
@@ -674,6 +691,7 @@ class InstanceWorker:
             kind = job.kind
             payload = job.payload
             version_id = job.version_id
+            asset_id = job.asset_id
             _publish_job(job)
             is_judge = parse_kind(kind)[1] == "judge"
             if version_id and not is_judge:
@@ -694,15 +712,27 @@ class InstanceWorker:
         self.current_job_id = job_id
         log.info("worker %s running job %s (%s)", self.name, job_id, kind)
         last: dict[str, Any] = {"fraction": -1.0, "message": "", "at": 0.0}
+        # A clean-up's own phases say little about the time (the sharpening is a minute, the projection ten), so its
+        # progress follows the clock against the expected time instead: the time left only ever falls.
+        timed = await asyncio.to_thread(estimates.job_times, kind, asset_id) if kind.startswith("prep.") else None
+        started = time.monotonic()
 
         def progress(fraction: float, message: str) -> None:
             # A fraction change always goes out; a message-only change (the elapsed-seconds counter) at most every
-            # MESSAGE_THROTTLE_SECONDS, so a long job does not commit, log and broadcast once per poll.
+            # MESSAGE_THROTTLE_SECONDS, so a long job does not commit, log and broadcast once per poll. A message held
+            # back is sent by the ticker below, so the last label is never left stale.
             now = time.monotonic()
+            if timed is not None:
+                expected, stage_expected = timed
+                left = estimates.seconds_left(expected, now - started)
+                fraction = max(last["fraction"], min(0.97, max(0.0, 1.0 - left / stage_expected)))
             fraction_changed = fraction >= 0 and abs(fraction - last["fraction"]) >= 0.005
             message_changed = bool(message) and message != last["message"]
             if not fraction_changed and (not message_changed or now - last["at"] < MESSAGE_THROTTLE_SECONDS):
+                if message_changed:
+                    last["pending"] = message
                 return
+            last.pop("pending", None)
             with Session() as db2:
                 j = db2.get(Job, job_id)
                 if j is None:
@@ -729,6 +759,16 @@ class InstanceWorker:
 
             ctx.borrow = borrow
         self.current_ctx = ctx
+
+        async def tick() -> None:
+            while True:
+                await asyncio.sleep(MESSAGE_THROTTLE_SECONDS)
+                try:
+                    progress(-1.0, last.pop("pending", ""))
+                except Exception:  # noqa: BLE001
+                    log.debug("job %s: progress tick failed", job_id[:8], exc_info=True)
+
+        ticker = asyncio.create_task(tick(), name=f"vgac-tick-{job_id[:8]}")
         error: str | None = None
         cancelled = False
         requeued = False
@@ -774,6 +814,7 @@ class InstanceWorker:
                 error = f"{type(e).__name__}: {e}"
                 log.error("job %s failed: %s\n%s", job_id, e, traceback.format_exc()[-4000:])
         finally:
+            ticker.cancel()
             if self.after_job is not None:
                 try:
                     self.after_job(job_id)  # any card still lent to this job goes back now
@@ -875,6 +916,10 @@ class JobQueue:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.workers: dict[str, InstanceWorker] = {}
+        # The host's second worker (exports only), started with the others; None before start(). `extra`: further
+        # workers for long host jobs, only with host_cleanup_workers above 1.
+        self.quick: InstanceWorker | None = None
+        self.extra: list[InstanceWorker] = []
         self.clients: dict[str, ComfyClient] = {}
         # Graphics cards turned off in the app (prefs.json disabled_instances). Never contains the host.
         self.disabled: set[str] = set()
@@ -922,10 +967,18 @@ class JobQueue:
         # Cards turned off (and kinds of work forbidden) before the restart stay so, applied before any worker can
         # pick a job; queued jobs parked on them move now where another card can take them.
         self._load_prefs()
+        # The host runs two jobs at most: the clean-up and the like on its main worker, an export on a second one, so
+        # a short job does not wait behind another asset's clean-up. Each still takes the free-memory check first.
+        self.quick = InstanceWorker(name=HOST, settings=self.settings, clients=self.clients, lane=HOST_QUICK,
+                                    on_rerouted=self._after_reroute, lend=self.lend, after_job=self.end_leases)
+        self.extra = [InstanceWorker(name=HOST, settings=self.settings, clients=self.clients, lane=HOST_MAIN,
+                                     on_rerouted=self._after_reroute, lend=self.lend, after_job=self.end_leases)
+                      for _ in range(max(1, self.settings.host_cleanup_workers) - 1)]
         for name in list(self.settings.instances) + [HOST]:
             gpu = name in self.settings.instances
             self.workers[name] = InstanceWorker(
                 name=name, settings=self.settings, clients=self.clients, disabled=name in self.disabled,
+                lane=HOST_MAIN if name == HOST else "",
                 on_rerouted=self._after_reroute, allows=(lambda kind, n=name: self.kind_allowed_here(n, kind)) if gpu else None,
                 free_after_job=self.free_after_job.get(name, False),
                 prepare=(lambda job_id, n=name: self._prepare(n, job_id)) if gpu else None,
@@ -937,6 +990,8 @@ class JobQueue:
                      {n: sorted(k) for n, k in self.allowed_kinds.items()})
         self._rebalance()
         for w in self.workers.values():
+            w.start()
+        for w in self.host_helpers():
             w.start()
         self._idle_task = asyncio.create_task(self._idle_loop(), name="vgac-engine-idle")
         if any(i.discover is not None for i in self.settings.instances.values()):
@@ -974,6 +1029,8 @@ class JobQueue:
                 pass
             self._idle_task = None
         for w in self.workers.values():
+            await w.stop()
+        for w in self.host_helpers():
             await w.stop()
         if self.supervisor is not None:
             await self.supervisor.close()
@@ -1030,12 +1087,80 @@ class JobQueue:
             db.refresh(job)
         _publish_job(job)
         self.wake(instance)
+        try:
+            self.note_waits()
+        except Exception:  # noqa: BLE001
+            log.debug("could not note the waits", exc_info=True)
         return job
 
     def wake(self, instance: str) -> None:
         w = self.workers.get(instance)
         if w:
             w.wake.set()
+        if instance == HOST:
+            for h in self.host_helpers():
+                h.wake.set()
+
+    def host_helpers(self) -> list[InstanceWorker]:
+        """The host's workers besides the main one: the export worker, then any further clean-up workers."""
+        return ([self.quick] if self.quick is not None else []) + list(self.extra)
+
+    def note_waits(self) -> None:
+        """Say in each waiting job's message what it waits for and for about how long: "Waiting for another
+        character's clean-up, about 9 minutes; then about 15 minutes to run". Only jobs that have no message of their
+        own (empty, "queued" or an earlier note) are written, and only when the text changes."""
+        names = {"prep": "clean-up", "export": "export", "rig": "skeleton step", "mesh": "3D model build",
+                 "turnaround": "side-views step", "concept": "concept picture"}
+        now = utcnow().replace(tzinfo=None)
+        changed: list[Job] = []
+        with session_factory()() as db:
+            queued = db.scalars(select(Job).where(Job.status == "queued").order_by(Job.created_at, Job.id)).all()
+            if not queued:
+                return
+            cats: dict[str | None, str | None] = {}
+            expect_cache: dict[tuple[str, str | None], float] = {}
+
+            def expect(j: Job) -> float:
+                if j.asset_id not in cats:
+                    a = db.get(Asset, j.asset_id) if j.asset_id else None
+                    cats[j.asset_id] = a.category if a is not None else None
+                key = (j.kind, cats[j.asset_id])
+                if key not in expect_cache:
+                    expect_cache[key] = estimates.expected_seconds(db, j.kind, cats[j.asset_id]) or 120.0
+                return expect_cache[key]
+
+            ahead: dict[tuple[str, str], tuple[float, Job]] = {}
+            for j in queued:
+                quick = j.instance == HOST and self.quick is not None and j.kind.startswith("export.")
+                lane = (j.instance, HOST_QUICK if quick else (HOST_MAIN if j.instance == HOST else ""))
+                w = self.quick if quick else self.workers.get(j.instance)
+                cur_id = (w.current_job_id or w.lent_to) if w is not None else None
+                if cur_id and lane[1] == HOST_MAIN and any(h.lane == HOST_MAIN and not h.current_job_id for h in self.extra):
+                    cur_id = None  # another clean-up worker is free: this job starts at once
+                if not cur_id:
+                    continue  # nothing runs on this lane: the job is not waiting for another one
+                if lane not in ahead:
+                    cur = db.get(Job, cur_id)
+                    if cur is None:
+                        continue
+                    since = (cur.started_at or now).replace(tzinfo=None)
+                    ahead[lane] = (estimates.seconds_left(expect(cur), max(0.0, (now - since).total_seconds())), cur)
+                wait, cur = ahead[lane]
+                run = expect(j)
+                ahead[lane] = (wait + run, cur)
+                if j.message and j.message != "queued" and not j.message.startswith(WAIT_PREFIX):
+                    continue
+                whose = "this character's" if cur.asset_id == j.asset_id and j.asset_id else "another character's"
+                noun = names.get(cur.kind.split(".")[0] if not cur.kind.startswith("material.") else cur.kind.split(".")[1], "step")
+                text = (f"{WAIT_PREFIX}{whose} {noun}, {estimates.minutes_text(wait)}; "
+                        f"then {estimates.minutes_text(run)} to run")
+                if j.message != text:
+                    j.message = text
+                    changed.append(j)
+            if changed:
+                db.commit()
+                for j in changed:
+                    _publish_job(j)
 
     def cancel(self, job_id: str) -> Job | None:
         with session_factory()() as db:
@@ -1059,6 +1184,8 @@ class JobQueue:
                 return job
             if job.status == "running":
                 w = self.workers.get(job.instance)
+                if job.instance == HOST:
+                    w = next((h for h in self.host_helpers() if h.current_job_id == job.id), w)
                 if w is not None:
                     w.cancel_current(job.id)
                 job.message = "cancelling"
@@ -1155,6 +1282,10 @@ class JobQueue:
         w = self.workers[instance]
         w.paused = paused
         w.wake.set()
+        if instance == HOST:
+            for h in self.host_helpers():
+                h.paused = paused
+                h.wake.set()
 
     # --- graphics cards on and off ------------------------------------------------------------------------------
 
@@ -1742,6 +1873,7 @@ class JobQueue:
             try:
                 await self.refresh_engines()
                 self.idle_check()
+                self.note_waits()
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
@@ -1883,6 +2015,9 @@ class JobQueue:
             func.count().over(partition_by=Job.instance).label("n"),
         ).where(Job.status == "queued").subquery()
         busy_ids = [i for w in self.workers.values() for i in (w.current_job_id, w.lent_to) if i]
+        quick_id = self.quick.current_job_id if self.quick is not None else None
+        helper_ids = [h.current_job_id for h in self.host_helpers() if h.current_job_id]
+        busy_ids.extend(helper_ids)
         with session_factory()() as db:
             heads = {row.instance: (row.id, int(row.n)) for row in db.execute(select(ranked.c.instance, ranked.c.id, ranked.c.n).where(ranked.c.rn == 1))}
             kinds = dict(db.execute(select(Job.id, Job.kind).where(Job.id.in_(busy_ids))).all()) if busy_ids else {}
@@ -1894,4 +2029,7 @@ class JobQueue:
                          "next_job_id": next_id, "lent_to": w.lent_to,
                          "current_kind": kinds.get(w.current_job_id), "lent_kind": kinds.get(w.lent_to),
                          "in_use": self.card_in_use(name)}
+        if HOST in out:
+            out[HOST]["quick_job_id"] = quick_id  # the export running beside the host's main job, if any
+            out[HOST]["helper_job_ids"] = helper_ids  # every job running on the host besides the main worker's
         return out

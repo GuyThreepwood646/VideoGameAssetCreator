@@ -1,9 +1,12 @@
 """Honest time estimates: what a stage took the last times it ran on this machine, else the stated default.
 
-guidance.STAGE_GUIDE keeps the defaults (used when there is no history). `stage_seconds` takes the median of the last
-HISTORY_RUNS finished runs of the stage (job kind "<stage>.run", "material.<stage>.run" for materials), from the same
-category when there are enough of those. Job time runs from the start of the job to its end, so it includes any wait
-for a borrowed card, the sharpening and the face close-ups of the clean-up step.
+guidance.STAGE_GUIDE keeps the defaults (used when there is no history). `stage_seconds` takes the QUANTILE (three
+quarters) of the last HISTORY_RUNS finished runs of the stage (job kind "<stage>.run", "material.<stage>.run" for
+materials), from the same category when there are enough of those: a step that took 8 to 34 minutes is shown at the
+upper end, so the time left falls and is not later raised (in round 4 the median said 14 minutes for a 24-minute
+clean-up). Job time runs from the start of the job to its end, so it includes any wait for a borrowed card, the
+sharpening and the face close-ups of the clean-up step; the wait in the queue before the job starts is not in it and is
+stated separately (JobQueue.note_waits).
 """
 from __future__ import annotations
 
@@ -18,6 +21,31 @@ from .db import Asset, Job
 HISTORY_RUNS = 15
 MIN_RUNS = 3          # fewer finished runs than this and the default stands
 MIN_SECONDS = 2.0     # runs that skipped their work (an instant pass-through) say nothing about the real time
+QUANTILE = 0.75       # the share of recent runs that finished within the estimate
+OVERRUN_FLOOR = 0.1   # a job past its estimate shows this share of it as time left, not less and not more
+
+
+def pick(runs: list[float], q: float = QUANTILE) -> float:
+    """The q quantile of `runs` (linear between neighbours)."""
+    xs = sorted(runs)
+    pos = q * (len(xs) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+def seconds_left(expected: float, elapsed: float) -> float:
+    """Time left on a job that has run `elapsed` seconds of an `expected` total: it only ever falls, and past the
+    estimate it stays at OVERRUN_FLOOR of it."""
+    return max(expected - elapsed, OVERRUN_FLOOR * expected)
+
+
+def minutes_text(seconds: float) -> str:
+    """"less than a minute", "about 1 minute", "about 12 minutes" (rounded up, so a wait is not understated)."""
+    m = int(-(-seconds // 60))
+    if seconds < 45:
+        return "less than a minute"
+    return f"about {m} minute" + ("" if m == 1 else "s")
 
 
 def _durations(db: Session, kind: str, category: str | None) -> list[float]:
@@ -30,14 +58,47 @@ def _durations(db: Session, kind: str, category: str | None) -> list[float]:
     return [d for d in out if d >= MIN_SECONDS][:HISTORY_RUNS]
 
 
-def stage_seconds(db: Session, stage: str, category: str | None = None, material: bool = False) -> tuple[int, int] | None:
-    """(median seconds, number of runs it rests on) or None when there is too little history."""
-    kind = f"material.{stage}.run" if material else f"{stage}.run"
+def stage_seconds(db: Session, stage: str, category: str | None = None, material: bool = False,
+                  op: str = "run") -> tuple[int, int] | None:
+    """(seconds, number of runs it rests on) or None when there is too little history."""
+    kind = f"material.{stage}.{op}" if material else f"{stage}.{op}"
     for cat in ((category, None) if category else (None,)):
         runs = _durations(db, kind, cat)
         if len(runs) >= MIN_RUNS:
-            return round(statistics.median(runs)), len(runs)
+            return round(pick(runs)), len(runs)
     return None
+
+
+def expected_seconds(db: Session, kind: str, category: str | None = None) -> float | None:
+    """How long a job of `kind` ("prep.run", "prep.adjust", "export.run") is expected to run, from its own history,
+    else the stage's stated default; None for a kind that is not a stage's."""
+    from . import guidance
+    parts = kind.split(".")
+    material = parts[0] == "material"
+    if material:
+        parts = parts[1:]
+    if len(parts) != 2:
+        return None
+    stage, op = parts
+    got = stage_seconds(db, stage, category, material, op)
+    if got:
+        return float(got[0])
+    g = guidance.stage_guide(stage)
+    return float(g["estimate_seconds"]) if g and g.get("estimate_seconds") else None
+
+
+def job_times(kind: str, asset_id: str | None) -> tuple[float, float] | None:
+    """(seconds a job of `kind` is expected to run, seconds the step's own estimate in /api/stages says) or None when
+    there is no basis. The page shows the second times the share left, so a job's progress is set from both."""
+    from .db import session_factory
+    with session_factory()() as db:
+        a = db.get(Asset, asset_id) if asset_id else None
+        expected = expected_seconds(db, kind, a.category if a is not None else None)
+        stage = kind.split(".")[1] if kind.startswith("material.") else kind.split(".")[0]
+        stage_expected = expected_seconds(db, f"{stage}.run", None)
+    if not expected or not stage_expected:
+        return None
+    return expected, max(stage_expected, expected)
 
 
 def activity(status: dict[str, Any]) -> str:

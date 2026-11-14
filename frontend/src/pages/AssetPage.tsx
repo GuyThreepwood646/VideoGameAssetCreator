@@ -637,6 +637,13 @@ function VariantPanel({ asset, onClose, onError }: { asset: Asset; onClose: () =
   )
 }
 
+// What a queued job waits for, when the backend said so ("Waiting for another character's clean-up, about 9 minutes; then
+// about 15 minutes to run"), as the end of a sentence; null when it said nothing of the kind.
+function waitNote(job: Job | undefined): string | null {
+  const m = job?.status === 'queued' ? job.message : ''
+  return m && m.startsWith('Waiting for ') ? m.charAt(0).toLowerCase() + m.slice(1) : null
+}
+
 function stageOfJob(job: Job, asset: Asset): StageId | null {
   const prefix = job.kind.split('.')
   for (const p of prefix) if (STAGES.includes(p as StageId)) return p as StageId
@@ -655,6 +662,8 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
       const queued = apJob?.status === 'queued'
       const until = STAGES.includes(autopilot.until_stage as StageId) ? (autopilot.until_stage as StageId) : 'export'
       const left = s ? autopilotSecondsLeft(s, queued ? 0 : (apJob?.progress ?? 0), until, ref?.stages, suggestion?.estimates) : null
+      const wait = waitNote(apJob)
+      if (wait && s) return { text: `Autopilot: ${stageGerund(s)}, ${wait}.`, tone: 'ok' }
       return { text: autopilotLine(s, left, { queued }) + '.', tone: 'ok' }
     }
     return { text: `Autopilot ${autopilot.status === 'paused' ? 'paused' : 'stopped'}${s ? ` at "${stagePlain(s)}"` : ''}: ${plainJargon(autopilot.reason) || 'it needs you.'}`, tone: autopilot.status === 'paused' ? 'warn' : 'bad' }
@@ -663,7 +672,10 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
     const s = stageOfJob(job, asset)
     const step = s ? `step ${STAGES.indexOf(s) + 1} of ${STAGES.length}` : ''
     const importing = job.kind === 'mesh.upload'
-    if (job.status === 'queued') return { text: `${importing ? 'Reading your 3D model' : s ? stageGerund(s) : 'Working'}: waiting ${importing ? 'its turn' : 'for the graphics card'}${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    if (job.status === 'queued') {
+      const wait = waitNote(job)
+      return { text: `${importing ? 'Reading your 3D model' : s ? stageGerund(s) : 'Working'}: ${wait ?? `waiting ${importing ? 'its turn' : 'for the graphics card'}`}${step ? `, ${step}` : ''}.`, tone: 'warn' }
+    }
     if (importing) return { text: `Reading your 3D model, ${fmtDuration(MODEL_IMPORT_SECONDS * (1 - (job.progress ?? 0)))} left${step ? `, ${step}` : ''}.`, tone: 'ok' }
     const est = s ? stageEstimate(s, ref?.stages.find((x) => x.id === s), suggestion?.estimates) : 120
     const left = est * (1 - (job.progress ?? 0))

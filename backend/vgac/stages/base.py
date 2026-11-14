@@ -186,7 +186,9 @@ class StageContext:
         try:
             return await client.run(graph, poll_seconds=poll, timeout=self.settings.job_timeout_seconds, on_poll=on_poll)
         finally:
-            self.progress(base + span, None)
+            # The card's part is over; what follows (the pictures painted onto the model, saving) runs on this computer,
+            # and the label said "on instance b" for ten minutes after the draws were done.
+            self.progress(base + span, f"{message}: finished, now working on the result on this computer" if message else None)
 
     async def stage_input(self, path: Path | str, name: str, instance: str | None = None) -> str:
         return await self.client(instance).stage_input(path, name)
