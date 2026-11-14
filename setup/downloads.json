@@ -474,6 +474,7 @@
   "zip": "https://download.blender.org/release/Blender5.2/blender-5.2.3-windows-x64.zip",
   "sha256": "723f08a4401502561eb763cdeacf8745b31e5f3f154d287d3830d97cf75dc2fb",
   "size": 405839452,
+  "sha256_file": "https://download.blender.org/release/Blender5.2/blender-5.2.3.sha256",
   "sha256_source": "Read once from download.blender.org/release/Blender5.2/blender-5.2.3.sha256 on 2026-11-14. A file from any server, mirror or official, is accepted only if it matches this pin.",
   "mirrors": ["https://ftp.nluug.nl/pub/graphics/blender/release/", "https://mirrors.dotsrc.org/blender/release/"],
   "page": "https://www.blender.org/download/",
