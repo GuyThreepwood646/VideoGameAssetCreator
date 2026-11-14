@@ -108,7 +108,10 @@ def _input_image(sc: StageContext, input_view: str) -> Path:
 # person's picture with step 2's pose_held measure (turnaround.pose_check, three-quarter limits); `quarter` is used
 # unless it lost the pose and `quarter2` kept it.
 # UNTESTED ON A CARD: the model's facing after a build from quarter2 (the facing tests should absorb it), and the rebuild itself.
-BUILD_VIEW_ORIGINS = ("default", "pose")  # input_view_origin values that are re-decided on every build; anything else was the person's
+# input_view_origin is recorded only when this step switched the view ("pose"); a recorded view that is that one, or the
+# category's default, is decided again on every build, and any other recorded view was the person's. So a person who
+# picks `quarter` by hand gets the default's behaviour (the chooser may still switch it).
+BUILD_VIEW_ORIGINS = ("pose",)
 
 
 def pick_build_view(first: dict[str, Any] | None, second: dict[str, Any] | None) -> tuple[str, str]:
@@ -263,7 +266,7 @@ DEFAULT_TEX_STEPS = 24  # the texture sampler's steps (graphs/trellis.py); 12 on
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     default_view = sc.category.get("input_view_default") or "concept"
     # A view the person chose is kept as it is; the default (and a view this step chose itself) is decided again here.
-    by_hand = bool(params.get("input_view")) and params.get("input_view_origin") not in BUILD_VIEW_ORIGINS
+    by_hand = bool(params.get("input_view")) and params["input_view"] != default_view and params.get("input_view_origin") not in BUILD_VIEW_ORIGINS
     decided = {"view": params["input_view"], "why": "none", "measures": {}} if by_hand else await choose_build_view(sc, default_view)
     input_view = decided["view"]
     rec = stage_recipe(sc)
@@ -288,11 +291,12 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
         await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
         sc.set_params(hand_edit=True)
     src = _input_image(sc, input_view)
-    origin = "hand" if by_hand else ("pose" if decided["why"] == "switched" else "default")
-    sc.set_params(engine="trellis", input_view=input_view, input_view_origin=origin, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
+    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                   head_room=targets.get("head_room"), first_seed=None)
-    if decided["why"] != "none":
+    if decided["why"] in ("switched", "both_lost"):  # nothing is recorded when the chooser changed nothing and found nothing wrong
+        if decided["why"] == "switched":
+            sc.set_params(input_view_origin="pose")
         sc.set_metrics(build_view=decided, build_view_note=build_view_words(decided))
     sc.use_model("trellis2")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
