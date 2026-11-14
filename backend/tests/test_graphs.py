@@ -31,11 +31,34 @@ def strip_prefix(g: dict) -> dict:
     return out
 
 
-def test_zimage_matches_gen_concepts(bakeoff_dir):
+def as_checkpoint_graph(g, loader):
+    """Our Z-Image Turbo graphs load three split files (diffusion model, text encoder, VAE); the bakeoff scripts still load
+    the earlier all-in-one checkpoint. Fold ours back to that shape so everything else is compared node for node."""
+    out = {}
+    for k, node in g.items():
+        if k in ("1c", "1v"):
+            continue
+        inputs = {}
+        for ik, iv in node["inputs"].items():
+            if isinstance(iv, list) and iv == ["1c", 0]:
+                iv = ["1", 1]
+            elif isinstance(iv, list) and iv == ["1v", 0]:
+                iv = ["1", 2]
+            inputs[ik] = iv
+        out[k] = {**node, "inputs": inputs}
+    out["1"] = loader
+    return out
+
+
+def test_zimage_is_three_split_files_and_otherwise_matches_gen_concepts(bakeoff_dir):
     bk = load_bakeoff(bakeoff_dir, "gen_concepts")
     ours = concept.zimage_graph("a knight", 123, "bakeoff/concepts/x")
     theirs = bk.zimage_graph("a knight", 123, "x")
-    assert ours == theirs
+    assert ours["1"] == {"class_type": "UNETLoader", "inputs": {"unet_name": "Z-Image\\z_image_turbo_int8_convrot.safetensors", "weight_dtype": "default"}}
+    assert ours["1c"]["inputs"]["clip_name"] == "qwen_3_4b.safetensors" and ours["1c"]["inputs"]["type"] == "lumina2"
+    assert ours["1v"] == {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}}
+    assert not any(n["class_type"] == "CheckpointLoaderSimple" for n in ours.values())
+    assert as_checkpoint_graph(ours, theirs["1"]) == theirs
 
 
 def test_concept_dispatch_and_save_nodes():
@@ -97,7 +120,10 @@ def test_skintoken_matches_rig(bakeoff_dir):
 
 def test_material_matches_bakeoff(bakeoff_dir):
     bk = load_bakeoff(bakeoff_dir, "material")
-    assert material.t2i_graph("stone", 3, 1024, "bakeoff/material/s_raw") == bk.t2i_graph("stone", 3, 1024, "s_raw")
+    ours = material.t2i_graph("stone", 3, 1024, "bakeoff/material/s_raw")
+    theirs = bk.t2i_graph("stone", 3, 1024, "s_raw")
+    assert ours["1"]["class_type"] == "UNETLoader" and not any(n["class_type"] == "CheckpointLoaderSimple" for n in ours.values())
+    assert as_checkpoint_graph(ours, theirs["1"]) == theirs
 
 
 def test_judge_matches_bakeoff_and_parses(bakeoff_dir):

@@ -215,7 +215,7 @@ $OptIn = @{
         Notice = @("Gemma 3 is under Google's Gemma Terms of Use and Prohibited Use Policy: https://ai.google.dev/gemma/terms",
                    'This helper never accepts terms for you. Read them, and accept only if you agree.') }
 }
-$requiredModels = @('zturbo', 'qwen_edit', 'birefnet', 'trellis2', 'skintoken', 'trellis2_dino')
+$requiredModels = @('zturbo', 'zimage_te', 'flux_ae', 'qwen_edit', 'birefnet', 'trellis2', 'skintoken', 'trellis2_dino')
 $loraAsAddon = @{ pixel = 'pixel_art'; qwen_angles_lora = 'qwen_angles'; qwen_lightning_lora = 'qwen_lightning' }
 $altFolder = @{ diffusion_models = 'unet'; text_encoders = 'clip' }
 

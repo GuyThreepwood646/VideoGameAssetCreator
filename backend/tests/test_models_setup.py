@@ -255,7 +255,7 @@ def test_the_shipped_sets_cover_every_file_once_and_gates_are_consistent():
     starter = next(s for s in d["sets"] if s["id"] == "starter")
     assert starter["required"]
     total = sum(d[{"model": "models", "addon": "addons", "project_file": "project_files"}[i.split(":")[0]]][i.split(":")[1]]["size"] for i in starter["items"])
-    assert 50e9 < total < 55e9  # "about 52 GB"
+    assert 55e9 < total < 58e9  # "about 56 GB": the Z-Image diffusion file, text encoder and VAE are three files now
     required = {f"model:{k}" for k, v in d["models"].items() if v.get("required")} | {f"project_file:{k}" for k, v in d["project_files"].items() if v.get("required")}
     assert required <= set(starter["items"])
     assert re.fullmatch(r"[0-9a-f]{64}", next(iter(d["models"].values()))["sha256"])
@@ -315,3 +315,34 @@ def test_one_entry_that_cannot_be_looked_at_never_takes_the_whole_panel_down(wor
     items = {i["id"]: i for s in r.json()["sets"] for i in s["items"]}
     assert items["model:b"]["state"] == "missing" and "odd" in items["model:b"]["error"]
     assert items["model:a"]["state"] == "missing" and "error" not in items["model:a"]  # the others are looked at as usual
+
+
+def test_the_default_picture_route_files_are_in_the_starter_set_and_the_old_community_files_are_gone():
+    d = json.loads(REAL_LIST.read_text(encoding="utf-8"))
+    starter = next(s for s in d["sets"] if s["id"] == "starter")["items"]
+    assert {"model:zturbo", "model:zimage_te", "model:flux_ae"} <= set(starter)
+    for k in ("zturbo", "zbase"):
+        e = d["models"][k]
+        assert e["publisher"] is True and "/Comfy-Org/" in e["url"] and e["size"] == 6201001296 and e["dest"] == "diffusion_models/Z-Image"
+    text = REAL_LIST.read_text(encoding="utf-8")
+    assert "Elena2810" not in text and "Winnougan" not in text
+    # the zbase file has a name of its own: the earlier community file z_image_int8_convrot.safetensors (a different file) never meets it
+    assert d["models"]["zbase"]["save_as"] != "z_image_int8_convrot.safetensors"
+
+
+def test_old_z_image_files_in_a_models_folder_are_ignored_not_reported_as_wrong(world, monkeypatch):
+    """Someone who has the earlier fp8 all-in-one and the community int8 file: neither is looked for, neither is called
+    'differs', and nothing tells them to delete them; the new files simply show as missing."""
+    tmp, models = world
+    real = json.loads(REAL_LIST.read_text(encoding="utf-8"))
+    keep = ("zturbo", "zbase", "zimage_te", "flux_ae")
+    lst = {"models": {k: real["models"][k] for k in keep}, "addons": {}, "project_files": {},
+           "sets": [{"id": "starter", "name": "Starter", "required": True, "items": [f"model:{k}" for k in keep]}], "gates": {}}
+    (tmp / "setup" / "downloads.json").write_text(json.dumps(lst), encoding="utf-8")
+    (models / "checkpoints" / "Z-Image").mkdir(parents=True)
+    (models / "checkpoints" / "Z-Image" / "z-image-turbo-fp8-aio.safetensors").write_bytes(b"old" * 10)
+    (models / "diffusion_models" / "Z-Image").mkdir(parents=True)
+    (models / "diffusion_models" / "Z-Image" / "z_image_int8_convrot.safetensors").write_bytes(b"old" * 10)
+    items, _ = states(models)
+    assert items["model:zturbo"]["state"] == "missing" and items["model:zbase"]["state"] == "missing"
+    assert not [i for i in items.values() if i["state"] == "differs"]

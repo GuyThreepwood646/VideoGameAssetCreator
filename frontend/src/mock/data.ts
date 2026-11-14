@@ -1488,7 +1488,7 @@ export function setupReport(): SetupReport {
     it('engine.b', 'engines', 'ComfyUI instance on the RTX 3080', 'unknown', 'Not running now; it starts when needed.', '', ['concept', 'turnaround', 'rig', 'material', 'judge'], 'instance b at http://127.0.0.1:8189'),
     it('nodes.b.rig.0', 'engines', 'Parts for rigging (SkinToken)', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['rig'], 'instance b: SkinTokenRigTrimesh, VGACLoadTrimesh, PreviewAny'),
     it('model.a.trellis2', 'models', 'TRELLIS.2', 'ok', 'Installed.', '', ['mesh'], 'instance a: trellis_2_int8_convrot.safetensors (UNETLoader.unet_name; models.yaml trellis2)'),
-    it('model.b.zturbo', 'models', 'Z-Image Turbo', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['concept'], 'instance b: z-image-turbo-fp8-aio.safetensors (CheckpointLoaderSimple.ckpt_name; models.yaml zturbo)'),
+    it('model.b.zturbo', 'models', 'Z-Image Turbo', 'unknown', 'Not checked: the engine is not running; it starts when needed.', '', ['concept'], 'instance b: z_image_turbo_int8_convrot.safetensors (UNETLoader.unet_name; models.yaml zturbo)'),
     it('disk.D:', 'storage', 'Free space on D:', 'ok', '412 GB is free on D:.', '', [], 'library_path on D:\: 412.0 GB free'),
     it('memory', 'storage', 'Free memory', 'ok', '28 GB of memory is free.', '', [], 'min_free_ram_gb in backend/config.yaml: 8; 28.0 GB free now'),
   ]

@@ -23,18 +23,33 @@ PAINT_NEG = ("comic book art, cartoon, cel shading, thick black outlines, ink li
              "extra limbs, duplicate person, text, letters, numbers, logo, watermark, signature, border, frame")
 ANIMA_NEG = "worst quality, low quality, artist name, blurry, jpeg artifacts, text, watermark"
 
-def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8) -> dict[str, Any]:
-    ckpt = "Z-Image" + BS + "z-image-turbo-fp8-aio.safetensors"
+# Z-Image in ComfyUI's split layout (Comfy-Org's packaging of Tongyi-MAI's models): the diffusion model, the Qwen 3 4B text
+# encoder and the ae VAE are three files. The two int8 (convrot) diffusion files are listed in setup/downloads.json.
+ZTURBO_UNET = "Z-Image" + BS + "z_image_turbo_int8_convrot.safetensors"
+ZBASE_UNET = "Z-Image" + BS + "z_image_base_int8_convrot.safetensors"
+
+
+def zimage_loaders(unet: str) -> dict[str, Any]:
+    """Nodes "1" (model), "1c" (text encoder, CLIP output 0) and "1v" (VAE, output 0). "1" stays the first node, which is
+    where chain_addons puts the add-on LoRAs."""
     return {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet, "weight_dtype": "default"}},
+        "1c": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
+        "1v": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+    }
+
+
+def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8) -> dict[str, Any]:
+    return {
+        **zimage_loaders(ZTURBO_UNET),
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
-        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": prompt}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": ""}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": prompt}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": ""}},
         "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
         "6": {"class_type": "KSampler", "inputs": {"model": ["2", 0], "positive": ["3", 0], "negative": ["4", 0],
                                                   "latent_image": ["5", 0], "seed": seed, "steps": steps, "cfg": 1.0,
                                                   "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
-        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1v", 0]}},
         "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": prefix}},
     }
 
@@ -42,7 +57,7 @@ def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height:
 def zbase_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 30, cfg: float = 4.0,
                 neg: str = PAINT_NEG) -> dict[str, Any]:
     return {
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "Z-Image" + BS + "z_image_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": ZBASE_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
         "3b": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
@@ -93,15 +108,15 @@ def pixel_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: 
                 lora: str = "ZImage" + BS + "pixel_art_style_z_image_turbo.safetensors", trigger: str = "Pixel art style.",
                 strength: float = 1.0, colors: int = 32) -> dict[str, Any]:
     return {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "Z-Image" + BS + "z-image-turbo-fp8-aio.safetensors"}},
+        **zimage_loaders(ZTURBO_UNET),
         "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": lora, "strength_model": strength}},
         "3": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["2", 0], "shift": 3.0}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": trigger + " " + prompt}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": ""}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": trigger + " " + prompt}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": ""}},
         "6": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
         "7": {"class_type": "KSampler", "inputs": {"model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0],
               "seed": seed, "steps": steps, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
-        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["1v", 0]}},
         "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": prefix + "_raw"}},
         "10": {"class_type": "PixelArtDetectorToImage", "inputs": {"images": ["8", 0], "reduce_palette": True, "reduce_palette_max_colors": colors}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": prefix}},
@@ -148,7 +163,7 @@ def default_steps(model: str) -> int:
 # --- Add-on chain (data/addons.yaml, reference.resolve_addons) ------------------------------------------------------
 
 # Node types whose output 0 is the diffusion MODEL; the add-on chain goes right after it.
-MODEL_LOADERS = ("CheckpointLoaderSimple", "UNETLoader")
+MODEL_LOADERS = ("CheckpointLoaderSimple", "UNETLoader")  # the node a graph's add-on LoRAs chain after
 
 
 def lora_name(path: str) -> str:

@@ -87,7 +87,7 @@ GRAPH_USES: dict[str, dict[str, tuple[str, bool, str]]] = {
 
 # models.yaml id -> (loader node class, its file input, stage, required)
 MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
-    "zturbo": ("CheckpointLoaderSimple", "ckpt_name", "concept", True),
+    "zturbo": ("UNETLoader", "unet_name", "concept", True),
     "zbase": ("UNETLoader", "unet_name", "concept", False),
     "klein": ("UNETLoader", "unet_name", "concept", False),
     "anima": ("UNETLoader", "unet_name", "concept", False),
@@ -110,8 +110,8 @@ MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
     "trellis2_dino": ("CLIPVisionLoader", "clip_name", "mesh", True),
     "trellis2_shape_vae": ("VAELoader", "vae_name", "mesh", True),
     "trellis2_texture_vae": ("VAELoader", "vae_name", "mesh", True),
-    "zimage_te": ("CLIPLoader", "clip_name", "concept", False),
-    "flux_ae": ("VAELoader", "vae_name", "concept", False),
+    "zimage_te": ("CLIPLoader", "clip_name", "concept", True),  # the default picture route (Z-Image Turbo) loads both
+    "flux_ae": ("VAELoader", "vae_name", "concept", True),
     "flux2_vae": ("VAELoader", "vae_name", "concept", False),
     "chroma_te": ("CLIPLoader", "clip_name", "concept", False),
     "anima_te": ("CLIPLoader", "clip_name", "concept", False),

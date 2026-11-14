@@ -244,7 +244,7 @@ if ($engines.Count -eq 0) {
 # models.yaml id -> loader node, its file input, which engine runs it (default stage plan: pictures and rigging on B,
 # 3D on A), required or optional. Same table as backend\vgac\preflight.py MODEL_LOADERS.
 $loaders = [ordered]@{
-    zturbo              = @('CheckpointLoaderSimple', 'ckpt_name', 'B', $true)
+    zturbo              = @('UNETLoader', 'unet_name', 'B', $true)
     zbase               = @('UNETLoader', 'unet_name', 'B', $false)
     klein               = @('UNETLoader', 'unet_name', 'B', $false)
     anima               = @('UNETLoader', 'unet_name', 'B', $false)

@@ -1,26 +1,28 @@
 {
- "_comment": "Download sources for setup/Setup-Extras.ps1. Each url, size and sha256 was read from the Hugging Face file list on 2026-11-06 (companion files, the two Qwen LoRAs, the upscalers, the SkinToken VAE, the face models and Anima on 2026-11-13). 'publisher' is true when the repository belongs to the model's own publisher (or ComfyUI's Comfy-Org for ComfyUI-format files); false means a community upload. Edit a link here when it changes; no code change needed. Your own additions go in setup/downloads.local.json (same shape).",
- "verified": "2026-11-13",
+ "_comment": "Download sources for setup/Setup-Extras.ps1. Each url, size and sha256 was read from the Hugging Face file list on 2026-11-06 (companion files, the two Qwen LoRAs, the upscalers, the SkinToken VAE, the face models and Anima on 2026-11-13, the two Z-Image files on 2026-11-14). 'publisher' is true when the repository belongs to the model's own publisher (or ComfyUI's Comfy-Org for ComfyUI-format files); false means a community upload. Edit a link here when it changes; no code change needed. Your own additions go in setup/downloads.local.json (same shape).",
+ "verified": "2026-11-14",
  "models": {
   "zturbo": {
-   "url": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio/resolve/main/z-image-turbo-fp8-aio.safetensors",
-   "page": "https://huggingface.co/Elena2810/z-image-turbo-fp8-aio",
-   "size": 10345190658,
-   "sha256": "f569c42b6797a89e65e80c743d6dfd230ed9318237aa242c92777deb22fad660",
-   "dest": "checkpoints/Z-Image",
-   "save_as": "z-image-turbo-fp8-aio.safetensors",
-   "publisher": false,
-   "note": "Uploaded by a community member, not by the model's publisher (Tongyi-MAI). Check the page before you accept."
+   "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/z_image_turbo",
+   "size": 6201001296,
+   "sha256": "be517ebd47c912a5626a588e1aeea43e6be4a43c0cdcd2b48a2a780d9f358635",
+   "dest": "diffusion_models/Z-Image",
+   "save_as": "z_image_turbo_int8_convrot.safetensors",
+   "publisher": true,
+   "note": "Z-Image Turbo by Tongyi-MAI (Apache-2.0), as ComfyUI's own Comfy-Org organisation packages it for ComfyUI: int8 (convrot), 6.2 GB. Tongyi-MAI's own repository holds only the diffusers layout, which ComfyUI does not load directly. It is loaded with the Qwen 3 4B text encoder and the ae VAE from the same Comfy-Org repository.",
+   "licence": "Apache-2.0"
   },
   "zbase": {
-   "url": "https://huggingface.co/Winnougan/Z-Image-Base-Turbo-INT8-Convrot/resolve/main/z_image_int8_convrot.safetensors",
-   "page": "https://huggingface.co/Winnougan/Z-Image-Base-Turbo-INT8-Convrot",
-   "size": 6299127240,
-   "sha256": "bb74db6afc4b895415d915b245d2142c9aad420cf1698d6ade3d4cbcc450a3df",
+   "url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_int8_convrot.safetensors",
+   "page": "https://huggingface.co/Comfy-Org/z_image",
+   "size": 6201001296,
+   "sha256": "eb2b470694fbd9778f15efd309000ea0091312c018c10a352c120b1da9bf4279",
    "dest": "diffusion_models/Z-Image",
-   "save_as": "z_image_int8_convrot.safetensors",
-   "publisher": false,
-   "note": "Uploaded by a community member (an int8 conversion of Z-Image Base), not by the publisher. Check the page before you accept."
+   "save_as": "z_image_base_int8_convrot.safetensors",
+   "publisher": true,
+   "note": "Z-Image (base) by Tongyi-MAI (Apache-2.0), as Comfy-Org packages it for ComfyUI: int8 (convrot), 6.2 GB. Saved as z_image_base_int8_convrot.safetensors, not the publisher's name (z_image_int8_convrot.safetensors), so it never meets the earlier community file of that name, which differs.",
+   "licence": "Apache-2.0"
   },
   "klein": {
    "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
@@ -643,6 +645,8 @@
    "what": "One character from start to finish: the picture, the side views, the cut-out, the 3D model and the rig.",
    "items": [
     "model:zturbo",
+    "model:zimage_te",
+    "model:flux_ae",
     "model:qwen_edit",
     "model:qwen_te",
     "model:qwen_vae",
@@ -669,8 +673,6 @@
     "model:zbase",
     "model:klein",
     "model:chroma",
-    "model:zimage_te",
-    "model:flux_ae",
     "model:flux2_vae",
     "model:chroma_te",
     "addon:pixel_art",

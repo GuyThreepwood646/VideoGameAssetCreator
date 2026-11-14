@@ -1,8 +1,23 @@
 {
  "1": {
-  "class_type": "CheckpointLoaderSimple",
+  "class_type": "UNETLoader",
   "inputs": {
-   "ckpt_name": "Z-Image\\z-image-turbo-fp8-aio.safetensors"
+   "unet_name": "Z-Image\\z_image_turbo_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "1c": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen_3_4b.safetensors",
+   "type": "lumina2",
+   "device": "default"
+  }
+ },
+ "1v": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "ae.safetensors"
   }
  },
  "2": {
@@ -19,8 +34,8 @@
   "class_type": "CLIPTextEncode",
   "inputs": {
    "clip": [
-    "1",
-    1
+    "1c",
+    0
    ],
    "text": "PROMPT A flat, evenly lit, top-down photograph of the surface filling the whole frame edge to edge, uniform diffuse lighting with no shadows, no vignette, no objects, no horizon, no text, no borders, consistent scale across the image, suitable as a seamless tiling game texture."
   }
@@ -29,8 +44,8 @@
   "class_type": "CLIPTextEncode",
   "inputs": {
    "clip": [
-    "1",
-    1
+    "1c",
+    0
    ],
    "text": ""
   }
@@ -78,8 +93,8 @@
     0
    ],
    "vae": [
-    "1",
-    2
+    "1v",
+    0
    ]
   }
  },

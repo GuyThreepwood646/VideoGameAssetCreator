@@ -11,9 +11,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageFilter
 
-from . import BS
-
-CKPT = "Z-Image" + BS + "z-image-turbo-fp8-aio.safetensors"
+from .concept import ZTURBO_UNET, zimage_loaders
 SURFACE = (" A flat, evenly lit, top-down photograph of the surface filling the whole frame edge to edge, uniform "
            "diffuse lighting with no shadows, no vignette, no objects, no horizon, no text, no borders, consistent "
            "scale across the image, suitable as a seamless tiling game texture.")
@@ -21,14 +19,14 @@ SURFACE = (" A flat, evenly lit, top-down photograph of the surface filling the 
 
 def t2i_graph(prompt: str, seed: int, size: int, prefix: str) -> dict[str, Any]:
     return {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CKPT}},
+        **zimage_loaders(ZTURBO_UNET),
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
-        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": prompt + SURFACE}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": ""}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": prompt + SURFACE}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": ""}},
         "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": size, "height": size, "batch_size": 1}},
         "6": {"class_type": "KSampler", "inputs": {"model": ["2", 0], "positive": ["3", 0], "negative": ["4", 0], "latent_image": ["5", 0],
                                                   "seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
-        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1v", 0]}},
         "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": prefix}},
     }
 

@@ -84,7 +84,7 @@ def dest_subfolder(d: dict) -> str:
 def test_the_scan_finds_the_known_references():
     names = {n for _s, _p, n in referenced()}
     # a floor, so a broken regex cannot make the real test pass by finding nothing
-    for must in ("z-image-turbo-fp8-aio.safetensors", "qwen_2.5_vl_7b_fp8_scaled.safetensors", "qwen_image_vae.safetensors",
+    for must in ("z_image_turbo_int8_convrot.safetensors", "qwen_2.5_vl_7b_fp8_scaled.safetensors", "qwen_image_vae.safetensors",
                  "trellis_2_shape_vae_bf16.safetensors", "dino_v3_vit_l.safetensors", "grpo_1400.ckpt", "ae.safetensors",
                  "4xRealWebPhoto_v4_dat2.pth", "RealESRGAN_x2plus.pth", "mediapipe_face_fp32.safetensors",
                  "qie2511_turnaround_sheet_tarn59.safetensors", "Hunyuan3D-2mv.fp16.safetensors", "gemma_3_12B_it.safetensors"):

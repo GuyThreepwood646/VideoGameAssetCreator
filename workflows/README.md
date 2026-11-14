@@ -25,4 +25,4 @@ scripts they were ported from.
 | `judge_local.json` | `graphs.judge.judge_graph` | B | `bakeoff/judge.py` |
 
 Model file names use the Windows subfolders of this machine's ComfyUI model folders (for example
-`Z-Image\z-image-turbo-fp8-aio.safetensors`).
+`Z-Image\z_image_turbo_int8_convrot.safetensors`).

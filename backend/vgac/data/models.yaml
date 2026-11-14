@@ -11,9 +11,9 @@
 #   negative       true when the graph takes a real negative prompt (the style lock's negative is passed in)
 # Add a concept model by adding an entry here plus its builder function; nothing else lists them.
 models:
-  zturbo: {name: Z-Image Turbo, file: z-image-turbo-fp8-aio.safetensors, licence: Apache-2.0, version: "1.0",
+  zturbo: {name: Z-Image Turbo, file: z_image_turbo_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
     concept: true, label: Z-Image Turbo, description: fast painted look, default_steps: 8, builder: zimage_graph, save_node: "8", negative: false}
-  zbase: {name: Z-Image base, file: z_image_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
+  zbase: {name: Z-Image base, file: z_image_base_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
     concept: true, label: Z-Image Base, description: "higher quality, slower", default_steps: 30, builder: zbase_graph, save_node: "9", negative: true}
   klein: {name: FLUX.2 Klein 4B, file: flux-2-klein-4b-fp8.safetensors, licence: Apache-2.0, version: "4B",
     concept: true, label: FLUX.2 Klein 4B, description: quick drafts, default_steps: 4, builder: klein_graph, save_node: "12", negative: false}
@@ -51,8 +51,8 @@ companions:
   trellis2_dino: {name: DINOv3 ViT-L image encoder (TRELLIS.2), file: dino_v3_vit_l.safetensors, licence: MIT, version: "1.0", used_by: [trellis2]}
   trellis2_shape_vae: {name: TRELLIS.2 shape VAE, file: trellis_2_shape_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
   trellis2_texture_vae: {name: TRELLIS.2 texture VAE, file: trellis_2_texture_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
-  zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zbase, klein]}
-  flux_ae: {name: FLUX autoencoder (ae), file: ae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [zbase, chroma]}
+  zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zturbo, zbase, klein]}
+  flux_ae: {name: FLUX autoencoder (ae), file: ae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [zturbo, zbase, chroma]}
   flux2_vae: {name: FLUX.2 VAE, file: flux2-vae.safetensors, licence: Apache-2.0, version: "2", used_by: [klein]}
   chroma_te: {name: T5-XXL text encoder (fp8 scaled), file: t5xxl_fp8_e4m3fn_scaled.safetensors, licence: Apache-2.0, version: "1.1", used_by: [chroma]}
   anima_te: {name: Qwen 3 0.6B base text encoder, file: qwen_3_06b_base.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "3", used_by: [anima]}

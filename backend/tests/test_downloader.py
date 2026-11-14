@@ -113,8 +113,8 @@ ALLOWED_HOSTS = {
 }
 ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comfy-Org's own packaging; see the report for the re-uploads
     "Comfy-Org/BiRefNet", "Comfy-Org/Chroma1-HD", "Comfy-Org/Qwen-Image-Edit_ComfyUI", "Comfy-Org/Qwen-Image_ComfyUI", "Comfy-Org/TRELLIS.2",
-    "Comfy-Org/flux2-klein-4b", "Comfy-Org/ltx-2", "Comfy-Org/mediapipe", "Comfy-Org/z_image_turbo", "Elena2810/z-image-turbo-fp8-aio",
-    "Phips/4xRealWebPhoto_v4_dat2", "VAST-AI/SkinTokens", "Winnougan/Z-Image-Base-Turbo-INT8-Convrot", "artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
+    "Comfy-Org/flux2-klein-4b", "Comfy-Org/ltx-2", "Comfy-Org/mediapipe", "Comfy-Org/z_image_turbo", "Comfy-Org/z_image",
+    "Phips/4xRealWebPhoto_v4_dat2", "VAST-AI/SkinTokens", "artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
     "artificialguybr/ClayAnimation-Redmond-ZIMAGE", "artificialguybr/PIXELART-REDMOND-ZIMAGETURBO", "artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
     "berkerdooo/qwen-image-edit-2511-camera-angle-lora", "black-forest-labs/FLUX.2-klein-4b-fp8", "circlestone-labs/Anima",
     "comfyanonymous/flux_text_encoders", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", "lightx2v/Qwen-Image-Edit-2511-Lightning",

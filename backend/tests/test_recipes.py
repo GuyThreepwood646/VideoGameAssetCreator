@@ -199,7 +199,7 @@ def test_addon_chain_after_a_checkpoint_loader():
     assert g["addon1"]["class_type"] == "LoraLoaderModelOnly" and g["addon1"]["inputs"]["model"] == ["1", 0]
     assert g["addon1"]["inputs"]["strength_model"] == 0.6 and g["addon1"]["inputs"]["lora_name"].startswith("ZImage\\")
     assert g["2"]["inputs"]["model"] == ["addon1", 0]  # ModelSamplingAuraFlow now reads the chain
-    assert g["3"]["inputs"]["clip"] == ["1", 1] and g["7"]["inputs"]["vae"] == ["1", 2]  # CLIP and VAE untouched
+    assert g["3"]["inputs"]["clip"] == ["1c", 0] and g["7"]["inputs"]["vae"] == ["1v", 0]  # CLIP and VAE untouched
     assert g["3"]["inputs"]["text"] == "a goblin Pixel art style."
     assert cg.concept_graph("zturbo", "a goblin", 1, "p") == cg.zimage_graph("a goblin", 1, "p")
 
