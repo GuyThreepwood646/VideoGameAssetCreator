@@ -295,3 +295,45 @@ def test_use_unity_exe_saves_it(box):
     assert json.loads(machine.read_text(encoding="utf-8"))["backend"]["unity_exe"] == str(exe)
     r = _client().post("/api/tools/unity/use", json={"path": str(tmp / "notunity.exe")})
     assert r.status_code == 400
+
+
+def test_the_user_agent_is_an_honest_client_name_never_a_browser(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["ua"] = req.get_header("User-agent")
+        return io.BytesIO(b"x")
+
+    monkeypatch.setattr(downloader.urllib.request, "urlopen", fake_urlopen)
+    downloader.default_open("https://example.test/f", 0)
+    assert seen["ua"] == f"VGAC-setup/{__import__('vgac').__version__}"
+    assert "Mozilla" not in seen["ua"] and downloader.USER_AGENT == seen["ua"]
+
+
+class MainRefused(FakeNet):
+    """download.blender.org refuses; the official mirrors answer."""
+
+    def __call__(self, url: str, start: int):
+        if "download.blender.org" in url:
+            self.log.append(url)
+            import urllib.error
+            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        return super().__call__(url, start)
+
+
+def test_when_the_main_server_refuses_the_official_mirrors_are_tried(box, monkeypatch):
+    tmp, machine = box
+    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
+    monkeypatch.setattr(setup_settings, "blender_runner", run)
+    net = MainRefused(blender_zip())
+    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
+    assert job.state == "done", job.error
+    mirror_hits = [u for u in net.log if "download.blender.org" not in u]
+    assert any(u.endswith(".zip") for u in mirror_hits) and all(u.startswith("https://") for u in mirror_hits)
+
+
+def test_when_every_server_refuses_the_person_is_told_to_use_their_own_browser(box):
+    job = tools_setup.start_blender_install(opener=FakeNet(b"", refuse=True), runner=runner_for({}), wait=True)
+    assert job.state == "failed" and job.error["code"] == "link_gone"
+    assert "your own browser" in job.error["fix"] and "I downloaded the zip" in job.error["fix"]
+    assert "get around" in job.error["fix"]

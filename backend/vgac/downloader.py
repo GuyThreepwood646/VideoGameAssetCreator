@@ -29,6 +29,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from . import __version__
 
 from .config import PROJECT_DIR, get_settings
 
@@ -38,6 +39,7 @@ GB = 1024**3
 MB = 1024**2
 DOWNLOAD_TIMEOUT = 30
 CHUNK = 1024 * 1024
+USER_AGENT = f"VGAC-setup/{__version__}"  # an honest client name, never a browser's; a server that refuses it is not worked around
 SPACE_MARGIN = 200 * MB  # left free after a download
 
 
@@ -62,7 +64,7 @@ def project_dir() -> Path:  # a function so tests can point it at a scratch fold
 
 
 def default_open(url: str, start: int):  # the one place the network is touched; tests replace the `opener`
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VGAC"}
+    headers = {"User-Agent": USER_AGENT}
     if start:
         headers["Range"] = f"bytes={start}-"
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=DOWNLOAD_TIMEOUT)
@@ -203,6 +205,7 @@ class Spec:
     publisher: bool = True  # False: a community upload, say so
     required: bool | None = None
     note: str = ""
+    gone_fix: str = ""  # what to say when every link is refused or gone (default: get it from the page)
     kind: str = "model"  # model | addon | project_file
 
     @property
@@ -235,7 +238,7 @@ def fetch(spec: Spec, cancel: threading.Event, on_bytes: Callable[[int, int], No
     report = on_bytes or (lambda done, total: None)
     if not (spec.size and have == spec.size):
         try_each(spec.urls, lambda url: stream_to_part(url, spec.part, spec.name, cancel, lambda d: report(d, spec.size), opener),
-                 spec.name, spec.page, where=spec.dest.parent)
+                 spec.name, spec.page, spec.gone_fix, spec.dest.parent)
     size = spec.part.stat().st_size
     if spec.size and size != spec.size:
         raise DownloadError("short", f"{spec.name} is {size} bytes but should be {spec.size}.", "Press Try again; the download carries on where it stopped.")

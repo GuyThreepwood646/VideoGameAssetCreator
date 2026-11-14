@@ -34,6 +34,8 @@ from .downloader import DownloadError, Job, Spec
 log = logging.getLogger("vgac.tools_setup")
 
 BLENDER_TESTED = (5, 2, 3)
+BLENDER_GONE = ("Open blender.org in your own browser, download the Windows zip (portable), and choose it with \"I downloaded the zip\". "
+                "The app does not try to get around a server that refuses it.")
 UNITY_TESTED = "6000.4.3f1"
 UNITY_PAGE = "https://unity.com/download"
 UNITY_TERMS = "https://unity.com/products/unity-personal"
@@ -209,12 +211,27 @@ def parse_sha_file(text: str, name: str) -> str:
     return ""
 
 
-def _read_text(url: str, opener: Callable[[str, int], Any] | None) -> str:
-    try:
-        with (opener or downloader.default_open)(url, 0) as r:
-            return r.read(200_000).decode("utf-8", errors="replace")
-    except Exception as e:  # noqa: BLE001
-        raise downloader.classify(e, "Blender's checksum file", str(downloader.catalogue().get("blender", {}).get("page", "")), "", tools_dir()) from None
+BLENDER_MAIN = "https://download.blender.org/release/"
+
+
+def _with_mirrors(url: str, cat: dict[str, Any]) -> list[str]:
+    """The official address first, then the same path on each of Blender's own mirrors. Never a different kind of address."""
+    urls = [url]
+    if url.startswith(BLENDER_MAIN):
+        urls += [m.rstrip("/") + "/" + url[len(BLENDER_MAIN):] for m in cat.get("mirrors") or [] if isinstance(m, str) and m.startswith("https://")]
+    return urls
+
+
+def _read_text(url: str, opener: Callable[[str, int], Any] | None, cat: dict[str, Any] | None = None) -> str:
+    box: list[str] = []
+
+    def attempt(u: str) -> None:
+        with (opener or downloader.default_open)(u, 0) as r:
+            box.append(r.read(200_000).decode("utf-8", errors="replace"))
+
+    page = str(downloader.catalogue().get("blender", {}).get("page", ""))
+    downloader.try_each(_with_mirrors(url, cat or {}), attempt, "Blender's checksum file", page, BLENDER_GONE, tools_dir())
+    return box[0]
 
 
 def safe_unzip(zip_path: Path, into: Path) -> None:
@@ -254,7 +271,7 @@ def blender_specs(opener: Callable[[str, int], Any] | None) -> list[Spec]:
     name = _blender_zip_name(cat)
     sha = ""
     if cat.get("sha256_file"):
-        sha = parse_sha_file(_read_text(str(cat["sha256_file"]), opener), name)
+        sha = parse_sha_file(_read_text(str(cat["sha256_file"]), opener, cat), name)
     if not sha:
         raise DownloadError("no_checksum", "Blender's checksum for this file could not be read, so nothing was downloaded.",
                             "Open blender.org, download the Windows zip yourself, and choose it with \"I downloaded the zip\".")
@@ -263,8 +280,8 @@ def blender_specs(opener: Callable[[str, int], Any] | None) -> list[Spec]:
     where.mkdir(parents=True, exist_ok=True)
     if downloader.free_bytes(where) < need + downloader.SPACE_MARGIN:
         raise downloader.no_space(where, need + downloader.SPACE_MARGIN)
-    return [Spec(id="blender", name=f"Blender {cat.get('version', '')}", urls=[url], dest=tools_dir() / "downloads" / name,
-                 size=0, sha256=sha, page=str(cat.get("page", "")), kind="tool")]
+    return [Spec(id="blender", name=f"Blender {cat.get('version', '')}", urls=_with_mirrors(url, cat), dest=tools_dir() / "downloads" / name,
+                 size=0, sha256=sha, page=str(cat.get("page", "")), kind="tool", gone_fix=BLENDER_GONE)]
 
 
 def start_blender_install(opener: Callable[[str, int], Any] | None = None, runner: Callable[[Path], str] | None = None,
@@ -300,7 +317,7 @@ def use_blender_zip(zip_path: str, opener: Callable[[str, int], Any] | None = No
         raise DownloadError("bad_zip", f"{p} is not a zip file.", "Choose the Blender zip you downloaded.")
     checked = False
     try:
-        want = parse_sha_file(_read_text(str(cat.get("sha256_file", "")), opener), p.name) if cat.get("sha256_file") else ""
+        want = parse_sha_file(_read_text(str(cat.get("sha256_file", "")), opener, cat), p.name) if cat.get("sha256_file") else ""
     except DownloadError:
         want = ""
     if want:

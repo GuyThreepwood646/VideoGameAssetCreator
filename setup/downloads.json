@@ -473,6 +473,7 @@
   "version": "5.2.3",
   "zip": "https://download.blender.org/release/Blender5.2/blender-5.2.3-windows-x64.zip",
   "sha256_file": "https://download.blender.org/release/Blender5.2/blender-5.2.3.sha256",
+  "mirrors": ["https://ftp.nluug.nl/pub/graphics/blender/release/", "https://mirrors.dotsrc.org/blender/release/"],
   "page": "https://www.blender.org/download/",
   "folder": "blender-5.2.3-windows-x64",
   "size_mb": 400,
