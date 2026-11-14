@@ -241,9 +241,12 @@ def box_blur(a: np.ndarray, r: int) -> np.ndarray:
         p = np.pad(out, pad, mode="edge")
         c = np.cumsum(p, axis=axis)
         n = out.shape[axis]
-        hi = np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=axis)
-        lo = np.take(c, np.arange(0, n), axis=axis)
-        out = (hi - lo) / (2 * r + 1)
+        # the window's ends as slices of the running sum (the same values np.take with index arrays gave, without the
+        # copies: docs/SPEED-AUDIT.md O4 b, about a fifth off every blur)
+        hi = [slice(None)] * out.ndim
+        lo = [slice(None)] * out.ndim
+        hi[axis], lo[axis] = slice(2 * r + 1, 2 * r + 1 + n), slice(0, n)
+        out = (c[tuple(hi)] - c[tuple(lo)]) / (2 * r + 1)
     return out
 
 
