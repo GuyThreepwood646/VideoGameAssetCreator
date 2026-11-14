@@ -109,8 +109,8 @@ def test_second_connection_error_fails_with_a_plain_message(client, flaky):
     jid = out["job"]["id"]
     j = wait_for(lambda: _finished(client, jid), what="the job to fail")
     assert j["status"] == "error" and flaky["calls"] == ["b", "b"]
-    assert j["message"] == ("The graphics engine on test stopped twice while working on this step. Check that it starts "
-                            "(the Health page shows it), then run the step again.")
+    # This engine was started by someone else (the app has no way to start it): the message says so.
+    assert j["message"].startswith("The graphics engine on test stopped answering, and the app does not know where ComfyUI is")
     assert "ConnectError: refused" in j["error"]
     v = client.get(f"/api/versions/{out['version']['id']}").json()
     assert v["status"] == "error"

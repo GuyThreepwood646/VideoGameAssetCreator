@@ -41,7 +41,10 @@ def run_process(cmd: list[str], log_path: Path | None = None, timeout: float | N
 
 def blender_cmd(settings: Settings, script: str, args: list[Any]) -> list[str]:
     if not settings.blender_exe or not Path(settings.blender_exe).is_file():
-        raise ToolError(f"blender_exe not configured or missing: {settings.blender_exe}")
+        from .firstrun import blender_problem
+
+        problem = blender_problem(settings)
+        raise ToolError(" ".join(problem) if problem else "Blender is not set up (blender_exe).")
     script_path = BLENDER_SCRIPTS_DIR / script
     if not script_path.is_file():
         raise ToolError(f"blender script missing: {script_path}")

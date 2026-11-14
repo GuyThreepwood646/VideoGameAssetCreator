@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, my_hair, user_addons
+from . import credits as credits_mod, hairlib, items, my_hair, setup_settings, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -63,6 +63,7 @@ app.include_router(items.router)  # items: empty-handed characters and "Add an i
 app.include_router(__import__("vgac.model_import", fromlist=["router"]).router)  # your own 3D model on step 3 (model_import.py)
 app.include_router(my_hair.router)  # your own hairstyles: add, rename, remove (my_hair.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
+app.include_router(setup_settings.router)  # write this machine's settings from the setup card (setup_settings.py)
 app.include_router(__import__("vgac.packs", fromlist=["router"]).router)  # get the hair library (and later the animation packs) from inside the app (packs.py)
 
 # Exact origins the app is served from: the backend itself (the launcher and the built UI) and the Vite dev server
@@ -300,7 +301,8 @@ async def health() -> dict[str, Any]:
     for (name, inst), summary in zip(settings.instances.items(), summaries):
         instances[name] = {"url": clients[name].base_url, "gpu": inst.gpu, "role": inst.role, **summary,
                            "enabled": queue.is_enabled(name) if queue else True}
-    instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe), "unity": str(settings.unity_exe)}
+    instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe) if settings.blender_exe else None,
+                       "unity": str(settings.unity_exe) if settings.unity_exe else None}
     vm = psutil.virtual_memory()
     return {
         "ok": True,
@@ -323,6 +325,7 @@ async def health() -> dict[str, Any]:
 
 SETUP_CACHE_SECONDS = 60.0
 _setup_cache: dict[str, Any] = {"at": 0.0, "report": None}
+setup_settings.after_change.append(lambda: _setup_cache.update(at=0.0, report=None))
 
 
 @app.get("/api/setup")
@@ -332,7 +335,7 @@ async def setup_check(refresh: bool = False) -> dict[str, Any]:
     one node at a time and reports only found or missing for each expected model file."""
     import time as _time
 
-    from . import preflight
+    from . import firstrun, preflight
 
     now = _time.monotonic()
     if not refresh and _setup_cache["report"] is not None and now - _setup_cache["at"] < SETUP_CACHE_SECONDS:
@@ -344,6 +347,8 @@ async def setup_check(refresh: bool = False) -> dict[str, Any]:
     items = await preflight.run_checks(settings, clients, disabled=set(queue.disabled) if queue else set(),
                                        supervisor=queue.supervisor if queue else None)
     rep = preflight.report(items)
+    rep["first_run"] = firstrun.first_run(settings, items, queue.supervisor if queue else None,
+                                          restart=setup_settings.restart_needed())
     _setup_cache.update(at=_time.monotonic(), report=rep)
     return rep
 

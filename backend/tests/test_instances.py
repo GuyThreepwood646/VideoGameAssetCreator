@@ -442,7 +442,7 @@ def test_no_start_script_means_no_start(settings, monkeypatch: pytest.MonkeyPatc
             assert all(not q.supervisor.can_start(n) for n in unscripted.instances)
             assert await q._prepare("b", "nope") is True
             assert all(x["can_start"] is False for x in q.gpus())
-            with pytest.raises(ValueError, match="no start script"):
+            with pytest.raises(ValueError, match="does not know where ComfyUI"):
                 q.start_engine("b")
         finally:
             await q.stop()
