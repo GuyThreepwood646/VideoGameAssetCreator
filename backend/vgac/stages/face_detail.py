@@ -65,6 +65,7 @@ EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab 
 EYE_PAINTED_MIN = 0.5  # the eye box's mean paint weight
 EYE_MATCH_MIN = 0.6  # the render's eye against the picture's (face.feature_match in the box)
 EYE_SHARP_MIN = 0.4  # the render's sharpness in the eye box over the picture's
+EYE_COVER_STEP_M = 0.002  # hair over an eye is a flap in front of the face: a depth step (per render pixel) this big in the eye's box
 EYE_HAIR_COVER = 0.3  # an unpainted eye whose box is at least this much the model's hair is under the hair
 # Side views (the turnaround's pictures): which picture, from where. The quarter view's side is found by its outline.
 # quarter2 is the three-quarter view from the other side: it takes the side the first one did not.
@@ -139,6 +140,11 @@ CLOSEUP_TRIES_MAX = 3  # one close-up and up to two more with new seeds, each ab
 CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
 LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.980, different faces 0.19 to 0.87
 CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
+# Under a photographic look the hair is judged tone by tone (face.tone_distance, facecloseup hair_tone_shift): the middle colour
+# read 12 to 18 on photographic close-ups whose hair was the same two tones (auburn and grey), over the limit of 10 that was set
+# on painted faces. Tone distance: those same-hair draws 7.0 to 11.4, good stored close-ups 0.8 to 6.2, hair recoloured
+# blond or blue 27.7 and more.
+CLOSEUP_HAIR_TONE_MAX = 15.0
 CLOSEUP_HAIR_MAX = 10.0  # hair colour, the same; good close-ups 1.6 to 3.5, a different hair colour 40 and more
 CLOSEUP_MOVE_MAX = 0.04  # how far the eyes and mouth may sit from the painting's, as a share of the face's width
 CLOSEUP_REASONS = {
@@ -446,7 +452,11 @@ def eye_state(e: dict[str, Any]) -> str | None:
     picture's eye), "eye_blurry" (painted but much softer than the picture's)."""
     painted = float(e.get("painted") or 0.0)
     if painted < EYE_PAINTED_MIN:
-        return "eye_under_hair" if float(e.get("hair") or 0.0) >= EYE_HAIR_COVER else "eye_missing"
+        # the hair mask is colour only: a shadowed cheek or brow of a dark face counts as hair (the live M1-clothed, 0.7 of an
+        # eye box that has no hair over it). Covered means a flap in front of the eye: a step in depth in its box (0.2 to 0.6 mm per
+        # pixel on the false alarms, 3 to 19 on real flaps). Measured runs before the step was recorded keep the old verdict.
+        covered = float(e.get("hair") or 0.0) >= EYE_HAIR_COVER and (e.get("step") is None or float(e["step"]) >= EYE_COVER_STEP_M)
+        return "eye_under_hair" if covered else "eye_missing"
     if e.get("match") is not None and float(e["match"]) < EYE_MATCH_MIN:
         return "eye_missing"
     if e.get("sharp") is not None and float(e["sharp"]) < EYE_SHARP_MIN:
@@ -545,6 +555,13 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     return {"ok": reason is None, "reason": reason, **out}
 
 
+def hair_too_far(m: dict[str, Any], photo: bool, guided: bool = False) -> bool:
+    """The close-up's hair is another colour: tone by tone under a photographic look (when measured), else the middle colour."""
+    if photo and m.get("hair_tone_shift") is not None:
+        return float(m["hair_tone_shift"]) > CLOSEUP_HAIR_TONE_MAX
+    return m.get("hair_shift") is not None and float(m["hair_shift"]) > (CLOSEUP_HAIR_MAX_GUIDED if guided else CLOSEUP_HAIR_MAX)
+
+
 def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False) -> str | None:
     """Why a close-up is not used (a CLOSEUP_REASONS key), from closeup_guard's measures, or None when it is the same
     face. Not measurable colours do not count against it; an unmeasurable fit to the model is left to the paint step's
@@ -565,7 +582,7 @@ def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False
         return "eye_colour"
     if m.get("skin_shift") is not None and float(m["skin_shift"]) > CLOSEUP_SKIN_MAX:
         return "skin_colour"
-    if m.get("hair_shift") is not None and float(m["hair_shift"]) > (CLOSEUP_HAIR_MAX_GUIDED if guided else CLOSEUP_HAIR_MAX):
+    if hair_too_far(m, photo, guided):
         return "hair_colour"
     if m.get("fit_residual") is not None and float(m["fit_residual"]) > LANDMARK_RESIDUAL_MAX:
         return "off_model"
@@ -826,7 +843,7 @@ def own_verdict(guard: dict[str, Any], photo: bool = False) -> tuple[str | None,
         notes.append("eye_colour")
     if m.get("skin_shift") is not None and float(m["skin_shift"]) > CLOSEUP_SKIN_MAX:
         notes.append("skin_colour")
-    if m.get("hair_shift") is not None and float(m["hair_shift"]) > CLOSEUP_HAIR_MAX:
+    if hair_too_far(m, photo):
         notes.append("hair_colour")
     return None, notes
 
@@ -957,7 +974,8 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "tone_spread_texels": spread_n,
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
-        "eyes": eye_measures(toned, after["image"], weight, seg["old_hair"], lm_fit, info),
+        "eyes": eye_measures(toned, after["image"], weight, seg["old_hair"], lm_fit, info,
+                             (view["raster"]["z"], view["mask"])),
         **eye_colour_measure(painted_fitted, after["image"], fitted, info, paint),
         "sides": side_record, "sides_used": [k for k, v in side_record.items() if v.get("used")],
     }
@@ -1126,8 +1144,21 @@ def eye_colour_measure(painted: np.ndarray, after: np.ndarray, fitted: np.ndarra
     return {"eye_colour_painting": a, "eye_colour_model": b, "eye_colour_shift": face.colour_shift(a, b), "eyes_measured": len(eyes)}
 
 
+def depth_step(z: np.ndarray | None, mask: np.ndarray | None, box: np.ndarray) -> float | None:
+    """The biggest jump in depth between neighbouring render pixels inside box, in metres (None without a depth picture)."""
+    if z is None or mask is None:
+        return None
+    zz = np.where(mask, z, np.nan)
+    out = 0.0
+    for d, b in ((np.abs(np.diff(zz, axis=1)), box[:, :-1]), (np.abs(np.diff(zz, axis=0)), box[:-1, :])):
+        v = d[b]
+        if np.isfinite(v).any():
+            out = max(out, float(np.nanmax(v)))
+    return round(out, 5)
+
+
 def eye_measures(picture: np.ndarray, after: np.ndarray, weight: np.ndarray, model_hair: np.ndarray,
-                 lm: dict[str, Any] | None, info: dict[str, Any]) -> list[dict[str, Any]] | None:
+                 lm: dict[str, Any] | None, info: dict[str, Any], depth: tuple[np.ndarray, np.ndarray] | None = None) -> list[dict[str, Any]] | None:
     """Each eye of the picture (fitted to the model) against the painted model's front render, in a box around the eye
     and its lids (face.eye_boxes): {side ("right" or "left": the character's own, so the eye on the viewer's left is
     her right), painted (the box's mean paint weight, 0..1), hair (the share of the box that is the model's hair),
@@ -1145,7 +1176,7 @@ def eye_measures(picture: np.ndarray, after: np.ndarray, weight: np.ndarray, mod
         sp = face.sharpness(picture, box)
         out.append({"side": "right" if i == 0 else "left", "at": [round(x, 1), round(y, 1)],
                     "painted": round(float(weight[box].mean()), 3), "hair": round(float(hair[box].mean()), 3),
-                    "match": face.feature_match(after, picture, wide),
+                    "match": face.feature_match(after, picture, wide), "step": depth_step(*(depth or (None, None)), box),
                     "sharp": round(face.sharpness(after, box) / sp, 3) if sp > 0 else None})
     return out
 
@@ -1486,7 +1517,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     def record_tries(tries: list[dict[str, Any]]) -> None:
         if tries:
             keys = ("prompt", "seed", "ok", "reason", "likeness", "feature_scores", "feature_score_min", "feature_move",
-                    "hair_shift", "skin_texture")
+                    "hair_shift", "hair_tone_shift", "skin_texture")
             closeup["tries"] = [{k: t.get(k) for k in keys} for t in tries]
             closeup["draws"] = len(tries)
 
