@@ -1136,6 +1136,7 @@ def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, ren
     pos = face.interpolate(mesh["verts"], mesh["faces"], render["raster"])
     y0, y1 = zone["neck"]
     v.zone_img = face.smoothstep(y0, y1, pos[..., 1]) * render["mask"] * frame_weight(a, S)
+    v.align = dict(a)  # the fit that placed the picture (checks read it)
     v.size = S
     k = 0.5 * (float(a["sx"]) + float(a["sy"]))
     v.pic_px_m = 1.0 / float(crop["px_per_m"]) / max(k, 1e-6) * pic_n0 / float(PIC_N)
