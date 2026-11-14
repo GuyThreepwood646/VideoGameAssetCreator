@@ -178,6 +178,7 @@ export default function SetupCheck() {
   const extras = report ? report.items.filter((i) => i.state === 'optional' && i.offer) : []
   const [openKit, setOpenKit] = useState<string | null>(null)
   const [unityOpen, setUnityOpen] = useState(false)
+  const [blenderOpen, setBlenderOpen] = useState(false)
   const [comfyOpen, setComfyOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const hash = useLocation().hash
@@ -232,6 +233,17 @@ export default function SetupCheck() {
             </button>
           )}
           {comfyOpen && <ComfyPanel onChanged={() => void reload(true)} onClose={() => setComfyOpen(false)} />}
+        </div>
+      )}
+      {report && !problems.some((p) => p.setting === 'blender_exe') && (
+        <div className="setup-extras">
+          <div className="field-label">Blender</div>
+          {!blenderOpen && (
+            <button type="button" className="small-btn" onClick={() => setBlenderOpen(true)}>
+              Look at my Blender
+            </button>
+          )}
+          {blenderOpen && <ToolPanel tool="blender" onChanged={() => void reload(true)} onClose={() => setBlenderOpen(false)} />}
         </div>
       )}
       {report && !problems.some((p) => p.setting === 'unity_exe') && (
