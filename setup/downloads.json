@@ -412,6 +412,34 @@
    "licence": "Apache-2.0",
    "required": true,
    "note": "Lives in the project's runtime/models folder, not in ComfyUI. Used by backend/vgac/lipmarks.py through the mediapipe Python package; without it the mouth is placed by the older finder. Size and MD5 are Google's (HTTP headers on 2026-11-13); the SHA-256 is that of the owner's copy, whose MD5 matches Google's."
+  },
+  "pose_landmarker": {
+   "url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
+   "page": "https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker",
+   "size": 30664242,
+   "sha256": "64437af838a65d18e5ba7a0d39b465540069bc8aae8308de3e318aad31fcbc7b",
+   "md5_base64": "RT3sTQLMxNPOgStt6E+lFg==",
+   "dest": "runtime/models",
+   "save_as": "pose_landmarker_heavy.task",
+   "publisher": true,
+   "name": "MediaPipe pose landmarker, heavy (arms and legs for the pose check)",
+   "licence": "Apache-2.0",
+   "required": false,
+   "note": "Lives in the project's runtime/models folder. Used by backend/vgac/buildpose.py through the mediapipe Python package: the pose check before the 3D build reads the arms' angle from it and the pose redraw's guard places the body parts with it. Without it the arms are read from the outline and the guard does not compare garments, which the check says. Size and MD5 are Google's (HTTP headers on 2026-11-13) and match the downloaded copy; the SHA-256 is that copy's."
+  },
+  "hand_landmarker": {
+   "url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+   "page": "https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker",
+   "size": 7819105,
+   "sha256": "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+   "md5_base64": "FTGEMOo4UWcP6ZFBFqnPrQ==",
+   "dest": "runtime/models",
+   "save_as": "hand_landmarker.task",
+   "publisher": true,
+   "name": "MediaPipe hand landmarker (open hands or fists for the pose check)",
+   "licence": "Apache-2.0",
+   "required": false,
+   "note": "Lives in the project's runtime/models folder. Used by backend/vgac/buildpose.py through the mediapipe Python package: open hand, fist or not found. Without it the hands are not checked, which the check says. The same file ships inside the comfyui_controlnet_aux node pack (mesh_graphormer folder). Size and MD5 are Google's (HTTP headers on 2026-11-13) and match the downloaded copy; the SHA-256 is that copy's."
   }
  },
  "node_packs": {

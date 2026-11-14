@@ -60,3 +60,5 @@ companions:
   gemma3_12b: {name: Gemma 3 12B text encoder (picture judge), file: gemma_3_12B_it.safetensors, licence: Gemma Terms of Use, version: "3", used_by: [judge]}
   face_model: {name: MediaPipe face landmarker (ComfyUI route), file: mediapipe_face_fp32.safetensors, licence: Apache-2.0, version: "1.0", used_by: [lip points]}
   face_landmarker: {name: MediaPipe face landmarker (eyes and mouth, runtime/models), file: face_landmarker.task, licence: Apache-2.0, version: "1", used_by: [lip points]}
+  pose_landmarker: {name: MediaPipe pose landmarker heavy (pose check, runtime/models), file: pose_landmarker_heavy.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
+  hand_landmarker: {name: MediaPipe hand landmarker (pose check, runtime/models), file: hand_landmarker.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
