@@ -4367,3 +4367,15 @@ button.preset-card:hover:not(:disabled) {
 .pack-choice-what { margin-left: 1.6em; }
 .setup-extras { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); }
 .hair-offer { margin-bottom: var(--s2); }
+.setup-firstrun {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.setup-field {
+  margin-top: 6px;
+}
+.setup-path {
+  flex: 1 1 22rem;
+  min-width: 12rem;
+}

@@ -516,12 +516,41 @@ export type SetupItem = {
   // Optional extras (vgac/packs.py kit id): `kit` is set whenever the item has a guided panel; `offer` only while it is missing.
   kit?: string
   offer?: { kit: string; button: string }
+  // The setting that fixes this item (a key of PUT /api/setup/settings), or '' when it is not one the person can give.
+  setting?: string
+}
+// What the app has and lacks on a machine that may be new (backend/vgac/firstrun.py).
+export type FirstRunItem = { id: string; label: string; detail: string; fix: string; setting: string; needed_for: string[] }
+export type FirstRun = {
+  state: 'settings_problem' | 'not_set_up' | 'partly_set_up' | 'ready'
+  fresh: boolean
+  settings_problem: string
+  missing: FirstRunItem[]
+  optional: FirstRunItem[]
+  configured: { id: string; label: string }[]
+  unchecked: number
+  steps: { stage: string; plain: string; can_run: boolean; missing: string[]; message: string }[]
+  // Settings saved that the running app uses only after it restarts.
+  restart_needed: string[]
 }
 export type SetupReport = {
   summary: { ok: boolean; fails: number; warns: number; unknown: number; affected: string[] }
   items: SetupItem[]
   groups: { id: SetupGroup; label: string }[]
   checked_at: string
+  first_run?: FirstRun
+}
+// PUT /api/setup/settings: one value checked and saved. `applies`: 'now', or 'next_start' (after the app restarts).
+export type SettingChange = {
+  key: string
+  label: string
+  changed: boolean
+  from: string | number | null
+  to: string | number | null
+  applies: 'now' | 'next_start'
+  message: string
+  restart_needed: string[]
+  missing: { id: string; message: string; setting: string }[]
 }
 export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'off'
 export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
@@ -614,6 +643,7 @@ export const api = {
   startGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/start`),
   stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
   setup: (refresh = false) => get<SetupReport>('/api/setup' + (refresh ? '?refresh=1' : '')),
+  setSetting: (key: string, value: string | null) => put<SettingChange>('/api/setup/settings', { key, value }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),
