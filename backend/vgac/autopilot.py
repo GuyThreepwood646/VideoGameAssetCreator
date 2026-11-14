@@ -86,11 +86,39 @@ FACE_HELD_STOP_REASON = (
     "accurate face. Painting it again will not change this. Look at the clean-up step (step 4); building the 3D model "
     "again can give a face the picture fits, or use a clearer picture of the face looking straight at the camera; or "
     "press Resume to carry on as it is.")
-STOP_AND_ASK: tuple[tuple[str, str, Any, str], ...] = (
+POSE_STOP_ASK_TAIL = (
+    " Autopilot never redraws the pose on its own, because a redraw can change your character.")
+POSE_STOP_OFFER = (
+    " \"Pose it for 3D, then draw the sides\" has step 2 redraw the pose (it checks the redraw and keeps your own picture if "
+    "the character changed), or \"Continue anyway\" builds from the picture as it is. Whichever you pick is remembered, so "
+    "it is not asked again for this picture.")
+POSE_STOP_NO_OFFER = (
+    " No pose redraw is offered for this picture. \"Continue anyway\" builds from the picture as it is, and this is not "
+    "asked again for this picture.")
+
+
+def _pose_stop_reason(c: dict[str, Any]) -> str:
+    """What the picture's pose will do to the 3D model and the skeleton, from the pose_for_3d check's own sentence."""
+    v = c.get("vars") or {}
+    words = " ".join(str(v.get("words") or "").split()) or "The pose will join parts of the 3D model."
+    return ("Before the 3D steps: the pose in this picture is likely to cost the skeleton later. " + words
+            + " That shows up in the rig as arms or thighs grown into the body and missing finger bones."
+            + POSE_STOP_ASK_TAIL + (POSE_STOP_OFFER if v.get("offer") else POSE_STOP_NO_OFFER))
+
+
+# Entry: stage, check name, a test of the failed check, and the sentence (a format string over value and limit, or a
+# function of the check). The step 1 pose check asks once per picture; see ASK_ON_EXISTING.
+STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
     ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, FACING_STOP_REASON),
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
+    # a pose that was measured and fails; "not measured" (the cut-out could not be read) is a note on the card
+    ("concept", "pose_for_3d", lambda c: (c.get("vars") or {}).get("measured") is not False, _pose_stop_reason),
 )
+# Steps whose finished version is also asked about when it already exists when the autopilot reaches it (a picture the
+# person added themselves). Each version is asked once: its id goes into the autopilot state's "asked", so Resume, or a
+# later run on the same asset, judges it as it is and carries on.
+ASK_ON_EXISTING = frozenset({"concept"})
 
 
 def attention_reason(v: Version, stop_on: str) -> str | None:
@@ -105,10 +133,17 @@ def attention_reason(v: Version, stop_on: str) -> str | None:
         for c in _failed_checks(v):
             if c.get("name") == name and test(c):
                 value, limit = c.get("value"), c.get("limit")
+                if callable(text):
+                    out.append(text(c))
+                    break
                 out.append(text.format(value=f"{value:g}" if isinstance(value, (int, float)) else value,
                                        limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit))
                 break
     return " ".join(out) or None
+
+
+def _asked_with(state: dict[str, Any], vid: str) -> list[str]:
+    return [*[x for x in (state.get("asked") or []) if x != vid], vid]
 
 
 REDRAW_PAUSE_REASON = "Step 2 redrew your character for 3D (open hands, standing pose). Check the redraw before the 3D build."
@@ -236,7 +271,8 @@ def _settle_fix(aid: str, vid: str, fallback: str | None, stop_on: str) -> bool:
                 return False
             ask = attention_reason(v, stop_on)
             if ask:
-                _set(aid, status="paused", stage=v.stage, version_id=v.id, job_id=None, reason=ask)
+                _set(aid, status="paused", stage=v.stage, version_id=v.id, job_id=None, reason=ask,
+                     asked=_asked_with(get_state(db.get(Asset, aid)), v.id))
                 return False
             pipeline.select(db, v)
             _set(aid, stage=v.stage, version_id=v.id, job_id=None)
@@ -291,6 +327,13 @@ async def _run(aid: str) -> None:
                 fix = state.get("pending_fix")
                 if fix:
                     fstage = fix["stage"]
+                    # A fix at a later step ("Pose it for 3D, then draw the sides" from a paused step 1) builds on the
+                    # version the autopilot paused on: choosing it is keeping that version.
+                    pv = db.get(Version, state["version_id"]) if state.get("version_id") else None
+                    if (pv is not None and pv.asset_id == aid and pv.status == "done" and pv.stage in STAGE_ORDER
+                            and STAGE_ORDER.index(pv.stage) < STAGE_ORDER.index(fstage)
+                            and pipeline.selected(db, aid, pv.stage) is None):
+                        pipeline.select(db, pv)
                     kept = pipeline.selected(db, aid, fstage)
                     later = STAGE_ORDER[STAGE_ORDER.index(fstage) + 1:]
                     # Everything built on the old result is superseded: mark it rejected so it is rebuilt, not re-kept.
@@ -342,6 +385,12 @@ async def _run(aid: str) -> None:
                 for s in STAGE_ORDER:
                     sel = pipeline.selected(db, aid, s)
                     if sel is not None and sel.status == "done":
+                        # A kept picture (the person's own, or one made by hand) is asked about once too.
+                        ask = attention_reason(sel, stop_on) if s in ASK_ON_EXISTING and sel.id not in (state.get("asked") or []) else None
+                        if ask:
+                            _set(aid, status="paused", stage=s, version_id=sel.id, job_id=None, reason=ask,
+                                 stages_done=stages_done, asked=_asked_with(state, sel.id))
+                            return
                         stages_done.append(s)
                         if s == until:
                             break
@@ -374,6 +423,12 @@ async def _run(aid: str) -> None:
                     best = sorted(finished, key=_rank, reverse=True)[0]
                     ok, reason = _passes(best, stop_on)
                     if ok:
+                        # A picture the person added is asked about once (the pose), then carried on with as it is.
+                        ask = attention_reason(best, stop_on) if target in ASK_ON_EXISTING and best.id not in (state.get("asked") or []) else None
+                        if ask:
+                            _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=ask,
+                                 stages_done=stages_done, asked=_asked_with(state, best.id))
+                            return
                         pipeline.select(db, best)
                         _set(aid, stage=target, version_id=best.id, stages_done=stages_done)
                         continue
@@ -418,7 +473,10 @@ async def _run(aid: str) -> None:
                     return
                 redraw = redraw_pause_reason(best, stop_on) or attention_reason(best, stop_on)
                 if redraw:
-                    _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=redraw)
+                    if target in ASK_ON_EXISTING:
+                        pipeline.select(db, best)  # the picture the question is about is the one Resume carries on with
+                    _set(aid, status="paused", stage=target, version_id=best.id, job_id=None, reason=redraw,
+                         asked=_asked_with(get_state(db.get(Asset, aid)), best.id))
                     return
                 pipeline.select(db, best)
                 _set(aid, stage=target, version_id=best.id, job_id=None)

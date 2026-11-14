@@ -372,12 +372,12 @@ def is_stopped(v: "Version") -> bool:
     return v.status == "rejected" and v.error == STOPPED_ERROR
 
 
-def _with_fix_notes(metrics: dict[str, Any]) -> dict[str, Any]:
+def _with_fix_notes(metrics: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
     """The version's metrics with each failed check saying what a person can do about it (fixnotes), also for versions
     stored before that existed. Never raises: a note is a courtesy."""
     try:
         from . import fixnotes
-        return fixnotes.annotate_checks(metrics)
+        return fixnotes.after_fix_notes(fixnotes.annotate_checks(metrics), params)
     except Exception:  # noqa: BLE001
         return metrics
 
@@ -392,7 +392,7 @@ def version_to_dict(v: Version) -> dict[str, Any]:
         "status": v.status,
         "params": v.params,
         "files": v.files,
-        "metrics": _with_fix_notes(v.metrics),
+        "metrics": _with_fix_notes(v.metrics, v.params),
         "job_id": v.job_id,
         "error": v.error,
         "created_at": _iso(v.created_at),

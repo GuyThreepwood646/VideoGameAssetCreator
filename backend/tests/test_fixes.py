@@ -63,7 +63,7 @@ def test_two_ticks_with_one_snippet_are_joined_once():
 
 def test_a_merged_redraw_numbers_its_changes_and_keeps_one_keep_list():
     out = _c(["in_frame", "hair_off_eyes"])["instruction"]
-    assert out.startswith("Make these 2 changes: (1) Redraw the whole person slightly smaller")
+    assert out.startswith("Make these 2 changes: (1) Pull the camera back just far enough")
     assert "(2) Move the hair off the face" in out
     assert out.count("Keep everything else exactly the same:") == 1
     keep = out.split("Keep everything else exactly the same: ")[1]
@@ -146,3 +146,22 @@ def test_each_of_the_six_checks_is_pinned_to_its_own_wording():
         for other, (osid, owords) in expect.items():
             if osid != sid:
                 assert owords not in text, (check, other)  # no wording carries another check's change
+
+
+def test_the_frame_wording_keeps_the_subject_as_large_as_the_picture_allows():
+    ins = _c(["in_frame"])["instruction"]
+    assert "as large as that allows" in ins and "almost the full height" in ins and "slightly smaller" not in ins
+
+
+def test_after_a_frame_redraw_a_short_subject_says_so_and_offers_upscale():
+    from vgac import fixnotes, quality
+    from vgac.readiness import DETAIL_SUBJECT_PX
+
+    short = quality.check("detail_size", False, 744, DETAIL_SUBJECT_PX, vars={"measure": "tall", "target": 930})
+    fine = quality.check("detail_size", True, 940, DETAIL_SUBJECT_PX, vars={"measure": "tall", "target": 930})
+    out = fixnotes.after_fix_notes({"checks": [short]}, {"fix_for": ["in_frame"]})["checks"][0]
+    assert "now 744 pixels tall" in out["fix_note"] and "at least 860" in out["fix_note"] and "Upscale it" in out["fix_note"]
+    assert "fix_note" not in short  # a copy
+    assert "fix_note" not in fixnotes.after_fix_notes({"checks": [fine]}, {"fix_for": ["in_frame"]})["checks"][0]
+    assert fixnotes.after_fix_notes({"checks": [short]}, {"fix_for": ["soft_light"]})["checks"][0].get("fix_note") != out["fix_note"]
+    assert fixnotes.after_fix_notes({"checks": [short]}, {})["checks"][0].get("fix_note") != out["fix_note"]

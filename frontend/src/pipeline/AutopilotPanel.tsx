@@ -249,7 +249,10 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
   const failing = checks.filter((c) => !checkPassed(c))
   // "Fix and continue" only takes a re-run fix; a fix that opens a tool waits for the person.
   // An upscale makes a new step 1 picture to keep, so it is never the autopilot's own "Fix and continue".
-  const firstFix = failing.map((c) => checkFix(c)).find((f) => f !== null && !f.ui && f.op !== 'upscale') ?? null
+  // A pause for the pose (before the 3D steps) offers the pose redraw as the fix and continue, whatever else fails.
+  const poseAsk = ap.status === 'paused' && !!ap.reason?.startsWith('Before the 3D steps')
+  const fixable = poseAsk && failing.some((c) => c.name === 'pose_for_3d' && checkFix(c) !== null) ? failing.filter((c) => c.name === 'pose_for_3d') : failing
+  const firstFix = fixable.map((c) => checkFix(c)).find((f) => f !== null && !f.ui && f.op !== 'upscale') ?? null
   const firstFixCheck = firstFix ? failing.find((c) => checkFix(c)?.label === firstFix.label) : undefined
   const onFix = (f: FixRequest) => (f.op === 'upscale' ? version && void api.upscale(version.id) : f.ui ? onOpenTool?.(f) : actions.fixAndContinue(f))
   const versionFailed = version?.status === 'error'

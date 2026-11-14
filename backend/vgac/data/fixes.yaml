@@ -16,11 +16,12 @@ max_words: 260     # longest the whole instruction may be
 snippets:
   frame:
     checks: [in_frame]
-    change: "Redraw the whole {subject} slightly smaller, so every part of it, hands and feet included, fits inside the picture with a clear margin on all four sides."
+    change: "Pull the camera back just far enough that the whole {subject}, hands and feet included, fits inside the picture with a thin clear margin (about 3 percent) on all four sides. Keep the {subject} as large as that allows: head near the top edge, feet near the bottom edge, filling almost the full height."
     keep: ["the same {subject}", "face", "hair", "clothes", "colours", "pose", "the plain light grey background"]
     drops: ["framing", "the whole body in frame"]
     conflicts: []
-    tested: true     # trial: the check passed on 2 of 3 pictures, in a redraw that also changed the pose; the third still touched the edge
+    tested: false    # reworded 2026-11-14 (it only shrank the person: one redraw left the subject 744 px tall, under the 860 the detail check wants);
+                     # the first wording passed the check on 2 of 3 pictures, in a redraw that also changed the pose; the third still touched the edge
 
   pose_a:
     checks: [arms_away, pose_for_3d]

@@ -150,6 +150,15 @@ def test_create_from_a_picture_and_autopilot_continues_from_it(client, engine):
         if st["status"] in ("done", "error", "paused"):
             break
         time.sleep(0.1)
+    # the picture has its arms down: autopilot asks once about the pose (never redraws it), and Resume carries on
+    assert st["status"] == "paused" and st["stage"] == "concept" and "skeleton" in st["reason"], st
+    client.post(f"/api/assets/{a['id']}/autopilot", json={"until_stage": "turnaround"})
+    t0 = time.time()
+    while time.time() - t0 < 30:
+        st = client.get(f"/api/assets/{a['id']}/autopilot").json()
+        if st["status"] in ("done", "error", "paused"):
+            break
+        time.sleep(0.1)
     assert st["status"] == "done", st
     full = client.get(f"/api/assets/{a['id']}").json()
     assert len(full["stages"]["concept"]) == 1  # the uploaded concept counted as the concept step: nothing painted

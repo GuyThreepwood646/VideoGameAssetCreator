@@ -191,3 +191,28 @@ def annotate_checks(metrics: dict[str, Any]) -> dict[str, Any]:
         annotate(d, name, g or None)
         out.append(d)
     return {**metrics, "checks": out}
+
+
+AFTER_FRAME_NOTE = (
+    "This redraw fitted the whole {sub} inside the picture, and it is now {value} pixels {measure}; the later steps want at "
+    "least {limit}. The picture editor drew it smaller than the frame allows. \"Upscale it\" makes the picture bigger and "
+    "adds the detail back without redrawing the {sub}, or redraw once more.")
+
+
+def after_fix_notes(metrics: dict[str, Any], params: dict[str, Any] | None) -> dict[str, Any]:
+    """The re-check after a redraw made to fit the picture (params.fix_for has in_frame): when the detail_size check now
+    fails, its line says the redraw is what made the subject small and offers Upscale it. A copy; nothing stored changes."""
+    if "in_frame" not in ((params or {}).get("fix_for") or []):
+        return metrics
+    checks = metrics.get("checks") if isinstance(metrics, dict) else None
+    if not isinstance(checks, list):
+        return metrics
+    out: list[Any] = []
+    for c in checks:
+        if (isinstance(c, dict) and (c.get("name") or c.get("id")) == "detail_size" and not bool(c.get("passed", c.get("ok", True)))
+                and isinstance(c.get("value"), (int, float)) and isinstance(c.get("limit"), (int, float))):
+            v = c.get("vars") or {}
+            c = {**c, "fix_note": AFTER_FRAME_NOTE.format(sub="person" if v.get("measure") == "tall" else "subject", value=f"{c['value']:g}",
+                                                           measure=v.get("measure") or "tall", limit=f"{c['limit']:g}")}
+        out.append(c)
+    return {**metrics, "checks": out}
