@@ -272,7 +272,7 @@ export const stages: StageInfo[] = [
     estimate_seconds: 110,
     adjust_schema: [
       { name: 'views', label: 'Views', type: 'multiselect', options: ['front', 'left', 'back', 'right', 'quarter', 'quarter2', 'top'], default: ['front', 'left', 'back', 'right', 'quarter', 'quarter2'] },
-      { name: 'pose_ready', label: 'Pose for 3D first (A-pose, open empty hands)', type: 'boolean', default: null, categories: ['humanoid'] },
+      { name: 'pose_ready', label: 'Pose for 3D first (wide A-pose, open empty hands)', type: 'boolean', default: null, categories: ['humanoid'] },
       { name: 'neutral_mouth', label: 'Close the mouth too', type: 'boolean', default: null, categories: ['humanoid'] },
       {
         name: 'turn_method',

@@ -19,6 +19,14 @@ from vgac.comfy import ComfyClient
 from vgac.stages import base as stage_base
 
 
+@pytest.fixture(autouse=True)
+def _no_pose_finders(monkeypatch):
+    """The pose and hand finders are never asked here: the outline decides, the same on every machine."""
+    from vgac import buildpose
+
+    monkeypatch.setattr(buildpose, "_model", lambda name: None)
+
+
 def wait_job(client: TestClient, job_id: str, timeout: float = 20.0) -> dict[str, Any]:
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -43,7 +51,7 @@ def engine(monkeypatch: pytest.MonkeyPatch):
         return {"outputs": {}, "elapsed_seconds": 0.1}
 
     async def download_image(self, entry, node, dest, instance=None):
-        figure("a", **BIG).save(dest)  # whatever the model was asked for, it draws a ready A-pose figure
+        figure("wide", legs="apart", **BIG).save(dest)  # whatever the model was asked for, it draws a ready A-pose figure
         return Path(dest)
 
     async def cutout(self, image_path, name, instance=None, base=0.0, span=0.1):
@@ -93,7 +101,7 @@ def _asset(client, pid, category="humanoid", **extra):
 def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, settings):
     p = _project(client)
     a = _asset(client, p["id"], prompt="a knight")
-    r = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(cut(figure("a", **BIG)))})
+    r = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(cut(figure("wide", legs="apart", **BIG)))})
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["job"]["kind"] == "concept.upload" and out["version"]["params"]["source"] == "upload"
@@ -103,7 +111,7 @@ def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, setti
     assert v["status"] == "done" and v["selected"] is True
     assert {"image", "original", "cutout", "cutout_white"} <= set(v["files"])
     assert v["metrics"]["source"] == "upload" and v["metrics"]["gate_ok"] is True
-    assert {c["name"] for c in v["metrics"]["checks"]} == {"one_subject", "in_frame", "big_enough", "detail_size", "arms_away"}
+    assert {c["name"] for c in v["metrics"]["checks"]} == {"one_subject", "in_frame", "big_enough", "detail_size", "pose_for_3d"}
     # The stored picture is a plain PNG on light grey, no metadata.
     img = Image.open(settings.library_path / v["files"]["image"])
     assert img.format == "PNG" and img.mode == "RGB" and img.getpixel((2, 2)) == (235, 235, 235)
@@ -161,12 +169,20 @@ def test_note_fills_an_empty_description(client):
 def test_the_redraw_fix_runs_a_refine(client, engine):
     p = _project(client)
     a = _asset(client, p["id"])
-    out = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(figure("down"))}).json()
+    # cut off at the bottom: in_frame fails and its fix is the concept refine with the fixed redraw
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/upload",
+                      json={"image": b64(figure("wide", legs="apart", offset=(0, 120)))}).json()
     wait_job(client, out["job"]["id"])
     v = client.get(f"/api/versions/{out['version']['id']}").json()
-    arms = next(c for c in v["metrics"]["checks"] if c["name"] == "arms_away")
-    assert not arms["passed"] and v["metrics"]["gate_ok"] is False
-    fix = arms["fix"]
+    frame = next(c for c in v["metrics"]["checks"] if c["name"] == "in_frame")
+    assert not frame["passed"] and v["metrics"]["gate_ok"] is False
+    # arms down against the body: pose_for_3d's fix is step 2 with the guarded pose redraw
+    down = client.post(f"/api/assets/{a['id']}/stages/concept/upload", json={"image": b64(figure("down", legs="apart"))}).json()
+    wait_job(client, down["job"]["id"])
+    dv = client.get(f"/api/versions/{down['version']['id']}").json()
+    pose = next(c for c in dv["metrics"]["checks"] if c["name"] == "pose_for_3d")
+    assert not pose["passed"] and pose["fix"]["stage"] == "turnaround" and pose["fix"]["params"] == {"pose_ready": True}
+    fix = frame["fix"]
     assert fix["label"] == "Redraw it ready for 3D" and fix["op"] == "refine"
     r = client.post(f"/api/versions/{v['id']}/refine", json={"instruction": fix["instruction"], "params": fix["params"]})
     assert r.status_code == 200

@@ -111,21 +111,32 @@ def _checks(im, category=HUMANOID):
     return {c["name"]: c for c in readiness.concept_checks(cut(im), category)}
 
 
-def test_a_pose_figure_is_ready():
-    c = _checks(figure("a", **BIG))
-    assert all(x["passed"] for x in c.values()), c
-    assert set(c) == {"one_subject", "in_frame", "big_enough", "detail_size", "arms_away"}
+@pytest.fixture(autouse=True)
+def _no_pose_finders(monkeypatch):
+    """The pose and hand finders are never asked here: the outline decides, the same on every machine."""
+    from vgac import buildpose
+
+    monkeypatch.setattr(buildpose, "_model", lambda name: None)
+
+
+def test_wide_a_pose_figure_is_ready():
+    c = _checks(figure("wide", legs="apart", **BIG))
+    assert all(x["passed"] for x in c.values()), {n: x.get("help") for n, x in c.items() if not x["passed"]}
+    assert set(c) == {"one_subject", "in_frame", "big_enough", "detail_size", "pose_for_3d"}
     assert all(x["severity"] == "warn" for x in c.values())
 
 
-def test_t_pose_passes_and_arms_down_warns_with_the_redraw_fix():
-    assert _checks(figure("t"))["arms_away"]["passed"]
-    arms = _checks(figure("down"))["arms_away"]
+def test_t_pose_passes_and_arms_down_warns_with_the_pose_redraw_fix():
+    assert _checks(figure("t", legs="apart"))["pose_for_3d"]["passed"]
+    arms = _checks(figure("down", legs="apart"))["pose_for_3d"]
     assert not arms["passed"] and arms["severity"] == "warn"
-    assert arms["fix_label"] == "Redraw it ready for 3D"
-    assert arms["fix"] == {"stage": "concept", "op": "refine", "instruction": readiness.HUMANOID_REDRAW, "params": {},
-                           "label": "Redraw it ready for 3D"}
-    assert "arms are close to the body" in arms["help"]
+    assert arms["fix_label"] == "Pose it for 3D, then draw the sides"
+    assert arms["fix"] == {"stage": "turnaround", "params": {"pose_ready": True}, "label": "Pose it for 3D, then draw the sides"}
+    assert "Both arms hang close to the body" in arms["help"]
+    assert "Not measured: the arms were read from the outline" in arms["help"]
+    # feet side by side: the thighs
+    legs = _checks(figure("wide"))["pose_for_3d"]
+    assert not legs["passed"] and "thighs" in legs["help"]
 
 
 def test_two_subjects_cropped_and_small_pictures_warn():
@@ -145,14 +156,15 @@ def test_two_subjects_cropped_and_small_pictures_warn():
 def test_props_measure_across_and_skip_the_arms_check():
     prop = reference.category("prop_rigid")
     c = _checks(figure("down"), prop)
-    assert "arms_away" not in c and "pixels across" in c["big_enough"]["help"]
+    assert "pose_for_3d" not in c and "arms_away" not in c and "pixels across" in c["big_enough"]["help"]
 
 
 def test_redraw_instruction_uses_each_category_pose_block():
-    assert readiness.redraw_instruction(reference.category("humanoid")) == (
-        "Redraw this same character with the same design, colours and outfit, standing in a relaxed A-pose with each hand "
-        "open and empty, back of the hand toward the camera, fingers straight and slightly spread, nothing held in "
-        "either hand and no hand in a pocket or hidden, whole body in frame, plain light grey background, even lighting")
+    from vgac import buildpose
+
+    text = readiness.redraw_instruction(reference.category("humanoid"))
+    assert text.startswith("Redraw this same character with the same design, colours and outfit, standing in a wide A pose: ")
+    assert buildpose.A_POSE in text and text.endswith("plain light grey background, even lighting.")
     for cid in ("quadruped", "prop_rigid", "vehicle"):
         cat = reference.category(cid)
         text = readiness.redraw_instruction(cat)
@@ -225,7 +237,7 @@ def test_style_description_is_one_short_paragraph():
 
 
 def test_guide_sentences_for_the_new_checks_have_no_placeholders_left():
-    for name in ("one_subject", "in_frame", "big_enough", "detail_size", "arms_away", "even_lighting", "straight_on"):
+    for name in ("one_subject", "in_frame", "big_enough", "detail_size", "arms_away", "pose_for_3d", "even_lighting", "straight_on"):
         g = guidance.CHECK_GUIDE[name]
         assert g["severity"] == "warn"
 

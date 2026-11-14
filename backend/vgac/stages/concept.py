@@ -194,7 +194,9 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
         return
     sc.progress(0.96, "checking it is ready for 3D")
     try:
-        checks = await asyncio.to_thread(readiness.concept_checks, cutout, sc.category)
+        held = getattr(getattr(sc, "asset", None), "held_item", None) or {}
+        checks = await asyncio.to_thread(readiness.concept_checks, cutout, sc.category,
+                                         (held.get("label") or "item") if held else None)
     except (OSError, ValueError) as e:  # an unreadable cutout: no readiness checks, never a failed picture
         sc.set_metrics(readiness_error=str(e)[:200])
         return
