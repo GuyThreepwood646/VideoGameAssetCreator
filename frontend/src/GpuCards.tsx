@@ -315,7 +315,7 @@ function GpuRow({ gpu: g, busy, onChange, onStart, onStop }: RowProps) {
             <div className="muted small">
               {g.keep_loaded_how === 'unsupported'
                 ? 'This ComfyUI is too old for this option.'
-                : 'Uses computer memory (RAM) while it is on, not card memory: the models stay ready between draws, which saves 30 to 45 seconds when a small step runs between two draws. They are let go when the computer runs short of memory, when the card is lent to another step, or when the engine is shut down.'}
+                : 'Uses computer memory (RAM), not card memory: about 17 GB on the test PC while the picture-editing model is kept. The models stay ready between draws, which saves 10 to 45 seconds when a small step runs between two draws. They are let go when a clean-up or another step needs the memory, when the card is lent to another step, or when the engine is shut down.'}
               {g.keep_loaded_how === 'app' && g.reachable && g.keep_loaded_applied === false && (g.keep_loaded ?? true)
                 ? ' It starts working the next time the app starts this engine (it was started without it).' : ''}
               {g.keep_loaded_flag && g.owned === false
