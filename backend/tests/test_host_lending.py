@@ -176,3 +176,52 @@ def test_step_2_still_borrows_with_no_arguments(settings, monkeypatch):
     jid = queued_job("b", "turnaround.run")
     asyncio.run(q.workers["b"]._execute(jid))
     assert seen["instance"] == "a" and q.leases == {}
+
+
+# --- the face pass takes the card of its first close-up as a lease (only=) -------------------------------------------
+
+def test_the_card_the_first_close_up_is_drawn_on_is_taken_as_a_lease(settings):
+    q = make_queue(settings, b=FakeClient("b", free_gb=2.0))     # short of memory: no audit for this lease
+    lease, why = asyncio.run(q.lend(HOST, "prep1", PICTURES, None, "b"))
+    assert lease is not None and lease.instance == "b" and why == ""
+    assert q.workers["b"].lent_to == "prep1" and q._card_takes("b") is False
+    # the second card is still lent beside it, avoiding the first
+    second, _ = asyncio.run(q.lend(HOST, "prep1", PICTURES, "b"))
+    assert second is not None and second.instance == "a"
+    q.end_leases("prep1")
+    assert q.leases == {} and q.workers["b"].lent_to is None and q.workers["a"].lent_to is None
+
+
+def test_a_card_running_a_job_or_with_work_waiting_is_not_taken_and_nothing_changes(settings):
+    q = make_queue(settings)
+    q.workers["b"].current_job_id = "rig"
+    lease, why = asyncio.run(q.lend(HOST, "prep1", PICTURES, None, "b"))
+    assert lease is None and "busy with another step" in why and q.workers["b"].lent_to is None
+    q.workers["b"].current_job_id = None
+    queued_job("b", "rig.run")
+    lease, why = asyncio.run(q.lend(HOST, "prep1", PICTURES, None, "b"))
+    assert lease is None and "has work waiting" in why
+
+
+def test_only_a_card_the_app_knows(settings):
+    q = make_queue(settings)
+    lease, why = asyncio.run(q.lend(HOST, "prep1", PICTURES, None, "zz"))
+    assert lease is None and "cannot be taken" in why and q.leases == {}
+
+
+def test_the_face_pass_claims_its_card_through_the_host_worker_and_the_job_end_hands_it_back(settings, monkeypatch):
+    seen = {}
+
+    async def execute(ctx, kind, payload):
+        sc = SimpleNamespace(ctx=ctx)
+        home = await fd.claim_card(sc, "b")
+        second, _ = await fd.borrow_card(sc, "b")
+        seen["home"], seen["second"] = home.instance, second.instance
+        seen["lent"] = (q.workers["b"].lent_to, q.workers["a"].lent_to)
+        raise jobs.JobCancelled()
+
+    q = make_queue(settings)
+    status = _run_host_job(q, execute, monkeypatch)
+    assert seen["home"] == "b" and seen["second"] == "a" and all(seen["lent"])
+    assert status == "cancelled" and q.leases == {}
+    assert q.workers["a"].lent_to is None and q.workers["b"].lent_to is None

@@ -26,6 +26,8 @@ the job hands it back when it ends, fails or is stopped (Lease.end), and the wor
 when the job finishes. Turning the lent card off takes it back from the job (Lease.revoked). The host lane borrows
 too (item 20b: the clean-up's face pass draws a second close-up at once): its job runs on no card, so it names the
 kind of work the card must be allowed (`kind`, pictures) and the card already drawing its first close-up (`avoid`).
+The face pass also takes the card it draws its first close-up on as a lease (`only`, no memory audit: it draws there
+in any case), so the queue does not start other work on that card or lend it while the close-ups are drawn.
 
 On-demand start (instances.py): before a job runs on a card the backend can start (engine settings or a start
 script), the worker calls Supervisor.ensure_running. While the instance starts the job stays queued with "Starting the graphics engine on
@@ -441,8 +443,9 @@ class JobContext:
     reroute_to: str | None = None
     reroute_message: str = ""
     # Borrow a second card for part of this job (JobQueue.lend): awaited with nothing, or with kind= (the work the
-    # card must be allowed, default this job's kind) and avoid= (a card not to lend, the one the job already draws
-    # on); returns (Lease or None, the plain reason when None). None: this job cannot borrow (tests).
+    # card must be allowed, default this job's kind), avoid= (a card not to lend, the one the job already draws on)
+    # and only= (that card and no other); returns (Lease or None, the plain reason when None). None: this job cannot
+    # borrow (tests).
     borrow: Callable[..., Awaitable[tuple["Lease | None", str]]] | None = None
 
     @property
@@ -720,8 +723,9 @@ class InstanceWorker:
         if self.lend is not None:
             lend, here, job_kind = self.lend, self.name, kind
 
-            def borrow(kind: str | None = None, avoid: str | None = None) -> Awaitable[tuple[Lease | None, str]]:
-                return lend(here, job_id, kind or job_kind, avoid)
+            def borrow(kind: str | None = None, avoid: str | None = None,
+                       only: str | None = None) -> Awaitable[tuple[Lease | None, str]]:
+                return lend(here, job_id, kind or job_kind, avoid, only)
 
             ctx.borrow = borrow
         self.current_ctx = ctx
@@ -1437,13 +1441,19 @@ class JobQueue:
                     return f"work is waiting that {gpu} would take over"
         return None
 
-    async def lend(self, borrower: str, job_id: str, kind: str, avoid: str | None = None) -> tuple[Lease | None, str]:
+    async def lend(self, borrower: str, job_id: str, kind: str, avoid: str | None = None,
+                   only: str | None = None) -> tuple[Lease | None, str]:
         """Lend a second card to the running job `job_id` (on card `borrower`, or the host, needing `kind` of work), when
         one is free: on, allowed the work, idle, nothing waiting it would take, its engine already answering (never
         started for this: a start and a first model load take longer than they save) and LEND_MIN_ROOM_GB of memory
-        for the engine. `avoid`: a card not to lend (the host job already draws on it). Returns (Lease, "") or (None,
-        the plain reason why not, for the step's record)."""
+        for the engine. `avoid`: a card not to lend (the host job already draws on it). `only`: that card or none, and
+        no memory audit (the host job draws there whether lent or not; the lease only keeps other work off it).
+        Returns (Lease, "") or (None, the plain reason why not, for the step's record)."""
         others = [n for n in self.settings.instances if n != borrower and n != avoid]
+        if only is not None:
+            others = [n for n in others if n == only]
+            if not others:
+                return None, f"{gpu_name(only, self.settings)} cannot be taken for this step"
         if not others:
             if len(self.settings.instances) <= 1:
                 return None, "this computer has one graphics card"
@@ -1466,7 +1476,7 @@ class JobQueue:
                 room = engine_room_gb(summary)
                 if not (summary and summary.get("reachable")):
                     why = f"the graphics engine on {gpu} is not running"
-                elif room is not None and room < LEND_MIN_ROOM_GB:
+                elif only is None and room is not None and room < LEND_MIN_ROOM_GB:
                     after, freed = await self._room_after_freeing(name, kind, client)
                     if after is not None and after >= LEND_MIN_ROOM_GB:
                         note = (f"{gpu} let go of the models it was keeping loaded, so it had the memory to help "
