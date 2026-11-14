@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type Health } from './api'
+import { api, type Health, type HealthInstance } from './api'
 import { Link } from 'react-router'
 import GpuCards from './GpuCards'
 import SetupCheck from './SetupCheck'
@@ -12,6 +12,23 @@ const GB = 1024 ** 3
 function gb(bytes: number | null | undefined): string {
   if (bytes == null) return '?'
   return (bytes / GB).toFixed(1)
+}
+
+// One word for a card: off, not running, working for the app, busy with another program, or ready.
+function cardState(inst: HealthInstance): string {
+  if (inst.enabled === false) return 'Turned off'
+  if (!inst.reachable) return 'Starts when needed'
+  if (inst.working) return 'Working'
+  if (inst.busy_outside) return 'In use by another program'
+  return 'Ready'
+}
+
+// Free memory in GB, from the card itself when the app could read it; the engine's own figure is marked as such.
+function cardFree(inst: HealthInstance): string | null {
+  const m = inst.memory
+  if (m && m.free_gb != null) return m.source === 'card' ? `${m.free_gb.toFixed(1)} GB free` : `${m.free_gb.toFixed(1)} GB free, as the engine reports it`
+  const d = inst.devices?.[0]
+  return d?.vram_free != null ? `${gb(d.vram_free)} GB free, as the engine reports it` : null
 }
 
 export function useHealth(intervalMs = 5000) {
@@ -121,12 +138,13 @@ export function HealthBadge() {
           </Link>
         )}
         {Object.entries(health.instances).map(([name, inst]) => {
-          const state = inst.enabled === false ? 'Turned off' : inst.reachable ? 'Ready' : 'Starts when needed'
+          const state = cardState(inst)
+          const free = inst.reachable ? cardFree(inst) : null
           return (
             <div key={name} className="health-inst" title={`${inst.gpu} / ${inst.role} / ${inst.url}${inst.error ? ' / ' + inst.error : ''}`}>
               <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
               {inst.gpu || name}: {state}
-              {inst.reachable && inst.devices?.[0]?.vram_free != null ? <span className="muted"> ({gb(inst.devices[0].vram_free)} GB free)</span> : null}
+              {free ? <span className="muted"> ({free})</span> : null}
             </div>
           )
         })}
@@ -153,15 +171,19 @@ export default function HealthPanel() {
                 <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
                 {inst.gpu || `Card ${name}`}
               </span>
-              <span className="meta">
-                {inst.enabled === false ? 'Turned off' : inst.reachable ? 'Ready' : 'Starts when needed'}
-              </span>
+              <span className="meta">{cardState(inst)}</span>
             </div>
             <div className="meta">
               {inst.gpu} / {inst.role} / {inst.url}
               {inst.comfyui_version ? ` / ComfyUI ${inst.comfyui_version}` : ''}
             </div>
-            {inst.reachable ? (
+            {inst.reachable && inst.memory?.source === 'card' && inst.memory.used_gb != null && inst.memory.total_gb != null ? (
+              <div className="device">
+                {inst.memory.used_gb.toFixed(1)} of {inst.memory.total_gb.toFixed(1)} GB used on the card
+                {inst.memory.others_gb != null && inst.memory.others_gb >= 1.5 ? `, ${inst.memory.others_gb.toFixed(1)} GB of it by other programs` : ''}
+                {inst.memory.util != null ? ` / ${inst.memory.util}% busy` : ''}
+              </div>
+            ) : inst.reachable ? (
               (inst.devices ?? []).map((d, i) => (
                 <div className="device" key={i}>
                   {d.name ?? d.type ?? 'device'}: {d.vram_total != null && d.vram_free != null ? gb(d.vram_total - d.vram_free) : "?"} of {gb(d.vram_total)} GB used

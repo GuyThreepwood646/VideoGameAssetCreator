@@ -72,6 +72,17 @@ def _never_touch_live_comfy(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_card_figures(monkeypatch: pytest.MonkeyPatch):
+    """Tests never read this machine's cards (nvidia-smi): cardmem answers "no figures" unless a test says otherwise."""
+    from vgac import cardmem
+
+    cardmem.forget()
+    monkeypatch.setattr(cardmem, "runner", lambda: None)
+    yield
+    cardmem.forget()
+
+
+@pytest.fixture(autouse=True)
 def _own_hair_stays_out_of_tests_without_a_temporary_library(request, monkeypatch: pytest.MonkeyPatch):
     """A test that does not use the temporary-library fixture would read the person's real my_hair/ folder, and the
     built-in library tests (all CC0, all with files in the app's data folder) would see their own hairstyles."""

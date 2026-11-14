@@ -51,7 +51,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from sqlalchemy import func, select
 
-from . import comfy_inputs, prefs
+from . import cardmem, comfy_inputs, prefs
 from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
@@ -1473,20 +1473,28 @@ class JobQueue:
                 client = self.clients.get(name)
                 summary = await client.cached_vram_summary(5.0) if client is not None else None
                 gpu = gpu_name(name, self.settings)
-                room = engine_room_gb(summary)
+                room, source = await self._card_room(name, summary)
+                said = "" if source == "card" else " (as its engine reports it; the card's own figure could not be read)"
                 if not (summary and summary.get("reachable")):
                     why = f"the graphics engine on {gpu} is not running"
                 elif only is None and room is not None and room < LEND_MIN_ROOM_GB:
-                    after, freed = await self._room_after_freeing(name, kind, client)
+                    own = cardmem.own_gb(summary)
+                    if source == "card" and own is not None and own < cardmem.OWN_RECLAIMABLE_MIN_GB:
+                        # The engine holds next to nothing: unloading cannot help, another program holds the memory.
+                        after, freed = None, False
+                    else:
+                        after, freed = await self._room_after_freeing(name, kind, client)
                     if after is not None and after >= LEND_MIN_ROOM_GB:
                         note = (f"{gpu} let go of the models it was keeping loaded, so it had the memory to help "
                                 f"({room:.1f} GB before, {after:.1f} GB after)")
                         why = self._lend_refusal(name, kind)
                     else:
                         now = after if after is not None else room
-                        why = f"{gpu} has {now:.1f} GB of memory for drawing, {LEND_MIN_ROOM_GB:.0f} GB are needed"
+                        why = f"{gpu} has {now:.1f} GB of memory for drawing, {LEND_MIN_ROOM_GB:.0f} GB are needed{said}"
                         if freed:
                             why += " (even after it let go of its own models: another program holds the rest)"
+                        elif source == "card" and after is None and own is not None and own < cardmem.OWN_RECLAIMABLE_MIN_GB:
+                            why += " (another program is using the card)"
                 else:
                     # The answer took a moment: look again, then mark it lent with no await in between.
                     why = self._lend_refusal(name, kind)
@@ -1528,7 +1536,21 @@ class JobQueue:
             return None, True
         if not (fresh and fresh.get("reachable")):
             return None, True
-        return engine_room_gb(fresh), True
+        return (await self._card_room(name, fresh, fresh_read=True))[0], True
+
+    async def _card_room(self, name: str, summary: dict[str, Any] | None,
+                         fresh_read: bool = False) -> tuple[float | None, str]:
+        """(GB the engine on `name` could use now, "card" or "engine"): the driver's free memory of its card (every
+        process counted, cardmem), else the engine's own figure (engine_room_gb, which under DynamicVRAM sees only
+        its own process)."""
+        try:
+            cards = await asyncio.to_thread(cardmem.read, 0.0 if fresh_read else cardmem.CACHE_SECONDS)
+        except Exception:  # noqa: BLE001
+            cards = None
+        card = cardmem.card_of(self.settings, name, summary, cards)
+        if card is None:
+            return engine_room_gb(summary), "engine"
+        return cardmem.room(summary, card)
 
     def _note_running_job(self, job_id: str, text: str) -> None:
         """Show `text` as the running job's message (it is replaced by the job's next progress words)."""
@@ -1685,7 +1707,12 @@ class JobQueue:
 
     async def refresh_engines(self) -> None:
         """Notice an engine that came up or went away on its own (one cached /system_stats per card), so the card's
-        state, and the "gpus" event, follow it. An engine that comes up after a failed start clears the failure."""
+        state, and the "gpus" event, follow it. An engine that comes up after a failed start clears the failure.
+        Also reads the cards' own memory figures (cardmem, in a thread) for the panels."""
+        try:
+            await asyncio.to_thread(cardmem.read)
+        except Exception:  # noqa: BLE001
+            pass
         sup = self.supervisor
         if sup is None:
             return
@@ -1829,8 +1856,16 @@ class JobQueue:
             if reachable:
                 dev = (summary.get("devices") or [{}])[0] or {}
                 total, free = dev.get("vram_total"), dev.get("vram_free")
+                card = cardmem.card_of(self.settings, name, summary, cardmem.last())
+                memory = cardmem.describe(card, summary)
+                if card is not None:
+                    total, free = card.total_gb * GB, card.free_gb * GB
                 entry["vram_total_mb"] = round(total / MB) if isinstance(total, (int, float)) else None
                 entry["vram_free_mb"] = round(free / MB) if isinstance(free, (int, float)) else None
+                # Where the figures come from ("card": the driver, every program; "engine": the engine's own view),
+                # and whether something other than the app is using the card now.
+                entry["memory"] = memory
+                entry["busy_outside"] = cardmem.outside_use(summary, card, bool(cur))
             out.append(entry)
         return out
 

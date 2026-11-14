@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, library, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, library, own_images, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -297,10 +297,23 @@ async def health() -> dict[str, Any]:
     queue = active_queue()
     clients = {name: (queue.clients.get(name) if queue else None) or _health_client(name, inst.url) for name, inst in settings.instances.items()}
     summaries = await asyncio.gather(*(c.cached_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values()))
+    try:
+        cards = await asyncio.to_thread(cardmem.read)
+    except Exception:  # noqa: BLE001
+        cards = None
+    st = queue.status() if queue else {}
     instances = {}
     for (name, inst), summary in zip(settings.instances.items(), summaries):
+        # `memory`: the card's own figures from the driver (every program on it), else the engine's own view,
+        # labelled by `source`. `working`: the app has a job on the card or lent it. `busy_outside`: something
+        # else is using it while the app is not.
+        card = cardmem.card_of(settings, name, summary, cards)
+        s = st.get(name, {})
+        working = bool(s.get("current_job_id") or s.get("lent_to"))
         instances[name] = {"url": clients[name].base_url, "gpu": inst.gpu, "role": inst.role, **summary,
-                           "enabled": queue.is_enabled(name) if queue else True}
+                           "enabled": queue.is_enabled(name) if queue else True,
+                           "memory": cardmem.describe(card, summary), "working": working,
+                           "busy_outside": cardmem.outside_use(summary, card, working)}
     instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe) if settings.blender_exe else None,
                        "unity": str(settings.unity_exe) if settings.unity_exe else None}
     vm = psutil.virtual_memory()

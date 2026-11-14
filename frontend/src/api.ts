@@ -625,6 +625,20 @@ export type HealthInstance = {
   devices: HealthDevice[]
   // False when the card is turned off in the app (Graphics cards).
   enabled?: boolean
+  // The card's memory: from the driver ("card": every program on it) or, without nvidia-smi, the engine's own view
+  // ("engine"). In GB.
+  memory?: HealthMemory
+  // The app has a job on this card or lent it; something other than the app is using it while the app is not.
+  working?: boolean
+  busy_outside?: boolean
+}
+export type HealthMemory = {
+  source: 'card' | 'engine'
+  total_gb: number | null
+  used_gb: number | null
+  free_gb: number | null
+  util: number | null
+  others_gb: number | null
 }
 export type Health = {
   ok: boolean
