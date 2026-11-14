@@ -612,3 +612,19 @@ def test_a_three_quarter_built_from_picture_on_the_back_is_refused() -> None:
     front_pic = turned(picture=170.0)["picture"]
     front_pic.info["front_view"] = True  # a front picture is the front: not judged here
     assert srcproject.picture_contradicts_front(front_pic, 0.0) is None
+
+
+def test_the_chin_fill_takes_no_colour_from_the_collar() -> None:
+    mesh = model()
+    atlas = srcproject.Atlas(mesh, T)
+    y = atlas.pos[:, 1]
+    base = np.full((T, T, 3), 0.1)
+    green = np.array([0.25, 0.35, 0.2])  # a jacket collar the body fits painted just below the gap
+    paint = np.where((y > 0.0)[:, None], SKIN, green) * np.ones((atlas.idx.size, 3))
+    alpha = ((y > 0.0) | (y < -0.08)).astype(np.float64)
+    under = ((y < 0.0) & (y > -0.08)).astype(np.float64)
+    zt = {"face": np.zeros(atlas.idx.size), "keep": np.zeros(atlas.idx.size, dtype=bool), "under": under,
+          "head_painted": y > 0.0}
+    new = srcproject.finish(atlas, base, paint, alpha, zt).reshape(-1, 3)[atlas.idx]
+    strip = (under > 0) & ~atlas.is_gut
+    assert np.abs(new[strip] - SKIN).max() < 0.05  # skin, not mixed with the collar's green

@@ -1056,6 +1056,16 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray,
             # from both its borders, the jaw above and the neck below, with their shading (shaded_fill), not as one
             # colour (one colour read as a flat patch with an edge against the face on the live W2-clothed run)
             sel_p = (alpha > 0.5) & ~atlas.is_gut
+            hp = zt.get("head_painted")
+            if hp is not None and (sel_p & hp).sum() >= 200:
+                # its colour from the head views' paint, and from the body fits' only where that is skin: the body fits
+                # also paint the collar beside the neck (M1-clothed's green jacket made the fill brown-green, W2-clothed's
+                # cream cardigan made it cream)
+                head_lab = face.to_lab(paint[sel_p & hp][None])[0]
+                skin = np.median(head_lab, axis=0)
+                lab = face.to_lab(paint[None])[0]
+                skin_like = np.linalg.norm((lab - skin) * np.array([0.5, 1.0, 1.0]), axis=1) < SKIN_TOL
+                sel_p = sel_p & (hp | skin_like)
             field, reach = shaded_fill(atlas, paint, sel_p)
             took = under * (reach > 0.05)
             out = out * (1 - took[:, None]) + field * took[:, None]
@@ -1492,6 +1502,9 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
     if "head" in parts and "body" in parts and zone and zone.get("neck") and zone.get("chin"):
         paint_ = neck_tone_match(atlas, parts, zone, paint_)
     extra: dict[str, Any] = {}
+    if atlas.zone is not None:  # which texels the head views painted (the chin fill's colour comes from them, see finish)
+        hv = np.array([v.name.startswith(HEAD_VIEW) for v in views] + [False])
+        atlas.zone["head_painted"] = hv[np.where(dom >= 0, dom, len(views))]
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
             "fill": extra.get("fill"), "under_fill": extra.get("under_fill")}
