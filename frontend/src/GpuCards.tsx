@@ -204,7 +204,9 @@ export default function GpuCards() {
 type RowProps = { gpu: Gpu; busy: boolean; onChange: (patch: GpuPatch) => void; onStart: () => void; onStop: () => void }
 
 function GpuRow({ gpu: g, busy, onChange, onStart, onStop }: RowProps) {
-  const used = g.vram_total_mb != null && g.vram_free_mb != null ? g.vram_total_mb - g.vram_free_mb : null
+  const used = g.memory?.source === 'card' && g.memory.used_gb != null
+    ? g.memory.used_gb * 1024
+    : g.vram_total_mb != null && g.vram_free_mb != null ? g.vram_total_mb - g.vram_free_mb : null
   const name = g.gpu || `Card ${g.instance}`
   const status = gpuStatusText(g)
   const switchId = `gpu-switch-${g.instance}`

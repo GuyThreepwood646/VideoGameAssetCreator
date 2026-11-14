@@ -1134,7 +1134,13 @@ async def _gpu_list(q: JobQueue) -> list[dict[str, Any]]:
     names = list(q.settings.instances)
     summaries = await asyncio.gather(*((q.clients.get(n) or _health_client(n, q.settings.instances[n].url)).cached_vram_summary(HEALTH_STATS_MAX_AGE)
                                        for n in names))
-    return q.gpus(dict(zip(names, summaries)))
+    # The same read (and 3 s cache) as /api/health, so the card panel and the Checks list show one figure; the
+    # "gpus" event, sent without a read, carries the idle loop's last one.
+    try:
+        cards = await asyncio.to_thread(cardmem.read)
+    except Exception:  # noqa: BLE001
+        cards = None
+    return q.gpus(dict(zip(names, summaries)), cards)
 
 
 @app.get("/api/gpus")

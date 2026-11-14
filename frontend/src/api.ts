@@ -479,6 +479,9 @@ export type Gpu = {
   reachable: boolean
   vram_total_mb?: number | null
   vram_free_mb?: number | null
+  // Where the figures come from and the card's used memory (see HealthMemory): the panel shows used_gb when the
+  // source is "card", so it agrees with the Checks list.
+  memory?: HealthMemory
   current_job_id: string | null
   current_job?: GpuCurrentJob | null
   queued: number

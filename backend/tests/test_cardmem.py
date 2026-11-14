@@ -199,3 +199,31 @@ def test_health_carries_the_figures(client, monkeypatch):
     for name in ("a", "b"):
         inst = h["instances"][name]
         assert "memory" in inst and inst["working"] is False and "busy_outside" in inst
+
+
+def test_the_card_panel_and_the_checks_list_show_one_figure(client, named, monkeypatch):
+    """2026-11-14: /api/gpus read the idle loop's snapshot (up to 15 s old) and /api/health the 3 s one, so the two
+    showed 9.5 and 4.7 GB for the same card in the same minute. Both now read through the same cache."""
+    engines = {"a": Engine("RTX 3060", 12.0, own_gb=1.11), "b": Engine("RTX 3080", 10.0, own_gb=0.8)}
+    for n, e in engines.items():
+        monkeypatch.setattr(jobs.active_queue().clients[n], "cached_vram_summary", e.cached_vram_summary)
+        monkeypatch.setattr(jobs.active_queue().clients[n], "last_vram_summary", e.last_vram_summary)
+    from vgac import main
+    monkeypatch.setattr(main, "_health_client", lambda n, url: engines[n])
+    smi(monkeypatch, SMI_IDLE)
+    cardmem.read(0.0)
+    cardmem.runner = lambda: SMI_BUSY  # the card gets busy; the old snapshot is what the idle loop would still hold
+    health = client.get("/api/health").json()["instances"]
+    gpus = {g["instance"]: g for g in client.get("/api/gpus").json()}
+    for n in ("a", "b"):
+        assert health[n]["memory"]["source"] == gpus[n]["memory"]["source"] == "card"
+        assert health[n]["memory"]["used_gb"] == gpus[n]["memory"]["used_gb"]
+        # total minus free is not the driver's used figure (they differ by about 0.2 GB): the panel shows memory.used_gb
+
+
+def test_gpus_takes_the_reading_it_is_given(named):
+    q = make_queue(named, a=Engine("RTX 3060", 12.0, own_gb=1.11))
+    smi_cards = cardmem.parse(SMI_BUSY)
+    cardmem.forget()
+    a = {r["instance"]: r for r in q.gpus(None, smi_cards)}["a"]
+    assert a["memory"]["source"] == "card" and a["memory"]["used_gb"] == round(11438 / 1024, 2)

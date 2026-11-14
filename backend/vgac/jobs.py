@@ -1925,7 +1925,8 @@ class JobQueue:
         else:
             loop.call_soon_threadsafe(_do)
 
-    def gpus(self, summaries: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    def gpus(self, summaries: dict[str, dict[str, Any]] | None = None,
+             cards: list[cardmem.Card] | None = None) -> list[dict[str, Any]]:
         """One entry per graphics card for GET /api/gpus and the "gpus" event. `summaries` are vram_summary() answers
         by instance; without them the last cached answer is used (no request)."""
         st = self.status()
@@ -1988,7 +1989,7 @@ class JobQueue:
             if reachable:
                 dev = (summary.get("devices") or [{}])[0] or {}
                 total, free = dev.get("vram_total"), dev.get("vram_free")
-                card = cardmem.card_of(self.settings, name, summary, cardmem.last())
+                card = cardmem.card_of(self.settings, name, summary, cards if cards is not None else cardmem.last())
                 memory = cardmem.describe(card, summary)
                 if card is not None:
                     total, free = card.total_gb * GB, card.free_gb * GB
