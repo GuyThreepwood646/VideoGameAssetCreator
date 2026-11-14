@@ -5,6 +5,7 @@ import { Link, useLocation } from 'react-router'
 import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
+import ComfyPanel from './components/ComfyPanel'
 import ToolPanel from './components/ToolPanel'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
 
@@ -176,6 +177,7 @@ export default function SetupCheck() {
   const extras = report ? report.items.filter((i) => i.state === 'optional' && i.offer) : []
   const [openKit, setOpenKit] = useState<string | null>(null)
   const [unityOpen, setUnityOpen] = useState(false)
+  const [comfyOpen, setComfyOpen] = useState(false)
   const hash = useLocation().hash
   useEffect(() => {
     if (hash.startsWith('#get-')) setOpenKit(hash.slice(5))
@@ -207,6 +209,17 @@ export default function SetupCheck() {
             ))}
           </ul>
         </>
+      )}
+      {report && (
+        <div className="setup-extras">
+          <div className="field-label">Your own ComfyUI</div>
+          {!comfyOpen && (
+            <button type="button" className="small-btn" onClick={() => setComfyOpen(true)}>
+              Find or use my ComfyUI
+            </button>
+          )}
+          {comfyOpen && <ComfyPanel onChanged={() => void reload(true)} onClose={() => setComfyOpen(false)} />}
+        </div>
       )}
       {report && !problems.some((p) => p.setting === 'unity_exe') && (
         <div className="setup-extras">

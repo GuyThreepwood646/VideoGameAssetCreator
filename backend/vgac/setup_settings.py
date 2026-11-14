@@ -433,6 +433,56 @@ def set_setting(key: str, value: Any, supervisor: Any = None) -> dict[str, Any]:
             "message": message, "restart_needed": pending, "missing": missing_now(now_saved, supervisor)}
 
 
+def set_engines(comfy_dir: str, python: str, main: str, extra_model_paths: str | None, cards: dict[str, int],
+                supervisor: Any = None) -> dict[str, Any]:
+    """Point every graphics card's engine at one ComfyUI in a single write (the setup card's "Use this one"). The files
+    were checked by the caller (comfy_find.check_candidate); this refuses only what cannot be saved safely."""
+    with _lock:
+        problem = config.settings_problem()
+        if problem:
+            raise SettingError(f"This machine's settings file could not be used ({problem}) and nothing can be saved until it is fixed or removed.")
+        mpath = config.machine_path()
+        if mpath is None:
+            raise SettingError("This copy of the app has no machine settings file to write to.")
+        try:
+            saved = _saved()
+        except ConfigError as err:
+            raise SettingError(str(err)) from None
+        for n, card in cards.items():
+            if n not in saved.instances:
+                raise SettingError(f"There is no graphics card called {n}.")
+            if not 0 <= int(card) <= 15:
+                raise SettingError("The graphics card number must be between 0 and 15.")
+        engines: dict[str, Any] = {}
+        for name in saved.instances:
+            e: dict[str, Any] = {"comfy_dir": comfy_dir, "python": python, "main": main}
+            if extra_model_paths:
+                e["extra_model_paths"] = extra_model_paths
+            if name in cards:
+                e["cuda_device"] = int(cards[name])
+            engines[name] = {"engine": e}
+        try:
+            config.update_machine({"backend": {"instances": engines}}, mpath)
+        except ConfigError as err:
+            raise SettingError(f"That would leave the app unable to start, so it was not saved: {err}") from None
+        try:
+            now_saved = _saved(create_library=False)
+        except ConfigError as err:
+            raise SettingError(f"The settings could not be read back after saving: {err}") from None
+        cur = config.get_settings()
+        for name in engines:
+            if name in cur.instances and name in now_saved.instances:
+                cur.instances[name].engine = now_saved.instances[name].engine
+        for cb in list(after_change):
+            try:
+                cb()
+            except Exception:  # noqa: BLE001
+                log.exception("after a setting changed")
+    return {"message": "Your ComfyUI is set as the engine for every graphics card and is used from now on.",
+            "instances": sorted(engines), "restart_needed": restart_needed(), "missing": missing_now(now_saved, supervisor)}
+
+
+
 # --- HTTP ----------------------------------------------------------------------------------------------------------
 
 

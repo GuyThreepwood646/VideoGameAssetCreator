@@ -561,6 +561,22 @@ export type UnityTool = {
   guide: { hub_installed: boolean; download_page: string; terms_page: string; licence_line: string; wanted_version: string; loses_without: string; cannot_install: string; steps: string[] }
 }
 
+export type ComfyCopy = {
+  id: string; kind: string; source: string; name: string; folder: string; version: string; python: string; has_trellis: boolean
+  running: number[] | boolean | null; problems?: string[]
+}
+export type ComfyFind = {
+  found: ComfyCopy[]
+  answering: { port: number; devices: string[] }[]
+  choices: { id: string; name: string; available: boolean; recommended: boolean; text: string }[]
+  current: Record<string, { comfy_dir: string; cuda_device: number | null }>
+}
+export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
+export type ComfyPacksReport = {
+  packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
+  python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
+}
+
 export type SettingChange = {
   key: string
   label: string
@@ -685,6 +701,11 @@ export const api = {
   useBlenderZip: (path: string) => post<SettingChange>('/api/tools/blender/zip', { path }),
   unityTool: () => get<UnityTool>('/api/tools/unity'),
   useUnity: (path: string) => post<SettingChange>('/api/tools/unity/use', { path }),
+  comfyFind: () => get<ComfyFind>('/api/comfy'),
+  comfyCheck: (id: string) => post<ComfyCheck>('/api/comfy/check', { id }),
+  comfyLink: (id: string) => post<{ message: string }>('/api/comfy/link', { id }),
+  comfyPacksReport: (id: string) => post<ComfyPacksReport>('/api/comfy/packs/report', { id }),
+  comfyPacksApply: (id: string) => post<{ added: string[] }>('/api/comfy/packs/apply', { id, confirm: true }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),
