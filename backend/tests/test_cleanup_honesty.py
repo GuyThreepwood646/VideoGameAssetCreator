@@ -67,13 +67,29 @@ def test_a_blanket_metal_map_keeps_only_small_metal_looking_pieces():
     assert not skinmetal.small_metal_pieces(mesh, big, met, T).any()
 
 
-def test_blanket_map_is_not_a_knife_edge_on_the_head_share():
-    # W2-clothed, same model, two clean-ups: the head read 0.546 and then 0.492 metal, with 0.85 and 0.69 of the body skin-coloured
-    # texels metal; the cardigan, shirt, trousers and hair were metal both times.
-    assert skinmetal.blanket_map(0.546, 0.85) and skinmetal.blanket_map(0.4921, 0.6921)
-    assert skinmetal.blanket_map(0.3119, 0.9473)  # W1-bikini R3
-    # a figure whose body is mostly not metal, or whose head is clean, is not a blanket map (knights, a necklace and glasses)
-    assert not skinmetal.blanket_map(0.0173, 0.9) and not skinmetal.blanket_map(0.25, 0.9) and not skinmetal.blanket_map(0.4, 0.3)
+def test_metal_coloured_is_bright_grey_or_bright_gold_only():
+    steel, silver, gold = lab_of((0.62, 0.64, 0.66)), lab_of((0.85, 0.86, 0.88)), lab_of((0.85, 0.65, 0.10))
+    black_trousers, dark_brown, mustard, skin = lab_of((0.02, 0.02, 0.01)), lab_of((0.15, 0.09, 0.03)), lab_of((0.56, 0.39, 0.15)), lab_of((0.8, 0.58, 0.46))
+    got = skinmetal.metal_coloured(np.stack([steel, silver, gold, black_trousers, dark_brown, skin]))
+    assert got.tolist() == [True, True, True, False, False, False]
+
+
+def test_a_selective_map_is_believed_and_a_guess_over_cloth_is_not():
+    T = 128
+    mesh = strip()
+    base = np.zeros((T, T, 3))
+    base[:] = (0.2, 0.3, 0.5)  # blue cloth
+    base[:, :64] = (0.62, 0.64, 0.66)  # a steel half
+    plate = np.zeros((T, T))
+    plate[:, :64] = 1.0  # the builder marked exactly the steel
+    ok, share, area = skinmetal.selective_map(mesh, base, plate, T)
+    assert ok and share > 0.9 and area > 0.3
+    guess = np.zeros((T, T))
+    guess[:, 64:] = 0.75  # the builder marked the cloth (a robe at 0.75, W2 trousers at 0.55)
+    assert not skinmetal.selective_map(mesh, base, guess, T)[0]
+    tiny = np.zeros((T, T))
+    tiny[10:14, 10:14] = 1.0  # a necklace's worth of steel is not armour
+    assert not skinmetal.selective_map(mesh, base, tiny, T)[0]
 
 
 # --- the helmet test ----------------------------------------------------------------------------------------------------

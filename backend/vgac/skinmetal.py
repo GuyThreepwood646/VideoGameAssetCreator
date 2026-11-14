@@ -43,18 +43,20 @@ BODY_HUE_TOL = 22.0  # degrees: the body's skin has the face's hue (Lab angle of
 BODY_CHROMA_MIN = 0.3  # of the face's colourfulness: greyer than this is not skin (grey cloth, steel)
 BODY_CHROMA_MAX = 1.8  # and redder or yellower than this is paint or cloth
 BODY_L_MIN = 8.0  # shadowed skin is dark: lower than this is black
-# When the builder marked the face itself as metal (BLANKET_SHARE of its skin), its metal map says nothing about the
-# character: it is metal everywhere (clothes, hair, skin, the shadow side). Then only small metal-looking pieces keep
-# their metal: grey or gold coloured, separate from each other, each smaller than KEEP_MAX_AREA of the surface
-# (earrings, glasses frames, buckles, a pendant). Large pieces (a whole jacket, a head of hair) are cleared.
-BLANKET_SHARE = 0.5
-# The head's share alone is a knife edge (W2-clothed: 0.546 in one clean-up, 0.492 in the next on the same model, with the
-# cardigan, shirt, trousers and hair all still metal). A head that is a third metal while most of the skin-coloured body
-# is metal too is just as much a junk map: no real face is a third metal.
-BLANKET_HEAD_SHARE = 0.3
-BLANKET_ALL_SHARE = 0.6
+# The metal map says nothing about a person in cloth (see ARMOUR_COLOUR_SHARE), so only small metal-looking pieces keep their
+# metal: grey or gold coloured, separate from each other, each smaller than KEEP_MAX_AREA of the surface (earrings, glasses
+# frames, buckles, a pendant). Large pieces (a whole jacket, a head of hair) are cleared.
 KEEP_MAX_AREA = 0.015
 METAL_GREY_CHROMA = 14.0  # Lab chroma under this is grey (steel, silver, chrome)
+METAL_GREY_L_MIN = 35.0  # darker than this, grey is black cloth, hair or shadow, not polished metal
+METAL_GOLD_L_MIN = 45.0  # dark brown and mustard sit at the gold hue too; gold, brass and bronze are brighter than that
+# The builder's metal map on a person in cloth is a smooth guess (0.3 on a cardigan, 0.55 on trousers, 0.75 on a whole robe),
+# not a measurement: nothing in it says a piece is metal. So a person (no armour in the description) has no metal except small
+# pieces that are both marked and metal-coloured. A map that is selective (the marked texels are mostly grey or gold, a
+# knight's plate) is the exception: it is believed and only the skin is cleared, as for a described suit of armour.
+ARMOUR_COLOUR_SHARE = 0.5  # of the marked texels, the share that is metal-coloured above which the map looks selective
+ARMOUR_MIN_AREA = 0.03  # and the marked texels cover at least this share of the surface (a necklace is not armour)
+BLANKET_COVER = 0.15  # the clearing is reported as a whole-character one when it took metal off this share of the surface
 METAL_GOLD_HUE = (65.0, 105.0)  # Lab hue angle of gold and brass (skin is at about 45 to 60)
 METAL_GOLD_CHROMA = 22.0
 BODY_MIN_AREA = 0.004  # a piece of body skin not joined to the head is a limb when it covers this share of the surface
@@ -173,12 +175,6 @@ def skin_texels(mesh: dict[str, np.ndarray], base: np.ndarray, T: int, body: boo
     return out
 
 
-def blanket_map(head_share: float, all_share: float) -> bool:
-    """True when the builder's metal map says nothing about the character: the head (certainly not metal) is half metal, or a
-    third metal while most of the skin-coloured body is metal too."""
-    return head_share >= BLANKET_SHARE or (head_share >= BLANKET_HEAD_SHARE and all_share >= BLANKET_ALL_SHARE)
-
-
 def skin_hue(lab: np.ndarray, skin: np.ndarray) -> np.ndarray:
     """Whether Lab colours (n,3) are the face's skin, lit or in shadow: the hue angle of a and b within BODY_HUE_TOL of the
     face's, a colourfulness near it, and not black or white. Light changes the lightness of skin far more than its
@@ -193,8 +189,31 @@ def skin_hue(lab: np.ndarray, skin: np.ndarray) -> np.ndarray:
             & (lab[:, 0] >= BODY_L_MIN) & (lab[:, 0] <= 94))
 
 
+def metal_coloured(lab: np.ndarray) -> np.ndarray:
+    """Texels (Lab rows) coloured like polished metal: bright grey (steel, silver, chrome) or bright gold-yellow (gold, brass).
+    Colour alone cannot tell steel from grey or white cloth, or gold from mustard; it only rules out dark and skin colours."""
+    chroma = np.hypot(lab[:, 1], lab[:, 2])
+    hue = np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) % 360.0
+    grey = (chroma < METAL_GREY_CHROMA) & (lab[:, 0] >= METAL_GREY_L_MIN)
+    gold = (hue >= METAL_GOLD_HUE[0]) & (hue <= METAL_GOLD_HUE[1]) & (chroma >= METAL_GOLD_CHROMA) & (lab[:, 0] >= METAL_GOLD_L_MIN)
+    return grey | gold
+
+
+def selective_map(mesh: dict[str, np.ndarray], base: np.ndarray, met: np.ndarray, T: int) -> tuple[bool, float, float]:
+    """Whether the builder's metal map looks like a measurement (a knight's plate: the marked texels are mostly metal-coloured
+    and cover a real share of the surface) and not a guess spread over cloth. -> (selective, coloured share, marked area share)."""
+    reg = hair.texel_region(mesh, T, np.ones(len(mesh["faces"]), dtype=bool))
+    marked = met[reg["ys"], reg["xs"]] > METAL_LIMIT
+    area = float(marked.mean()) if len(marked) else 0.0
+    if not marked.any():
+        return False, 0.0, area
+    lab = face.to_lab(np.clip(base[reg["ys"][marked], reg["xs"][marked]], 0, 1))
+    share = float(metal_coloured(lab).mean())
+    return share >= ARMOUR_COLOUR_SHARE and area >= ARMOUR_MIN_AREA, share, area
+
+
 def small_metal_pieces(mesh: dict[str, np.ndarray], base: np.ndarray, met: np.ndarray, T: int) -> np.ndarray:
-    """Texels of the small metal-looking pieces of a model whose metal map cannot be trusted (BLANKET_SHARE): triangles
+    """Texels of the small metal-looking pieces of a person's model (the builder's metal map is not evidence): triangles
     whose texels are mostly grey or gold coloured and marked metal, joined through shared edges into pieces, the
     pieces smaller than KEEP_MAX_AREA of the surface. -> bool (T, T) of the texels that keep their metal."""
     n_tri = len(mesh["faces"])
@@ -204,7 +223,7 @@ def small_metal_pieces(mesh: dict[str, np.ndarray], base: np.ndarray, met: np.nd
     lab = face.to_lab(np.clip(base[reg["ys"], reg["xs"]], 0, 1))
     chroma = np.hypot(lab[:, 1], lab[:, 2])
     hue = np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) % 360.0
-    colour = (chroma < METAL_GREY_CHROMA) | ((hue >= METAL_GOLD_HUE[0]) & (hue <= METAL_GOLD_HUE[1]) & (chroma >= METAL_GOLD_CHROMA))
+    colour = metal_coloured(lab)
     cand = colour & (met[reg["ys"], reg["xs"]] > METAL_LIMIT)
     total = np.bincount(reg["tri"], minlength=n_tri)
     cnt = np.bincount(reg["tri"], weights=cand.astype(np.float64), minlength=n_tri)
@@ -321,20 +340,26 @@ def clear(glb: Path | str, maps: dict[str, Path], category: str | None, descript
                     head_before = before[: found["head_texels"]]  # the head and neck: the part that is certainly not metal
                     share = float((head_before > METAL_LIMIT).mean()) if len(head_before) else 0.0
                     share_all = float((before > METAL_LIMIT).mean()) if len(before) else 0.0
-                    rec["blanket"] = bool(with_body and blanket_map(share, share_all))
-                    if rec["blanket"]:
+                    selective, colour_share, marked_area = selective_map(mesh, base, met, T) if with_body else (True, 0.0, 0.0)
+                    rec.update(marked_area=round(marked_area, 4), marked_metal_coloured=round(colour_share, 4), selective_map=bool(selective))
+                    # A person in cloth has no metal but small metal-coloured pieces; a selective map is believed (armour).
+                    if with_body and not selective:
                         # metal everywhere: nothing in the map is evidence. Clear it all but the small metal-looking pieces.
                         keep = small_metal_pieces(mesh, base, met, T)
                         every = hair.texel_region(mesh, T, np.ones(len(mesh["faces"]), dtype=bool))["covered"]
                         wipe = every & (met > 0.0) & ~keep
                         out[wipe] = 0.0
+                        out[keep & (met > METAL_LIMIT)] = 1.0  # what is kept is metal outright, never half
                         written |= wipe
                         covered = covered | every
                         rec["kept_metal_texels"] = int((keep & (met > METAL_LIMIT)).sum())
                         rec["blanket_cleared_texels"] = int((wipe & (met > METAL_LIMIT)).sum())
+                        rec["blanket"] = bool(rec["blanket_cleared_texels"] >= BLANKET_COVER * max(1, int(every.sum())))
+                    else:
+                        rec["blanket"] = False
                     out = hair.spill(out, written, covered & ~written)
                     left = out[found["left_ys"], found["left_xs"]]  # after the clearing: what is left on small skin-coloured pieces
-                    changed = int((before > 0.0).sum()) + (int((wipe & ~written_skin).sum()) if rec["blanket"] else 0)
+                    changed = int((before > 0.0).sum()) + (int((wipe & ~written_skin).sum()) if rec.get("kept_metal_texels") is not None else 0)
                     rec.update(ran=True, skin_texels=int(len(ys)), face_texels=found["face_texels"], body=with_body,
                                left_skin_coloured=int(len(left)), left_metal=int((left > METAL_LIMIT).sum()),
                                skin_coloured_texels=int(len(left)) + int(found["body_texels"]) + int(found["head_texels"]),
