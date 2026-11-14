@@ -1087,8 +1087,9 @@ export function checkFix(check: Check): FixAction | null {
   if (id === 'triangle_budget' && limit) return { stage: 'mesh', params: { target_faces: limit }, label }
   if (id === 'manifold' || id === 'watertight') return { stage: 'mesh', params: { remesh: true }, label }
   if ((id === 'size_m' || id === 'height_m') && limit) return { stage: 'prep', params: { size_m: limit }, label }
-  const turn = quarterTurn(num(check.value))
-  if (id === 'facing' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
+  // The two facing tests disagreeing (facing_tests): turn to the turn the clean-up decided on, which the check carries.
+  const turn = quarterTurn(num(check.vars?.fix_yaw))
+  if (id === 'facing_tests' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
   if (id === 'hitbox_cover') return { stage: 'rig', params: { hitbox_fit: 'loose' }, label }
   if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
   if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }
