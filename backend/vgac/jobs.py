@@ -371,6 +371,11 @@ class JobCancelled(Exception):
 # the rest); the drawing model runs on it by loading in parts. Not measured below that: a guess with margin.
 LEND_MIN_ROOM_GB = 7.0
 STEP2_PREFIX = "turnaround."  # step 2's jobs, which borrow a card for their whole run
+# A card short of memory whose engine is idle is asked to let go of its models, then measured again (lend). On
+# ComfyUI 0.45 with DynamicVRAM the models an idle engine keeps loaded are not in its torch_vram figures, so
+# engine_room_gb() cannot count them as room (live check 2026-11-13: an idle 3060 holding the drawing model read 3.1
+# GB). Seconds to wait after /free before measuring again.
+LEND_FREE_SETTLE_SECONDS = 2.0
 
 
 def engine_room_gb(summary: dict[str, Any] | None) -> float | None:
@@ -399,6 +404,8 @@ class Lease:
     revoked: bool = False
     revoked_reason: str = ""
     ended: bool = False
+    # What the queue did to lend it, in plain words ("" when nothing special), e.g. the engine let go of its models.
+    note: str = ""
 
     async def end(self, interrupt: bool = False) -> None:
         """Hand the card back. interrupt: stop what this job left running on it first (the job was stopped), so the
@@ -1450,6 +1457,7 @@ class JobQueue:
                     return None, "the side views of another character are waiting and may need the second card"
         reasons: list[str] = []
         for name in others:
+            note = ""
             why = self._lend_refusal(name, kind)
             if why is None:
                 client = self.clients.get(name)
@@ -1459,7 +1467,16 @@ class JobQueue:
                 if not (summary and summary.get("reachable")):
                     why = f"the graphics engine on {gpu} is not running"
                 elif room is not None and room < LEND_MIN_ROOM_GB:
-                    why = f"{gpu} has {room:.1f} GB of memory for drawing, {LEND_MIN_ROOM_GB:.0f} GB are needed"
+                    after, freed = await self._room_after_freeing(name, kind, client)
+                    if after is not None and after >= LEND_MIN_ROOM_GB:
+                        note = (f"{gpu} let go of the models it was keeping loaded, so it had the memory to help "
+                                f"({room:.1f} GB before, {after:.1f} GB after)")
+                        why = self._lend_refusal(name, kind)
+                    else:
+                        now = after if after is not None else room
+                        why = f"{gpu} has {now:.1f} GB of memory for drawing, {LEND_MIN_ROOM_GB:.0f} GB are needed"
+                        if freed:
+                            why += " (even after it let go of its own models: another program holds the rest)"
                 else:
                     # The answer took a moment: look again, then mark it lent with no await in between.
                     why = self._lend_refusal(name, kind)
@@ -1469,14 +1486,50 @@ class JobQueue:
             w = self.workers[name]
             lease = Lease(instance=name, job_id=job_id, client=self.clients[name], gpu=gpu_name(name, self.settings),
                           _give_back=self._give_back)
+            lease.note = note
             w.lent_to = job_id
             self.leases[name] = lease
+            if note:
+                log.info("graphics card %s: %s", name, note)
+                self._note_running_job(job_id, note)
             if self.supervisor is not None:
                 self.supervisor.touch(name)
             log.info("graphics card %s lent to job %s on %s (%s)", name, job_id[:8], borrower, kind)
             self.publish_gpus()
             return lease, ""
         return None, "; ".join(reasons)
+
+    async def _room_after_freeing(self, name: str, kind: str, client: Any) -> tuple[float | None, bool]:
+        """(GB of room measured again, whether the engine was asked to let go of its models). Only an engine with
+        nothing running or waiting in its own queue (anyone's work, not only the app's) on a card still free to lend
+        is asked; otherwise (None, False) and nothing is changed. The 7 GB floor is not changed by this."""
+        try:
+            q = await client.queue_state()
+        except Exception:  # noqa: BLE001  (no answer: do not touch it)
+            return None, False
+        if q.get("queue_running") or q.get("queue_pending"):
+            return None, False
+        if self._lend_refusal(name, kind) is not None or not await client.free():
+            return None, False
+        await asyncio.sleep(LEND_FREE_SETTLE_SECONDS)
+        try:
+            fresh = await client.vram_summary()
+        except Exception:  # noqa: BLE001
+            return None, True
+        if not (fresh and fresh.get("reachable")):
+            return None, True
+        return engine_room_gb(fresh), True
+
+    def _note_running_job(self, job_id: str, text: str) -> None:
+        """Show `text` as the running job's message (it is replaced by the job's next progress words)."""
+        with session_factory()() as db:
+            job = db.get(Job, job_id)
+            if job is None or job.status != "running":
+                return
+            job.message = text
+            db.commit()
+            db.refresh(job)
+            _publish_job(job)
 
     def _give_back(self, lease: Lease) -> None:
         if self.leases.get(lease.instance) is lease:
