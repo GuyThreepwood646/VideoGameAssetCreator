@@ -396,17 +396,17 @@ def test_a_kept_redraw_records_the_guard(step):
 
 
 def test_a_refused_redraw_is_tried_again_then_the_persons_picture_is_used(step, monkeypatch):
-    verdicts = iter([{"ok": False, "reasons": ["gloves were added to bare hands"], "not_compared": [], "measures": {}}] * 2)
+    verdicts = iter([{"ok": False, "reasons": ["gloves were added to bare hands"], "not_compared": [], "measures": {}}] * 3)
     monkeypatch.setattr(buildpose, "guard", lambda a, b: next(verdicts))
     sc = _SC(step.dir, step.person)
     assert asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src)) is None
-    assert len(sc.graphs) == 2 and set(sc.registered) == {"pose_refused_picture", "pose_refused_cutout"}
+    assert len(sc.graphs) == 3 and set(sc.registered) == {"pose_refused_picture", "pose_refused_cutout"}
     g = _checks(sc)["pose_guard"]
     assert not g["passed"] and "gloves were added to bare hands" in g["help"] and "second try" in g["help"]
     assert g["fix"] == {"stage": "turnaround", "params": {"pose_ready": True, "pose_keep_refused": "ver000001"},
                         "label": "Use the redraw anyway"}
     # Resume after the refusal: no third redraw
-    assert asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src)) is None and len(sc.graphs) == 2
+    assert asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src)) is None and len(sc.graphs) == 3
 
 
 def test_refused_once_then_kept(step, monkeypatch):
@@ -519,12 +519,15 @@ def test_feet_far_enough_on_the_first_try_draws_no_second(step, monkeypatch):
 
 
 def test_both_tries_too_close_keeps_the_wider_not_the_last(step, monkeypatch):
-    _gaps(monkeypatch, 0.22, 0.19)
+    _gaps(monkeypatch, 0.22, 0.19, 0.21)
     sc = _SC(step.dir, step.person)
     out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
-    assert len(sc.graphs) == 1 + turnaround.POSE_GUARD_RETRIES and out == step.dir / "pose_ready_picture.png"
+    assert len(sc.graphs) == 1 + turnaround.POSE_GUARD_RETRIES == 3 and out == step.dir / "pose_ready_picture.png"
     m = sc.version.metrics["pose_guard"]
     assert m["kept_try"] == 1 and "may still join" in m["why"]
+    # the card says how many tries were drawn, which was kept and why
+    help_ = _checks(sc)["pose_guard"]["help"]
+    assert "redrawn 3 times; try 1 was kept" in help_ and "may still join" in help_
 
 
 def test_an_unread_gap_asks_for_nothing_more(step, monkeypatch):
@@ -542,3 +545,19 @@ def test_a_refused_close_first_try_and_a_kept_wide_second_keeps_the_second(step,
     sc = _SC(step.dir, step.person)
     out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
     assert out == step.dir / "pose_ready_picture_2.png" and sc.version.metrics["pose_guard"]["kept_try"] == 2
+
+
+def test_a_third_try_is_drawn_when_two_were_too_close_and_it_is_kept_when_it_clears(step, monkeypatch):
+    _gaps(monkeypatch, 0.21, 0.22, 0.28)
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 3 and out == step.dir / "pose_ready_picture_3.png"
+    assert sc.version.metrics["pose_guard"]["kept_try"] == 3
+    assert "redrawn 3 times; try 3 was kept" in _checks(sc)["pose_guard"]["help"]
+
+
+def test_one_try_says_nothing_about_tries(step, monkeypatch):
+    _gaps(monkeypatch, 0.31)
+    sc = _SC(step.dir, step.person)
+    asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert "redrawn" not in _checks(sc)["pose_guard"]["help"]

@@ -454,7 +454,7 @@ POSE_READY = buildpose.POSE_READY
 POSE_MOUTH = " Give the face a relaxed, closed mouth with the lips together; keep the same face, eyes, nose and features."
 POSE_KEYS = ("pose_ready_picture", "pose_ready_cutout")
 REFUSED_KEYS = ("pose_refused_picture", "pose_refused_cutout")
-POSE_GUARD_RETRIES = 1
+POSE_GUARD_RETRIES = 2   # redraws after the first: one in three clears the feet limit, so three tries clear about 70 percent (two, 56)
 
 
 def pose_ready_on(params: dict[str, Any], category: str | None) -> bool:
@@ -497,10 +497,12 @@ def _person_cutout(sc: StageContext) -> Path | None:
     return Path(p) if p is not None and Path(p).is_file() else None
 
 
-def _guard_check(sc: StageContext, g: dict[str, Any], retried: bool, kept_anyway: bool = False) -> None:
-    """The pose_guard check on this version (warn): passed when the redraw kept the character."""
+def _guard_check(sc: StageContext, g: dict[str, Any], retried: bool, kept_anyway: bool = False, tries_note: str = "") -> None:
+    """The pose_guard check on this version (warn): passed when the redraw kept the character. tries_note: a sentence for the
+    card when more than one try was drawn (how many, which was kept, why)."""
     ok = bool(g.get("ok")) and not kept_anyway
-    vars_ = {"words": buildpose.guard_words(g, kept_anyway=kept_anyway, retried=retried), "reasons": g.get("reasons") or [],
+    words = buildpose.guard_words(g, kept_anyway=kept_anyway, retried=retried)
+    vars_ = {"words": f"{words} {tries_note}".strip() if tries_note else words, "reasons": g.get("reasons") or [],
              "not_compared": g.get("not_compared") or [], "kept_anyway": kept_anyway,
              **({"version": sc.version.id} if not ok and not kept_anyway else {})}
     set_step_checks(sc, [quality.check("pose_guard", ok, "kept" if g.get("ok") else "changed", "kept", vars=vars_)])
@@ -603,6 +605,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
         if not pick["another"]:
             break
     kept = tries[pick["keep"]] if pick["keep"] is not None else tries[-1]
+    note = (f"The pose was redrawn {len(tries)} times; try {tries.index(kept) + 1} was kept: {pick['why']}." if len(tries) > 1 else "")
     sc.set_metrics(pose_guard={"tries": len(tries), "ok": kept["guard"]["ok"], "reasons": kept["guard"]["reasons"],
                                "not_compared": kept["guard"]["not_compared"], "seeds": [t["seed"] for t in tries],
                                "measures": [t["guard"].get("measures") for t in tries], "gaps": [t["gap"] for t in tries],
@@ -611,7 +614,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
         sc.register("pose_refused_picture", kept["picture"])
         sc.register("pose_refused_cutout", kept["cutout"])
         sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_refused=True)
-        _guard_check(sc, kept["guard"], retried=len(tries) > 1)
+        _guard_check(sc, kept["guard"], retried=len(tries) > 1, tries_note=note)
         sc.publish()
         return None
     sc.register("pose_ready_picture", kept["picture"])
@@ -619,7 +622,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.set_params(pose_ready=True, neutral_mouth=mouth, pose_seed=kept["seed"])
     sc.set_metrics(pose_ready={"seed": kept["seed"], "card": kept["card"], "size": [w, h], "neutral_mouth": mouth,
                                "prompt": prompt, "elapsed_seconds": kept["entry"].get("elapsed_seconds")})
-    _guard_check(sc, kept["guard"], retried=len(tries) > 1)
+    _guard_check(sc, kept["guard"], retried=len(tries) > 1, tries_note=note)
     sc.publish()  # the redraw exists about 40 seconds in; show it now, not when the whole step ends (UI-18)
     return Path(sc.file("pose_ready_picture"))
 
