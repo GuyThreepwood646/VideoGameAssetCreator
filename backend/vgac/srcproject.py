@@ -134,6 +134,8 @@ def other_quarter(built_from: str | None) -> str:
     unless step 3 built from the second one, when the first lost the pose)."""
     return "quarter" if built_from == SECOND_QUARTER else SECOND_QUARTER
 SIDE_MIN_TURN = 45.0
+PICTURE_MAX_TURN = 80.0  # a picture the model was built from that is not a front view (a three-quarter view) fitted more
+                         # than this from the front is refused: it would paint one side's picture onto the back
 BACK_MIN_TURN = 120.0
 
 
@@ -1560,6 +1562,20 @@ def front_turn(fitted: dict[str, View], head_yaw: float = 0.0) -> tuple[float, s
     return float(head_yaw), "head"
 
 
+def picture_contradicts_front(picture_view: View, front_yaw: float) -> str | None:
+    """Why the picture the model was built from is refused for its turn, or None: a three-quarter picture (not a front
+    view) fitted more than PICTURE_MAX_TURN from the front. Its outline can fit as well from behind when the model's
+    colour cannot tell the turns apart, and the turn hint can agree (a rerun that started from an already painted texture
+    put a three-quarter picture at 150 degrees, onto the back). On the stored runs it refuses only M1-shorts' (135
+    degrees, on a model that faced backwards: it painted the drawn view over the front)."""
+    if not picture_view.ok or picture_view.info.get("front_view") or picture_view.info.get("yaw") is None:
+        return None
+    rel = abs(_signed(float(picture_view.info["yaw"]) - front_yaw))
+    if rel > PICTURE_MAX_TURN:
+        return f"its turn contradicts the front: the picture the model was built from fits {rel:.0f} degrees from the front"
+    return None
+
+
 def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, picture_view: View | None = None,
                                built_from: str | None = None) -> dict[str, str]:
     """Refuse the drawn views whose fitted turn contradicts the front (docs/AFTER-TEST-CHANGES.md D2 item 8): a back view
@@ -1669,6 +1685,13 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         for n, why in refuse_contradicting_turns(fitted, front_yaw, front, built_from).items():
             if log:
                 log(f"view {n}: refused, {why}")
+        why = picture_contradicts_front(front, front_yaw)
+        if why:
+            front.ok = False
+            front.info["refused"] = why
+            front.info["turn_from_front_deg"] = round(_signed(front.info["yaw"] - front_yaw), 1)
+            if log:
+                log(f"view picture: refused, {why}")
         infos = {"picture": front.info}
         views: list[View] = []
         for name in ("source", "front"):

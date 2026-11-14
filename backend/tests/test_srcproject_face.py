@@ -599,3 +599,16 @@ def test_the_chin_fill_carries_the_shading_of_both_its_borders() -> None:
     assert np.all(mid > bottom + 0.05) and np.all(mid < top - 0.05)  # in between: blended, not one border's colour
     assert reach[gap].min() > 0.05
     assert np.ptp(f[gap][:, 0]) > 0.15  # not one colour across the gap
+
+
+def test_a_three_quarter_built_from_picture_on_the_back_is_refused() -> None:
+    pic = turned(picture=150.0)["picture"]
+    pic.info["front_view"] = False
+    assert "contradicts the front" in srcproject.picture_contradicts_front(pic, 0.0)
+    for y in (45.0, -40.0, 75.0, 315.0):  # every stored run's built-from picture sits 25 to 55 degrees from the front
+        ok = turned(picture=y)["picture"]
+        ok.info["front_view"] = False
+        assert srcproject.picture_contradicts_front(ok, 0.0) is None, y
+    front_pic = turned(picture=170.0)["picture"]
+    front_pic.info["front_view"] = True  # a front picture is the front: not judged here
+    assert srcproject.picture_contradicts_front(front_pic, 0.0) is None
