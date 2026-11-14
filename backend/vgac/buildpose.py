@@ -51,6 +51,11 @@ ROBE_FEET = 0.08  # ... when the feet below the hem are this far apart (feet tog
 POSE_SCORE_MIN = 0.5  # MediaPipe visibility of shoulders, elbows and hips under this: the outline decides the arms
 HAND_SPREAD = 0.22  # neighbouring fingertips' mean gap over the palm length: under it the fingers are together
 GREY_CHROMA = 5.0  # chroma of the most colourful tenth of a black-and-white picture is under this
+# Share of the figure outside a body drawn from its joints (body_figure). On the 36 stored models plain people are
+# 0.002 to 0.017, the viking's furs 0.041, the caped hero 0.107 and the two robed mages 0.121 and 0.133. No stored
+# person-shaped character has extra arms, wings or a tail, so this is a caution, never a refusal or a hidden fix:
+# such parts may be redrawn or removed, and the guard refuses a redraw that loses much of the figure (GUARD_AREA).
+BEYOND_BODY_CAUTION = 0.05
 
 # The guard's lines (8 stored redraw pairs: knight and viking kept, caped hero, mage, TheHeir and three soldiers refused)
 GUARD_PART_DE = 10.0  # a body part's middle colour moved more than this (Lab, lightness counted half)
@@ -342,6 +347,40 @@ def hands_tiles(rgb: np.ndarray, mask: np.ndarray) -> dict[str, dict[str, Any]]:
     return out
 
 
+def body_figure(P: np.ndarray, shape: tuple[int, ...], height: int) -> np.ndarray:
+    """The pixels a plain body takes, drawn from the pose landmarks: the torso, thick limbs, the head, hands and feet,
+    widened a little. What the cut-out has beyond it is clothing that stands off the body, hair, or a designed part."""
+    import cv2
+
+    m = np.zeros(shape[:2], np.uint8)
+    H = float(height)
+
+    def pt(i: int) -> tuple[int, int]:
+        return int(round(P[i, 0])), int(round(P[i, 1]))
+
+    cv2.fillConvexPoly(m, np.array([pt(i) for i in (L_SH, R_SH, R_HIP, L_HIP)], np.int32), 1)
+    for a, b, r in ((L_SH, L_EL, 0.045), (L_EL, L_WR, 0.045), (R_SH, R_EL, 0.045), (R_EL, R_WR, 0.045),
+                    (L_HIP, L_KN, 0.06), (L_KN, L_AN, 0.06), (R_HIP, R_KN, 0.06), (R_KN, R_AN, 0.06),
+                    (L_SH, L_HIP, 0.06), (R_SH, R_HIP, 0.06)):
+        cv2.line(m, pt(a), pt(b), 1, max(1, int(2 * r * H)))
+    for i in (L_WR, R_WR):
+        cv2.circle(m, pt(i), max(1, int(0.06 * H)), 1, -1)
+    for i in (L_AN, R_AN, 29, 30, 31, 32):
+        cv2.circle(m, pt(i), max(1, int(0.04 * H)), 1, -1)
+    ears = (P[7, :2] + P[8, :2]) / 2
+    head = (P[NOSE, :2] + ears) / 2
+    cv2.circle(m, (int(head[0]), int(head[1])), max(1, int(0.085 * H)), 1, -1)
+    neck = (P[L_SH, :2] + P[R_SH, :2]) / 2
+    cv2.circle(m, (int(neck[0]), int(neck[1])), max(1, int(0.07 * H)), 1, -1)
+    return cv2.dilate(m, np.ones((3, 3), np.uint8), iterations=max(1, int(0.015 * H))) > 0
+
+
+def beyond_body(mask: np.ndarray, P: np.ndarray, height: int) -> float:
+    """Share of the figure outside body_figure."""
+    total = float(mask.sum())
+    return round(float((mask & ~body_figure(P, mask.shape, height)).sum()) / total, 3) if total else 0.0
+
+
 # --- the measure ----------------------------------------------------------------------------------------------------
 
 
@@ -377,6 +416,7 @@ def measure(cutout: Path | str | Image.Image | np.ndarray) -> dict[str, Any]:
         ang = arm_angles(P)
         out["arms"] = {s: {"angle": a, "how": "joints", "state": "join" if a < ARM_LINE else "free"} for s, a in ang.items()}
         out["points"] = P[:, :2].round(1).tolist()
+        out["beyond_body"] = beyond_body(mask, P, height)
     else:
         if not available("pose"):
             out["not_read"].append("pose_model")
@@ -570,6 +610,9 @@ def pose_check(m: dict[str, Any], held_item: str | None = None, after_redraw: bo
         cautions.append(f"The redraw also takes the {held_item} out of the hands; add it back afterwards with Add an item.")
     if unseen:
         cautions.append("Gloves, gauntlets and claws are kept but opened; check them in the redrawn picture.")
+    if (m.get("beyond_body") or 0) >= BEYOND_BODY_CAUTION:
+        cautions.append("Parts that stand off the body (a cape, wide sleeves, wings, a tail or extra arms) may be redrawn "
+                        "or removed; the redraw is not used if much of your character goes missing, but check them.")
     if m.get("grey"):
         cautions.append("Your picture is black and white; the redraw is asked to keep it so, and is not used if it adds colour.")
     fixable = bool(bad_arms or fists or legs_bad) and not after_redraw and not no_person
@@ -581,7 +624,7 @@ def pose_check(m: dict[str, Any], held_item: str | None = None, after_redraw: bo
              "arms": {s: {k: v for k, v in a.items()} for s, a in arms.items()},
              "legs": legs, "hands": {s: {k: v for k, v in h.items() if k != "points"} for s, h in hands.items()},
              "how": "joints" if all(a["how"] == "joints" for a in arms.values()) else "outline",
-             "not_read": list(m["not_read"]), "grey": bool(m.get("grey"))}
+             "not_read": list(m["not_read"]), "grey": bool(m.get("grey")), "beyond_body": m.get("beyond_body")}
     return quality.check("pose_for_3d", ok, value, ARM_LINE, vars=vars_)
 
 

@@ -125,6 +125,37 @@ def _pose(arm_deg: float) -> np.ndarray:
     return P
 
 
+def test_parts_beyond_the_body_are_measured_and_cautioned():
+    """A plain figure lies inside the body drawn from its joints; a big extra part beside it does not."""
+    P = np.zeros((33, 3))
+    P[:, 2] = 0.99
+    pts = {buildpose.NOSE: (256, 110), 7: (276, 105), 8: (236, 105), buildpose.L_SH: (296, 165), buildpose.R_SH: (216, 165),
+           buildpose.L_EL: (376, 248), buildpose.R_EL: (136, 248), buildpose.L_WR: (440, 318), buildpose.R_WR: (72, 318),
+           buildpose.L_HIP: (270, 430), buildpose.R_HIP: (242, 430), buildpose.L_KN: (300, 560), buildpose.R_KN: (212, 560),
+           buildpose.L_AN: (330, 690), buildpose.R_AN: (182, 690)}
+    for i, xy in pts.items():
+        P[i, :2] = xy
+    for i, j in ((29, buildpose.L_AN), (31, buildpose.L_AN), (30, buildpose.R_AN), (32, buildpose.R_AN)):
+        P[i, :2] = P[j, :2]
+    plain = Image.new("L", (512, 768), 0)
+    d = ImageDraw.Draw(plain)
+    d.ellipse([226, 75, 286, 145], fill=255)
+    d.polygon([(216, 165), (296, 165), (270, 430), (242, 430)], fill=255)
+    for a, b in (((296, 165), (440, 318)), ((216, 165), (72, 318)), ((270, 430), (330, 690)), ((242, 430), (182, 690))):
+        d.line([a, b], fill=255, width=24)
+    mask = np.asarray(plain) > 127
+    h = 690 - 75
+    assert buildpose.beyond_body(mask, P, h) < 0.02
+    winged = plain.copy()
+    ImageDraw.Draw(winged).polygon([(296, 200), (500, 60), (500, 330)], fill=255)  # a wing off the back
+    extra = buildpose.beyond_body(np.asarray(winged) > 127, P, h)
+    assert extra >= buildpose.BEYOND_BODY_CAUTION
+    m = _measure(figure("down", legs="apart"))
+    m["beyond_body"] = extra
+    c = buildpose.pose_check(m)
+    assert "a cape, wide sleeves, wings, a tail or extra arms" in c["help"] and c["vars"]["beyond_body"] == extra
+
+
 def test_arm_angles_from_the_joints():
     a = buildpose.arm_angles(_pose(45))
     assert abs(a["left"] - 45) < 0.5 and abs(a["right"] - 45) < 0.5
