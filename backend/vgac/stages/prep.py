@@ -883,6 +883,9 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     up = upscale_check(metrics.get("srcproject_upscale"))
     if up is not None:
         checks.append(up)
+    ff = (metrics.get("srcproject_face_finder") or {}).get("missing")
+    if ff:  # the processor finder was asked for and is not there (nothing asked for: nothing said)
+        checks.append(quality.check("face_finder", False, ff, "found", vars={"reason": ff}))
     return checks
 
 

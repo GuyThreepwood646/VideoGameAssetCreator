@@ -154,3 +154,14 @@ def test_facing_tests_report_both_tests_and_whether_they_agreed():
     assert prep.facing_check(FACING, "quadruped") is None  # no second test exists for it, and the old circular check is gone
     assert prep.facing_check({"face_toes_found": False, "face_outline_turn": None, "face_toes_reason": "x"}, "humanoid") is None
     assert "facing" not in guidance.CHECK_GUIDE
+
+
+def test_face_finder_warns_only_when_the_processor_finder_was_asked_for_and_is_missing():
+    def names(m):
+        return {c["name"]: c for c in prep.prep_checks({}, {}, m, "humanoid", None)}
+
+    assert "face_finder" not in names({})  # no finder asked for (the test harness)
+    assert "face_finder" not in names({"srcproject_face_finder": {"used": "mediapipe"}})  # present
+    c = names({"srcproject_face_finder": {"missing": "the mediapipe package"}})["face_finder"]
+    assert not c["passed"] and c["severity"] == "warn"
+    assert "the mediapipe package" in c["help"] and "three-quarter views did not paint the face" in c["help"]

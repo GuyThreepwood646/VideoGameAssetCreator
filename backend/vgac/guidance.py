@@ -413,6 +413,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": ("{value:pct} of the skin-coloured surface is still marked metal, on small separate pieces (a bracelet or a pendant "
                  "would be). If any of it is skin, it will shine like metal in game lights."),
     },
+    "face_finder": {
+        "severity": "warn",
+        "ok": "The eyes and mouth were found on the processor.",
+        "fail": ("The eyes and mouth could not be found on the processor ({reason}), so the head was painted the older way: the "
+                 "three-quarter views did not paint the face. Install the mediapipe package and the face landmarker model (setup), "
+                 "then run the clean-up again."),
+    },
     "picture_projection": {
         "severity": "warn",
         "vars": lambda c: {"reason": _var(c, "reason") or "no reason was recorded"},
