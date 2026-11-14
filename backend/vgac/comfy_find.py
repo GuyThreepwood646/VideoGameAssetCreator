@@ -196,6 +196,19 @@ def portable_and_manual(env: Env) -> list[dict[str, Any]]:
     return out
 
 
+def _relative_main(line: str, end: int) -> Path | None:
+    """ComfyUI Desktop starts its engines as `<install>\\ComfyUI\\.venv\\Scripts\\python.exe -s ComfyUI\\main.py`: main.py is
+    named relative to the install folder, so find the install folder among the parents of that python.exe."""
+    token = re.split(r"[\s\"]", line[:end + len("main.py")])[-1]
+    py = re.match(r'\s*"?([A-Za-z]:[\\/][^"]*?\.exe)', line)
+    if not token or not py:
+        return None
+    for parent in Path(py.group(1)).parents:
+        if (parent / token).is_file():
+            return parent / token
+    return None
+
+
 def running_now(env: Env) -> list[dict[str, Any]]:
     """What answers on the usual ports, and the install folder of each (from the process command line)."""
     answering = []
@@ -208,8 +221,13 @@ def running_now(env: Env) -> list[dict[str, Any]]:
     for line in env.process_lines():
         end = line.find("main.py")
         starts = [m.start() for m in re.finditer(r"[A-Za-z]:[\\/]", line[:end])]
-        if end > 0 and starts:
-            folders.append((Path(line[max(starts):end + len("main.py")].strip('"')), line))
+        if end <= 0 or not starts:
+            continue
+        p = Path(line[max(starts):end + len("main.py")].strip('"'))
+        if not p.is_file():
+            p = _relative_main(line, end) or p
+        if all(os.path.normcase(str(p)) != os.path.normcase(str(q)) for q, _ in folders):  # a launcher and its child, or two engines of one install
+            folders.append((p, line))
     return [{"answering": answering, "mains": [str(p) for p, _ in folders]}] if answering or folders else []
 
 

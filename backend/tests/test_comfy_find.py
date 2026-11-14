@@ -138,6 +138,23 @@ def test_a_running_copy_is_marked_and_an_unknown_running_copy_is_added(box):
     assert len(res["found"]) == 2 and any(c["kind"] == "running" and c["folder"] == str(other) for c in res["found"])
 
 
+def test_desktop_engines_started_with_a_relative_main_are_marked_not_listed_again(box):
+    """ComfyUI Desktop starts each engine (a launcher and its child, so two lines each) as
+    `<install>\\ComfyUI\\.venv\\Scripts\\python.exe -s ComfyUI\\main.py`. Round 4 showed them four times as 'too old'."""
+    tmp, _ = box
+    good = tmp / "Installs" / "ComfyUI (1)"
+    make_install(good)
+    desktop_files(tmp / "AppData", [{"id": "inst-1", "name": "Mine", "installPath": str(good), "sourceId": "standalone"}])
+    py = good / "ComfyUI" / ".venv" / "Scripts" / "python.exe"
+    one = f'"{py}" -s ComfyUI\\main.py --port 8189 --cuda-device 0'
+    two = f'"{py}" -s ComfyUI\\main.py --cuda-device 1 --enable-assets'
+    lines = lambda: [one, one, two, two]
+    probe = lambda port: {"devices": [{"name": "cuda:0 NVIDIA GeForce RTX 3080"}]} if port in (8188, 8189) else None
+    res = comfy_find.find_comfy(env_for(tmp, probe, lines))
+    assert len(res["found"]) == 1 and res["found"][0]["name"] == "Mine" and res["found"][0]["has_trellis"]
+    assert res["found"][0]["running"] == [8188, 8189]
+
+
 def test_check_says_what_is_wrong_in_plain_words(box):
     tmp, _ = box
     make_install(tmp / "Old", trellis=False)
