@@ -85,6 +85,10 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 | Check wording, severity (`block` or `warn`) and fixes | `guidance.CHECK_GUIDE`, filled when the check is made (`quality.check`; geometry, LOD, texture and rig checks in `quality.py`) |
 | Plain stage names, parameter help | `guidance.STAGE_GUIDE`, `guidance.PARAM_HELP` |
 | Pose check and the A-pose wording | `buildpose.py` |
+| Starter (`VGAC.exe`) | `starter/` (C#): first-run setup (uv, private Python, packages, frontend build), starts and stops the backend, shows the app in a WebView2 window with the browser as fallback; bridge `window.vgacHost` (hello, pickFolder, pickFile) only for the backend's own origin. Records: `local/state.json`, `local/installed.json`, `runtime/logs/setup.log`. Tests: `starteruild.cmd test` |
+| Downloads | `downloader.py`, the one downloader (resume, SHA-256, mirrors, space check, licence gate, stop and continue); `packs.py` uses it. List: `setup/downloads.json` plus `setup/downloads.local.json` |
+| Hair matches the sides (step 2 back view) | `hair_matches_sides` in `stages/turnaround.py`; fails the back into the redraw path |
+| Card memory | read from the driver (`nvidia-smi`) for lending and the status panel; the engine's own figure is the labelled fallback |
 | Setup check | `preflight.py` (`GET /api/setup`) |
 
 Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and metrics pick; a version is kept when it has no failed check at the `stop_on` level (`block` default, `warn`, `never`), otherwise it pauses and offers the check's fix.
