@@ -115,6 +115,7 @@ SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this
 HEAD_FRAME_MARGIN = (0.03, 0.10)  # of the head picture's frame: a head view's weight is zero this close to the frame's edge,
                                  # full from the second; and zero where its fit reaches past the frame (face.apply_alignment
                                  # repeats the last row there: on the live W2-clothed run the bottom 18 mm of the neck)
+HEAD_FRAME_BELOW = 0.01   # metres: a head view's frame reaches this far below the bottom of its neck fade at full weight
 HEAD_FACING = (0.35, 0.45)  # surface-to-camera cosine over which a head view fades in: nothing seen more edge-on than
                             # about 70 degrees (the underside of the chin from a level camera: the live W2-clothed run had
                             # the chin's last rows stretched over it as a pale band)
@@ -903,7 +904,14 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
                 # and where it paints with HEAD_HANDOVER of weight or more, as before the gradual hand-over: cover alone
                 # let the body fits back onto the upper neck under the chin, where the wider neck fade starts
                 # (M1-shorts' built-from picture 12.0 to 16.5 percent of the face region)
-                cov = np.maximum(cov, np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
+                # (M1-shorts' built-from picture 12.0 to 16.5 percent of the face region); not in the neck fade itself,
+                # where that held the body fits off until the head views' weight was nearly gone, so the two met in a
+                # line at the fade's foot instead of crossing over its height (live round four: a line across the hair)
+                above = 1.0
+                zt_ = getattr(atlas, "zone", None)
+                if zt_ is not None and zt_.get("above_neck") is not None:
+                    above = zt_["above_neck"]
+                cov = np.maximum(cov, np.clip(seen / HEAD_HANDOVER, 0.0, 1.0) * above)
                 under_head = under_head * (1.0 - cov)
             else:
                 under_head = under_head * (1.0 - np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
@@ -1207,10 +1215,41 @@ def frame_weight(a: dict[str, Any], size: int) -> np.ndarray:
     return face.smoothstep(HEAD_FRAME_MARGIN[0] * size, HEAD_FRAME_MARGIN[1] * size, d) * (d > 0)
 
 
+def neck_frame(cam: face.Camera, zone: dict[str, Any]) -> tuple[face.Camera, int]:
+    """The head picture's camera grown down until the neck fade (zone["neck"]) lies inside its frame at full weight
+    (HEAD_FRAME_MARGIN, HEAD_FRAME_BELOW), keeping its top edge, its pixels per metre and its middle; and how many pixels
+    it grew on each side. The face pass's framing (face.head_camera) ends about at the jaw: on the four live round-four
+    runs its bottom edge sat 0 to 13 cm above the neck fade's foot, at or above the fade's top, so the head views stopped
+    at their frame's edge over 2 cm, at one height all round, and the whole-body fits took over there at once: a hard
+    line across the neck (and the hair beside it), with the neck tone match (which works in the fade) never reached.
+    The camera as it is, and 0, when the frame already reaches."""
+    y0 = float(zone["neck"][0])
+    top = float(cam.target[1]) + 0.5 * cam.scale
+    need = (top - y0 + HEAD_FRAME_BELOW) / (1.0 - HEAD_FRAME_MARGIN[1])
+    if need <= cam.scale:
+        return cam, 0
+    px = cam.scale / cam.size
+    n = int(np.ceil((need - cam.scale) / (2.0 * px)))
+    d = n * px
+    return face.Camera(target=np.asarray(cam.target, dtype=np.float64) - np.array([0.0, d, 0.0]), yaw_deg=cam.yaw_deg,
+                       scale=cam.scale + 2.0 * d, size=cam.size + 2 * n), n
+
+
 def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, render: dict[str, Any], crop: dict[str, Any],
-                   a: dict[str, Any], zone: dict[str, Any], body_px_m: float, pic_n0: int) -> View:
+                   a: dict[str, Any], zone: dict[str, Any], body_px_m: float, pic_n0: int,
+                   reframe: Callable[[face.Camera], tuple[dict[str, Any] | None, dict[str, Any]]] | None = None) -> View:
     """A head view: the picture's head (crop, framed by face.painted_head for cam) moved by the alignment a, painting the
-    head above the neck (zone["neck"], HEAD_NECK), with the depth-edge and stretch gates as the body's views have them."""
+    head above the neck (zone["neck"], HEAD_NECK), with the depth-edge and stretch gates as the body's views have them.
+    With reframe (the crop and the model's render for another camera), the picture is framed again on neck_frame's
+    taller camera, so it reaches down the whole neck fade; the fit a, found on the face pass's framing, moves with the
+    frame (the same pixels per metre, its middle as many pixels across as the frame grew on each side)."""
+    if reframe is not None and zone.get("neck") is not None:
+        cam2, n = neck_frame(cam, zone)
+        if n > 0:
+            crop2, render2 = reframe(cam2)
+            if crop2 is not None:
+                cam, crop, render = cam2, crop2, render2
+                a = {**a, "centre": (float(a["centre"][0]) + n, float(a["centre"][1]))}
     S = cam.size
     v = View(name, 1.0)
     v.cam, v.raster = cam, Raster(mesh, cam)
@@ -1257,7 +1296,8 @@ def limit_squash(crop: np.ndarray, render: np.ndarray, a: dict[str, Any], size: 
 
 def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[tuple[str, Any]], body_px_m: float,
              pic_n: int | None = None, log: Callable[[str], None] | None = None,
-             prep: Callable[..., tuple[np.ndarray, np.ndarray]] = prepare_picture) -> tuple[View | None, dict[str, Any]]:
+             prep: Callable[..., tuple[np.ndarray, np.ndarray]] = prepare_picture,
+             tex: np.ndarray | None = None) -> tuple[View | None, dict[str, Any]]:
     """The first picture fitted to the head on its own, by its eyes and mouth (docs/AFTER-TEST-CHANGES.md D2 item 6): the
     face pass's own framing (face.painted_head: the picture's head cut out as the model's head is framed from where its
     face looks) and fit (face_detail.fit_picture: eyes and mouth found by MediaPipe when facemarks has a finder set, else
@@ -1289,7 +1329,9 @@ def fit_head(mesh: dict[str, np.ndarray], zone: dict[str, Any], pictures: list[t
             tried[name] = ("its eyes and mouth could not be found on both" if err is None else
                            f"its eyes land {err:.2f} of the face's width from the model's") + f" (fit: {a.get('how')}, score {a.get('score', 0):.2f})"
             continue
-        v = make_head_view(mesh, HEAD_VIEW, cam, view, crop, a, zone, body_px_m, pic.shape[0])
+        v = make_head_view(mesh, HEAD_VIEW, cam, view, crop, a, zone, body_px_m, pic.shape[0], None if tex is None else
+                           lambda c, pic=pic, alpha=alpha: (face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1),
+                                                                               head, c, size=c.size), face.render_view(mesh, tex, c)))
         rec.update(picture=name, yaw=round(float(cam.yaw_deg), 1), how=a.get("how"), score=round(float(a.get("score", 0)), 3),
                    eye_error=round(float(err), 3), fit={kk: a.get(kk) for kk in ("sx", "sy", "tx", "ty")},
                    head_px=crop.get("head_px"), nose_from=info.get("nose_from", "shape"), squash=a.get("squash"))
@@ -1354,7 +1396,9 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
     rec["residual"] = round(float(a["residual_px"]) / w, 3)
     if rec["residual"] > SIDE_AGREE_MAX:
         return refuse(f"its eyes and mouth do not fit with one scale (left {rec['residual']:.2f} of the face's width)")
-    v = make_head_view(mesh, rec["name"], cam, render, crop, a, zone, body_px_m, pic.shape[0])
+    v = make_head_view(mesh, rec["name"], cam, render, crop, a, zone, body_px_m, pic.shape[0],
+                       lambda c: (face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, c, size=c.size),
+                                  face.render_view(mesh, tex, c)))
     rec.update(fit={kk: a.get(kk) for kk in ("sx", "tx", "ty")}, head_px=crop.get("head_px"))
     v.info = rec
     if log:
@@ -1445,6 +1489,8 @@ def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarr
         out["fill"] = np.clip(face.sample(zone["fill"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis, 0.0, 1.0)
     if zone.get("chin") is not None:
         out["under"] = chin_underside(atlas, zone["chin"])
+    if zone.get("neck") is not None:  # above the head views' neck fade: there they keep the body fits off (blend)
+        out["above_neck"] = face.smoothstep(0.9 * zone["neck"][1] + 0.1 * zone["neck"][0], zone["neck"][1], atlas.pos[:, 1])
     return out
 
 
@@ -1490,6 +1536,50 @@ def neck_tone_match(atlas: Atlas, parts: dict[str, Any], zone: dict[str, Any], p
     return out
 
 
+NECK_HANDOVER_MIN = 0.02  # metres: the least height over which the neck's paint should pass from the head views to the body fits
+
+
+def neck_handover(atlas: Atlas, parts: dict[str, Any], zone: dict[str, Any]) -> dict[str, Any] | None:
+    """How the front of the neck passes from the head views' paint to the whole-body fits': in 5 mm steps of height,
+    the head views' share of the paint on the neck's front (facing the face, within 0.7 of the head's width of its
+    middle), and the height between where that share falls through 0.9 and through 0.1 ("span_m"), with the colour step
+    (Lab distance between the head views' and the body fits' paint) where both paint there ("step"). A span under
+    NECK_HANDOVER_MIN is a line across the neck, at one height all round: the live round-four runs had 0.5 to 1.5 cm,
+    from head pictures that ended at their frame above the neck fade, and showed it as pale and dark blocks under the
+    chin. None when the head views or the body fits paint none of the neck."""
+    if "head" not in parts or "body" not in parts or not zone or zone.get("neck") is None or zone.get("chin") is None:
+        return None
+    (nh, dh), (nb, db) = parts["head"], parts["body"]
+    ch = zone["chin"]
+    y = atlas.pos[:, 1]
+    fwd = np.array([np.sin(np.radians(float(zone["cam"].yaw_deg))), 0.0, np.cos(np.radians(float(zone["cam"].yaw_deg)))])
+    r = np.hypot(atlas.pos[:, 0] - ch["centre"][0], atlas.pos[:, 2] - ch["centre"][1])
+    y0, y1 = (float(v) for v in zone["neck"])
+    top = float(ch["nose_y"]) - 0.5 * float(ch["L"])  # from the chin
+    front = (r < 0.7 * ch["width"]) & (atlas.nrm @ fwd > 0.5) & ~atlas.is_gut & ((dh + db) > 1e-9)
+    share, hs = [], []
+    for yb in np.arange(top, y0 - 0.06, -0.005):
+        s_ = front & (y <= yb) & (y > yb - 0.005)
+        if s_.sum() < 10:
+            continue
+        hs.append(yb - 0.0025)
+        share.append(float(np.median(dh[s_] / (dh[s_] + db[s_]))))
+    if len(share) < 3 or max(share) < 0.9 or min(share) > 0.1:
+        return None
+    share_, hs_ = np.array(share), np.array(hs)
+    hi = hs_[np.flatnonzero(share_ >= 0.9)[-1]] if (share_ >= 0.9).any() else hs_[0]
+    lo_i = np.flatnonzero((share_ <= 0.1) & (hs_ < hi))
+    lo = hs_[lo_i[0]] if lo_i.size else hs_[-1]
+    both = front & (dh > 1e-9) & (db > 1e-9) & (y <= hi + 0.005) & (y >= lo - 0.005)
+    step = None
+    if both.sum() >= 10:
+        ch_ = face.to_lab((nh[both] / dh[both][:, None])[None])[0]
+        cb_ = face.to_lab((nb[both] / db[both][:, None])[None])[0]
+        step = round(float(np.median(np.linalg.norm(ch_ - cb_, axis=1))), 1)
+    return {"span_m": round(float(hi - lo), 4), "at_m": round(float(0.5 * (hi + lo)), 3), "step": step,
+            "fade_m": [round(y0, 3), round(y1, 3)], "ok": bool(hi - lo >= NECK_HANDOVER_MIN)}
+
+
 def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
             zone: dict[str, Any] | None = None) -> dict[str, Any]:
     """Project the fitted views onto this layout, blend them and finish the atlas, with the face region when there is
@@ -1499,6 +1589,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
     parts: dict[str, Any] = {}
     paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views], parts)
+    handover = neck_handover(atlas, parts, zone) if zone and zone.get("found") else None
     if "head" in parts and "body" in parts and zone and zone.get("neck") and zone.get("chin"):
         paint_ = neck_tone_match(atlas, parts, zone, paint_)
     extra: dict[str, Any] = {}
@@ -1507,7 +1598,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         atlas.zone["head_painted"] = hv[np.where(dom >= 0, dom, len(views))]
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
-            "fill": extra.get("fill"), "under_fill": extra.get("under_fill")}
+            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "neck_handover": handover}
 
 
 # --- measures ---------------------------------------------------------------------------------------------------
@@ -1678,7 +1769,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
         def zone_and_head() -> tuple[dict[str, Any], View | None, dict[str, Any]]:
             z = face_zone(mesh, tex, head_yaw)
-            hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log, prepared)
+            hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log, prepared, tex)
             return z, hv, hrec
 
         zone_job = pool.submit(contextvars.copy_context().run, zone_and_head)
@@ -1806,8 +1897,12 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
          "srcproject_front_turn": {"yaw": round(front_yaw, 1), "from": front_by}, "srcproject_face_finder": finder,
-         "srcproject_seconds": round(time.time() - t0, 1)}
+         "srcproject_neck_handover": c.get("neck_handover"), "srcproject_seconds": round(time.time() - t0, 1)}
     res["metrics"] = m
+    nh = c.get("neck_handover")
+    if log and nh is not None and not nh["ok"]:
+        log(f"neck: the head views hand over to the body fits within {nh['span_m'] * 100:.1f} cm at {nh['at_m']:.3f} m "
+            f"(colour step {nh['step']}): a line across the neck")
     worse = after["lab_diff"] == after["lab_diff"] and before["lab_diff"] == before["lab_diff"] and after["lab_diff"] > before["lab_diff"] - 0.5
     if worse:
         res["reason"] = "the result is no closer to the picture than the model's own colour"

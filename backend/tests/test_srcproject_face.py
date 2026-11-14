@@ -628,3 +628,66 @@ def test_the_chin_fill_takes_no_colour_from_the_collar() -> None:
     new = srcproject.finish(atlas, base, paint, alpha, zt).reshape(-1, 3)[atlas.idx]
     strip = (under > 0) & ~atlas.is_gut
     assert np.abs(new[strip] - SKIN).max() < 0.05  # skin, not mixed with the collar's green
+
+
+def test_a_head_pictures_frame_grows_down_to_the_neck_fade() -> None:
+    head = face.Head(centre=np.array([0.0, 1.68, 0.0]), width=0.2, top=1.8, height=1.8)
+    cam = face.head_camera(head, 10.0, 1000)  # bottom edge about at the jaw, 1.49 m
+    zone = {"neck": (1.36, 1.45)}
+    big, n = srcproject.neck_frame(cam, zone)
+    assert n > 0 and big.size == cam.size + 2 * n
+    assert abs(big.scale / big.size - cam.scale / cam.size) < 1e-12  # the same pixels per metre
+    assert abs((big.target[1] + 0.5 * big.scale) - (cam.target[1] + 0.5 * cam.scale)) < 1e-12  # the same top edge
+    bottom = big.target[1] - 0.5 * big.scale
+    assert bottom + srcproject.HEAD_FRAME_MARGIN[1] * big.scale <= 1.36 - 0.9 * srcproject.HEAD_FRAME_BELOW  # full weight there
+    same, n0 = srcproject.neck_frame(big, zone)
+    assert n0 == 0 and same is big  # a frame that already reaches is kept
+
+
+def test_a_head_picture_framed_again_on_the_taller_camera_lines_up_with_its_fit() -> None:
+    rng = np.random.default_rng(3)
+    cut = np.concatenate([face.blur(rng.random((900, 600, 3)), 3), np.ones((900, 600, 1))], -1)
+    cut[:, :50, 3] = 0.0
+    head = face.Head(centre=np.array([0.0, 1.68, 0.0]), width=0.2, top=1.8, height=1.8)
+    cam = face.head_camera(head, 0.0, 400)
+    big, n = srcproject.neck_frame(cam, {"neck": (1.36, 1.45)})
+    a = {"sx": 0.95, "sy": 0.95, "tx": -12.0, "ty": 20.0, "centre": (190.0, 210.0)}
+    small_ = face.apply_alignment(face.painted_head(cut, head, cam, size=cam.size)["image"], a)
+    tall = face.apply_alignment(face.painted_head(cut, head, big, size=big.size)["image"],
+                                {**a, "centre": (a["centre"][0] + n, a["centre"][1])})
+    inner = (slice(40, 360), slice(40, 360))
+    assert np.abs(tall[:400, n:n + 400][inner] - small_[inner]).max() < 0.02  # the same picture in the same place
+
+
+def test_body_fits_cross_over_the_head_views_in_the_neck_fade() -> None:
+    N = 3
+    atlas = type("A", (), {"idx": np.arange(N)})()
+    img = lambda c: np.full((4, 4, 3), c)  # noqa: E731
+    sp = np.full((N, 2), 2.0)
+    # texel 0: above the neck fade; 1: half way down it; 2: near its foot. The head view paints well at 0 and 1
+    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.8, 0.4, 0.15]), "cover_sel": np.arange(N),
+            "cover": np.array([1.0, 0.5, 0.15])}
+    body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
+    atlas.zone = {"above_neck": np.array([1.0, 0.0, 0.0])}
+    paint, _, _ = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
+    assert abs(paint[0, 0] - 0.9) < 1e-9  # above the fade the head view holds the body fits off, as before
+    assert 0.1 < paint[2, 0] < paint[1, 0] < 0.9  # in the fade they cross over: more of the body further down
+    atlas.zone = {"above_neck": np.ones(N)}  # without it (the old hand-over) the body fits were held off down to the foot
+    old, _, _ = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
+    assert abs(old[1, 0] - 0.9) < 1e-9 and abs(old[2, 0] - 0.9) < 1e-9
+
+
+def test_the_neck_hand_over_measure_finds_a_line_across_the_neck() -> None:
+    ys = np.linspace(1.30, 1.60, 601)
+    pos = np.stack([np.zeros_like(ys), ys, np.full_like(ys, 0.05)], -1)
+    atlas = _A(pos, np.tile([0.0, 0.0, 1.0], (ys.size, 1)))
+    atlas.is_gut = np.zeros(ys.size, dtype=bool)
+    zone = {"neck": (1.36, 1.45), "chin": {"nose_y": 1.61, "L": 0.19, "centre": [0.0, 0.0], "width": 0.16},
+            "cam": face.Camera(target=np.zeros(3), yaw_deg=0.0, scale=0.3, size=100)}
+    head_c, body_c = np.array([0.8, 0.6, 0.5]), np.array([0.6, 0.45, 0.4])
+    for lo, hi, ok in ((1.48, 1.49, False), (1.37, 1.44, True)):  # a cut 1 cm tall, and a fade 7 cm tall
+        dh = face.smoothstep(lo, hi, ys)
+        db = 1.0 - dh
+        m = srcproject.neck_handover(atlas, {"head": (head_c * dh[:, None], dh), "body": (body_c * db[:, None], db)}, zone)
+        assert m is not None and m["ok"] is ok, m
+        assert m["step"] > 5.0  # the two paints' colours differ
