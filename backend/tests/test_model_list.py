@@ -33,7 +33,8 @@ DEAD_REFERENCES = {
     "anima-aesthetic-v1.1.safetensors",
 }
 # models.yaml / companions that are deliberately not asked of an engine (comments in preflight.MODEL_LOADERS say why).
-NOT_ASKED = {"skintoken_vae", "face_model", "face_landmarker"}  # face_landmarker has its own check (check_face_landmarker)
+NOT_ASKED = {"skintoken_vae", "face_model", "face_landmarker",  # face_landmarker has its own check (check_face_landmarker)
+             "pose_landmarker", "hand_landmarker"}  # optional: without them the pose check says what it did not measure
 # Companions whose file the graphs do not name directly (the node pack loads it).
 NODE_PACK_FILES = {"last.ckpt"}
 
@@ -156,7 +157,7 @@ def test_every_companion_is_checked_by_the_setup_check():
         assert models.get(mid, {}).get("file"), mid
     for mid, m in MODELS_YAML["companions"].items():
         for user in m.get("used_by", []):
-            assert user in MODELS_YAML["models"] or user in {"judge", "lip points"} or user in MODELS_YAML["companions"], (mid, user)
+            assert user in MODELS_YAML["models"] or user in {"judge", "lip points", "pose check"} or user in MODELS_YAML["companions"], (mid, user)
 
 
 def test_companions_do_not_leak_into_the_concept_list_or_credits():
