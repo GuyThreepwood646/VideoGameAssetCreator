@@ -1,0 +1,1 @@
+248d043bc72d40cae94d28c2e93edf8e2a36cfd359c1b3f63c2204d92e5b514a  VGAC.exe  (built by starter\build.cmd with the in-box compiler; a rebuild is not byte-identical)
