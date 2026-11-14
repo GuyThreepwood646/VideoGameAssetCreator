@@ -472,13 +472,14 @@
  "blender": {
   "version": "5.2.3",
   "zip": "https://download.blender.org/release/Blender5.2/blender-5.2.3-windows-x64.zip",
-  "sha256_file": "https://download.blender.org/release/Blender5.2/blender-5.2.3.sha256",
+  "sha256": "723f08a4401502561eb763cdeacf8745b31e5f3f154d287d3830d97cf75dc2fb",
+  "size": 405839452,
+  "sha256_source": "Read once from download.blender.org/release/Blender5.2/blender-5.2.3.sha256 on 2026-11-14. A file from any server, mirror or official, is accepted only if it matches this pin.",
   "mirrors": ["https://ftp.nluug.nl/pub/graphics/blender/release/", "https://mirrors.dotsrc.org/blender/release/"],
   "page": "https://www.blender.org/download/",
   "folder": "blender-5.2.3-windows-x64",
   "size_mb": 400,
-  "licence": "GPL",
-  "unconfirmed": "blender.org's download server refused an automated request on 2026-11-06, so this link follows Blender's standard release layout and was not read back. The script checks the file against Blender's published checksum and stops if the link or the checksum is missing; then download from the page."
+  "licence": "GPL"
  },
  "animation_packs": {
   "ual1": {
@@ -510,6 +511,8 @@
    "zip_alt": "https://files2.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html",
    "zip_size": 280737770,
+   "zip_sha256": "b542127a8e25547c7c29c19f2d1d2adb9a664c80396ecd694095dbc8028a0107",
+   "zip_sha256": "b542127a8e25547c7c29c19f2d1d2adb9a664c80396ecd694095dbc8028a0107",
    "check_dir": "hair",
    "zip_expect": ["hair/", "proxymeshes/"],
    "licence": "CC0 1.0",
@@ -523,6 +526,8 @@
    "zip_alt": "https://files2.makehumancommunity.org/asset_packs/hair01/hair01_cc0.zip",
    "page": "https://static.makehumancommunity.org/assets/assetpacks/hair01.html",
    "zip_size": 227775853,
+   "zip_sha256": "49445d69848a313ec41a9970f6a0fe4bcf925c9f1c6ef40a76f119c2e07940c9",
+   "zip_sha256": "49445d69848a313ec41a9970f6a0fe4bcf925c9f1c6ef40a76f119c2e07940c9",
    "check_dir": "hair",
    "zip_expect": ["hair/", "packs/hair01.json"],
    "licence": "CC0 1.0",

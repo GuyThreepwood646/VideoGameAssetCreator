@@ -3,6 +3,7 @@ build and its failures. The network and Blender are faked; the zips are tiny one
 library, runtime folder or setup/downloads.json."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import time
@@ -41,7 +42,7 @@ def world(monkeypatch, tmp_path):
     dl = {
         "hair_sources": [
             {"id": "sysx", "name": "System pack", "zip_name": "sys.zip", "zip": "http://fake/sys.zip", "zip_alt": "http://alt/sys.zip",
-             "page": "http://page/sys", "zip_size": len(SYS_ZIP), "check_dir": "hair", "zip_expect": ["hair/", "proxymeshes/"]},
+             "page": "http://page/sys", "zip_size": len(SYS_ZIP), "zip_sha256": hashlib.sha256(SYS_ZIP).hexdigest(), "check_dir": "hair", "zip_expect": ["hair/", "proxymeshes/"]},
             {"id": "quax", "name": "Quaternius pack", "zip_name": "qua.zip", "page": "http://page/qua", "zip_size": len(QUA_ZIP),
              "check_dir": "Q Pack", "zip_expect": ["Q Pack/License.txt"], "click_text": "Click the thing."},
         ],
@@ -111,6 +112,16 @@ def serve(monkeypatch, files: dict[str, bytes], seen: list | None = None, hook=N
         data = files[url]
         return Resp(data, start, partial=bool(start), hook=hook)
     monkeypatch.setattr(packs, "_open", _open)
+
+
+def pin_to(world, data: bytes) -> None:
+    """Make the shipped checksum of the system pack the one of `data` (for tests of what is checked after the checksum)."""
+    f = world.project / "setup" / "downloads.json"
+    d = json.loads(f.read_text(encoding="utf-8"))
+    for h in d["hair_sources"]:
+        if h["id"] == "sysx":
+            h["zip_sha256"] = hashlib.sha256(data).hexdigest()
+    f.write_text(json.dumps(d), encoding="utf-8")
 
 
 def wait(client, kit="hair", until=("done", "failed", "waiting", "cancelled")):
@@ -234,7 +245,30 @@ def test_cancel_keeps_the_part_and_the_next_start_resumes(world, monkeypatch):
     assert not part.exists()
 
 
+def test_a_download_that_is_not_the_pinned_file_is_refused_from_every_server(world, monkeypatch):
+    seen: list = []
+    serve(monkeypatch, {"http://fake/sys.zip": WRONG_ZIP, "http://alt/sys.zip": WRONG_ZIP}, seen)
+    start(world.client, ["p_sys"])
+    st = wait(world.client)
+    assert st["run"]["state"] == "failed" and st["run"]["error"]["code"] == "bad_checksum"
+    assert [u for u, _ in seen] == ["http://fake/sys.zip", "http://alt/sys.zip"]  # the alternate link is tried, and is held to the same pin
+    assert not (world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip").exists()
+    assert (world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip.bad").exists()
+
+
+def test_a_direct_link_with_no_pin_is_not_downloaded(world, monkeypatch):
+    f = world.project / "setup" / "downloads.json"
+    d = json.loads(f.read_text(encoding="utf-8"))
+    d["hair_sources"][0].pop("zip_sha256")
+    f.write_text(json.dumps(d), encoding="utf-8")
+    serve(monkeypatch, {"http://fake/sys.zip": SYS_ZIP})
+    start(world.client, ["p_sys"])
+    st = wait(world.client)
+    assert st["run"]["state"] == "failed" and st["run"]["error"]["code"] == "no_pin"
+
+
 def test_a_damaged_download_is_refused_not_used(world, monkeypatch):
+    pin_to(world, WRONG_ZIP)
     serve(monkeypatch, {"http://fake/sys.zip": WRONG_ZIP})
     start(world.client, ["p_sys"])
     st = wait(world.client)
@@ -291,6 +325,7 @@ def test_a_library_that_fails_its_check_is_not_swapped_in(world, monkeypatch):
 
 
 def test_a_zip_that_writes_outside_its_folder_is_refused(world, monkeypatch):
+    pin_to(world, EVIL_ZIP)
     serve(monkeypatch, {"http://fake/sys.zip": EVIL_ZIP})
     start(world.client, ["p_sys"])
     st = wait(world.client)

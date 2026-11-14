@@ -265,3 +265,13 @@ def test_the_shipped_list_is_complete_and_safe(monkeypatch):
     for s in specs:
         if s.urls:
             assert len(s.sha256) == 64 and s.size > 0, f"{s.id}: a link without a size and checksum"
+
+
+def test_a_file_with_no_pinned_checksum_is_never_downloaded(tmp_path):
+    import threading
+
+    spec = dl.Spec(id="x", name="X", urls=["http://fake/x"], dest=tmp_path / "x.bin", size=3, sha256="", page="http://page")
+    asked = []
+    with pytest.raises(dl.DownloadError) as e:
+        dl.fetch(spec, threading.Event(), opener=lambda u, s: asked.append(u))
+    assert e.value.code == "no_pin" and asked == []

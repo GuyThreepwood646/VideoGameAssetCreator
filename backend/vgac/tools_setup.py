@@ -199,41 +199,6 @@ def blender_offer() -> dict[str, Any]:
             "unconfirmed": cat.get("unconfirmed", "")}
 
 
-# The sha file reads "<hash>  <file name>" per line.
-_SHA_LINE = re.compile(r"^([0-9a-fA-F]{64})\s+\*?(\S+)\s*$")
-
-
-def parse_sha_file(text: str, name: str) -> str:
-    for line in text.splitlines():
-        m = _SHA_LINE.match(line.strip())
-        if m and m.group(2).split("/")[-1] == name:
-            return m.group(1).lower()
-    return ""
-
-
-BLENDER_MAIN = "https://download.blender.org/release/"
-
-
-def _with_mirrors(url: str, cat: dict[str, Any]) -> list[str]:
-    """The official address first, then the same path on each of Blender's own mirrors. Never a different kind of address."""
-    urls = [url]
-    if url.startswith(BLENDER_MAIN):
-        urls += [m.rstrip("/") + "/" + url[len(BLENDER_MAIN):] for m in cat.get("mirrors") or [] if isinstance(m, str) and m.startswith("https://")]
-    return urls
-
-
-def _read_text(url: str, opener: Callable[[str, int], Any] | None, cat: dict[str, Any] | None = None) -> str:
-    box: list[str] = []
-
-    def attempt(u: str) -> None:
-        with (opener or downloader.default_open)(u, 0) as r:
-            box.append(r.read(200_000).decode("utf-8", errors="replace"))
-
-    page = str(downloader.catalogue().get("blender", {}).get("page", ""))
-    downloader.try_each(_with_mirrors(url, cat or {}), attempt, "Blender's checksum file", page, BLENDER_GONE, tools_dir())
-    return box[0]
-
-
 def safe_unzip(zip_path: Path, into: Path) -> None:
     """Unpack, refusing any entry that would land outside `into`."""
     into.mkdir(parents=True, exist_ok=True)
@@ -263,25 +228,35 @@ def _finish_blender(folder: Path, runner: Callable[[Path], str] | None) -> dict[
     return result
 
 
+BLENDER_MAIN = "https://download.blender.org/release/"
+
+
+def _with_mirrors(url: str, cat: dict[str, Any]) -> list[str]:
+    """The official address first, then the same path on each of Blender's own mirrors. Never a different kind of address."""
+    urls = [url]
+    if url.startswith(BLENDER_MAIN):
+        urls += [m.rstrip("/") + "/" + url[len(BLENDER_MAIN):] for m in cat.get("mirrors") or [] if isinstance(m, str) and m.startswith("https://")]
+    return urls
+
+
 def blender_specs(opener: Callable[[str, int], Any] | None) -> list[Spec]:
     cat = downloader.catalogue().get("blender") or {}
     url = str(cat.get("zip") or "")
     if not url:
-        raise DownloadError("no_link", "This copy of the app has no link for Blender.", "Choose the zip yourself from blender.org.")
+        raise DownloadError("no_link", "This copy of the app has no link for Blender.", BLENDER_GONE)
+    sha = str(cat.get("sha256") or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+        raise DownloadError("no_pin", "The list has no published checksum for Blender, so it will not be downloaded.", BLENDER_GONE)
+    size = int(cat.get("size") or 0)
     name = _blender_zip_name(cat)
-    sha = ""
-    if cat.get("sha256_file"):
-        sha = parse_sha_file(_read_text(str(cat["sha256_file"]), opener, cat), name)
-    if not sha:
-        raise DownloadError("no_checksum", "Blender's checksum for this file could not be read, so nothing was downloaded.",
-                            "Open blender.org, download the Windows zip yourself, and choose it with \"I downloaded the zip\".")
-    need = int(cat.get("size_mb", 400)) * 3 * downloader.MB  # the zip, then the unpacked copy, with room to spare
+    need = max(size, int(cat.get("size_mb", 400)) * downloader.MB) * 3  # the zip, then the unpacked copy, with room to spare
     where = tools_dir()
     where.mkdir(parents=True, exist_ok=True)
     if downloader.free_bytes(where) < need + downloader.SPACE_MARGIN:
         raise downloader.no_space(where, need + downloader.SPACE_MARGIN)
+    # Any server, the official one or a mirror, is held to this one pinned checksum; no server vouches for itself.
     return [Spec(id="blender", name=f"Blender {cat.get('version', '')}", urls=_with_mirrors(url, cat), dest=tools_dir() / "downloads" / name,
-                 size=0, sha256=sha, page=str(cat.get("page", "")), kind="tool", gone_fix=BLENDER_GONE)]
+                 size=size, sha256=sha, page=str(cat.get("page", "")), kind="tool", gone_fix=BLENDER_GONE)]
 
 
 def start_blender_install(opener: Callable[[str, int], Any] | None = None, runner: Callable[[Path], str] | None = None,
@@ -309,22 +284,18 @@ def start_blender_install(opener: Callable[[str, int], Any] | None = None, runne
 
 
 def use_blender_zip(zip_path: str, opener: Callable[[str, int], Any] | None = None, runner: Callable[[Path], str] | None = None) -> dict[str, Any]:
-    """A zip the person downloaded themselves (for when blender.org refuses the app). Checked against Blender's checksum
-    file when that can be read; refused when it can be read and does not match."""
+    """A zip the person downloaded themselves (for when blender.org refuses the app). It is used only if it is the pinned
+    file: the same SHA-256 as a download by the app. Another Blender version is linked through "Use a different one"."""
     p = Path(zip_path.strip().strip('"'))
     cat = downloader.catalogue().get("blender") or {}
     if not p.is_file() or not zipfile.is_zipfile(p):
         raise DownloadError("bad_zip", f"{p} is not a zip file.", "Choose the Blender zip you downloaded.")
-    checked = False
-    try:
-        want = parse_sha_file(_read_text(str(cat.get("sha256_file", "")), opener, cat), p.name) if cat.get("sha256_file") else ""
-    except DownloadError:
-        want = ""
-    if want:
-        if downloader.sha256_of(p) != want:
-            raise DownloadError("bad_checksum", "That zip does not match Blender's published checksum, so it was not used.",
-                                "Download it again from blender.org.")
-        checked = True
+    want = str(cat.get("sha256") or "").lower()
+    if not want:
+        raise DownloadError("no_pin", "The list has no published checksum for Blender, so a zip cannot be checked.", "Unpack Blender yourself and use Use a different one.")
+    if downloader.sha256_of(p) != want:
+        raise DownloadError("bad_checksum", f"That zip is not the Blender {cat.get('version', '')} zip the app is set up for (its checksum is different), so it was not used.",
+                            f"Download blender-{cat.get('version', '')}-windows-x64.zip from blender.org again, or unpack another version yourself and use Use a different one.")
     with zipfile.ZipFile(p) as z:
         tops = {n.split("/")[0] for n in z.namelist() if n}
     safe_unzip(p, tools_dir())
@@ -332,7 +303,7 @@ def use_blender_zip(zip_path: str, opener: Callable[[str, int], Any] | None = No
     if not folders:
         raise DownloadError("bad_zip", "That zip does not hold Blender (no blender.exe).", "Choose Blender's Windows portable zip.")
     result = _finish_blender(tools_dir() / folders[0], runner)
-    result["checksum_checked"] = checked
+    result["checksum_checked"] = True
     return result
 
 

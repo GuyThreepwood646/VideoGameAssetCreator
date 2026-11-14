@@ -216,6 +216,15 @@ class Spec:
         return self.dest.is_file()
 
 
+def verify_pin(part: Path, want: str, bad: Path, name: str, page: str, cancel: threading.Event | None = None) -> None:
+    """The file is accepted only if its SHA-256 is the pinned one; otherwise it is set aside as `bad` and DownloadError is raised."""
+    if sha256_of(part, cancel).lower() != want.lower():
+        bad.unlink(missing_ok=True)
+        os.replace(part, bad)
+        raise DownloadError("bad_checksum", f"{name} was downloaded, but it is not the published file (it may be damaged or changed). It has been set aside as {bad.name}.",
+                            f"Press Try again. If it happens again, check {page or 'the source page'}.")
+
+
 def fetch(spec: Spec, cancel: threading.Event, on_bytes: Callable[[int, int], None] | None = None,
           opener: Callable[[str, int], Any] | None = None, accepted: set[str] | None = None) -> str:
     """Get one file. Returns 'present' (already there, nothing touched) or 'downloaded'. A finished file is never replaced."""
@@ -225,6 +234,8 @@ def fetch(spec: Spec, cancel: threading.Event, on_bytes: Callable[[int, int], No
                             f"Read it at {spec.licence_page or spec.page} and accept it in the app, then try again.")
     if spec.present():
         return "present"
+    if not spec.sha256:
+        raise DownloadError("no_pin", f"{spec.name} has no published checksum in the list, so it will not be downloaded.", f"Get it yourself from {spec.page or 'its official page'}.")
     if not spec.urls:
         raise DownloadError("no_link", f"There is no download link for {spec.name}.", f"Get it from {spec.page} and put it at {spec.dest}." if spec.page else "Get it from its official page.")
     have = spec.part.stat().st_size if spec.part.exists() else 0

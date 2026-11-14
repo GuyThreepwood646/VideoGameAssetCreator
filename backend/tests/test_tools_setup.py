@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import shutil
 import json
 import zipfile
@@ -127,11 +128,10 @@ def blender_zip() -> bytes:
 
 
 class FakeNet:
-    """Serves the zip and its checksum file; `log` records every URL asked for."""
+    """Serves one zip for every address; `log` records every URL asked for."""
 
-    def __init__(self, data: bytes, sha_text: str | None = None, refuse: bool = False) -> None:
+    def __init__(self, data: bytes, refuse: bool = False) -> None:
         self.data = data
-        self.sha = sha_text if sha_text is not None else f"{hashlib.sha256(data).hexdigest()}  {NAME}\n"
         self.refuse = refuse
         self.log: list[str] = []
 
@@ -140,86 +140,20 @@ class FakeNet:
         if self.refuse:
             import urllib.error
             raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
-        body = self.sha.encode() if url.endswith(".sha256") else self.data[start:]
-        r = io.BytesIO(body)
+        r = io.BytesIO(self.data[start:])
         r.status = 206 if start else 200
-        r.headers = {"Content-Length": str(len(body))}
+        r.headers = {"Content-Length": str(len(self.data) - start)}
         return r
 
 
-def test_get_it_downloads_checks_unpacks_and_links(box, monkeypatch):
-    tmp, machine = box
-    net = FakeNet(blender_zip())
-    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
-    monkeypatch.setattr(setup_settings, "blender_runner", run)
-    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
-    assert job.state == "done", job.error
-    exe = tmp / "local" / "tools" / "blender-5.2.3-windows-x64" / "blender.exe"
-    assert exe.is_file()
-    assert json.loads(machine.read_text(encoding="utf-8"))["backend"]["blender_exe"] == str(exe)
-    assert not (tmp / "local" / "tools" / "downloads" / NAME).exists()  # the zip is tidied away
-    ledger = json.loads((tmp / "local" / "installed.json").read_text(encoding="utf-8"))
-    assert "blender-5.2.3-windows-x64" in json.dumps(ledger) and "added" in json.dumps(ledger)
-    assert any(u.endswith(".sha256") for u in net.log) and any(u.endswith(".zip") for u in net.log)
+def same_size_other(data: bytes) -> bytes:
+    """Another file of exactly the same length, so only the checksum can tell it apart."""
+    return data[:-1] + bytes([data[-1] ^ 1])
 
 
-def test_a_copy_already_unpacked_is_not_fetched_again(box, monkeypatch):
-    tmp, _ = box
-    make_blender(tmp / "local" / "tools" / "blender-5.2.3-windows-x64")
-    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
-    monkeypatch.setattr(setup_settings, "blender_runner", run)
-    net = FakeNet(b"unused")
-    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
-    assert job.state == "done" and net.log == []
-
-
-def test_a_wrong_checksum_is_refused_and_nothing_is_installed(box, monkeypatch):
-    tmp, machine = box
-    net = FakeNet(blender_zip(), sha_text=f"{'0' * 64}  {NAME}\n")
-    job = tools_setup.start_blender_install(opener=net, runner=runner_for({}), wait=True)
-    assert job.state == "failed" and job.error["code"] == "bad_checksum"
-    assert not machine.exists() and not (tmp / "local" / "tools" / "blender-5.2.3-windows-x64").exists()
-
-
-def test_a_missing_checksum_file_stops_before_downloading_the_zip(box):
-    net = FakeNet(blender_zip(), sha_text="no hashes here\n")
-    job = tools_setup.start_blender_install(opener=net, runner=runner_for({}), wait=True)
-    assert job.state == "failed" and job.error["code"] == "no_checksum"
-    assert not any(u.endswith(".zip") for u in net.log)
-
-
-def test_a_refused_download_says_what_to_do_instead(box):
-    job = tools_setup.start_blender_install(opener=FakeNet(b"", refuse=True), runner=runner_for({}), wait=True)
-    assert job.state == "failed" and job.error["message"] and job.error["fix"]
-
-
-def test_a_blender_that_is_too_old_in_the_zip_is_not_linked(box, monkeypatch):
-    tmp, machine = box
-    run = runner_for({"blender-5.2.3": "Blender 4.0.0"})
-    job = tools_setup.start_blender_install(opener=FakeNet(blender_zip()), runner=run, wait=True)
-    assert job.state == "failed" and "too old" in job.error["message"] and not machine.exists()
-
-
-def test_a_zip_the_person_downloaded_is_checked_and_used(box, monkeypatch):
-    tmp, machine = box
-    data = blender_zip()
-    z = tmp / "Downloads" / NAME
-    z.parent.mkdir()
-    z.write_bytes(data)
-    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
-    monkeypatch.setattr(setup_settings, "blender_runner", run)
-    out = tools_setup.use_blender_zip(str(z), opener=FakeNet(data), runner=run)
-    assert out["changed"] and json.loads(machine.read_text(encoding="utf-8"))["backend"]["blender_exe"].endswith("blender.exe")
-    assert z.exists()  # the person's own file is never removed
-
-
-def test_a_downloaded_zip_with_the_wrong_checksum_is_refused(box):
-    tmp, machine = box
-    z = tmp / NAME
-    z.write_bytes(blender_zip())
-    with pytest.raises(downloader.DownloadError) as e:
-        tools_setup.use_blender_zip(str(z), opener=FakeNet(b"other data"), runner=runner_for({}))
-    assert e.value.code == "bad_checksum" and not machine.exists()
+def pin_blender(tmp: Path, data: bytes) -> None:
+    """The list's pin for Blender becomes the checksum and size of `data` (a stand-in for the real zip)."""
+    (tmp / "setup" / "downloads.local.json").write_text(json.dumps({"blender": {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}}), encoding="utf-8")
 
 
 def test_a_zip_that_escapes_its_folder_is_refused(box, tmp_path):
@@ -236,12 +170,6 @@ def test_the_offer_says_what_where_how_big_and_that_no_admin_is_needed(box):
     assert o["available"] and o["from"] == "download.blender.org" and o["size_mb"] > 0 and o["needs_admin"] is False
     assert "tools" in o["goes_to"] and o["licence"]
 
-
-def test_sha_file_parsing():
-    h = "a" * 64
-    assert tools_setup.parse_sha_file(f"{h}  {NAME}\n{'b' * 64}  other.zip", NAME) == h
-    assert tools_setup.parse_sha_file(f"{h} *{NAME}", NAME) == h
-    assert tools_setup.parse_sha_file("junk", NAME) == ""
 
 
 def make_unity(root: Path, version: str) -> Path:
@@ -321,19 +249,120 @@ class MainRefused(FakeNet):
         return super().__call__(url, start)
 
 
-def test_when_the_main_server_refuses_the_official_mirrors_are_tried(box, monkeypatch):
+
+def test_get_it_downloads_checks_unpacks_and_links(box, monkeypatch):
     tmp, machine = box
+    data = blender_zip()
+    pin_blender(tmp, data)
+    net = FakeNet(data)
     run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
     monkeypatch.setattr(setup_settings, "blender_runner", run)
-    net = MainRefused(blender_zip())
+    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
+    assert job.state == "done", job.error
+    exe = tmp / "local" / "tools" / "blender-5.2.3-windows-x64" / "blender.exe"
+    assert exe.is_file()
+    assert json.loads(machine.read_text(encoding="utf-8"))["backend"]["blender_exe"] == str(exe)
+    assert not (tmp / "local" / "tools" / "downloads" / NAME).exists()  # the zip is tidied away
+    ledger = json.loads((tmp / "local" / "installed.json").read_text(encoding="utf-8"))
+    assert "blender-5.2.3-windows-x64" in json.dumps(ledger) and "added" in json.dumps(ledger)
+    assert net.log == [net.log[0]] and net.log[0].endswith(".zip")  # no checksum file is fetched from anywhere
+
+
+def test_a_copy_already_unpacked_is_not_fetched_again(box, monkeypatch):
+    tmp, _ = box
+    make_blender(tmp / "local" / "tools" / "blender-5.2.3-windows-x64")
+    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
+    monkeypatch.setattr(setup_settings, "blender_runner", run)
+    net = FakeNet(b"unused")
+    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
+    assert job.state == "done" and net.log == []
+
+
+def test_a_file_that_is_not_the_pinned_one_is_refused_and_nothing_is_installed(box):
+    tmp, machine = box
+    pin_blender(tmp, blender_zip())
+    job = tools_setup.start_blender_install(opener=FakeNet(same_size_other(blender_zip())), runner=runner_for({}), wait=True)
+    assert job.state == "failed" and job.error["code"] == "bad_checksum"
+    assert not machine.exists() and not (tmp / "local" / "tools" / "blender-5.2.3-windows-x64").exists()
+
+
+def test_a_mirror_serving_a_different_zip_with_its_own_matching_checksum_is_refused(box):
+    """The pin vouches, never the server: a mirror that offers another zip and a checksum file that matches that other zip
+    gets nowhere, and its checksum file is never even asked for."""
+    tmp, machine = box
+    good = blender_zip()
+    pin_blender(tmp, good)
+    evil = same_size_other(good)
+    net = MainRefused(evil)
+    job = tools_setup.start_blender_install(opener=net, runner=runner_for({}), wait=True)
+    assert job.state == "failed" and job.error["code"] == "bad_checksum"
+    assert not any(u.endswith(".sha256") for u in net.log)
+    assert not machine.exists() and not list((tmp / "local" / "tools").glob("blender-*"))
+
+
+def test_with_no_pin_in_the_list_nothing_is_downloaded(box):
+    tmp, _ = box
+    (tmp / "setup" / "downloads.local.json").write_text(json.dumps({"blender": {"sha256": ""}}), encoding="utf-8")
+    net = FakeNet(blender_zip())
+    job = tools_setup.start_blender_install(opener=net, runner=runner_for({}), wait=True)
+    assert job.state == "failed" and job.error["code"] == "no_pin" and net.log == []
+
+
+def test_the_shipped_pin_is_a_real_sha256_and_size_and_names_the_zip(box):
+    cat = downloader.catalogue()["blender"]
+    assert re.fullmatch(r"[0-9a-f]{64}", cat["sha256"]) and cat["size"] > 300_000_000
+    assert cat["zip"].endswith(NAME) and all(m.startswith("https://") for m in cat["mirrors"])
+
+
+def test_a_refused_download_says_what_to_do_instead(box):
+    tmp, _ = box
+    pin_blender(tmp, blender_zip())
+    job = tools_setup.start_blender_install(opener=FakeNet(b"", refuse=True), runner=runner_for({}), wait=True)
+    assert job.state == "failed" and job.error["code"] == "link_gone"
+    assert "your own browser" in job.error["fix"] and "I downloaded the zip" in job.error["fix"] and "get around" in job.error["fix"]
+
+
+def test_when_the_main_server_refuses_the_official_mirrors_are_tried(box, monkeypatch):
+    tmp, machine = box
+    data = blender_zip()
+    pin_blender(tmp, data)
+    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
+    monkeypatch.setattr(setup_settings, "blender_runner", run)
+    net = MainRefused(data)
     job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
     assert job.state == "done", job.error
     mirror_hits = [u for u in net.log if "download.blender.org" not in u]
     assert any(u.endswith(".zip") for u in mirror_hits) and all(u.startswith("https://") for u in mirror_hits)
 
 
-def test_when_every_server_refuses_the_person_is_told_to_use_their_own_browser(box):
-    job = tools_setup.start_blender_install(opener=FakeNet(b"", refuse=True), runner=runner_for({}), wait=True)
-    assert job.state == "failed" and job.error["code"] == "link_gone"
-    assert "your own browser" in job.error["fix"] and "I downloaded the zip" in job.error["fix"]
-    assert "get around" in job.error["fix"]
+def test_a_blender_that_is_too_old_in_the_zip_is_not_linked(box):
+    tmp, machine = box
+    data = blender_zip()
+    pin_blender(tmp, data)
+    run = runner_for({"blender-5.2.3": "Blender 4.0.0"})
+    job = tools_setup.start_blender_install(opener=FakeNet(data), runner=run, wait=True)
+    assert job.state == "failed" and "too old" in job.error["message"] and not machine.exists()
+
+
+def test_a_zip_the_person_downloaded_is_used_only_if_it_is_the_pinned_file(box, monkeypatch):
+    tmp, machine = box
+    data = blender_zip()
+    pin_blender(tmp, data)
+    z = tmp / "Downloads" / NAME
+    z.parent.mkdir()
+    z.write_bytes(data)
+    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
+    monkeypatch.setattr(setup_settings, "blender_runner", run)
+    out = tools_setup.use_blender_zip(str(z), runner=run)
+    assert out["changed"] and out["checksum_checked"] and json.loads(machine.read_text(encoding="utf-8"))["backend"]["blender_exe"].endswith("blender.exe")
+    assert z.exists()  # the person's own file is never removed
+
+
+def test_a_downloaded_zip_that_is_not_the_pinned_file_is_refused(box):
+    tmp, machine = box
+    pin_blender(tmp, blender_zip())
+    z = tmp / NAME
+    z.write_bytes(blender_zip() + b"other version")
+    with pytest.raises(downloader.DownloadError) as e:
+        tools_setup.use_blender_zip(str(z), runner=runner_for({}))
+    assert e.value.code == "bad_checksum" and "Use a different one" in e.value.fix and not machine.exists()

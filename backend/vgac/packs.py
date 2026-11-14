@@ -100,6 +100,7 @@ class Source:
     click_text: str = ""
     what: str = ""
     find_name: str = ""  # a file to look for anywhere under dest instead of a fixed ready_path
+    sha256: str = ""  # the pinned SHA-256 of a direct download (a direct link without one is refused)
 
     @property
     def zip_path(self) -> Path:
@@ -152,7 +153,7 @@ def hair_kit() -> Kit:
         sources.append(Source(id=h["id"], name=h["name"], zip_name=h["zip_name"], size=int(h.get("zip_size") or 0), page=h.get("page", ""),
                               store=store, dest=dest, ready_path=dest / h.get("check_dir", "hair"), expect=list(h.get("zip_expect") or []),
                               urls=[u for u in (h.get("zip"), h.get("zip_alt")) if u], needs=list(h.get("needs") or []),
-                              click_text=h.get("click_text", ""), what=h.get("note", "")))
+                              click_text=h.get("click_text", ""), what=h.get("note", ""), sha256=h.get("zip_sha256", "")))
     choices = []
     for hp in d.get("hair_packs", []):
         if hp.get("no_download") or not hp.get("source"):
@@ -251,7 +252,10 @@ def _open(url: str, start: int):  # replaced in tests
 
 def _download_one(url: str, src: Source, run: Run, on_bytes: Callable[[int], None]) -> None:
     part = src.store / (src.zip_name + ".part")
+    if not src.sha256:
+        raise DownloadError("no_pin", f"{src.name} has no published checksum in the list, so it will not be downloaded.", f"Download the zip yourself from {src.page} and drop it onto this panel.")
     downloader.stream_to_part(url, part, src.name, run.cancel, on_bytes, lambda u, st: _open(u, st))
+    downloader.verify_pin(part, src.sha256, src.store / (src.zip_name + ".bad"), src.name, src.page, run.cancel)
     os.replace(part, src.zip_path)
 
 

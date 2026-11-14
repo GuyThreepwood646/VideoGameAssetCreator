@@ -317,3 +317,15 @@ def test_apply_over_http_needs_the_go_ahead(box):
     assert r.status_code == 400 and "Go ahead" in r.json()["detail"]
     r = TestClient(app).post("/api/comfy/choice/A")
     assert r.status_code == 400 and "not built yet" in r.json()["detail"]
+
+
+def test_a_node_pack_with_no_pin_is_not_fetched(box):
+    tmp, _ = box
+    inst = tmp / "Installs" / "C"
+    make_install(inst)
+    real = json.loads(REAL_LIST.read_text(encoding="utf-8-sig"))["node_packs"]
+    (tmp / "setup" / "downloads.local.json").write_text(json.dumps({"node_packs": {"skintoken": dict(real["skintoken"], sha256="")}}), encoding="utf-8")
+    net = PackNet(pack_zip("a\n"))
+    with pytest.raises(downloader.DownloadError) as e:
+        comfy_find.packs_report(comfy_find._candidate(inst, "desktop", "x"), net, FakePip({}, {}))
+    assert e.value.code == "no_pin" and net.log == []
