@@ -690,6 +690,8 @@ export type HealthInstance = {
   memory?: HealthMemory
   // The app has a job on this card or lent it; something other than the app is using it while the app is not.
   working?: boolean
+  // What the card is doing when working: "Drawing: Build the 3D model" or "Lent to Clean up for the game".
+  activity?: string | null
   busy_outside?: boolean
 }
 export type HealthMemory = {

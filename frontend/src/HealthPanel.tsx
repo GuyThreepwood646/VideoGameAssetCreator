@@ -17,8 +17,9 @@ function gb(bytes: number | null | undefined): string {
 // One word for a card: off, not running, working for the app, busy with another program, or ready.
 function cardState(inst: HealthInstance): string {
   if (inst.enabled === false) return 'Turned off'
+  // A card with a job on it (or lent to one) is working even when its engine is slow to answer while a model loads.
+  if (inst.working) return inst.activity || 'Working'
   if (!inst.reachable) return 'Starts when needed'
-  if (inst.working) return 'Working'
   if (inst.busy_outside) return 'In use by another program'
   return 'Ready'
 }

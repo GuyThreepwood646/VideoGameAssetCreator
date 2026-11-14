@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, library, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, estimates, library, own_images, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -312,10 +312,11 @@ async def health() -> dict[str, Any]:
         # else is using it while the app is not.
         card = cardmem.card_of(settings, name, summary, cards)
         s = st.get(name, {})
-        working = bool(s.get("current_job_id") or s.get("lent_to"))
+        working = bool(s.get("in_use") or s.get("current_job_id") or s.get("lent_to"))
         instances[name] = {"url": clients[name].base_url, "gpu": inst.gpu, "role": inst.role, **summary,
                            "enabled": queue.is_enabled(name) if queue else True,
                            "memory": cardmem.describe(card, summary), "working": working,
+                           "activity": estimates.activity(s) if working else None,
                            "busy_outside": cardmem.outside_use(summary, card, working)}
     instances[HOST] = {"role": "blender, unity", "reachable": True, "blender": str(settings.blender_exe) if settings.blender_exe else None,
                        "unity": str(settings.unity_exe) if settings.unity_exe else None}
@@ -413,8 +414,9 @@ def platforms() -> list[dict[str, Any]]:
 
 
 @app.get("/api/stages")
-def stages_() -> list[dict[str, Any]]:
-    return reference.stages()
+def stages_(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    # estimate_seconds: the median of the last runs on this machine when there are some, else the default in guidance.
+    return estimates.with_history(db, reference.stages())
 
 
 @app.get("/api/style-presets")
@@ -433,9 +435,11 @@ def recipe_(style: str = "painted", category: str = "humanoid", platform: str = 
 
 
 @app.get("/api/suggest")
-def suggest_(category: str = "humanoid", style: str = "painted", platform: str = "pc_mid") -> dict[str, Any]:
+def suggest_(category: str = "humanoid", style: str = "painted", platform: str = "pc_mid",
+             db: Session = Depends(get_session)) -> dict[str, Any]:
     from . import guidance
-    return guidance.suggest(category, style, platform, reference.categories(), reference.styles(), reference.platforms())
+    res = guidance.suggest(category, style, platform, reference.categories(), reference.styles(), reference.platforms())
+    return estimates.suggest_with_history(db, res, category, platform)
 
 
 # ---------------------------------------------------------------------------

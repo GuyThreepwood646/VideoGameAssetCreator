@@ -1882,11 +1882,16 @@ class JobQueue:
             func.row_number().over(partition_by=Job.instance, order_by=(Job.created_at, Job.id)).label("rn"),
             func.count().over(partition_by=Job.instance).label("n"),
         ).where(Job.status == "queued").subquery()
+        busy_ids = [i for w in self.workers.values() for i in (w.current_job_id, w.lent_to) if i]
         with session_factory()() as db:
             heads = {row.instance: (row.id, int(row.n)) for row in db.execute(select(ranked.c.instance, ranked.c.id, ranked.c.n).where(ranked.c.rn == 1))}
+            kinds = dict(db.execute(select(Job.id, Job.kind).where(Job.id.in_(busy_ids))).all()) if busy_ids else {}
         out = {}
         for name, w in self.workers.items():
             next_id, n = heads.get(name, (None, 0))
+            # current_kind / lent_kind: what the card is drawing, or what it is lent to (the borrowing job's kind).
             out[name] = {"paused": w.paused, "enabled": not w.disabled, "current_job_id": w.current_job_id, "queued": n,
-                         "next_job_id": next_id, "lent_to": w.lent_to}
+                         "next_job_id": next_id, "lent_to": w.lent_to,
+                         "current_kind": kinds.get(w.current_job_id), "lent_kind": kinds.get(w.lent_to),
+                         "in_use": self.card_in_use(name)}
         return out
