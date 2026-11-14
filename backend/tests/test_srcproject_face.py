@@ -577,3 +577,25 @@ def test_a_head_view_painting_well_holds_the_body_fits_off_whatever_its_cover() 
     body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
     paint, _, _ = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
     assert np.allclose(paint[:, 0], 0.9)  # weight 0.3 is over HEAD_HANDOVER: no body colour
+
+
+def test_the_chin_fill_carries_the_shading_of_both_its_borders() -> None:
+    xs, ys = np.meshgrid(np.arange(-0.05, 0.05, 0.001), np.arange(-0.08, 0.08, 0.001))  # a 1 mm grid, like a real atlas
+    pos = np.stack([xs.ravel(), ys.ravel(), np.zeros(xs.size)], 1)
+    atlas = _A(pos, np.tile([0.0, 0.0, 1.0], (len(pos), 1)))
+    y = pos[:, 1]
+    top, bottom = np.array([0.85, 0.65, 0.55]), np.array([0.55, 0.40, 0.33])
+    shade = 0.05 * np.sin(y * 300)[:, None]  # shading in the painted surface
+    painted = (y > 0.04) | (y < -0.04)  # an 8 cm gap, about a chin's underside
+    colour = np.where((y > 0)[:, None], top, bottom) + shade
+    f, reach = srcproject.shaded_fill(atlas, colour, painted)
+    gap = np.abs(y) < 0.04
+    up_edge, low_edge, middle = gap & (y > 0.036), gap & (y < -0.036), gap & (np.abs(y) < 0.004)
+    jaw_border = colour[painted & (y > 0.04) & (y < 0.044)].mean(axis=0)  # the painted jaw just above the gap
+    neck_border = colour[painted & (y < -0.04) & (y > -0.044)].mean(axis=0)
+    assert np.abs(f[up_edge] - jaw_border).mean() < 0.02  # next to the jaw: the jaw's own colour and shading there
+    assert np.abs(f[low_edge] - neck_border).mean() < 0.02  # next to the neck: the neck's
+    mid = f[middle].mean(axis=0)
+    assert np.all(mid > bottom + 0.05) and np.all(mid < top - 0.05)  # in between: blended, not one border's colour
+    assert reach[gap].min() > 0.05
+    assert np.ptp(f[gap][:, 0]) > 0.15  # not one colour across the gap

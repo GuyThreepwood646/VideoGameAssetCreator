@@ -973,6 +973,52 @@ def skin_tone(atlas: Atlas, kept: np.ndarray, paint: np.ndarray, alpha: np.ndarr
     return np.clip(field * reach[:, None] + ref[None] * (1 - reach[:, None]), 0, 1)
 
 
+FILL_CELLS = (0.032, 0.016, 0.008, 0.004)  # metres: the scales shaded_fill carries painted colour in at, coarse to fine
+
+
+def _smooth_mean(atlas: Atlas, vals: np.ndarray, wt: np.ndarray, cell: float, passes: int) -> tuple[np.ndarray, np.ndarray]:
+    """The weighted mean of vals (N,3) round each texel over a few cells of `cell` metres along the surface, as a
+    normalised average: sums and weights are smoothed and interpolated apart and divided last, so empty cells do not
+    pull the mean toward black. Returns (mean (N,3), weight round the texel (N), 0 where nothing is painted near)."""
+    pos = atlas.pos
+    lo = pos.min(0) - 3 * cell
+    f = (pos - lo) / cell
+    idx = np.floor(f).astype(int)
+    dims = tuple(int(d) for d in idx.max(0) + 4)
+    flat = np.ravel_multi_index(tuple(idx.T), dims)
+    size = int(np.prod(dims))
+    sv = [np.bincount(flat, weights=vals[:, c] * wt, minlength=size).reshape(dims) for c in range(3)]
+    sw = np.bincount(flat, weights=wt, minlength=size).reshape(dims)
+    for _ in range(passes):
+        sv = [face._box3(x, 1) for x in sv]
+        sw = face._box3(sw, 1)
+    fc = f - 0.5
+    w = face._trilinear(sw, fc)
+    mean = np.stack([face._trilinear(x, fc) for x in sv], -1) / np.maximum(w, 1e-12)[:, None]
+    return mean, w
+
+
+FILL_CELLS = (0.032, 0.016, 0.008, 0.004)  # metres: the scales shaded_fill carries painted colour in at, coarse to fine
+
+
+def shaded_fill(atlas: Atlas, colour: np.ndarray, painted: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The painted colour carried into the texels around it, coarse to fine: at each of FILL_CELLS the mean painted
+    colour a few cells round each texel (_smooth_mean), each finer scale taking over as far as it has enough painted
+    texels near. Next to painted surface the fill has that surface's own shading and tone a few millimetres in;
+    further in, the larger scales blend the borders on either side (the jaw above, the neck below) into each other.
+    Returns (colour (N,3), reach (N) 0..1: how much painted surface the coarsest scale found near)."""
+    wt = painted.astype(np.float64)
+    vals = np.where(painted[:, None], colour, 0.0)
+    out, w0 = _smooth_mean(atlas, vals, wt, FILL_CELLS[0], 3)
+    reach = np.clip(w0 / max(float(np.percentile(w0[painted], 50)) if painted.any() else 1.0, 1e-9) * 4.0, 0.0, 1.0)
+    for cell in FILL_CELLS[1:]:
+        m, w = _smooth_mean(atlas, vals, wt, cell, 1)
+        full = float(np.percentile(w[painted], 50)) if painted.any() else 1.0
+        k = face.smoothstep(0.05, 0.5, w / max(full, 1e-9))[:, None]
+        out = out * (1 - k) + m * k
+    return np.clip(out, 0.0, 1.0), reach
+
+
 def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray] | None = None,
            out_info: dict[str, Any] | None = None) -> np.ndarray:
     """The new atlas: painted texels take the painted colour; the others keep base with its low frequencies shifted to agree
@@ -1004,10 +1050,11 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray,
         under = zt.get("under")
         if under is not None and (under * (1 - alpha) > 0.5).any():
             # the underside of the chin, which the head views no longer paint at a grazing angle: the painted colour
-            # around it, smoothly (skin under a bare chin, the beard's colour under a beard), never the step 3 colour
+            # around it (skin under a bare chin, the beard's colour under a beard), never the step 3 colour; carried in
+            # from both its borders, the jaw above and the neck below, with their shading (shaded_fill), not as one
+            # colour (one colour read as a flat patch with an edge against the face on the live W2-clothed run)
             sel_p = (alpha > 0.5) & ~atlas.is_gut
-            # (a wider reach than finish's own shift: the underside lies up to a few centimetres from painted surface)
-            field, reach = surface_correction(atlas, np.where(sel_p[:, None], paint, 0.0), sel_p.astype(np.float64), cell=0.02)
+            field, reach = shaded_fill(atlas, paint, sel_p)
             took = under * (reach > 0.05)
             out = out * (1 - took[:, None]) + field * took[:, None]
             if out_info is not None:
