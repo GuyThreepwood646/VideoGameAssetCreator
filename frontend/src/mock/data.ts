@@ -539,11 +539,12 @@ const checksFor = (stage: StageId, seed: number, budget = 20000, category = 'hum
             ]),
         // The front check. On the failing seed the best turn is not a quarter turn, so its fix opens the front
         // picker instead of re-running (2.5).
-        chk('facing', !fail, fail ? 45 : 0, 20, {
+        chk('facing_tests', !fail, fail ? 150 : 5, 60, {
           severity: 'warn',
+          vars: { outline_turn: fail ? 150 : 0, toes_turn: fail ? 0 : 5 },
           ...(fail
-            ? { fix: { ui: 'front_picker', label: 'Pick the front' }, help: 'The model may face the wrong way: it matches the front picture best when turned 45 degrees.' }
-            : { help: 'The front of the model faces forward in the game.' }),
+            ? { fix: { ui: 'front_picker', label: 'Pick the front' }, help: 'The model may face the wrong way: its outline against the side pictures says turn it 150 degrees, but its toes say 0 degrees, 150 degrees apart. Look at the model from the front; if the face is on the back of the head, turn it.' }
+            : { help: 'The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.' }),
         }),
         chk('uv_set', true, 1, 1),
         // Textures and light (3.9). Some leave help out so the frontend fallback sentences show.
@@ -643,7 +644,7 @@ function sizeOn(category: string): number {
 export function addBackendFinish(asset: Asset, version: Version) {
   const prefab = `Assets/VGAC/${asset.name}/${asset.name}.prefab`
   version.metrics.finish_lines = [
-    { id: 'size', text: 'Real size: 1.8 m tall, but the front may face the wrong way.', state: 'warn', term: 'face_yaw', check: 'facing' },
+    { id: 'size', text: 'Real size: 1.8 m tall, but the front may face the wrong way.', state: 'warn', term: 'face_yaw', check: 'facing_tests' },
     { id: 'surface', text: 'Looks right in Unity: colour, bumps, shadows, metal and shine are connected.', state: 'ok', term: 'metal_shine' },
     { id: 'movement', text: 'Ready to move: set Speed and it idles, walks and runs; Attack, Hit and Die are one line each.', state: 'ok', term: 'animator_controller' },
     { id: 'collision', text: 'Bumps into things: a standing capsule for moving and 11 hit boxes that follow the animation.', state: 'ok', term: 'hitboxes' },

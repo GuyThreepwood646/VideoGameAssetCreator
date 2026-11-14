@@ -95,7 +95,8 @@ export function attentionItems(asset: Asset): AttentionItem[] {
   return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
 }
 
-const FACING_IDS = ['facing_tests', 'clips_face_forward', 'facing']
+// (The clean-up's old `facing` check compared the turn with the test that chose it, so it is not read here any more.)
+const FACING_IDS = ['facing_tests', 'clips_face_forward']
 
 // The facing checks that exist on the kept versions.
 export function facingChecks(asset: Asset): Check[] {
@@ -191,11 +192,11 @@ function baseFinishLines(asset: Asset): FinishLine[] {
   const size = axis && axis !== 'grid' ? measuredSize(selectedVersion(asset, 'prep')?.metrics, asset.category) : null
   if (size) {
     const sc = findCheck(asset, 'size_m') ?? findCheck(asset, 'height_m')
-    const facing = findCheck(asset, 'facing')
+    const facing = findCheck(asset, 'facing_tests')
     const bad = failed(sc) ? sc : failed(facing) ? facing : null
     lines.push({
       id: 'size',
-      text: `Real size: ${metres(size.value)} m ${size.word}${facing && facesForward(asset) ? ', front facing forward' : ''}.`,
+      text: `Real size: ${metres(size.value)} m ${size.word}${facesForward(asset) ? ', front facing forward' : ''}.`,
       state: bad ? 'warn' : 'ok',
       term: 'size_m',
       check: bad ? (bad.id ?? bad.name) : undefined,
