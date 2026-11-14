@@ -670,6 +670,27 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
   return { job: clone(job), version: clone(v) }
 })
 
+// The merged redraw words for ticked failed checks (a short stand-in for the backend's fixes.compose).
+const MOCK_CHANGES: Record<string, { id: string; change: string }> = {
+  in_frame: { id: 'frame', change: 'Redraw the whole person slightly smaller, so every part of it fits inside the picture with a clear margin on all four sides.' },
+  soft_light: { id: 'even_light', change: 'Redraw the person in flat, even light with no strong shadows.' },
+  face_drawn: { id: 'face_draw', change: 'Draw the face: the person faces the viewer, with both eyes open and clearly drawn.' },
+}
+on('POST', '/api/versions/:vid/fix-plan', (m, body) => {
+  const { version } = findVersion(m.groups!.vid)
+  if (version.stage !== 'concept') throw new HttpError(400, 'only the first picture is redrawn to fix checks')
+  const failing = new Set(((version.metrics.checks as { id?: string; name: string; passed?: boolean }[]) ?? []).filter((c) => !c.passed).map((c) => c.id ?? c.name))
+  const wanted = [...new Set((Array.isArray(body.checks) ? body.checks : []).map(String))].filter((c) => failing.has(c) && MOCK_CHANGES[c])
+  const bySnippet = new Map<string, string[]>()
+  for (const c of wanted) bySnippet.set(MOCK_CHANGES[c].id, [...(bySnippet.get(MOCK_CHANGES[c].id) ?? []), c])
+  const chosen = [...bySnippet.keys()].slice(0, 3)
+  const dropped = [...bySnippet.entries()].filter(([s]) => !chosen.includes(s)).flatMap(([, cs]) => cs).map((c) => ({ check: c, reason: 'too_many', text: 'A redraw takes at most 3 changes at once, so ' + c.replace(/_/g, ' ') + ' was left out. Fix it after this redraw.' }))
+  const changes = chosen.map((s) => Object.values(MOCK_CHANGES).find((x) => x.id === s)!.change)
+  const keep = 'Keep everything else exactly the same: the same person, clothes, colours and the plain light grey background.'
+  const instruction = !changes.length ? null : changes.length === 1 ? changes[0] + ' ' + keep : 'Make these ' + changes.length + ' changes: ' + changes.map((c, i) => '(' + (i + 1) + ') ' + c).join(' ') + ' ' + keep
+  return { instruction, used: chosen.flatMap((s) => bySnippet.get(s)!), snippets: chosen, dropped, words: instruction ? instruction.split(/s+/).length : 0, max_changes: 3 }
+})
+
 // ---------------------------------------------------------------------------
 // Start from your own images. The picture (a data: URL) becomes the version's file as it is; the mock "cutout" is
 // the same picture, and the readiness checks are faked in data.ts (a person's arms always warn, with the fix).

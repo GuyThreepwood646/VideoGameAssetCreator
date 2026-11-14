@@ -473,6 +473,7 @@ type MockCheck = {
   help?: string
   fix?: { stage?: string; params?: Record<string, unknown>; label?: string; ui?: string; op?: 'refine'; instruction?: string }
   severity?: 'block' | 'warn'
+  fix_snippet?: string
   vars?: Record<string, unknown>
 }
 
@@ -667,7 +668,7 @@ function uploadReadiness(asset: Asset): MockCheck[] {
   const fix = { stage: 'concept', op: 'refine' as const, instruction: redraw, params: {}, label: 'Redraw it ready for 3D' }
   const out = [
     chk('one_subject', true, 1, 1, { severity: 'warn', help: 'The picture shows one subject.' }),
-    chk('in_frame', true, 0.04, 0.01, { severity: 'warn', help: 'The whole subject is in the picture, with space around it.' }),
+    chk('in_frame', asset.category !== 'humanoid', 0.0, 0.01, { severity: 'warn', help: asset.category === 'humanoid' ? 'Part of the subject touches the edge of the picture.' : 'The whole subject is in the picture, with space around it.', ...(asset.category === 'humanoid' ? { fix_snippet: 'frame' } : {}) } as Partial<MockCheck>),
     chk('big_enough', true, 820, 400, { severity: 'warn', vars: { measure: asset.category === 'humanoid' ? 'tall' : 'across' } }),
   ]
   if (asset.category === 'humanoid')
@@ -677,7 +678,12 @@ function uploadReadiness(asset: Asset): MockCheck[] {
         help: 'The arms are close to the body; the 3D model may join them to the sides and the skeleton step may not tell them apart.',
         fix,
         vars: { redraw, span_ratio: 1.3 },
-      }),
+      } as Partial<MockCheck>),
+      chk('soft_light', false, 0.17, 0.3, {
+        severity: 'warn',
+        help: 'The picture has hard, high-contrast light: some of the skin sits in strong shadow while the rest is lit bright.',
+        fix_snippet: 'even_light',
+      } as Partial<MockCheck>),
     )
   return out
 }

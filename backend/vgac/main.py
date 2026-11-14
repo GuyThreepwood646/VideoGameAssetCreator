@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, estimates, library, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, estimates, fixes, library, own_images, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -184,6 +184,12 @@ class RefineIn(BaseModel):
     # Experimental: a second picture the concept refine passes to the edit model (own_images.write_reference).
     reference_image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
     params: dict[str, Any] = Field(default_factory=dict)
+    # The failed checks this redraw is meant to fix (fixes.compose made the instruction); stored as params.fix_for.
+    fix_for: list[str] | None = Field(default=None, max_length=12)
+
+
+class FixPlanIn(BaseModel):
+    checks: list[str] = Field(default_factory=list, max_length=12)
 
 
 class AdjustIn(BaseModel):
@@ -818,8 +824,12 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     _check_mask(body.mask_png)
     reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
-    inherited = {k: val for k, val in parent.params.items() if k != "reference_experimental"}
-    v = pipeline.new_version(db, a, parent.stage, parent, {**inherited, **rparams})
+    inherited = {k: val for k, val in parent.params.items() if k not in ("reference_experimental", "fix_for")}
+    # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
+    fix_for = fixes.check_fix_for(body.fix_for or [])
+    if body.fix_for and parent.stage != "concept":
+        raise HTTPException(400, "only the first picture is redrawn to fix checks")
+    v = pipeline.new_version(db, a, parent.stage, parent, {**inherited, **rparams, **({"fix_for": fix_for} if fix_for else {})})
     if reference_img is not None:
         own_images.write_reference(db, a, v, reference_img)
     job = pipeline.submit(db, a, v, "refine", {"instruction": body.instruction, "view": body.view, "views": views, "mask_png": body.mask_png,
@@ -834,9 +844,26 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
-    v = pipeline.new_version(db, a, parent.stage, parent, {**parent.params, **aparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in parent.params.items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/fix-plan")
+def fix_plan(vid: str, body: FixPlanIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """The one redraw instruction for the ticked failed checks on this first picture (fixes.compose), for the card to
+    show and then send to the refine. Nothing is made here. A tick that is not failing on this version is left out."""
+    v = _version(db, vid)
+    a = _asset(db, v.asset_id)
+    if v.stage != "concept":
+        raise HTTPException(400, "only the first picture is redrawn to fix checks")
+    checks = v.metrics.get("checks") if isinstance(v.metrics, dict) else None
+    failing = {c.get("id") or c.get("name") for c in (checks if isinstance(checks, list) else [])
+               if isinstance(c, dict) and not bool(c.get("passed", c.get("ok", True)))}
+    ticked = [c for c in dict.fromkeys(body.checks) if c in failing]
+    out = fixes.compose(ticked, a.category)
+    out["max_changes"] = int(fixes.data().get("max_changes") or 3)
+    return out
 
 
 @app.post("/api/versions/{vid}/select")

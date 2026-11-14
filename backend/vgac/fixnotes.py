@@ -88,7 +88,7 @@ NOTES: dict[str, tuple[str, str]] = {
     "limb_joins": ("by_hand", "Arms or legs touching the body cannot be rigged cleanly. Draw the side views again with Pose for 3D first, "
                               "then build the 3D model and rig again."),
     # step 6 (export)
-    "unity_import": ("outside", "Nothing in the app fixes this. Open the Unity console and read the message quoted above, check the Unity project path "
+    "unity_import": ("outside", "Nothing in the app fixes this. Open the Unity console and read its error message, check the Unity project path "
                                 "and Unity version in Look and settings, then make the files again once."),
     "collider_vertices": ("by_hand", "Under Fine tune in the last step, use fewer collision shapes, then make the files again."),
     "grip_found": ("by_hand", "Use the Items panel to place the item in the hand by hand."),
@@ -145,6 +145,11 @@ def covered(check_id: str, guide: dict[str, Any] | None) -> str | None:
 def annotate(out: dict[str, Any], check_id: str, guide: dict[str, Any] | None) -> None:
     """Add fix_note and fix_kind to a failed check (out is the described check). Relabels a rerun fix "Try again" and gives
     the checks that had no button a real one where the table has it. Never touches a passing check."""
+    from . import fixes
+
+    snippet = fixes.snippet_for(check_id)
+    if snippet:
+        out["fix_snippet"] = snippet  # the picture checks that can be ticked together for one redraw (data/fixes.yaml)
     if check_id in OWN_FIX:
         return  # the check's own producer sets its fix and its full explanation after this
     fix = out.get("fix")

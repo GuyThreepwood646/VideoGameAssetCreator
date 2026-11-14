@@ -1,0 +1,65 @@
+# Words for fixing failed checks on the first picture (step 1), one snippet per check.
+#
+# Each snippet is an edit instruction for the picture editor: one change, then what must stay the same. Ticking several
+# failed checks joins their changes into ONE redraw (vgac/fixes.py compose): changes in the order below, a thing two
+# snippets both keep named once, and anything a change alters left off the keep list. Order in this file is the order in
+# the redraw. Placeholders: {subject} is "person" for characters and the category's own word for the rest, {a_pose} is
+# buildpose.A_POSE (one source for the A pose; step 2's redraw uses the same words).
+#
+# tested: false means the wording has not been measured on the picture editor. offered: false means the checks keep their own
+# buttons and get no tick box, because the card trial (2026-11-14, 7 stored pictures, one redraw each on the picture editor)
+# showed the redraw changing the character or missing the check; the reason is written beside the snippet.
+
+max_changes: 3     # most changes in one redraw; more than this go in a second redraw after the first is checked
+max_words: 260     # longest the whole instruction may be
+
+snippets:
+  frame:
+    checks: [in_frame]
+    change: "Redraw the whole {subject} slightly smaller, so every part of it, hands and feet included, fits inside the picture with a clear margin on all four sides."
+    keep: ["the same {subject}", "face", "hair", "clothes", "colours", "pose", "the plain light grey background"]
+    drops: ["framing", "the whole body in frame"]
+    conflicts: []
+    tested: true     # trial: the check passed on 2 of 3 pictures, in a redraw that also changed the pose; the third still touched the edge
+
+  pose_a:
+    checks: [arms_away, pose_for_3d]
+    change: "Redraw the pose as a wide A pose: {a_pose}"
+    keep: ["the same {subject}", "face", "hair", "skin colour", "every garment and its colours and materials", "the body proportions",
+           "the art style", "the camera angle", "the whole body in frame", "the plain light grey background"]
+    drops: ["pose"]
+    conflicts: []
+    tested: true
+    offered: false
+    # Step 2's pose redraw has a guard that refuses a redraw that changed the character (8 stored redraws: 2 kept, 6 refused). A step 1
+    # redraw has no guard. Trial: the pose check passed on 4 of 5 pictures, but the redraw changed the character on 3 of 5 (it drew a
+    # face on a character with none, took four extra arms off a robot) and left the arms out on 1. arms_away and pose_for_3d keep their
+    # own guarded button.
+
+  even_light:
+    checks: [soft_light]
+    change: "Redraw the {subject} in flat, even light, soft studio or cloudy-day light, with no strong shadows and no bright highlights."
+    keep: ["the same {subject}", "face", "hair", "clothes", "colours", "pose", "framing", "the plain light grey background"]
+    drops: []
+    conflicts: []
+    tested: true     # trial: fixed 2 of 2 hard-light pictures, the person kept (skin comes out lighter once the shadows go)
+
+  hair_off:
+    checks: [hair_off_eyes]
+    change: "Move the hair off the face: sweep the fringe and any locks away from the forehead and both eyes, to the sides or behind the ears, so both eyes and eyebrows are fully visible."
+    keep: ["the same {subject}", "face", "hair colour", "hair length", "clothes", "colours", "pose", "framing", "the plain light grey background"]
+    drops: ["hair"]
+    conflicts: []
+    tested: true
+    offered: false
+    # Trial: the check passed on 2 of 3 pictures, but the redraw gave a man with short grey hair long black locks, and on the third
+    # (a character whose face is hidden) it drew a new face and the check got worse. The check itself fires on pictures where the hair
+    # is not over the eyes, and the wording invents hair then. Keep the button (hairpic.FIX_INSTRUCTION) and its own guard.
+
+  face_draw:
+    checks: [face_drawn]
+    change: "Draw the face: the {subject} faces the viewer, with both eyes open and clearly drawn, eyebrows, a nose and a mouth."
+    keep: ["the same {subject}", "hair colour", "hair length", "clothes", "colours", "pose", "framing", "the plain light grey background"]
+    drops: ["face"]
+    conflicts: []
+    tested: false

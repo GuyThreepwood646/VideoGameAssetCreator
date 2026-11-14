@@ -639,3 +639,68 @@ def test_stage_context_publish_sends_a_version_event(client, monkeypatch):
         v = db.get(Version, out["version"]["id"])
         StageContext.publish(SimpleNamespace(version=v))
     assert seen and seen[0]["type"] == "version" and seen[0]["version"]["id"] == out["version"]["id"]
+
+
+def _concept_with_failed_checks(client, ids):
+    """A done concept version whose metrics say these checks failed (as a real concept step would write them)."""
+    p, a = _project_asset(client)
+    out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
+    wait_job(client, out["job"]["id"])
+    vid = out["version"]["id"]
+    with session_factory()() as db:
+        v = db.get(Version, vid)
+        m = v.metrics
+        m["checks"] = [{"name": i, "id": i, "passed": False, "value": 1, "limit": 0} for i in ids] + [{"name": "one_subject", "id": "one_subject", "passed": True}]
+        v.metrics = m
+        db.commit()
+    return a, vid
+
+
+def test_fix_plan_joins_the_ticked_failed_checks_only(client, fake_execute):
+    a, vid = _concept_with_failed_checks(client, ["in_frame", "soft_light"])
+    r = client.post(f"/api/versions/{vid}/fix-plan", json={"checks": ["soft_light", "in_frame", "face_drawn", "arms_away", "one_subject", "bogus"]})
+    assert r.status_code == 200
+    out = r.json()
+    assert out["used"] == ["in_frame", "soft_light"] and out["snippets"] == ["frame", "even_light"]
+    assert out["dropped"] == []  # face_drawn passes here, arms_away is not offered a tick, one_subject passed, bogus is unknown
+    assert out["instruction"].startswith("Make these 2 changes: (1) Redraw the whole person") and out["max_changes"] == 3
+    assert client.post(f"/api/versions/{vid}/fix-plan", json={"checks": []}).json()["instruction"] is None
+
+
+def test_fix_plan_is_for_the_first_picture_only(client, fake_execute):
+    a, vid = _concept_with_failed_checks(client, ["in_frame"])
+    t = client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={"parent_version_id": vid}).json()
+    wait_job(client, t["job"]["id"])
+    assert client.post(f"/api/versions/{t['version']['id']}/fix-plan", json={"checks": ["in_frame"]}).status_code == 400
+    assert client.post(f"/api/versions/{t['version']['id']}/refine", json={"instruction": "x", "fix_for": ["in_frame"]}).status_code == 400
+
+
+def test_refine_stores_fix_for_on_the_new_version_and_it_is_not_inherited(client, fake_execute):
+    a, vid = _concept_with_failed_checks(client, ["in_frame", "soft_light"])
+    plan = client.post(f"/api/versions/{vid}/fix-plan", json={"checks": ["soft_light", "in_frame"]}).json()
+    r = client.post(f"/api/versions/{vid}/refine", json={"instruction": plan["instruction"], "fix_for": plan["used"] + ["bogus", "in_frame"]})
+    assert r.status_code == 200
+    ref = r.json()
+    assert ref["version"]["params"]["fix_for"] == ["in_frame", "soft_light"]  # known ids only, in order, no repeats
+    wait_job(client, ref["job"]["id"])
+    assert fake_execute[-1]["payload"]["instruction"] == plan["instruction"]
+    # a plain refine of the redraw, and an adjust of it, are not "made to fix" those checks
+    again = client.post(f"/api/versions/{ref['version']['id']}/refine", json={"instruction": "red cloak"}).json()
+    assert "fix_for" not in again["version"]["params"]
+    wait_job(client, again["job"]["id"])
+    adj = client.post(f"/api/versions/{ref['version']['id']}/adjust", json={"params": {"seed": 3}}).json()
+    assert "fix_for" not in adj["version"]["params"]
+    # and the original, never refined for a fix, has none
+    assert "fix_for" not in client.get(f"/api/versions/{vid}").json()["params"]
+
+
+def test_the_picture_checks_say_which_snippet_fixes_them(client, fake_execute):
+    a, vid = _concept_with_failed_checks(client, ["in_frame"])
+    from vgac import guidance
+
+    c = guidance.describe_check({"name": "soft_light", "id": "soft_light", "passed": False, "value": 0.2, "limit": 0.3, "vars": {"redraw": "R"}})
+    assert c["fix_snippet"] == "even_light" and c["fix"]["op"] == "refine"
+    arms = guidance.describe_check({"name": "arms_away", "id": "arms_away", "passed": False, "value": 0.1, "limit": 0.2, "vars": {"redraw": "R"}})
+    assert "fix_snippet" not in arms and arms["fix"]["op"] == "refine"  # withheld: its own button stays, no tick box
+    ok = guidance.describe_check({"name": "soft_light", "id": "soft_light", "passed": True, "value": 0.5, "limit": 0.3, "vars": {}})
+    assert "fix_snippet" not in ok

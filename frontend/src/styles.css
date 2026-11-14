@@ -4384,3 +4384,33 @@ button.preset-card:hover:not(:disabled) {
   flex: 1 1 22rem;
   min-width: 12rem;
 }
+
+/* Fix several failed picture checks in one redraw (FixTicks). */
+.fix-ticks {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  align-items: flex-start;
+}
+.fix-ticks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fix-tick {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.fix-tick-note {
+  margin-left: 24px;
+}
+.fix-tick-words {
+  max-width: 60ch;
+  margin: var(--s1) 0;
+}

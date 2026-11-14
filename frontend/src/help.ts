@@ -1060,6 +1060,16 @@ const FIX_LABELS: Record<string, string> = {
 }
 export const DEFAULT_FIX_LABEL = 'Fix automatically'
 
+// The tick box words for the first picture's checks that one redraw can fix together (FixTicks).
+export const FIX_TICK_LABELS: Record<string, string> = {
+  in_frame: 'Part of it touches the edge of the picture',
+  arms_away: 'The arms and legs are too close to the body',
+  pose_for_3d: 'The pose would join parts of the 3D model',
+  soft_light: 'Hard shadows on the person',
+  hair_off_eyes: 'Hair covers the eyes',
+  face_drawn: 'The face is not drawn',
+}
+
 const quarterTurn = (v: number | null): number | null => {
   if (v === null) return null
   const d = ((Math.round(v) % 360) + 360) % 360

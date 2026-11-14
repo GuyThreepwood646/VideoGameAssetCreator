@@ -157,6 +157,8 @@ export type Check = {
   // rerun, by_hand, outside, legacy.
   fix_note?: string
   fix_kind?: 'rerun' | 'by_hand' | 'outside' | 'legacy'
+  // Set on the first picture's checks that one redraw can fix together with others (backend data/fixes.yaml).
+  fix_snippet?: string
   severity?: 'block' | 'warn'
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>
@@ -620,7 +622,9 @@ export type GpuSharingPatch = { default_instance?: string | null; share_when_bus
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 // reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
 // `views` (Check all sides): several views redrawn together in one new version.
-export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string }
+export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string; fix_for?: string[] }
+// POST /api/versions/{vid}/fix-plan: the one redraw instruction for the ticked failed checks. `dropped` are ticks that could not be joined.
+export type FixPlan = { instruction: string | null; used: string[]; snippets: string[]; dropped: { check: string; reason: string; text: string }[]; words: number; max_changes: number }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
 export type ComposeRole = 'face' | 'body' | 'outfit' | 'other'
@@ -803,6 +807,7 @@ export const api = {
   runStage: (assetId: string, stage: StageId, body: RunStageBody = {}) =>
     post<RunResult | RunResult[]>(`/api/assets/${assetId}/stages/${stage}/run`, body),
   refine: (vid: string, body: RefineBody) => post<RunResult>(`/api/versions/${vid}/refine`, body),
+  fixPlan: (vid: string, checks: string[]) => post<FixPlan>(`/api/versions/${vid}/fix-plan`, { checks }),
   // "Upscale it": a new step 1 version, the picture made bigger and checked again.
   upscale: (vid: string) => post<RunResult>(`/api/versions/${vid}/upscale`),
   adjust: (vid: string, params: Record<string, unknown>) => post<RunResult>(`/api/versions/${vid}/adjust`, { params }),

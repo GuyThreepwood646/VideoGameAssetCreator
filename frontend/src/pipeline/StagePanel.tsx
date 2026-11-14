@@ -38,6 +38,7 @@ import { finishShown, GuidePanel, guideState } from './GuidePanel'
 import { opensInView, readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
+import { FixTicks } from './FixTicks'
 import { MeshView } from './views/MeshView'
 import { RigView } from './views/RigView'
 import { TurnaroundView } from './views/TurnaroundView'
@@ -386,6 +387,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                   <Info term="term.gate_ok" />
                 </div>
                 <PlainChecks checks={checks} ctx={ctx} onFix={fix} busy={busy} compact />
+                {stage === 'concept' && active.status === 'done' && (
+                  <FixTicks version={active} checks={checks} busy={busy} onRun={(ids, instruction) => act(async () => { const out = await api.refine(active.id, { instruction, fix_for: ids }); setActiveId(out.version.id) })} />
+                )}
               </div>
             )}
             {active.status === 'done' && (
