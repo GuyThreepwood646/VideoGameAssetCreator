@@ -244,6 +244,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
+        await _fingers(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -969,6 +970,33 @@ def springs_check(m: dict[str, Any] | None) -> dict[str, Any] | None:
     return quality.check("springs", v["ok"], v["value"], v["limit"], vars=v["vars"])
 
 
+async def _fingers(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Build the finger chains SkinToken left out, from the hand's own geometry (blender/finger_build.py), in place.
+    Runs after rig_fix (the bones carry their Mixamo names) and before anything reads the skeleton (rig inspection, hit
+    boxes, the moves, the export), so they all see the new bones. A hand that already has five fingers is untouched; a
+    hand the skeleton saw as one lump gets nothing. metrics.finger_build: {Left, Right: {path, built, ...}} with path
+    complete, tips, proportion or lump. Never raises. Setting build_fingers (default on) turns it off."""
+    on = params.get("build_fingers", True) is not False
+    sc.set_params(build_fingers=on)
+    if not on:
+        return
+    out = sc.dir / "rig_fingers.glb"
+    report = sc.dir / "finger_build.json"
+    try:
+        await sc.blender("finger_build.py", [rig_glb, out, "--report", report], log_name="finger_build.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        sides = {s: {k: v for k, v in (rep.get(s) or {}).items() if k in ("path", "built", "peaks", "reach_m", "kept", "renamed", "reason", "chains", "error")}
+                 for s in ("Left", "Right")}
+        if sum(int(v.get("built") or 0) for v in sides.values()) and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_fingers.glb")
+            shutil.move(str(out), str(rig_glb))
+        if report.is_file():
+            sc.register("finger_build", report)
+        sc.set_metrics(finger_build=sides)
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(finger_build={"error": str(e)[:300]})
+
+
 PREFIX = "mixamorig:"
 FINGER_NAMES = ("Thumb", "Index", "Middle", "Ring", "Pinky")
 FINGER_WORDS = {"Thumb": "thumb", "Index": "index finger", "Middle": "middle finger", "Ring": "ring finger", "Pinky": "little finger"}
@@ -999,9 +1027,11 @@ def _hand_chains(segments: list[dict[str, Any]] | None, side: str) -> int | None
     return len(kids)
 
 
-def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] | None = None,
+                  build: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The rig check `fingers` (warn): every hand has all five fingers of three bones. None when the skeleton is not a
-    mapped humanoid. The check carries its own help text (it is not in guidance.CHECK_GUIDE)."""
+    mapped humanoid. `build` is metrics.finger_build (what the finger build did per hand). The check carries its own help
+    text (it is not in guidance.CHECK_GUIDE)."""
     counts = finger_counts(bone_names)
     if counts is None:
         return None
@@ -1014,6 +1044,15 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
     c = quality.check("fingers", not lacking, total, 2 * FINGERS_FULL,
                       vars={"left": counts["Left"], "right": counts["Right"], "lacking": {k.lower(): v for k, v in lacking.items()}})
     c["severity"] = "warn"
+    paths = {side: (((build or {}).get(side) or {}).get("path")) for side in ("Left", "Right")}
+    made = [side for side, pth in paths.items() if pth in ("tips", "proportion") and int(((build or {}).get(side) or {}).get("built") or 0)]
+    c["vars"]["finger_build"] = paths
+    if not lacking and made:
+        both = len(made) == 2
+        c["help"] = (f"{'Both hands have' if both else 'The ' + made[0].lower() + ' hand has'} all five fingers. The skeleton step left some finger "
+                     "bones out, so the missing fingers were built from the shape of the hand. They sit where the model's fingers are, but they are "
+                     "estimates: fingers that touch in the model bend together, so a closed hand can look stiffer than a real one.")
+        return c
     if not lacking:
         c["help"] = "Both hands have all five fingers (thumb, index, middle, ring and little finger), so a hand can close, grip and point in the game."
         return c
@@ -1028,7 +1067,7 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
     what = " and ".join(parts)
     one = len(lacking) == 1
     what = what[0].upper() + what[1:] + "."
-    lumps = [s for s in lacking if _hand_chains(segments, s) == 1]
+    lumps = [s for s in lacking if paths.get(s) == "lump" or _hand_chains(segments, s) == 1]
     if lumps:
         cause = ("The cause is the model's hands, not the skeleton: the model's " + ("hand is a single lump" if one else "hands are single lumps") + " (mittens or fingers fused together), "
                  "and no skeleton can place finger bones inside a lump. ")
@@ -1112,7 +1151,7 @@ async def judge(sc: StageContext) -> None:
             checks.append(hb)
     if not sc.version.metrics.get("rigid") and info_path is not None:
         info = json.loads(Path(info_path).read_text())
-        fc = fingers_check(info.get("bone_names"), info.get("bone_segments"))
+        fc = fingers_check(info.get("bone_names"), info.get("bone_segments"), sc.version.metrics.get("finger_build"))
         if fc is not None:
             checks.append(fc)
     lj = limb_joins_check(sc.version.metrics.get("limb_joins"), sc.version.metrics.get("joins"))
