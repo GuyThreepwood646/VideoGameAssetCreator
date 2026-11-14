@@ -523,3 +523,23 @@ def test_a_file_that_cannot_work_is_not_linked_or_copied(world):
         r = client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": mode})
         assert r.status_code == 400 and "safetensors layout" in r.json()["detail"]
     assert not (models / "diffusion_models").exists()
+
+
+# --- the words a person reads ---------------------------------------------------------------------------------------------------------------
+
+
+def test_a_system_page_row_says_the_same_as_the_panel_about_an_earlier_copy(world):
+    tmp, models, folder = world
+    old = put_old(folder, st_file(len(PIN), fill=b"q"))  # an earlier copy that is a different file
+    assert models_setup.row_info(BASE_NAME)["in_use"] == {"kind": "earlier", "path": str(old)}
+    old.write_bytes(PIN)  # now it is the publisher's file under another name
+    models_setup.VERIFIED.clear()
+    setrow()
+    settle()
+    assert models_setup.row_info(BASE_NAME)["in_use"] == {"kind": "renamed", "path": str(old)}
+
+
+def test_every_entry_of_the_shipped_list_has_a_name_a_person_can_read():
+    d = json.loads((Path(__file__).resolve().parents[2] / "setup" / "downloads.json").read_text(encoding="utf-8-sig"))
+    bare = [k for sec in ("models", "addons") for k, v in d[sec].items() if not v.get("name")]
+    assert bare == []  # the panel shows `name`; without it the row shows the list key (zbase, qwen_edit)

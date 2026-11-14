@@ -374,6 +374,17 @@ def row_info(file_name: str) -> dict[str, Any]:
             if p is not None and p.is_file() and choice_usable(p):
                 same = check_state(p, None) == "ok"  # type: ignore[arg-type]
                 out["in_use"] = {"kind": "renamed" if same else "own", "path": str(p)}
+            else:
+                try:  # no choice: an earlier copy may stand in for the publisher's file (the panel's answer, the same words)
+                    root = downloader.models_root()
+                    spec = all_specs_by_id(root).get(spec_id) if root else None
+                    got = item_state(spec, root, read_roots(root)) if spec else {}
+                except Exception:  # noqa: BLE001
+                    got = {}
+                if got.get("renamed"):
+                    out["in_use"] = {"kind": "renamed", "path": got["path"]}
+                elif got.get("older") and got.get("state") in ("missing", "checking"):
+                    out["in_use"] = {"kind": "earlier", "path": got["older"]}
             return out
     return {}
 

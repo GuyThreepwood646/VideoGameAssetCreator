@@ -3,6 +3,7 @@
  "verified": "2026-11-14",
  "models": {
   "zturbo": {
+   "name": "Z-Image Turbo (the first picture)",
    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors",
    "page": "https://huggingface.co/Comfy-Org/z_image_turbo",
    "size": 6201001296,
@@ -15,6 +16,7 @@
    "licence": "Apache-2.0"
   },
   "zbase": {
+   "name": "Z-Image base",
    "url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_int8_convrot.safetensors",
    "page": "https://huggingface.co/Comfy-Org/z_image",
    "size": 6201001296,
@@ -27,6 +29,7 @@
    "licence": "Apache-2.0"
   },
   "klein": {
+   "name": "FLUX.2 Klein 4B",
    "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
    "page": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8",
    "size": 4070624520,
@@ -36,6 +39,7 @@
    "publisher": true
   },
   "chroma": {
+   "name": "Chroma1-HD",
    "url": "https://huggingface.co/Comfy-Org/Chroma1-HD/resolve/main/split_files/diffusion_models/Chroma1-HD-fp8mixed.safetensors",
    "page": "https://huggingface.co/Comfy-Org/Chroma1-HD",
    "size": 9193379316,
@@ -45,6 +49,7 @@
    "publisher": true
   },
   "qwen_edit": {
+   "name": "Qwen-Image-Edit 2511 (side views and picture fixes)",
    "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
    "page": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI",
    "size": 20533762817,
@@ -54,6 +59,7 @@
    "publisher": true
   },
   "birefnet": {
+   "name": "BiRefNet (cut-out)",
    "url": "https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors",
    "page": "https://huggingface.co/Comfy-Org/BiRefNet",
    "size": 444473596,
@@ -63,6 +69,7 @@
    "publisher": true
   },
   "trellis2": {
+   "name": "TRELLIS.2 (the 3D model)",
    "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors",
    "page": "https://huggingface.co/Comfy-Org/TRELLIS.2",
    "size": 5253048192,
@@ -72,6 +79,7 @@
    "publisher": true
   },
   "hy3d_mv": {
+   "name": "Hunyuan3D-2mv (second 3D route)",
    "url": "https://huggingface.co/tencent/Hunyuan3D-2mv/resolve/main/hunyuan3d-dit-v2-mv/model.fp16.safetensors",
    "page": "https://huggingface.co/tencent/Hunyuan3D-2mv",
    "size": 4928151562,
@@ -84,6 +92,7 @@
    "note": "Saved under the name the app expects (Hunyuan3D-2mv.fp16.safetensors); the publisher's file is hunyuan3d-dit-v2-mv/model.fp16.safetensors."
   },
   "skintoken": {
+   "name": "SkinToken (rigging)",
    "url": "https://huggingface.co/VAST-AI/SkinTokens/resolve/main/experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
    "page": "https://huggingface.co/VAST-AI/SkinTokens",
    "size": 1131603979,
@@ -319,6 +328,7 @@
  },
  "addons": {
   "pixel_art": {
+   "name": "Pixel art style add-on",
    "url": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo/resolve/main/pixel_art_style_z_image_turbo.safetensors",
    "page": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo",
    "size": 170128328,
@@ -328,6 +338,7 @@
    "publisher": false
   },
   "qwen_lightning": {
+   "name": "Qwen Lightning 4-step add-on",
    "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
    "page": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
    "size": 849608296,
@@ -337,6 +348,7 @@
    "publisher": true
   },
   "qwen_angles": {
+   "name": "Qwen multiple-angles add-on",
    "url": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/resolve/main/qwen-image-edit-2511-multiple-angles-lora.safetensors",
    "page": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
    "size": 295140688,
@@ -346,6 +358,7 @@
    "publisher": true
   },
   "turnaround_sheet": {
+   "name": "Qwen character turnaround sheet add-on",
    "url": "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511/resolve/main/character_turnaround_sheet_v3_qwen_image_edit_2511_000000400.safetensors",
    "page": "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511",
    "size": 295146344,
@@ -356,6 +369,7 @@
    "note": "Saved under the name the app expects; the publisher's file is character_turnaround_sheet_v3_qwen_image_edit_2511_000000400.safetensors. Apache-2.0."
   },
   "turnaround_white": {
+   "name": "Qwen camera-angle add-on",
    "url": "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora/resolve/main/qwen_edit_2511_camera_angle_lora.safetensors",
    "page": "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora",
    "size": 590057184,
@@ -366,6 +380,7 @@
    "note": "Saved under the name the app expects; the publisher's file is qwen_edit_2511_camera_angle_lora.safetensors. Apache-2.0."
   },
   "stylised_3d": {
+   "name": "Stylised 3D render add-on",
    "url": "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE/resolve/main/%5BZImage.Turbo%5D3DRenderStyle_Redmond.safetensors",
    "page": "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
    "size": 85094920,
@@ -375,6 +390,7 @@
    "publisher": true
   },
   "clay_finish": {
+   "name": "Clay finish add-on",
    "url": "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE/resolve/main/%5BZImage.Turbo%5DClayAnimation_Redmond.safetensors",
    "page": "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE",
    "size": 85094904,
@@ -384,6 +400,7 @@
    "publisher": true
   },
   "retro_lowpoly": {
+   "name": "Retro low-poly add-on",
    "url": "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO/resolve/main/%5BZImage.Turbo%5DPS1Screencap_Redmond.safetensors",
    "page": "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
    "size": 85094928,
@@ -393,6 +410,7 @@
    "publisher": true
   },
   "chunky_pixels": {
+   "name": "Chunky pixels add-on",
    "url": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO/resolve/main/%5BZImage.Turbo%5DPixelArt_Redmond.safetensors",
    "page": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO",
    "size": 85094896,

@@ -531,7 +531,7 @@ export type SetupItem = {
   // A model or LoRA row: the entry of the download list it is (for "Set model location") and which file is in use.
   spec_id?: string
   can_choose?: boolean
-  in_use?: { kind: 'app' | 'renamed' | 'own'; path?: string }
+  in_use?: { kind: 'app' | 'renamed' | 'own' | 'earlier'; path?: string }
 }
 // What the app has and lacks on a machine that may be new (backend/vgac/firstrun.py).
 export type FirstRunItem = { id: string; label: string; detail: string; fix: string; setting: string; needed_for: string[] }

@@ -158,7 +158,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                 <span className="setup-row-label">{i.name}</span>
                 <span className="muted small setup-row-detail">
                   {size(i.size)} - {STATE_WORD[i.state]}
-                  {i.reused && !i.chosen ? ` (used where it is: ${i.path})` : ''}
+                  {i.reused && !i.chosen && !i.renamed ? ` (used where it is: ${i.path})` : ''}
                   {i.chosen && i.state === 'present' && !i.yours ? ` - your file at ${i.path}; it is the same as the published one` : ''}
                   {i.source ? ` (${i.placed === 'link' ? 'linked from' : 'copied from'} ${i.source})` : ''}
                   {i.chosen && i.state === 'present' && i.yours ? ` - your own file at ${i.path}, not the one this app was tested with (you chose to use it)` : ''}

@@ -159,6 +159,7 @@ function inUse(item: SetupItem): string {
   const u = item.in_use
   if (!u || u.kind === 'app') return ''
   if (u.kind === 'renamed') return `In use: the publisher's file, which you have as ${u.path}.`
+  if (u.kind === 'earlier') return `In use: an earlier copy at ${u.path} (the app's own file is not here; getting it is optional).`
   return `In use: your own file at ${u.path}. It is not the file the app was tested with, so results may differ or a step may fail.`
 }
 
