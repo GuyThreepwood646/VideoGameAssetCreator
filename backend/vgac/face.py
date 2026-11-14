@@ -452,6 +452,8 @@ def find_face(view: dict[str, Any], mesh: dict[str, np.ndarray], cam: Camera, he
     x0, x1 = np.percentile(xs, [2, 98])
     y0, y1 = np.percentile(ys, [2, 98])
     region, added = close_eye_gaps(region, m, lab, skin, (int(ix), int(iy)), (int(x0), int(y0), int(x1), int(y1)))
+    region, closed = close_feature_holes(region, m, (int(ix), int(iy)), float(x1 - x0), z=ras["z"])
+    added += closed
     return {"found": True, "reason": None, "nose": (int(ix), int(iy)), "skin": [round(float(v), 2) for v in skin], "region": region,
             "box": (int(x0), int(y0), int(x1), int(y1)), "width_px": float(x1 - x0), "area_px": int(region.sum()),
             "eye_gap_px": added}
@@ -577,6 +579,42 @@ def close_eye_gaps(region: np.ndarray, m: np.ndarray, lab: np.ndarray, skin: np.
     add = enclosed & band_
     # only pieces that touch the face (a gap in the hair far from the skin is not an eye)
     add = grow(add & dilate_mask(region, 1), add) if add.any() else add
+    return region | add, int(add.sum())
+
+
+HOLE_STEP_M = 0.002  # a depth step this big between neighbouring pixels is the edge of a flap or a fringe, not a socket
+HOLE_STEP_NEAR = 0.08  # of the face's width: how far from such a step a gap is left alone
+
+
+def close_feature_holes(region: np.ndarray, m: np.ndarray, nose: tuple[int, int], width: float,
+                        frac: float = 0.06, z: np.ndarray | None = None) -> tuple[np.ndarray, int]:
+    """The face region with the dark eye sockets and brows put back. The skin test leaves out whatever is darker than
+    the skin (a deep-set eye, a heavy brow in shadow: the M1 test's right eye), and find_face's small closing and hole
+    filling miss a gap wider than a few pixels or one open to the side. Here the region is closed with a box of `frac`
+    of the face's width, in the band of the eyes and brows only (from 36 percent of the width above the nose to its
+    tip, 42 percent to each side) and on the model: a gap the face encloses at that size is the face's own. Pieces that
+    do not touch the region are not added. Where the model's depth (z) steps (a flap of hair or a fringe standing in
+    front of the face: the W2 test's right eye is under one), within HOLE_STEP_NEAR of the face's width of the step,
+    nothing is added: that eye is covered, and the face pass reports it so. Returns (region, pixels added)."""
+    r = max(3, int(round(frac * width)))
+    closed = erode(dilate_mask(region, r), r) & m
+    nx, ny = nose
+    Y, X = np.mgrid[0:region.shape[0], 0:region.shape[1]]
+    band = (np.abs(X - nx) <= 0.42 * width) & (Y >= ny - 0.36 * width) & (Y <= ny + 0.02 * width)
+    add = closed & ~region & band
+    if z is not None and add.any():
+        zz = np.where(m, z, np.nan)
+        step = np.zeros(region.shape, dtype=bool)
+        dy = np.abs(np.diff(zz, axis=0)) >= HOLE_STEP_M
+        dx = np.abs(np.diff(zz, axis=1)) >= HOLE_STEP_M
+        step[:-1] |= dy
+        step[1:] |= dy
+        step[:, :-1] |= dx
+        step[:, 1:] |= dx
+        add &= ~dilate_mask(step, max(2, int(round(HOLE_STEP_NEAR * width))))
+    if not add.any():
+        return region, 0
+    add = grow(add & dilate_mask(region, 1), add)
     return region | add, int(add.sum())
 
 

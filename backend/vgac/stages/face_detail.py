@@ -932,7 +932,8 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     paint = region & ~face.dilate_mask(seg["old_hair"], 2)
     # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
     # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
-    core = seg["pic_hair"] | (seg["pic_background"] & ~inner & ~face.features_box(info))
+    pic_hair = pic_hair_without_eyes(seg["pic_hair"], fitted, info, region.shape)
+    core = pic_hair | (seg["pic_background"] & ~inner & ~face.features_box(info))
     # Outside the eyes-nose-mouth area the painted face's own rim goes too (the shadow along its jaw and cheek, which
     # lands inside the model's wider cheek and shows as a line from the side).
     rim = face.dilate_mask(core, max(2, int(RIM_FRAC * view["image"].shape[0]))) & ~face.features_box(info)
@@ -1008,7 +1009,18 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     return {"ok": True, "base_color": out, "sheet": sheet, "metrics": metrics}
 
 
+EYE_NOT_HAIR_GROW = 3.0  # face.eye_boxes growth for the box (eye, lids and brow) where picture hair is not filled over an eye
 HAIR_STEP_NEAR = 0.08  # of the face's width: how near a depth step a hair pixel in the features area must be to count as a flap
+
+
+def pic_hair_without_eyes(pic_hair: np.ndarray, fitted: np.ndarray, info: dict[str, Any], shape: tuple[int, int]) -> np.ndarray:
+    """The picture's hair mask without the boxes of the eyes MediaPipe finds in the picture. An eye found there is an eye,
+    not hair, even where it is as dark as the hair (the M1 test: a deep-set eye and its brow joined the picture's hair
+    through the shadow of the temple and were filled with skin). Eyes found by the darkest spots prove nothing: unchanged."""
+    lm = face.landmarks(fitted, info)
+    if lm and lm.get("how") == "mediapipe":
+        return pic_hair & ~face.eye_boxes(shape, lm["eyes"], float(info["width_px"]), grow=EYE_NOT_HAIR_GROW)
+    return pic_hair
 
 
 def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any]) -> tuple[np.ndarray, int]:
