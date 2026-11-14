@@ -67,7 +67,18 @@ GUARD_SKIN_AFTER = 15.0  # ... and beyond this after the redraw: gloves added
 GUARD_PALETTE = 0.6  # colour histogram overlap under this: the colours changed
 GUARD_COLOUR_ADDED = 10.0  # a black-and-white picture whose redraw's colourful tenth is over this was coloured in
 GUARD_AREA = 0.92  # figure area over height squared shrank under this share: parts were removed (TheHeir 0.87)
-GUARD_FACE_SHAPE = 0.12  # a face proportion (eyes apart, eyes to mouth, mouth width) changed by more than this share
+GUARD_FACE_SHAPE = 0.12  # a face proportion (eyes apart, eyes to mouth) changed by more than this share
+# ... or of the whole person's figure: the redraw brought in no new colour, it showed more of one already there. Added
+# gloves keep their own test (GUARD_SKIN_*), colouring in keeps GUARD_COLOUR_ADDED and GUARD_PALETTE.
+COLOUR_PRESENT_FIGURE = 0.02
+# Pixels this near a part's middle colour count as that colour: wider than GUARD_PART_DE, which compares two middle
+# colours, since a print's pixels spread around its middle (the boy's sleeve red: 1.1 percent of his figure within 10,
+# 2.2 within 15; the same reds cover 6.0 and 6.3 percent of the two pictures).
+PRESENT_DE = 15.0
+COLOUR_PRESENT = 0.05  # share of a part's (and its neighbours') pixels near a colour for the colour to be there already
+# The parts whose colour a part may show after the pose changes: skin out of a sleeve, a sleeve over more of the arm.
+PART_NEIGHBOURS = {"torso": ("upper arms", "thighs"), "upper arms": ("torso", "forearms"), "forearms": ("upper arms", "hands"),
+                   "hands": ("forearms",), "thighs": ("torso", "shins"), "shins": ("thighs",)}
 
 POSE_MODEL = "pose_landmarker_heavy.task"
 HAND_MODEL = "hand_landmarker.task"
@@ -527,16 +538,27 @@ def part_colours(rgb: np.ndarray, mask: np.ndarray, P: np.ndarray, height: int) 
     """Middle Lab colour of each body part (face skin, torso, upper arms, forearms, hands, thighs, shins) placed by the
     pose landmarks."""
     r = max(2.0, 0.0125 * height)
-    out: dict[str, Any] = {"face": _face_colour(rgb, mask, P)}
+    lab = _lab(rgb)
+    out: dict[str, Any] = {"face": _face_colour(rgb, mask, P), "_pixels": {}}
     for name, segs in PARTS.items():
         region = np.zeros(mask.shape, bool)
         for a, b in segs:
             region |= _segment(mask.shape, P[a, :2], P[b, :2], r)
         out[name] = _median(rgb, region & mask)
+        out["_pixels"][name] = lab[region & mask][::max(1, int((region & mask).sum()) // 4000)]
     hands = [_hand_colour(rgb, mask, P, s) for s in ("left", "right")]
     hands = [h for h in hands if h is not None]
     out["hands"] = np.mean(hands, axis=0) if hands else None
     return out
+
+
+def colour_present(colour: np.ndarray, pixels: list[np.ndarray]) -> float:
+    """Share of `pixels` (Lab rows) within PRESENT_DE of `colour` (lightness counted half)."""
+    px = np.concatenate([p for p in pixels if p is not None and len(p)]) if any(p is not None and len(p) for p in pixels) else None
+    if px is None:
+        return 0.0
+    d = np.linalg.norm((px - np.asarray(colour)) * np.array([0.5, 1.0, 1.0]), axis=1)
+    return float((d <= PRESENT_DE).mean())
 
 
 # --- the check ------------------------------------------------------------------------------------------------------
@@ -731,6 +753,8 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
         out["not_compared"].append("the colour of each garment, the skin and the hands (no person's joints found)")
     else:
         pa, pb = part_colours(a["rgb"], a["mask"], Pa, a["height"]), part_colours(b["rgb"], b["mask"], Pb, b["height"])
+        figure_px = _lab(a["rgb"])[a["mask"]]
+        figure_px = figure_px[::max(1, len(figure_px) // 20000)]
         parts = {}
         for name in ("face", "torso", "upper arms", "forearms", "hands", "thighs", "shins"):
             if pa.get(name) is None or pb.get(name) is None:
@@ -738,7 +762,17 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
                 continue
             parts[name] = _de(pa[name], pb[name])
         me["parts"] = parts
-        changed = [n for n, d in parts.items() if d > (GUARD_HAND_DE if n == "hands" else GUARD_PART_DE)]
+        # A part whose new colour a neighbouring part already had is not a change: the arm lifted out of a short sleeve
+        # shows the skin the forearm had (the boy, card test of 2026-11-13: upper arms 23.2 and 31.9 for the same shirt).
+        # A many-coloured print (the boy's tie-dye sleeve) shows another of its own colours from another angle: a new
+        # colour already on that part or a neighbour in the person's picture (COLOUR_PRESENT of its pixels) is no change.
+        explained = {n for n in parts if pb.get(n) is not None and (
+            any(pa.get(k) is not None and _de(pb[n], pa[k]) <= GUARD_PART_DE for k in PART_NEIGHBOURS.get(n, ()))
+            or colour_present(pb[n], [pa["_pixels"].get(k) for k in (n, *PART_NEIGHBOURS.get(n, ()))]) >= COLOUR_PRESENT
+            or colour_present(pb[n], [figure_px]) >= COLOUR_PRESENT_FIGURE)}
+        me["explained_by_neighbour"] = sorted(explained)
+        changed = [n for n, d in parts.items()
+                   if d > (GUARD_HAND_DE if n == "hands" else GUARD_PART_DE) and n not in explained]
         if pa.get("hands") is not None and pa.get("face") is not None and pb.get("hands") is not None and pb.get("face") is not None:
             before, after = _de(pa["hands"], pa["face"]), _de(pb["hands"], pb["face"])
             me["hand_skin"] = [before, after]
@@ -757,7 +791,8 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
     else:
         moved = {k: round(abs(fb[k] - fa[k]) / max(1e-6, fa[k]), 3) for k in fa}
         me["face_shape"] = moved
-        if max(moved.values()) > GUARD_FACE_SHAPE:
+        # The mouth's width follows the expression (a grin redrawn as a closed smile), not the person: recorded only.
+        if max(v for k, v in moved.items() if k != "mouth") > GUARD_FACE_SHAPE:
             out["reasons"].append("the face changed")
     out["ok"] = not out["reasons"]
     return out

@@ -269,6 +269,13 @@ def test_guard_part_colours_and_gloves_with_joints(monkeypatch):
     ImageDraw.Draw(bracer).line([(376, 248), (440, 318)], fill=(40, 120, 40), width=18)
     g = buildpose.guard(cut(base), cut(bracer))
     assert not g["ok"] and any("forearms" in r for r in g["reasons"]), g
+    # a colour already on the character (the trousers' blue on the forearm, as a print shows another of its colours
+    # from another angle) is not a change
+    shown = base.copy()
+    for a, b in (((376, 248), (440, 318)), ((136, 248), (72, 318))):  # the part is both forearms
+        ImageDraw.Draw(shown).line([a, b], fill=(40, 40, 120), width=24)
+    g = buildpose.guard(cut(base), cut(shown))
+    assert g["ok"] and "forearms" in g["measures"]["explained_by_neighbour"], g
 
 
 # The stored pose redraws (docs: notes of 2026-11-13): the eye's verdict for each. Run only where the library holds
