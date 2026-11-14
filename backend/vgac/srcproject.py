@@ -104,8 +104,9 @@ GLASSES_JUMP_M = 0.004    # a step in depth of this much inside the face is the 
 FILL_FEATHER = 0.05       # of the face's width: how softly the skin fill ends round the eyes-nose-mouth box
 SKIN_TOL = 14.0           # Lab distance (lightness half) from the painted face's middle colour that still counts as skin
 HEAD_VIEW = "head"        # the first picture fitted on the head alone, by its eyes and mouth (item 6)
-HEAD_NECK = (0.95, 0.75)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
-                          # nose tip (the chin is at about 0.65): the hand-over to the body's own fit lies on the neck
+HEAD_NECK = (1.35, 0.85)  # the head view fades in up the neck between these shares of (nose tip to top of head) below the
+                          # nose tip (the chin is at about 0.65): the hand-over to the body's own fit lies on the neck, over
+                          # about 6 cm (it was 0.95 to 0.75, about 2.5 cm, and showed as a line on the live W2-clothed run)
 HEAD_SIDES = ("quarter", SECOND_QUARTER)  # the three-quarter views that get a head view of their own, after the front's
 SIDE_HEAD_TURN = (15.0, 80.0)  # turn from the face a three-quarter head view must be seen from
 SIDE_HEAD_YAW = 40.0      # the turn from the face a three-quarter head view is seen from when its body fit gives none
@@ -852,7 +853,17 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
                "removed_by_face_region": round(float((base * (1 - fz)).sum() / wsum), 4),
                "removed_any": round(float(1.0 - w.sum() / wsum), 4)}
     keep = np.flatnonzero(w > 1e-5)
-    return {"sel": keep, "sp": sp[keep], "w": w[keep]}
+    out = {"sel": keep, "sp": sp[keep], "w": w[keep]}
+    if v.name.startswith(HEAD_VIEW):
+        # where this head view can paint at all, whatever its weight: seen, facing it, inside its frame and its neck fade,
+        # not by a depth edge and not stretched. The body fits stay off there (blend), so they hand over down the neck
+        # as the neck fade does, and not on the cheeks, where a head view's weight is low but its placement is right.
+        cover = f0 * visible * fd * st * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
+        if zi is not None:
+            cover = cover * face.sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
+        ck = np.flatnonzero(cover > 1e-3)
+        out["cover_sel"], out["cover"] = ck, np.clip(cover[ck], 0.0, 1.0)
+    return out
 
 
 def detail_only(v: View, sigma_px: float) -> np.ndarray:
@@ -867,9 +878,9 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
           n_primary: int = 1, heads: list[bool] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
     of priority: each one, and every view after them, fades out where the ones before it see well. Head views (heads[i],
-    first among them) hand over to one another the same way, and every other view stays off wherever a head view paints
-    with HEAD_HANDOVER or more (no whole-body fit paints the head once a head view has; they meet on the neck, where the
-    head views fade). Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
+    first among them) hand over to one another the same way, and every other view stays off as far as a head view covers
+    the surface (its "cover" from project_view; HEAD_HANDOVER of its weight when it has none): no whole-body fit paints
+    the head once a head view has, and they meet down the neck, over the head views' neck fade. Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
     N = atlas.idx.size
     heads = heads or [False] * len(projs)
     num, den, wmax, dom = np.zeros((N, 3)), np.zeros(N), np.zeros(N), np.full(N, -1)
@@ -882,7 +893,12 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
             seen = np.zeros(N)
             seen[sel] = w
             head_chain = head_chain * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
-            under_head = under_head * (1.0 - np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
+            if "cover" in p:  # by where the head view can paint (project_view), so the hand-over follows the neck fade
+                cov = np.zeros(N)
+                cov[p["cover_sel"]] = p["cover"]
+                under_head = under_head * (1.0 - cov)
+            else:
+                under_head = under_head * (1.0 - np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
         else:
             w = w * suppress[sel] * under_head[sel]
         if i < n_primary and not heads[i]:

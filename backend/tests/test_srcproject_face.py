@@ -529,3 +529,18 @@ def test_the_chin_underside_takes_the_painted_colour_around_it() -> None:
     far = (y < -0.3) & ~atlas.is_gut
     plain = srcproject.finish(atlas, base, paint, alpha).reshape(-1, 3)[atlas.idx]
     assert np.allclose(new[far], plain[far])  # outside the underside: as before
+
+
+def test_body_fits_hand_over_by_where_the_head_views_cover_not_by_their_weight() -> None:
+    N = 4
+    atlas = type("A", (), {"idx": np.arange(N)})()
+    img = lambda c: np.full((4, 4, 3), c)  # noqa: E731
+    sp = np.full((N, 2), 2.0)
+    # texel 0: a cheek the head view covers fully but sees at a low weight; 1 and 2: down the neck fade; 3: the chest
+    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.03, 0.2, 0.1, 0.0]),
+            "cover_sel": np.arange(3), "cover": np.array([1.0, 0.5, 0.2])}
+    body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
+    paint, alpha, dom = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
+    assert abs(paint[0, 0] - 0.9) < 1e-9  # the cheek: no body colour, though the head view's weight is only 0.03
+    assert 0.1 < paint[2, 0] < paint[1, 0] < 0.9  # down the neck: more of the body the further down
+    assert abs(paint[3, 0] - 0.1) < 1e-9  # the chest: the body alone
