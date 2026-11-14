@@ -150,12 +150,28 @@ def compare(back: Path | str, front: Path | str, left: Path | str, right: Path |
     """The back view's hair against the front and side views', or None when there is nothing to compare (see the module
     note). The result: ok, end_gap (positive: the back's hair ends higher than the sides'), width_ratio (None when the hair
     is not loose) and the numbers behind them."""
-    f, lf, rt, bk = (measure(p) for p in (front, left, right, back))
-    if not all(_usable(m) for m in (f, lf, rt, bk)):
-        return None
+    return compare_with_reason(back, front, left, right)[0]
+
+
+NOT_MEASURED = {
+    "pictures": "a picture of this view or of the front or a side could not be read",
+    "colour": "the hair's colour could not be told apart from the skin, a hat, a hood or the clothes in every view",
+    "short": "the side views do not both show hair hanging to the shoulders (short or tied-up hair, no hair, or hair whose "
+             "colour the mask could not follow)",
+}
+
+
+def compare_with_reason(back: Path | str, front: Path | str, left: Path | str, right: Path | str) -> tuple[dict[str, Any] | None, str]:
+    """compare() and, when it gives no verdict, which NOT_MEASURED reason (a key) says why."""
+    ms = [measure(p) for p in (front, left, right, back)]
+    if not all(m is not None for m in ms):
+        return None, "pictures"
+    f, lf, rt, bk = ms
+    if not all(_usable(m) for m in ms):
+        return None, "colour"
     sh = f["shoulder"]
     if sh < SHOULDER_MIN or min(lf["end"], rt["end"]) < sh - 0.015:
-        return None   # short hair or none: nothing hangs to the shoulders
+        return None, "short"   # nothing hangs to the shoulders
     depth = (lf["band"] + rt["band"]) / 2
     loose = min(lf["band"], rt["band"]) >= LOOSE_DEPTH
     if loose:
@@ -164,6 +180,6 @@ def compare(back: Path | str, front: Path | str, left: Path | str, right: Path |
         gap, limit = ((lf["end"] + rt["end"]) / 2 - bk["end"]) / sh, MAX_END_GAP
     ratio = bk["band"] / depth if loose else None
     ok = gap <= limit and (ratio is None or ratio >= MIN_WIDTH_RATIO)
-    return {"ok": ok, "end_gap": round(gap, 4), "limit": limit, "width_ratio": None if ratio is None else round(ratio, 4),
+    return ({"ok": ok, "end_gap": round(gap, 4), "limit": limit, "width_ratio": None if ratio is None else round(ratio, 4),
             "loose": loose, "back_end": bk["end"], "back_half_end": bk["half_end"], "shoulder": sh, "back_width": bk["band"],
-            "side_depth": round(depth, 4)}
+            "side_depth": round(depth, 4)}, "")

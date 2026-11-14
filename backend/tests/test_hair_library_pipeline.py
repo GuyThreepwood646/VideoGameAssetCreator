@@ -426,7 +426,6 @@ ADDED_ON = {
 }
 # Texture fidelity (2026-11): the report-only measure in both steps, and the picture painted onto a character by itself.
 for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cutout", "quarter2_white"]),
-                             ("turnaround", "metrics", ["back_references"]),  # the back drawn with the side views (2026-11-13)  # the other three-quarter view
                              ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
                              ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)

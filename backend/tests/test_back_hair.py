@@ -250,3 +250,16 @@ def test_a_side_view_missing_means_no_references_and_no_check(tmp_path, drawn):
     asyncio.run(turnaround._run_views(sc, ["back"], {"seed": 100, "back_references": True}, concept))
     assert calls_by_view(drawn)["back"][0]["references"] is None
     assert all(c["name"] != "hair_matches_sides" for c in sc.metrics["views"]["back"]["checks"])
+
+
+def test_a_back_with_nothing_to_compare_says_not_measured_and_is_not_redrawn(tmp_path, drawn):
+    sc = run(tmp_path, {"back_references": True}, views=ORDER)
+    c = [x for x in sc.metrics["views"]["back"]["checks"] if x["name"] == "hair_matches_sides"]
+    assert len(c) == 1 and c[0]["passed"] is True
+    res, why = hair_sides.compare_with_reason(*(_set(tmp_path / "bald", bald=True)[v] for v in ("back", "front", "left", "right")))
+    assert res is None and why == "colour"
+    note = turnaround.hair_not_measured(why)
+    assert note["ok"] is True and note["help"].startswith("Not measured: the hair in this back view was not compared")
+    assert "pale" not in note["help"] and "skin" in note["help"]
+    _, why2 = hair_sides.compare_with_reason(*(_set(tmp_path / "short", end=40)[v] for v in ("back", "front", "left", "right")))
+    assert why2 == "short"

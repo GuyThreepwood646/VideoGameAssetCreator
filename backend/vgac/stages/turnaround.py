@@ -82,6 +82,14 @@ def back_references_on(sc: StageContext, params: dict[str, Any], method: str) ->
     return bool(on and method == "standard" and _category(sc) == "humanoid" and not _bald_on(sc, params))
 
 
+def hair_not_measured(why: str) -> dict[str, Any]:
+    """hair_matches_sides when there was nothing to compare (bald, short or tied-up hair, a hat, a mask that could not follow
+    the hair): it passes (a back is never redrawn for it) but says it was not measured, never that the hair matches."""
+    return {"id": "hair_matches_sides", "ok": True, "value": "not measured", "limit": None, "measured": False, "severity": "warn",
+            "help": ("Not measured: the hair in this back view was not compared with the side views, because "
+                     f"{hair_sides.NOT_MEASURED.get(why, why)}.")}
+
+
 def hair_check(res: dict[str, Any]) -> dict[str, Any]:
     """hair_matches_sides (warn) from hair_sides.compare: the back view's hair against the side views'. value is how much
     higher the back's hair ends than theirs (a share of the head-to-shoulder height); the sentence is the check's own."""
@@ -271,8 +279,11 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
         out["pose_arm_ratio"], out["pose_leg_ratio"] = pc["value"], pc["leg_ratio"]
         checks.append(pc)
     if hair is not None and view == "back":
-        out["hair_end_gap"], out["hair_width_ratio"] = hair["end_gap"], hair["width_ratio"]
-        checks.append(hair_check(hair))
+        if hair.get("measured") is False:
+            checks.append(hair_not_measured(hair["why"]))
+        else:
+            out["hair_end_gap"], out["hair_width_ratio"] = hair["end_gap"], hair["width_ratio"]
+            checks.append(hair_check(hair))
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)
     out["ok"] = out["passed"]
@@ -909,7 +920,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             if view == "back" and view not in supplied and _category(sc) == "humanoid" and not _bald_on(sc, params):
                 others = [sc.file(f"{v}_cutout") for v in ("front", "left", "right")]
                 if all(others):
-                    hair = await asyncio.to_thread(hair_sides.compare, files["cutout"], *others)
+                    hair, why = await asyncio.to_thread(hair_sides.compare_with_reason, files["cutout"], *others)
+                    if hair is None:
+                        hair = {"measured": False, "why": why}
             info = view_checks(view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
                                as_drawn, pose, hair)
             if view in with_refs and drew == "standard":
