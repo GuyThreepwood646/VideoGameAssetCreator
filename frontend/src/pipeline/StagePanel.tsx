@@ -497,7 +497,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
         </div>
       )}
       {full !== null && <PictureViewer items={items} start={full} checker={fromCutout && full === 0} onClose={() => setFull(null)} />}
-      <span>{version.status === 'queued' ? 'Waiting for the graphics card...' : 'Working on it. The result appears here when it is ready.'}</span>
+      <span>{version.status === 'queued' ? 'Waiting its turn...' : 'Working on it. The result appears here when it is ready.'}</span>
     </div>
   )
 }

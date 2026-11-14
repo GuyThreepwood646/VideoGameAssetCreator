@@ -215,7 +215,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
         : isVariantRepaint
           ? `We are repainting ${baseName ?? 'the original'} with your change${asset.variant_change ? ` ("${asset.variant_change}")` : ''}.`
           : `${stageGerund(stage)}.`
-      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? (importing ? `Waiting its turn, then ${fmtDuration(runEst)}.` : `Waiting for the graphics card, then ${fmtDuration(est)}.`) : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
+      now = `${isVariantRepaint ? 'The rest of the steps run as usual. ' : ''}${job?.status === 'queued' ? (importing ? `Waiting its turn, then ${fmtDuration(runEst)}.` : (job?.instance === 'host' ? `Waiting for another job on this computer to finish, then ${fmtDuration(est)}.` : `Waiting for the graphics card, then ${fmtDuration(est)}.`)) : `${fmtDuration(left).replace(/^about /, 'About ')} left.`} You can leave this page and come back.`
       extra = (
         <div className="guide-progress">
           <div className="progress" aria-label={`progress ${Math.round(progress * 100)} percent`}>
