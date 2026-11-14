@@ -83,6 +83,8 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 | Item words; hair library; credits | `data/items.yaml`; `data/hairlib/`, `hairstyles.py`; `data/credits.yaml` |
 | Step order and ids | `reference.STAGE_ORDER` |
 | Check wording, severity (`block` or `warn`) and fixes | `guidance.CHECK_GUIDE`, filled when the check is made (`quality.check`; geometry, LOD, texture and rig checks in `quality.py`) |
+| What a person can do about a failed check | `fixnotes.py`: a fix that only reruns the step reads "Try again"; a check with no button carries a line (the in-app way, or "Nothing in the app fixes this" plus the outside step). Added as `fix_note` and `fix_kind` by `guidance.describe_check` and again when a stored version is served. `tests/test_fix_notes.py` fails on a check id with neither |
+| Several fixes in one redraw (step 1) | `data/fixes.yaml` (one picture-editor wording per check; `offered: false` keeps a wording out of the app) and `fixes.py` (`compose`: at most 3 changes, shared keep list, conflicts dropped and said). `POST /api/versions/{id}/fix-plan` shows the wording; `refine` takes `fix_for`, stored as `params.fix_for` on the new version only. Card: `pipeline/FixTicks.tsx` |
 | Plain stage names, parameter help | `guidance.STAGE_GUIDE`, `guidance.PARAM_HELP` |
 | Pose check and the A-pose wording | `buildpose.py` |
 | Starter (`VGAC.exe`) | `starter/` (C#): first-run setup (uv, private Python, packages, frontend build), starts and stops the backend, shows the app in a WebView2 window with the browser as fallback; bridge `window.vgacHost` (hello, pickFolder, pickFile) only for the backend's own origin. Records: `local/state.json`, `local/installed.json`, `runtime/logs/setup.log`. Tests: `starteruild.cmd test` |
