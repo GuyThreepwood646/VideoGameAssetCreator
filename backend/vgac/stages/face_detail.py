@@ -759,7 +759,9 @@ def show_closeup(sc: StageContext, path: Path, state: str, caption: str) -> None
         sc.set_metrics(face_closeup_live={"state": state, "caption": caption})
         sc.publish()
     except Exception:  # noqa: BLE001
-        pass
+        import logging
+
+        logging.getLogger(__name__).warning("the close-up could not be put on the step's card", exc_info=True)
 
 
 def own_closeup_file(sc: StageContext, params: dict[str, Any]) -> Path | None:

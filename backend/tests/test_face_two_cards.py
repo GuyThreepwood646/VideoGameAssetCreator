@@ -240,3 +240,40 @@ def test_no_claim_is_todays_drawing(tmp_path, draws, monkeypatch):
     r = _run(sc, glb, maps)["metrics"]["face_detail"]
     assert state["log"] and all(card == "b" for _, _, card in state["log"]) and state["peak"] == 1
     assert r["closeup"]["cards"]["two"] is False
+
+
+def test_the_preview_reaches_the_card_on_the_queue_leased_two_card_path(tmp_path, draws, monkeypatch):
+    """The path the live runs take: the first card claimed from the queue (only=), a second one lent (kind, avoid). Every
+    close-up still goes on the running step's card (files.face_closeup_draft and metrics.face_closeup_live) and the last
+    caption says how it ended."""
+    state, glb, maps = draws
+    shown: list[tuple[str, str]] = []
+
+    class Seen(Card):
+        def register(self, key, path):
+            self._k = (key, str(path).replace("\\", "/").rsplit("/", 1)[-1])
+
+        def set_metrics(self, **kw):
+            self._live = kw.get("face_closeup_live")
+
+        def publish(self):
+            shown.append((self._k[0], self._k[1], self._live["state"], self._live["caption"]))
+
+    leases = []
+
+    async def borrow2(kind=None, avoid=None, only=None):
+        le = Lease()
+        le.instance = only or "c"
+        leases.append(le)
+        return le, ""
+
+    sc = Seen(tmp_path, None)
+    sc.ctx = SimpleNamespace(borrow=borrow2)
+    monkeypatch.setattr(fd, "closeup_guard", _guard({"painted_head_closeup.png": (None, 0.9, 0.9), "painted_head_closeup_2.png": (None, 0.99, 0.97)}))
+    _run(sc, glb, maps)
+    assert len(leases) == 2  # the first card claimed, the second lent
+    assert shown, "no close-up reached the step's card"
+    assert {k for k, _, _, _ in shown} == {"face_closeup_draft"}
+    files = {f for _, f, _, _ in shown}
+    assert {"painted_head_closeup.png", "painted_head_closeup_2.png"} <= files
+    assert shown[-1][2] == "used" and "was used" in shown[-1][3]

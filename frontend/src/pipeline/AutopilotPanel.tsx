@@ -180,6 +180,24 @@ function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
   )
 }
 
+// The clean-up step's face close-up while the autopilot still works on it (face_detail.show_closeup: files.face_closeup_draft and
+// metrics.face_closeup_live of the running version), with its caption, so the autopilot card shows it as the step's own card does.
+function LiveCloseup({ version }: { version: Version | undefined }) {
+  const [open, setOpen] = useState(false)
+  const src = libraryUrl(version?.files.face_closeup_draft ?? undefined)
+  if (!version || !src) return null
+  const caption = ((version.metrics?.face_closeup_live ?? null) as { caption?: string } | null)?.caption ?? 'The close-up of the face.'
+  return (
+    <figure className="redraw-pair-cell" aria-label="The close-up of the face">
+      <Zoomable label="the close-up of the face" onOpen={() => setOpen(true)}>
+        <img src={src} alt="The close-up of the face drawn for the clean-up step" style={{ maxHeight: 220 }} />
+      </Zoomable>
+      <figcaption className="small">{caption}</figcaption>
+      {open && <PictureViewer items={[{ src, label: caption }]} start={0} checker={false} onClose={() => setOpen(false)} />}
+    </figure>
+  )
+}
+
 // The card shown instead of "Your next step" while the autopilot runs, is paused or stopped.
 export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions, onOpenTool }: CardProps) {
   const apStage = autopilotStage(ap)
@@ -207,6 +225,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           <div className="guide-now">
             It runs every step and only stops if something needs you. You can leave this page and come back. {elsewhere}
           </div>
+          <LiveCloseup version={autopilotVersion(asset, ap)} />
           <div className="guide-progress">
             <div className="progress" aria-label={`progress ${Math.round(progress * 100)} percent`}>
               <div className="progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
