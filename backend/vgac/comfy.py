@@ -115,6 +115,13 @@ class ComfyClient:
         self._http: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
         self._vram_cache: tuple[float, dict[str, Any]] | None = None
+        # The address each prompt was sent to: wait() keeps asking there even if the client is pointed elsewhere
+        # meanwhile (a prompt exists only on the engine that took it). Clients for addresses other than base_url.
+        self._prompt_url: dict[str, str] = {}
+        self._side: dict[str, tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]] = {}
+        # Prompts being waited on now (wait()): while above 0 the engine is working for us and its address is not
+        # changed (instances.Supervisor.in_use).
+        self.waiting = 0
 
     def _client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
@@ -124,6 +131,22 @@ class ComfyClient:
             self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
             self._http_loop = loop
         return self._http
+
+    def _client_at(self, url: str) -> httpx.AsyncClient:
+        """The client for `url`: the pooled one for base_url, else one kept for that address (a prompt sent there)."""
+        url = url.rstrip("/")
+        if url == self.base_url:
+            return self._client()
+        loop = asyncio.get_running_loop()
+        got = self._side.get(url)
+        if got is None or got[0].is_closed or got[1] is not loop:
+            got = (httpx.AsyncClient(base_url=url, timeout=self.timeout), loop)
+            self._side[url] = got
+        return got[0]
+
+    def prompt_url(self, prompt_id: str) -> str:
+        """The address `prompt_id` was sent to (base_url for one this client did not send)."""
+        return self._prompt_url.get(prompt_id, self.base_url)
 
     def set_base_url(self, url: str) -> None:
         """Point the client at another address (the instance was found on another port, instances.Supervisor.locate).
@@ -154,6 +177,13 @@ class ComfyClient:
         return info if isinstance(info, dict) else None
 
     async def aclose(self) -> None:
+        side, self._side = list(self._side.values()), {}
+        for c, _ in side:
+            if not c.is_closed:
+                try:
+                    await c.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
         http, self._http, self._http_loop = self._http, None, None
         if http is not None and not http.is_closed:
             try:
@@ -210,6 +240,7 @@ class ComfyClient:
         body: dict[str, Any] = {"prompt": graph}
         if client_id:
             body["client_id"] = client_id
+        url = self.base_url
         r = await self._client().post("/prompt", json=body,
                                       timeout=httpx.Timeout(self.timeout, read=SUBMIT_READ_TIMEOUT))
         if r.status_code >= 400:
@@ -230,10 +261,11 @@ class ComfyClient:
         prompt_id = data.get("prompt_id")
         if not prompt_id:
             raise ComfyError(f"/prompt did not return a prompt_id: {data}")
+        self._prompt_url[prompt_id] = url
         return prompt_id
 
     async def history(self, prompt_id: str) -> dict[str, Any]:
-        r = await self._client().get(f"/history/{prompt_id}")
+        r = await self._client_at(self.prompt_url(prompt_id)).get(f"/history/{prompt_id}")
         r.raise_for_status()
         return r.json()
 
@@ -248,8 +280,18 @@ class ComfyClient:
 
         Raises ComfyError if the prompt ended in error or the timeout elapsed. A poll that times out while reading is
         tried again until nothing has been read for ENGINE_STALL_SECONDS (a busy engine loading a model); a refused
-        or reset connection raises at once.
+        or reset connection raises at once. Polls the address the prompt was sent to (prompt_url), whatever the
+        client's address is now.
         """
+        self.waiting += 1
+        try:
+            return await self._wait(prompt_id, poll_seconds, timeout, on_poll)
+        finally:
+            self.waiting -= 1
+            self._prompt_url.pop(prompt_id, None)
+
+    async def _wait(self, prompt_id: str, poll_seconds: float, timeout: float | None,
+                    on_poll: Callable[[float], None] | None) -> dict[str, Any]:
         t0 = time.monotonic()
         last_answer = t0
         while True:

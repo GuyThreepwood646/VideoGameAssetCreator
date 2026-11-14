@@ -19,7 +19,10 @@ Finding an instance by its card (config.DiscoverConfig): an instance with `disco
 its /system_stats device name contains `gpu_match`. When the configured url does not answer, or answers from another
 card, locate() tries the listed ports on the same host (at most once every PROBE_SECONDS) and points the instance's
 client at the first ComfyUI on the right card for the rest of the session, never at one whose device matches another
-instance's gpu_match. A ComfyUI on the instance's own port that runs on another card is a setup problem (conflict()):
+instance's gpu_match. Never while the instance is in use (in_use(): a job running on it, the card lent, a prompt being
+waited on): a slow or missing answer then means the engine is busy (loading a model), not gone, and its address
+stays. An engine that really went away is noticed by the job itself (a refused connection ends its wait; the queue
+requeues it once), and the search runs again once the instance is no longer in use. A ComfyUI on the instance's own port that runs on another card is a setup problem (conflict()):
 the start fails at once with a plain fix instead of sending the work to the wrong card.
 
 State per instance: running | starting | stopped | failed, owned, last_error. Every change calls `on_change` (the job
@@ -310,6 +313,9 @@ class Supervisor:
         self.found: dict[str, str] = {}
         self.conflicts: dict[str, str] = {}
         self._probed_at: dict[str, float] = {}
+        # Set by the job queue: whether a card has a job running or is lent (jobs.JobQueue.card_in_use).
+        self.busy: Callable[[str], bool] | None = None
+        self._busy_noted: set[str] = set()
         self._load_owned()
 
     # --- facts -------------------------------------------------------------------------------------------------
@@ -376,6 +382,16 @@ class Supervisor:
     def conflict(self, name: str) -> str:
         return self.conflicts.get(name, "")
 
+    def in_use(self, name: str) -> bool:
+        """Whether the instance is working for the app now: a prompt being waited on (ComfyClient.waiting), or a job
+        running on its card or the card lent (the queue's `busy`). Its address is then never changed."""
+        if int(getattr(self.clients.get(name), "waiting", 0) or 0) > 0:
+            return True
+        try:
+            return bool(self.busy is not None and self.busy(name))
+        except Exception:  # noqa: BLE001
+            return False
+
     def identity_ok(self, name: str, summary: dict[str, Any] | None) -> bool:
         """Whether a vram_summary() answer comes from this instance's card (any answer, without `discover`)."""
         inst = self.settings.instances.get(name)
@@ -411,10 +427,19 @@ class Supervisor:
             return reachable
         if reachable and card_matches(summary, d.gpu_match):
             self.conflicts.pop(name, None)
+            self._busy_noted.discard(name)
             return True
         here = self.current_url(name)
+        busy = self.in_use(name)
+        if busy and not reachable:
+            # Working for us and slow to answer (a model loading holds the engine's server): busy, not gone.
+            if name not in self._busy_noted:
+                self._busy_noted.add(name)
+                log.info("graphics engine %s: no answer from %s while it works for a step; taken as busy, its "
+                         "address is kept", name, here)
+            return True
         now = self.clock()
-        if force or now - self._probed_at.get(name, -1e18) >= PROBE_SECONDS:
+        if not busy and (force or now - self._probed_at.get(name, -1e18) >= PROBE_SECONDS):
             self._probed_at[name] = now
             url = await search_ports(self.settings, name, here, self.probe)
             if url is not None:

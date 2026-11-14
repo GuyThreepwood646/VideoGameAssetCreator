@@ -907,6 +907,7 @@ class JobQueue:
         for name, inst in self.settings.instances.items():
             self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=inst.output_dir)
         self.supervisor = Supervisor(self.settings, self.clients, on_change=lambda _n: self.publish_gpus())
+        self.supervisor.busy = self.card_in_use
         # Cards turned off (and kinds of work forbidden) before the restart stay so, applied before any worker can
         # pick a job; queued jobs parked on them move now where another card can take them.
         self._load_prefs()
@@ -1351,6 +1352,11 @@ class JobQueue:
             for j in changed:
                 db.refresh(j)
                 _publish_job(j)
+
+    def card_in_use(self, instance: str) -> bool:
+        """A job runs on the card, or the card is lent: its engine's address is never changed meanwhile."""
+        w = self.workers.get(instance)
+        return instance in self.leases or (w is not None and (w.current_job_id is not None or w.lent_to is not None))
 
     def _card_takes(self, instance: str) -> bool:
         """Whether a card may be given work now: on, its engine not failed, its queue not paused."""
