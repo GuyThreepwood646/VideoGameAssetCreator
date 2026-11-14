@@ -231,7 +231,7 @@ export default function ToolPanel({ tool, onChanged, onClose }: { tool: Tool; on
           )}
         </div>
       )}
-      {unity && (
+      {unity && usable.length === 0 && (
         <div className="setup-field">
           <div>{unity.guide.cannot_install}</div>
           <div className="muted small">{unity.guide.licence_line}</div>
