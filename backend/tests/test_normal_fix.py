@@ -278,10 +278,13 @@ def test_clear_zeroes_the_skin_texels_and_keeps_the_rest(tmp_path, monkeypatch):
     Image.fromarray(base).save(tmp_path / "base_color.png")
     ys, xs = np.array([10, 10, 11]), np.array([5, 6, 5])
     region = {"covered": np.zeros((32, 32), bool)}
-    monkeypatch.setattr(skinmetal, "skin_texels", lambda mesh, b, T: {"ys": ys, "xs": xs, "face_texels": 2, "skin_lab": [60, 15, 20],
-                                                                        "region": region})
+    none = np.zeros(0, dtype=np.int64)
+    monkeypatch.setattr(skinmetal, "skin_texels", lambda mesh, b, T, body=False: {
+        "ys": ys, "xs": xs, "face_texels": 2, "skin_lab": [60, 15, 20], "region": region, "head_texels": 3, "body_texels": 0,
+        "body_pieces": 0, "body_small_pieces": 0, "left_ys": none, "left_xs": none, "covered": None})
+    # armour in the description: only the head and neck are cleared (a map that is metal everywhere would otherwise be wiped)
     r = skinmetal.clear(glb, {"metallic": tmp_path / "metallic.png", "base_color": tmp_path / "base_color.png"}, "humanoid",
-                        "a knight", tmp_path / "skin")
+                        "a knight in steel plate armour", tmp_path / "skin")
     out = np.asarray(Image.open(r["files"]["metallic"]))
     assert (out[ys, xs] == 0).all()
     keep = np.ones((32, 32), bool)

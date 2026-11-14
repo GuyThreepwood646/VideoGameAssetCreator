@@ -400,12 +400,28 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _size_fix,
         "fix_label": "Set the size",
     },
-    "facing": {
+    "skin_not_metal": {
         "severity": "warn",
-        "ok": "The front of the model faces forward in the game.",
-        "fail": "The model may face the wrong way: it matches the front picture best when turned {value} degrees.",
-        "fix": _facing_fix,
-        "fix_label": "Turn it to face forward",
+        "ok": lambda c: ("The 3D builder marked the whole character as metal, skin, clothes and hair included. That was set back to plain "
+                         "skin and cloth; small metal pieces such as jewellery and glasses keep their metal."
+                         if _var(c, "blanket") else
+                         "The 3D builder marked {before:pct} of the skin of the head as metal. It was set back to plain skin."
+                         if (_as_float(_var(c, "before")) or 0) >= 0.05 else
+                         "The skin is plain skin, not metal."
+                         + (" (Only the head and neck were checked, because the description names armour or metal.)"
+                            if _var(c, "head_only") else "")),
+        "fail": ("{value:pct} of the skin-coloured surface is still marked metal, on small separate pieces (a bracelet or a pendant "
+                 "would be). If any of it is skin, it will shine like metal in game lights."),
+    },
+    "picture_projection": {
+        "severity": "warn",
+        "vars": lambda c: {"reason": _var(c, "reason") or "no reason was recorded"},
+        "ok": lambda c: ("The picture's own colours were painted onto the model ({share:pct} of its surface)." if _var(c, "share")
+                         else "The picture's own colours were painted onto the model."),
+        "fail": ("The picture was not painted onto the model, because {reason}. The model keeps the 3D builder's own colours, which "
+                 "are softer and look less like the picture. To get the picture's colours: redraw the front view in step 2 as a "
+                 "straight, full-length view in the same pose as the model, or build the 3D model again from a clearer front "
+                 "picture. Or keep it as it is."),
     },
     "facing_tests": {
         "severity": "warn",
@@ -1238,11 +1254,17 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
     values["value"] = c.get("value")
     values["limit"] = c.get("limit")
     template = g.get("ok" if passed else "fail")
-    if callable(template):
+    unmeasured = not passed and values.get("measured") is False
+    if unmeasured:
+        # A check that could not be measured says so, never a pass (quality.not_measured)
+        template = "Not measured: {what} was not checked, because {why}."
+        values.setdefault("what", "this")
+        values.setdefault("why", "it could not be read")
+    elif callable(template):
         template = template(c)
     if template:
         out["help"] = format_check_text(template, values)
-    if not passed and "fix" in g:
+    if not passed and "fix" in g and not unmeasured:
         fix = g["fix"](c)
         if fix:
             label = g.get("fix_label")

@@ -39,6 +39,15 @@ def check(id_: str, ok: bool, value: Any, limit: Any, vars: dict[str, Any] | Non
     return guidance.describe_check(c)
 
 
+def not_measured(id_: str, what: str, why: str, vars: dict[str, Any] | None = None) -> Check:
+    """A check that could not be measured. It fails (never passes), so a missing measure is not read as a good one: the
+    sentence is "Not measured: {what} was not checked, because {why}." (guidance.describe_check), with no fix.
+    value is "not measured"; vars.measured is False and carries what and why."""
+    c = check(id_, False, "not measured", None, vars={**(vars or {}), "measured": False, "what": what, "why": why})
+    c["message"] = "not measured"
+    return c
+
+
 def axis_extent(dims_m: list[float] | tuple[float, ...], axis: str = "height") -> float:
     """The extent the size is measured on, from Blender dimensions [x, y, z] (z up): height is z; horizontal the larger
     of x and y (the ground plane; X and Z in a Y-up engine); longest the largest of all three."""
@@ -74,15 +83,6 @@ def auto_turn(best: float | None) -> int:
         return 0
     q = nearest_quarter(best)
     return q if angle_diff(best, q) <= AUTO_TURN_WINDOW_DEG else 0
-
-
-def facing_check(best: float, applied: float) -> Check:
-    """facing: passes when the applied turn is the quarter turn nearest the audit's best turn. The fix turns to the
-    nearest quarter turn, and is left out when that is the turn already applied."""
-    q = nearest_quarter(best)
-    ok = angle_diff(best, applied) <= FACING_TOLERANCE_DEG
-    fix_yaw = q if angle_diff(q, applied) > 0 else None
-    return check("facing", ok, int(round(best)) % 360, int(round(applied)) % 360, vars={"fix_yaw": fix_yaw})
 
 
 def facing_tests_check(outline_turn: float, toes_turn: float, differ: float, decided: float | None, applied: float) -> Check:

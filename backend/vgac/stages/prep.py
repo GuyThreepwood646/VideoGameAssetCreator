@@ -10,7 +10,7 @@ size. height_m, the old knob, is still read from older versions and means the he
 
 Facing (G14): face_yaw "auto" turns the model by the nearest quarter turn to the mesh audit's best fit when the fit
 is trusted (silhouette match at or above the category floor) and within 20 degrees of a quarter turn; a number turns
-it by that many degrees. The facing check compares the turn applied with the audit's best turn.
+it by that many degrees. The facing_tests check reports the outline test and the toes test and whether they agreed.
 
 Textures on the final model (G05, G03): symmetrize is off unless the version turns it on. When prep changes the
 surface anyway (symmetrize, or a decimation back to the budget) or the version asks (rebake), blender/rebake.py bakes
@@ -59,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import shutil
 import time
 from pathlib import Path
@@ -293,7 +294,13 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_params(hair_detail=hair_detail.on(params), hair_strength=hair_detail.strength_of(params))
         if sc.asset.category == "humanoid":
             sc.set_params(**{hairmat.PARAM: hairmat.option(params)})  # hair as its own material (vgac/hairmat.py)
-        hf = await hair_detail.find(sc, out, current, rec, params)
+        # Skin is never metal (vgac/skinmetal.py), first: the 3D builder spreads metal over the skin of the whole body, and the
+        # hair find reads the metal map to tell a helmet from hair. The share of skin that was metal says whether metal on
+        # the head means anything.
+        current, sm = await clear_skin_metal(sc, out, current)
+        sc.set_metrics(**sm["metrics"])
+        hf = await hair_detail.find(sc, out, current, rec, params,
+                                    skin_metal=(sm["metrics"]["skin_metal"].get("metal_share_before") if sm["metrics"]["skin_metal"].get("ran") else None))
         face_detail_seed = params.get("face_detail_seed")
         fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
                                    after_relayout=paint_body_again if body_views.get("views") else None,
@@ -306,20 +313,24 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if fd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex))
         after_face = {**current, **{k: Path(p) for k, p in fd["files"].items() if k in TEXTURE_KEYS}}
-        # Skin is never metal (vgac/skinmetal.py): the face and the skin of the head and neck joined to it lose the metal
-        # the 3D builder spread onto them from armour and helmets, before the hair pass reads the maps.
-        sm = await asyncio.to_thread(skinmetal.clear, out, after_face, sc.asset.category, sc.asset.prompt, sc.dir / "skin")
-        if sm["files"].get("metallic") is not None:
-            after_face["metallic"] = Path(sm["files"]["metallic"])
-            sc.register("metallic", after_face["metallic"])
-            await asyncio.to_thread(imaging.glb_replace_images, out, metallic=after_face["metallic"])
-        sc.set_metrics(**sm["metrics"])
+        if fd["relayout"]:
+            # the face pass laid the texture out again: the cleared metal was baked across, and the skin is looked at once more on
+            # the new layout (the face's own texels in particular)
+            after_face, sm2 = await clear_skin_metal(sc, out, after_face)
+            sc.set_metrics(skin_metal_again=sm2["metrics"]["skin_metal"])
         hd = await hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout"))
         for key, p in hd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**hd["metrics"])
         if hd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "hair detail"))
+        final = {**after_face, **{k: Path(p) for k, p in hd["files"].items() if k in TEXTURE_KEYS}}
+        if final.get("metallic") != maps.get("metallic") or final.get("base_color") != maps.get("base_color"):
+            # metal was cleared (skin, hair) and colours painted after the texture pass measured them: measure again, so the
+            # metal and colour-range checks read the finished maps
+            after = await asyncio.to_thread(remeasure_pbr, out, final)
+            if after is not None:
+                sc.set_metrics(pbr=after, pbr_measured="finished")
         if int(fd.get("base_color_size") or 0) > tex:
             # "High" face detail on a 4096 platform: the base colour ships at 4096, the other maps stay at the atlas size
             sc.set_metrics(base_color_size=int(fd["base_color_size"]), texture_size_shipped=int(fd["base_color_size"]))
@@ -332,6 +343,29 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
 
 HAIR_FILE_PREFIXES = ("hair_", "with_hair_")
 HAIR_DIR = "hairlib"
+
+
+async def clear_skin_metal(sc: StageContext, glb: Path, maps: dict[str, Path]) -> tuple[dict[str, Path], dict[str, Any]]:
+    """skinmetal.clear on the current maps; the cleared metal map goes into the GLB and the version. -> (maps, result)."""
+    sm = await asyncio.to_thread(skinmetal.clear, glb, maps, sc.asset.category, sc.asset.prompt, sc.dir / "skin")
+    if sm["files"].get("metallic") is not None:
+        maps = {**maps, "metallic": Path(sm["files"]["metallic"])}
+        sc.register("metallic", maps["metallic"])
+        await asyncio.to_thread(imaging.glb_replace_images, glb, metallic=maps["metallic"])
+    return maps, sm
+
+
+def remeasure_pbr(glb: Path, maps: dict[str, Path]) -> dict[str, Any] | None:
+    """The PBR range figures (imaging.pbr_stats) on the finished maps. The texture pass measures them before the face,
+    skin and hair passes, which clear metal; the checks read these, after."""
+    uvf = imaging.load_uv_mesh(glb)
+    if uvf is None or not maps.get("base_color"):
+        return None
+    base = imaging.read_map(maps["base_color"])
+    size = base.shape[0]
+    mask = imaging.rasterise_uv(uvf, size)["labels"] > 0
+    return imaging.pbr_stats(base, imaging.read_map(maps.get("metallic"), size, grey=True),
+                             imaging.read_map(maps.get("roughness"), size, grey=True), mask)
 
 
 def hair_plan(sc: StageContext, params: dict[str, Any], mesh_v: Any, limit: int | None) -> dict[str, Any]:
@@ -718,6 +752,12 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
     p = params or {}
     out: list[dict[str, Any]] = []
     if m.get("export_mesh_hash") is None:
+        if m.get("texture_pass_error"):
+            # the texture pass could not read the model's layout: these were not measured, which is not the same as fine
+            why = str(m["texture_pass_error"])
+            return [quality.not_measured("baked_light", "whether painted-in shadows are gone", why),
+                    quality.not_measured("albedo_range", "whether the colours stay inside the range real materials have", why),
+                    quality.not_measured("metal_mixed", "whether metal parts are clearly metal", why)]
         return out
     match = m.get("bake_match")
     if match is not None:
@@ -837,16 +877,114 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
                 c.update(guidance.describe_check(c))  # the sentence again, with the new values
     if on_grid:
         checks += quality.grid_checks(report["grid"], params)
-    best = metrics.get("face_best_turn")
-    if best is not None:
-        checks.append(quality.facing_check(best, metrics.get("face_yaw_applied") or 0))
-    if metrics.get("face_toes_found") and metrics.get("face_tests_differ_deg") is not None:
-        checks.append(quality.facing_tests_check(metrics["face_outline_turn"], metrics["face_toes_turn"], metrics["face_tests_differ_deg"],
-                                                 metrics.get("face_best_turn"), metrics.get("face_yaw_applied") or 0))
+    fc = facing_check(metrics, category_id)
+    if fc is not None:
+        checks.append(fc)
     up = upscale_check(metrics.get("srcproject_upscale"))
     if up is not None:
         checks.append(up)
     return checks
+
+
+def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dict[str, Any] | None:
+    """facing_tests: what the two independent facing tests found and whether they agreed (the outline of the drawn views
+    and the direction of the toes). Replaces the old `facing` check, which compared the turn applied with the outline
+    test that had chosen it and could never fail. Only for two-legged characters, which is where the toes test exists:
+    both tests agree (passes), they disagree (fails, with the fix to the decided turn), or the toes were not found
+    (fails as "not measured": the outline test alone cannot be checked against anything, so it is not called good).
+    Nothing when the outline test has no answer either (no trusted fit: nothing was decided)."""
+    m = metrics or {}
+    if category_id not in facing.TOES_CATEGORIES:
+        return None  # no second test exists for this kind of model, and the outline test alone is not a check
+    if m.get("face_outline_turn") is None and not m.get("face_toes_found"):
+        return None
+    applied = m.get("face_yaw_applied") or 0
+    if m.get("face_toes_found") and m.get("face_tests_differ_deg") is not None:
+        return quality.facing_tests_check(m["face_outline_turn"], m["face_toes_turn"], m["face_tests_differ_deg"],
+                                          m.get("face_best_turn"), applied)
+    if m.get("face_toes_reason") is None and "face_toes_found" not in m:
+        return None  # a version made before the toes test existed: nothing to report
+    reason = str(m.get("face_toes_reason") or "the feet were not found")
+    if m.get("face_toes_found"):  # the toes have an answer and the outline has none
+        return quality.not_measured("facing_tests", "the outline test of which way it faces",
+                                    "the drawn views did not fit the model well enough to read it; the toes say turn "
+                                    f"{int(round(float(m['face_toes_turn']))) % 360} degrees, with nothing to compare them with",
+                                    vars={"toes_turn": int(round(float(m["face_toes_turn"]))) % 360})
+    return quality.not_measured("facing_tests", "the second test of which way it faces (where the toes point)",
+                                f"{reason}. The outline of the drawn views alone says turn {int(m['face_outline_turn']) % 360} "
+                                "degrees, and nothing else confirms it",
+                                vars={"outline_turn": int(m["face_outline_turn"]) % 360})
+
+
+SKIN_METAL_LEFT_MAX = 0.05  # share of the skin-coloured surface still metal, on small separate pieces, that is not worth a warning
+
+
+def skin_metal_check(m: dict[str, Any], category: str | None) -> dict[str, Any] | None:
+    """skin_not_metal: measured after the clearing (skinmetal.clear): the share of the skin-coloured surface still marked
+    metal, which is only ever on small separate pieces (jewellery) because the pass clears the rest. "Not measured" when the
+    pass could not find the face. Nothing for other categories or a character that is metal by its description."""
+    if category != "humanoid":
+        return None
+    rec = m.get("skin_metal")
+    if not rec:
+        return None
+    skipped = rec.get("skipped")
+    if skipped in ("not a humanoid", "the description makes the character metal", "no metal map"):
+        return None
+    if rec.get("error") or not rec.get("ran"):
+        why = ("the face could not be found in the model" if skipped == "no face found" else
+               "the model has no texture layout to read" if skipped == "no texture layout" else
+               f"the check failed ({rec.get('error')})" if rec.get("error") else "it did not run")
+        return quality.not_measured("skin_not_metal", "whether the skin is plain skin or metal", why)
+    total = max(1, int(rec.get("skin_coloured_texels") or 0))
+    left = int(rec.get("left_metal") or 0) / total
+    return quality.check("skin_not_metal", left <= SKIN_METAL_LEFT_MAX, round(left, 4), SKIN_METAL_LEFT_MAX,
+                         vars={"before": rec.get("metal_share_before"), "blanket": bool(rec.get("blanket")),
+                               "kept": rec.get("kept_metal_texels"), "head_only": rec.get("body") is False,
+                               "cleared": bool(rec.get("texels_changed"))})
+
+
+def projection_reason_words(reason: Any) -> str:
+    """srcproject's recorded reason (srcproject_reason) in words a person reads, as the end of "...because ...". The
+    recorded text is kept after the plain words when it says something more."""
+    r = str(reason or "").strip()
+    m = re.match(r"silhouette match ([0-9.]+) is under ([0-9.]+)", r)
+    if m:
+        return (f"the picture did not line up with the model well enough (outline match {float(m.group(1)):.2f}, it needs "
+                f"{float(m.group(2)):.2f})")
+    if r.startswith("the result is no closer"):
+        return "painting from the picture would not have made the model look more like it than the 3D builder's own colour"
+    if r == "the picture does not show the front":
+        return "the picture does not show the character from the front"
+    if "mirrored" in r:
+        return "the model's two halves share one piece of texture (it is mirrored), so a picture cannot be painted on one side"
+    if "ambiguous" in r:
+        return f"the picture's turn could not be told from the outline ({r})"
+    if "contradicts" in r:
+        return f"a view turned the opposite way to the front ({r})"
+    if r.startswith("failed:"):
+        return f"the painting failed ({r[7:].strip()})"
+    if r.startswith("no base colour"):
+        return "the model had no colour texture or there was no picture to paint from"
+    return r or "no reason was recorded"
+
+
+def projection_check(m: dict[str, Any], params: dict[str, Any], category: str, look: dict[str, Any] | None) -> dict[str, Any] | None:
+    """picture_projection: whether the pictures' own pixels were painted onto the model (srcproject). It shows the
+    reason in plain words when the pass was refused, skipped or failed, so a character left in the 3D builder's softer
+    colour is never read as a painted one. Nothing when the pass is off for this look or by the person's choice."""
+    if category == "material" or not srcproject.on(params, category, look):
+        return None
+    if m.get("srcproject_applied") is None:
+        if m.get("export_mesh_hash") is None:
+            return None  # no base colour to paint: nothing was attempted
+        return quality.not_measured("picture_projection", "whether the pictures were painted onto the model",
+                                    "the clean-up did not record what the picture painting did")
+    if m.get("srcproject_applied"):
+        share = m.get("srcproject_painted_share")
+        return quality.check("picture_projection", True, share if isinstance(share, (int, float)) else None, None,
+                             vars={"share": share if isinstance(share, (int, float)) else None})
+    return quality.check("picture_projection", False, "refused", None, vars={"reason": projection_reason_words(m.get("srcproject_reason"))})
 
 
 def upscale_check(up: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -911,6 +1049,12 @@ async def judge(sc: StageContext) -> None:
         sc.set_metrics(picture_colour=pic, texture_match=texcolour.compare(pic, tex))
         m = sc.version.metrics
     checks += surface_checks(m, sc.version.params)
+    sk = skin_metal_check(m, sc.asset.category)
+    if sk is not None:
+        checks.append(sk)
+    pc = projection_check(m, sc.version.params or {}, sc.asset.category, texture_look(rec, (sc.project.style_lock or {}).get("palette")))
+    if pc is not None:
+        checks.append(pc)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)
