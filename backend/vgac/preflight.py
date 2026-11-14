@@ -335,6 +335,34 @@ def check_hair_library(settings: Settings) -> dict[str, Any]:
                          "hair", "Get the hair library", "library/hairlib, built by vgac/packs.py")
 
 
+def check_face_landmarker() -> dict[str, Any]:
+    """The MediaPipe face landmarker file (runtime/models/face_landmarker.task, setup/downloads.json project_files) and the
+    mediapipe package that reads it. The picture projection finds the eyes and mouth with them (vgac/lipmarks.py); without
+    either, humanoid faces are painted by the older darkest-spot finder, which is worse, so this is a problem (warn: the
+    pipeline still runs) and not an optional extra."""
+    import importlib.util
+
+    from . import lipmarks
+
+    path = lipmarks.model_path()
+    has_pkg = importlib.util.find_spec("mediapipe") is not None
+    tech = f"{path} (setup/downloads.json project_files.face_landmarker); mediapipe package {'found' if has_pkg else 'not found'}"
+    label = "Face finder (MediaPipe face landmarker)"
+    if path.is_file() and has_pkg:
+        return item("face_landmarker", "models", label, "ok", "Installed. Faces on humanoid characters are placed by their eyes and mouth.",
+                    "", ["material"], tech)
+    if not path.is_file():
+        return item("face_landmarker", "models", label, "warn",
+                    "The face finder's model file is missing, so the eyes and mouth are not found properly and faces on humanoid "
+                    "characters are painted the older, worse way.",
+                    "Download face_landmarker.task (3.8 MB, Apache-2.0) from the link in setup/downloads.json and put it in the "
+                    "project's runtime/models folder; the installer does this.", ["material"], tech)
+    return item("face_landmarker", "models", label, "warn",
+                "The mediapipe package that reads the face finder's model is not installed, so faces on humanoid characters are "
+                "painted the older, worse way.",
+                "Install the backend's requirements (backend/requirements.txt pins mediapipe), then restart the app.", ["material"], tech)
+
+
 def check_skintoken_blender(settings: Settings, project_dir: Path = PROJECT_DIR) -> dict[str, Any] | None:
     rigger = settings.stage_instances.get("rig")
     inst = settings.instances.get(rigger or "")
@@ -627,6 +655,7 @@ async def run_checks(settings: Settings, clients: dict[str, Any], disabled: set[
     items.extend(check_unity(settings))
     items.extend(check_clips(settings))
     items.append(check_hair_library(settings))
+    items.append(check_face_landmarker())
     sk = check_skintoken_blender(settings)
     if sk is not None:
         items.append(sk)

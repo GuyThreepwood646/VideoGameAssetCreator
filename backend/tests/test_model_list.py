@@ -33,7 +33,7 @@ DEAD_REFERENCES = {
     "anima-aesthetic-v1.1.safetensors",
 }
 # models.yaml / companions that are deliberately not asked of an engine (comments in preflight.MODEL_LOADERS say why).
-NOT_ASKED = {"skintoken_vae", "face_model"}
+NOT_ASKED = {"skintoken_vae", "face_model", "face_landmarker"}  # face_landmarker has its own check (check_face_landmarker)
 # Companions whose file the graphs do not name directly (the node pack loads it).
 NODE_PACK_FILES = {"last.ckpt"}
 
@@ -172,3 +172,29 @@ def test_every_listed_file_is_used_by_something():
     used |= NODE_PACK_FILES
     unused = sorted(d["save_as"] for sec in ("models", "addons") for d in DOWNLOADS[sec].values() if d.get("save_as") and d["save_as"] not in used)
     assert not unused, f"on the list but no graph or code names them: {unused}"
+
+
+def test_the_face_landmarker_is_required_and_checked():
+    """The picture projection's head chain finds the eyes and mouth with the MediaPipe face landmarker (runtime/models); a
+    missing file is a problem the setup check shows in plain words, and the file is listed with its licence."""
+    d = DOWNLOADS["project_files"]["face_landmarker"]
+    assert d["required"] is True and d["licence"] == "Apache-2.0" and d["save_as"] == "face_landmarker.task"
+    assert MODELS_YAML["companions"]["face_landmarker"]["file"] == "face_landmarker.task"
+    assert MODELS_YAML["companions"]["face_landmarker"]["licence"] == "Apache-2.0"
+    from vgac import lipmarks
+
+    assert lipmarks.MODEL_NAME == d["save_as"]
+    credits = yaml.safe_load((VGAC / "data" / "credits.yaml").read_text(encoding="utf-8"))
+    names = " ".join(e["name"] for e in credits["data"] + credits["libraries"])
+    assert "face landmarker" in names and "MediaPipe (Python package)" in names
+
+
+def test_a_missing_face_landmarker_shows_as_a_problem_in_plain_words(tmp_path, monkeypatch):
+    monkeypatch.setenv("VGAC_FACE_LANDMARKER", str(tmp_path / "nope.task"))
+    it = preflight.check_face_landmarker()
+    assert it["state"] == "warn" and it["group"] == "models" and it["id"] == "face_landmarker"
+    assert "missing" in it["detail"] and "worse way" in it["detail"] and "face_landmarker.task" in it["fix"]
+    f = tmp_path / "ok.task"
+    f.write_bytes(b"x")
+    monkeypatch.setenv("VGAC_FACE_LANDMARKER", str(f))
+    assert preflight.check_face_landmarker()["state"] in ("ok", "warn")  # warn only when the package is not installed here
