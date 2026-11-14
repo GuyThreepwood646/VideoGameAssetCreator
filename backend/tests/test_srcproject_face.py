@@ -420,3 +420,21 @@ def test_a_model_built_from_the_second_three_quarter_view_refuses_no_turn_views(
     assert set(srcproject.refuse_contradicting_turns(f, 0.0, pic)) == {"quarter", "quarter2"}  # no input_view: quarter
     assert srcproject.other_quarter("quarter2") == "quarter"
     assert srcproject.other_quarter("quarter") == srcproject.other_quarter(None) == "quarter2"
+
+
+def test_the_box_blur_is_the_same_as_with_index_arrays() -> None:
+    def old(a, r):  # noqa: ANN001, ANN202  (face.box_blur before it took slices)
+        out = a.astype(np.float64)
+        for axis in (0, 1):
+            pad = [(0, 0)] * out.ndim
+            pad[axis] = (r + 1, r)
+            c = np.cumsum(np.pad(out, pad, mode="edge"), axis=axis)
+            n = out.shape[axis]
+            out = (np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=axis) - np.take(c, np.arange(0, n), axis=axis)) / (2 * r + 1)
+        return out
+
+    rng = np.random.default_rng(3)
+    for shape, r in (((257, 300), 5), ((128, 96, 3), 12), ((64, 64), 1), ((50, 40, 3), 30)):
+        a = rng.random(shape)
+        assert np.array_equal(face.box_blur(a, r), old(a, r))
+    assert np.array_equal(face.box_blur(np.ones((4, 4)), 0), np.ones((4, 4)))
