@@ -91,18 +91,32 @@ def hair_not_measured(why: str) -> dict[str, Any]:
 
 
 def hair_check(res: dict[str, Any]) -> dict[str, Any]:
-    """hair_matches_sides (warn) from hair_sides.compare: the back view's hair against the side views'. value is how much
-    higher the back's hair ends than theirs (a share of the head-to-shoulder height); the sentence is the check's own."""
+    """hair_matches_sides (warn) from hair_sides.compare: the back view's hair against the side views' (how far down it
+    reaches and how wide) and against itself (swept to one side). value is how much higher the back's hair ends than theirs
+    (a share of the head-to-shoulder height), or, when only the sweep was measured, how much further it reaches to one side
+    than to the other (head widths); the sentence is the check's own."""
+    swept = bool(res.get("swept"))
+    gap = res.get("end_gap")
     if res["ok"]:
-        text = "The hair in this back view is as long and as wide as the side views show it."
+        if gap is None:
+            text = ("The hair in this back view hangs evenly on both sides of the spine. How far down it reaches and how wide "
+                    "it is were not compared with the side views.")
+        else:
+            text = "The hair in this back view is as long and as wide as the side views show it."
     else:
-        short = res["end_gap"] > res["limit"]
-        what = ("is shorter than the side views show it: it stops higher up, at the neck, where they show it falling to the shoulders" if short else
-                "is a narrow strip down the middle of the back, where the side views show it falling wider")
+        if swept:
+            what = "is swept out to one side of the back, where the side views show it hanging straight down"
+        elif gap > res["limit"]:
+            what = ("is shorter than the side views show it: it stops higher up, at the neck, where they show it falling to the shoulders")
+        else:
+            what = "is a narrow strip down the middle of the back, where the side views show it falling wider"
         text = (f"The hair in this back view {what}. The 3D model and its texture take the back of the hair from this "
                 "picture, so the hair would look different from behind. Draw this view again.")
-    return {"id": "hair_matches_sides", "ok": res["ok"], "value": res["end_gap"], "limit": res["limit"],
-            "width_ratio": res["width_ratio"], "severity": "warn", "help": text}
+    sweep = res.get("sweep") or {}
+    only_sweep = gap is None
+    return {"id": "hair_matches_sides", "ok": res["ok"], "value": sweep.get("asym") if only_sweep else gap,
+            "limit": hair_sides.MAX_SWEEP if only_sweep else res["limit"],
+            "width_ratio": res["width_ratio"], **({"sweep": sweep} if sweep else {}), "severity": "warn", "help": text}
 
 
 MAX_REROLLS = 2
@@ -283,6 +297,8 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
             checks.append(hair_not_measured(hair["why"]))
         else:
             out["hair_end_gap"], out["hair_width_ratio"] = hair["end_gap"], hair["width_ratio"]
+            if hair.get("sweep"):
+                out["hair_sweep"] = hair["sweep"]["asym"]
             checks.append(hair_check(hair))
     out["checks"] = [{"name": c["id"], "passed": c["ok"], "message": f"{c['value']} (limit {c['limit']})", **c} for c in checks]
     out["passed"] = all(c["ok"] for c in checks)

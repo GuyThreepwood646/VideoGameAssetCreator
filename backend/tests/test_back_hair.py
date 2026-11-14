@@ -311,3 +311,100 @@ def test_a_back_with_nothing_to_compare_says_not_measured_and_is_not_redrawn(tmp
     assert "pale" not in note["help"] and "skin" in note["help"]
     _, why2 = hair_sides.compare_with_reason(*(_set(tmp_path / "short", end=40)[v] for v in ("back", "front", "left", "right")))
     assert why2 == "short"
+
+
+# --- sweep: long hair swept to one side, judged from the back view alone ------------------------------------------------
+
+
+def _long_back(path, shift=0, spread=0, width=90, end=280, hair_colour=HAIR, bald=False):
+    """A back view with long hair: a block `width` wide from the crown down to row `end`, moved `shift` pixels to one side;
+    spread: extra block on the other side too (both sides swept)."""
+    im = Image.new("RGBA", (400, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle((100, 100, 300, H - 1), fill=SHIRT)
+    d.rectangle((185, 80, 215, 100), fill=SKIN)
+    d.ellipse((158, 8, 242, 90), fill=SKIN)
+    hc = SKIN if bald else hair_colour
+    d.rectangle((200 - width // 2, 0, 200 + width // 2, 100 if not bald else 60), fill=hc)    # the crown, over the head
+    if not bald:
+        d.rectangle((200 - width // 2 + shift, 100, 200 + width // 2 + shift, end), fill=hc)  # the length, swept `shift` aside
+    if spread:
+        d.rectangle((200 - width // 2 - spread, 100, 200 + width // 2 - spread, end), fill=hc)
+    im.save(path)
+    return path
+
+
+def _sweep(tmp, **kw):
+    tmp.mkdir(exist_ok=True)
+    return hair_sides.sweep(_long_back(tmp / "back.png", **kw), _figure(tmp / "front.png", "front", bald=True))   # the face colour only
+
+
+def test_long_hair_hanging_straight_is_not_swept(tmp_path):
+    res, why = _sweep(tmp_path)
+    assert res is not None and res["swept"] is False and res["asym"] < 0.2
+
+
+def test_long_hair_swept_to_one_side_is_flagged(tmp_path):
+    res, why = _sweep(tmp_path, shift=75)
+    assert res is not None and res["swept"] is True and res["asym"] > hair_sides.MAX_SWEEP
+
+
+def test_the_sweep_needs_no_natural_hair_colour(tmp_path):
+    for name, colour in (("silver", (140, 140, 148, 255)), ("red", (190, 40, 20, 255)), ("blue", (40, 60, 200, 255))):
+        res, why = _sweep(tmp_path / name, shift=75, hair_colour=colour)
+        assert res is not None and res["swept"] is True, name
+        res, why = _sweep(tmp_path / (name + "2"), hair_colour=colour)
+        assert res is not None and res["swept"] is False, name
+
+
+def test_no_sweep_verdict_for_bald_tied_up_or_short_hair(tmp_path):
+    assert _sweep(tmp_path / "bald", bald=True)[0] is None
+    assert _sweep(tmp_path / "bun", width=14, shift=60)[0] is None          # tied up: narrow at the shoulders
+    res, why = _sweep(tmp_path / "bob", end=108)
+    assert res is None and why == "short"
+    assert hair_sides.sweep(tmp_path / "nothere.png", tmp_path / "bob" / "front.png")[1] == "pictures"
+
+
+def test_the_sweep_alone_gives_a_verdict_and_its_words(tmp_path):
+    """Waist-length hair the length measure cannot judge: the check passes or fails on the sweep and says so."""
+    tmp_path.mkdir(exist_ok=True)
+    sides = {v: _figure(tmp_path / f"{v}.png", v, end=108) for v in ("left", "right")}
+    sides["front"] = _figure(tmp_path / "front.png", "front", bald=True)
+    back = _long_back(tmp_path / "back.png", shift=75)
+    res, why = hair_sides.compare_with_reason(back, sides["front"], sides["left"], sides["right"])
+    assert res is not None and res["ok"] is False and res["swept"] is True and res["end_gap"] is None
+    chk = turnaround.hair_check(res)
+    assert chk["ok"] is False and chk["limit"] == hair_sides.MAX_SWEEP and "swept out to one side" in chk["help"]
+    good, _ = hair_sides.compare_with_reason(_long_back(tmp_path / "good.png"), sides["front"], sides["left"], sides["right"])
+    assert good["ok"] is True
+    ok = turnaround.hair_check(good)
+    assert ok["ok"] is True and "not compared" in ok["help"]
+
+
+def test_a_back_swept_to_one_side_is_redrawn_and_says_so(tmp_path, drawn, monkeypatch):
+    calls = {"n": 0}
+    swept = {"ok": False, "end_gap": None, "limit": None, "width_ratio": None, "loose": None, "swept": True,
+             "sweep": {"asym": 1.7, "swept": True, "left_mean": 0.6, "right_mean": 2.3, "left_max": 0.6, "right_max": 2.3, "cover": 0.1}}
+    fine = {**swept, "ok": True, "swept": False, "sweep": {**swept["sweep"], "asym": 0.1, "swept": False}}
+
+    def fake(back, front, left, right):
+        calls["n"] += 1
+        return (swept if calls["n"] == 1 else fine), ""
+
+    monkeypatch.setattr(turnaround.hair_sides, "compare_with_reason", fake)
+    sc = run(tmp_path)
+    assert len(calls_by_view(drawn)["back"]) == 2
+    info = sc.metrics["views"]["back"]
+    assert info["rerolls"] == 1 and info["passed"] is True and info["hair_sweep"] == 0.1
+    assert [c["name"] for c in info["checks"]].count("hair_matches_sides") == 1
+
+
+def test_a_back_that_stays_swept_is_flagged_with_its_words(tmp_path, drawn, monkeypatch):
+    swept = {"ok": False, "end_gap": None, "limit": None, "width_ratio": None, "loose": None, "swept": True,
+             "sweep": {"asym": 1.7, "swept": True, "left_mean": 0.6, "right_mean": 2.3, "left_max": 0.6, "right_max": 2.3, "cover": 0.1}}
+    monkeypatch.setattr(turnaround.hair_sides, "compare_with_reason", lambda *a: (swept, ""))
+    sc = run(tmp_path)
+    assert len(calls_by_view(drawn)["back"]) == 1 + turnaround.MAX_REROLLS
+    info = sc.metrics["views"]["back"]
+    chk = [c for c in info["checks"] if c["name"] == "hair_matches_sides"][0]
+    assert info["flagged"] is True and chk["passed"] is False and "swept out to one side" in chk["help"] and chk["value"] == 1.7

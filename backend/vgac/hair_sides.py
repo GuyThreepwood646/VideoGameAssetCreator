@@ -5,7 +5,12 @@ head-to-shoulder height) and how wide it is just above its end, the back against
 
 Only for hair that is there to match: long enough to reach the shoulders in both side views, a natural hair colour, a mask
 that stays near the head. Anything else (bald, short hair, a hat or hood, a mask that ran into clothes of the same colour)
-gives no verdict, so the check stays quiet rather than guess."""
+gives no verdict, so the check stays quiet rather than guess.
+
+Second measure, for long loose hair of any colour (silver included, down to the waist): the back's hair is checked for sweep,
+how far it reaches to each side of the spine below the shoulders, in head widths. Hair hanging behind the back is about as
+wide on both sides; hair swept out to one side is not. It needs only the back view's own hair mask (grown from the crown, taller
+zone, no colour range), kept apart from skin, so it works where the colour range of the length measure gives up."""
 
 from __future__ import annotations
 
@@ -17,7 +22,8 @@ import numpy as np
 from PIL import Image
 
 N = 512            # the figure is scaled to this many rows
-ZONE = 0.42        # the hair is looked for in the top share of the figure's height
+ZONE = 0.42        # the hair is looked for in the top share of the figure's height (the length measure)
+ZONE_LONG = 0.66   # and for the sweep measure: waist-length hair ends near 0.5
 CROWN = (0.012, 0.035)
 TOL_L = 55.0       # how far a pixel's lightness may differ from the hair's and still be hair (8-bit Lab)
 TOL_AB = 16.0      # and its colour (a, b)
@@ -40,7 +46,7 @@ def load_figure(path: Path | str, rows: int = N) -> tuple[np.ndarray, np.ndarray
     return arr[..., :3].copy(), arr[..., 3] > 127
 
 
-def hair_mask(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+def hair_mask(rgb: np.ndarray, opaque: np.ndarray, zone_share: float = ZONE) -> tuple[np.ndarray, dict[str, Any]]:
     """The hair near the head: opaque pixels in the top ZONE of the figure whose colour is near the hair's, joined to the
     crown. The hair's colour starts as the crown's median and is re-taken from the mask a few times (hair has highlights and
     shade, so the first pick is only its middle). Returns (mask, info) with the colour (Lab, 8-bit scale)."""
@@ -60,7 +66,7 @@ def hair_mask(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict[str
         return np.zeros_like(opaque), {"ok": False}
     med = np.median(lab[sel], axis=0)
     zone = np.zeros_like(opaque)
-    zone[:int(ZONE * h)] = True
+    zone[:int(zone_share * h)] = True
     zone &= opaque
     out = np.zeros_like(opaque)
     for _ in range(3):
@@ -122,6 +128,67 @@ def measure(path: Path | str) -> dict[str, Any] | None:
             "area": round(float(m.sum()) / (h * h), 4), "hair": info, "_mask": m, "_rgb": rgb}
 
 
+SWEEP_COVER = 0.08     # the back's hair this wide at the shoulders (share of the figure's height) is loose, not tied up
+SWEEP_HANG = 0.10      # and reaches this far below the shoulders (share of the figure's height)
+SPILL = 0.03           # a mask that reaches this close to the bottom of the zone has run into clothes or a background
+SKIN_DISTANCE = 28.0   # hair (8-bit Lab distance) this close to the face's skin is a bald scalp or a skin-coloured picture
+MAX_SWEEP = 1.0        # the back's hair reaches this many head widths further to one side of the spine than to the other
+
+
+def _skin_lab(fig: tuple[np.ndarray, np.ndarray]) -> np.ndarray | None:
+    """The face's colour (Lab, 8-bit scale): the median of a small box between the brows and the mouth of the front view."""
+    rgb, op = fig
+    h = op.shape[0]
+    cols = np.where(op[int(.03 * h):int(.09 * h)].any(axis=0))[0]
+    if not len(cols):
+        return None
+    ax, hw = (cols.min() + cols.max()) // 2, cols.max() - cols.min()
+    box = (slice(int(.075 * h), int(.115 * h)), slice(max(0, int(ax - .18 * hw)), int(ax + .18 * hw) + 1))
+    px = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB).astype(np.float32)[box][op[box]]
+    return np.median(px, axis=0) if len(px) > 20 else None
+
+
+def sweep(back: Path | str, front: Path | str) -> tuple[dict[str, Any] | None, str]:
+    """The back's hair swept to one side? (result, reason): result None when there is no loose long hair to judge (then the
+    reason, a NOT_MEASURED key). The result holds the reach to each side of the spine, in head widths: mean and largest, and
+    asym, the difference of the two means (the number that is judged against MAX_SWEEP)."""
+    fb, ff = load_figure(back), load_figure(front)
+    if fb is None or ff is None:
+        return None, "pictures"
+    rgb, op = fb
+    h = op.shape[0]
+    m, info = hair_mask(rgb, op, ZONE_LONG)
+    if not info["ok"] or m.sum() < 50:
+        return None, "colour"
+    ys = np.where(m.sum(axis=1) >= 3)[0]
+    end = int(ys.max()) if len(ys) else 0
+    if end >= int((ZONE_LONG - SPILL) * h):
+        return None, "colour"                      # the mask ran down into the clothes or the background
+    skin = _skin_lab(ff)
+    if skin is not None and float(np.linalg.norm(np.array(info["lab"]) - skin)) < SKIN_DISTANCE:
+        return None, "colour"                      # a bald scalp, or hair the colour of the face
+    sh = shoulder_row(op)
+    cover = float(m[sh:sh + int(0.04 * h)].sum(axis=1).mean()) / h
+    if cover < SWEEP_COVER or (end - sh) / h < SWEEP_HANG:
+        return None, "short"                       # tied up, or does not hang below the shoulders
+    cols = np.where(op[int(.03 * h):int(.09 * h)].any(axis=0))[0]
+    head = float(op[int(.03 * h):int(.09 * h)].sum(axis=1).max())
+    axis = (cols.min() + cols.max()) / 2
+    hi = min(end, int(.5 * h))
+    left, right = [], []
+    for y in range(sh, max(hi, sh + 6)):
+        xs = np.where(m[y])[0]
+        left.append((axis - np.percentile(xs, 3)) / head if len(xs) >= 3 else 0.0)
+        right.append((np.percentile(xs, 97) - axis) / head if len(xs) >= 3 else 0.0)
+    l, r = np.array(left), np.array(right)
+    out = {"left_mean": float(l.mean()), "right_mean": float(r.mean()), "left_max": float(l.max()), "right_max": float(r.max())}
+    out["asym"] = abs(out["left_mean"] - out["right_mean"])
+    out = {k: round(v, 3) for k, v in out.items()}
+    out["swept"] = out["asym"] > MAX_SWEEP
+    out["cover"] = round(cover, 4)
+    return out, ""
+
+
 # Limits, set on the stored step 2 sets (see the validation table in the work notes).
 # Loose hair (deep in both side views, so not a ponytail or a braid): where the mass of the hair stops (half_end) in the back
 # against the side views' average, as a share of the head-to-shoulder height. Backs judged consistent (5 sets of 2 women) stop
@@ -162,7 +229,24 @@ NOT_MEASURED = {
 
 
 def compare_with_reason(back: Path | str, front: Path | str, left: Path | str, right: Path | str) -> tuple[dict[str, Any] | None, str]:
-    """compare() and, when it gives no verdict, which NOT_MEASURED reason (a key) says why."""
+    """compare() and, when it gives no verdict, which NOT_MEASURED reason (a key) says why. The length and width measure
+    (the side views as the standard) and the sweep measure (the back's hair alone) each have their own cases; the result
+    carries what was measured and fails if either failed. `swept` is in it whenever the sweep measure gave a verdict."""
+    length, why_length = _length(back, front, left, right)
+    sw, why_sweep = sweep(back, front)
+    if length is None and sw is None:
+        return None, "pictures" if "pictures" in (why_length, why_sweep) else why_length
+    res: dict[str, Any] = dict(length) if length is not None else {"ok": True, "end_gap": None, "limit": None, "width_ratio": None, "loose": None}
+    if sw is not None:
+        res["sweep"] = sw
+        res["swept"] = sw["swept"]
+        res["ok"] = bool(res["ok"] and not sw["swept"])
+    else:
+        res["swept"] = None
+    return res, ""
+
+
+def _length(back: Path | str, front: Path | str, left: Path | str, right: Path | str) -> tuple[dict[str, Any] | None, str]:
     ms = [measure(p) for p in (front, left, right, back)]
     if not all(m is not None for m in ms):
         return None, "pictures"
