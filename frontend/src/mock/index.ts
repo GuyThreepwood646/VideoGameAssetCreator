@@ -364,6 +364,10 @@ on('GET', '/api/health', () => ({
 }))
 on('GET', '/api/gpus', () => gpuList())
 on('GET', '/api/setup', () => setupReport())
+on('PUT', '/api/setup/settings', (_m, body) => {
+  const b = body as { key: string; value: string | null }
+  return { key: b.key, label: b.key, changed: true, from: null, to: b.value, applies: 'now', message: 'Saved (demo: nothing was written).', restart_needed: [], missing: [] }
+})
 on('PUT', '/api/gpus', (_m, body) => {
   if ('default_instance' in body) {
     const d = body.default_instance

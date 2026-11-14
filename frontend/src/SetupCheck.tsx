@@ -2,7 +2,7 @@
 // GET /api/setup (backend/vgac/preflight.py; the backend keeps a result for a minute, Check again asks afresh).
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import { api, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
+import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
@@ -42,7 +42,60 @@ function stepsText(item: SetupItem): string {
   return item.needed_for.length ? `Affects: ${item.needed_for.map(setupStagePlain).join(', ')}` : ''
 }
 
-function Problem({ item }: { item: SetupItem }) {
+// What each setting asks for, in the words of the box (the backend checks the value and answers in plain words).
+const FIELD_HELP: Record<string, { label: string; placeholder: string }> = {
+  blender_exe: { label: 'Where is blender.exe?', placeholder: 'The full path of blender.exe, for example C:\\Tools\\Blender\\blender.exe' },
+  unity_exe: { label: 'Where is Unity.exe?', placeholder: 'The full path of Unity.exe' },
+  unity_project: { label: 'Which folder is the Unity project?', placeholder: 'The full path of a Unity project folder' },
+}
+
+function fieldHelp(setting: string): { label: string; placeholder: string } {
+  if (FIELD_HELP[setting]) return FIELD_HELP[setting]
+  if (setting.endsWith('.engine.comfy_dir')) return { label: 'Where is ComfyUI?', placeholder: 'The full path of the folder that holds ComfyUI and its Python' }
+  return { label: 'Where is it?', placeholder: 'The full path' }
+}
+
+// One setting, given one at a time: the backend checks it, saves it and says what changed and whether a restart is needed.
+function SettingField({ setting, onSaved }: { setting: string; onSaved: () => void }) {
+  const help = fieldHelp(setting)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [answer, setAnswer] = useState<{ ok: boolean; text: string } | null>(null)
+  const save = async () => {
+    setBusy(true)
+    try {
+      const r = await api.setSetting(setting, value.trim())
+      setAnswer({ ok: true, text: r.message })
+      setValue('')
+      onSaved()
+    } catch (e) {
+      setAnswer({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="setup-field">
+      <label className="field-label">{help.label}</label>
+      <div className="row-gap">
+        <input
+          type="text"
+          className="setup-path"
+          value={value}
+          placeholder={help.placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && value.trim() && !busy && void save()}
+        />
+        <button type="button" className="small-btn" disabled={busy || !value.trim()} onClick={() => void save()}>
+          {busy ? 'Checking...' : 'Use this'}
+        </button>
+      </div>
+      {answer && <div className={answer.ok ? 'setup-ok small' : 'error small'}>{answer.text}</div>}
+    </div>
+  )
+}
+
+function Problem({ item, onSaved }: { item: SetupItem; onSaved?: () => void }) {
   const steps = stepsText(item)
   return (
     <li className={'setup-problem setup-' + item.state}>
@@ -55,7 +108,37 @@ function Problem({ item }: { item: SetupItem }) {
       <div>{item.detail}</div>
       {item.fix && <div className="setup-fix">What to do: {item.fix}</div>}
       {steps && <div className="muted small">{steps}</div>}
+      {item.setting && onSaved && <SettingField setting={item.setting} onSaved={onSaved} />}
     </li>
+  )
+}
+
+// The first thing a new machine meets: what is missing as a whole, which steps cannot run yet, and a restart note.
+function FirstRunBanner({ firstRun }: { firstRun: FirstRun }) {
+  const blocked = firstRun.steps.filter((s) => !s.can_run)
+  if (firstRun.state === 'ready' && firstRun.restart_needed.length === 0) return null
+  return (
+    <div className="setup-firstrun">
+      {firstRun.state === 'settings_problem' && (
+        <div className="error">
+          This computer&apos;s settings file could not be used, so the app started with nothing set up and no step will run. {firstRun.settings_problem}
+        </div>
+      )}
+      {firstRun.state === 'not_set_up' && (
+        <div className="warn">
+          Nothing is set up yet, so no step can run. The app needs ComfyUI (it runs the picture and 3D models) and Blender (it cleans up, rigs and hands off). Give where each one is below.
+        </div>
+      )}
+      {firstRun.state === 'partly_set_up' && blocked.length > 0 && (
+        <div className="warn">Some steps cannot run yet: {blocked.map((s) => s.plain).join(', ')}.</div>
+      )}
+      {firstRun.restart_needed.length > 0 && (
+        <div className="muted">Saved. Close the app and open it again to use {firstRun.restart_needed.length === 1 ? 'one setting' : `${firstRun.restart_needed.length} settings`} you changed.</div>
+      )}
+      {firstRun.unchecked > 0 && firstRun.state === 'not_set_up' && (
+        <div className="muted small">The model files are checked once a ComfyUI is running.</div>
+      )}
+    </div>
   )
 }
 
@@ -98,7 +181,8 @@ export default function SetupCheck() {
       </h2>
       {!report && !error && <div className="muted">Checking...</div>}
       {error && !report && <div className="error">Could not run the setup check: {humanError(error)}</div>}
-      {allGood && <div className="setup-ok">Everything the app needs is in place.</div>}
+      {report?.first_run && <FirstRunBanner firstRun={report.first_run} />}
+      {allGood && report?.first_run?.state !== 'settings_problem' && <div className="setup-ok">Everything the app needs is in place.</div>}
       {problems.length > 0 && (
         <>
           <div className={report!.summary.fails > 0 ? 'warn' : 'muted'}>
@@ -109,7 +193,7 @@ export default function SetupCheck() {
           </div>
           <ul className="setup-problems">
             {problems.map((p) => (
-              <Problem key={p.id} item={p} />
+              <Problem key={p.id} item={p} onSaved={() => void reload(true)} />
             ))}
           </ul>
         </>
