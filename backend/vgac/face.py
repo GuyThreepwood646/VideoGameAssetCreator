@@ -1010,6 +1010,36 @@ def colour_distance(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float | N
     return round(float(np.linalg.norm((la - lb) * np.array([0.5, 1.0, 1.0]))), 2)
 
 
+def tone_distance(a: np.ndarray, b: np.ndarray, mask: np.ndarray, k: int = 3) -> float | None:
+    """How far apart the main tones of two pictures are inside mask (Lab, lightness counted half): each picture's pixels are
+    grouped into k tones (a few rounds of k-means from lightness quantiles), and each tone is matched to the nearest tone of
+    the other picture; the larger of the two weighted averages. Two-toned hair (auburn and grey) or hair with highlights and
+    strands keeps its tones when the proportions or the lighting change, where the one middle colour of colour_distance
+    jumps from one tone to the other. None with too few pixels."""
+    if mask.sum() < 50:
+        return None
+    w_ = np.array([0.5, 1.0, 1.0])
+
+    def tones(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        x = to_lab(np.clip(img, 0, 1))[mask] * w_
+        if len(x) > 4000:
+            x = x[np.random.default_rng(0).choice(len(x), 4000, replace=False)]
+        order = np.argsort(x[:, 0])
+        c = np.array([x[order[int(q * (len(x) - 1))]] for q in np.linspace(0.15, 0.85, k)])
+        lab = np.zeros(len(x), dtype=int)
+        for _ in range(12):
+            lab = np.linalg.norm(x[:, None] - c[None], axis=-1).argmin(1)
+            for j in range(k):
+                if (lab == j).any():
+                    c[j] = x[lab == j].mean(0)
+        return c, np.array([(lab == j).mean() for j in range(k)])
+
+    ca, wa = tones(a)
+    cb, wb = tones(b)
+    d = np.linalg.norm(ca[:, None] - cb[None], axis=-1)
+    return round(float(max((wa * d.min(1)).sum(), (wb * d.min(0)).sum())), 2)
+
+
 def eye_boxes(shape: tuple[int, int], eyes: list[tuple[float, float]], width_px: float, grow: float = 1.6) -> np.ndarray:
     """A mask of the boxes eye_colour measures, made `grow` times bigger (the whole eye and its lids)."""
     m = np.zeros(shape, dtype=bool)

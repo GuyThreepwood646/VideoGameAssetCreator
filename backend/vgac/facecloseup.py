@@ -203,6 +203,8 @@ def guard(view: dict[str, Any], info: dict[str, Any], crop: np.ndarray, closeup:
     skin = inner & ~seg["pic_hair"]
     out["skin_shift"] = face.colour_distance(a, b_fixed, skin)
     out["hair_shift"] = face.colour_distance(a, b_fixed, seg["pic_hair"]) if seg.get("found") else None
+    # tone by tone, for photographic hair (strands, highlights, grey among the colour) that the one middle colour misreads
+    out["hair_tone_shift"] = face.tone_distance(a, b_fixed, seg["pic_hair"]) if seg.get("found") else None
     bf_m = face.apply_alignment(b_fixed, pre) if pre else b_fixed
     out["eye_colour_shift"] = face.colour_shift(face.eye_colour(a_m, la["eyes"], w), face.eye_colour(bf_m, la["eyes"], w))
     # The close-up now has its features where the painting has them, so it lands on the model as the painting does:
