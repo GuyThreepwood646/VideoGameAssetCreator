@@ -6,6 +6,7 @@ import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, 
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import ComfyPanel from './components/ComfyPanel'
+import ModelsPanel from './components/ModelsPanel'
 import ToolPanel from './components/ToolPanel'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
 
@@ -178,6 +179,7 @@ export default function SetupCheck() {
   const [openKit, setOpenKit] = useState<string | null>(null)
   const [unityOpen, setUnityOpen] = useState(false)
   const [comfyOpen, setComfyOpen] = useState(false)
+  const [modelsOpen, setModelsOpen] = useState(false)
   const hash = useLocation().hash
   useEffect(() => {
     if (hash.startsWith('#get-')) setOpenKit(hash.slice(5))
@@ -209,6 +211,17 @@ export default function SetupCheck() {
             ))}
           </ul>
         </>
+      )}
+      {report && (
+        <div className="setup-extras">
+          <div className="field-label">Models</div>
+          {!modelsOpen && (
+            <button type="button" className="small-btn" onClick={() => setModelsOpen(true)}>
+              Get or check the models
+            </button>
+          )}
+          {modelsOpen && <ModelsPanel onChanged={() => void reload(true)} onClose={() => setModelsOpen(false)} />}
+        </div>
       )}
       {report && (
         <div className="setup-extras">

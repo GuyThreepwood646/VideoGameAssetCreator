@@ -577,6 +577,24 @@ export type ComfyPacksReport = {
   python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
 }
 
+export type ModelItem = {
+  id: string; name: string; size: number; gate: string; page: string; licence: string; publisher: boolean; note: string
+  state: 'present' | 'missing' | 'differs'; path: string; reused: boolean; check: string; accepted: boolean
+}
+export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
+export type ModelSet = {
+  id: string; name: string; what: string; required: boolean; gate: string; items: ModelItem[]; total: number; remaining: number
+  need: number; free: number | null; enough_space: boolean; job: ModelJob | null; complete: boolean
+}
+export type ModelSets = {
+  sets: ModelSet[]
+  gates: Record<string, { notice: string[]; phrase: string }>
+  models_folder: string
+  reads: string[]
+  verify: { state: string; done: number; total: number; current: string }
+  test_character: { asset_id?: string; passed?: boolean | null }
+}
+
 export type SettingChange = {
   key: string
   label: string
@@ -706,6 +724,12 @@ export const api = {
   comfyLink: (id: string) => post<{ message: string }>('/api/comfy/link', { id }),
   comfyPacksReport: (id: string) => post<ComfyPacksReport>('/api/comfy/packs/report', { id }),
   comfyPacksApply: (id: string) => post<{ added: string[] }>('/api/comfy/packs/apply', { id, confirm: true }),
+  modelSets: () => get<ModelSets>('/api/model-sets'),
+  startModelSet: (id: string, phrases: Record<string, string>) => post<ModelJob>(`/api/model-sets/${id}/start`, { phrases }),
+  stopModelSet: (id: string) => post<unknown>(`/api/model-sets/${id}/stop`),
+  verifyModels: () => post<unknown>('/api/model-sets/verify'),
+  acceptModel: (id: string) => post<unknown>('/api/model-sets/accept', { id }),
+  recordTestCharacter: (asset_id: string, passed: boolean | null) => post<unknown>('/api/model-sets/test_character', { asset_id, passed }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),

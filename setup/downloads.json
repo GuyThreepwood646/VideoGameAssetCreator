@@ -634,5 +634,111 @@
    "catalogue_pack": "VGAC rule-built styles",
    "catalogue_author": "VGAC"
   }
- ]
+ ],
+ "sets": [
+  {
+   "id": "starter",
+   "name": "Starter set",
+   "required": true,
+   "what": "One character from start to finish: the picture, the side views, the cut-out, the 3D model and the rig.",
+   "items": [
+    "model:zturbo",
+    "model:qwen_edit",
+    "model:qwen_te",
+    "model:qwen_vae",
+    "addon:qwen_lightning",
+    "addon:qwen_angles",
+    "model:birefnet",
+    "model:trellis2",
+    "model:trellis2_shape_vae",
+    "model:trellis2_texture_vae",
+    "model:trellis2_dino",
+    "model:skintoken",
+    "model:skintoken_vae",
+    "project_file:face_landmarker",
+    "project_file:pose_landmarker",
+    "project_file:hand_landmarker"
+   ]
+  },
+  {
+   "id": "looks",
+   "name": "More looks",
+   "required": false,
+   "what": "More ways to draw the first picture (Z-Image base, FLUX.2 Klein, Chroma), the style add-ons, the turnaround helpers and the picture upscalers.",
+   "items": [
+    "model:zbase",
+    "model:klein",
+    "model:chroma",
+    "model:zimage_te",
+    "model:flux_ae",
+    "model:flux2_vae",
+    "model:chroma_te",
+    "addon:pixel_art",
+    "addon:stylised_3d",
+    "addon:clay_finish",
+    "addon:retro_lowpoly",
+    "addon:chunky_pixels",
+    "addon:turnaround_sheet",
+    "addon:turnaround_white",
+    "model:upscale_photo",
+    "model:upscale_art",
+    "model:face_model"
+   ]
+  },
+  {
+   "id": "hunyuan",
+   "name": "Second 3D route (Hunyuan3D-2mv)",
+   "required": false,
+   "gate": "hunyuan",
+   "what": "A second way to make the 3D model. It has a licence you must read and accept yourself.",
+   "items": [
+    "model:hy3d_mv"
+   ]
+  },
+  {
+   "id": "judge",
+   "name": "Picture judge (Gemma 3)",
+   "required": false,
+   "gate": "gemma",
+   "what": "Lets the app judge its own pictures. It comes under Google's Gemma terms, which you must accept yourself.",
+   "items": [
+    "model:gemma3_12b"
+   ]
+  },
+  {
+   "id": "anima",
+   "name": "Anima",
+   "required": false,
+   "gate": "anima",
+   "what": "An anime-style picture model. The model itself is for non-commercial use.",
+   "items": [
+    "model:anima",
+    "model:anima_te"
+   ]
+  }
+ ],
+ "gates": {
+  "hunyuan": {
+   "phrase": "I have read this and I am not in the EU, UK or South Korea",
+   "notice": [
+    "Hunyuan3D-2mv is under the Tencent Hunyuan Community Licence. Read it first: https://huggingface.co/tencent/Hunyuan3D-2mv/blob/main/LICENSE",
+    "It is NOT granted in the European Union, the United Kingdom or South Korea: people there must not use it.",
+    "A request to Tencent is needed above 1 million monthly users of your products. It is off by default."
+   ]
+  },
+  "anima": {
+   "phrase": "I have read this",
+   "notice": [
+    "Anima: the model itself is non-commercial. What it makes may be used commercially. Do not sell or host the model file itself.",
+    "Page: https://huggingface.co/circlestone-labs/Anima"
+   ]
+  },
+  "gemma": {
+   "phrase": "I accept the Gemma terms myself",
+   "notice": [
+    "Gemma 3 is under Google's Gemma Terms of Use and Prohibited Use Policy: https://ai.google.dev/gemma/terms",
+    "The app never accepts terms for you. Read them, and accept only if you agree."
+   ]
+  }
+ }
 }
