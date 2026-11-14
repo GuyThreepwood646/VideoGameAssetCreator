@@ -259,3 +259,59 @@ def test_the_shipped_sets_cover_every_file_once_and_gates_are_consistent():
     required = {f"model:{k}" for k, v in d["models"].items() if v.get("required")} | {f"project_file:{k}" for k, v in d["project_files"].items() if v.get("required")}
     assert required <= set(starter["items"])
     assert re.fullmatch(r"[0-9a-f]{64}", next(iter(d["models"].values()))["sha256"])
+
+
+# --- a file that does not live under a ComfyUI models folder (the real list's landmark files) ----------------------------
+
+def _app():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(models_setup.router)
+    return TestClient(app)
+
+
+def _with_project_file(tmp: Path, data: bytes):
+    lst = json.loads((tmp / "setup" / "downloads.json").read_text(encoding="utf-8"))
+    lst["project_files"] = {"lm": {**entry(data, "runtime/models", "lm.task"), "required": True}}
+    lst["sets"][0]["items"].append("project_file:lm")
+    (tmp / "setup" / "downloads.json").write_text(json.dumps(lst), encoding="utf-8")
+
+
+def test_a_file_outside_the_comfyui_models_folders_is_looked_for_at_its_own_path(world):
+    """The exact layout that broke the live app: dest under the project's runtime/models, ComfyUI's models folder elsewhere
+    (GET /api/model-sets answered 500 with ValueError from relative_to)."""
+    tmp, models = world
+    data = b"landmark" * 5
+    _with_project_file(tmp, data)
+    r = _app().get("/api/model-sets")
+    assert r.status_code == 200
+    item = next(i for s in r.json()["sets"] for i in s["items"] if i["id"] == "project_file:lm")
+    assert item["state"] == "missing" and item["path"] == str(tmp / "runtime" / "models" / "lm.task")
+    (tmp / "runtime" / "models").mkdir(parents=True)
+    (tmp / "runtime" / "models" / "lm.task").write_bytes(data)
+    item = next(i for s in _app().get("/api/model-sets").json()["sets"] for i in s["items"] if i["id"] == "project_file:lm")
+    assert item["state"] == "present" and not item["reused"]
+    # another ComfyUI folder is never searched for it
+    stray = models / "runtime" / "models"
+    stray.mkdir(parents=True)
+    (stray / "lm.task").write_bytes(b"x" * len(data))
+    assert models_setup.candidates(next(s for s in downloader.specs_for(models) if s.id == "project_file:lm"), models, models_setup.read_roots(models)) == [tmp / "runtime" / "models" / "lm.task"]
+
+
+def test_one_entry_that_cannot_be_looked_at_never_takes_the_whole_panel_down(world, monkeypatch):
+    tmp, models = world
+    real = models_setup.candidates
+
+    def boom(spec, root, roots):
+        if spec.id == "model:b":
+            raise RuntimeError("something odd about this entry")
+        return real(spec, root, roots)
+
+    monkeypatch.setattr(models_setup, "candidates", boom)
+    r = _app().get("/api/model-sets")
+    assert r.status_code == 200
+    items = {i["id"]: i for s in r.json()["sets"] for i in s["items"]}
+    assert items["model:b"]["state"] == "missing" and "odd" in items["model:b"]["error"]
+    assert items["model:a"]["state"] == "missing" and "error" not in items["model:a"]  # the others are looked at as usual

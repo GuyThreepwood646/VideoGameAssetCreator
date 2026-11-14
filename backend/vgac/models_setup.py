@@ -108,8 +108,13 @@ def read_roots(root: Path | None) -> dict[str, Any]:
 
 
 def candidates(spec: Spec, root: Path, roots: dict[str, Any]) -> list[Path]:
-    """The exact paths this file could be at, in reading order: its own place first, then every other folder ComfyUI reads."""
-    rel = spec.dest.relative_to(root)
+    """The exact paths this file could be at, in reading order: its own place first, then every other folder ComfyUI reads.
+    A file that does not live under a ComfyUI models folder (the project's own landmark files, for example) is looked for
+    at its own path only: ComfyUI does not read it."""
+    try:
+        rel = spec.dest.relative_to(root)
+    except ValueError:
+        return [spec.dest]
     parts = rel.parts
     typ, rest = parts[0], Path(*parts[1:]) if len(parts) > 1 else Path()
     out = [spec.dest]
@@ -212,6 +217,16 @@ def verify_all(specs: list[tuple[Spec, Path]], wait: bool = False) -> dict[str, 
 
 
 def item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]:
+    """The state of one file, but one entry that cannot be looked at (whatever the reason) is reported missing with its error
+    instead of taking the whole panel down."""
+    try:
+        return _item_state(spec, root, roots)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not look for %s: %s", spec.id, e)
+        return {"state": "missing", "path": str(spec.dest), "reused": False, "check": "", "accepted": False, "error": str(e)}
+
+
+def _item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]:
     """Where this file is and in what state: present (own place), reused (elsewhere ComfyUI reads), differs, or missing."""
     acc = accepted_paths()
     found_size_wrong: Path | None = None
