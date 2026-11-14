@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, my_hair, setup_settings, user_addons
+from . import credits as credits_mod, hairlib, items, my_hair, setup_settings, tools_setup, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -63,6 +63,7 @@ app.include_router(items.router)  # items: empty-handed characters and "Add an i
 app.include_router(__import__("vgac.model_import", fromlist=["router"]).router)  # your own 3D model on step 3 (model_import.py)
 app.include_router(my_hair.router)  # your own hairstyles: add, rename, remove (my_hair.py)
 app.include_router(hairlib.router)  # hair from the library: the choice, the pick, the library's pictures (hairlib.py)
+app.include_router(tools_setup.router)  # find, link or get Blender; find or guide Unity (tools_setup.py)
 app.include_router(setup_settings.router)  # write this machine's settings from the setup card (setup_settings.py)
 app.include_router(__import__("vgac.packs", fromlist=["router"]).router)  # get the hair library (and later the animation packs) from inside the app (packs.py)
 

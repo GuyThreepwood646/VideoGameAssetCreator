@@ -541,6 +541,26 @@ export type SetupReport = {
   first_run?: FirstRun
 }
 // PUT /api/setup/settings: one value checked and saved. `applies`: 'now', or 'next_start' (after the app restarts).
+export type ToolCopy = { path: string; version: string; source: string; usable: boolean; tested: boolean; reason: string; best?: boolean }
+export type ToolInstall = {
+  state: 'idle' | 'working' | 'done' | 'failed' | 'stopped'
+  text: string
+  fraction: number
+  bytes_done: number
+  error: { code: string; message: string; fix: string } | null
+}
+export type BlenderTool = {
+  current: string
+  found: ToolCopy[]
+  offer: { available: boolean; version: string; from: string; page: string; size_mb: number; licence: string; goes_to: string; needs_admin: boolean; unconfirmed: string }
+  install: ToolInstall | null
+}
+export type UnityTool = {
+  current: string
+  found: ToolCopy[]
+  guide: { hub_installed: boolean; download_page: string; terms_page: string; licence_line: string; wanted_version: string; loses_without: string; cannot_install: string; steps: string[] }
+}
+
 export type SettingChange = {
   key: string
   label: string
@@ -658,6 +678,13 @@ export const api = {
   stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
   setup: (refresh = false) => get<SetupReport>('/api/setup' + (refresh ? '?refresh=1' : '')),
   setSetting: (key: string, value: string | null) => put<SettingChange>('/api/setup/settings', { key, value }),
+  blenderTool: () => get<BlenderTool>('/api/tools/blender'),
+  useBlender: (path: string) => post<SettingChange>('/api/tools/blender/use', { path }),
+  installBlender: () => post<ToolInstall>('/api/tools/blender/install'),
+  stopBlender: () => post<unknown>('/api/tools/blender/stop'),
+  useBlenderZip: (path: string) => post<SettingChange>('/api/tools/blender/zip', { path }),
+  unityTool: () => get<UnityTool>('/api/tools/unity'),
+  useUnity: (path: string) => post<SettingChange>('/api/tools/unity/use', { path }),
   categories: () => get<Category[]>('/api/categories').then((list) => { rememberSkips(list); return list }),
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),

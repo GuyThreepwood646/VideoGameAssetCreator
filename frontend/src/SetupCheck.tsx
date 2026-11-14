@@ -5,6 +5,7 @@ import { Link, useLocation } from 'react-router'
 import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
+import ToolPanel from './components/ToolPanel'
 import { humanError, setupItemHelp, setupStagePlain } from './help'
 
 const GROUP_ORDER: SetupGroup[] = ['tools', 'engines', 'models', 'storage']
@@ -97,6 +98,8 @@ function SettingField({ setting, onSaved }: { setting: string; onSaved: () => vo
 
 function Problem({ item, onSaved }: { item: SetupItem; onSaved?: () => void }) {
   const steps = stepsText(item)
+  const tool = item.setting === 'blender_exe' ? 'blender' : item.setting === 'unity_exe' ? 'unity' : null
+  const [openTool, setOpenTool] = useState(false)
   return (
     <li className={'setup-problem setup-' + item.state}>
       <div className="setup-problem-head">
@@ -108,7 +111,13 @@ function Problem({ item, onSaved }: { item: SetupItem; onSaved?: () => void }) {
       <div>{item.detail}</div>
       {item.fix && <div className="setup-fix">What to do: {item.fix}</div>}
       {steps && <div className="muted small">{steps}</div>}
-      {item.setting && onSaved && <SettingField setting={item.setting} onSaved={onSaved} />}
+      {tool && onSaved && !openTool && (
+        <button type="button" className="small-btn" onClick={() => setOpenTool(true)}>
+          Find or get {tool === 'blender' ? 'Blender' : 'Unity'}
+        </button>
+      )}
+      {tool && onSaved && openTool && <ToolPanel tool={tool} onChanged={onSaved} onClose={() => setOpenTool(false)} />}
+      {item.setting && !tool && onSaved && <SettingField setting={item.setting} onSaved={onSaved} />}
     </li>
   )
 }
@@ -166,6 +175,7 @@ export default function SetupCheck() {
   // Optional extras (the hair library): offered, never a fault. The button opens the guided panel (PackInstall).
   const extras = report ? report.items.filter((i) => i.state === 'optional' && i.offer) : []
   const [openKit, setOpenKit] = useState<string | null>(null)
+  const [unityOpen, setUnityOpen] = useState(false)
   const hash = useLocation().hash
   useEffect(() => {
     if (hash.startsWith('#get-')) setOpenKit(hash.slice(5))
@@ -197,6 +207,17 @@ export default function SetupCheck() {
             ))}
           </ul>
         </>
+      )}
+      {report && !problems.some((p) => p.setting === 'unity_exe') && (
+        <div className="setup-extras">
+          <div className="field-label">Unity (optional)</div>
+          {!unityOpen && (
+            <button type="button" className="small-btn" onClick={() => setUnityOpen(true)}>
+              Find or set up Unity
+            </button>
+          )}
+          {unityOpen && <ToolPanel tool="unity" onChanged={() => void reload(true)} onClose={() => setUnityOpen(false)} />}
+        </div>
       )}
       {extras.length > 0 && (
         <div className="setup-extras">

@@ -62,7 +62,7 @@ def project_dir() -> Path:  # a function so tests can point it at a scratch fold
 
 
 def default_open(url: str, start: int):  # the one place the network is touched; tests replace the `opener`
-    headers = {"User-Agent": "VGAC-app"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VGAC"}
     if start:
         headers["Range"] = f"bytes={start}-"
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=DOWNLOAD_TIMEOUT)
@@ -379,6 +379,8 @@ class Job:
     thread: threading.Thread | None = None
     opener: Callable[[str, int], Any] | None = None
     results: dict[str, str] = field(default_factory=dict)  # spec id -> present | downloaded
+    prepare: Callable[["Job"], list[Spec]] | None = None  # runs first in the thread; returns the specs (may raise DownloadError)
+    after: Callable[["Job"], None] | None = None  # runs when every file is in place (unpack, link); may raise DownloadError
 
     def public(self) -> dict[str, Any]:
         return {"id": self.id, "state": self.state, "index": self.index, "count": len(self.specs), "text": self.text, "error": self.error,
@@ -392,6 +394,9 @@ _jobs_lock = threading.Lock()
 
 def _work(job: Job) -> None:
     try:
+        if job.prepare:
+            job.text = "Getting ready"
+            job.specs = job.prepare(job)
         todo = [s for s in job.specs if not s.present()]
         job.bytes_total = sum(s.size for s in todo)
         base = 0
@@ -413,6 +418,9 @@ def _work(job: Job) -> None:
             job.bytes_done = base
             if how == "downloaded":
                 record(s.name, s.dest)
+        if job.after:
+            job.text = "Setting it up"
+            job.after(job)
         job.state, job.text = "done", "Done"
     except Stopped:
         job.state, job.text = "stopped", "Stopped. Anything half-downloaded is kept and carries on next time."
@@ -424,13 +432,14 @@ def _work(job: Job) -> None:
         job.error = {"code": "unexpected", "message": f"Something unexpected went wrong ({type(e).__name__}).", "fix": "Press Try again."}
 
 
-def start_job(job_id: str, specs: list[Spec], accepted: set[str] | None = None, opener: Callable[[str, int], Any] | None = None, wait: bool = False) -> Job:
+def start_job(job_id: str, specs: list[Spec], accepted: set[str] | None = None, opener: Callable[[str, int], Any] | None = None, wait: bool = False,
+              prepare: Callable[[Job], list[Spec]] | None = None, after: Callable[[Job], None] | None = None) -> Job:
     """Start (or restart, after a stop or failure) the job `job_id`. One job per id at a time."""
     with _jobs_lock:
         old = JOBS.get(job_id)
         if old and old.state == "working":
             raise DownloadError("busy", "This is already downloading.", "Wait for it to finish, or stop it first.")
-        job = Job(job_id, specs, set(accepted or ()), state="working", opener=opener)
+        job = Job(job_id, specs, set(accepted or ()), state="working", opener=opener, prepare=prepare, after=after)
         JOBS[job_id] = job
         job.thread = threading.Thread(target=_work, args=(job,), daemon=True, name=f"download-{job_id}")
         job.thread.start()
