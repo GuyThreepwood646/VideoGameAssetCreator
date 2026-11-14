@@ -171,8 +171,9 @@ def readable_by_engine(path: Path, root: Path | None, roots: dict[str, Any]) -> 
 # --- choosing and undoing --------------------------------------------------------------------------------------------------------
 
 
-def choose(spec: Spec, path_text: str, root: Path | None, roots: dict[str, Any]) -> dict[str, Any]:
-    """Take `path_text` as the file for `spec`. Raises DownloadError with a plain message and what to do."""
+def choose(spec: Spec, path_text: str, root: Path | None, roots: dict[str, Any], placed: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Take `path_text` as the file for `spec`. Raises DownloadError with a plain message and what to do. `placed` says the file was
+    put there by the app (a hard link or a copy of the person's file), so undoing the choice can take it away again."""
     if not can_choose(spec):
         raise DownloadError("not_supported", f"{spec.name} cannot be pointed at a file of your own yet.", "Use the download button for it.")
     path = Path(path_text.strip().strip('"'))
@@ -184,18 +185,91 @@ def choose(spec: Spec, path_text: str, root: Path | None, roots: dict[str, Any])
                             "Put the file in one of the folders your ComfyUI reads (the panel lists them), or add its folder to your "
                             "ComfyUI's extra model paths yourself; the app does not change your ComfyUI settings.")
     d = load()
-    d[spec.id] = {"path": str(path), "name": path.name, "size": path.stat().st_size}
+    d[spec.id] = {"path": str(path), "name": path.name, "size": path.stat().st_size, **({"placed": placed} if placed else {})}
     _save(d)
     return {**d[spec.id], "warning": warning(spec, path)}
 
 
 def unchoose(spec_id: str) -> bool:
+    """Stop using the file chosen for this entry. A hard link or a copy the app made for it is taken away again (only that: the
+    link, never the person's file it points to; a copy only while it is still the size it was made)."""
     d = load()
     if spec_id not in d:
         return False
-    del d[spec_id]
+    rec = d.pop(spec_id)
     _save(d)
+    placed = rec.get("placed")
+    if placed:
+        try:
+            mine = Path(rec["path"])
+            if placed.get("mode") == "link" and mine.exists() and Path(placed["source"]).exists() and os.path.samefile(mine, placed["source"]):
+                mine.unlink()
+            elif placed.get("mode") == "copy" and mine.is_file() and mine.stat().st_size == rec.get("size"):
+                mine.unlink()
+        except OSError as e:
+            log.warning("could not take away %s: %s", rec.get("path"), e)
     return True
+
+
+# --- a file the engine cannot read where it is: a hard link, or a copy ---------------------------------------------------------------------------
+
+
+def place_target(spec: Spec, source: Path) -> Path:
+    """Where a link or copy of the person's file goes: next to the entry's own place, under the person's own file name (never the
+    app's file name, so the trust rules still apply to it)."""
+    name = source.name
+    if name.casefold() == spec.dest.name.casefold():
+        name = f"{source.stem}_yours{source.suffix}"
+    return spec.dest.parent / name
+
+
+def placement_options(spec: Spec, source: Path) -> dict[str, Any]:
+    """What can be done for a file in a folder the engine does not read: a hard link (no copy, no extra space, same drive only), or
+    a copy (any drive, needs the room), or adding the folder to the engine's extra model paths themselves."""
+    target = place_target(spec, source)
+    size = source.stat().st_size
+    free = downloader.free_bytes(target.parent)
+    same = _same_drive(source, target.parent)
+    return {"can_link": same, "same_drive": same, "can_copy": free >= size + COPY_MARGIN, "size": size, "free": free, "target": str(target),
+            "add_folder": str(source.parent)}
+
+
+COPY_MARGIN = 2 * 1024**3  # room to keep free after a copy
+
+
+def _same_drive(a: Path, b: Path) -> bool:
+    probe = b
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return os.stat(a).st_dev == os.stat(probe).st_dev
+    except OSError:
+        return False
+
+
+def place_link(spec: Spec, source: Path, root: Path | None, roots: dict[str, Any]) -> dict[str, Any]:
+    """Hard-link the person's file into the engine's models folder (same drive; no copy, no space, no administrator rights), then take
+    it as their file."""
+    why = refusal(spec, source)
+    if why:
+        raise DownloadError("refused", why, "Choose another file, or use the download button.")
+    target = place_target(spec, source)
+    if target.exists():
+        try:
+            same = os.path.samefile(target, source)
+        except OSError:
+            same = False
+        if not same:
+            raise DownloadError("exists", f"A different file called {target.name} is already in {target.parent}.", "Rename your file, or remove that one.")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(source, target)
+        except OSError as e:
+            raise DownloadError("cross_drive", "ComfyUI cannot read your file from where it is, and it cannot be linked from there "
+                                f"({e.strerror or e}).", "Copy it into the models folder with the Copy button, or add its folder to your "
+                                "ComfyUI's extra model paths yourself; the app does not change your ComfyUI settings.") from None
+    return choose(spec, str(target), root, roots, placed={"mode": "link", "source": str(source)})
 
 
 def chosen(spec_id: str) -> Path | None:

@@ -72,7 +72,8 @@ export default function ModelFolderChoice({ setId, onChanged }: { setId: string;
                   {f.path} ({HOW[f.how] ?? f.how}
                   {f.size_matches ? '' : '; not the size the app was tested with: results may differ or the step may fail'})
                   {f.problem ? ` - cannot be used: ${f.problem}` : ''}
-                  {!f.problem && !f.readable ? ' - your ComfyUI does not read that folder, so it cannot load this file from there' : ''}
+                  {!f.problem && !f.readable && f.can_link ? ' - your ComfyUI does not read that folder; it will be linked in (nothing is copied)' : ''}
+                  {!f.problem && !f.readable && !f.can_link ? ' - your ComfyUI does not read that folder and it is on another drive, so it cannot be linked: choose this file on its own to copy it in' : ''}
                 </span>
               </li>
             ))}

@@ -6,6 +6,7 @@ an extra model path); its hash is read in the background and decides how it is s
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import struct
 from pathlib import Path
@@ -131,7 +132,9 @@ def test_a_file_in_a_folder_the_engine_does_not_read_is_refused_plainly(world):
     elsewhere.parent.mkdir()
     elsewhere.write_bytes(PIN)
     r = client().post("/api/model-sets/choose", json={"id": "model:zbase", "path": str(elsewhere)})
-    assert r.status_code == 400 and "does not read that folder" in r.json()["detail"] and "does not change your ComfyUI settings" in r.json()["detail"]
+    need = r.json()["needs_place"]  # not refused: told what can be done (link it, copy it, or add the folder themselves)
+    assert r.status_code == 200 and "does not read that folder" in need["message"] and "does not change your ComfyUI settings" in need["message"]
+    assert need["can_link"] and need["can_copy"] and need["add_folder"] == str(elsewhere.parent) and not model_choices.load()
     assert client().post("/api/model-sets/choose", json={"id": "model:nope", "path": str(elsewhere)}).status_code == 404
 
 
@@ -398,7 +401,7 @@ def test_a_renamed_copy_is_matched_by_its_exact_size_when_only_one_file_has_it(w
     assert got["found"] == [] and [m["id"] for m in got["missing"]] == ["model:zbase"]
 
 
-def test_using_a_folder_takes_the_matches_like_single_choices_and_reports_the_ones_it_cannot(world):
+def test_using_a_folder_takes_the_matches_like_single_choices_and_reports_the_ones_it_cannot(world, monkeypatch):
     tmp, models, folder = world
     (folder / BASE_NAME).write_bytes(PIN)
     out = client().post("/api/model-sets/s/use-folder", json={"path": str(folder)}).json()
@@ -411,7 +414,17 @@ def test_using_a_folder_takes_the_matches_like_single_choices_and_reports_the_on
     (elsewhere / BASE_NAME).write_bytes(PIN)
     client().post("/api/model-sets/unchoose", json={"id": "model:zbase"})
     seen = client().post("/api/model-sets/s/scan-folder", json={"path": str(elsewhere)}).json()["found"][0]
-    assert seen["readable"] is False and seen["ok"] is False
+    assert seen["readable"] is False and seen["can_link"] is True and seen["ok"] is True  # same drive: it can be linked
+    out = client().post("/api/model-sets/s/use-folder", json={"path": str(elsewhere)}).json()
+    assert [x["id"] for x in out["taken"]] == ["model:zbase"] and out["left"] == []
+    settle()
+    it = item()
+    assert it["state"] == "present" and it["placed"] == "link" and it["source"] == str(elsewhere / BASE_NAME) and "_yours" in it["path"]
+    # another drive: found, not takeable, with the reason
+    client().post("/api/model-sets/unchoose", json={"id": "model:zbase"})
+    monkeypatch.setattr(model_choices, "_same_drive", lambda a, b: False)
+    seen = client().post("/api/model-sets/s/scan-folder", json={"path": str(elsewhere)}).json()["found"][0]
+    assert seen["can_link"] is False and seen["ok"] is False
     out = client().post("/api/model-sets/s/use-folder", json={"path": str(elsewhere)}).json()
     assert out["taken"] == [] and "does not read that folder" in out["left"][0]["reason"]
 
@@ -425,3 +438,88 @@ def test_a_file_that_cannot_work_is_flagged_in_the_preview_and_left_out_and_bad_
     assert out["taken"] == [] and out["left"]
     assert client().post("/api/model-sets/s/scan-folder", json={"path": str(tmp / "nope")}).status_code == 400
     assert client().post("/api/model-sets/nope/scan-folder", json={"path": str(folder)}).status_code == 400
+
+
+# --- a file the engine cannot read where it is: a hard link, a copy, or the person adds the folder -----------------------------------------------
+
+
+def outside(tmp: Path, data: bytes = PIN, name: str = "mine.safetensors") -> Path:
+    f = tmp / "Downloads" / name
+    f.parent.mkdir(exist_ok=True)
+    f.write_bytes(data)
+    return f
+
+
+def test_a_hard_link_puts_the_file_where_the_engine_reads_without_copying_and_undo_removes_only_the_link(world):
+    tmp, models, folder = world
+    src = outside(tmp)
+    r = client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": "link"})
+    assert r.status_code == 200
+    settle()
+    link = models / "diffusion_models" / "Z-Image" / "mine.safetensors"
+    assert link.is_file() and os.path.samefile(link, src)  # one file on the disk, two names
+    it = item()
+    assert it["state"] == "present" and it["chosen"] and not it["yours"] and it["placed"] == "link" and it["source"] == str(src) and it["path"] == str(link)
+    assert models_setup.current_alias_table()[BASE_NAME.casefold()][0][2] == "mine.safetensors"
+    client().post("/api/model-sets/unchoose", json={"id": "model:zbase"})
+    assert not link.exists() and src.read_bytes() == PIN and item()["state"] == "missing"  # the person's file is untouched
+
+
+def test_a_file_with_the_apps_own_name_is_linked_under_another_name_so_the_trust_rules_still_apply(world):
+    tmp, models, folder = world
+    src = outside(tmp, st_file(len(PIN), fill=b"w"), BASE_NAME)  # another file that happens to carry the app's name
+    client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": "link"})
+    settle()
+    it = item()
+    assert it["path"].endswith("_yours.safetensors") and it["state"] == "differs" and it["yours"]  # not used until the person says so
+    assert not (models / "diffusion_models" / "Z-Image" / BASE_NAME).exists()
+
+
+def test_another_drive_cannot_be_linked_and_says_so_with_the_ways_on(world, monkeypatch):
+    tmp, models, folder = world
+    src = outside(tmp)
+    monkeypatch.setattr(model_choices, "_same_drive", lambda a, b: False)
+    need = client().post("/api/model-sets/choose", json={"id": "model:zbase", "path": str(src)}).json()["needs_place"]
+    assert need["can_link"] is False and need["can_copy"] is True and need["same_drive"] is False
+
+    def refuse(a, b):
+        raise OSError(17, "The system cannot move the file to a different disk drive")
+
+    monkeypatch.setattr(os, "link", refuse)
+    r = client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": "link"})
+    assert r.status_code == 400 and "cannot be linked" in r.json()["detail"] and "Copy button" in r.json()["detail"]
+    assert not model_choices.load() and src.read_bytes() == PIN
+
+
+def test_a_copy_is_space_checked_runs_in_the_background_and_undo_removes_the_copy(world, monkeypatch):
+    tmp, models, folder = world
+    src = outside(tmp)
+    real_free = downloader.free_bytes
+    monkeypatch.setattr(downloader, "free_bytes", lambda p: 1000)  # no room
+    r = client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": "copy"})
+    assert r.status_code == 400 and "not enough room" in r.json()["detail"] and not (models / "diffusion_models").exists()
+    monkeypatch.setattr(downloader, "free_bytes", real_free)
+    assert client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": "copy"}).status_code == 200
+    import time
+
+    for _ in range(300):
+        if models_setup._copies["model:zbase"]["state"] != "working":
+            break
+        time.sleep(0.02)
+    assert models_setup._copies["model:zbase"]["state"] == "done"
+    settle()
+    copy = models / "diffusion_models" / "Z-Image" / "mine.safetensors"
+    assert copy.read_bytes() == PIN and not os.path.samefile(copy, src)
+    it = item()
+    assert it["state"] == "present" and it["placed"] == "copy"
+    client().post("/api/model-sets/unchoose", json={"id": "model:zbase"})
+    assert not copy.exists() and src.read_bytes() == PIN
+
+
+def test_a_file_that_cannot_work_is_not_linked_or_copied(world):
+    tmp, models, folder = world
+    src = outside(tmp, b"n" * len(PIN))
+    for mode in ("link", "copy"):
+        r = client().post("/api/model-sets/place", json={"id": "model:zbase", "path": str(src), "mode": mode})
+        assert r.status_code == 400 and "safetensors layout" in r.json()["detail"]
+    assert not (models / "diffusion_models").exists()

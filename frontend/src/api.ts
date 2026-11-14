@@ -595,6 +595,8 @@ export type ComfyPacksReport = {
 export type ModelItem = {
   id: string; name: string; size: number; gate: string; page: string; licence: string; publisher: boolean; note: string
   state: 'present' | 'missing' | 'differs' | 'checking'; path: string; reused: boolean; check: string; accepted: boolean
+  source?: string // a link or copy the app made: the person's file it came from
+  placed?: 'link' | 'copy'
   older?: string // missing here, but an earlier copy is there and the app uses it
   can_choose?: boolean // the person may point the app at a file of their own for this entry
   chosen?: boolean // the file at `path` is one the person pointed at
@@ -602,10 +604,12 @@ export type ModelItem = {
   renamed?: boolean // the published file is here under another name (its checksum matched)
   covered?: boolean // not here, but an earlier copy stands in: the published file is optional
 }
+// A file the engine cannot read where it is: what can be done for it (POST /api/model-sets/choose answers this instead of refusing).
+export type PlaceOptions = { can_link: boolean; same_drive: boolean; can_copy: boolean; size: number; free: number; target: string; add_folder: string; message: string }
 // What a chosen folder holds of one set (nothing is saved by looking).
 export type FolderScan = {
   folder: string
-  found: { id: string; name: string; path: string; how: 'name' | 'size'; size_matches: boolean; problem: string; readable: boolean; already: boolean; ok: boolean }[]
+  found: { id: string; name: string; path: string; how: 'name' | 'size'; size_matches: boolean; problem: string; readable: boolean; can_link: boolean; already: boolean; ok: boolean }[]
   missing: { id: string; name: string }[]
 }
 export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
@@ -620,6 +624,7 @@ export type ModelSets = {
   models_folder: string
   reads: string[]
   verify: { state: string; done: number; total: number; current: string }
+  copying?: Record<string, { state: string; done: number; total: number; error: string }>
   test_character: { asset_id?: string; passed?: boolean | null }
 }
 
@@ -762,7 +767,8 @@ export const api = {
   stopModelSet: (id: string) => post<unknown>(`/api/model-sets/${id}/stop`),
   verifyModels: () => post<unknown>('/api/model-sets/verify'),
   acceptModel: (id: string) => post<unknown>('/api/model-sets/accept', { id }),
-  chooseModel: (id: string, path: string) => post<{ warning: string }>('/api/model-sets/choose', { id, path }),
+  chooseModel: (id: string, path: string) => post<{ warning: string; needs_place?: PlaceOptions }>('/api/model-sets/choose', { id, path }),
+  placeModel: (id: string, path: string, mode: 'link' | 'copy') => post<{ warning?: string; copying?: unknown }>('/api/model-sets/place', { id, path, mode }),
   unchooseModel: (id: string) => post<unknown>('/api/model-sets/unchoose', { id }),
   scanModelFolder: (setId: string, path: string) => post<FolderScan>(`/api/model-sets/${setId}/scan-folder`, { path }),
   useModelFolder: (setId: string, path: string, ids: string[]) =>

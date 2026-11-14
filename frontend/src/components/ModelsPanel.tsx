@@ -31,7 +31,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
     void load()
   }, [load])
 
-  const working = !!data?.sets.some((s) => s.job?.state === 'working') || data?.verify.state === 'working'
+  const working = !!data?.sets.some((s) => s.job?.state === 'working') || data?.verify.state === 'working' || Object.values(data?.copying ?? {}).some((c) => c.state === 'working')
   useEffect(() => {
     if (!working) return
     const t = window.setInterval(() => void load(), 1500)
@@ -160,6 +160,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                   {size(i.size)} - {STATE_WORD[i.state]}
                   {i.reused && !i.chosen ? ` (used where it is: ${i.path})` : ''}
                   {i.chosen && i.state === 'present' && !i.yours ? ` - your file at ${i.path}; it is the same as the published one` : ''}
+                  {i.source ? ` (${i.placed === 'link' ? 'linked from' : 'copied from'} ${i.source})` : ''}
                   {i.chosen && i.state === 'present' && i.yours ? ` - your own file at ${i.path}, not the one this app was tested with (you chose to use it)` : ''}
                   {i.chosen && i.state === 'checking' ? ` - your file at ${i.path}; checking it against the published one in the background` : ''}
                   {i.chosen && i.state === 'differs' ? ` - your own file at ${i.path}. This is not the file the app was tested with. Results may differ or the step may fail. It is not used until you press Use it anyway.` : ''}
@@ -185,6 +186,12 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                     Get the publisher&apos;s file ({size(i.size)})
                   </button>
                 )}
+                {data?.copying?.[i.id]?.state === 'working' && (
+                  <span className="small">
+                    <progress value={data.copying[i.id].done} max={data.copying[i.id].total || 1} /> copying your file in
+                  </span>
+                )}
+                {data?.copying?.[i.id]?.state === 'failed' && <span className="error small">The copy failed: {data.copying[i.id].error}</span>}
                 {i.can_choose && <ModelFileChoice specId={i.id} name={i.name} chosen={!!i.chosen} onChanged={load} />}
               </li>
             ))}

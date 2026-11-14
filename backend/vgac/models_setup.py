@@ -342,8 +342,9 @@ def _chosen_state(spec: Spec, acc: set[str]) -> dict[str, Any] | None:
     chk = check_state(p, spec) if size == spec.size else "size"
     anyway = key in acc
     state = "present" if chk == "ok" or anyway else ("checking" if chk == "unchecked" else "differs")
+    placed = (model_choices.load().get(spec.id) or {}).get("placed") or {}
     return {"state": state, "path": str(p), "reused": True, "check": chk, "accepted": anyway, "chosen": True,
-            "yours": chk in ("differs", "size")}
+            "yours": chk in ("differs", "size"), **({"source": placed["source"], "placed": placed.get("mode")} if placed.get("source") else {})}
 
 
 def choice_usable(path: Path) -> bool:
@@ -470,7 +471,7 @@ def set_status(root: Path | None) -> dict[str, Any]:
         verify_all(pending)  # read in the background, once; the answer is kept for next time
     return {"sets": out, "gates": {k: {"notice": v.get("notice", []), "phrase": v.get("phrase", "")} for k, v in gates().items()},
             "models_folder": str(root) if root else "", "reads": [str(p) for p in roots["bases"]] if root else [],
-            "verify": dict(_verify_state)}
+            "verify": dict(_verify_state), "copying": {k: dict(v) for k, v in _copies.items() if v.get("state") in ("working", "failed")}}
 
 
 def start_set(set_id: str, typed: dict[str, str], opener: Callable[[str, int], Any] | None = None, wait: bool = False,
@@ -590,6 +591,12 @@ class ChooseIn(BaseModel):
     path: str
 
 
+class PlaceIn(BaseModel):
+    id: str
+    path: str
+    mode: str  # "link" (a hard link, same drive) or "copy"
+
+
 class FolderIn(BaseModel):
     path: str
     ids: list[str] | None = None  # the entries to take (the preview's matches); all of them when left out
@@ -608,6 +615,10 @@ def post_choose(body: ChooseIn) -> dict[str, Any]:
     try:
         got = model_choices.choose(spec, body.path, root, roots)
     except DownloadError as e:
+        if e.code == "not_readable":
+            # Not refused: the person is told what can be done (link it, copy it, or add its folder themselves).
+            src = Path(body.path.strip().strip('"'))
+            return {"needs_place": {**model_choices.placement_options(spec, src), "message": f"{e.message} {e.fix}".strip()}, "warning": ""}
         raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
     p = Path(body.path.strip().strip('"'))
     if p.stat().st_size == spec.size:
@@ -654,9 +665,11 @@ def scan_folder(set_id: str, folder_text: str) -> dict[str, Any]:
             continue
         problem = model_choices.refusal(spec, pick)
         readable = model_choices.readable_by_engine(pick, root, roots)
+        can_link = not readable and model_choices.placement_options(spec, pick)["can_link"]
         already = _item_state_quiet(spec, root, roots)
         found.append({"id": sid, "name": spec.name, "path": str(pick), "how": how, "size_matches": pick.stat().st_size == spec.size,
-                      "problem": problem, "readable": readable, "already": already in ("present",), "ok": not problem and readable})
+                      "problem": problem, "readable": readable, "can_link": can_link, "already": already in ("present",),
+                      "ok": not problem and (readable or can_link)})
     return {"folder": str(folder), "found": found, "missing": missing}
 
 
@@ -690,15 +703,87 @@ def post_use_folder(set_id: str, body: FolderIn) -> dict[str, Any]:
             continue
         spec = by_id[f["id"]]
         try:
-            model_choices.choose(spec, f["path"], root, roots)
+            if f["readable"]:
+                model_choices.choose(spec, f["path"], root, roots)
+            elif f["can_link"]:
+                model_choices.place_link(spec, Path(f["path"]), root, roots)  # same drive: a hard link, nothing is copied
+            else:
+                model_choices.choose(spec, f["path"], root, roots)  # says why it cannot be used
         except DownloadError as e:
             left.append({"id": f["id"], "name": f["name"], "reason": f"{e.message} {e.fix}".strip()})
             continue
         taken.append({"id": f["id"], "name": f["name"], "path": f["path"]})
-    exact = [(by_id[x["id"]], Path(x["path"])) for x in taken if Path(x["path"]).stat().st_size == by_id[x["id"]].size]
+    exact = [(by_id[x["id"]], Path(model_choices.chosen(x["id"]) or x["path"])) for x in taken if Path(x["path"]).stat().st_size == by_id[x["id"]].size]
     if exact:
         verify_all(exact)
     return {"taken": taken, "left": left, "verify": dict(_verify_state)}
+
+
+_copies: dict[str, dict[str, Any]] = {}  # spec id -> {"state": working|done|failed, "done": bytes, "total": bytes, "error": str}
+
+
+def _copy_worker(spec: Spec, source: Path, target: Path, root: Path, roots: dict[str, Any]) -> None:
+    st = _copies[spec.id]
+    part = target.with_name(target.name + ".part")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as r, part.open("wb") as w:
+            while True:
+                chunk = r.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                w.write(chunk)
+                st["done"] += len(chunk)
+        os.replace(part, target)
+        model_choices.choose(spec, str(target), root, roots, placed={"mode": "copy", "source": str(source)})
+        if target.stat().st_size == spec.size:
+            verify_all([(spec, target)])
+        st["state"] = "done"
+    except (OSError, DownloadError) as e:
+        st["state"] = "failed"
+        st["error"] = getattr(e, "message", None) or str(e)
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@router.post("/api/model-sets/place")
+def post_place(body: PlaceIn) -> dict[str, Any]:
+    """Make a file the engine cannot read where it is available to it: a hard link (same drive; nothing is copied) or a copy (any
+    drive; started in the background, space-checked, and only with the person's say-so). The app never changes ComfyUI's settings."""
+    root = downloader.models_root()
+    spec = all_specs_by_id(root).get(body.id) if root else None
+    if spec is None:
+        raise HTTPException(404, "That file is not in the list.")
+    roots = read_roots(root)
+    source = Path(body.path.strip().strip('"'))
+    try:
+        if body.mode == "link":
+            got = model_choices.place_link(spec, source, root, roots)
+            if source.stat().st_size == spec.size:
+                verify_all([(spec, Path(got["path"]))])
+            return {"item": item_state(spec, root, roots), "warning": got.get("warning", "")}
+        if body.mode == "copy":
+            why = model_choices.refusal(spec, source)
+            if why:
+                raise DownloadError("refused", why, "Choose another file, or use the download button.")
+            opts = model_choices.placement_options(spec, source)
+            if not opts["can_copy"]:
+                raise DownloadError("no_space", f"There is not enough room for a copy ({size_text(opts['size'])} needed, {size_text(opts['free'])} free).",
+                                    "Free some space, or add the folder to your ComfyUI's extra model paths yourself.")
+            if _copies.get(spec.id, {}).get("state") == "working":
+                raise DownloadError("busy", "That copy is already running.", "Wait for it to finish.")
+            _copies[spec.id] = {"state": "working", "done": 0, "total": opts["size"], "error": ""}
+            threading.Thread(target=_copy_worker, args=(spec, source, Path(opts["target"]), root, roots), daemon=True, name="copy-model").start()
+            return {"copying": _copies[spec.id]}
+    except DownloadError as e:
+        raise HTTPException(400, f"{e.message} {e.fix}".strip()) from None
+    raise HTTPException(400, "Choose link or copy.")
+
+
+def size_text(n: int) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB"
 
 
 @router.post("/api/model-sets/unchoose")

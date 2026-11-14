@@ -3,7 +3,7 @@
 // The window's file chooser when there is one, else a typed path. Any model file may be chosen; a file that is not the one the
 // app was tested with comes back with a warning and is used only after "Use it anyway" (the panel row has that button).
 import { useState } from 'react'
-import { api } from '../api'
+import { api, type PlaceOptions } from '../api'
 import { hostPick } from '../desktop'
 
 const MODEL_FILES = 'Model files|*.safetensors;*.gguf;*.ckpt;*.sft'
@@ -22,6 +22,7 @@ export default function ModelFileChoice({
   const [typing, setTyping] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [place, setPlace] = useState<{ path: string; opts: PlaceOptions } | null>(null) // a file in a folder ComfyUI does not read
 
   const act = async (fn: () => Promise<string>) => {
     setBusy(true)
@@ -37,7 +38,22 @@ export default function ModelFileChoice({
       setBusy(false)
     }
   }
-  const choose = (path: string) => act(async () => (await api.chooseModel(specId, path)).warning)
+  const choose = (path: string) =>
+    act(async () => {
+      const r = await api.chooseModel(specId, path)
+      if (r.needs_place) {
+        setPlace({ path, opts: r.needs_place })
+        return ''
+      }
+      setPlace(null)
+      return r.warning
+    })
+  const doPlace = (mode: 'link' | 'copy') =>
+    act(async () => {
+      const r = await api.placeModel(specId, place!.path, mode)
+      setPlace(null)
+      return mode === 'copy' ? 'Copying your file in the background; the models panel shows how far it is.' : (r.warning ?? '')
+    })
   const pick = () => {
     const host = hostPick()
     if (host) void host.pickFile(`Choose your file for ${name}`, MODEL_FILES).then((p) => p && void choose(p))
@@ -62,6 +78,30 @@ export default function ModelFileChoice({
             Use this file
           </button>
         </>
+      )}
+      {place && (
+        <div className="small">
+          <div>{place.opts.message}</div>
+          <div className="row-gap">
+            {place.opts.can_link && (
+              <button type="button" className="small-btn" disabled={busy} onClick={() => void doPlace('link')}>
+                Link it (nothing is copied)
+              </button>
+            )}
+            {place.opts.can_copy && (
+              <button type="button" className="small-btn" disabled={busy} onClick={() => void doPlace('copy')}>
+                Copy it in ({(place.opts.size / 1e9).toFixed(1)} GB)
+              </button>
+            )}
+            <button type="button" className="link small" onClick={() => setPlace(null)}>
+              Cancel
+            </button>
+          </div>
+          {!place.opts.can_link && <div className="muted">It is on another drive than your ComfyUI&apos;s models, so it cannot be linked.</div>}
+          <div className="muted">
+            Or add the folder {place.opts.add_folder} to your ComfyUI&apos;s extra model paths yourself, restart ComfyUI and press Look again. The app never changes your ComfyUI settings.
+          </div>
+        </div>
       )}
       {note && <span className={note.ok ? 'setup-ok small' : 'warn small'}>{note.text}</span>}
     </span>
