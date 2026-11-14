@@ -132,3 +132,17 @@ def test_the_steps_two_redraw_and_the_pose_snippet_share_the_a_pose():
 
 def test_fix_for_keeps_known_ids_in_order_without_repeats():
     assert fixes.check_fix_for(["face_drawn", "bogus", "in_frame", "face_drawn"]) == ["face_drawn", "in_frame"]
+
+
+def test_each_of_the_six_checks_is_pinned_to_its_own_wording():
+    """A tick box must ask for what its label says (the old "Redraw it in even light" button sent the A-pose redraw)."""
+    expect = {"in_frame": ("frame", "margin"), "arms_away": ("pose_a", "A pose"), "pose_for_3d": ("pose_a", "A pose"),
+              "soft_light": ("even_light", "even light"), "hair_off_eyes": ("hair_off", "Move the hair off the face"),
+              "face_drawn": ("face_draw", "Draw the face")}
+    for check, (sid, words) in expect.items():
+        assert fixes.snippet_for(check, withheld=True) == sid, check
+        text = fixes.compose([check], d=ALL)["instruction"]
+        assert words in text, check
+        for other, (osid, owords) in expect.items():
+            if osid != sid:
+                assert owords not in text, (check, other)  # no wording carries another check's change
