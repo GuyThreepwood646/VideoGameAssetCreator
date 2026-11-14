@@ -67,6 +67,15 @@ def test_a_blanket_metal_map_keeps_only_small_metal_looking_pieces():
     assert not skinmetal.small_metal_pieces(mesh, big, met, T).any()
 
 
+def test_blanket_map_is_not_a_knife_edge_on_the_head_share():
+    # W2-clothed, same model, two clean-ups: the head read 0.546 and then 0.492 metal, with 0.85 and 0.69 of the body skin-coloured
+    # texels metal; the cardigan, shirt, trousers and hair were metal both times.
+    assert skinmetal.blanket_map(0.546, 0.85) and skinmetal.blanket_map(0.4921, 0.6921)
+    assert skinmetal.blanket_map(0.3119, 0.9473)  # W1-bikini R3
+    # a figure whose body is mostly not metal, or whose head is clean, is not a blanket map (knights, a necklace and glasses)
+    assert not skinmetal.blanket_map(0.0173, 0.9) and not skinmetal.blanket_map(0.25, 0.9) and not skinmetal.blanket_map(0.4, 0.3)
+
+
 # --- the helmet test ----------------------------------------------------------------------------------------------------
 
 

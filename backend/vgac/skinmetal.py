@@ -48,6 +48,11 @@ BODY_L_MIN = 8.0  # shadowed skin is dark: lower than this is black
 # their metal: grey or gold coloured, separate from each other, each smaller than KEEP_MAX_AREA of the surface
 # (earrings, glasses frames, buckles, a pendant). Large pieces (a whole jacket, a head of hair) are cleared.
 BLANKET_SHARE = 0.5
+# The head's share alone is a knife edge (W2-clothed: 0.546 in one clean-up, 0.492 in the next on the same model, with the
+# cardigan, shirt, trousers and hair all still metal). A head that is a third metal while most of the skin-coloured body
+# is metal too is just as much a junk map: no real face is a third metal.
+BLANKET_HEAD_SHARE = 0.3
+BLANKET_ALL_SHARE = 0.6
 KEEP_MAX_AREA = 0.015
 METAL_GREY_CHROMA = 14.0  # Lab chroma under this is grey (steel, silver, chrome)
 METAL_GOLD_HUE = (65.0, 105.0)  # Lab hue angle of gold and brass (skin is at about 45 to 60)
@@ -166,6 +171,12 @@ def skin_texels(mesh: dict[str, np.ndarray], base: np.ndarray, T: int, body: boo
         by, bx, info = body_skin(mesh, b, T, skin, joined, nb)
         out.update(ys=np.concatenate([ys, by]), xs=np.concatenate([xs, bx]), **info)
     return out
+
+
+def blanket_map(head_share: float, all_share: float) -> bool:
+    """True when the builder's metal map says nothing about the character: the head (certainly not metal) is half metal, or a
+    third metal while most of the skin-coloured body is metal too."""
+    return head_share >= BLANKET_SHARE or (head_share >= BLANKET_HEAD_SHARE and all_share >= BLANKET_ALL_SHARE)
 
 
 def skin_hue(lab: np.ndarray, skin: np.ndarray) -> np.ndarray:
@@ -309,7 +320,8 @@ def clear(glb: Path | str, maps: dict[str, Path], category: str | None, descript
                     covered = found["region"]["covered"] | found["covered"] if found.get("covered") is not None else found["region"]["covered"]
                     head_before = before[: found["head_texels"]]  # the head and neck: the part that is certainly not metal
                     share = float((head_before > METAL_LIMIT).mean()) if len(head_before) else 0.0
-                    rec["blanket"] = bool(with_body and share >= BLANKET_SHARE)
+                    share_all = float((before > METAL_LIMIT).mean()) if len(before) else 0.0
+                    rec["blanket"] = bool(with_body and blanket_map(share, share_all))
                     if rec["blanket"]:
                         # metal everywhere: nothing in the map is evidence. Clear it all but the small metal-looking pieces.
                         keep = small_metal_pieces(mesh, base, met, T)
