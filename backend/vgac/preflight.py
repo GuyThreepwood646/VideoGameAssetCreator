@@ -243,6 +243,14 @@ def blender_version(exe: Path, runner: Callable[[Path], str] = _run_version) -> 
     return ver
 
 
+def _blender_note(exe: Any, runner: Callable[[Path], str] | None) -> str:
+    """What changed under the saved Blender since it was chosen (blender_watch), in plain words; "" when nothing did."""
+    from . import blender_watch
+
+    n = blender_watch.check(exe, runner)
+    return n["message"] if n else ""
+
+
 def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_version) -> dict[str, Any]:
     exe = settings.blender_exe
     tech = f"blender_exe in the settings: {exe}"
@@ -250,19 +258,21 @@ def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_versi
 
     problem = blender_problem(settings)
     if problem is not None:
-        return item("blender", "tools", "Blender", "fail", problem[0], problem[1], HOST_BLENDER_STAGES, tech, "blender_exe")
+        note = _blender_note(exe, None)
+        return item("blender", "tools", "Blender", "fail", (note + " " if note else "") + problem[0], problem[1], HOST_BLENDER_STAGES, tech, "blender_exe")
     exe = Path(exe)
     ver = blender_version(exe, runner)
+    note = _blender_note(exe, runner)
     if ver is None:
-        return item("blender", "tools", "Blender", "warn", "Blender is there, but it did not say which version it is.",
+        return item("blender", "tools", "Blender", "warn", (note + " " if note else "") + "Blender is there, but it did not say which version it is.",
                     "Open Blender once to check it starts. The app needs version 5.0 or newer; you can give a different "
                     "blender.exe in the setup card.", HOST_BLENDER_STAGES, tech, "blender_exe")
     v = ".".join(str(x) for x in ver)
     if ver[:2] < BLENDER_MIN:
-        return item("blender", "tools", "Blender", "fail", f"Blender {v} is too old: the animation steps need 5.0 or newer.",
+        return item("blender", "tools", "Blender", "fail", (note + " " if note else "") + f"Blender {v} is too old: the animation steps need 5.0 or newer.",
                     "Install Blender 5.0 or newer and give the path to its blender.exe in the setup card.",
                     HOST_BLENDER_STAGES, f"{tech} (version {v}; action slots need 5.0)", "blender_exe")
-    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready.", "", HOST_BLENDER_STAGES, f"{tech} (version {v})",
+    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready." + (" " + note if note else ""), "", HOST_BLENDER_STAGES, f"{tech} (version {v})",
                 "blender_exe")
 
 

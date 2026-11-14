@@ -27,7 +27,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import downloader, preflight, setup_settings
+from . import blender_watch, downloader, preflight, setup_settings
 from .config import get_settings
 from .downloader import DownloadError, Job, Spec
 
@@ -76,6 +76,50 @@ def _registry_install_dirs(publisher: str) -> list[str]:
     return [f for f in found if f]
 
 
+def _steam_roots() -> list[str]:
+    """Steam's own install folder, from the registry (empty off Windows or when Steam is not registered)."""
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError:
+        return []
+    out: list[str] = []
+    for hive, sub, name in ((winreg.HKEY_CURRENT_USER, r"SOFTWARE\Valve\Steam", "SteamPath"),
+                            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+                            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath")):
+        try:
+            with winreg.OpenKey(hive, sub) as k:
+                v = str(winreg.QueryValueEx(k, name)[0]).strip()
+                if v:
+                    out.append(v)
+        except OSError:
+            continue
+    return out
+
+
+def steam_libraries(roots: list[Path]) -> list[Path]:
+    """Every Steam library folder: each Steam install itself plus every "path" in its steamapps/libraryfolders.vdf.
+    A missing or malformed vdf, or a library that is gone, is skipped without complaint."""
+    libs: list[Path] = []
+    for root in roots:
+        libs.append(root)
+        try:
+            text = (root / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r'"path"\s+"([^"\r\n]*)"', text):
+            raw = m.group(1).replace("\\\\", "\\").strip()
+            if raw:
+                libs.append(Path(raw))
+    seen: set[str] = set()
+    out = []
+    for lib in libs:
+        key = os.path.normcase(str(lib))
+        if key not in seen:
+            seen.add(key)
+            out.append(lib)
+    return out
+
+
 def _running_paths(image: str) -> list[str]:
     """Full paths of running programs named `image` (for example blender), by PowerShell; empty when it cannot ask."""
     try:
@@ -96,6 +140,7 @@ class Env:
     which: Callable[[str], str | None] = shutil.which
     registry: Callable[[str], list[str]] = _registry_install_dirs
     running: Callable[[str], list[str]] = _running_paths
+    steam: Callable[[], list[str]] = _steam_roots
 
 
 # --- Blender -----------------------------------------------------------------------------------------------------------
@@ -122,13 +167,14 @@ def blender_locations(env: Env, current: str = "") -> list[tuple[Path, str]]:
                 out += [(p, "Program Files") for p in _exes_under(d)]
         except OSError:
             pass
-        for sub in ("Steam/steamapps/common/Blender",):
-            out += [(p, "Steam") for p in _exes_under(pf / sub)]
         try:
             for d in sorted((pf / "WindowsApps").glob("BlenderFoundation.Blender*")):
                 out += [(p, "Microsoft Store") for p in _exes_under(d)]
         except OSError:
             pass
+    roots = [Path(r) for r in env.steam() if r] + [pf / "Steam" for pf in env.program_files]  # the registry's, then the default path
+    for lib in steam_libraries(roots):
+        out += [(p, "Steam") for p in _exes_under(lib / "steamapps" / "common" / "Blender")]
     w = env.which("blender")
     if w:
         out.append((Path(w), "your PATH"))
@@ -193,7 +239,9 @@ def blender_offer() -> dict[str, Any]:
     cat = downloader.catalogue().get("blender") or {}
     zip_url = str(cat.get("zip") or "")
     host = re.sub(r"^https?://([^/]+)/.*$", r"\1", zip_url) if zip_url else ""
+    stores = cat.get("store_pages") or {}
     return {"available": bool(zip_url), "version": cat.get("version", ""), "from": host, "page": cat.get("page", ""),
+            "steam_page": stores.get("steam", ""), "store_page": stores.get("microsoft", ""),
             "size_mb": cat.get("size_mb", 0), "licence": cat.get("licence", "GPL"),
             "goes_to": str(tools_dir()), "needs_admin": False,
             "unconfirmed": cat.get("unconfirmed", "")}
@@ -390,7 +438,15 @@ def _problem(e: DownloadError) -> HTTPException:
 def get_blender() -> dict[str, Any]:
     s = get_settings()
     job = downloader.job_status("tool-blender")
-    return {"current": str(s.blender_exe or ""), "found": find_blender(), "offer": blender_offer(), "install": job}
+    return {"current": str(s.blender_exe or ""), "found": find_blender(), "offer": blender_offer(), "install": job,
+            "changed": blender_watch.check(s.blender_exe)}
+
+
+@router.post("/api/tools/blender/seen")
+def post_blender_seen() -> dict[str, Any]:
+    """"Fine, keep using it": remember the version that is there now, so the notice goes away."""
+    blender_watch.accept(get_settings().blender_exe)
+    return {"changed": None}
 
 
 @router.post("/api/tools/blender/use")

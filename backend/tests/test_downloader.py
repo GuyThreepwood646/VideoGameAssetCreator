@@ -109,6 +109,7 @@ ALLOWED_HOSTS = {
     "github.com",  # only the project's own repositories in ALLOWED_GH below
     "quaternius.itch.io",  # the author's own page
     "files.makehumancommunity.org", "files2.makehumancommunity.org", "static.makehumancommunity.org",  # MakeHuman's own
+    "store.steampowered.com", "apps.microsoft.com",  # Blender's own listings; links the person opens, nothing is fetched from them
 }
 ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comfy-Org's own packaging; see the report for the re-uploads
     "Comfy-Org/BiRefNet", "Comfy-Org/Chroma1-HD", "Comfy-Org/Qwen-Image-Edit_ComfyUI", "Comfy-Org/Qwen-Image_ComfyUI", "Comfy-Org/TRELLIS.2",

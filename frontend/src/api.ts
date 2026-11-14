@@ -552,7 +552,8 @@ export type ToolInstall = {
 export type BlenderTool = {
   current: string
   found: ToolCopy[]
-  offer: { available: boolean; version: string; from: string; page: string; size_mb: number; licence: string; goes_to: string; needs_admin: boolean; unconfirmed: string }
+  changed: { kind: string; from: string; to: string; tested: boolean; usable: boolean; message: string } | null
+  offer: { available: boolean; version: string; from: string; page: string; steam_page: string; store_page: string; size_mb: number; licence: string; goes_to: string; needs_admin: boolean; unconfirmed: string }
   install: ToolInstall | null
 }
 export type UnityTool = {
@@ -714,6 +715,7 @@ export const api = {
   setSetting: (key: string, value: string | null) => put<SettingChange>('/api/setup/settings', { key, value }),
   blenderTool: () => get<BlenderTool>('/api/tools/blender'),
   useBlender: (path: string) => post<SettingChange>('/api/tools/blender/use', { path }),
+  blenderSeen: () => post<unknown>('/api/tools/blender/seen'),
   installBlender: () => post<ToolInstall>('/api/tools/blender/install'),
   stopBlender: () => post<unknown>('/api/tools/blender/stop'),
   useBlenderZip: (path: string) => post<SettingChange>('/api/tools/blender/zip', { path }),

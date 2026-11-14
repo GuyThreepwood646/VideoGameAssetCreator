@@ -60,7 +60,7 @@ def make_blender(folder: Path) -> Path:
 
 def env_for(tmp: Path, **kw) -> Env:
     return Env(program_files=[tmp / "PF"], appdata=tmp / "AppData", which=kw.get("which", lambda n: None),
-               registry=kw.get("registry", lambda p: []), running=kw.get("running", lambda n: []))
+               registry=kw.get("registry", lambda p: []), running=kw.get("running", lambda n: []), steam=kw.get("steam", lambda: []))
 
 
 def test_finds_every_copy_and_marks_the_tested_one_best(box):
@@ -327,3 +327,176 @@ def test_a_downloaded_zip_that_is_not_the_pinned_file_is_refused(box):
     with pytest.raises(downloader.DownloadError) as e:
         tools_setup.use_blender_zip(str(z), runner=runner_for({}))
     assert e.value.code == "bad_checksum" and "Use a different one" in e.value.fix and not machine.exists()
+
+
+# --- Steam libraries on any drive ---------------------------------------------------------------------------------------
+
+VDF = '''"libraryfolders"
+{
+	"0"
+	{
+		"path"		"%s"
+		"label"		""
+	}
+	"1"
+	{
+		"path"		"%s"
+	}
+	"2"
+	{
+		"path"		"%s"
+	}
+}
+'''
+
+
+def steam_env(tmp: Path, roots) -> Env:
+    e = env_for(tmp)
+    e.steam = lambda: [str(r) for r in roots]
+    return e
+
+
+def test_steam_copies_are_found_in_every_library_listed_by_steams_own_vdf(box):
+    tmp, _ = box
+    steam = tmp / "Steam"
+    lib2, lib3, gone = tmp / "SteamLibrary", tmp / "Other drive" / "Games", tmp / "unplugged" / "Lib"
+    (steam / "steamapps").mkdir(parents=True)
+
+    def esc(p):
+        return str(p).replace("\\", "\\\\")  # vdf escapes backslashes
+
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(VDF % (esc(steam), esc(lib2), esc(gone)), encoding="utf-8")
+    b2 = make_blender(lib2 / "steamapps" / "common" / "Blender")
+    b1 = make_blender(steam / "steamapps" / "common" / "Blender")
+    make_blender(lib3 / "steamapps" / "common" / "Blender")  # a library the vdf does not list: not looked at
+    run = runner_for({"": "Blender 5.2.3"})
+    found = tools_setup.find_blender(steam_env(tmp, [steam]), run, current="")
+    assert {Path(f["path"]) for f in found} == {b1, b2}
+    assert {f["source"] for f in found} == {"Steam"}  # labelled Steam, no reliance on the installed-programs list
+
+
+def test_a_malformed_or_missing_vdf_still_finds_the_steam_folders_own_copy(box):
+    tmp, _ = box
+    steam = tmp / "Steam"
+    (steam / "steamapps").mkdir(parents=True)
+    (steam / "steamapps" / "libraryfolders.vdf").write_bytes(b'"libraryfolders" { "path" "unterminated \x00\xff garbage')
+    b1 = make_blender(steam / "steamapps" / "common" / "Blender")
+    run = runner_for({"": "Blender 5.2.3"})
+    assert [Path(f["path"]) for f in tools_setup.find_blender(steam_env(tmp, [steam]), run, current="")] == [b1]
+    (steam / "steamapps" / "libraryfolders.vdf").unlink()
+    assert [Path(f["path"]) for f in tools_setup.find_blender(steam_env(tmp, [steam]), run, current="")] == [b1]
+    assert tools_setup.find_blender(steam_env(tmp, [tmp / "nosuch"]), run, current="") == []
+
+
+def test_steam_is_also_looked_for_at_its_default_path_when_the_registry_says_nothing(box):
+    tmp, _ = box
+    b = make_blender(tmp / "PF" / "Steam" / "steamapps" / "common" / "Blender")
+    found = tools_setup.find_blender(steam_env(tmp, []), runner_for({"": "Blender 5.2.3"}), current="")
+    assert [Path(f["path"]) for f in found] == [b] and found[0]["source"] == "Steam"
+
+
+def test_the_panel_offers_the_official_store_pages_and_nothing_to_download(box):
+    offer = tools_setup.blender_offer()
+    assert offer["steam_page"].startswith("https://store.steampowered.com/") and offer["store_page"].startswith("https://apps.microsoft.com/")
+
+
+# --- Blender changed underneath (Steam / the Store update it) -------------------------------------------------------------
+
+
+def _script() -> str:
+    return next(config.BLENDER_SCRIPTS_DIR.glob("*.py")).name
+
+
+def test_a_different_usable_version_is_reported_and_the_job_still_runs(box):
+    from vgac import blender_watch, preflight, tools
+
+    tmp, _ = box
+    exe = make_blender(tmp / "Steamish" / "Blender")
+    s = config.get_settings().model_copy(update={"blender_exe": exe})
+    assert blender_watch.check(exe, lambda p: "Blender 5.2.3") is None  # first sight: remembered, silent
+    assert blender_watch.check(exe, lambda p: "Blender 5.2.3") is None
+    exe.write_bytes(exe.read_bytes() + b" updated")  # an in-place update changes size and time
+    n = blender_watch.check(exe, lambda p: "Blender 5.4.1")
+    assert n and n["kind"] == "changed" and n["usable"] and not n["tested"]
+    assert "5.2.3 to 5.4.1" in n["message"] and "untested" in n["message"] and "will be used" in n["message"]
+    item = preflight.check_blender(s, lambda p: "Blender 5.4.1")
+    assert item["state"] == "ok" and "5.2.3 to 5.4.1" in item["detail"]  # still ready, with the plain note
+    assert tools.blender_cmd(s, _script(), [])[0] == str(exe)  # the job's command is built; nothing raised
+    blender_watch.accept(exe, lambda p: "Blender 5.4.1")
+    assert blender_watch.check(exe, lambda p: "Blender 5.4.1") is None
+
+
+def test_going_back_to_the_tested_version_says_so(box):
+    from vgac import blender_watch
+
+    tmp, _ = box
+    exe = make_blender(tmp / "S" / "Blender")
+    blender_watch.check(exe, lambda p: "Blender 5.4.1")
+    exe.write_bytes(exe.read_bytes() + b"x")
+    n = blender_watch.check(exe, lambda p: "Blender 5.2.3")
+    assert n["usable"] and n["tested"] and "was tested with" in n["message"]
+
+
+def test_an_update_to_a_too_old_missing_or_unreadable_blender_is_a_plain_sentence(box, monkeypatch):
+    from vgac import blender_watch, preflight, tools
+
+    tmp, _ = box
+    exe = make_blender(tmp / "S" / "Blender")
+    s = config.get_settings().model_copy(update={"blender_exe": exe})
+    blender_watch.check(exe, lambda p: "Blender 5.2.3")
+    exe.write_bytes(exe.read_bytes() + b"1")
+    old = blender_watch.check(exe, lambda p: "Blender 4.2.1")
+    assert old["kind"] == "old" and not old["usable"] and "too old" in old["message"] and "newer Blender" in old["message"]
+    assert "4.2.1" in preflight.check_blender(s, lambda p: "Blender 4.2.1")["detail"]
+    monkeypatch.setattr(preflight, "_run_version", lambda p: "Blender 4.2.1")  # what a job's own check reads
+    preflight._blender_versions.clear()
+    with pytest.raises(tools.ToolError) as e:
+        tools.blender_cmd(s, _script(), [])
+    assert "too old" in str(e.value) and "exited" not in str(e.value) and "Traceback" not in str(e.value)
+    exe.write_bytes(exe.read_bytes() + b"2")
+    unreadable = blender_watch.check(exe, lambda p: "gibberish")
+    assert unreadable["kind"] == "unreadable" and not unreadable["usable"] and "5.2.3" in unreadable["message"]
+    exe.unlink()
+    gone = blender_watch.check(exe, lambda p: "")
+    assert gone["kind"] == "missing" and "no longer there" in gone["message"]
+    assert "no longer there" in preflight.check_blender(s, lambda p: "")["detail"]
+    with pytest.raises(tools.ToolError) as e2:
+        tools.blender_cmd(s, _script(), [])
+    assert "not found" in str(e2.value)
+
+
+def test_the_watch_never_raises_and_does_nothing_with_no_blender_set(box, monkeypatch):
+    from vgac import blender_watch, preflight
+
+    assert blender_watch.check(None) is None and blender_watch.check("") is None
+    tmp, _ = box
+    exe = make_blender(tmp / "Q" / "Blender")
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(preflight, "blender_version", boom)
+    assert blender_watch.check(exe) is None
+
+
+def test_the_panel_data_carries_the_change_and_the_seen_route_clears_it(box, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from vgac import blender_watch, preflight
+    from vgac.main import app
+
+    tmp, _ = box
+    exe = make_blender(tmp / "Steamish" / "Blender")
+    monkeypatch.setattr(preflight, "_run_version", lambda p: "Blender 5.2.3")
+    blender_watch.check(exe)
+    config.reset_settings()
+    monkeypatch.setattr(setup_settings, "blender_runner", lambda p: "Blender 5.2.3")
+    setup_settings.set_setting("blender_exe", str(exe))
+    exe.write_bytes(exe.read_bytes() + b"upd")
+    monkeypatch.setattr(preflight, "_run_version", lambda p: "Blender 5.3.0")
+    monkeypatch.setattr(tools_setup, "find_blender", lambda *a, **k: [])
+    c = TestClient(app)
+    got = c.get("/api/tools/blender").json()
+    assert got["changed"] and "5.2.3 to 5.3.0" in got["changed"]["message"]
+    c.post("/api/tools/blender/seen")
+    assert c.get("/api/tools/blender").json()["changed"] is None

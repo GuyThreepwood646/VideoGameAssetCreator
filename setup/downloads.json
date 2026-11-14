@@ -477,6 +477,7 @@
   "sha256_file": "https://download.blender.org/release/Blender5.2/blender-5.2.3.sha256",
   "sha256_source": "Read once from download.blender.org/release/Blender5.2/blender-5.2.3.sha256 on 2026-11-14. The downloaded file is accepted only if it matches this pin.",
   "page": "https://www.blender.org/download/",
+  "store_pages": {"steam": "https://store.steampowered.com/app/365670/Blender/", "microsoft": "https://apps.microsoft.com/detail/9pp3c07gtvrh"},
   "folder": "blender-5.2.3-windows-x64",
   "size_mb": 400,
   "licence": "GPL"

@@ -141,6 +141,34 @@ export default function ToolPanel({ tool, onChanged, onClose }: { tool: Tool; on
         </>
       )}
       {data && found.length === 0 && <div>{n.name} was not found on this computer.</div>}
+      {blender?.changed && (
+        <div className={blender.changed.usable ? 'warn small' : 'error small'}>
+          {blender.changed.message}{' '}
+          {blender.changed.usable && (
+            <button type="button" className="link small" disabled={busy} onClick={() => void act(() => api.blenderSeen())}>
+              Fine, keep using it
+            </button>
+          )}
+        </div>
+      )}
+      {blender && usable.length === 0 && (
+        <div className="small">
+          Blender is free on Steam and in the Microsoft Store. These open the official pages in your browser; nothing is downloaded by the app.{' '}
+          {blender.offer.steam_page && (
+            <a className="link small" href={blender.offer.steam_page} target="_blank" rel="noreferrer">
+              Blender on Steam
+            </a>
+          )}{' '}
+          {blender.offer.store_page && (
+            <a className="link small" href={blender.offer.store_page} target="_blank" rel="noreferrer">
+              Blender in the Microsoft Store
+            </a>
+          )}{' '}
+          <button type="button" className="small-btn" disabled={busy} onClick={() => void load()}>
+            Look again
+          </button>
+        </div>
+      )}
       {data && (
         <div className="setup-field">
           <div className="field-label">{found.length ? 'Use a different one' : `Do you already have ${n.name}?`}</div>

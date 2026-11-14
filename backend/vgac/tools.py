@@ -6,11 +6,15 @@ job context so a cancel can kill it.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 from .config import BLENDER_SCRIPTS_DIR, Settings
+
+
+log = logging.getLogger("vgac.tools")
 
 
 class ToolError(RuntimeError):
@@ -48,6 +52,13 @@ def blender_cmd(settings: Settings, script: str, args: list[Any]) -> list[str]:
     script_path = BLENDER_SCRIPTS_DIR / script
     if not script_path.is_file():
         raise ToolError(f"blender script missing: {script_path}")
+    from . import blender_watch
+
+    note = blender_watch.check(settings.blender_exe)  # Steam / the Store may have updated it; never a raw error for that
+    if note is not None:
+        log.warning("blender: %s", note["message"])
+        if not note["usable"]:
+            raise ToolError(note["message"])
     return [str(settings.blender_exe), "-b", "--python", str(script_path), "--", *[str(a) for a in args]]
 
 
