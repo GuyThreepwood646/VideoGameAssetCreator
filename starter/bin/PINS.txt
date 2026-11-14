@@ -1,0 +1,10 @@
+Microsoft.Web.WebView2 1.0.4314.35 (stable), from the official NuGet source:
+  https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg
+  package SHA-256 90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4 (9,818,548 bytes), read 2026-11-13
+Licence: BSD-3-Clause style, in LICENSE.txt here (redistribution in binary form allowed with the notice); NOTICE.txt lists third-party parts.
+Taken from the package, unchanged (lib\net462 for the two managed files, runtimes\win-x64\native for the loader):
+  acdd517b951829f763d1255f32df1e6a936cb8623a7ebff6b8b24172dede6bd6  Microsoft.Web.WebView2.Core.dll
+  c66437f80886aecf074804b61af4cc10ad90a95310c8e0a717f31ea377c26b03  Microsoft.Web.WebView2.WinForms.dll
+  d3fce90bdeecb08596e377dea6a316354dd8949e32ff09b89d51be00c14e21b6  WebView2Loader.dll
+These are only the connector. The WebView2 runtime itself is Microsoft's and is on Windows 11 and most Windows 10
+machines; where it is missing the starter opens the app in the default browser.

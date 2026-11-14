@@ -33,7 +33,14 @@ To trust the exe without trusting the checksum, rebuild it and use your own.
 
 `VGAC.exe --plan out.json` writes what a start would do and changes nothing.
 
+## The app's window and the bridge
+
+The app opens in its own window (Microsoft WebView2; files and pins in `bin/`) when Microsoft's WebView2 runtime is
+installed, and in the default browser when it is not (the window says so). Pages of other sites open in your browser,
+never in this window. The page gets `window.vgacHost` only from the backend's own address, with `hello()`,
+`pickFolder(title)` and `pickFile(title, "Name|pattern")`, each returning a path or null. The page sends the path to the
+backend, which checks it. `VGAC.exe --window <url>` opens only the window on a page (for checks).
+
 ## Not done yet
 
-The window that shows the app itself (WebView2) and the folder-chooser bridge to the page: the app opens in the
-default browser. See the installer plan, phases 2 and 8.
+The Electron launcher's calls (`setWork`, `notify`, `startEngine`), the tray icon and the badge: phase 8 of the plan.

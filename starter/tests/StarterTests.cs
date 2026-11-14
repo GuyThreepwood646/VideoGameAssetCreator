@@ -61,6 +61,13 @@ public class FakeHost : IHost
     public long FreeBytes(string folder) { return Free; }
 }
 
+public class FakePickers : IPickers
+{
+    public string Folder = @"D:\Big", File = @"C:\B\blender.exe"; public string LastTitle, LastFilter;
+    public string PickFolder(string title) { LastTitle = title; return Folder; }
+    public string PickFile(string title, string filter) { LastTitle = title; LastFilter = filter; return File; }
+}
+
 public static class T
 {
     static int failed, passed;
@@ -125,6 +132,7 @@ public static class T
             VersionParsing();
             ZipSlipRefused();
             DownloadChecksumAndResume();
+            BridgeAnswersOnlyItsList();
         }
         finally
         {
@@ -468,5 +476,26 @@ public static class T
         Check(got2 != null && got2.Message.Contains("not the published one"), "wrong checksum refused");
         Check(!File.Exists(dest2) && File.Exists(dest2 + ".bad"), "wrong file set aside as .bad, not left in place");
         listener.Stop();
+    }
+
+    static void BridgeAnswersOnlyItsList()
+    {
+        var ui = new FakePickers();
+        Func<string, object> run = delegate(string json) { return BridgeOps.Handle(Json.ParseObject(json), ui); };
+        Eq(run("{\"id\":1,\"op\":\"pickFolder\",\"args\":{\"title\":\"Where is ComfyUI?\"}}"), @"D:\Big", "pickFolder returns the chosen folder");
+        Eq(ui.LastTitle, "Where is ComfyUI?", "title passed to the dialog");
+        Eq(run("{\"id\":2,\"op\":\"pickFile\",\"args\":{\"title\":\"t\",\"filter\":\"Blender|blender.exe\"}}"), @"C:\B\blender.exe", "pickFile returns the chosen file");
+        Eq(ui.LastFilter, "Blender|blender.exe", "filter passed on");
+        ui.Folder = null;
+        Eq(run("{\"id\":3,\"op\":\"pickFolder\"}"), null, "cancelled dialog gives null");
+        Eq(run("{\"id\":4,\"op\":\"deleteEverything\"}"), null, "an operation not in the list does nothing");
+        Eq(run("{\"id\":5,\"op\":\"hello\"}"), "VGAC starter 0.1", "hello");
+        Check(BridgeOps.FromOurOrigin("http://127.0.0.1:8765/", "http://127.0.0.1:8765"), "own origin accepted");
+        Check(BridgeOps.FromOurOrigin("http://127.0.0.1:8765/health", "http://127.0.0.1:8765"), "own origin with a path accepted");
+        Check(!BridgeOps.FromOurOrigin("http://127.0.0.1:87650/", "http://127.0.0.1:8765"), "a longer port is not our origin");
+        Check(!BridgeOps.FromOurOrigin("http://127.0.0.1:8765.evil.com/", "http://127.0.0.1:8765"), "a look-alike host is not our origin");
+        Check(!BridgeOps.FromOurOrigin("https://example.com/", "http://127.0.0.1:8765"), "another site is not our origin");
+        Check(!BridgeOps.FromOurOrigin(null, "http://127.0.0.1:8765"), "no source is refused");
+        Check(WebBin.Find(Path.GetTempPath()) == null, "no WebView2 files in a plain folder");
     }
 }

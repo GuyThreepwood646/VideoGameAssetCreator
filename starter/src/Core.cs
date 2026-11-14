@@ -251,4 +251,27 @@ namespace Vgac.Starter
             }
         }
     }
+
+    // Where the WebView2 files are, and making them findable. No WebView2 type is named here, so this always loads.
+    public static class WebBin
+    {
+        // starterin beside the exe, or the exe's own folder (the test build); null when the files are not there.
+        public static string Find(string baseDir)
+        {
+            foreach (string d in new[] { Path.Combine(baseDir, "starter", "bin"), baseDir })
+                if (File.Exists(Path.Combine(d, "Microsoft.Web.WebView2.Core.dll")) && File.Exists(Path.Combine(d, "WebView2Loader.dll"))) return d;
+            return null;
+        }
+
+        // The managed files are loaded from there, and the native loader is found through PATH (this process only).
+        public static void Prepare(string binDir)
+        {
+            Environment.SetEnvironmentVariable("PATH", binDir + ";" + Environment.GetEnvironmentVariable("PATH"));
+            AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs a)
+            {
+                string f = Path.Combine(binDir, new System.Reflection.AssemblyName(a.Name).Name + ".dll");
+                return File.Exists(f) ? System.Reflection.Assembly.LoadFrom(f) : null;
+            };
+        }
+    }
 }

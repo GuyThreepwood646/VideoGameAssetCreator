@@ -36,6 +36,8 @@ namespace Vgac.Starter
                 else if (args[i] == "--plan" && i + 1 < args.Length) planOut = args[++i];
                 else if (args[i] == "--port" && i + 1 < args.Length) int.TryParse(args[++i], out port);
             }
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (args[i] == "--window") return WindowOnly(args[i + 1]);
             string root = FindProjectRoot(project ?? AppDomain.CurrentDomain.BaseDirectory);
             if (planOut != null) return PlanOnly(root, planOut);
 
@@ -58,6 +60,27 @@ namespace Vgac.Starter
                 Application.Run(new MainForm(root, port));
             }
             return 0;
+        }
+
+        // --window <url>: opens only the in-app window on a page (for checking the window and the bridge without the
+        // backend). The page's origin is the one the bridge answers to. Its browser data goes to a temporary folder.
+        static int WindowOnly(string url)
+        {
+            Application.EnableVisualStyles();
+            string bin = WebBin.Find(AppDomain.CurrentDomain.BaseDirectory);
+            if (bin == null) return 3;
+            WebBin.Prepare(bin);
+            return RunWindow(url);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static int RunWindow(string url)
+        {
+            if (!AppWindow.RuntimeInstalled()) return 4;
+            string data = Path.Combine(Path.GetTempPath(), "vgac-window-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            var w = new AppWindow(url, data, new SetupLog(data));
+            Application.Run(w);
+            return w.Problem == null ? 0 : 5;
         }
 
         // --plan <file>: writes what a start would do, as JSON, and changes nothing else. For checks without a window.
@@ -242,7 +265,41 @@ namespace Vgac.Starter
             primary.Text = "Open the app"; secondary.Text = "Quit";
             primary.Visible = secondary.Visible = openLog.Visible = true; choose.Visible = false;
             onPrimary = OpenApp; onSecondary = Close;
-            OpenApp();
+            if (!OpenInWindow()) OpenApp();
+        }
+
+        // The app in its own window (WebView2); false when the files or Microsoft's runtime are missing, and the caller
+        // uses the browser instead. Reached only through this wrapper so a missing DLL cannot stop the starter.
+        bool OpenInWindow()
+        {
+            try
+            {
+                string bin = WebBin.Find(AppDomain.CurrentDomain.BaseDirectory);
+                if (bin == null) { log.Line("no WebView2 files in starter\\bin; using the browser"); return false; }
+                WebBin.Prepare(bin);
+                return OpenWindowCore();
+            }
+            catch (Exception ex) { log.Line("in-app window not available: " + ex.Message + "; using the browser"); return false; }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        bool OpenWindowCore()
+        {
+            if (!AppWindow.RuntimeInstalled())
+            {
+                log.Line("Microsoft's WebView2 runtime is not installed; using the browser");
+                body.Text += Environment.NewLine + Environment.NewLine + "The app opened in your browser because Microsoft's WebView2 runtime is not installed (microsoft.com, search 'WebView2 Runtime').";
+                return false;
+            }
+            var w = new AppWindow(backend.Url, Path.Combine(lay.DataFolder, "webview2"), log);
+            w.FormClosed += delegate
+            {
+                if (w.Problem != null) { Show(); OpenApp(); }
+                else Close();
+            };
+            w.Show();
+            Hide();
+            return true;
         }
 
         void OpenApp()
