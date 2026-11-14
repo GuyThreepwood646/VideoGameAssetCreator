@@ -142,10 +142,46 @@ async def probe_url(url: str) -> dict[str, Any] | None:
     return {"reachable": True, "devices": [{"name": d.get("name")} for d in stats["devices"] if isinstance(d, dict)]}
 
 
-def engine_command(settings: Settings, name: str) -> tuple[list[str], Path, dict[str, str]]:
+# Keeping the picture models in memory between graphs. ComfyUI 0.45 keeps the outputs of the last prompt's nodes (the
+# loaded models) in a RAM cache, but after every node it drops each cached output the current prompt did not use until
+# the PC's free RAM is above its "inactive" threshold, which defaults to the PC's whole RAM (comfy: main.py, execution.py).
+# On every PC that threshold is never reached, so a small graph between two edit draws (an upscale, a cut-out)
+# throws the edit model, its text encoder and its VAE away and the next draw rebuilds them: 30 to 47 s on the 3080.
+# `--cache-ram <active> <inactive>` sets both thresholds; a lower inactive one keeps them until free RAM really is short.
+CACHE_RAM_FLAG = "--cache-ram"
+
+
+def cache_ram_gb(total_ram_gb: float, floor_gb: float) -> tuple[int, int]:
+    """(active, inactive) free-RAM thresholds in GB for --cache-ram. Active: ComfyUI's own default, a tenth of the
+    RAM between 2 and 10 GB. Inactive: a quarter of the RAM, at least 6 GB and at most the app's free-RAM floor (24 GB
+    on a 96 GB PC, 8 GB on a 32 GB one), never below the active one."""
+    active = int(min(10.0, max(2.0, total_ram_gb * 0.10)))
+    inactive = int(min(max(floor_gb, 6.0), max(6.0, total_ram_gb * 0.25)))
+    return active, max(active, inactive)
+
+
+def supports_cache_ram(comfy_dir: Path) -> bool:
+    """Whether this ComfyUI folder's command line knows --cache-ram (older ones stop at an unknown flag)."""
+    try:
+        return CACHE_RAM_FLAG in (comfy_dir / "ComfyUI" / "comfy" / "cli_args.py").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def cache_ram_args(settings: Settings, comfy_dir: Path) -> list[str]:
+    """The flag and its two numbers for this PC, or [] when this ComfyUI does not have it."""
+    if not supports_cache_ram(comfy_dir):
+        return []
+    import psutil
+    active, inactive = cache_ram_gb(psutil.virtual_memory().total / 1024 ** 3, settings.min_free_ram_gb)
+    return [CACHE_RAM_FLAG, str(active), str(inactive)]
+
+
+def engine_command(settings: Settings, name: str, keep_loaded: bool = False) -> tuple[list[str], Path, dict[str, str]]:
     """The command that starts instance `name`'s ComfyUI from its `engine` settings: (argv, working folder,
     environment variables to add). ValueError when the instance has no engine. Paths are already absolute
-    (config.resolve_paths)."""
+    (config.resolve_paths). `keep_loaded`: add --cache-ram (cache_ram_args) unless the engine's own extra_args already
+    choose a cache mode."""
     inst = settings.instances[name]
     e = inst.engine
     if e is None:
@@ -166,6 +202,8 @@ def engine_command(settings: Settings, name: str) -> tuple[list[str], Path, dict
         if value is not None:
             argv += [flag, str(value)]
     argv += [str(a) for a in e.extra_args]
+    if keep_loaded and not any(str(a).startswith("--cache-") for a in e.extra_args):
+        argv += cache_ram_args(settings, Path(e.comfy_dir))
     env = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
     if settings.blender_exe is not None:
         env["SKINTOKEN_BLENDER_BIN"] = str(settings.blender_exe)
@@ -315,6 +353,8 @@ class Supervisor:
         self._probed_at: dict[str, float] = {}
         # Set by the job queue: whether a card has a job running or is lent (jobs.JobQueue.card_in_use).
         self.busy: Callable[[str], bool] | None = None
+        # Set by the job queue: whether the person wants this card's engine started with its models kept loaded.
+        self.keep_loaded: Callable[[str], bool] | None = None
         self._busy_noted: set[str] = set()
         self._load_owned()
 
@@ -534,7 +574,8 @@ class Supervisor:
                 else:
                     out_log, err_log = self.log_paths(name)
                     if inst.engine is not None:
-                        argv, cwd, env = engine_command(self.settings, name)
+                        argv, cwd, env = engine_command(self.settings, name,
+                                                        bool(self.keep_loaded is not None and self.keep_loaded(name)))
                         if not cwd.is_dir():
                             raise StartFailed(f"its ComfyUI folder {cwd} was not found (instances.{name}.engine."
                                               "comfy_dir in local/machine.json)")

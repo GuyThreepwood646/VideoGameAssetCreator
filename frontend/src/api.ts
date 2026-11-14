@@ -492,6 +492,14 @@ export type Gpu = {
   effective_kinds: GpuKind[]
   kind_notes: Partial<Record<GpuKind, string>>
   free_after_job: boolean
+  // Keep the picture models in memory between graphs (the engine starts with --cache-ram). Applies when the app next
+  // starts this engine. keep_loaded_how: "app" (the app starts it that way), "unsupported" (its ComfyUI has no such
+  // flag) or "none" (the app cannot start it). keep_loaded_flag: what to add to the launch arguments of an engine you
+  // start yourself (ComfyUI Desktop). keep_loaded_applied: the running engine has it (null: not known).
+  keep_loaded?: boolean
+  keep_loaded_how?: 'app' | 'unsupported' | 'none'
+  keep_loaded_flag?: string
+  keep_loaded_applied?: boolean | null
   // The card's ComfyUI: started by itself when a step needs it (when can_start), stopped only if the app started it
   // (owned). "off" when the card is turned off in the app.
   state?: GpuEngineState
@@ -640,7 +648,7 @@ export type SettingChange = {
   missing: { id: string; message: string; setting: string }[]
 }
 export type GpuEngineState = 'running' | 'starting' | 'stopped' | 'failed' | 'off'
-export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; stop_when_idle_minutes?: number }
+export type GpuPatch = { enabled?: boolean; allowed_kinds?: GpuKind[]; free_after_job?: boolean; keep_loaded?: boolean; stop_when_idle_minutes?: number }
 // default_instance null: each step's usual card.
 export type GpuSharingPatch = { default_instance?: string | null; share_when_busy?: boolean }
 

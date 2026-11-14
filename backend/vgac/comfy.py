@@ -230,6 +230,7 @@ class ComfyClient:
                 }
             )
         system = stats.get("system", {})
+        self._argv = system.get("argv") if isinstance(system.get("argv"), list) else None
         return {
             "reachable": True,
             "comfyui_version": system.get("comfyui_version"),
@@ -463,6 +464,10 @@ class ComfyClient:
         except Exception as e:  # noqa: BLE001
             log.info("instance %s: /free failed (it may be down): %s", self.name, e)
             return False
+
+    def last_argv(self) -> list[str] | None:
+        """The command line the engine was started with, from its last /system_stats answer (None before one)."""
+        return getattr(self, "_argv", None)
 
     def last_vram_summary(self) -> dict[str, Any] | None:
         """The last cached vram_summary(), however old, without a request (None before the first)."""

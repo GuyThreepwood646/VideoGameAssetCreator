@@ -306,6 +306,23 @@ function GpuRow({ gpu: g, busy, onChange, onStart, onStop }: RowProps) {
           </label>
           <Info term="gpu_free_after" />
         </div>
+        {g.keep_loaded_how && g.keep_loaded_how !== 'none' && (
+          <div className="gpu-kind">
+            <label>
+              <input type="checkbox" checked={g.keep_loaded ?? true} disabled={busy || g.keep_loaded_how === 'unsupported'} onChange={(e) => onChange({ keep_loaded: e.target.checked })} />
+              Keep the picture model loaded between draws
+            </label>
+            <div className="muted small">
+              {g.keep_loaded_how === 'unsupported'
+                ? 'This ComfyUI is too old for this option.'
+                : 'Uses computer memory (RAM) while it is on, not card memory: the models stay ready between draws, which saves 30 to 45 seconds when a small step runs between two draws. They are let go when the computer runs short of memory, when the card is lent to another step, or when the engine is shut down.'}
+              {g.keep_loaded_how === 'app' && g.reachable && g.keep_loaded_applied === false && (g.keep_loaded ?? true)
+                ? ' It starts working the next time the app starts this engine (it was started without it).' : ''}
+              {g.keep_loaded_flag && g.owned === false
+                ? ` If you start this engine yourself, add ${g.keep_loaded_flag} to its launch arguments (in ComfyUI Desktop: your installation, Launch arguments).` : ''}
+            </div>
+          </div>
+        )}
         <div className="gpu-kind">
           <label htmlFor={idleId}>Shut down when idle</label>{' '}
           <select

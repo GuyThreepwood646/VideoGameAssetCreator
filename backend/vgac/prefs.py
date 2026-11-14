@@ -5,6 +5,8 @@ Today these are the graphics card settings (Health page, "Graphics cards"):
     {"disabled_instances": ["b"],                                  cards turned off (default: none)
      "allowed_kinds": {"a": ["pictures", "model", "review"]},       what each card may do (default: every kind)
      "free_after_job": {"a": false, "b": true},                     free the card's memory after each job (default: off)
+     "keep_models_loaded": {"a": true, "b": false},                 start the card's engine so it keeps the picture
+                                                                    models in memory between graphs (default: on)
      "stop_when_idle_minutes": {"b": 15},                          shut down an engine the app started after this many
                                                                     minutes without work (default: 0, never)
      "default_instance": "a",                                      the card work goes to first, for every step it can
@@ -35,7 +37,7 @@ _lock = threading.Lock()
 
 def defaults() -> dict[str, Any]:
     return {"disabled_instances": [], "allowed_kinds": {}, "free_after_job": {}, "stop_when_idle_minutes": {},
-            "default_instance": None, "share_when_busy": False}
+            "keep_models_loaded": {}, "default_instance": None, "share_when_busy": False}
 
 
 def prefs_path(settings: Settings | None = None) -> Path:
@@ -50,6 +52,8 @@ def _normalise(out: dict[str, Any]) -> dict[str, Any]:
                             if isinstance(kinds, dict) else {})
     free = out.get("free_after_job")
     out["free_after_job"] = {str(k): bool(v) for k, v in free.items()} if isinstance(free, dict) else {}
+    keep = out.get("keep_models_loaded")
+    out["keep_models_loaded"] = {str(k): bool(v) for k, v in keep.items()} if isinstance(keep, dict) else {}
     idle = out.get("stop_when_idle_minutes")
     clean: dict[str, int] = {}
     if isinstance(idle, dict):

@@ -1126,6 +1126,8 @@ class GpuIn(BaseModel):
     # Kinds of work this card may do: pictures, model, rigging, review (jobs.KIND_GROUPS).
     allowed_kinds: list[str] | None = None
     free_after_job: bool | None = None
+    # Start the card's engine with its picture models kept in memory between graphs (applies at its next start).
+    keep_loaded: bool | None = None
     # Shut down an engine the app started after this many minutes without work; 0 = never.
     stop_when_idle_minutes: int | None = Field(default=None, ge=0, le=1440)
 
@@ -1183,7 +1185,7 @@ async def set_gpu(instance: str, body: GpuIn) -> list[dict[str, Any]]:
         raise HTTPException(404, f"unknown graphics card {instance!r}; known: {list(q.settings.instances)}")
     try:
         q.configure(instance, enabled=body.enabled, allowed_kinds=body.allowed_kinds, free_after_job=body.free_after_job,
-                    stop_when_idle_minutes=body.stop_when_idle_minutes)
+                    stop_when_idle_minutes=body.stop_when_idle_minutes, keep_loaded=body.keep_loaded)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return await _gpu_list(q)

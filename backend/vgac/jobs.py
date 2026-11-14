@@ -46,6 +46,7 @@ import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import psutil
@@ -56,6 +57,7 @@ from .comfy import ComfyClient
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
+from . import instances as instances_mod
 from .instances import NotOwned, StartAborted, StartFailed, Supervisor
 from .reference import STAGE_ORDER
 
@@ -928,6 +930,9 @@ class JobQueue:
         self.allowed_kinds: dict[str, set[str]] = {n: set(KIND_GROUPS) for n in self.settings.instances}
         # Per card, free its memory after every finished job (prefs.json free_after_job; off by default).
         self.free_after_job: dict[str, bool] = {n: False for n in self.settings.instances}
+        # Per card, start its engine with the picture models kept in memory between graphs (prefs.json
+        # keep_models_loaded; on by default). Read when the app starts the engine.
+        self.keep_loaded: dict[str, bool] = {n: True for n in self.settings.instances}
         # Per card, minutes without work before an engine the app started is shut down (prefs.json; 0 = never).
         self.stop_when_idle_minutes: dict[str, int] = {n: 0 for n in self.settings.instances}
         # The card work goes to first (prefs.json default_instance; None: each step's usual card), and whether an idle
@@ -965,6 +970,7 @@ class JobQueue:
             self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=inst.output_dir)
         self.supervisor = Supervisor(self.settings, self.clients, on_change=lambda _n: self.publish_gpus())
         self.supervisor.busy = self.card_in_use
+        self.supervisor.keep_loaded = lambda n: self.keep_loaded.get(n, True)
         # Cards turned off (and kinds of work forbidden) before the restart stay so, applied before any worker can
         # pick a job; queued jobs parked on them move now where another card can take them.
         self._load_prefs()
@@ -1314,7 +1320,8 @@ class JobQueue:
         self.configure(instance, enabled=enabled)
 
     def configure(self, instance: str, enabled: bool | None = None, allowed_kinds: list[str] | set[str] | None = None,
-                  free_after_job: bool | None = None, stop_when_idle_minutes: int | None = None) -> None:
+                  free_after_job: bool | None = None, stop_when_idle_minutes: int | None = None,
+                  keep_loaded: bool | None = None) -> None:
         """Change a card's settings (PUT /api/gpus/{instance}); fields left None stay. Unticking a kind moves the
         queued jobs of that kind as turning the card off does (a running job of that kind finishes first). Call it
         on the queue's loop. Raises KeyError for an unknown card, ValueError for an unknown kind."""
@@ -1350,6 +1357,8 @@ class JobQueue:
             self.free_after_job[instance] = bool(free_after_job)
             if w is not None:
                 w.free_after_job = bool(free_after_job)
+        if keep_loaded is not None:
+            self.keep_loaded[instance] = bool(keep_loaded)
         self._save_prefs()
         self._rebalance()
         if turned_off and w is not None and w.current_job_id is not None:
@@ -1381,6 +1390,20 @@ class JobQueue:
                      self.stop_when_idle_minutes[instance])
         self.publish_gpus()
 
+    def keep_loaded_info(self, name: str) -> dict[str, Any]:
+        """For the card's row: how the "keep the picture models loaded" setting reaches this engine.
+        keep_loaded_how: "app" (the app starts it with --cache-ram), "unsupported" (its ComfyUI has no such flag) or
+        "none" (the app cannot start this engine). keep_loaded_flag: the flag to put in the launch arguments of an
+        engine started outside the app (ComfyUI Desktop). keep_loaded_applied: the running engine has it."""
+        inst = self.settings.instances.get(name)
+        if inst is None or inst.engine is None:
+            return {"keep_loaded_how": "none", "keep_loaded_flag": "", "keep_loaded_applied": None}
+        args = instances_mod.cache_ram_args(self.settings, Path(inst.engine.comfy_dir))
+        client = self.clients.get(name)
+        argv = client.last_argv() if client is not None and hasattr(client, "last_argv") else None
+        return {"keep_loaded_how": "app" if args else "unsupported", "keep_loaded_flag": " ".join(args),
+                "keep_loaded_applied": (instances_mod.CACHE_RAM_FLAG in argv) if argv is not None else None}
+
     def _load_prefs(self) -> None:
         p = prefs.load(self.settings)
         self.disabled = {n for n in p["disabled_instances"] if n in self.settings.instances}
@@ -1390,6 +1413,9 @@ class JobQueue:
         for n, flag in p["free_after_job"].items():
             if n in self.settings.instances:
                 self.free_after_job[n] = bool(flag)
+        for n, flag in p["keep_models_loaded"].items():
+            if n in self.settings.instances:
+                self.keep_loaded[n] = bool(flag)
         for n, minutes in p["stop_when_idle_minutes"].items():
             if n in self.settings.instances:
                 self.stop_when_idle_minutes[n] = int(minutes)
@@ -1401,7 +1427,7 @@ class JobQueue:
         try:
             prefs.update(self.settings, disabled_instances=sorted(self.disabled),
                          allowed_kinds={n: [k for k in KIND_GROUPS if k in ks] for n, ks in self.allowed_kinds.items()},
-                         free_after_job=dict(self.free_after_job),
+                         free_after_job=dict(self.free_after_job), keep_models_loaded=dict(self.keep_loaded),
                          stop_when_idle_minutes=dict(self.stop_when_idle_minutes),
                          default_instance=self.default_instance, share_when_busy=self.share_when_busy)
         except OSError as e:
@@ -1974,6 +2000,7 @@ class JobQueue:
                 "effective_kinds": [k for k in possible if k in allowed],
                 "kind_notes": kind_notes(name, self.settings),
                 "free_after_job": self.free_after_job.get(name, False),
+                "keep_loaded": self.keep_loaded.get(name, True), **self.keep_loaded_info(name),
                 "is_default": self.default_instance == name,
                 "share_when_busy": self.share_when_busy,
             }
