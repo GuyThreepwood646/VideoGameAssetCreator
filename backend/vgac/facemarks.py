@@ -64,6 +64,25 @@ def active() -> bool:
     return _card.get() is not None or _local.get()
 
 
+def finder() -> dict[str, Any]:
+    """Which MediaPipe finder answers now, for the record: {"finder": "processor" | "card" | "none", "missing": why the
+    processor one is not there (the package, or its model file), when it was asked for}."""
+    from . import lipmarks
+
+    out: dict[str, Any] = {"finder": "none"}
+    if _local.get():
+        if lipmarks.available():
+            return {"finder": "processor"}
+        try:
+            import mediapipe  # noqa: F401
+            out["missing"] = f"the face landmarker model is not at {lipmarks.model_path()}"
+        except Exception:  # noqa: BLE001
+            out["missing"] = "the mediapipe package is not installed"
+    if _card.get() is not None:
+        out["finder"] = "card"
+    return out
+
+
 def local(img: np.ndarray) -> dict[str, Any] | None:
     """Eyes, mouth and mouth corners from the mediapipe package's 478 points (vgac/lipmarks.py), in the same shape as a
     card's answer. None when the package or its model is missing or no face is found."""

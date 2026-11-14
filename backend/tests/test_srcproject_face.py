@@ -438,3 +438,29 @@ def test_the_box_blur_is_the_same_as_with_index_arrays() -> None:
         a = rng.random(shape)
         assert np.array_equal(face.box_blur(a, r), old(a, r))
     assert np.array_equal(face.box_blur(np.ones((4, 4)), 0), np.ones((4, 4)))
+
+
+def test_without_a_face_finder_the_record_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(lipmarks, "available", lambda: False)
+    assert facemarks.finder() == {"finder": "none"}  # nothing asked for: no finder, nothing missing
+    tok = facemarks.use_local()
+    try:
+        f = facemarks.finder()
+        assert f["finder"] == "none" and ("model" in f["missing"] or "package" in f["missing"])
+        v, rec = srcproject.fit_side_head(None, None, None, {"found": True}, "quarter", None, 40.0, 0.001)
+        assert v is None and rec["refused"].startswith("no face finder: ")
+    finally:
+        facemarks.done_local(tok)
+    monkeypatch.setattr(lipmarks, "available", lambda: True)
+    tok = facemarks.use_local()
+    try:
+        assert facemarks.finder() == {"finder": "processor"}
+    finally:
+        facemarks.done_local(tok)
+
+
+def test_the_projection_records_its_face_finder() -> None:
+    r = srcproject.paint(model(), soft_base(), picture(), mode="off", size=SIZE, picture_yaws=[0.0])
+    assert r["metrics"]["srcproject_face_finder"] == {"finder": "none"}
+    r = srcproject.paint(model(), soft_base(), picture(), mode="off", size=SIZE, picture_yaws=[0.0], min_iou=1.01)
+    assert r["metrics"]["srcproject_face_finder"] == {"finder": "none"}  # also when every picture is refused
