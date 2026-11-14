@@ -94,12 +94,61 @@ def test_starts_over_when_the_site_ignores_the_range(tmp_path):
     assert s.dest.read_bytes() == DATA
 
 
-def test_a_wrong_checksum_is_set_aside_and_never_used(tmp_path):
+def test_a_wrong_checksum_deletes_the_file_and_it_is_never_used(tmp_path):
     s = spec(tmp_path, sha256="0" * 64)
     with pytest.raises(dl.DownloadError) as e:
         run(s, {"http://a/x.bin": DATA})
-    assert e.value.code == "bad_checksum" and "set aside as x.bin.bad" in e.value.message
-    assert not s.dest.exists() and not s.part.exists() and (s.dest.parent / "x.bin.bad").exists()
+    assert e.value.code == "bad_checksum" and "deleted" in e.value.message
+    assert not s.dest.exists() and not s.part.exists() and not list(s.dest.parent.glob("*.bad"))
+
+
+ALLOWED_HOSTS = {
+    "download.blender.org", "www.blender.org",  # Blender Foundation
+    "huggingface.co",  # only the repositories in ALLOWED_HF below
+    "ai.google.dev", "storage.googleapis.com",  # Google: Gemma terms, MediaPipe's own model files
+    "github.com",  # only the project's own repositories in ALLOWED_GH below
+    "quaternius.itch.io",  # the author's own page
+    "files.makehumancommunity.org", "files2.makehumancommunity.org", "static.makehumancommunity.org",  # MakeHuman's own
+}
+ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comfy-Org's own packaging; see the report for the re-uploads
+    "Comfy-Org/BiRefNet", "Comfy-Org/Chroma1-HD", "Comfy-Org/Qwen-Image-Edit_ComfyUI", "Comfy-Org/Qwen-Image_ComfyUI", "Comfy-Org/TRELLIS.2",
+    "Comfy-Org/flux2-klein-4b", "Comfy-Org/ltx-2", "Comfy-Org/mediapipe", "Comfy-Org/z_image_turbo", "Elena2810/z-image-turbo-fp8-aio",
+    "Phips/4xRealWebPhoto_v4_dat2", "VAST-AI/SkinTokens", "Winnougan/Z-Image-Base-Turbo-INT8-Convrot", "artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
+    "artificialguybr/ClayAnimation-Redmond-ZIMAGE", "artificialguybr/PIXELART-REDMOND-ZIMAGETURBO", "artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
+    "berkerdooo/qwen-image-edit-2511-camera-angle-lora", "black-forest-labs/FLUX.2-klein-4b-fp8", "circlestone-labs/Anima",
+    "comfyanonymous/flux_text_encoders", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", "lightx2v/Qwen-Image-Edit-2511-Lightning",
+    "tarn59/character_turnaround_sheet_qwen_edit_2511", "tarn59/pixel_art_style_lora_z_image_turbo", "tencent/Hunyuan3D-2mv",
+}
+ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "dimtoneff/ComfyUI-PixelArt-Detector"}
+
+
+def test_every_address_in_the_shipped_list_is_on_an_allowed_host():
+    """No third-party mirror, proxy or re-upload host: an address added to setup/downloads.json must be added here on purpose."""
+    from urllib.parse import urlparse
+    real = Path(__file__).resolve().parents[2] / "setup" / "downloads.json"
+    found: list[str] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            assert "mirrors" not in o, "a mirrors entry is not allowed"
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+        elif isinstance(o, str) and o.startswith(("http://", "https://")):
+            found.append(o)
+
+    walk(json.loads(real.read_text(encoding="utf-8")))
+    assert found
+    for u in found:
+        p = urlparse(u)
+        assert p.scheme == "https" and p.netloc in ALLOWED_HOSTS, f"{u}: not an allowed host"
+        parts = p.path.strip("/").split("/")
+        if p.netloc == "huggingface.co":
+            assert "/".join(parts[:2]) in ALLOWED_HF, f"{u}: a Hugging Face repository that is not on the allowed list"
+        if p.netloc == "github.com":
+            assert "/".join(parts[:2]) in ALLOWED_GH, f"{u}: a GitHub repository that is not on the allowed list"
 
 
 def test_a_short_file_keeps_its_part_for_the_next_try(tmp_path):

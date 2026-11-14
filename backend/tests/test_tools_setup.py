@@ -238,18 +238,6 @@ def test_the_user_agent_is_an_honest_client_name_never_a_browser(monkeypatch):
     assert "Mozilla" not in seen["ua"] and downloader.USER_AGENT == seen["ua"]
 
 
-class MainRefused(FakeNet):
-    """download.blender.org refuses; the official mirrors answer."""
-
-    def __call__(self, url: str, start: int):
-        if "download.blender.org" in url:
-            self.log.append(url)
-            import urllib.error
-            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
-        return super().__call__(url, start)
-
-
-
 def test_get_it_downloads_checks_unpacks_and_links(box, monkeypatch):
     tmp, machine = box
     data = blender_zip()
@@ -286,20 +274,6 @@ def test_a_file_that_is_not_the_pinned_one_is_refused_and_nothing_is_installed(b
     assert not machine.exists() and not (tmp / "local" / "tools" / "blender-5.2.3-windows-x64").exists()
 
 
-def test_a_mirror_serving_a_different_zip_with_its_own_matching_checksum_is_refused(box):
-    """The pin vouches, never the server: a mirror that offers another zip and a checksum file that matches that other zip
-    gets nowhere, and its checksum file is never even asked for."""
-    tmp, machine = box
-    good = blender_zip()
-    pin_blender(tmp, good)
-    evil = same_size_other(good)
-    net = MainRefused(evil)
-    job = tools_setup.start_blender_install(opener=net, runner=runner_for({}), wait=True)
-    assert job.state == "failed" and job.error["code"] == "bad_checksum"
-    assert not any(u.endswith(".sha256") for u in net.log)
-    assert not machine.exists() and not list((tmp / "local" / "tools").glob("blender-*"))
-
-
 def test_with_no_pin_in_the_list_nothing_is_downloaded(box):
     tmp, _ = box
     (tmp / "setup" / "downloads.local.json").write_text(json.dumps({"blender": {"sha256": ""}}), encoding="utf-8")
@@ -311,7 +285,7 @@ def test_with_no_pin_in_the_list_nothing_is_downloaded(box):
 def test_the_shipped_pin_is_a_real_sha256_and_size_and_names_the_zip(box):
     cat = downloader.catalogue()["blender"]
     assert re.fullmatch(r"[0-9a-f]{64}", cat["sha256"]) and cat["size"] > 300_000_000
-    assert cat["zip"].endswith(NAME) and all(m.startswith("https://") for m in cat["mirrors"])
+    assert cat["zip"].endswith(NAME) and "mirrors" not in cat
 
 
 def test_a_refused_download_says_what_to_do_instead(box):
@@ -320,19 +294,6 @@ def test_a_refused_download_says_what_to_do_instead(box):
     job = tools_setup.start_blender_install(opener=FakeNet(b"", refuse=True), runner=runner_for({}), wait=True)
     assert job.state == "failed" and job.error["code"] == "link_gone"
     assert "your own browser" in job.error["fix"] and "I downloaded the zip" in job.error["fix"] and "get around" in job.error["fix"]
-
-
-def test_when_the_main_server_refuses_the_official_mirrors_are_tried(box, monkeypatch):
-    tmp, machine = box
-    data = blender_zip()
-    pin_blender(tmp, data)
-    run = runner_for({"blender-5.2.3": "Blender 5.2.3"})
-    monkeypatch.setattr(setup_settings, "blender_runner", run)
-    net = MainRefused(data)
-    job = tools_setup.start_blender_install(opener=net, runner=run, wait=True)
-    assert job.state == "done", job.error
-    mirror_hits = [u for u in net.log if "download.blender.org" not in u]
-    assert any(u.endswith(".zip") for u in mirror_hits) and all(u.startswith("https://") for u in mirror_hits)
 
 
 def test_a_blender_that_is_too_old_in_the_zip_is_not_linked(box):

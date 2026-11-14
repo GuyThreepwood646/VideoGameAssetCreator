@@ -9,7 +9,7 @@ reads, plus the person's own setup/downloads.local.json).
     catalogue() / specs_for(...)      the list, read from downloads.json (+ downloads.local.json), with where each file goes
     record(...)                       the ledger, local/installed.json (what VGAC added), shared with VGAC.exe
 
-A stop keeps the `.part` file: the next start carries on from it. A file whose checksum is wrong is set aside as `.bad`
+A stop keeps the `.part` file: the next start carries on from it. A file whose checksum is wrong is deleted
 and never used. Items that need the person to accept a licence first (`optin`) are refused unless the caller passes their
 id in `accepted`, which only a panel that showed the licence page and got the person's own yes may do.
 Every failure is a DownloadError: `message` says what happened, `fix` what to do.
@@ -216,12 +216,11 @@ class Spec:
         return self.dest.is_file()
 
 
-def verify_pin(part: Path, want: str, bad: Path, name: str, page: str, cancel: threading.Event | None = None) -> None:
-    """The file is accepted only if its SHA-256 is the pinned one; otherwise it is set aside as `bad` and DownloadError is raised."""
+def verify_pin(part: Path, want: str, name: str, page: str, cancel: threading.Event | None = None) -> None:
+    """The file is accepted only if its SHA-256 is the pinned one; otherwise it is deleted and DownloadError is raised."""
     if sha256_of(part, cancel).lower() != want.lower():
-        bad.unlink(missing_ok=True)
-        os.replace(part, bad)
-        raise DownloadError("bad_checksum", f"{name} was downloaded, but it is not the published file (it may be damaged or changed). It has been set aside as {bad.name}.",
+        part.unlink(missing_ok=True)
+        raise DownloadError("bad_checksum", f"{name} was downloaded, but it is not the published file (it may be damaged or changed). It has been deleted.",
                             f"Press Try again. If it happens again, check {page or 'the source page'}.")
 
 
@@ -254,16 +253,7 @@ def fetch(spec: Spec, cancel: threading.Event, on_bytes: Callable[[int, int], No
     if spec.size and size != spec.size:
         raise DownloadError("short", f"{spec.name} is {size} bytes but should be {spec.size}.", "Press Try again; the download carries on where it stopped.")
     if spec.sha256:
-        try:
-            got = sha256_of(spec.part, cancel)
-        except Stopped:
-            raise
-        if got.lower() != spec.sha256.lower():
-            bad = spec.dest.with_name(spec.dest.name + ".bad")
-            bad.unlink(missing_ok=True)
-            os.replace(spec.part, bad)
-            raise DownloadError("bad_checksum", f"{spec.name} was downloaded, but it is not the published file (it may be damaged or changed). It has been set aside as {bad.name}.",
-                                f"Press Try again. If it happens again, check {spec.page or 'the source page'}.")
+        verify_pin(spec.part, spec.sha256, spec.name, spec.page, cancel)
     spec.dest.parent.mkdir(parents=True, exist_ok=True)
     os.replace(spec.part, spec.dest)
     return "downloaded"

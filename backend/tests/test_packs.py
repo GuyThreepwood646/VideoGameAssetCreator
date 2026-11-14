@@ -253,7 +253,8 @@ def test_a_download_that_is_not_the_pinned_file_is_refused_from_every_server(wor
     assert st["run"]["state"] == "failed" and st["run"]["error"]["code"] == "bad_checksum"
     assert [u for u, _ in seen] == ["http://fake/sys.zip", "http://alt/sys.zip"]  # the alternate link is tried, and is held to the same pin
     assert not (world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip").exists()
-    assert (world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip.bad").exists()
+    assert not (world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip.bad").exists()  # a mismatch is deleted, not kept
+    assert not list((world.project / "runtime" / "hairpacks" / "sysx").glob("*.part"))
 
 
 def test_a_direct_link_with_no_pin_is_not_downloaded(world, monkeypatch):

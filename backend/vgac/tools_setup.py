@@ -228,17 +228,6 @@ def _finish_blender(folder: Path, runner: Callable[[Path], str] | None) -> dict[
     return result
 
 
-BLENDER_MAIN = "https://download.blender.org/release/"
-
-
-def _with_mirrors(url: str, cat: dict[str, Any]) -> list[str]:
-    """The official address first, then the same path on each of Blender's own mirrors. Never a different kind of address."""
-    urls = [url]
-    if url.startswith(BLENDER_MAIN):
-        urls += [m.rstrip("/") + "/" + url[len(BLENDER_MAIN):] for m in cat.get("mirrors") or [] if isinstance(m, str) and m.startswith("https://")]
-    return urls
-
-
 def blender_specs(opener: Callable[[str, int], Any] | None) -> list[Spec]:
     cat = downloader.catalogue().get("blender") or {}
     url = str(cat.get("zip") or "")
@@ -254,8 +243,8 @@ def blender_specs(opener: Callable[[str, int], Any] | None) -> list[Spec]:
     where.mkdir(parents=True, exist_ok=True)
     if downloader.free_bytes(where) < need + downloader.SPACE_MARGIN:
         raise downloader.no_space(where, need + downloader.SPACE_MARGIN)
-    # Any server, the official one or a mirror, is held to this one pinned checksum; no server vouches for itself.
-    return [Spec(id="blender", name=f"Blender {cat.get('version', '')}", urls=_with_mirrors(url, cat), dest=tools_dir() / "downloads" / name,
+    # Only the publisher's own address; the file is held to this one pinned checksum, and no server vouches for itself.
+    return [Spec(id="blender", name=f"Blender {cat.get('version', '')}", urls=[url], dest=tools_dir() / "downloads" / name,
                  size=size, sha256=sha, page=str(cat.get("page", "")), kind="tool", gone_fix=BLENDER_GONE)]
 
 

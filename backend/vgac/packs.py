@@ -255,7 +255,7 @@ def _download_one(url: str, src: Source, run: Run, on_bytes: Callable[[int], Non
     if not src.sha256:
         raise DownloadError("no_pin", f"{src.name} has no published checksum in the list, so it will not be downloaded.", f"Download the zip yourself from {src.page} and drop it onto this panel.")
     downloader.stream_to_part(url, part, src.name, run.cancel, on_bytes, lambda u, st: _open(u, st))
-    downloader.verify_pin(part, src.sha256, src.store / (src.zip_name + ".bad"), src.name, src.page, run.cancel)
+    downloader.verify_pin(part, src.sha256, src.name, src.page, run.cancel)
     os.replace(part, src.zip_path)
 
 
