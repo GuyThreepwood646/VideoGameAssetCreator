@@ -875,12 +875,14 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
 
 
 def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
-          n_primary: int = 1, heads: list[bool] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+          n_primary: int = 1, heads: list[bool] | None = None,
+          parts: dict[str, Any] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
     of priority: each one, and every view after them, fades out where the ones before it see well. Head views (heads[i],
     first among them) hand over to one another the same way, and every other view stays off as far as a head view covers
     the surface (its "cover" from project_view; HEAD_HANDOVER of its weight when it has none): no whole-body fit paints
-    the head once a head view has, and they meet down the neck, over the head views' neck fade. Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
+    the head once a head view has, and they meet down the neck, over the head views' neck fade. parts, when given, gets
+    the head views' and the other views' sums apart ("head", "body": (num (N,3), den (N))), for the tone match. Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
     N = atlas.idx.size
     heads = heads or [False] * len(projs)
     num, den, wmax, dom = np.zeros((N, 3)), np.zeros(N), np.zeros(N), np.full(N, -1)
@@ -909,6 +911,12 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
         ww = w ** BLEND_POW
         num[sel] += col * ww[:, None]
         den[sel] += ww
+        if parts is not None:
+            key = "head" if heads[i] else "body"
+            if key not in parts:
+                parts[key] = (np.zeros((N, 3)), np.zeros(N))
+            parts[key][0][sel] += col * ww[:, None]
+            parts[key][1][sel] += ww
         better = w > wmax[sel]
         dom[sel[better]] = i
         wmax[sel] = np.maximum(wmax[sel], w)
@@ -1390,6 +1398,35 @@ def chin_underside(atlas: Atlas, chin: dict[str, Any]) -> np.ndarray:
     return np.clip(band * near * down, 0.0, 1.0)
 
 
+def neck_tone_match(atlas: Atlas, parts: dict[str, Any], zone: dict[str, Any], paint: np.ndarray) -> np.ndarray:
+    """The blend again, with the whole-body fits' colour shifted toward the head views' in the band where they hand over
+    (docs: neck seams, part d). The shift is the head views' colour minus the body fits', where both paint, spread
+    smoothly along the surface (surface_correction, a few centimetres: low frequencies only, so no feature moves), and
+    applied only in the band: from half the neck fade's height below its bottom up to a third above its top, within the
+    head's width of its middle (not the chest, not the shoulders). Everywhere else `paint` (the blend) is kept as it is."""
+    (nh, dh), (nb, db) = parts["head"], parts["body"]
+    col_h = nh / np.maximum(dh, 1e-12)[:, None]
+    col_b = nb / np.maximum(db, 1e-12)[:, None]
+    y0, y1 = zone["neck"]
+    span = max(y1 - y0, 1e-3)
+    y = atlas.pos[:, 1]
+    band = face.smoothstep(y0 - 0.5 * span, y0, y) * (1.0 - face.smoothstep(y1, y1 + 0.33 * span, y))
+    cx, cz = zone["chin"]["centre"]
+    width = float(zone["chin"]["width"])
+    band = band * (1.0 - face.smoothstep(0.8 * width, 1.0 * width, np.hypot(atlas.pos[:, 0] - cx, atlas.pos[:, 2] - cz)))
+    both = (dh > 1e-9) & (db > 1e-9) & (band > 0)
+    if both.sum() < 50:
+        return paint
+    wgt = np.where(both, np.minimum(dh, db) / np.maximum(dh + db, 1e-12), 0.0)
+    shift, reach = surface_correction(atlas, np.where(both[:, None], col_h - col_b, 0.0), wgt)
+    k = reach * band
+    touch = (k > 1e-6) & (db > 1e-9)
+    out = paint.copy()
+    cb = np.clip(col_b[touch] + shift[touch] * k[touch, None], 0.0, 1.0)
+    out[touch] = (nh[touch] + cb * db[touch, None]) / np.maximum(dh[touch] + db[touch], 1e-12)[:, None]
+    return out
+
+
 def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
             zone: dict[str, Any] | None = None) -> dict[str, Any]:
     """Project the fitted views onto this layout, blend them and finish the atlas, with the face region when there is
@@ -1397,7 +1434,10 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
     atlas.zone = zone_texels(atlas, zone)
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
-    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views])
+    parts: dict[str, Any] = {}
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views], parts)
+    if "head" in parts and "body" in parts and zone and zone.get("neck") and zone.get("chin"):
+        paint_ = neck_tone_match(atlas, parts, zone, paint_)
     extra: dict[str, Any] = {}
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
@@ -1418,7 +1458,7 @@ def zone_record(zone: dict[str, Any] | None) -> dict[str, Any] | None:
     """What of the face region is kept to paint again on another layout (repaint): the head picture's camera and maps."""
     if not zone or not zone.get("found"):
         return None
-    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep", "fill", "chin")}
+    return {k: zone.get(k) for k in ("found", "cam", "weight", "z", "keep", "fill", "chin", "neck")}
 
 
 def zone_metrics(zone: dict[str, Any] | None, c: dict[str, Any]) -> dict[str, Any]:
