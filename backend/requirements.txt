@@ -10,5 +10,8 @@ psutil==7.2.2
 # Used only by scripts/make_sample_glb.py to write library/samples/sample.glb
 trimesh==5.2.0
 numpy==2.5.4
+# Eyes and mouth on the processor for the picture projection's head views and the face pass (vgac/lipmarks.py,
+# vgac/facemarks.py); its model is runtime/models/face_landmarker.task (setup/downloads.json). Brings opencv-contrib-python.
+mediapipe==1.2.3
 pytest==9.2.0
 coacd>=1.0.14
