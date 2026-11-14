@@ -20,7 +20,7 @@ from PIL import Image
 
 from .. import buildpose, hair_sides, hairlib, library, quality, reference
 from ..db import Version
-from ..graphs.qwen_edit import (BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
+from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
 from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
@@ -74,6 +74,17 @@ def set_step_checks(sc: StageContext, new: list[dict[str, Any]], drop: tuple[str
 # in a version's settings: as before. Always off where the hair comes from the library (the bald pictures have no hair to
 # match and the haired views are replaced) and for any turn method but the standard one. metrics.back_references records it.
 BACK_REFERENCES = False
+# True: a character's back view is drawn with graphs/qwen_edit.BACK_HAIR_SENTENCE (the hair hangs straight down the back, no
+# wind, nothing streaming out to a side) from the first draw, so a kept front picture with wind-blown hair does not give a back
+# view with it. False, or `back_hair_words: false` in a version's settings: as before. Standard turn method, humanoids that are
+# not bald only (library hair has its own hair). Untested on tied-up hair, short hair and hair meant to be styled to a side.
+BACK_HAIR_WORDS = True
+
+
+def back_hair_words_on(sc: StageContext, params: dict[str, Any], method: str) -> bool:
+    chosen = params.get("back_hair_words")
+    on = BACK_HAIR_WORDS if chosen is None else bool(chosen)
+    return bool(on and method == "standard" and _category(sc) == "humanoid" and not _bald_on(sc, params))
 
 
 def back_references_on(sc: StageContext, params: dict[str, Any], method: str) -> bool:
@@ -862,6 +873,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     src_names: dict[str | None, str] = {None: src_name}
 
     back_refs = back_references_on(sc, params, method)
+    hair_words = back_hair_words_on(sc, params, method)
+    with_words: set[str] = set()
     side_pictures: dict[str | None, list[str]] = {}
     with_refs: set[str] = set()
 
@@ -895,6 +908,11 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         else:
             with_refs.discard(view)
             extra_v = extra
+        if view == "back" and hair_words:
+            with_words.add(view)
+            extra_v = " ".join(p for p in (extra_v, BACK_HAIR_SENTENCE) if p)
+        else:
+            with_words.discard(view)
         if card is None:
             return await _generate_view(sc, src_name, view, seed, lora_strength, extra_v, at, width / n,
                                         **({"references": refs} if refs else {})), "standard"
@@ -965,6 +983,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             info = view_checks(*check_args[view], hair)
             if view in with_refs and drew == "standard":
                 info["references"] = ["left", "right"]
+            if view in with_words and drew == "standard":
+                info["hair_words"] = True
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew

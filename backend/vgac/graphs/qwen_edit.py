@@ -201,6 +201,13 @@ POSE_KEEP = "Keep the exact pose, with the arms and legs where they are in the p
 # where the sides show hair to the collarbones). The back is drawn last, so the two finished side views ride along as
 # Picture 2 (the character's left side) and Picture 3 (the right), the kept picture staying Picture 1, and this sentence
 # names them. To undo, empty it and turn `back_references` off.
+# CARD TRIAL 2026-11-14 (Mage, long silver hair swept out to one side in the back view, sweep 1.74 against a limit of 1.0): with
+# this sentence added to the back prompt, 4 of 4 draws came out hanging straight (sweep 0.016 to 0.036), pose_held ok, 60 to 90 s;
+# the redraws without it repeated the sweep (2.29, 2.01) because the kept front picture fans out. A woman with straight chestnut
+# hair to the waist came out straight too (0.14 and 0.19, pose ok). NOT tried on tied-up hair (a ponytail or a braid to one side),
+# short hair or hair meant to be styled to a side: see turnaround.BACK_HAIR_WORDS.
+BACK_HAIR_SENTENCE = ("The hair hangs straight down the back, as when standing still with no wind. It does not stream out to "
+                      "either side.")
 BACK_SIDES_SENTENCE = ("Picture 2 shows this character's left side and Picture 3 the right side. The hair, seen from behind, "
                        "must match them: the same length, ending at the same place against the shoulders, and falling as wide. "
                        "Do not copy the pose or the turn of Pictures 2 and 3; show the back of Picture 1.")

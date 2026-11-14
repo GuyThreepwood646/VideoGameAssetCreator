@@ -408,3 +408,38 @@ def test_a_back_that_stays_swept_is_flagged_with_its_words(tmp_path, drawn, monk
     info = sc.metrics["views"]["back"]
     chk = [c for c in info["checks"] if c["name"] == "hair_matches_sides"][0]
     assert info["flagged"] is True and chk["passed"] is False and "swept out to one side" in chk["help"] and chk["value"] == 1.7
+
+
+# --- the hair words in the back view's prompt ----------------------------------------------------------------------------
+
+
+def test_the_sentence_is_the_one_that_was_tried_on_a_card():
+    assert qwen_edit.BACK_HAIR_SENTENCE == ("The hair hangs straight down the back, as when standing still with no wind. "
+                                            "It does not stream out to either side.")
+
+
+def test_the_back_is_drawn_with_the_hair_words_from_the_first_draw_and_on_every_redraw(tmp_path, drawn):
+    drawn["back_fails"] = 2
+    sc = run(tmp_path)
+    backs = calls_by_view(drawn)["back"]
+    assert len(backs) == 3 and all(qwen_edit.BACK_HAIR_SENTENCE in b["extra"] for b in backs)
+    assert all(qwen_edit.BACK_HAIR_SENTENCE not in c["extra"] for c in drawn["calls"] if c["view"] != "back")
+    assert sc.metrics["views"]["back"]["hair_words"] is True
+    assert all("hair_words" not in info for v, info in sc.metrics["views"].items() if v != "back")
+
+
+@pytest.mark.parametrize("params, category", [
+    ({"back_hair_words": False}, "humanoid"),
+    ({}, "quadruped"),                       # no hair to speak of
+    ({"bald_views": True}, "humanoid"),      # library hair: the bald pictures have no hair to hang
+])
+def test_the_hair_words_stay_off_where_they_do_not_belong(tmp_path, drawn, params, category):
+    sc = run(tmp_path, params, category=category)
+    assert all(qwen_edit.BACK_HAIR_SENTENCE not in c["extra"] for c in drawn["calls"])
+    assert "hair_words" not in sc.metrics["views"].get("back", {})
+
+
+def test_the_hair_words_and_the_references_go_together_when_both_are_on(tmp_path, drawn):
+    run(tmp_path, {"back_references": True})
+    back = calls_by_view(drawn)["back"][0]
+    assert qwen_edit.BACK_HAIR_SENTENCE in back["extra"] and qwen_edit.BACK_SIDES_SENTENCE in back["extra"]
