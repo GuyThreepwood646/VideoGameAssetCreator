@@ -245,6 +245,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _joins(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
         await _fingers(sc, rig_glb, params)
+        await _palm_down(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -995,6 +996,34 @@ async def _fingers(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> N
         sc.set_metrics(finger_build=sides)
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(finger_build={"error": str(e)[:300]})
+
+
+async def _palm_down(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Turn the hands from palm-forward to palm-down and re-bind (blender/palm_down.py), in place. The pictures show open
+    palms forward, so the skeleton is fitted that way and the retarget's T-pose and Unity's Humanoid avatar keep it; every
+    clip then shows palms forward. Needs the finger chains (the palm is read from them), so it runs after _fingers, and
+    before anything reads the skeleton (rig inspection, hit boxes, sockets, the moves, the export). Three forearm twist bones
+    per turned arm (Extra_ForeArmTwist_*) keep the forearm's thickness. metrics.palm_down: {Left, Right: {path turned or
+    skipped, roll_deg, twist_bones, reason}}, the degrees each hand was turned. Never raises. Setting palm_down (default on)
+    turns it off."""
+    on = params.get("palm_down", True) is not False
+    sc.set_params(palm_down=on)
+    if not on:
+        return
+    out = sc.dir / "rig_palm_down.glb"
+    report = sc.dir / "palm_down.json"
+    try:
+        await sc.blender("palm_down.py", [rig_glb, out, "--report", report], log_name="palm_down.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        sides = {s: {k: v for k, v in (rep.get(s) or {}).items() if k in ("path", "roll_deg", "twist_bones", "reason")} for s in ("Left", "Right")}
+        if any(v.get("path") == "turned" for v in sides.values()) and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_palm_down.glb")
+            shutil.move(str(out), str(rig_glb))
+        if report.is_file():
+            sc.register("palm_down", report)
+        sc.set_metrics(palm_down=sides)
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(palm_down={"error": str(e)[:300]})
 
 
 PREFIX = "mixamorig:"

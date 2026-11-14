@@ -87,7 +87,8 @@ if arms:
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
     keys = ("arm", "leg", "thigh", "shoulder", "upper", "neck", "tail", "spine", "hip", "knee", "elbow", "lid")
-    bent = [pb.name for pb in arm.pose.bones if any(k in pb.name.lower() for k in keys) and pb.parent is not None]
+    bent = [pb.name for pb in arm.pose.bones if any(k in pb.name.lower() for k in keys) and pb.parent is not None
+            and "extra_" not in pb.name.lower()]  # Extra_ bones (forearm twist) turn with their parent, not as forearms
     if not bent:
         bent = [pb.name for pb in list(arm.pose.bones)[1:6]]
     info["bent"] = bent
