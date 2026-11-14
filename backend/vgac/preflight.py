@@ -640,9 +640,23 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
                             "its files.", "", [stage], mtech))
             continue
         found = has_file(choices, expected)
+        earlier = ""
+        if not found and mid in ("zturbo", "zbase"):  # the earlier Z-Image files stand in (zimage_fallback)
+            from . import zimage_fallback as zf
+
+            if mid == "zbase":
+                earlier = zf.listed(choices, zf.OLD_BASE_UNET) or ""
+            else:
+                cinfo = await _node_info(client, "CheckpointLoaderSimple", cache)
+                cchoices = combo_choices(cinfo, "ckpt_name") if not isinstance(cinfo, Exception) else None
+                earlier = next((c for w in zf.OLD_TURBO_CHECKPOINTS if (c := zf.listed(cchoices, w))), "")
         del choices  # only found or missing leaves this function
         if found:
             out.append(item(f"model.{name}.{mid}", "models", label, "ok", "Installed.", "", [stage], mtech))
+        elif earlier:
+            out.append(item(f"model.{name}.{mid}", "models", label, "ok",
+                            "The publisher's file is not installed; the earlier copy is used instead.", "", [stage],
+                            mtech + f"; using {earlier}"))
         else:
             state = "fail" if required else "warn"
             what = STAGE_PLAIN.get(stage, stage)

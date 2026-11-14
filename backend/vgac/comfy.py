@@ -115,6 +115,7 @@ class ComfyClient:
         self._http: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
         self._vram_cache: tuple[float, dict[str, Any]] | None = None
+        self._listings: dict[str, tuple[float, list[Any] | None]] = {}  # loader node -> (when asked, what it lists)
         # The address each prompt was sent to: wait() keeps asking there even if the client is pointed elsewhere
         # meanwhile (a prompt exists only on the engine that took it). Clients for addresses other than base_url.
         self._prompt_url: dict[str, str] = {}
@@ -156,7 +157,7 @@ class ComfyClient:
             return
         old = self._http
         self.base_url = url
-        self._http, self._http_loop, self._vram_cache = None, None, None
+        self._http, self._http_loop, self._vram_cache, self._listings = None, None, None, {}
         if old is not None and not old.is_closed:
             try:
                 asyncio.get_running_loop().create_task(old.aclose())
@@ -236,7 +237,36 @@ class ComfyClient:
             "devices": devices,
         }
 
+    async def _listing(self, node_class: str, input_name: str) -> list[Any] | None:
+        """What a loader node lists now (kept 30 s), or None when it cannot be asked."""
+        from .preflight import combo_choices
+
+        got = self._listings.get(node_class)
+        if got is not None and time.monotonic() - got[0] < 30.0:
+            return got[1]
+        try:
+            choices = combo_choices(await self.object_info(node_class), input_name)
+        except Exception as e:  # noqa: BLE001  (the engine not answering is the submit's problem, not ours)
+            log.debug("instance %s: could not list %s: %s", self.name, node_class, e)
+            return None
+        self._listings[node_class] = (time.monotonic(), choices)
+        return choices
+
+    async def _adapt_zimage(self, graph: dict[str, Any]) -> dict[str, Any]:
+        """Use the earlier Z-Image files when the publisher's are not in this engine's lists (zimage_fallback)."""
+        from . import zimage_fallback
+
+        if not zimage_fallback.wants(graph):
+            return graph
+        unets = await self._listing("UNETLoader", "unet_name")
+        checkpoints = await self._listing("CheckpointLoaderSimple", "ckpt_name")
+        new, note = zimage_fallback.adapt(graph, unets, checkpoints)
+        if note:
+            log.info("instance %s: %s", self.name, note)
+        return new
+
     async def queue_prompt(self, graph: dict[str, Any], client_id: str | None = None) -> str:
+        graph = await self._adapt_zimage(graph)
         body: dict[str, Any] = {"prompt": graph}
         if client_id:
             body["client_id"] = client_id

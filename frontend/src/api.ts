@@ -588,6 +588,7 @@ export type ComfyPacksReport = {
 export type ModelItem = {
   id: string; name: string; size: number; gate: string; page: string; licence: string; publisher: boolean; note: string
   state: 'present' | 'missing' | 'differs'; path: string; reused: boolean; check: string; accepted: boolean
+  older?: string // missing here, but an earlier copy is there and the app uses it
 }
 export type ModelJob = { state: string; text: string; fraction: number; bytes_done: number; bytes_total: number; error: { code: string; message: string; fix: string } | null }
 export type ModelSet = {

@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -244,7 +245,23 @@ def _item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]
         found_size_wrong = found_size_wrong or p
     if found_size_wrong is not None:
         return {"state": "differs", "path": str(found_size_wrong), "reused": found_size_wrong != spec.dest, "check": "size", "accepted": False}
-    return {"state": "missing", "path": str(spec.dest), "reused": False, "check": "", "accepted": False}
+    out = {"state": "missing", "path": str(spec.dest), "reused": False, "check": "", "accepted": False}
+    older = _older_copy(spec, root, roots)
+    if older is not None:
+        out["older"] = str(older)  # not here, but an earlier copy is, and the app uses it (zimage_fallback)
+    return out
+
+
+def _older_copy(spec: Spec, root: Path, roots: dict[str, Any]) -> Path | None:
+    """An earlier file the list names for this one (`older`), looked for like any other: exact paths in every models folder."""
+    for rel in spec.older:
+        for p in candidates(replace(spec, dest=root / rel, older=[]), root, roots):
+            try:
+                if p.is_file():
+                    return p
+            except OSError:
+                continue
+    return None
 
 
 def all_specs_by_id(root: Path | None) -> dict[str, Spec]:

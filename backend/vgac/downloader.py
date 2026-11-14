@@ -207,6 +207,7 @@ class Spec:
     note: str = ""
     gone_fix: str = ""  # what to say when every link is refused or gone (default: get it from the page)
     kind: str = "model"  # model | addon | project_file
+    older: list[str] = field(default_factory=list)  # earlier files (paths under the models folder) the app can use while this one is not there
 
     @property
     def part(self) -> Path:
@@ -334,7 +335,8 @@ def _spec(kind: str, key: str, d: dict[str, Any], root: Path) -> Spec | None:
     urls = [u for u in (d.get("url"), d.get("url_alt")) if u]
     return Spec(id=f"{kind}:{key}", name=d.get("name") or key, urls=urls, dest=dest, size=int(d.get("size") or 0), sha256=d.get("sha256") or "",
                 page=d.get("page", ""), licence=d.get("licence", ""), licence_page=d.get("licence_page", ""), optin=bool(d.get("optin")),
-                publisher=d.get("publisher", True) is not False, required=d.get("required"), note=d.get("note", ""), kind=kind)
+                publisher=d.get("publisher", True) is not False, required=d.get("required"), note=d.get("note", ""), kind=kind,
+                older=[str(x) for x in (d.get("older") or []) if isinstance(x, str)])
 
 
 def _inside(path: Path, base: Path) -> bool:

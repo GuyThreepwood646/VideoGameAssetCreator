@@ -157,6 +157,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                   {i.reused ? ` (used where it is: ${i.path})` : ''}
                   {i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the published size' : ''}
                   {i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the published one' : ''}
+                  {i.state === 'missing' && i.older ? ` - the publisher's file is not here; the app is using the older copy at ${i.older}` : ''}
                   {!i.publisher ? ' - community upload, check the page' : ''}
                 </span>
                 {i.state === 'differs' && (

@@ -104,6 +104,18 @@ def test_instance_with_everything_installed(settings, new_combo):
     assert PERSONAL not in json.dumps(items)
 
 
+def test_the_publishers_zimage_file_missing_but_the_earlier_copy_listed_is_ok_and_neither_fails(settings):
+    models = preflight.load_models()
+    new_name = str(models["zturbo"]["file"])
+    rest = [f for f in all_model_files() if new_name not in f]
+    earlier = NodeClient("http://127.0.0.1:10", DEV_3080, files=rest + ["Z-Image\\z-image-turbo-fp8-aio.safetensors"])
+    z = by_id(asyncio.run(preflight.check_instance(settings, "b", earlier, set())))["model.b.zturbo"]
+    assert z["state"] == "ok" and "earlier copy" in z["detail"] and "z-image-turbo-fp8-aio" in z["technical"]
+    neither = NodeClient("http://127.0.0.1:10", DEV_3080, files=rest)
+    z = by_id(asyncio.run(preflight.check_instance(settings, "b", neither, set())))["model.b.zturbo"]
+    assert z["state"] == "fail"
+
+
 def test_missing_nodes_and_models_fail_or_warn(settings):
     files = [f for f in all_model_files() if "qwen-image-edit-2511-multiple-angles" not in f and "Chroma1-HD" not in f]
     client = NodeClient("http://127.0.0.1:10", DEV_3080, missing={"SkinTokenRigTrimesh", "PixelArtDetectorToImage"}, files=files)
