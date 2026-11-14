@@ -537,7 +537,7 @@ def test_body_fits_hand_over_by_where_the_head_views_cover_not_by_their_weight()
     img = lambda c: np.full((4, 4, 3), c)  # noqa: E731
     sp = np.full((N, 2), 2.0)
     # texel 0: a cheek the head view covers fully but sees at a low weight; 1 and 2: down the neck fade; 3: the chest
-    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.03, 0.2, 0.1, 0.0]),
+    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.03, 0.04, 0.01, 0.0]),
             "cover_sel": np.arange(3), "cover": np.array([1.0, 0.5, 0.2])}
     body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
     paint, alpha, dom = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
@@ -566,3 +566,14 @@ def test_the_neck_tone_match_shifts_the_body_paint_in_the_band_only() -> None:
     d_in = out[band] - out[band].mean(axis=0)
     d_was = paint[band] - paint[band].mean(axis=0)
     assert np.corrcoef(d_in[:, 0], d_was[:, 0])[0, 1] > 0.9  # the fine detail is kept, only the tone moved
+
+
+def test_a_head_view_painting_well_holds_the_body_fits_off_whatever_its_cover() -> None:
+    N = 2
+    atlas = type("A", (), {"idx": np.arange(N)})()
+    img = lambda c: np.full((4, 4, 3), c)  # noqa: E731
+    sp = np.full((N, 2), 2.0)
+    head = {"sel": np.arange(N), "sp": sp, "w": np.array([0.3, 0.3]), "cover_sel": np.arange(N), "cover": np.array([0.4, 0.0])}
+    body = {"sel": np.arange(N), "sp": sp, "w": np.full(N, 0.6)}
+    paint, _, _ = srcproject.blend(atlas, [head, body], [img(0.9), img(0.1)], 2, [True, False])
+    assert np.allclose(paint[:, 0], 0.9)  # weight 0.3 is over HEAD_HANDOVER: no body colour

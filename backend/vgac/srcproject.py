@@ -898,6 +898,10 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
             if "cover" in p:  # by where the head view can paint (project_view), so the hand-over follows the neck fade
                 cov = np.zeros(N)
                 cov[p["cover_sel"]] = p["cover"]
+                # and where it paints with HEAD_HANDOVER of weight or more, as before the gradual hand-over: cover alone
+                # let the body fits back onto the upper neck under the chin, where the wider neck fade starts
+                # (M1-shorts' built-from picture 12.0 to 16.5 percent of the face region)
+                cov = np.maximum(cov, np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
                 under_head = under_head * (1.0 - cov)
             else:
                 under_head = under_head * (1.0 - np.clip(seen / HEAD_HANDOVER, 0.0, 1.0))
