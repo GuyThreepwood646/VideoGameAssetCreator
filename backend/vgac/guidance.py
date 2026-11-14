@@ -320,28 +320,31 @@ LIGHT_LEFT_WORDS = {  # lightfix.left_alone keys
 
 
 def _light_after_text(c: dict[str, Any], passed: bool) -> str:
-    """baked_light measured after the pictures were painted on (vgac/lightfix.py): stops of light across one material,
-    before and after, and what was left as it was. Braces are doubled: the text is filled as a template after this."""
+    """baked_light measured after the pictures were painted on (vgac/lightfix.py): the light found across one material
+    (value) and across the figure, how much more even the materials became when it was corrected, and what was left as
+    it was. Braces are doubled: the text is filled as a template after this."""
     def stops(v: Any) -> str:
         return f"{float(v):.1f}" if v is not None else "?"
 
-    after, before = c.get("value"), _var(c, "before")
+    found, whole = c.get("value"), _var(c, "whole")
     left = [LIGHT_LEFT_WORDS[k] for k in (_var(c, "left") or []) if k in LIGHT_LEFT_WORDS]
     left_text = (" Left as it was: " + ", ".join(left[:-1]) + (" and " if len(left) > 1 else "") + left[-1] + ".") if left else ""
-    how = (" The colours as painted are kept as base_color_lit.png in this version's files; to keep the picture's light, "
-           "set Delight to Keep in Fine-tune and run clean-up again.")
-    if passed and _var(c, "removed"):
-        text = (f"The light from the picture was taken out of the colours (it varied {stops(before)} stops across one material, "
-                f"now {stops(after)}), so your game's lights shade the model." + left_text + how)
-    elif passed:
-        text = f"No strong light from the picture in the colours ({stops(after)} stops across one material), so they were left as painted."
+    best = " Best fix: a picture taken in soft, even light."
+    seen = (f"Light from the picture is painted into the colours: {stops(found)} stops across one material"
+            + (f", {stops(whole)} across the figure" if whole is not None else "") + ". Your game's lights will shade it a second time.")
+    if passed:
+        text = f"No strong light from the picture in the colours ({stops(found)} stops across one material), so they were left as painted."
     elif _var(c, "removed"):
-        text = (f"Light from the picture is still painted into the colours: {stops(after)} stops across one material, reduced from "
-                f"{stops(before)}. Your game's lights will shade it a second time." + left_text
-                + " Best fix: a picture taken in soft, even light." + how)
+        evened = _var(c, "evened")
+        part = f" by {round(100 * float(evened))}%" if evened is not None else ""
+        text = (seen + f" The colours were evened out{part}, only where the texture and the measured light agree and one stop at "
+                "most, so the character still reads as lit." + left_text + best
+                + " The colours as painted are kept as base_color_lit.png in this version's files; to keep the picture's light, "
+                "set Delight to Keep in Fine-tune and run clean-up again.")
+    elif _var(c, "rejected"):
+        text = seen + " A correction was tried and not kept, because it did not make the colours more even." + best
     else:
-        text = (f"Light from the picture is painted into the colours ({stops(after)} stops across one material), too little to "
-                "remove safely, so your game's lights will shade it a second time. Best fix: a picture taken in soft, even light.")
+        text = seen + " Too little to remove safely, so the colours were left as painted." + best
     return text.replace("{", "{{").replace("}", "}}")
 
 

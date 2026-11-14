@@ -306,6 +306,12 @@ def test_texture_pass_corrects_a_realistic_asset_and_keeps_the_original(tmp_path
     res2 = prep_stage.texture_pass(glb, glb, maps, out, 64, "keep", False)
     assert not res2["metrics"]["delight_applied"] and "base_color" not in res2["files"] and "roughness" in res2["files"]
 
+    # When the pictures will be painted on, the light is removed after that (vgac/lightfix.py): not here, but measured.
+    res3 = prep_stage.texture_pass(glb, glb, maps, out, 64, "remove", False, light_after=True)
+    m3 = res3["metrics"]
+    assert m3["delight_deferred"] and not m3["delight_applied"] and "base_color" not in res3["files"]
+    assert m3["light_score_before"] == m["light_score_before"]
+
 
 # --- G05: the re-bake in Blender ------------------------------------------------------------------------------
 
