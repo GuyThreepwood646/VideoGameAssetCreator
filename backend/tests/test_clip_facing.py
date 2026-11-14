@@ -63,7 +63,7 @@ def test_check_fails_on_backwards_moves_with_a_plain_sentence():
     assert c["help"] == ("The run move (jog fwd loop) plays with the body turned 180 degrees away from the character's forward "
                          "(to its left), and 3 more moves are turned too, so in a game the character would face the wrong way "
                          "while it plays.")
-    assert c["fix"] == {"stage": "export", "params": {}, "label": "Rebuild for Unity"}
+    assert c["fix"] == {"stage": "export", "params": {}, "label": "Try again"}
 
 
 def test_check_passes_after_the_fix():

@@ -400,7 +400,7 @@ def test_look_check_sentences(tmp_path):
     bad = guidance.describe_check(prep_stage.look_checks(low, {}, {"shading_applied": "smooth", "shading_source": "recipe"},
                                                          {"base_color": big, "normal": big})[0])
     assert not bad["passed"] and bad["help"].startswith("The Low-poly look is not fully applied: the textures are 1024 px, not 512 px")
-    assert bad["fix"] == {"stage": "prep", "params": {}, "label": "Apply the look again"}
+    assert bad["fix"] == {"stage": "prep", "params": {}, "label": "Try again"}
     # Looks that keep the full pipeline, and the material category, get no look check.
     assert prep_stage.look_checks(reference.recipe("painted", "humanoid", "pc_mid"), {}, {}, {}) == []
     assert prep_stage.look_checks(low, {}, {}, {}, "material") == []

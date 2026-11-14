@@ -7,7 +7,7 @@ import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
+import { autopilotLine, autopilotSecondsLeft, checkFix, checkFixNote, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
 import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
@@ -464,6 +464,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
                       <span className="finish-line-text">
                         <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
                         {a.text} <Link to={`/assets/${asset.id}/${a.stage}`}>Go to this step</Link>
+                        {checkFixNote(a.check) && <span className="fix-note muted small">{checkFixNote(a.check)}</span>}
                       </span>
                       {fix && (
                         <button type="button" className="small-btn" disabled={busy} onClick={() => onFix!(fix)} title={fixTooltip(fix)}>

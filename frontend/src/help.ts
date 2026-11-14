@@ -1066,6 +1066,13 @@ const quarterTurn = (v: number | null): number | null => {
   return [0, 90, 180, 270].includes(d) ? d : null
 }
 
+// The plain line under a failed check saying what a person can do about it (backend fixnotes: "Try again" only runs the
+// step again; no button means the app has a manual way or nothing fixes it inside the app). Null for a passed check.
+export function checkFixNote(check: Check): string | null {
+  if (checkPassed(check)) return null
+  return check.fix_note?.trim() || null
+}
+
 // Where the app can fix a failing check (the backend's check.fix wins). Passing checks have no fix.
 export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null

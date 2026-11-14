@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ApiError, type Check, type JobStatus, type VersionStatus } from '../api'
-import { checkFix, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
+import { checkFix, checkFixNote, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
 import { useRefData } from '../refdata'
 import { Info } from './Info'
 
@@ -200,6 +200,7 @@ export function PlainChecks({
         <span className="plain-check-text" title={`Technical name: ${c.id ?? c.name}`}>
           {checkSentence(c, ctx)}
           {key && <Info term={'term.' + key} />}
+          {!ok && checkFixNote(c) && <span className="fix-note muted small">{checkFixNote(c)}</span>}
         </span>
         {fix && onFix && (
           <button type="button" className="small-btn" disabled={busy} onClick={() => onFix(fix, c)} title={fixTooltip(fix, ref?.stages)}>

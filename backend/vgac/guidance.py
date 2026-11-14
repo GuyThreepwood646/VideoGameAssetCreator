@@ -11,7 +11,7 @@ import re
 import string
 from typing import Any
 
-from . import reference
+from . import fixnotes, reference
 from .reference import STAGE_ORDER
 
 STAGE_GUIDE: dict[str, dict[str, Any]] = {
@@ -1321,6 +1321,8 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
     passed = bool(c.get("passed", c.get("ok", False)))
     if not g:
         out.setdefault("severity", "warn")
+        if not passed and (c.get("vars") or {}).get("measured") is not False:
+            fixnotes.annotate(out, name, None)
         return out
     out["severity"] = g.get("severity", "warn")
     values: dict[str, Any] = {**implied, **(c.get("vars") or {})}
@@ -1346,6 +1348,8 @@ def describe_check(c: dict[str, Any]) -> dict[str, Any]:
             label = (label(c) if callable(label) else label) or DEFAULT_FIX_LABEL
             out["fix"] = {**fix, "label": label}
             out["fix_label"] = label
+    if not passed and not unmeasured:
+        fixnotes.annotate(out, name, g)  # the honest label: a rerun says so, a check with no button says what to do
     return out
 
 

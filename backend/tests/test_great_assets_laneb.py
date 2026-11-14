@@ -146,9 +146,9 @@ def test_existing_severities_kept():
 
 
 def test_fix_labels_and_default_label(monkeypatch):
-    labels = {"triangle_budget": "Shrink to the budget", "size_m": "Set the size", "lod_count": "Rebuild the detail levels",
-              "collider_present": "Add a collision shape", "weight_coverage": "Attach the loose surface",
-              "weights_normalised": "Balance the weights"}
+    labels = {"triangle_budget": "Shrink to the budget", "size_m": "Set the size", "lod_count": "Try again",
+              "collider_present": "Add a collision shape", "weight_coverage": "Try again",
+              "weights_normalised": "Try again"}
     for name, label in labels.items():
         (_, _), (fv, fl) = SAMPLES[name]
         c = _described(name, fv, fl, False)
@@ -197,7 +197,7 @@ def test_quality_check_carries_outcome_sentence():
     good = quality.check("weight_coverage", True, 1.0, 0.99)
     bad = quality.check("weight_coverage", False, 0.9, 0.99)
     assert good["help"] == "100% of the surface follows the bones."
-    assert bad["help"].startswith("Only 90% of the surface") and bad["fix"] == {"stage": "rig", "params": {}, "label": "Attach the loose surface"}
+    assert bad["help"].startswith("Only 90% of the surface") and bad["fix"] == {"stage": "rig", "params": {}, "label": "Try again"}
 
 
 # --- 2.2 option labels, 2.3 knobs for some categories -----------------------------------

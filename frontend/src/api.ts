@@ -152,6 +152,11 @@ export type Check = {
   fix?: CheckFix | null
   // The Fix button's words when the backend puts them on the check rather than on fix.label.
   fix_label?: string
+  // What a person can do about a failure, in plain words (backend fixnotes): a "Try again" button says it only runs the
+  // step again; a check with no button says what to do in the app or the one step outside it. fix_kind is one of
+  // rerun, by_hand, outside, legacy.
+  fix_note?: string
+  fix_kind?: 'rerun' | 'by_hand' | 'outside' | 'legacy'
   severity?: 'block' | 'warn'
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>

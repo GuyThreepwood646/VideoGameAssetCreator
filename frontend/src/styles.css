@@ -2216,6 +2216,11 @@ button.btn-lg {
 .plain-check.ok .plain-check-text {
   color: var(--muted);
 }
+/* What a person can do about a failure: a line under the sentence, so a "Try again" or a no-button check says so. */
+.fix-note {
+  display: block;
+  margin-top: 2px;
+}
 .plain-check .small-btn {
   border-color: var(--border-control);
   color: var(--text);
