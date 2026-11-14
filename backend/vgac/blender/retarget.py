@@ -40,6 +40,7 @@ How a clip is moved across (the standard rest-pose compensated method):
 """
 import json
 import math
+import re
 import os
 import sys
 import time
@@ -55,7 +56,7 @@ from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 import motionfile  # noqa: E402
 
 T0 = time.time()
-_VALUE_FLAGS = ("--library", "--clips", "--loops", "--fps", "--keep", "--report", "--spec")
+_VALUE_FLAGS = ("--library", "--clips", "--loops", "--fps", "--keep", "--report", "--spec", "--finger-cap", "--finger-cap-except")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src_glb, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
@@ -330,12 +331,34 @@ def sample_source(arm, act, frame):
     return qs, ps
 
 
+FINGER_CAP = _common.opt("--finger-cap", None)  # degrees per finger joint, or None for the library's own curl
+FINGER_CAP = math.radians(float(FINGER_CAP)) if FINGER_CAP and float(FINGER_CAP) > 0 else None
+FINGER_CAP_EXCEPT = {c for c in _common.opt("--finger-cap-except", "").split(",") if c}  # clips whose fists keep the library's curl
+_cap_active = [True]
+_FINGER_RE = re.compile(r"^(Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)[123]$")
+
+
 def target_frame(qs, ps):
     """Canonical world orientation of every target bone and the hips position, before the ground pass."""
     out = {}
+    cap_delta = {}  # finger joints: the capped world turn from the reference pose, by short name
     for b in order:
         s = T.short_of.get(b.name)
-        if s is not None:
+        if s is not None and FINGER_CAP and _cap_active[0] and _FINGER_RE.match(s):
+            # Each finger joint turns by at most FINGER_CAP from its parent's (capped) turn: the library's loose fist (about 77
+            # degrees a joint) is deeper than a short finger can close without folding into its neighbours.
+            ps_ = T.short_of.get(b.parent.name) if b.parent is not None else None
+            delta = Quaternion(tuple(qs[s])) @ Quaternion(tuple(Sref[s])).inverted()
+            if ps_ is not None:
+                pd_old = Quaternion(tuple(qs[ps_])) @ Quaternion(tuple(Sref[ps_])).inverted()
+                pd_new = cap_delta.get(ps_, pd_old)
+                local = pd_old.inverted() @ delta
+            else:
+                pd_new, local = Quaternion((1, 0, 0, 0)), delta
+            local = Quaternion(gait.cap_turn(tuple(local), FINGER_CAP))
+            cap_delta[s] = pd_new @ local
+            out[b.name] = cap_delta[s] @ Quaternion(tuple(Tref[s]))
+        elif s is not None:
             out[b.name] = Quaternion(gait.compensate(tuple(qs[s]), tuple(Sref[s]), tuple(Tref[s])))
         elif b.parent is not None:
             # Unmapped bone: rides on its parent (rest relation kept).
@@ -548,6 +571,8 @@ def solve_frames(frames, loop, lift):
 
 
 def retarget_clip(name, arm, act, loop):
+    # An entry ending in "_" is an action-name prefix (Punch_, Sword_, Pistol_: the library's fists and grips), else a clip name.
+    _cap_active[0] = name not in FINGER_CAP_EXCEPT and not any(e.endswith("_") and act.name.startswith(e) for e in FINGER_CAP_EXCEPT)
     fr = act.frame_range
     start, end = float(fr[0]), float(fr[1])
     # The library's frames count at its own rate: sample the clip's length in seconds at the output rate.

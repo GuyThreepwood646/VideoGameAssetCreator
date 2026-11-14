@@ -735,6 +735,26 @@ async def rig_from_donor(sc: StageContext, donor: Any, params: dict[str, Any], b
     await judge(sc)
 
 
+# The library turns every finger joint about 77 degrees in almost every clip (a loose fist), more than a short finger closes
+# without folding into its neighbours or through the palm. The retarget limits each finger joint's turn to this many degrees
+# (blender/retarget.py --finger-cap). 0 turns it off. The fists and grips keep the library's own curl: clips named punch or
+# attack, and library actions Punch_*, Sword_* and Pistol_* (a held item or a punch needs a closed hand).
+FINGER_CAP_DEFAULT = 40.0
+FINGER_CAP_EXCEPT = ("punch", "attack", "Punch_", "Sword_", "Pistol_")
+
+
+def finger_cap_of(params: dict[str, Any]) -> float | None:
+    """Degrees per finger joint the moves are limited to (setting finger_cap; default FINGER_CAP_DEFAULT; 0 or false: none)."""
+    v = params.get("finger_cap", FINGER_CAP_DEFAULT)
+    if v is None or v is False:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return FINGER_CAP_DEFAULT
+    return v if v > 0 else None
+
+
 async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], chosen_moves: Any) -> None:
     """Retarget the library clips into anim.glb (in place). A failure leaves the procedural clips and records
     retarget_error; metrics say which clips came from where and how long it took."""
@@ -759,6 +779,10 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     report = sc.dir / "anim_retarget.json"
     args: list[Any] = [anim_glb, anim_glb, "--library", ";".join(f"{lid}={p}" for lid, p in libs), "--spec", spec_path,
                        "--loops", loops or "none", "--fps", 24, "--report", report]
+    cap = finger_cap_of(params)
+    sc.set_params(finger_cap=cap or 0)
+    if cap:
+        args += ["--finger-cap", cap, "--finger-cap-except", ",".join(FINGER_CAP_EXCEPT)]
     proc = list(sc.version.metrics.get("procedural_clips") or [])
     if removed:
         # Built-in moves the person took off (and built-in copies of removed library moves) are not kept.

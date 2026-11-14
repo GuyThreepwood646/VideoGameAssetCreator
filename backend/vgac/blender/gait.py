@@ -397,6 +397,22 @@ def compensate(src_q, src_ref_q, tgt_ref_q):
     return q_normalize(q_mul(q_mul(src_q, q_conj(src_ref_q)), tgt_ref_q))
 
 
+def cap_turn(q, max_rad):
+    """The turn q (w, x, y, z) with its angle limited to max_rad, by the short way round (q and -q are the same turn, so a
+    negative w is flipped first: otherwise a small turn reads as nearly a full circle). Same axis, so the direction is
+    kept. A turn already within the limit is returned unchanged (as a normalised quaternion)."""
+    w, x, y, z = q_normalize(tuple(q))
+    if w < 0:
+        w, x, y, z = -w, -x, -y, -z
+    angle = 2.0 * math.acos(min(1.0, w))
+    if angle <= max_rad or angle < 1e-9:
+        return (w, x, y, z)
+    s = math.sin(angle / 2.0)
+    ax = (x / s, y / s, z / s)
+    h = math.sin(max_rad / 2.0)
+    return (math.cos(max_rad / 2.0), ax[0] * h, ax[1] * h, ax[2] * h)
+
+
 # Library bone names (Quaternius UAL1 Rigify "DEF-" names, UAL2 Unreal names) -> Mixamo names without the prefix.
 _SIDE = {"L": "Left", "R": "Right", "l": "Left", "r": "Right"}
 _FINGERS = {"index": "Index", "middle": "Middle", "ring": "Ring", "pinky": "Pinky"}
