@@ -191,8 +191,19 @@ def blender_locations(env: Env, current: str = "") -> list[tuple[Path, str]]:
         key = os.path.normcase(str(p))
         if key not in seen and p.is_file():
             seen.add(key)
-            uniq.append((p, why))
+            uniq.append((p, _store_label(p) or why))
     return uniq
+
+
+def _store_label(exe: Path) -> str:
+    """"Steam" or "Microsoft Store" when the file lives where that store puts Blender, whichever finder saw it first
+    (the installed-programs list, the saved setting or the running program may list the same copy)."""
+    parts = [x.lower() for x in exe.parts]
+    if "steamapps" in parts and "common" in parts:
+        return "Steam"
+    if "windowsapps" in parts and any(x.startswith("blenderfoundation.blender") for x in parts):
+        return "Microsoft Store"
+    return ""
 
 
 def _vtext(v: tuple[int, ...] | None) -> str:

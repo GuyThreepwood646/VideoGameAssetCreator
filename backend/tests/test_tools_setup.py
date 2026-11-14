@@ -500,3 +500,17 @@ def test_the_panel_data_carries_the_change_and_the_seen_route_clears_it(box, mon
     assert got["changed"] and "5.2.3 to 5.3.0" in got["changed"]["message"]
     c.post("/api/tools/blender/seen")
     assert c.get("/api/tools/blender").json()["changed"] is None
+
+
+def test_a_copy_in_a_steam_library_reads_steam_whichever_finder_saw_it_first(box):
+    tmp, _ = box
+    b = make_blender(tmp / "SteamLibrary" / "steamapps" / "common" / "Blender")
+    run = runner_for({"": "Blender 5.2.3"})
+    # the installed-programs list, the saved setting and the running program all name the same copy before the Steam finder
+    env = env_for(tmp, registry=lambda p: [str(b.parent)], running=lambda n: [str(b)])
+    for current in ("", str(b)):
+        found = tools_setup.find_blender(env, run, current=current)
+        assert [Path(f["path"]) for f in found] == [b] and found[0]["source"] == "Steam"
+    store = make_blender(tmp / "PF" / "WindowsApps" / "BlenderFoundation.Blender_5.2.3.0_x64__abc")
+    found = tools_setup.find_blender(env_for(tmp, running=lambda n: [str(store)]), run, current="")
+    assert found[0]["source"] == "Microsoft Store"
