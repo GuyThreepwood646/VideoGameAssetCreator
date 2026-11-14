@@ -94,10 +94,27 @@ def extra_folders(yaml_file: Path) -> dict[str, list[Path]]:
     return out
 
 
+def engine_models_folders() -> list[Path]:
+    """The models folder of every engine's own ComfyUI (a second instance on another card has its own install)."""
+    out = []
+    for inst in (get_settings().instances or {}).values():
+        e = getattr(inst, "engine", None)
+        cd = (e.get("comfy_dir") if isinstance(e, dict) else getattr(e, "comfy_dir", None)) if e else None
+        for sub in ("ComfyUI/models", "models"):
+            if cd and (Path(cd) / sub).is_dir():
+                out.append(Path(cd) / sub)
+                break
+    return out
+
+
 def read_roots(root: Path | None) -> dict[str, Any]:
-    """Every place ComfyUI reads models from: its own models folder and the folders of its extra model paths files."""
+    """Every place ComfyUI reads models from: the models folder of each engine's ComfyUI and the folders of its extra model
+    paths files. `idx` keeps the folder listings made while looking (candidates_below)."""
     typed: dict[str, list[Path]] = {}
     bases: list[Path] = [root] if root else []
+    for f in engine_models_folders():
+        if all(os.path.normcase(str(f)) != os.path.normcase(str(b)) for b in bases):
+            bases.append(f)
     for f in engine_extra_paths():
         got = extra_folders(f)
         for t, folders in got.items():
@@ -105,7 +122,55 @@ def read_roots(root: Path | None) -> dict[str, Any]:
                 bases += folders
             else:
                 typed.setdefault(t, []).extend(folders)
-    return {"typed": typed, "bases": bases}
+    return {"typed": typed, "bases": bases, "idx": {}}
+
+
+def _listing(folder: Path, depth: int = 5, limit: int = 60000) -> dict[str, list[Path]]:
+    """Every file under `folder` (to `depth` folders down, like the engine's own lists, which show subfolders): lower-case name -> paths."""
+    found: dict[str, list[Path]] = {}
+    todo = [(folder, 0)]
+    n = 0
+    while todo and n < limit:
+        d, level = todo.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    n += 1
+                    try:
+                        if e.is_dir():
+                            if level < depth:
+                                todo.append((Path(e.path), level + 1))
+                        else:
+                            found.setdefault(e.name.casefold(), []).append(Path(e.path))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return found
+
+
+def candidates_below(spec: Spec, root: Path, roots: dict[str, Any]) -> list[Path]:
+    """Files of this name in a subfolder of the type folder in every place the engine reads (ComfyUI lists subfolders, so a file
+    kept under skintoken/experiments/x/ is a file the engine has). Only the entry's own type folder is looked in, never a whole
+    models folder; the listing of a folder is made once per look."""
+    try:
+        rel = spec.dest.relative_to(root)
+    except ValueError:
+        return []
+    typ = rel.parts[0] if len(rel.parts) > 1 else ""
+    if not typ:
+        return []
+    folders = [b / typ for b in roots["bases"]] + list(roots["typed"].get(typ, []))
+    if typ in ALT_FOLDERS:
+        folders += [b / ALT_FOLDERS[typ] for b in roots["bases"]]
+    idx = roots.setdefault("idx", {})
+    out: list[Path] = []
+    for f in folders:
+        key = os.path.normcase(str(f))
+        if key not in idx:
+            idx[key] = _listing(f) if f.is_dir() else {}
+        out += idx[key].get(spec.dest.name.casefold(), [])
+    return out
 
 
 def candidates(spec: Spec, root: Path, roots: dict[str, Any]) -> list[Path]:
@@ -319,7 +384,7 @@ def _item_state(spec: Spec, root: Path, roots: dict[str, Any]) -> dict[str, Any]
     if mine is not None:
         return mine
     found_size_wrong: Path | None = None
-    for p in candidates(spec, root, roots):
+    for p in candidates(spec, root, roots) + candidates_below(spec, root, roots):
         try:
             size = p.stat().st_size if p.is_file() else -1
         except OSError:

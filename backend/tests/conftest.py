@@ -83,6 +83,14 @@ def _no_real_card_figures(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_models_folders(monkeypatch: pytest.MonkeyPatch):
+    """The models panel looks in every engine's own models folder; a test must not see this machine's."""
+    from vgac import models_setup
+
+    monkeypatch.setattr(models_setup, "engine_models_folders", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def _own_hair_stays_out_of_tests_without_a_temporary_library(request, monkeypatch: pytest.MonkeyPatch):
     """A test that does not use the temporary-library fixture would read the person's real my_hair/ folder, and the
     built-in library tests (all CC0, all with files in the app's data folder) would see their own hairstyles."""

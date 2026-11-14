@@ -323,3 +323,49 @@ def test_getting_a_set_skips_the_covered_file_unless_it_is_asked_for(world, monk
     assert taken[-1] == ["model:zbase"]
     models_setup.start_set("s", {}, only=["model:other"])
     assert taken[-1] == ["model:other"]
+
+
+# --- a file the engine has in a subfolder, or in another engine's own models folder ---------------------------------------------------------
+
+
+def _sk_list(tmp: Path, data: bytes):
+    lst = json.loads((tmp / "setup" / "downloads.json").read_text(encoding="utf-8"))
+    lst["models"]["sk"] = {"url": "http://fake/g", "page": "http://p", "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                           "dest": "skintoken", "save_as": "grpo_1400.ckpt", "publisher": True}
+    lst["sets"][0]["items"] = ["model:sk"]
+    (tmp / "setup" / "downloads.json").write_text(json.dumps(lst), encoding="utf-8")
+
+
+def test_a_file_kept_in_a_subfolder_of_its_type_folder_is_found_like_the_engine_lists_it(world):
+    """Round 4: SkinToken's grpo_1400.ckpt lives in skintoken/experiments/<run>/ of a folder the engine reads; the engine (and the
+    Checks list) has it, the panel looked only at skintoken/grpo_1400.ckpt and called it missing."""
+    tmp, models, folder = world
+    data = b"c" * 80
+    _sk_list(tmp, data)
+    shared = folder.parent.parent  # the extra model path's base
+    deep = shared / "skintoken" / "experiments" / "articulation_run_4"
+    deep.mkdir(parents=True)
+    (deep / "grpo_1400.ckpt").write_bytes(data)
+    it, s = setrow("model:sk")
+    assert it["state"] == "present" and it["reused"] and it["path"] == str(deep / "grpo_1400.ckpt") and s["remaining"] == 0
+    # the same name with another size is a file that differs, not "missing"
+    (deep / "grpo_1400.ckpt").write_bytes(b"c" * 70)
+    it, _ = setrow("model:sk")
+    assert it["state"] == "differs" and it["check"] == "size"
+    # and nothing of that name anywhere: missing
+    (deep / "grpo_1400.ckpt").unlink()
+    assert setrow("model:sk")[0]["state"] == "missing"
+
+
+def test_another_engines_own_models_folder_counts(world, monkeypatch):
+    """The 3080 engine is a second ComfyUI install: a file only that engine has is there."""
+    tmp, models, folder = world
+    data = b"d" * 80
+    _sk_list(tmp, data)
+    second = tmp / "Second" / "ComfyUI" / "models"
+    (second / "skintoken" / "experiments" / "x").mkdir(parents=True)
+    (second / "skintoken" / "experiments" / "x" / "grpo_1400.ckpt").write_bytes(data)
+    assert setrow("model:sk")[0]["state"] == "missing"
+    monkeypatch.setattr(models_setup, "engine_models_folders", lambda: [second])
+    it, _ = setrow("model:sk")
+    assert it["state"] == "present" and str(second) in it["path"]
