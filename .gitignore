@@ -27,6 +27,7 @@ unity-sandbox/Assets/VGAC.meta
 # Experiment outputs and scratch
 bakeoff/out/
 bakeoff/realistic_test/
+bakeoff/rig_paint_experiment/
 bakeoff/__pycache__/
 tools/e2e_report.json
 exports/
