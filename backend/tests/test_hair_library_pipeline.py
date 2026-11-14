@@ -176,7 +176,7 @@ class Engines:
 
         mp.setattr(mesh_stage, "upright_check", no_upright)
 
-        def texture_pass(final_glb, bake_glb, maps, out_dir, tex, delight_mode, pbr_fix, fill=False, look=None):
+        def texture_pass(final_glb, bake_glb, maps, out_dir, tex, delight_mode, pbr_fix, fill=False, look=None, light_after=False):
             return {"metrics": {"atlas_used": 0.5, "texture_padding_px": 8, "texture_padding_target_px": 8, "bake_mesh_hash": "h",
                                 "export_mesh_hash": "h", "bake_match": 1.0, "light_score": 0.1, "delight_applied": False,
                                 "pbr": {"albedo_out": 0.0, "metal_mixed": 0.0}}, "files": {}}

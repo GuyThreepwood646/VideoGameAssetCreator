@@ -30,6 +30,9 @@ Light and colour (G07, G08): prep scores light painted into the base colour (ima
 whether it is removed (styles.yaml delight_default; the delight knob overrides), and whether colours, metal and shine
 are brought into physically based ranges (pbr_fix_default; the pbr_fix knob overrides). Roughness is always kept at
 0.04 or more. A corrected base colour becomes base_color, and the one before is kept as base_color_original.
+When the pictures are painted on (srcproject), the de-light waits (delight_deferred): the projection would paint the
+pictures' light back in. The light is measured on the finished colour after hair detail instead, and evened out when
+strong (remove_light, vgac/lightfix.py; the colour before is kept as base_color_lit); baked_light then reads that.
 
 Recipes (reference.recipe): the shading is the recipe's (flat for low-poly: every face its own flat normal), unless
 the shading knob chooses; the triangle limit is the recipe's target (the platform budget when the mesh version chose
@@ -68,7 +71,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import facing, guidance, hairlib, hairmat, headtris, imaging, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import face, facing, guidance, hairlib, hairmat, headtris, imaging, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
 from .base import StageContext
@@ -261,8 +265,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         sc.progress(0.7, "Checking the textures")
         bake_glb = src if not rebaked else out
         look = texture_look(rec, (sc.project.style_lock or {}).get("palette"))
+        # Light is removed after the painting (vgac/lightfix.py) when the pictures are painted on: the projection paints
+        # their light back in over a de-light done here. The de-light here stays for models nothing is painted on.
+        light_after = surface["delight"] == "remove" and srcproject.on(params, sc.asset.category, look)
         result = await asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"], surface["pbr_fix"],
-                                         rebaked, look)
+                                         rebaked, look, light_after)
         for key, p in result["files"].items():
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
@@ -325,6 +332,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if hd["relayout"]:
             sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "hair detail"))
         final = {**after_face, **{k: Path(p) for k, p in hd["files"].items() if k in TEXTURE_KEYS}}
+        if light_after and final.get("base_color"):
+            final = await remove_light(sc, out, final, hf)
         if final.get("metallic") != maps.get("metallic") or final.get("base_color") != maps.get("base_color"):
             # metal was cleared (skin, hair) and colours painted after the texture pass measured them: measure again, so the
             # metal and colour-range checks read the finished maps
@@ -353,6 +362,30 @@ async def clear_skin_metal(sc: StageContext, glb: Path, maps: dict[str, Path]) -
         sc.register("metallic", maps["metallic"])
         await asyncio.to_thread(imaging.glb_replace_images, glb, metallic=maps["metallic"])
     return maps, sm
+
+
+async def remove_light(sc: StageContext, glb: Path, maps: dict[str, Path], hf: dict[str, Any] | None) -> dict[str, Path]:
+    """The light the pictures painted in, measured on the finished base colour and removed (vgac/lightfix.py), after the
+    last pass that paints colour. The hair the hair pass found keeps its colour; when it stood back, black is still never
+    lifted. The colour before is kept as base_color_lit. -> maps (base_color replaced when it corrected)."""
+    sc.progress(0.95, "Removing the picture's light")
+    hair_tris, hair_found = None, False
+    points = ((hf or {}).get("plan") or {}).get("points")
+    if points is not None and Path(points).is_file():
+        try:
+            mesh = await asyncio.to_thread(face.load_mesh, glb)
+            hair_tris = hairfind.match_tris(mesh, json.loads(Path(points).read_text(encoding="utf-8")))
+            hair_found = bool(hair_tris.any())
+        except Exception:  # noqa: BLE001  (the black guard still holds the hair)
+            hair_tris = None
+    r = await asyncio.to_thread(lightfix.run, glb, maps["base_color"], sc.dir / "light", hair_tris, hair_found)
+    sc.set_metrics(**r["metrics"])
+    if r["files"].get("base_color"):
+        await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=r["files"]["base_color"])
+        sc.register("base_color", r["files"]["base_color"])
+        sc.register("base_color_lit", r["files"]["base_color_lit"])
+        maps = {**maps, "base_color": Path(r["files"]["base_color"])}
+    return maps
 
 
 def remeasure_pbr(glb: Path, maps: dict[str, Path]) -> dict[str, Any] | None:
@@ -600,12 +633,13 @@ def texture_size_of(maps: dict[str, Path], mesh_params: dict[str, Any], budget_t
 
 
 def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir: Path, tex: int, delight_mode: str,
-                 pbr_fix: bool, fill: bool = False, look: dict[str, Any] | None = None) -> dict[str, Any]:
+                 pbr_fix: bool, fill: bool = False, look: dict[str, Any] | None = None, light_after: bool = False) -> dict[str, Any]:
     """Measure and correct the final textures (pure CPU work, run in a thread).
 
     Measures on the final mesh's layout: atlas_used, texture_padding_px, bake_mesh_hash, export_mesh_hash and
     bake_match (share of the shipped UV triangles that the maps were baked on); the light score; the PBR ranges.
-    Corrects: de-light when delight_mode is remove and the score is over the limit; with pbr_fix, colours into range and
+    Corrects: de-light when delight_mode is remove and the score is over the limit, unless light_after (the pictures will
+    be painted on, and the light is removed after that by lightfix: delight_deferred); with pbr_fix, colours into range and
     metallic toward 0 or 1; always, roughness up to 0.04. Changed maps are written to out_dir; a changed base colour
     keeps the previous one as base_color_original.png. With fill (maps re-baked in Blender, black past the bake
     margin), each map is first grown into the empty space and the far space filled (imaging.fill_empty), in place.
@@ -649,7 +683,7 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
 
     new_base, new_met, new_rough = base, met, rough
     strength = 0.0
-    if delight_mode == "remove":
+    if delight_mode == "remove" and not light_after:
         strength = imaging.delight_strength(light["score"], LIGHT_SCORE_LIMIT)
         if strength > 0:
             new_base = imaging.delight(new_base, mask, ao, ras["up"], strength)
@@ -685,7 +719,7 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
                                    nearest=bool(look and look.get("crisp")), mr_size=mr_size)
     metrics.update(look_metrics)
     after = imaging.light_score(new_base, mask, ao, ras["up"]) if new_base is not base else light
-    metrics.update(light_score=after["score"], delight_applied=strength > 0, delight_strength=round(strength, 3),
+    metrics.update(light_score=after["score"], delight_applied=strength > 0, delight_deferred=bool(light_after and delight_mode == "remove"), delight_strength=round(strength, 3),
                    pbr_fix_applied=bool(pbr_fix), metal_sharpened=metal_sharpened, roughness_clamped=new_rough is not rough,
                    pbr=imaging.pbr_stats(new_base, new_met, new_rough, mask) if corrected else stats,
                    texture_pass_seconds=round(time.time() - t0, 2))
@@ -770,7 +804,24 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
     if m.get("atlas_used") is not None:
         out.append(quality.check("atlas_used", float(m["atlas_used"]) >= ATLAS_USED_MIN, round(float(m["atlas_used"]), 4), ATLAS_USED_MIN,
                                  vars={"symmetric": bool(p.get("symmetric"))}))
-    if m.get("light_score") is not None:
+    lf = m.get("light_fix") or {}
+    if m.get("delight_deferred") and lf:
+        # the light was measured (and removed when strong) on the finished colour, after the pictures were painted on
+        if not lf.get("measured"):
+            why = lf.get("reason") or (f"the light pass failed: {lf['error']}" if lf.get("error") else "it could not be read")
+            out.append(quality.not_measured("baked_light", "whether the picture's light is still painted into the colours", why))
+        else:
+            # judged on the light found in the painted colours: a correction evens the materials out only partly (one stop
+            # at most, only what the texture and the fitted light agree on), so a hard-lit picture keeps the warning, with
+            # how much more even the materials became
+            found = float(lf.get("patch_before") or 0.0)
+            ub, ua = lf.get("uneven_before"), lf.get("uneven_after")
+            evened = round(1.0 - float(ua) / float(ub), 3) if lf.get("applied") and ub and ua is not None else None
+            out.append(quality.check("baked_light", found < lightfix.CHECK_MAX, round(found, 3), lightfix.CHECK_MAX,
+                                     vars={"kept": False, "removed": bool(lf.get("applied")), "after_painting": True,
+                                           "rejected": bool(lf.get("rejected")), "evened": evened,
+                                           "whole": lf.get("whole_before"), "left": list(lf.get("left") or [])}))
+    elif m.get("light_score") is not None:
         kept = m.get("delight_mode") == "keep"
         score = float(m["light_score"])
         out.append(quality.check("baked_light", kept or score <= LIGHT_SCORE_LIMIT, round(score, 4), LIGHT_SCORE_LIMIT,
