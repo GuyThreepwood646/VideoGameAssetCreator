@@ -99,6 +99,14 @@ export function AddMyAddon({ painter, onAdded, onClose }: { painter: string; onA
   )
 }
 
+// Change one of your own add-ons (the System page, Your library): the same short form, starting from its values.
+export function ChangeMyAddon({ entry, onSaved, onCancel }: { entry: AddonEntry; onSaved: (a: AddonEntry) => void; onCancel: () => void }) {
+  const mine = useMyAddons(true)
+  return (
+    <AddonForm editing={entry} picked={{ fileName: entry.file_name ?? '', bytes: 0, prefill: null }} painters={painterChoices(mine)} currentPainter="" onSaved={onSaved} onCancel={onCancel} />
+  )
+}
+
 function ChooseFile({ onPicked }: { onPicked: (p: Picked) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [progress, setProgress] = useState<number | null>(null)
@@ -210,19 +218,22 @@ function AddonForm({
   currentPainter,
   onSaved,
   onCancel,
+  editing,
 }: {
   picked: Picked
   painters: { id: string; label: string }[]
   currentPainter: string
   onSaved: (a: AddonEntry) => void
   onCancel: () => void
+  // Changing one of your own add-ons: the form starts from its values and saving replaces the entry (same file).
+  editing?: AddonEntry
 }) {
   const pre = picked.prefill
-  const [label, setLabel] = useState(pre?.label ?? picked.fileName.replace(/\.safetensors$/i, ''))
-  const [models, setModels] = useState<string[]>(pre?.base_models ?? [])
-  const [trigger, setTrigger] = useState(pre?.trigger ?? '')
-  const [strength, setStrength] = useState<StrengthName>('normal')
-  const [source, setSource] = useState('')
+  const [label, setLabel] = useState(editing?.label ?? pre?.label ?? picked.fileName.replace(/\.safetensors$/i, ''))
+  const [models, setModels] = useState<string[]>(editing?.base_models ?? pre?.base_models ?? [])
+  const [trigger, setTrigger] = useState(editing?.trigger ?? pre?.trigger ?? '')
+  const [strength, setStrength] = useState<StrengthName>(editing?.default_strength ?? 'normal')
+  const [source, setSource] = useState(editing?.source ?? '')
   const [error, setError] = useState<unknown>(null)
   const [saving, setSaving] = useState(false)
   const missing = !label.trim() ? 'Give the LoRA a name.' : models.length === 0 ? 'Choose at least one model.' : null
@@ -234,7 +245,21 @@ function AddonForm({
     setSaving(true)
     setError(null)
     try {
-      const entry = await api.addMyAddon({ file_name: picked.fileName, label: label.trim(), base_models: models, trigger: trigger.trim(), default_strength: strength, source: source.trim() })
+      const body = { file_name: picked.fileName, label: label.trim(), base_models: models, trigger: trigger.trim(), default_strength: strength, source: source.trim() }
+      let entry: AddonEntry
+      if (editing) {
+        // The app has no "edit" call: take the old entry off the list (the file stays) and set it up again with the new values.
+        // If that fails, the old entry is put back so nothing is lost.
+        await api.removeMyAddon(editing.id)
+        try {
+          entry = await api.addMyAddon(body)
+        } catch (e) {
+          await api.addMyAddon({ file_name: picked.fileName, label: editing.label, base_models: editing.base_models, trigger: editing.trigger, default_strength: editing.default_strength, source: editing.source }).catch(() => undefined)
+          throw e
+        }
+      } else {
+        entry = await api.addMyAddon(body)
+      }
       await reloadMyAddons().catch(() => undefined)
       onSaved(entry)
     } catch (e) {
@@ -247,10 +272,8 @@ function AddonForm({
   return (
     <div className="addon-add addon-form">
       <div className="row-between">
-        <strong>Set up your LoRA</strong>
-        <span className="muted small">
-          {picked.fileName} ({fmtBytes(picked.bytes)})
-        </span>
+        <strong>{editing ? 'Change your LoRA' : 'Set up your LoRA'}</strong>
+        <span className="muted small">{editing ? picked.fileName : `${picked.fileName} (${fmtBytes(picked.bytes)})`}</span>
       </div>
 
       <label className="field">
@@ -307,12 +330,12 @@ function AddonForm({
       <ErrorText error={error} />
       <div className="row-gap">
         <button type="button" className="primary" disabled={saving} onClick={save}>
-          {saving ? 'Saving...' : 'Add it'}
+          {saving ? 'Saving...' : editing ? 'Save changes' : 'Add it'}
         </button>
         <button type="button" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        {!saving && <span className="muted small">If you cancel, the file stays in the LoRA folder; Look again finds it.</span>}
+        {!saving && !editing && <span className="muted small">If you cancel, the file stays in the LoRA folder; Look again finds it.</span>}
       </div>
     </div>
   )

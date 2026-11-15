@@ -4450,3 +4450,8 @@ button.preset-card:hover:not(:disabled) {
 .body-marks-stage.large.actual { margin: auto; flex: none; }
 .picture-viewer-foot { padding: var(--s2) var(--s3); border-top: 1px solid var(--border); background: var(--panel); }
 .picture-viewer-foot .body-marks-key { margin-left: var(--s3); }
+
+/* Your library (YourLibrary.tsx): long source lines wrap, the head row wraps, item buttons sit after the text */
+.your-library li { overflow-wrap: anywhere; }
+.your-library .row-between { flex-wrap: wrap; gap: var(--s2); }
+.your-library-actions { display: inline-flex; gap: var(--s2); margin-left: var(--s2); }
