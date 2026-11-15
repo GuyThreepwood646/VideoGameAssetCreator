@@ -718,3 +718,24 @@ def test_a_head_pictures_outline_off_the_models_head_is_measured_above_the_chin(
     v.alpha_img = (np.hypot(xx - 125, yy - 90) < 60).astype(np.float64)  # the picture's head lies 25 px forward
     assert srcproject.head_outline_match(v, zone) < 0.8
     assert srcproject.head_outline_match(v, {}) is None
+
+
+def test_a_three_quarter_head_view_takes_the_fronts_skin_tone_by_one_offset() -> None:
+    N = 2000
+    skin, lighter, hair = np.array([0.80, 0.60, 0.50]), np.array([0.90, 0.70, 0.60]), np.array([0.15, 0.10, 0.08])
+    front_img = np.tile(skin, (16, 16, 1))
+    side_img = np.tile(lighter, (16, 16, 1))
+    side_img[:, 8:] = hair  # half the side view's texels are hair, which the front paints as skin here
+    atlas = type("A", (), {"idx": np.arange(N), "is_gut": np.zeros(N, dtype=bool), "zone": {"face": np.ones(N)}})()
+    sp_f = np.full((N, 2), 4.0)
+    sp_s = np.stack([np.where(np.arange(N) % 2 == 0, 3.0, 12.0), np.full(N, 4.0)], 1)
+    views = [type("V", (), {"name": n})() for n in ("head", "head_quarter", "source")]
+    projs = [{"sel": np.arange(N), "sp": sp_f, "w": np.full(N, 0.5)}, {"sel": np.arange(N), "sp": sp_s, "w": np.full(N, 0.5)},
+             {"sel": np.arange(N), "sp": sp_f, "w": np.full(N, 0.5)}]
+    shifts, rec = srcproject.head_tone_offsets(atlas, views, projs, [front_img, side_img, front_img])
+    assert shifts[0] is None and shifts[2] is None  # the front itself and the body fits are left as they are
+    assert np.abs(shifts[1] - (skin - lighter)).max() < 0.01, shifts[1]  # the skin's difference, not pulled by the hair
+    assert rec["head_quarter"]["matched"] and rec["head_quarter"]["overlap"] == N // 2
+    paint, _, _ = srcproject.blend(atlas, projs[1:2], [side_img], 1, [True], None, shifts[1:2])
+    assert np.abs(paint[0] - skin).max() < 0.01  # the side view's skin painted in the front's tone
+    assert np.abs(paint[1] - np.clip(hair + shifts[1], 0, 1)).max() < 1e-6  # its hair moved by the same offset only

@@ -879,7 +879,8 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
 
 def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
           n_primary: int = 1, heads: list[bool] | None = None,
-          parts: dict[str, Any] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+          parts: dict[str, Any] | None = None,
+          shifts: list[np.ndarray | None] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
     of priority: each one, and every view after them, fades out where the ones before it see well. Head views (heads[i],
     first among them) hand over to one another the same way, and every other view stays off as far as a head view covers
@@ -922,6 +923,8 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
             seen[sel] = w
             suppress = suppress * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
         col = catmull(img, p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
+        if shifts is not None and shifts[i] is not None:  # a three-quarter head view's tone, matched to the front's
+            col = np.clip(col + shifts[i][None], 0.0, 1.0)
         ww = w ** BLEND_POW
         num[sel] += col * ww[:, None]
         den[sel] += ww
@@ -1555,6 +1558,54 @@ def neck_tone_match(atlas: Atlas, parts: dict[str, Any], zone: dict[str, Any], p
     return out
 
 
+HEAD_TONE_MIN = 500       # skin texels a three-quarter head view must share with the front head view for its tone to be matched
+HEAD_TONE_SKIN = 20.0     # Lab distance (lightness half) from the front's face colour that counts as skin for that match
+HEAD_TONE_MAX = 0.12      # the largest shift per channel (0..1) the match may give
+
+
+def head_tone_offsets(atlas: Atlas, views: list[View], projs: list[dict[str, np.ndarray]],
+                      images: list[np.ndarray]) -> tuple[list[np.ndarray | None], dict[str, Any]]:
+    """For each three-quarter head view, the one colour offset that makes its skin agree with the front head view's
+    where both paint the same skin (owner's suggestion, round four). The three-quarter pictures are drawn separately
+    and come out lighter or darker than the photo: on the live W2 runs the left one 6 to 9 L lighter where the two
+    overlap, which showed as a pale cheek beside the front's. Fitted on skin only (both colours within HEAD_TONE_SKIN of
+    the front's face colour, so hair, glasses and collar do not pull it) and applied to the whole view: one offset
+    left no gradient across the cheek, where a field fading out from the overlap left the far cheek pale (W2 R4) and a
+    gain moved the clothing's colour as well (M1 R4's jacket went brown). Returns (offset per view or None, record)."""
+    names = [v.name for v in views]
+    out: list[np.ndarray | None] = [None] * len(views)
+    rec: dict[str, Any] = {}
+    if HEAD_VIEW not in names or getattr(atlas, "zone", None) is None:
+        return out, rec
+    f = names.index(HEAD_VIEW)
+    N = atlas.idx.size
+    pf = projs[f]
+    cf_all, wf = np.zeros((N, 3)), np.zeros(N)
+    cf_all[pf["sel"]] = catmull(images[f], pf["sp"][:, 0].reshape(-1, 1), pf["sp"][:, 1].reshape(-1, 1))[:, 0]
+    wf[pf["sel"]] = pf["w"]
+    face_t = (atlas.zone["face"] > 0.5) & (wf > 0.05)
+    if face_t.sum() < HEAD_TONE_MIN:
+        return out, rec
+    mid = np.median(face.to_lab(cf_all[face_t][None])[0], axis=0)
+    lw = np.array([0.5, 1.0, 1.0])
+    for i, n in enumerate(names):
+        if i == f or not n.startswith(HEAD_VIEW):
+            continue
+        p = projs[i]
+        cs = catmull(images[i], p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
+        cf = cf_all[p["sel"]]
+        ov = ((wf[p["sel"]] > 0.05) & (p["w"] > 0.05) & ~atlas.is_gut[p["sel"]]
+              & (np.linalg.norm((face.to_lab(cf[None])[0] - mid) * lw, axis=1) < HEAD_TONE_SKIN)
+              & (np.linalg.norm((face.to_lab(cs[None])[0] - mid) * lw, axis=1) < HEAD_TONE_SKIN))
+        if ov.sum() < HEAD_TONE_MIN:
+            rec[n] = {"overlap": int(ov.sum()), "matched": False}
+            continue
+        off = np.clip((cf[ov] - cs[ov]).mean(0), -HEAD_TONE_MAX, HEAD_TONE_MAX)
+        out[i] = off
+        rec[n] = {"overlap": int(ov.sum()), "matched": True, "offset": [round(float(x), 4) for x in off]}
+    return out, rec
+
+
 NECK_HANDOVER_MIN = 0.02  # metres: the least height over which the neck's paint should pass from the head views to the body fits
 
 
@@ -1621,7 +1672,9 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
     parts: dict[str, Any] = {}
-    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views], parts)
+    shifts, tone_rec = head_tone_offsets(atlas, views, projs, images)
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views], parts,
+                                shifts)
     handover = neck_handover(atlas, parts, zone) if zone and zone.get("found") else None
     if "head" in parts and "body" in parts and zone and zone.get("neck") and zone.get("chin"):
         paint_ = neck_tone_match(atlas, parts, zone, paint_)
@@ -1631,7 +1684,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         atlas.zone["head_painted"] = hv[np.where(dom >= 0, dom, len(views))]
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
-            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "neck_handover": handover}
+            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "neck_handover": handover, "head_tone": tone_rec}
 
 
 # --- measures ---------------------------------------------------------------------------------------------------
@@ -1930,7 +1983,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
          "srcproject_front_before": before, "srcproject_front_after": after,
          "srcproject_texel_pitch_mm": round(atlas.pitch_m * 1000, 3), "srcproject_face_region": zone_metrics(zone, c),
          "srcproject_front_turn": {"yaw": round(front_yaw, 1), "from": front_by}, "srcproject_face_finder": finder,
-         "srcproject_neck_handover": c.get("neck_handover"), "srcproject_seconds": round(time.time() - t0, 1)}
+         "srcproject_neck_handover": c.get("neck_handover"), "srcproject_head_tone": c.get("head_tone"), "srcproject_seconds": round(time.time() - t0, 1)}
     res["metrics"] = m
     nh = c.get("neck_handover")
     if log and nh is not None and not nh["ok"]:
