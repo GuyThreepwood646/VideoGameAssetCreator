@@ -179,26 +179,31 @@ SCENE = textwrap.dedent('''
     for b in arm_d.bones: mesh.vertex_groups.new(name=b.name)
     for v in me.vertices:
         grp = "mixamorig:LeftHandThumb1" if (mode != "nothumb" and v.co.z > 0.045 and v.co.x < 0.07 and v.co.x > 0.0) else "mixamorig:LeftHand"
+        if mode == "one_mid" and v.co.x > 0.09 and abs(v.co.z - 0.01) < 0.01:
+            grp = "mixamorig:LeftHandIndex1"  # the predicted chain holds the skin of its own finger
         mesh.vertex_groups[grp].add([v.index], 1.0, "REPLACE")
     def snapshot():
         return {{v.index: sorted((mesh.vertex_groups[g.group].name, round(g.weight, 5)) for g in v.groups) for v in me.vertices}}
     before = snapshot(); names_before = [b.name for b in arm_d.bones]
     report = {{}}
+    if {marks!r}:
+        fb.MARKS = {marks!r}
     fb.build_side(arm, mesh, "Left", report)
     after = snapshot()
     sums = [sum(w for _, w in after[i]) for i in after]
     out = {{"report": report["Left"], "names_before": names_before, "names_after": [b.name for b in arm_d.bones],
            "unchanged": before == after, "max_infl": max(len(after[i]) for i in after), "sum_min": min(sums), "sum_max": max(sums),
            "heads": {{b.name: list(b.head_local) for b in arm_d.bones if "Hand" in b.name and b.name.endswith(("1", "2", "3"))}},
+           "tails": {{b.name: list(b.tail_local) for b in arm_d.bones if "Hand" in b.name and b.name.endswith("3")}},
            "new_groups": {{g.name: sum(1 for v in me.vertices for gg in v.groups if gg.group == g.index) for g in mesh.vertex_groups}}}}
     open({out!r}, "w").write(json.dumps(out))
 ''')
 
 
-def _run(tmp_path, mode):
+def _run(tmp_path, mode, marks=None):
     out = tmp_path / f"{mode}.json"
     script = tmp_path / f"scene_{mode}.py"
-    script.write_text(SCENE.format(blender_dir=str(fb.__file__).rsplit("finger_build.py", 1)[0], mode=mode, out=str(out)), encoding="utf-8")
+    script.write_text(SCENE.format(blender_dir=str(fb.__file__).rsplit("finger_build.py", 1)[0], mode=mode, out=str(out), marks=marks), encoding="utf-8")
     subprocess.run([str(BLENDER), "-b", "--threads", "2", "--python", str(script), "--", "x"], check=True, capture_output=True, timeout=300)
     return json.loads(out.read_text())
 
@@ -236,8 +241,7 @@ def test_a_predicted_chain_in_the_middle_is_renamed_to_its_lane_and_keeps_its_sk
     assert r["report"]["kept"] and list(r["report"]["kept"].values()) == ["Index"]
     kept_lane = list(r["report"]["kept"])[0]
     assert kept_lane != "Index"
-    for i in (1, 2, 3):
-        assert r["new_groups"][f"mixamorig:LeftHand{kept_lane}{i}"] > 0  # the renamed bone's group still holds its vertices
+    assert r["new_groups"][f"mixamorig:LeftHand{kept_lane}1"] > 0  # the renamed bone's group still holds the finger's own skin
     assert r["max_infl"] <= 4 and abs(r["sum_min"] - 1) < 1e-3 and abs(r["sum_max"] - 1) < 1e-3
 
 
@@ -310,3 +314,16 @@ def test_complete_or_refused_hands_leave_the_rig_alone(tmp_path):
 def test_the_named_setting_turns_it_off(tmp_path):
     sc, glb = _run_fingers(tmp_path, {"Left": {"path": "proportion", "built": 9}}, {"build_fingers": False})
     assert glb.read_bytes() == b"OLD" and "finger_build" not in sc.metrics and sc.params["build_fingers"] is False
+
+
+@needs_blender
+def test_fingertip_marks_place_the_built_chains_on_the_marked_tips(tmp_path):
+    # The person marks the four fingertips (index to little finger, world points). The predicted index chain stays; the other three lanes are
+    # built straight from their knuckle to the marked tip instead of a guess by proportion.
+    marks = {"Left": {"fingertips": [[0.17, 0.0, 0.03], [0.185, 0.0, 0.01], [0.175, 0.0, -0.01], [0.145, 0.0, -0.03]]}}
+    r = _run(tmp_path, "one", marks)
+    assert r["report"]["path"] == "marks" and r["report"]["built"] == 9
+    for name, tip in (("Middle", marks["Left"]["fingertips"][1]), ("Ring", marks["Left"]["fingertips"][2]), ("Pinky", marks["Left"]["fingertips"][3])):
+        tail = r["tails"][f"mixamorig:LeftHand{name}3"]
+        assert max(abs(a - b) for a, b in zip(tail, tip)) < 0.003, (name, tail, tip)
+    assert r["max_infl"] <= 4 and abs(r["sum_min"] - 1) < 1e-3 and abs(r["sum_max"] - 1) < 1e-3

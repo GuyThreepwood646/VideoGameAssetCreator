@@ -245,6 +245,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _joins(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
         await _fingers(sc, rig_glb, params)
+        await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
@@ -1020,6 +1021,32 @@ async def _fingers(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> N
         sc.set_metrics(finger_build=sides)
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(finger_build={"error": str(e)[:300]})
+
+
+async def _finger_rigid(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Rigid finger segments (blender/finger_rigid.py), in place: every finger chain straight with its joints at the anatomical fractions, each
+    segment's skin on its own bone with a short blend at each joint, the first bone stopping at the knuckle. Runs after the finger build and the
+    lane naming and before the palm-down turn and everything that reads the skeleton. Skin only moves between a finger's own bones and the
+    palm bone, so fingers SkinToken already separated stay separate. metrics.finger_rigid: {Left, Right: {straightened, skipped, verts}}.
+    Never raises. Setting finger_rigid (default on) turns it off; off leaves the rig as it was."""
+    on = params.get("finger_rigid", True) is not False
+    sc.set_params(finger_rigid=on)
+    if not on:
+        return
+    out = sc.dir / "rig_finger_rigid.glb"
+    report = sc.dir / "finger_rigid.json"
+    try:
+        await sc.blender("finger_rigid.py", [rig_glb, out, "--report", report], log_name="finger_rigid.log", timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        sides = {s: {k: v for k, v in (rep.get(s) or {}).items() if k in ("straightened", "skipped", "verts")} for s in ("Left", "Right")}
+        if any(v.get("straightened") for v in sides.values()) and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_finger_rigid.glb")
+            shutil.move(str(out), str(rig_glb))
+        if report.is_file():
+            sc.register("finger_rigid", report)
+        sc.set_metrics(finger_rigid=sides)
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(finger_rigid={"error": str(e)[:300]})
 
 
 async def _palm_down(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:

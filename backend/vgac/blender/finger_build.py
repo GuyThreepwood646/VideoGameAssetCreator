@@ -28,6 +28,8 @@ MCP_SHARE = 0.48  # knuckle position along the finger's reach from the wrist
 FAR_ZONE = 0.55  # the part of the hand (from the wrist, share of its reach) that holds the fingers
 PEAK_MIN = 0.03  # a fingertip stands out of the outline by at least this share of the hand's reach
 BINS = 28
+SIGMA = 0.7  # falloff of the lane skin share, in lanes (1.0 pulled skin across neighbouring fingers)
+MARKS = None  # the person's marks ({side: {"fingertips": [4 world points]}}), loaded from --marks in main
 
 
 def _unit(v):
@@ -124,6 +126,17 @@ def chain_points(c, centre, lane, reach):
     return [np.array([a0 + (tip_a - a0) * k, centre, n_mid]) for k in cum]
 
 
+def chain_from_tip(c, tip, lane, reach):
+    """The four joint points of one finger whose tip the person marked: from the knuckle (MCP_SHARE of the tip's reach, in the tip's lane, at
+    the lane's middle thickness) in a straight line to the tip, bones split BONE_SHARE. tip: the marked point in frame coordinates (a, u, n)."""
+    inl = c[np.abs(c[:, 1] - tip[1]) <= max(lane, 1e-3) / 2]
+    sel = inl[(inl[:, 0] > 0.3 * tip[0]) & (inl[:, 0] < 0.95 * tip[0])]
+    n_mid = float(sel[:, 2].mean()) if len(sel) else float(tip[2])
+    mcp = np.array([MCP_SHARE * float(tip[0]), float(tip[1]), n_mid])
+    cum = np.cumsum((0.0,) + BONE_SHARE)
+    return [mcp + (np.asarray(tip, float) - mcp) * k for k in cum]
+
+
 def point_segment(p, a, b):
     ab = b - a
     t = np.clip(((p - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
@@ -202,6 +215,11 @@ def build_side(arm, mesh, side, report):
     c = coords(fr, pts)
     reach = float(c[:, 0].max())
     plan = plan_chains(c, outline_peaks(c, reach), reach)
+    marked = None
+    mk = ((MARKS or {}).get(side) or {}).get("fingertips")  # the person's fingertip marks, index to little finger: world points
+    if mk and len(mk) == 4:
+        marked = [coords(fr, np.asarray(t, float))[0] for t in mk]
+        plan = {"path": "marks", "centres": [float(x[1]) for x in marked], "lane": plan["lane"] or [0.02] * 4, "peaks": 4}
     rep.update(path=plan["path"], peaks=plan["peaks"], reach_m=round(reach, 4))
     # a predicted finger chain stays on its nearest lane (renamed to that lane's finger); the other lanes are built
     lane_of = {}
@@ -238,7 +256,7 @@ def build_side(arm, mesh, side, report):
     for k, f in enumerate(FINGERS):
         if k in lane_of:
             continue
-        jp = chain_points(c, plan["centres"][k], plan["lane"][k], reach)
+        jp = chain_from_tip(c, marked[k], plan["lane"][k], reach) if marked else chain_points(c, plan["centres"][k], plan["lane"][k], reach)
         world = [fr["wrist"] + fr["f"] * p[0] + fr["u"] * p[1] + fr["n"] * p[2] for p in jp]
         parent = hand_eb
         for i in range(3):
@@ -251,30 +269,37 @@ def build_side(arm, mesh, side, report):
     for n in built:
         if n not in mesh.vertex_groups:
             mesh.vertex_groups.new(name=n)
-    # skin: the hand's vertices share their hand mass among the palm, the thumb and the finger bones by distance
+    # skin: only the skin the palm bone (or a built chain) still holds is shared, among the palm and the built chains by distance. The
+    # chains SkinToken predicted keep their own weights, so a hand whose fingers were already separate keeps that separation.
     bones = arm.data.bones
     mcp = np.mean([coords(fr, np.array(AW @ bones[f"{PREFIX}{side}Hand{f}1"].head_local))[0] for f in FINGERS], axis=0)
     segs = {st["hand"]: (wrist, wrist + fr["f"] * mcp[0] + fr["u"] * mcp[1] + fr["n"] * mcp[2])}
-    for f in ALL_FINGERS:
-        for i in (1, 2, 3):
-            nm = f"{PREFIX}{side}Hand{f}{i}"
-            if nm in bones:
-                segs[nm] = (np.array(AW @ bones[nm].head_local), np.array(AW @ bones[nm].tail_local))
-    names, share = share_weights(pts, segs, float(_common_opt("--sigma", "1.0")) * float(np.mean(plan["lane"])))
+    for nm in built:
+        segs[nm] = (np.array(AW @ bones[nm].head_local), np.array(AW @ bones[nm].tail_local))
     gidx = {g.name: g.index for g in mesh.vertex_groups}
-    keep = {gidx[n] for n in set(st["names"]) | set(segs) if n in gidx}
-    for row, vid in enumerate(st["ids"]):
-        v = mesh.data.vertices[vid]
-        mass = sum(g.weight for g in v.groups if g.group in keep)
-        others = {g.group: g.weight for g in v.groups if g.group not in keep and g.weight > 0}
-        for g in list(v.groups):
-            if g.group in keep:
-                mesh.vertex_groups[g.group].remove([vid])
-        cand = {gidx[n]: float(share[row, j]) * mass for j, n in enumerate(names) if n in gidx}
-        top = sorted({**others, **cand}.items(), key=lambda t: -t[1])[:4]
-        tw = sum(w for _, w in top) or 1.0
-        for gi, w in top:
-            mesh.vertex_groups[gi].add([vid], w / tw, "REPLACE")
+    mine = {gidx[n] for n in segs if n in gidx}
+    owned = {gidx[f"{PREFIX}{side}Hand{f}{i}"] for f in ALL_FINGERS for i in (1, 2, 3) if f"{PREFIX}{side}Hand{f}{i}" in gidx} - mine
+    vids, ppts = [], []
+    for v in mesh.data.vertices:
+        ws = {g.group: g.weight for g in v.groups if g.weight > 0}
+        if sum(w for g, w in ws.items() if g in mine) >= 0.5 and sum(w for g, w in ws.items() if g in owned) < 0.3:
+            vids.append(v.index)
+            ppts.append(np.array(mesh.matrix_world @ v.co))
+    if vids:
+        names, share = share_weights(np.array(ppts), segs, float(_common_opt("--sigma", str(SIGMA))) * float(np.mean(plan["lane"])))
+        for row, vid in enumerate(vids):
+            v = mesh.data.vertices[vid]
+            mass = sum(g.weight for g in v.groups if g.group in mine)
+            others = {g.group: g.weight for g in v.groups if g.group not in mine and g.weight > 0}
+            for g in list(v.groups):
+                if g.group in mine:
+                    mesh.vertex_groups[g.group].remove([vid])
+            cand = {gidx[n]: float(share[row, j]) * mass for j, n in enumerate(names) if n in gidx}
+            top = sorted({**others, **cand}.items(), key=lambda t: -t[1])[:4]
+            tw = sum(w for _, w in top) or 1.0
+            for gi, w in top:
+                mesh.vertex_groups[gi].add([vid], w / tw, "REPLACE")
+    rep["reshared_verts"] = len(vids)
     rep["frame"] = {k: [round(float(x), 4) for x in fr[k]] for k in ("f", "u", "n")}
 
 
@@ -385,6 +410,9 @@ def main():
     argv = _common.after_double_dash()
     src, dst = os.path.abspath(argv[0]), os.path.abspath(argv[1])
     report_path = _common.opt("--report", "")
+    global MARKS
+    mk_path = _common.opt("--marks", "")
+    MARKS = json.load(open(mk_path, encoding="utf-8")) if mk_path else None
     _common.open_glb(src)
     arm = next(o for o in bpy.context.scene.objects if o.type == "ARMATURE")
     mesh = max((o for o in bpy.context.scene.objects if o.type == "MESH" and o.vertex_groups), key=lambda o: len(o.data.vertices))
