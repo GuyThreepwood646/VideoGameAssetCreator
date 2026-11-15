@@ -304,15 +304,18 @@ def body_skin(mesh: dict[str, np.ndarray], base: np.ndarray, T: int, skin: np.nd
                                               "left_ys": reg["ys"][left], "left_xs": reg["xs"][left], "covered": reg["covered"]}
 
 
-def clear(glb: Path | str, maps: dict[str, Path], category: str | None, description: str | None, out_dir: Path) -> dict[str, Any]:
+def clear(glb: Path | str, maps: dict[str, Path], category: str | None, description: str | None, out_dir: Path,
+          wears_armour: bool | None = None, body_is_metal: bool | None = None) -> dict[str, Any]:
     """The skin's metal set to 0 (pure CPU work, run in a thread). -> {files: {metallic: path} when changed,
-    metrics: {skin_metal: {...}}}. Never raises: a failure is recorded and the maps stay as they are."""
+    metrics: {skin_metal: {...}}}. Never raises: a failure is recorded and the maps stay as they are.
+    wears_armour and body_is_metal are the person's own answers from the first step (None: never stated, so the description's
+    words decide); an explicit answer wins either way (unticked beats an armour word, ticked beats a description that says nothing)."""
     t0 = time.time()
     rec: dict[str, Any] = {"ran": False}
     try:
         if category != "humanoid":
             rec["skipped"] = "not a humanoid"
-        elif metal_body(description):
+        elif body_is_metal if body_is_metal is not None else metal_body(description):
             rec["skipped"] = "the description makes the character metal"
         elif not maps.get("metallic") or not maps.get("base_color"):
             rec["skipped"] = "no metal map"
@@ -324,7 +327,7 @@ def clear(glb: Path | str, maps: dict[str, Path], category: str | None, descript
             else:
                 T = met.shape[0]
                 base = face.read_rgb(maps["base_color"])
-                with_body = not armoured(description)
+                with_body = not (wears_armour if wears_armour is not None else armoured(description))
                 found = skin_texels(mesh, base, T, body=with_body)
                 if found is None:
                     rec["skipped"] = "no face found"

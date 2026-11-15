@@ -308,3 +308,31 @@ def test_upright_check_measures_once_and_keeps_the_measure(tmp_path, monkeypatch
     assert asyncio.run(mesh_stage.upright_check(sc, "mesh", glb, png))["passed"]
     assert asyncio.run(mesh_stage.upright_check(SimpleNamespace(version=SimpleNamespace(metrics={}), set_metrics=lambda **kw: None),
                                                 "mesh", glb, None)) is None
+
+
+def test_the_persons_own_armour_and_metal_body_answers_win_over_the_description(tmp_path):
+    none = tmp_path / "none.glb"
+    bad = {"metallic": tmp_path / "x.png", "base_color": tmp_path / "y.png"}  # unreadable maps: the run gets as far as the error
+    # ticked metal body skips the clearing even when the description says nothing; unticked runs it for "a robot"
+    r = skinmetal.clear(none, {}, "humanoid", "a woman", tmp_path, body_is_metal=True)
+    assert r["metrics"]["skin_metal"]["skipped"].startswith("the description")
+    r = skinmetal.clear(none, bad, "humanoid", "a robot", tmp_path, body_is_metal=False)
+    assert not str(r["metrics"]["skin_metal"].get("skipped", "")).startswith("the description")
+    # armour: only the head and neck are cleared when ticked, or when None and the description says so; unticked beats the word
+    seen = []
+    real = skinmetal.skin_texels
+    skinmetal.skin_texels = lambda mesh, base, T, body=False: seen.append(body)
+    try:
+        import numpy as _np
+        mesh = {"verts": _np.zeros((3, 3)), "faces": _np.zeros((1, 3), int), "uv": _np.zeros((3, 2))}
+        orig_load, orig_read, orig_rgb = skinmetal.face.load_mesh, skinmetal.imaging.read_map, skinmetal.face.read_rgb
+        skinmetal.face.load_mesh = lambda p: mesh
+        skinmetal.imaging.read_map = lambda p, grey=False: _np.zeros((4, 4))
+        skinmetal.face.read_rgb = lambda p: _np.zeros((4, 4, 3))
+        for desc, tick, body in (("a woman", True, False), ("a knight in plate armour", None, False), ("a knight in plate armour", False, True),
+                                 ("a woman", None, True)):
+            skinmetal.clear(none, {"metallic": tmp_path / "m.png", "base_color": tmp_path / "b.png"}, "humanoid", desc, tmp_path, wears_armour=tick)
+        assert seen == [False, False, True, True]
+    finally:
+        skinmetal.skin_texels = real
+        skinmetal.face.load_mesh, skinmetal.imaging.read_map, skinmetal.face.read_rgb = orig_load, orig_read, orig_rgb

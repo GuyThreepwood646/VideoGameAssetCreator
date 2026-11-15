@@ -358,7 +358,8 @@ HAIR_DIR = "hairlib"
 
 async def clear_skin_metal(sc: StageContext, glb: Path, maps: dict[str, Path]) -> tuple[dict[str, Path], dict[str, Any]]:
     """skinmetal.clear on the current maps; the cleared metal map goes into the GLB and the version. -> (maps, result)."""
-    sm = await asyncio.to_thread(skinmetal.clear, glb, maps, sc.asset.category, sc.asset.prompt, sc.dir / "skin")
+    sm = await asyncio.to_thread(skinmetal.clear, glb, maps, sc.asset.category, sc.asset.prompt, sc.dir / "skin",
+                                 getattr(sc.asset, "wears_armour", None), getattr(sc.asset, "body_is_metal", None))
     if sm["files"].get("metallic") is not None:
         maps = {**maps, "metallic": Path(sm["files"]["metallic"])}
         sc.register("metallic", maps["metallic"])
