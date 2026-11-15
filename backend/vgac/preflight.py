@@ -332,19 +332,25 @@ def optional_item(id: str, group: str, label: str, installed: bool, ok_detail: s
 
 
 def check_hair_library(settings: Settings) -> dict[str, Any]:
-    """The ready-made hairstyles (vgac/hairstyles.py). Optional: without them the hair is built with the 3D model."""
+    """The ready-made hairstyles (vgac/hairstyles.py). Optional: without them the hair is built with the 3D model. A copy
+    inside the app's own folder works, but is offered as "get your own": the built one in <library>/hairlib is what lasts."""
     from . import hairstyles
 
     try:
         installed = hairstyles.installed()
         n = len(hairstyles.catalogue().get("styles") or {}) if installed else 0
+        built = hairstyles.built_dir() is not None
     except Exception:  # noqa: BLE001
-        installed, n = False, 0
-    return optional_item("hair_library", "tools", "Hair library (ready-made hairstyles)", installed,
-                         f"{n} ready-made hairstyles are installed.",
-                         "Not installed. It is optional: without it the hair is built with the 3D model. The library has 26 free "
-                         "ready-made hairstyles you can fit to a character.",
-                         "hair", "Get the hair library", "library/hairlib, built by vgac/packs.py")
+        installed, n, built = False, 0, False
+    if installed and not built:
+        detail = (f"{n} ready-made hairstyles work from the copy inside the app's folder. You can get your own copy, kept outside the "
+                  "app's files, which the app then uses instead.")
+    else:
+        detail = ("Not installed. It is optional: without it the hair is built with the 3D model. The library has 26 free "
+                  "ready-made hairstyles you can fit to a character.")
+    return optional_item("hair_library", "tools", "Hair library (ready-made hairstyles)", installed and built,
+                         f"{n} ready-made hairstyles are installed.", detail, "hair", "Get the hair library",
+                         "library/hairlib, built by vgac/packs.py")
 
 
 def check_face_landmarker() -> dict[str, Any]:

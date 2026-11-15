@@ -319,7 +319,7 @@ def test_setup_endpoint_shape_cache_and_refresh(settings, monkeypatch):
         assert [g["id"] for g in r["groups"]] == ["tools", "engines", "models", "storage"]
         for it in r["items"]:
             assert set(it) - {"kit", "offer"} == {"id", "group", "label", "state", "detail", "fix", "needed_for", "technical", "setting"}  # kit and offer: optional extras
-            assert it["state"] in ("ok", "warn", "fail", "unknown")
+            assert it["state"] in ("ok", "warn", "fail", "unknown", "optional")
         ids = by_id(r["items"])
         assert ids["blender"]["state"] == "fail"  # the test config has no Blender
         # Nothing answers and the test config gives the app no way to start either: a failure that says so.
