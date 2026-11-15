@@ -1,10 +1,20 @@
 // A picture at full size (steps 1 and 2). Opened by double-clicking a picture or by its corner button.
 // Fit shows the whole picture in the window; Actual size shows every pixel and scrolls to pan. Several pictures
 // (the views of Check all sides) step with the arrow keys or the arrow buttons. Esc, the close button or a click
-// outside the picture closes it, and focus goes back to what opened it.
+// outside the picture closes it, and focus goes back to what opened it. An item can draw its own content over the
+// stage instead of a plain picture (render: the step 2 body marks, still draggable at this size), with a line under it
+// (footer); arrow keys that content uses itself (it calls preventDefault) do not step to the next picture.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-export type PictureItem = { src: string; label: string }
+export type PictureItem = {
+  src: string
+  label: string
+  // Drawn on the stage in place of the picture; actual is true in Actual size.
+  render?: (actual: boolean) => ReactNode
+  // The picture's pixel size, shown in the bar when the content is drawn by render.
+  size?: [number, number]
+  footer?: ReactNode
+}
 
 export function PictureViewer({ items, start = 0, checker = false, onClose }: { items: PictureItem[]; start?: number; checker?: boolean; onClose: () => void }) {
   const [index, setIndex] = useState(Math.min(Math.max(start, 0), Math.max(items.length - 1, 0)))
@@ -28,6 +38,7 @@ export function PictureViewer({ items, start = 0, checker = false, onClose }: { 
     ref.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close.current()
+      else if (e.defaultPrevented) return
       else if (e.key === 'ArrowRight') stepRef.current(1)
       else if (e.key === 'ArrowLeft') stepRef.current(-1)
     }
@@ -47,7 +58,7 @@ export function PictureViewer({ items, start = 0, checker = false, onClose }: { 
             {item.label}
             {many && <span className="muted"> ({index + 1} of {items.length})</span>}
           </strong>
-          {size && <span className="muted small">{size[0]} x {size[1]} px</span>}
+          {(size ?? item.size) && <span className="muted small">{(size ?? item.size)![0]} x {(size ?? item.size)![1]} px</span>}
           <span className="grow" />
           <div className="segmented">
             <button type="button" aria-pressed={!actual} onClick={() => setActual(false)} title="The whole picture in the window">
@@ -67,15 +78,20 @@ export function PictureViewer({ items, start = 0, checker = false, onClose }: { 
           </button>
         </div>
         <div className={'picture-viewer-stage' + (actual ? ' actual' : '') + (checker ? ' checker' : '')}>
-          <img
-            key={item.src}
-            src={item.src}
-            alt={item.label}
-            onLoad={(e) => setSize([e.currentTarget.naturalWidth, e.currentTarget.naturalHeight])}
-            onDoubleClick={() => setActual((a) => !a)}
-            title={actual ? 'Double-click to fit the window' : 'Double-click for actual size'}
-          />
+          {item.render ? (
+            item.render(actual)
+          ) : (
+            <img
+              key={item.src}
+              src={item.src}
+              alt={item.label}
+              onLoad={(e) => setSize([e.currentTarget.naturalWidth, e.currentTarget.naturalHeight])}
+              onDoubleClick={() => setActual((a) => !a)}
+              title={actual ? 'Double-click to fit the window' : 'Double-click for actual size'}
+            />
+          )}
         </div>
+        {item.footer && <div className="picture-viewer-foot">{item.footer}</div>}
         {many && (
           <>
             <button type="button" className="picture-nav prev" onClick={() => step(-1)} aria-label="Previous picture" title="Previous (left arrow)">

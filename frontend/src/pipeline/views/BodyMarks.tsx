@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { api, libraryUrl, type BodyMarks as Marks, type Mark, type MarkView } from '../../api'
 import { Info } from '../../components/Info'
+import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 
 // Mark the body (step 2): the app's marks on the front picture and one side picture, each draggable. The marks are a note
 // on this version's pictures (marks.json): moving one, pressing These look right or putting the app's marks back changes
@@ -44,9 +45,16 @@ type PictureProps = {
   view: MarkView
   busy: boolean
   onMove: (view: MarkView, joint: string, x: number, y: number) => void
+  // Opens this picture enlarged (the small one on the card).
+  onOpen?: () => void
+  // Drawn in the picture viewer: fills its stage (Fit), or at the picture's own pixels (Actual size).
+  large?: boolean
+  actual?: boolean
 }
 
-function MarkedPicture({ data, view, busy, onMove }: PictureProps) {
+// The marks are drawn in the picture's own pixels (the svg's viewBox) and a drag is turned back into them through the
+// svg's on-screen transform, so a mark lands on the same picture point at any displayed size, small or enlarged.
+function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual = false }: PictureProps) {
   const pic = data.pictures[view]
   const marks = data.marks[view] ?? {}
   const svg = useRef<SVGSVGElement>(null)
@@ -65,7 +73,11 @@ function MarkedPicture({ data, view, busy, onMove }: PictureProps) {
   const down = (joint: string) => (ev: PointerEvent<SVGCircleElement>) => {
     if (busy) return
     ev.preventDefault()
-    ;(ev.target as Element).setPointerCapture(ev.pointerId)
+    try {
+      ;(ev.target as Element).setPointerCapture(ev.pointerId)
+    } catch {
+      // no capture (a pointer the browser no longer tracks): the drag still follows moves over the mark
+    }
     const p = toPicture(ev)
     if (p) setDrag({ joint, ...p })
   }
@@ -90,13 +102,10 @@ function MarkedPicture({ data, view, busy, onMove }: PictureProps) {
     onMove(view, joint, Math.min(w, Math.max(0, m.x + d[0])), Math.min(h, Math.max(0, m.y + d[1])))
   }
   const joints = Object.keys(marks).filter((j) => shown(view, j))
-  return (
-    <figure className="body-marks-picture">
-      <figcaption className="row-between small">
-        <strong>{SIDE_NAMES[view]}</strong>
-        {!pic.found && <span className="muted">The app could not find the body here: drag every mark into place.</span>}
-      </figcaption>
-      <div className="body-marks-stage checker" style={{ aspectRatio: `${w} / ${h}` }}>
+  const stageClass = 'body-marks-stage checker' + (large ? ' large' : '') + (large && actual ? ' actual' : '')
+  const stageStyle = large ? (actual ? { width: w, height: h } : undefined) : { aspectRatio: `${w} / ${h}` }
+  const stage = (
+      <div className={stageClass} style={stageStyle}>
         <img src={libraryUrl(pic.path)} alt={`${SIDE_NAMES[view].toLowerCase()} picture with the body marks`} draggable={false} />
         <svg ref={svg} viewBox={`0 0 ${w} ${h}`} role="group" aria-label={`Marks on the ${SIDE_NAMES[view].toLowerCase()} picture`}>
           {BONES.filter(([a, b]) => joints.includes(a) && joints.includes(b)).map(([a, b]) => {
@@ -132,7 +141,31 @@ function MarkedPicture({ data, view, busy, onMove }: PictureProps) {
           })}
         </svg>
       </div>
+  )
+  if (large) return stage
+  return (
+    <figure className="body-marks-picture">
+      <figcaption className="row-between small">
+        <strong>{SIDE_NAMES[view]}</strong>
+        {!pic.found && <span className="muted">The app could not find the body here: drag every mark into place.</span>}
+      </figcaption>
+      {onOpen ? (
+        <Zoomable className="body-marks-zoom" label={`the ${SIDE_NAMES[view].toLowerCase()} picture with its marks`} onOpen={onOpen}>
+          {stage}
+        </Zoomable>
+      ) : (
+        stage
+      )}
     </figure>
+  )
+}
+
+function Legend() {
+  return (
+    <span className="body-marks-key small muted">
+      <span className="key-dot mark-left" /> left <span className="key-dot mark-right" /> right <span className="key-dot mark-guessed" /> guessed or unsure{' '}
+      <span className="key-dot mark-yours" /> yours
+    </span>
   )
 }
 
@@ -155,6 +188,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [side, setSide] = useState<MarkView>('left')
+  const [open, setOpen] = useState<number | null>(null)
 
   useEffect(() => {
     // The card keys this panel on the version, so a new version starts with fresh state.
@@ -195,6 +229,23 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
   const stale = data?.stale ?? []
   const notes = data ? handNotes(data) : []
   const yours = !!data && Object.values(data.marks).some((v) => Object.values(v ?? {}).some((m) => m.source === 'you'))
+  // The front and the chosen side, small on the card; either opens enlarged in the app's picture viewer with the marks
+  // still drawn and draggable (left and right arrows there step between the two, unless a mark has the focus).
+  const pair = data ? (['front', side] as MarkView[]).filter((v) => data.pictures[v]?.path) : []
+  const enlarged: PictureItem[] = data
+    ? pair.map((v) => ({
+        src: libraryUrl(data.pictures[v]!.path)!,
+        label: `${SIDE_NAMES[v]} picture, body marks`,
+        size: data.pictures[v]!.size,
+        render: (actual: boolean) => <MarkedPicture data={data} view={v} busy={busy || !!locked} onMove={onMove} large actual={actual} />,
+        footer: (
+          <div className="row-between small">
+            <span className="muted">{locked ? 'The marks of this version cannot be changed.' : 'Drag a mark to move it, or select it and use the arrow keys (Shift for bigger steps).'}</span>
+            <Legend />
+          </div>
+        ),
+      }))
+    : []
   return (
     <section className={'body-marks' + (data ? ` body-marks-${data.state}` : '')} aria-busy={busy || !data}>
       <div className="view-intro view-intro-flush muted small">
@@ -234,15 +285,14 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
                 {SIDE_NAMES[v]}
               </button>
             ))}
-            <span className="body-marks-key small muted">
-              <span className="key-dot mark-left" /> left <span className="key-dot mark-right" /> right <span className="key-dot mark-guessed" /> guessed or unsure{' '}
-              <span className="key-dot mark-yours" /> yours
-            </span>
+            <Legend />
           </div>
           <div className="body-marks-pictures">
-            <MarkedPicture data={data} view="front" busy={busy || !!locked} onMove={onMove} />
-            {data.pictures[side] && <MarkedPicture data={data} view={side} busy={busy || !!locked} onMove={onMove} />}
+            {pair.map((v, i) => (
+              <MarkedPicture key={v} data={data} view={v} busy={busy || !!locked} onMove={onMove} onOpen={() => setOpen(i)} />
+            ))}
           </div>
+          {open !== null && <PictureViewer items={enlarged} start={open} checker onClose={() => setOpen(null)} />}
           {notes.length > 0 && (
             <ul className="body-marks-notes muted small">
               {notes.map((n) => (

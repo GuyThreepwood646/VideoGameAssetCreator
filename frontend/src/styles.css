@@ -4443,3 +4443,10 @@ button.preset-card:hover:not(:disabled) {
 .body-marks-notes { margin: 8px 0 0 18px; padding: 0; }
 .body-marks-actions { margin-top: 10px; display: flex; gap: 10px; }
 .body-marks-error { color: var(--bad); }
+/* Mark the body, enlarged in the picture viewer: the stage fills the viewer (Fit) or takes the picture's own pixels
+   (Actual size, the viewer scrolls); the svg and the picture share the box, both contained, so they stay aligned. */
+.body-marks-zoom { cursor: default; }
+.body-marks-stage.large { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+.body-marks-stage.large.actual { margin: auto; flex: none; }
+.picture-viewer-foot { padding: var(--s2) var(--s3); border-top: 1px solid var(--border); background: var(--panel); }
+.picture-viewer-foot .body-marks-key { margin-left: var(--s3); }
