@@ -6,6 +6,7 @@ import { api, type FirstRun, type TestCharacter, type SetupGroup, type SetupItem
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import ComfyPanel from './components/ComfyPanel'
+import HardwarePanel from './components/HardwarePanel'
 import ModelFileChoice from './components/ModelFileChoice'
 import ModelsPanel from './components/ModelsPanel'
 import ToolPanel from './components/ToolPanel'
@@ -229,6 +230,7 @@ export default function SetupCheck() {
   const [unityOpen, setUnityOpen] = useState(false)
   const [blenderOpen, setBlenderOpen] = useState(false)
   const [comfyOpen, setComfyOpen] = useState(false)
+  const [hardwareOpen, setHardwareOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const hash = useLocation().hash
   useEffect(() => {
@@ -282,6 +284,17 @@ export default function SetupCheck() {
             </button>
           )}
           {comfyOpen && <ComfyPanel onChanged={() => void reload(true)} onClose={() => setComfyOpen(false)} />}
+        </div>
+      )}
+      {report && (
+        <div className="setup-extras">
+          <div className="field-label">Graphics cards and memory</div>
+          {!hardwareOpen && (
+            <button type="button" className="small-btn" onClick={() => setHardwareOpen(true)}>
+              Look at my graphics cards
+            </button>
+          )}
+          {hardwareOpen && <HardwarePanel onChanged={() => void reload(true)} onClose={() => setHardwareOpen(false)} />}
         </div>
       )}
       {report && !problems.some((p) => p.setting === 'blender_exe') && (

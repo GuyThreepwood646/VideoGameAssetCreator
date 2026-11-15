@@ -605,6 +605,22 @@ export type ComfyFind = {
   choices: { id: string; name: string; available: boolean; recommended: boolean; text: string }[]
   current: Record<string, { comfy_dir: string; cuda_device: number | null }>
 }
+export type HardwareCard = { index: number; name: string; short: string; memory_gb: number; bus: string }
+export type HardwareLayout = {
+  engines: { name: string; gpu: string; card: number | null; role: string }[]
+  stage_instances: Record<string, string>; material_stage_instances: Record<string, string>
+  judge_instance: string; instance_capabilities: Record<string, string[]>; min_free_ram_gb: number
+}
+export type HardwarePlan = {
+  hardware: { cards: HardwareCard[]; ram_total_gb: number; ram_free_gb: number; other_cards: string[]; smi_problem: string }
+  plan: {
+    status: 'ok' | 'warn' | 'cannot'
+    engines: { name: string; card: number; gpu: string; memory_gb: number; role: string; steps: string }[]
+    min_free_ram_gb: number; messages: { level: 'info' | 'warn' | 'bad'; text: string }[]; explain: string[]; ignored: number[]
+  }
+  current: HardwareLayout | null; already: boolean; can_accept: boolean; problem: string
+}
+export type HardwareChoice = { use?: number[]; three_d?: number; min_free_ram_gb?: number }
 export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
 export type ComfyPacksReport = {
   packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
@@ -776,6 +792,15 @@ export const api = {
   useBlenderZip: (path: string) => post<SettingChange>('/api/tools/blender/zip', { path }),
   unityTool: () => get<UnityTool>('/api/tools/unity'),
   useUnity: (path: string) => post<SettingChange>('/api/tools/unity/use', { path }),
+  hardware: (c: HardwareChoice = {}) => {
+    const q = new URLSearchParams()
+    if (c.use) q.set('use', c.use.join(','))
+    if (c.three_d != null) q.set('three_d', String(c.three_d))
+    if (c.min_free_ram_gb != null) q.set('min_free_ram_gb', String(c.min_free_ram_gb))
+    const t = q.toString()
+    return get<HardwarePlan>('/api/hardware' + (t ? '?' + t : ''))
+  },
+  hardwareAccept: (c: HardwareChoice = {}) => post<{ changed: boolean; message: string; note: string; restart_needed: boolean }>('/api/hardware/accept', c),
   comfyFind: () => get<ComfyFind>('/api/comfy'),
   comfyCheck: (id: string) => post<ComfyCheck>('/api/comfy/check', { id }),
   comfyLink: (id: string) => post<{ message: string }>('/api/comfy/link', { id }),
