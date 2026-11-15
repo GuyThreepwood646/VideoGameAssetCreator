@@ -1118,6 +1118,8 @@ async def judge(sc: StageContext) -> None:
     pc = projection_check(m, sc.version.params or {}, sc.asset.category, texture_look(rec, (sc.project.style_lock or {}).get("palette")))
     if pc is not None:
         checks.append(pc)
+        if m.get("srcproject_applied"):
+            checks += srcproject.neck_checks(m)
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)

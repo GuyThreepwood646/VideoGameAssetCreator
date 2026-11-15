@@ -75,6 +75,8 @@ NOTES: dict[str, tuple[str, str]] = {
     "albedo_range": ("by_hand", "Pure black or white comes from the picture. Redraw the front picture a little lighter or darker in the first step "
                                 "(Refine), then run Clean up for the game again."),
     "face_finder": ("by_hand", "Open Setup and check that the face finder is installed, then run Clean up for the game again."),
+    "neck_join": ("by_hand", "No button moves this join on this version. Look at the neck from the front and the sides; if the line "
+                             "shows, accept it or touch up the neck in the exported colour texture."),
     "picture_projection": ("by_hand", "The reason is in the sentence. Build the 3D model again from a picture that shows the character from the front, "
                                       "or accept the 3D builder's own colours."),
     "tiles_cleanly": ("by_hand", "Make the picture again, asking for a seamless, evenly lit texture with nothing large near the edges."),

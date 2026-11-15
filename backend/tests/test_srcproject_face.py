@@ -691,3 +691,13 @@ def test_the_neck_hand_over_measure_finds_a_line_across_the_neck() -> None:
         m = srcproject.neck_handover(atlas, {"head": (head_c * dh[:, None], dh), "body": (body_c * db[:, None], db)}, zone)
         assert m is not None and m["ok"] is ok, m
         assert m["step"] > 5.0  # the two paints' colours differ
+
+
+def test_the_finish_card_says_when_the_neck_has_a_line_across_it() -> None:
+    m = {"srcproject_neck_handover": {"span_m": 0.005, "step": 16.5, "ok": False}}
+    (nj,) = srcproject.neck_checks(m)
+    assert nj["id"] == "neck_join" and not nj["passed"] and nj["severity"] == "warn" and "0.5 cm" in nj["help"]
+    assert nj.get("fix_note") and not nj.get("fix")  # no button moves it: an honest line instead
+    (ok,) = srcproject.neck_checks({"srcproject_neck_handover": {"span_m": 0.03, "step": 1.7, "ok": True}})
+    assert ok["passed"] and "over 3 cm" in ok["help"]
+    assert srcproject.neck_checks({}) == [] and srcproject.neck_checks({"srcproject_neck_handover": None}) == []

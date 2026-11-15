@@ -1580,6 +1580,20 @@ def neck_handover(atlas: Atlas, parts: dict[str, Any], zone: dict[str, Any]) -> 
             "fade_m": [round(y0, 3), round(y1, 3)], "ok": bool(hi - lo >= NECK_HANDOVER_MIN)}
 
 
+def neck_checks(m: dict[str, Any]) -> list[dict[str, Any]]:
+    """neck_join (warn) for the finish card, from the picture painting's neck_handover record: the neck's paint passes
+    from the head views to the body fits over less than NECK_HANDOVER_MIN, at one height all round, so a line or band
+    can show across the neck (the live round-four runs before the head pictures reached down the neck fade). Nothing
+    when the painting did not record it."""
+    from . import quality
+
+    nh = m.get("srcproject_neck_handover")
+    if not isinstance(nh, dict) or nh.get("span_m") is None:
+        return []
+    return [quality.check("neck_join", bool(nh.get("ok")), round(float(nh["span_m"]) * 100, 1),
+                          round(NECK_HANDOVER_MIN * 100, 1), vars={"step": nh.get("step")})]
+
+
 def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary: int, tex: np.ndarray,
             zone: dict[str, Any] | None = None) -> dict[str, Any]:
     """Project the fitted views onto this layout, blend them and finish the atlas, with the face region when there is

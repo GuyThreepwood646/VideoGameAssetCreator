@@ -472,6 +472,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                  "straight, full-length view in the same pose as the model, or build the 3D model again from a clearer front "
                  "picture. Or keep it as it is."),
     },
+    # The picture painting's neck hand-over (srcproject.neck_checks), warn only.
+    "neck_join": {
+        "severity": "warn",
+        "ok": "The neck passes from the face's painting to the body's over {value} cm, so no line shows across it.",
+        "fail": ("The neck passes from the face's painting to the body's within {value} cm, at one height all round (it should "
+                 "take at least {limit} cm), so a line or band may show across the neck and the hair beside it."),
+    },
     "facing_tests": {
         "severity": "warn",
         "ok": "The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.",
