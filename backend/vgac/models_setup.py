@@ -528,12 +528,48 @@ def test_character_file() -> Path:
     return downloader.project_dir() / "local" / "test_character.json"
 
 
-def test_character_state() -> dict[str, Any]:
+def _recorded_test_character() -> dict[str, Any]:
     try:
         d = json.loads(test_character_file().read_text(encoding="utf-8"))
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def test_character_state() -> dict[str, Any]:
+    """The test character as it is now, read from the asset itself (not from what the panel last remembered, which is stale when the
+    panel was closed or the app restarted while it ran):
+      state "not_run"  - none was made (or its asset is gone);
+      state "running"  - its autopilot is still going (`stage` is the step);
+      state "passed"   - it ran to the end;
+      state "failed"   - it stopped or failed (`reason` says why, `stage` where).
+    `passed` is True/False once it has finished, else None."""
+    d = _recorded_test_character()
+    aid = d.get("asset_id")
+    out: dict[str, Any] = {**d, "state": "not_run", "stage": None, "reason": None, "passed": None}
+    if not aid:
+        return out
+    try:
+        from . import autopilot
+        from .db import Asset, session_factory
+
+        with session_factory()() as db:
+            a = db.get(Asset, aid)
+            ap = autopilot.get_state(a) if a is not None else None
+    except Exception as e:  # noqa: BLE001  (no database yet: nothing was made)
+        log.debug("test character: %s", e)
+        return out
+    if ap is None:
+        return out
+    status = ap.get("status")
+    out["stage"] = ap.get("stage")
+    if status == "running":
+        out["state"] = "running"
+    elif status == "done":
+        out.update(state="passed", passed=True)
+    elif status in ("error", "paused"):
+        out.update(state="failed", passed=False, reason=ap.get("reason") or "It stopped before the end.")
+    return out
 
 
 def record_test_character(asset_id: str, passed: bool | None) -> dict[str, Any]:

@@ -184,6 +184,10 @@ def first_run(settings: Settings, items: list[dict[str, Any]], supervisor: Any =
         state = "partly_set_up"
     else:
         state = "ready"
+    from . import models_setup
+
     return {"state": state, "fresh": not has_machine_settings(), "settings_problem": problem, "missing": missing,
             "optional": optional, "configured": configured, "unchecked": unchecked, "steps": steps,
-            "restart_needed": list(restart or [])}
+            "restart_needed": list(restart or []),
+            # "Ready" on the card means a test character ran to the end: not_run / running / passed / failed, with the step and reason
+            "test_character": models_setup.test_character_state()}
