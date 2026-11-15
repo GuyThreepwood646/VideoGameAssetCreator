@@ -323,6 +323,8 @@ export type StageInfo = {
   plain_verb?: string
   help?: HelpText
   estimate_seconds?: number
+  // Set when the time with both cards and with one differ by 30 percent: "about 5 minutes with both cards, about 17 minutes with one".
+  estimate_note?: string
 }
 
 export type Suggestion = {

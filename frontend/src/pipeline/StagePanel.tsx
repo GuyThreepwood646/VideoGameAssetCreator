@@ -296,6 +296,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           <span className="muted small">
             {versions.length ? `${versions.length} version${versions.length > 1 ? 's' : ''}` : 'no versions yet'}
             {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
+            {stageInfo?.estimate_note ? ` / ${stageInfo.estimate_note}` : ''}
           </span>
         </div>
         {stage === 'concept' && <BriefCard asset={asset} onSaved={onChanged} onError={onError} />}
