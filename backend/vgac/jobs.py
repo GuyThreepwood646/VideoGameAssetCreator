@@ -479,6 +479,31 @@ HOST_QUICK = "quick"  # InstanceWorker.lane of the host's second worker, for exp
 HOST_MAIN = "main"    # the host's first worker once a quick one exists: it takes everything except exports
 
 
+RIG_PASS_LIMIT = 2  # rig jobs that may go ahead of one waiting long job on a card, then the long job goes
+
+
+def _card_pick(db: Any, rows: list[Any], passed: dict[str, int]) -> tuple[str | None, str | None]:
+    """(job to start, the longer job it goes ahead of or None) among a card's queued jobs `rows` (oldest first, already
+    limited to what the card may run). First come, first served, except that a rig job (1 to 2 minutes) goes ahead of
+    the long jobs queued before it (a 3D build takes 8 to 12; in round 4 rigs waited behind other characters' builds),
+    unless an earlier job of its own asset is still queued or running (its build), and at most RIG_PASS_LIMIT rigs go
+    ahead of the same waiting job. A running job is never interrupted: the rig starts when the card is next free."""
+    if not rows:
+        return None, None
+    head = rows[0]
+    if head.kind.startswith("rig.") or passed.get(head.id, 0) >= RIG_PASS_LIMIT:
+        return head.id, None
+    for r in rows[1:]:
+        if not r.kind.startswith("rig."):
+            continue
+        earlier = db.scalar(select(func.count()).select_from(Job).where(
+            Job.asset_id == r.asset_id, Job.id != r.id, Job.status.in_(("queued", "running")),
+            Job.created_at < r.created_at, ~Job.kind.startswith("rig."))) if r.asset_id is not None else 0
+        if not earlier:
+            return r.id, head.id
+    return head.id, None
+
+
 def _host_next(db: Any, lane: str = "") -> str | None:
     """The host lane's next job. First come, first served, except that an export (about 35 s of work) goes ahead of the
     clean-ups and other long jobs waiting before it (in the realistic test one waited 10 minutes behind a clean-up),
@@ -542,6 +567,9 @@ class InstanceWorker:
     share: Callable[[], str | None] | None = None
     # The job this card is lent to (JobQueue.lend): while set the worker picks nothing.
     lent_to: str | None = None
+    # Rig jobs started ahead of a waiting long job, by the long job's id (_card_pick), and the pass picked last.
+    _passed: dict[str, int] = field(default_factory=dict)
+    _pass_note: tuple[str, str] | None = None
     # Awaited when the worker holds a job because free RAM is under the floor: lets idle engines give back the models
     # they keep cached (JobQueue.release_cached_ram).
     ram_short: Callable[[], Awaitable[None]] | None = None
@@ -576,12 +604,16 @@ class InstanceWorker:
         with session_factory()() as db:
             if self.name == HOST:
                 return _host_next(db, self.lane)
-            if self.allows is None:
-                job = db.scalar(select(Job).where(Job.instance == self.name, Job.status == "queued").order_by(Job.created_at, Job.id).limit(1))
-                return job.id if job else None
-            rows = db.execute(select(Job.id, Job.kind).where(Job.instance == self.name, Job.status == "queued")
+            rows = db.execute(select(Job.id, Job.kind, Job.asset_id, Job.created_at)
+                              .where(Job.instance == self.name, Job.status == "queued")
                               .order_by(Job.created_at, Job.id).limit(500)).all()
-            return next((r.id for r in rows if self._allowed(r.kind)), None)
+            if self.allows is not None:
+                rows = [r for r in rows if self._allowed(r.kind)]
+            for k in [k for k in self._passed if k not in {r.id for r in rows}]:
+                del self._passed[k]
+            pick, ahead_of = _card_pick(db, rows, self._passed)
+            self._pass_note = (pick, ahead_of) if ahead_of else None
+            return pick
 
     async def _run(self) -> None:
         log.info("worker %s started", self.name)
@@ -698,6 +730,10 @@ class InstanceWorker:
             job.status = "running"
             job.started_at = utcnow()
             job.message = "starting"
+            if self._pass_note is not None and self._pass_note[0] == job_id:
+                # a rig job started ahead of a longer one that was waiting: count it against that one's limit
+                self._passed[self._pass_note[1]] = self._passed.get(self._pass_note[1], 0) + 1
+                self._pass_note = None
             db.commit()
             kind = job.kind
             payload = job.payload
