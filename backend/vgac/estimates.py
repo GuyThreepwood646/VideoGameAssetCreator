@@ -10,6 +10,7 @@ stated separately (JobQueue.note_waits).
 """
 from __future__ import annotations
 
+import json
 import statistics
 from typing import Any
 
@@ -48,30 +49,74 @@ def minutes_text(seconds: float) -> str:
     return f"about {m} minute" + ("" if m == 1 else "s")
 
 
-def _durations(db: Session, kind: str, category: str | None) -> list[float]:
-    q = select(Job.started_at, Job.finished_at).where(Job.kind == kind, Job.status == "done",
-                                                      Job.started_at.is_not(None), Job.finished_at.is_not(None))
+LENT_MIN_SECONDS = 30.0  # a run counts as having had a second card when the queue lent one for at least this long
+
+
+def lent_seconds(result_json: str | None) -> float:
+    """How long the job had a second card, from its result ({"lent": [{"card", "seconds"}]}); 0 when none."""
+    if not result_json:
+        return 0.0
+    try:
+        res = json.loads(result_json)
+        return float(sum(float(x.get("seconds") or 0) for x in (res.get("lent") or [])))
+    except (ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+def _durations(db: Session, kind: str, category: str | None, lent: bool | None = None) -> list[float]:
+    """Seconds of the last finished runs of `kind`. lent True: only runs that had a second card, False: only runs
+    that did not (older runs, which recorded nothing, count here), None: all."""
+    q = select(Job.started_at, Job.finished_at, Job.result_json).where(
+        Job.kind == kind, Job.status == "done", Job.started_at.is_not(None), Job.finished_at.is_not(None))
     if category:
         q = q.join(Asset, Asset.id == Job.asset_id).where(Asset.category == category)
-    rows = db.execute(q.order_by(Job.finished_at.desc()).limit(HISTORY_RUNS * 2)).all()
-    out = [(f - s).total_seconds() for s, f in rows]
+    rows = db.execute(q.order_by(Job.finished_at.desc()).limit(HISTORY_RUNS * 4)).all()
+    out = []
+    for s, f, r in rows:
+        if lent is not None and (lent_seconds(r) >= LENT_MIN_SECONDS) != lent:
+            continue
+        out.append((f - s).total_seconds())
     return [d for d in out if d >= MIN_SECONDS][:HISTORY_RUNS]
 
 
 def stage_seconds(db: Session, stage: str, category: str | None = None, material: bool = False,
-                  op: str = "run") -> tuple[int, int] | None:
-    """(seconds, number of runs it rests on) or None when there is too little history."""
+                  op: str = "run", lent: bool | None = None) -> tuple[int, int] | None:
+    """(seconds, number of runs it rests on) or None when there is too little history. lent: see _durations; when
+    there are too few runs of that kind the figure over all runs stands."""
     kind = f"material.{stage}.{op}" if material else f"{stage}.{op}"
-    for cat in ((category, None) if category else (None,)):
-        runs = _durations(db, kind, cat)
-        if len(runs) >= MIN_RUNS:
-            return round(pick(runs)), len(runs)
+    for want in ((lent, None) if lent is not None else (None,)):
+        for cat in ((category, None) if category else (None,)):
+            runs = _durations(db, kind, cat, want)
+            if len(runs) >= MIN_RUNS:
+                return round(pick(runs)), len(runs)
     return None
 
 
-def expected_seconds(db: Session, kind: str, category: str | None = None) -> float | None:
+def second_card_free(queue: Any = None) -> bool:
+    """Whether at least two cards are on and idle now, so a step that borrows one is likely to get it."""
+    from . import jobs
+    q = queue if queue is not None else jobs.active_queue()
+    if q is None:
+        return False
+    try:
+        free = [n for n in q.settings.instances if q.is_enabled(n) and not q.card_in_use(n)]
+    except Exception:  # noqa: BLE001
+        return False
+    return len(free) >= 2
+
+
+def split_estimates(db: Session, stage: str, category: str | None = None) -> tuple[int | None, int | None]:
+    """(seconds with a second card, seconds on one card) from runs that recorded which they had; None where there are
+    fewer than MIN_RUNS of that kind. Only steps that borrow a card (step 2, the clean-up) have both."""
+    two = _durations(db, f"{stage}.run", category, True)
+    one = _durations(db, f"{stage}.run", category, False)
+    return (round(pick(two)) if len(two) >= MIN_RUNS else None, round(pick(one)) if len(one) >= MIN_RUNS else None)
+
+
+def expected_seconds(db: Session, kind: str, category: str | None = None, lent: bool | None = None) -> float | None:
     """How long a job of `kind` ("prep.run", "prep.adjust", "export.run") is expected to run, from its own history,
-    else the stage's stated default; None for a kind that is not a stage's."""
+    else the stage's stated default; None for a kind that is not a stage's. lent: True when a second card is likely
+    to be free, False when not, None to ignore it."""
     from . import guidance
     parts = kind.split(".")
     material = parts[0] == "material"
@@ -80,7 +125,7 @@ def expected_seconds(db: Session, kind: str, category: str | None = None) -> flo
     if len(parts) != 2:
         return None
     stage, op = parts
-    got = stage_seconds(db, stage, category, material, op)
+    got = stage_seconds(db, stage, category, material, op, lent)
     if got:
         return float(got[0])
     g = guidance.stage_guide(stage)
@@ -127,10 +172,17 @@ def with_history(db: Session, stages: list[dict[str, Any]], category: str | None
     """The /api/stages list with estimate_seconds taken from history where there is some, plus estimate_basis
     ("history" or "default") and estimate_runs."""
     out = []
+    free = second_card_free()
     for s in stages:
-        got = stage_seconds(db, s["id"], category)
-        out.append({**s, "estimate_seconds": got[0], "estimate_basis": "history", "estimate_runs": got[1]} if got
-                   else {**s, "estimate_basis": "default", "estimate_runs": 0})
+        got = stage_seconds(db, s["id"], category, lent=free)
+        item = ({**s, "estimate_seconds": got[0], "estimate_basis": "history", "estimate_runs": got[1]} if got
+                else {**s, "estimate_basis": "default", "estimate_runs": 0})
+        two, one = split_estimates(db, s["id"], category)
+        if two is not None and one is not None:
+            item["estimate_two_cards"], item["estimate_one_card"] = two, one
+            if max(two, one) >= 1.3 * min(two, one):
+                item["estimate_note"] = f"{minutes_text(two)} with both cards, {minutes_text(one)} with one"
+        out.append(item)
     return out
 
 

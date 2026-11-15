@@ -412,6 +412,7 @@ class Lease:
     ended: bool = False
     # What the queue did to lend it, in plain words ("" when nothing special), e.g. the engine let go of its models.
     note: str = ""
+    granted_at: float = 0.0  # time.monotonic() when it was lent; the borrowing job records how long it kept it
 
     async def end(self, interrupt: bool = False) -> None:
         """Hand the card back. interrupt: stop what this job left running on it first (the job was stopped), so the
@@ -1179,7 +1180,8 @@ class JobQueue:
                     cats[j.asset_id] = a.category if a is not None else None
                 key = (j.kind, cats[j.asset_id])
                 if key not in expect_cache:
-                    expect_cache[key] = estimates.expected_seconds(db, j.kind, cats[j.asset_id]) or 120.0
+                    expect_cache[key] = estimates.expected_seconds(db, j.kind, cats[j.asset_id],
+                                                                   lent=estimates.second_card_free(self)) or 120.0
                 return expect_cache[key]
 
             ahead: dict[tuple[str, str], tuple[float, Job]] = {}
@@ -1729,6 +1731,7 @@ class JobQueue:
             lease = Lease(instance=name, job_id=job_id, client=self.clients[name], gpu=gpu_name(name, self.settings),
                           _give_back=self._give_back)
             lease.note = note
+            lease.granted_at = time.monotonic()
             w.lent_to = job_id
             self.leases[name] = lease
             if note:
@@ -1796,8 +1799,27 @@ class JobQueue:
         if self.supervisor is not None:
             self.supervisor.touch(lease.instance)
         log.info("graphics card %s handed back by job %s", lease.instance, lease.job_id[:8])
+        self._record_lent(lease)
         self.wake(lease.instance)
         self.publish_gpus()
+
+    def _record_lent(self, lease: Lease) -> None:
+        """Write on the borrowing job how long it had a second card ({"lent": [{"card", "seconds"}]} in its result), so
+        the estimates can tell runs that had two cards from runs that had one (estimates.stage_estimates)."""
+        if not lease.granted_at:
+            return
+        seconds = round(time.monotonic() - lease.granted_at, 1)
+        try:
+            with session_factory()() as db:
+                job = db.get(Job, lease.job_id)
+                if job is None:
+                    return
+                res = job.result if isinstance(job.result, dict) else {}
+                res["lent"] = list(res.get("lent") or []) + [{"card": lease.instance, "seconds": seconds}]
+                job.result = res
+                db.commit()
+        except Exception:  # noqa: BLE001
+            log.debug("could not record the lease on job %s", lease.job_id[:8], exc_info=True)
 
     def end_leases(self, job_id: str) -> None:
         """Hand back every card still lent to `job_id` (the job ended; the step normally does this itself)."""
