@@ -338,3 +338,20 @@ def test_a_whole_body_view_paints_neither_part_where_one_lies_in_front_of_anothe
     assert not band[S // 4 - 1 - 2 * margin, 10]  # the small step alone marks nothing
     srcproject.prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
     assert v.feather[S // 2, S // 2] == 0.0 and v.feather[S // 2 + 3 * S // 16, S // 2 + S // 4] > 0.9
+
+
+def test_a_thin_strip_no_picture_painted_takes_the_paint_round_it_and_a_large_area_does_not() -> None:
+    g = np.arange(-0.15, 0.15, 0.002)
+    xx, yy = np.meshgrid(g, g)
+    pos = np.stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)], 1)
+    atlas = type("A", (), {"pos": pos, "is_gut": np.zeros(len(pos), dtype=bool)})()
+    x = pos[:, 0]
+    strip = np.abs(x + 0.05) < 0.004  # 8 mm wide, painted on both sides (a strap's edge)
+    large = x > 0.06  # 9 cm wide (a hand no view sees clear)
+    alpha = np.where(strip | large, 0.0, 1.0)
+    paint = np.tile([0.8, 0.6, 0.5], (len(pos), 1))
+    k, col = srcproject.hole_fill(atlas, paint, alpha)
+    mid = np.abs(pos[:, 1]) < 0.1
+    assert k[strip & mid].min() > 0.95 and np.abs(col[strip & mid] - [0.8, 0.6, 0.5]).max() < 0.01
+    assert k[large & mid & (x > 0.1)].max() < 0.05  # the inside of the large area is left as it was
+    assert k[(alpha > 0.5)].max() == 0.0  # painted texels are never touched

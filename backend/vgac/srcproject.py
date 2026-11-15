@@ -1076,6 +1076,28 @@ def shaded_fill(atlas: Atlas, colour: np.ndarray, painted: np.ndarray) -> tuple[
     return np.clip(out, 0.0, 1.0), reach
 
 
+HOLE_CELL = 0.02          # metres: the scale at which a hole no picture painted counts as small (hole_fill)
+HOLE_SHARE = (0.55, 0.75)  # share of the surface round a texel that is painted, over which a hole there is filled
+
+
+def hole_fill(atlas: Atlas, paint: np.ndarray, alpha: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The painted colour round the small holes no picture painted inside painted surface: where painted texels make up
+    HOLE_SHARE of the surface within a few HOLE_CELL of a texel, an unpainted texel takes their mean colour (_smooth_mean)
+    instead of the 3D step's. The 3D step's own colour kept in a thin unpainted strip showed through: on the live W1 R5
+    run the depth-edge gate left the edges of the model's raised bikini strap unpainted on the back, and the strap's
+    navy, pulled pale by the colour correction, drew the strap's outline over the skin. Large unpainted areas (a hand
+    no view sees clear, the inside of a sleeve) keep the 3D step's colour as before. Returns (share filled (N), colour
+    (N,3)) or None."""
+    sel = (alpha > 0.5) & ~atlas.is_gut
+    if sel.sum() < 100:
+        return None
+    m, w = _smooth_mean(atlas, np.where(sel[:, None], paint, 0.0), sel.astype(np.float64), HOLE_CELL, 1)
+    _, wall = _smooth_mean(atlas, np.zeros_like(paint), (~atlas.is_gut).astype(np.float64), HOLE_CELL, 1)
+    frac = w / np.maximum(wall, 1e-9)
+    k = face.smoothstep(HOLE_SHARE[0], HOLE_SHARE[1], frac) * (1.0 - alpha) * (w > 1e-6)
+    return np.clip(k, 0.0, 1.0), np.clip(m, 0.0, 1.0)
+
+
 def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray] | None = None,
            out_info: dict[str, Any] | None = None) -> np.ndarray:
     """The new atlas: painted texels take the painted colour; the others keep base with its low frequencies shifted to agree
@@ -1096,6 +1118,12 @@ def finish(atlas: Atlas, base: np.ndarray, paint: np.ndarray, alpha: np.ndarray,
     if sel.sum() > 100:
         corr, reach = surface_correction(atlas, np.where(sel[:, None], paint - kept, 0.0), np.where(sel, alpha, 0.0))
         out = np.clip(kept + corr * reach[:, None], 0, 1)
+        holes = hole_fill(atlas, paint, alpha)
+        if holes is not None:
+            hk, hc = holes
+            out = out * (1 - hk[:, None]) + hc * hk[:, None]
+            if out_info is not None:
+                out_info["hole_fill"] = hk
     if zt is not None:
         fw = zt.get("fill", zt["face"]) * ~zt["keep"]
         if (fw * (1 - alpha) > 0.5).any():
@@ -1728,7 +1756,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         atlas.zone["head_painted"] = hv[np.where(dom >= 0, dom, len(views))]
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
-            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "neck_handover": handover, "head_tone": tone_rec}
+            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "hole_fill": extra.get("hole_fill"), "neck_handover": handover, "head_tone": tone_rec}
 
 
 # --- measures ---------------------------------------------------------------------------------------------------
