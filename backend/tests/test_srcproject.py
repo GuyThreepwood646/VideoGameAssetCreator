@@ -320,3 +320,21 @@ def test_between_turns_that_fit_the_outline_alike_the_heads_match_decides() -> N
     w1 = {90.0: (14.37, -0.013, 0.731), 85.0: (13.61, -0.031, 0.813), 87.5: (13.89, -0.009, 0.788),
           92.5: (14.10, 0.066, 0.729), 95.0: (14.36, 0.019, 0.701)}
     assert min(w1, key=lambda y: srcproject.turn_score(*w1[y])) == 92.5
+
+
+def test_a_whole_body_view_paints_neither_part_where_one_lies_in_front_of_another() -> None:
+    S = srcproject.SIZE // 8
+    cam = face.Camera(target=np.zeros(3), yaw_deg=90.0, scale=2.0 / 8, size=S)  # 1 mm pixels
+    z = np.full((S, S), 1.0)
+    z[:, S // 2:] = 1.05  # the hip, 5 cm behind the hand on the left half
+    z[: S // 4, :] = 1.005  # a 5 mm step (a strap's edge): not two parts
+    v = srcproject.View("left", 0.5)
+    v.size, v.cam, v.valid, v.disc = S, cam, np.ones((S, S), dtype=bool), np.zeros((S, S), dtype=bool)
+    v.raster = type("R", (), {"z": z})()
+    band = srcproject.overlap_band(v)
+    margin = max(1, round(srcproject.OVERLAP_PX / 8))
+    assert band[S // 2, S // 2 - margin + 1] and band[S // 2, S // 2 + margin - 1]  # both sides of the hand's edge
+    assert not band[S // 2, S // 2 - margin - 3] and not band[S // 2, S // 2 + margin + 3]
+    assert not band[S // 4 - 1 - 2 * margin, 10]  # the small step alone marks nothing
+    srcproject.prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+    assert v.feather[S // 2, S // 2] == 0.0 and v.feather[S // 2 + 3 * S // 16, S // 2 + S // 4] > 0.9

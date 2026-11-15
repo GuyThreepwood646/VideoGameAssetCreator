@@ -73,6 +73,11 @@ DETAIL_TEXELS = 2.0      # "detail" mode: the TRELLIS colour is kept below this 
 BG = 0.5
 STRETCH = (2.0, 3.5)     # one picture pixel covering this many texels along the surface: weight falls from 1 to 0
 DISC_PX = 4              # pixels (at the working size) kept away from depth discontinuities
+OVERLAP_JUMP_M = 0.03    # a step in depth of this much is one part of the body in front of another (a hand before the hip)
+OVERLAP_PX = 24          # pixels (at the working size) round such a step where a whole-body view paints neither part: the
+                         # drawn picture's hand sits a few pixels off the model's, so the hip's colour (W1 R5's navy bikini,
+                         # M1 R4's green jacket) landed on the hand's edge past the 4 pixels of DISC_PX; those texels
+                         # come from views that see them clear, else keep the 3D step's colour
 GATES = {"disc": True, "stretch": True, "agree": True, "flowsat": True}
 AGREE = {"lo": 0.025, "hi": 0.05, "reach": 0.25, "grow": 0.07}   # structure agreement gate, see agreement_gate
 TURN_YAWS = {
@@ -752,6 +757,16 @@ def agreement_gate(v: "View", fn: int = 512) -> tuple[np.ndarray, float]:
     return g, float(bad.sum() / max(m.sum(), 1))
 
 
+def overlap_band(v: "View") -> np.ndarray:
+    """(S, S) bool: the pixels of a whole-body view within OVERLAP_PX (scaled to its size) of a step in depth of
+    OVERLAP_JUMP_M or more, where one part of the body lies in front of another in the picture. Neither part is painted
+    from this view there."""
+    size = v.size
+    px_m = v.cam.scale / size
+    big = depth_discontinuities(v.raster.z, px_m, OVERLAP_JUMP_M / px_m)
+    return face.dilate_mask(big, max(1, int(round(OVERLAP_PX * size / SIZE))))
+
+
 def prepare_gates(v: "View", gates: dict[str, bool] | None = None) -> None:
     """The per-view gates on top of the angle cut-off: depth-edge erosion (changes the feather), the structure agreement
     gate and the flow-limit gate (images in v.gate_ag and v.gate_fs)."""
@@ -759,6 +774,8 @@ def prepare_gates(v: "View", gates: dict[str, bool] | None = None) -> None:
     size = v.size
     r = max(2, size // 340)
     valid = v.valid & ~face.dilate_mask(v.disc, DISC_PX) if g.get("disc") else v.valid
+    if g.get("disc") and not v.name.startswith(HEAD_VIEW) and getattr(v, "raster", None) is not None:
+        valid = valid & ~overlap_band(v)
     v.feather = np.clip(face.blur(face.erode(valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
     ones = np.ones((size, size), dtype=np.float32)
     v.gate_ag = v.gate_fs = ones
