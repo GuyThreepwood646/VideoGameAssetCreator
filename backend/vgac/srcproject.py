@@ -1400,10 +1400,29 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
                        lambda c: (face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, c, size=c.size),
                                   face.render_view(mesh, tex, c)))
     rec.update(fit={kk: a.get(kk) for kk in ("sx", "tx", "ty")}, head_px=crop.get("head_px"))
+    rec["outline"] = head_outline_match(v, zone)  # a record only: how well its head lies on the model's
     v.info = rec
     if log:
         log(f"view {rec['name']}: yaw {yaw:.1f}, lined up to {rec['lined_up_to']}, residual {rec['residual']:.3f}")
     return v, rec
+
+
+def head_outline_match(v: View, zone: dict[str, Any]) -> float | None:
+    """How well a head view's picture, moved by its fit, lies on the model's head from its camera: intersection over
+    union of the picture's cut-out and the model's outline, above the chin (from the zone's chin, so the neck and the
+    shoulders, which the head frame shows differently in every picture, do not count). None without a chin. Recorded,
+    not acted on: the live M1 R4 +40 view that painted a second ear and cheek had 0.74, every other stored
+    three-quarter head 0.71 (M1 R3, a second jaw line) and 0.82 to 0.94; refusing a view under 0.8 left the cheek to
+    worse paint on M1 and harmed W2-clothed."""
+    ch = zone.get("chin")
+    if ch is None:
+        return None
+    S = v.cam.size
+    top = float(v.cam.target[1]) + 0.5 * v.cam.scale
+    rows = int(np.clip((top - (float(ch["nose_y"]) - 0.65 * float(ch["L"]))) / v.cam.scale * S, 1, S))
+    a, m = v.alpha_img[:rows] > 0.5, v.raster.mask[:rows]
+    union = int((a | m).sum())
+    return round(float((a & m).sum() / union), 3) if union else None
 
 
 def side_head_yaw(name: str, body: View | None, head_yaw: float) -> tuple[float | None, str]:

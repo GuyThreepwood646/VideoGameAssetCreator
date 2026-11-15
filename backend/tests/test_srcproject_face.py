@@ -701,3 +701,20 @@ def test_the_finish_card_says_when_the_neck_has_a_line_across_it() -> None:
     (ok,) = srcproject.neck_checks({"srcproject_neck_handover": {"span_m": 0.03, "step": 1.7, "ok": True}})
     assert ok["passed"] and "over 3 cm" in ok["help"]
     assert srcproject.neck_checks({}) == [] and srcproject.neck_checks({"srcproject_neck_handover": None}) == []
+
+
+def test_a_head_pictures_outline_off_the_models_head_is_measured_above_the_chin() -> None:
+    S = 200
+    cam = face.Camera(target=np.array([0.0, 1.70, 0.0]), yaw_deg=40.0, scale=0.3, size=S)  # rows 0..199 span 1.85..1.55 m
+    zone = {"chin": {"nose_y": 1.66, "L": 0.14, "centre": [0.0, 0.0], "width": 0.16}}  # the chin at 1.569 m, row 187
+    yy, xx = np.mgrid[0:S, 0:S]
+    model = (np.hypot(xx - 100, yy - 90) < 60) | ((yy > 187) & (np.abs(xx - 100) < 25))  # a head and its neck
+    v = type("V", (), {})()
+    v.cam, v.raster = cam, type("R", (), {"mask": model})()
+    v.alpha_img = model.astype(np.float64)
+    assert srcproject.head_outline_match(v, zone) == 1.0
+    v.alpha_img = (np.hypot(xx - 100, yy - 90) < 60) | ((yy > 187) & (np.abs(xx - 100) < 60))  # a different neck only
+    assert srcproject.head_outline_match(v, zone) == 1.0  # below the chin does not count
+    v.alpha_img = (np.hypot(xx - 125, yy - 90) < 60).astype(np.float64)  # the picture's head lies 25 px forward
+    assert srcproject.head_outline_match(v, zone) < 0.8
+    assert srcproject.head_outline_match(v, {}) is None
