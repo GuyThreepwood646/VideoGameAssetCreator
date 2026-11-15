@@ -104,7 +104,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
   const joints = Object.keys(marks).filter((j) => shown(view, j))
   const stageClass = 'body-marks-stage checker' + (large ? ' large' : '') + (large && actual ? ' actual' : '')
   const stageStyle = large ? (actual ? { width: w, height: h } : undefined) : { aspectRatio: `${w} / ${h}` }
-  const stage = (
+  const marked = (
       <div className={stageClass} style={stageStyle}>
         <img src={libraryUrl(pic.path)} alt={`${SIDE_NAMES[view].toLowerCase()} picture with the body marks`} draggable={false} />
         <svg ref={svg} viewBox={`0 0 ${w} ${h}`} role="group" aria-label={`Marks on the ${SIDE_NAMES[view].toLowerCase()} picture`}>
@@ -142,7 +142,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
         </svg>
       </div>
   )
-  if (large) return stage
+  if (large) return marked
   return (
     <figure className="body-marks-picture">
       <figcaption className="row-between small">
@@ -151,10 +151,10 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
       </figcaption>
       {onOpen ? (
         <Zoomable className="body-marks-zoom" label={`the ${SIDE_NAMES[view].toLowerCase()} picture with its marks`} onOpen={onOpen}>
-          {stage}
+          {marked}
         </Zoomable>
       ) : (
-        stage
+        marked
       )}
     </figure>
   )
