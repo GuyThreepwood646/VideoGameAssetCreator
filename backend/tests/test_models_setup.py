@@ -213,11 +213,13 @@ def test_a_stopped_set_keeps_its_part_and_carries_on(world):
 
 
 def test_the_test_character_record_survives_a_restart(world):
-    assert models_setup.test_character_state() == {}
+    assert models_setup._recorded_test_character() == {}
     models_setup.record_test_character("asset-1", None)
-    assert models_setup.test_character_state() == {"asset_id": "asset-1", "passed": None}
+    assert models_setup._recorded_test_character() == {"asset_id": "asset-1", "passed": None}
     models_setup.record_test_character("asset-1", True)
-    assert models_setup.test_character_state()["passed"] is True
+    assert models_setup._recorded_test_character()["passed"] is True
+    # what the card shows is read from the asset itself (test_test_character_ready.py): with no such asset, none was made
+    assert models_setup.test_character_state()["state"] == "not_run" and models_setup.test_character_state()["passed"] is None
 
 
 def test_http_status_and_gate_refusal(world):

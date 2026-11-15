@@ -242,7 +242,8 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
               Make one test character
             </button>
             {passed === true && <span className="setup-ok small">It worked.</span>}
-            {passed === false && <span className="error small">The last try did not finish.</span>}
+            {passed === false && <span className="error small">The last try did not finish{data?.test_character.reason ? `: ${data.test_character.reason}` : ''}.</span>}
+            {data?.test_character.state === 'running' && <span className="muted small">One is being made now.</span>}
           </div>
           {testNote && <div className="muted small">{testNote}</div>}
         </div>

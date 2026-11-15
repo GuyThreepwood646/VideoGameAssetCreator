@@ -2,7 +2,7 @@
 // GET /api/setup (backend/vgac/preflight.py; the backend keeps a result for a minute, Check again asks afresh).
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import { api, type FirstRun, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
+import { api, type FirstRun, type TestCharacter, type SetupGroup, type SetupItem, type SetupReport, type SetupState } from './api'
 import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import ComfyPanel from './components/ComfyPanel'
@@ -163,6 +163,39 @@ function inUse(item: SetupItem): string {
   return `In use: your own file at ${u.path}. It is not the file the app was tested with, so results may differ or a step may fail.`
 }
 
+// What "everything is in place" may claim: Ready means a test character ran to the end. While it runs, or if it did not finish, the
+// card says so, and says what to do.
+function TestCharacterLine({ tc, onMake }: { tc: TestCharacter | undefined; onMake: () => void }) {
+  if (!tc || tc.state === 'passed') return <div className="setup-ok">Everything the app needs is in place, and a test character ran all the way to the end.</div>
+  if (tc.state === 'running') {
+    return (
+      <div className="muted">
+        Everything the app needs is in place. A test character is being made now{tc.stage ? ` (${setupStagePlain(tc.stage)})` : ''}; the app is ready when it reaches the end.
+      </div>
+    )
+  }
+  if (tc.state === 'failed') {
+    return (
+      <div className="warn">
+        Everything the app needs is in place, but the last test character did not finish: {tc.reason}
+        {tc.stage ? ` (at ${setupStagePlain(tc.stage)})` : ''}. Open the asset &quot;Setup test character&quot; in the project &quot;Setup test&quot; to see which step, then{' '}
+        <button type="button" className="link small" onClick={onMake}>
+          try the test character again
+        </button>
+        .
+      </div>
+    )
+  }
+  return (
+    <div className="warn">
+      Everything the app needs is in place, but nothing has been made from start to finish yet, so it is not proven to work.{' '}
+      <button type="button" className="link small" onClick={onMake}>
+        Make one test character
+      </button>
+    </div>
+  )
+}
+
 function Row({ item, onManage, onChanged }: { item: SetupItem; onManage?: (kit: string) => void; onChanged?: () => void }) {
   return (
     <li className="setup-row">
@@ -213,7 +246,7 @@ export default function SetupCheck() {
       {!report && !error && <div className="muted">Checking...</div>}
       {error && !report && <div className="error">Could not run the setup check: {humanError(error)}</div>}
       {report?.first_run && <FirstRunBanner firstRun={report.first_run} />}
-      {allGood && report?.first_run?.state !== 'settings_problem' && <div className="setup-ok">Everything the app needs is in place.</div>}
+      {allGood && report?.first_run?.state !== 'settings_problem' && <TestCharacterLine tc={report?.first_run?.test_character} onMake={() => setModelsOpen(true)} />}
       {problems.length > 0 && (
         <>
           <div className={report!.summary.fails > 0 ? 'warn' : 'muted'}>

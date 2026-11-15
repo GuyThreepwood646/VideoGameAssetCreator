@@ -543,6 +543,8 @@ export type SetupItem = {
 }
 // What the app has and lacks on a machine that may be new (backend/vgac/firstrun.py).
 export type FirstRunItem = { id: string; label: string; detail: string; fix: string; setting: string; needed_for: string[] }
+// The test character, read from its asset: "Ready" on the setup card means it ran to the end.
+export type TestCharacter = { state: 'not_run' | 'running' | 'passed' | 'failed'; asset_id?: string; stage: string | null; reason: string | null; passed: boolean | null }
 export type FirstRun = {
   state: 'settings_problem' | 'not_set_up' | 'partly_set_up' | 'ready'
   fresh: boolean
@@ -554,6 +556,7 @@ export type FirstRun = {
   steps: { stage: string; plain: string; can_run: boolean; missing: string[]; message: string }[]
   // Settings saved that the running app uses only after it restarts.
   restart_needed: string[]
+  test_character?: TestCharacter
 }
 export type SetupReport = {
   summary: { ok: boolean; fails: number; warns: number; unknown: number; affected: string[] }
@@ -633,7 +636,7 @@ export type ModelSets = {
   reads: string[]
   verify: { state: string; done: number; total: number; current: string }
   copying?: Record<string, { state: string; done: number; total: number; error: string }>
-  test_character: { asset_id?: string; passed?: boolean | null }
+  test_character: TestCharacter
 }
 
 export type SettingChange = {
