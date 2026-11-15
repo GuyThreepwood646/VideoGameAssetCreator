@@ -1085,6 +1085,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "turnaround", "params": {"add_views": ["quarter2"], "second_quarter": True}},
         "fix_label": "Draw the other three-quarter view",
     },
+    # Mark the body (bodymarks.py): the marks on the front and side pictures. Fails while a mark is unsure, a test between
+    # the pictures fails, or a mark you moved is on a picture drawn again. A warning: autopilot stops on it only when
+    # bodymarks.STOP_WHEN_UNSURE (or the version's body_marks_stop) is on (autopilot.STOP_AND_ASK).
+    "body_marks": {
+        "severity": "warn",
+        "ok": lambda c: ("You moved or checked the marks on the body." if _var(c, "state") == "edited"
+                         else "The app placed the marks on the body (chin, shoulders, elbows, wrists, groin, knees, ankles) and is confident."),
+        "fail": lambda c: "Please check the marks on the body under Mark the body: " + (_var(c, "words") or "some marks are unsure") + ".",
+    },
     # The three-quarter view the 3D step builds from (stages/mesh.choose_build_view): fails only when both views lost the pose.
     "pose_held_build": {
         "severity": "warn",

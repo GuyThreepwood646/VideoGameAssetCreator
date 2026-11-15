@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import buildpose, hair_sides, hairlib, library, quality, reference
+from .. import bodymarks, buildpose, hair_sides, hairlib, library, quality, reference
 from ..db import Version
 from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
@@ -1083,6 +1083,39 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                    **({"back_references": True} if any(r.get("references") for r in results.values()) else {}))
     _publish_views(sc, results)
     _note_second_quarter(sc, results)
+    if BODY_MARKS:
+        await asyncio.to_thread(body_marks, sc, list(views))
+
+
+# Mark the body (bodymarks.py): after the views are in, the marks on the front and both side pictures, in marks.json (file
+# "marks"), metrics.body_marks and the body_marks check. A version drawn from another (a redraw, your own picture for a view,
+# an added view) carries the parent's marks: only the views drawn now are found again, and your moved marks on them are
+# kept and marked as possibly out of date. False: no marks (the step's tests that draw fake pictures).
+BODY_MARKS = True
+
+
+def body_marks(sc: StageContext, redrawn: list[str]) -> None:
+    """The marks for this version: `redrawn` are the views drawn by this run; from a turnaround parent with marks, the
+    other views' marks and every moved mark are carried (bodymarks.carry), else all are found afresh. Never fails the
+    step: a fault is recorded in metrics."""
+    if _category(sc) not in bodymarks.CATEGORIES:
+        sc.set_metrics(body_marks={"skipped": "marks are made for characters with a human body only"})
+        return
+    files = {v: p for v in bodymarks.MARK_VIEWS if (p := sc.file(f"{v}_cutout")) is not None}
+    if "front" not in files:
+        sc.set_metrics(body_marks={"skipped": "there is no front view to mark"})
+        return
+    try:
+        parent = sc.parent
+        before = None
+        if parent is not None and parent.stage == "turnaround":
+            before = bodymarks.read(library.version_file(parent, "marks", sc.settings))
+        doc = bodymarks.carry(before, files, redrawn, sc.version.id) if before else bodymarks.compute(files)
+        sc.register("marks", bodymarks.write(doc, sc.dir / "marks.json"))
+        sc.set_metrics(body_marks=bodymarks.summary(doc))
+        set_step_checks(sc, [bodymarks.check(doc, bodymarks.stop_on(sc.version.params))])
+    except Exception as e:  # noqa: BLE001  (the views are good without marks; the panel offers to find them again)
+        sc.set_metrics(body_marks={"error": str(e)[:300]})
 
 
 def _note_second_quarter(sc: StageContext, results: dict[str, dict[str, Any]]) -> None:
@@ -1239,6 +1272,8 @@ async def _add_views(sc: StageContext, parent: Version | None, source: Version |
     if not targets:
         _publish_views(sc, keep)
         _note_second_quarter(sc, keep)
+        if BODY_MARKS:
+            await asyncio.to_thread(body_marks, sc, [])
         return
     await _run_views(sc, targets, merged, source, keep=keep)
     sc.set_params(views=all_views)

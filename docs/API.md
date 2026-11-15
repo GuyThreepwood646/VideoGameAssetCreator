@@ -276,3 +276,27 @@ Backend `vgac/model_import.py`, Blender `blender/modelimport.py`; design in docs
   model or another turn; 409 when the file is gone.
 - A Fine-tune or described change of an imported version builds a new model from the step 1 and 2 pictures: the
   import's own settings (`IMPORT_PARAMS` in stages/mesh.py) are not inherited.
+
+## Additions (2026-11-15, Mark the body on step 2)
+
+Characters (humanoid) only; a finished step 2 version. The marks are a note on that version's pictures: these calls
+change `files.marks` (`marks.json`), `metrics.body_marks` and the `body_marks` check of the version itself, and make no
+new version. Positions are pixels of the view's cut-out (`files.<view>_cutout`), x right, y down. Views: `front`,
+`left`, `right`. Marks: `head_top chin shoulder_L shoulder_R elbow_L elbow_R wrist_L wrist_R hip_L hip_R groin knee_L
+knee_R ankle_L ankle_R heel_L heel_R toe_L toe_R` and `tip_<thumb|index|middle|ring|little>_<L|R>` where a hand was
+found (`_L` is the character's own left).
+
+- `GET /api/versions/{vid}/marks`: `{version_id, state ("sure" | "check" | "edited"), pictures {view: {path, size, found}},
+  marks {view: {mark: {x, y, source ("app" | "you"), sure, guessed, stale}}} (yours over the app's), automatic {view:
+  {mark: {x, y}}}, to_check [{view, joint, name, why, guessed, words}] (joint null for a test between pictures),
+  stale [{view, joint, name}], tests {name: bool}, hands {view: {left|right: {found, score}}}, names {mark: plain name},
+  required, accepted, stop}`. A version made before marks has them found on the first call. 400 not a character or not
+  step 2; 409 not finished or no front view.
+- `PUT /api/versions/{vid}/marks` `{moves?: [{view, joint, x, y}], accept?: bool}`: your moves go in their own layer
+  (the app's marks are kept); `accept` says the marks look right as they stand. Same answer as GET. 400 for an unknown
+  view or mark, a position off the picture, or nothing to change.
+- `POST /api/versions/{vid}/marks/reset` `{view?}`: your moves dropped (on one picture, or all) and any accept.
+- A new step 2 version drawn from another (a redraw, your own view, an added view, Fine-tune) carries the marks: only the
+  views drawn again are found again; your moves on them are kept and marked `stale` until moved again or accepted.
+- `body_marks` is a warning. Autopilot stops on it only when `bodymarks.STOP_WHEN_UNSURE` is on or the version's
+  params have `body_marks_stop: true` (both off now).

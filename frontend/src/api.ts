@@ -246,6 +246,29 @@ export type Swatch = { hex: string; share: number }
 export type PaletteResult = { palette: string[]; swatches: Swatch[]; background: string | null; pixels: number }
 // GET/POST/DELETE /api/assets/{aid}/face-closeup: image is a library path (null when none was added).
 export type FaceCloseup = { image: string | null; updated: number | null; size?: [number, number] }
+// Mark the body (step 2): GET/PUT /api/versions/{id}/marks, POST /api/versions/{id}/marks/reset. Positions are pixels of
+// the cut-out picture of that view (x right, y down). state: sure (the app is confident), check (please check), edited (you
+// moved or checked them).
+export type MarkView = 'front' | 'left' | 'right'
+export type Mark = { x: number; y: number; source: 'app' | 'you'; sure: boolean | null; guessed: boolean; stale: boolean }
+export type MarkAsk = { view: MarkView; joint: string | null; name: string | null; why: string[]; guessed: boolean; words: string }
+export type BodyMarks = {
+  version_id: string
+  state: 'sure' | 'check' | 'edited'
+  pictures: Partial<Record<MarkView, { path: string | null; size: [number, number]; found: boolean }>>
+  marks: Partial<Record<MarkView, Record<string, Mark>>>
+  automatic: Partial<Record<MarkView, Record<string, { x: number; y: number }>>>
+  to_check: MarkAsk[]
+  stale: { view: MarkView; joint: string; name: string }[]
+  tests: Record<string, boolean>
+  hands: Partial<Record<MarkView, Record<'left' | 'right', { found: boolean; score?: number }>>>
+  names: Record<string, string>
+  required: string[]
+  accepted: boolean
+  stop: boolean
+}
+export type MarkMove = { view: MarkView; joint: string; x: number; y: number }
+
 export type StyleResult = { description: string; words: number; palette: string[]; swatches: Swatch[]; model: string; applied: boolean }
 export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_engine: boolean; message?: string }
 
@@ -858,6 +881,11 @@ export const api = {
   getFaceCloseup: (aid: string) => get<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
   setFaceCloseup: (aid: string, image: string) => post<FaceCloseup>(`/api/assets/${aid}/face-closeup`, { image }),
   removeFaceCloseup: (aid: string) => del<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
+  // Mark the body on a step 2 version
+  getMarks: (vid: string) => get<BodyMarks>(`/api/versions/${vid}/marks`),
+  moveMarks: (vid: string, moves: MarkMove[]) => put<BodyMarks>(`/api/versions/${vid}/marks`, { moves }),
+  acceptMarks: (vid: string) => put<BodyMarks>(`/api/versions/${vid}/marks`, { accept: true }),
+  resetMarks: (vid: string, view?: MarkView) => post<BodyMarks>(`/api/versions/${vid}/marks/reset`, view ? { view } : {}),
   paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
   styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),

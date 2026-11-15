@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 app.include_router(own_images.router)  # start from your own images (own_images.py)
+app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
 app.include_router(__import__("vgac.compose", fromlist=["router"]).router)  # step 0.5: a character from several pictures (compose.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)

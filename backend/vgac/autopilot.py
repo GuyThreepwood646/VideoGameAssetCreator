@@ -86,6 +86,9 @@ FACE_HELD_STOP_REASON = (
     "accurate face. Painting it again will not change this. Look at the clean-up step (step 4); building the 3D model "
     "again can give a face the picture fits, or use a clearer picture of the face looking straight at the camera; or "
     "press Resume to carry on as it is.")
+BODY_MARKS_STOP_REASON = (
+    "Please check the marks on the body before the 3D steps: the app is not sure where some joints are. Look at Mark the "
+    "body in the side views step (step 2), drag any mark that is wrong or press These look right, then press Resume.")
 POSE_STOP_ASK_TAIL = (
     " Autopilot never redraws the pose on its own, because a redraw can change your character.")
 POSE_STOP_OFFER = (
@@ -114,6 +117,8 @@ STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
     # a pose that was measured and fails; "not measured" (the cut-out could not be read) is a note on the card
     ("concept", "pose_for_3d", lambda c: (c.get("vars") or {}).get("measured") is not False, _pose_stop_reason),
+    # unsure marks on the body: only when the stop is on (bodymarks.STOP_WHEN_UNSURE or the version's body_marks_stop)
+    ("turnaround", "body_marks", lambda c: (c.get("vars") or {}).get("stop") is True, BODY_MARKS_STOP_REASON),
 )
 # Steps whose finished version is also asked about when it already exists when the autopilot reaches it (a picture the
 # person added themselves). Each version is asked once: its id goes into the autopilot state's "asked", so Resume, or a

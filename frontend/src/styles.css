@@ -4414,3 +4414,32 @@ button.preset-card:hover:not(:disabled) {
   max-width: 60ch;
   margin: var(--s1) 0;
 }
+
+/* Mark the body (step 2, pipeline/views/BodyMarks.tsx) */
+.body-marks { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.body-marks-check { border-color: var(--warn); background: var(--warn-tint); }
+.body-marks-state { margin: 6px 0 10px; }
+.body-marks-asks { margin: 4px 0 4px 18px; padding: 0; }
+.body-marks-pictures { display: flex; flex-wrap: wrap; gap: 12px; }
+.body-marks-picture { margin: 0; flex: 1 1 260px; max-width: 420px; }
+.body-marks-stage { position: relative; width: 100%; max-height: 640px; border-radius: 6px; overflow: hidden; touch-action: none; }
+.body-marks-stage img, .body-marks-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+.body-bone { stroke: rgba(255, 255, 255, 0.75); stroke-linecap: round; pointer-events: none; }
+.body-mark { cursor: grab; stroke: #10141a; }
+.body-mark.dragging { cursor: grabbing; }
+.body-mark:focus-visible { outline: none; stroke: #fff; }
+.mark-left { fill: var(--accent); }
+.mark-right { fill: var(--ok); }
+.mark-middle { fill: #e8e8e8; }
+.body-mark.mark-unsure, .body-mark.mark-guessed { fill: var(--warn); stroke: #fff; stroke-dasharray: 3 2; }
+.body-mark.mark-stale { fill: var(--bad); stroke: #fff; stroke-dasharray: 3 2; }
+.body-mark.mark-yours { stroke: #fff; }
+.body-marks-key { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.key-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid #10141a; margin-left: 6px; }
+.key-dot.mark-left { background: var(--accent); }
+.key-dot.mark-right { background: var(--ok); }
+.key-dot.mark-guessed { background: var(--warn); }
+.key-dot.mark-yours { background: #e8e8e8; border-color: #fff; box-shadow: 0 0 0 1px #10141a; }
+.body-marks-notes { margin: 8px 0 0 18px; padding: 0; }
+.body-marks-actions { margin-top: 10px; display: flex; gap: 10px; }
+.body-marks-error { color: var(--bad); }

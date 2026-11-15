@@ -4,6 +4,7 @@ import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { Disclosure, fmtNum, isCheckList, PlainChecks, TrafficDot } from '../../components/ui'
 import { metricPlain } from '../../help'
+import { BodyMarksPanel } from './BodyMarks'
 
 type ViewMetrics = Record<string, unknown> & { passed?: boolean; checks?: Check[] }
 
@@ -271,6 +272,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
           </div>
         </div>
       )}
+      {version.status === 'done' && views.includes('front') && !(version.metrics.body_marks as { skipped?: string } | undefined)?.skipped && <BodyMarksPanel key={version.id} versionId={version.id} />}
       <BaldRow version={version} cutout={cutout} />
       {open !== null && <PictureViewer items={items} start={open} checker={cutout} onClose={() => setOpen(null)} />}
     </div>

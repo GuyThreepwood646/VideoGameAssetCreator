@@ -139,3 +139,12 @@ def _pillows_pixel_limit_does_not_leak_between_tests():
     before = Image.MAX_IMAGE_PIXELS
     yield
     Image.MAX_IMAGE_PIXELS = before
+
+
+@pytest.fixture(autouse=True)
+def _no_body_marks_in_step_runs(monkeypatch: pytest.MonkeyPatch):
+    """Step 2's tests draw plain fake pictures: finding marks on them would add a body_marks check to every one and load
+    the pose finder. tests/test_bodymarks.py turns the marks back on with a fake finder."""
+    from vgac.stages import turnaround
+
+    monkeypatch.setattr(turnaround, "BODY_MARKS", False)
