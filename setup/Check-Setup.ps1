@@ -161,6 +161,7 @@ try {
 # --- 4. Python, Node, npm, Git ------------------------------------------------------------------------------------------
 $py313 = $null
 $pyLauncher = Get-Cmd 'py'
+# Accept Python 3.13 or newer (3.14, etc.)
 if ($pyLauncher) {
     $v = Invoke-Quiet $pyLauncher @('-3.13', '--version')
     if ($v -match 'Python 3\.13') { $py313 = @($pyLauncher, '-3.13') ; $pyText = $v }
@@ -169,13 +170,13 @@ if (-not $py313) {
     $pyExe = Get-Cmd 'python'
     if ($pyExe) {
         $v = Invoke-Quiet $pyExe @('--version')
-        if ($v -match 'Python 3\.13') { $py313 = @($pyExe); $pyText = $v }
+        if ($v -match 'Python 3\.(1[3-9]|[2-9]\d)') { $py313 = @($pyExe); $pyText = $v }
         elseif ($v) { $pyOther = $v }
     }
 }
-if ($py313) { Add-Row 'Python 3.13' 'Ready' $pyText }
-elseif ($pyOther) { Add-Row 'Python 3.13' 'Missing' "Found $pyOther, not 3.13." 'Install Python 3.13 from python.org (tick "Add to PATH"), then run this check again.' }
-else { Add-Row 'Python 3.13' 'Missing' 'Not found.' 'Install Python 3.13 from python.org (tick "Add to PATH"), then run this check again.' }
+if ($py313) { Add-Row 'Python 3.13+' 'Ready' $pyText }
+elseif ($pyOther) { Add-Row 'Python 3.13+' 'Missing' "Found $pyOther, not 3.13+." 'Install Python 3.13 or newer from python.org (tick "Add to PATH"), then run this check again.' }
+else { Add-Row 'Python 3.13+' 'Missing' 'Not found.' 'Install Python 3.13 or newer from python.org (tick "Add to PATH"), then run this check again.' }
 
 $nodeExe = Get-Cmd 'node'
 $npmCmd = Get-Cmd 'npm.cmd'; if (-not $npmCmd) { $npmCmd = Get-Cmd 'npm' }
