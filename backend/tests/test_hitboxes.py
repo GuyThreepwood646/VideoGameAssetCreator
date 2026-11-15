@@ -172,7 +172,7 @@ def test_mixamo_names_used_when_sane_and_ignored_when_shifted():
     bones = _humanoid(good)
     V, owner = _body(bones, _human_radii(bones))
     res = hb.fit(bones, V, owner, None, "humanoid", "detailed")
-    assert res["skeleton"] == "mixamo" and len(res["shapes"]) == 11
+    assert res["skeleton"] == "mixamo" and len(res["shapes"]) == 13  # 11 regions and a foot shape on each shin
     assert {s["region"]: s["bone"] for s in res["shapes"]}["forearm_l"] in ("mixamorig:LeftForeArm", "mixamorig:LeftHand")
     # SkinToken sometimes shifts the names along one arm: "Head" sits on the arm. The names are then not trusted.
     shifted = dict(good, neck="mixamorig:Extra_04", head="mixamorig:Extra_05", head_end="mixamorig:Extra_06",
@@ -404,3 +404,70 @@ def test_adjust_other_knob_rigs_again(tmp_path, monkeypatch):
     seen.clear()
     asyncio.run(rig.adjust(sc, {"hitbox_fit": "snug"}))  # nothing rigged to reuse: rig again
     assert seen["hitbox_fit"] == "snug"
+
+
+# --- hands and feet are covered (forearm runs on over the hand, a foot shape over the toes) -----------------------
+
+
+def test_the_far_end_of_a_capsule_can_run_on_over_the_hand():
+    rng = np.random.default_rng(5)
+    forearm = _tube((0, 0, 0), (0, 0, 0.25), 0.05, 1500, rng)
+    hand = _tube((0, 0, 0.25), (0, 0, 0.45), 0.04, 700, rng)  # beyond the forearm bones' end
+    P = np.concatenate([forearm, hand])
+    short = hb.fit_capsule(P, (0, 0, 0), (0, 0, 0.25))
+    far = hb.fit_capsule(P, (0, 0, 0), (0, 0, 0.25), ends="far")
+    top = lambda c: c["center"][2] + c["height"] / 2  # noqa: E731
+    assert top(short) < 0.35 and top(far) > 0.43
+    assert far["radius"] == short["radius"]  # only the far end moves
+
+
+def test_hands_and_toes_register_hits_on_a_mixamo_skeleton():
+    good = {"hips": "mixamorig:Hips", "spine": "mixamorig:Spine", "chest": "mixamorig:Spine1", "neck": "mixamorig:Neck",
+            "head": "mixamorig:Head", "head_end": "mixamorig:HeadTop_End", "clav_l": "mixamorig:LeftShoulder",
+            "upper_l": "mixamorig:LeftArm", "fore_l": "mixamorig:LeftForeArm", "hand_l": "mixamorig:LeftHand",
+            "clav_r": "mixamorig:RightShoulder", "upper_r": "mixamorig:RightArm", "fore_r": "mixamorig:RightForeArm",
+            "hand_r": "mixamorig:RightHand", "thigh_l": "mixamorig:LeftUpLeg", "shin_l": "mixamorig:LeftLeg",
+            "toe_l": "mixamorig:LeftFoot", "thigh_r": "mixamorig:RightUpLeg", "shin_r": "mixamorig:RightLeg", "toe_r": "mixamorig:RightFoot"}
+    bones = _humanoid(good)
+    radii = _human_radii(bones)
+    V, owner = _body(bones, radii)
+    # fingers: skin owned by the hand bone reaching 12 cm beyond the wrist bone's end, and toes 6 cm beyond the foot bone's end
+    rng = np.random.default_rng(9)
+    idx = {b["name"]: i for i, b in enumerate(bones)}
+    extra, own = [], []
+    for side, x in (("Left", 1.0), ("Right", -1.0)):
+        extra.append(_tube((0.72 * x, 0, 1.0), (0.84 * x, 0, 0.93), 0.04, 300, rng))
+        own += [idx[f"mixamorig:{side}Hand"]] * 300
+        extra.append(_tube((0.1 * x, -0.12, 0.03), (0.1 * x, -0.18, 0.01), 0.04, 300, rng))
+        own += [idx[f"mixamorig:{side}Foot"]] * 300
+    V2, owner2 = np.concatenate([V] + extra), np.concatenate([owner, own])
+    res = hb.fit(bones, V2, owner2, None, "humanoid", "detailed")
+    names = [h["name"] for h in hb.to_json(res, bones)["hitboxes"]]
+    assert "Hit_Foot_L" in names and "Hit_Foot_R" in names and len(names) == 13
+    feet = [s for s in res["shapes"] if s.get("name", "").startswith("Hit_Foot")]
+    assert {s["region"] for s in feet} == {"shin_l", "shin_r"}  # the foot belongs to the shin's region, so region choices stay the same
+    # the hand tips and the toe tips are inside a shape
+    tips = np.array([[0.84, 0, 0.93], [-0.84, 0, 0.93], [0.1, -0.18, 0.01], [-0.1, -0.18, 0.01]])
+    for t in tips:
+        assert any(hb.inside(s, t[None], hb.COVER_TOLERANCE)[0] for s in res["shapes"]), t
+    # keeping only the shin regions keeps the feet with them
+    only = hb.fit(bones, V2, owner2, None, "humanoid", "detailed", "normal", ["shin_l", "shin_r"])
+    assert sorted(s["region"] for s in only["shapes"]) == ["shin_l", "shin_l", "shin_r", "shin_r"]
+
+
+def test_stray_skin_owned_by_a_foot_bone_does_not_swing_the_foot_shape():
+    bones = _humanoid({"hips": "mixamorig:Hips", "spine": "mixamorig:Spine", "chest": "mixamorig:Spine1", "neck": "mixamorig:Neck",
+                       "head": "mixamorig:Head", "head_end": "mixamorig:HeadTop_End", "clav_l": "mixamorig:LeftShoulder",
+                       "upper_l": "mixamorig:LeftArm", "fore_l": "mixamorig:LeftForeArm", "hand_l": "mixamorig:LeftHand",
+                       "clav_r": "mixamorig:RightShoulder", "upper_r": "mixamorig:RightArm", "fore_r": "mixamorig:RightForeArm",
+                       "hand_r": "mixamorig:RightHand", "thigh_l": "mixamorig:LeftUpLeg", "shin_l": "mixamorig:LeftLeg",
+                       "toe_l": "mixamorig:LeftFoot", "thigh_r": "mixamorig:RightUpLeg", "shin_r": "mixamorig:RightLeg", "toe_r": "mixamorig:RightFoot"})
+    V, owner = _body(bones, _human_radii(bones))
+    idx = {b["name"]: i for i, b in enumerate(bones)}
+    rng = np.random.default_rng(4)
+    stray = np.column_stack([rng.uniform(-0.3, 0.3, 40), rng.uniform(-0.2, 0.2, 40), rng.uniform(0.8, 1.3, 40)])  # robe and hair up the body
+    V2 = np.concatenate([V, stray])
+    owner2 = np.concatenate([owner, np.full(40, idx["mixamorig:RightFoot"])])
+    res = hb.fit(bones, V2, owner2, None, "humanoid", "detailed")
+    foot = next(s for s in res["shapes"] if s.get("name") == "Hit_Foot_R")
+    assert foot["height"] < 0.5 and foot["radius"] < 0.15  # a foot, not a pole up to the stray skin

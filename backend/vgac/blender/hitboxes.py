@@ -212,6 +212,8 @@ def classify_mixamo(sk):
         ax = [full[m] for m in axis if m in full]
         if mem:
             out[rid] = {"bones": mem, "axis": ax or mem[:1]}
+            if rid.startswith("forearm"):
+                out[rid]["ends"] = "far"  # the capsule runs on over the hand, to its fingertips
     return out
 
 
@@ -508,7 +510,8 @@ def fit_capsule(P, a, b, factor=1.0, pct=PERCENTILE, ends="bones"):
     """Capsule around points P (n, 3) whose axis runs along a -> b, through the middle of the points. The radius is
     the pct-th percentile distance from the axis times factor; the ends are a and b pushed out by the radius and
     clipped to the points' extent along the axis (ends="points": the points' own 1st to 99th percentile extent,
-    for a merged body whose bones cover only the torso). -> {center, axis, radius, height} (height includes the
+    for a merged body whose bones cover only the torso; ends="far": the far end runs on to the region's farthest skin,
+    so a forearm capsule covers the hand). -> {center, axis, radius, height} (height includes the
     caps)."""
     P = np.asarray(P, float)
     c = P.mean(axis=0)
@@ -522,6 +525,8 @@ def fit_capsule(P, a, b, factor=1.0, pct=PERCENTILE, ends="bones"):
     ta, tb = sorted((float(np.dot(np.asarray(a, float) - c, u)), float(np.dot(np.asarray(b, float) - c, u))))
     lo_t, hi_t = float(t.min()), float(t.max())
     e0, e1 = max(ta - r, lo_t), min(tb + r, hi_t)
+    if ends == "far":
+        e1 = max(e1, float(np.percentile(t, 99.5)))  # beyond the bones' end: to the farthest skin of the region (a forearm's hand)
     if ends == "points":
         e0, e1 = float(np.percentile(t, 1)), float(np.percentile(t, 99))
     if e1 < e0:  # bone outside the points: use the points' own extent
@@ -756,6 +761,40 @@ def _fallback(sk, V, owner_names, category, factor, lo, hi):
     return [head, body], np.ones(len(V), bool)
 
 
+FOOT_REACH = 0.6  # foot-owned skin farther than this many foot lengths from the foot is not part of the foot shape
+
+
+def _foot_shape(sk, rid, r, m, V, owner_names, factor, min_verts):
+    """A capsule along the foot (the ankle to the end of the toes) for the vertices of a shin region owned by the foot and toe bones, so a hit on a
+    foot or toe lands. It belongs to the shin's region (hit-box region choices stay the same) and is named Hit_Foot_L / Hit_Foot_R. -> shape dict
+    with its vertex "mask", or None when the region has no foot or too few vertices."""
+    foot = [b for b in r["bones"] if "Foot" in short_name(b) or "Toe" in short_name(b)]
+    if not foot:
+        return None
+    mask = m & np.isin(np.asarray(owner_names, object), foot)
+    if int(mask.sum()) < min_verts:
+        return None
+    first = next((b for b in foot if "Foot" in short_name(b)), foot[0])
+    a, b = sk.head(first), sk.end(foot[-1])
+    if float(np.linalg.norm(np.asarray(b) - np.asarray(a))) < 1e-4:
+        return None
+    # Stray skin owned by the foot bones far from the foot (cloth, hair or a stray weight: on the Mage one right-foot vertex in twenty lay up to
+    # 1.25 m away) is left out, or the capsule would swing up toward it. The cap is a share of the foot's own length.
+    a_, b_ = np.asarray(a, float), np.asarray(b, float)
+    ab = b_ - a_
+    tt = np.clip(((V[mask] - a_) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
+    near = np.linalg.norm(V[mask] - (a_ + np.outer(tt, ab)), axis=1) <= FOOT_REACH * float(np.linalg.norm(ab))
+    idx = np.nonzero(mask)[0][near]
+    if len(idx) < min_verts:
+        return None
+    mask = np.zeros(len(V), bool)
+    mask[idx] = True
+    s = fit_capsule(V[mask], a, b, factor, ends="points")
+    side = "L" if rid.endswith("_l") else "R"
+    s.update(region=rid, bone=first, vertices=int(mask.sum()), name=f"Hit_Foot_{side}", label=("Left" if side == "L" else "Right") + " foot", mask=mask)
+    return s
+
+
 def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", keep_regions=None):
     """The whole fit in Blender space. bones: [{name, parent, head, tail}]; V: (n, 3) rest-pose vertices; owner:
     (n,) index into bones of each vertex's strongest bone (-1 when unweighted); tris: (m, 3) or None.
@@ -798,6 +837,11 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
             if int(m.sum()) < min_verts:
                 result["skipped"].append(rid)
                 continue
+            foot_shape = None
+            if rid.startswith("shin_"):
+                foot_shape = _foot_shape(sk, rid, r, m, V, owner_names, factor, min_verts)
+                if foot_shape is not None:
+                    foot_shape.pop("mask")  # the shin keeps its own fit (feet and all); the foot gets a shape of its own on top
             P = V[m]
             if r.get("kind") == "box":
                 s = fit_box(P, factor)
@@ -810,6 +854,8 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
             own = {n: c for n, c in counts.items() if n in set(r["bones"])} or counts
             s.update(region=rid, bone=max(own, key=own.get), vertices=int(m.sum()))
             shapes.append(s)
+            if foot_shape is not None:
+                shapes.append(foot_shape)
         if category == "winged":
             wing_ids = {s["region"] for s in shapes if s["region"].startswith("wing")}
             if wing_ids:
@@ -873,7 +919,7 @@ def to_json(result, bones):
     boxes = []
     for s in result["shapes"]:
         rid = s["region"]
-        d = {"name": region_name(rid), "region": rid, "label": region_label(rid), "bone": s.get("bone") or "", **_shape_json(s)}
+        d = {"name": s.get("name") or region_name(rid), "region": rid, "label": s.get("label") or region_label(rid), "bone": s.get("bone") or "", **_shape_json(s)}
         bone = s.get("bone")
         if bone in sk.by_name:
             bh, bt = to_gltf(sk.head(bone)), to_gltf(sk.tail(bone))
