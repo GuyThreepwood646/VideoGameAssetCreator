@@ -307,3 +307,16 @@ def test_square_pad_fills_with_transparency_or_the_backdrop() -> None:
     assert a.shape == (100, 100) and a[:30].max() == 0.0 and a[70:].max() == 0.0 and a[45, 50] == 1.0
     same, a2 = srcproject.square_pad(np.zeros((8, 8, 3)), None)
     assert same.shape == (8, 8, 3) and a2 is None
+
+
+def test_between_turns_that_fit_the_outline_alike_the_heads_match_decides() -> None:
+    # the live M1 R4 right view's pool (colour, fine detail, head match): the whole figure alone chose -105, which
+    # painted a second ear; the head says -70
+    pool = {-110.0: (13.12, -0.019, 0.297), -70.0: (12.95, 0.001, 0.529), -112.5: (13.36, -0.011, 0.356),
+            -107.5: (12.91, -0.021, 0.396), -105.0: (13.10, 0.008, 0.381)}
+    assert min(pool, key=lambda y: pool[y][0] - 40.0 * pool[y][1]) == -105.0  # without the head
+    assert min(pool, key=lambda y: srcproject.turn_score(*pool[y])) == -70.0
+    # the live W1 R4 left view, where the head agrees with the figure: the turn stays 92.5
+    w1 = {90.0: (14.37, -0.013, 0.731), 85.0: (13.61, -0.031, 0.813), 87.5: (13.89, -0.009, 0.788),
+          92.5: (14.10, 0.066, 0.729), 95.0: (14.36, 0.019, 0.701)}
+    assert min(w1, key=lambda y: srcproject.turn_score(*w1[y])) == 92.5

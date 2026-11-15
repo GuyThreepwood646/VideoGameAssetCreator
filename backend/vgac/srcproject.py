@@ -89,6 +89,11 @@ SOURCE_MIN_IOU = 0.82    # the original picture is taken at a slightly looser ou
 TURN_AGREE = False       # the structure gate on the drawn side and back views when they paint in full colour: off,
                          # because there it compares two guesses (the builder's back and the drawn back) and cuts the
                          # drawn one into patches
+TURN_HEAD_W = 20.0        # weight of the head's own match in the choice between turns whose outlines fit about equally
+                          # (turn_score): a side view's outline fits about as well from in front of the profile as from
+                          # behind it; on the live M1 R4 run the right view took -105 by the whole body's colour and
+                          # detail and painted a second ear; the head's match said -70 (0.53 against 0.38), as M1 R2 and
+                          # R3 fitted it
 TURN_COLOUR_MARGIN = 3.0  # colour difference (Lab) by which the chosen turn must beat every far turn to settle an
                           # outline that fits both ways round
 MAX_SHARED = 0.15        # share of the texture layout used by more than one triangle above which nothing is painted
@@ -539,6 +544,13 @@ class View:
         self.info: dict[str, Any] = {"name": name}
 
 
+def turn_score(colour: float, detail: float, head: float) -> float:
+    """How well a picture agrees with the model's own colour at one turn, lower is better: the colour difference
+    (Lab) less the fine detail's match over the whole figure and the head's coarser match (fit_view's pool of turns
+    whose outlines fit about equally)."""
+    return colour - 40.0 * detail - TURN_HEAD_W * head
+
+
 def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alpha: np.ndarray, name: str,
              yaws: list[float], centre: np.ndarray, scale: float, size: int = SIZE, min_iou: float = MIN_IOU,
              use_flow: bool = True, log: Callable[[str], None] | None = None,
@@ -581,6 +593,12 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     pool = [y for y, f in fits.items() if f["iou"] >= top_iou - 0.03]
     best_y, best_d, best_corr = pool[0], 1e9, -1.0
     lds: dict[float, float] = {}
+    head = face.find_head(mesh["verts"])
+    head_rows = None
+    if head is not None:  # the head's rows at the fit size: the top 13 percent of the figure (face.find_head)
+        yb = head.top - 0.13 * head.height
+        head_rows = int(np.clip((float(centre[1]) - yb) / scale * n + n / 2, 0, n))
+    v.info["turn_scores"] = {}
     if len(pool) > 1:
         for y in pool:
             f = fits[y]
@@ -595,7 +613,16 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
                 lb = face.to_lab(np.clip(face.masked_blur(ap, both, s_), 0, 1))
                 ld = float(np.linalg.norm(la - lb, axis=-1)[face.erode(both, 2)].mean())
                 corr = face.feature_match(ap, rc, both, lo=1.0, hi=4.0)
-                d = ld - 40.0 * corr  # colour and structure agreement together
+                hcorr = 0.0
+                if head_rows:
+                    hb = both.copy()
+                    hb[head_rows:] = False
+                    if hb.sum() > 200:
+                        hcorr = face.feature_match(ap, rc, hb, lo=8.0, hi=30.0)
+                d = turn_score(ld, corr, hcorr)
+                v.info["turn_scores"][float(y)] = {"iou": round(float(f["iou"]), 3), "colour": round(ld, 2),
+                                                   "detail": round(float(corr), 3), "head": round(float(hcorr), 3),
+                                                   "score": round(float(d), 2)}
                 lds[y] = ld
             else:
                 corr, d = -1.0, 1e9
