@@ -154,6 +154,9 @@ class AssetIn(BaseModel):
     hair: Literal["model", "library"] | None = None
     # "The face matters": False skips the face detail pass in step 4 (db.Asset.face_matters).
     face_matters: bool | None = None
+    # What the character is made of (db.Asset.wears_armour / body_is_metal): the person's own answer; None = not stated.
+    wears_armour: bool | None = None
+    body_is_metal: bool | None = None
     # The person chose a look other than the project's on purpose ("Use a different look for this asset"). Without it
     # a look that differs from the project's is refused (_check_project_look).
     different_look: bool | None = None
@@ -167,6 +170,8 @@ class AssetPatch(BaseModel):
     platform_target: str | None = None
     style_preset: str | None = None
     face_matters: bool | None = None
+    wears_armour: bool | None = None
+    body_is_metal: bool | None = None
 
 
 class RunIn(BaseModel):
@@ -555,6 +560,8 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     a.concept_model = body.concept_model
     if body.face_matters is False:
         a.face_matters = False
+    a.wears_armour = body.wears_armour
+    a.body_is_metal = body.body_is_metal
     a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
     db.add(a)
     db.commit()
@@ -597,6 +604,8 @@ def create_variant(aid: str, body: VariantIn, db: Session = Depends(get_session)
     a.variant_change = change
     a.hair_json = base.hair_json
     a.face_matters = base.face_matters
+    a.wears_armour = base.wears_armour
+    a.body_is_metal = base.body_is_metal
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -650,6 +659,10 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
         a.style_preset = body.style_preset
     if body.face_matters is not None:
         a.face_matters = body.face_matters
+    if body.wears_armour is not None:
+        a.wears_armour = body.wears_armour
+    if body.body_is_metal is not None:
+        a.body_is_metal = body.body_is_metal
     db.commit()
     db.refresh(a)
     return asset_to_dict(a)

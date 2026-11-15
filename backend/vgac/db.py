@@ -16,6 +16,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, creat
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
+from . import skinmetal
 from .config import get_settings
 from .reference import STAGE_ORDER as STAGES  # the one stage tuple (docs/CODE-AUDIT.md D2)
 VERSION_STATUSES = ("queued", "running", "done", "error", "rejected")
@@ -94,12 +95,26 @@ class Asset(Base):
     # "The face matters" (on unless turned off): off skips the face detail pass in step 4 and hides the face advice, for
     # a character whose face is hidden or too simple to gain from it (a hood with glowing eyes, a mask, a robot).
     face_matters: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # What the character is made of, the person's own answer from the two tick boxes on step 1 (never a rewrite of the
+    # description): wears_armour = "wears metal armour", body_is_metal = "its body is metal (a robot, a statue)". None = never
+    # answered: the clean-up then reads the description (skinmetal.armoured / metal_body). True or False wins over the
+    # description either way. asset_to_dict shows the answer in force.
+    wears_armour: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    body_is_metal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="assets")
     versions: Mapped[list["Version"]] = relationship(
         back_populates="asset", cascade="all, delete-orphan", order_by="Version.created_at"
     )
+
+    @property
+    def armour_in_force(self) -> bool:
+        return self.wears_armour if self.wears_armour is not None else skinmetal.armoured(self.prompt)
+
+    @property
+    def metal_in_force(self) -> bool:
+        return self.body_is_metal if self.body_is_metal is not None else skinmetal.metal_body(self.prompt)
 
     @property
     def autopilot(self) -> dict[str, Any] | None:
@@ -262,7 +277,8 @@ def init_db() -> None:
 
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
-                                                                                          "held_item_json": "TEXT", "equipment_json": "TEXT", "hair_json": "TEXT", "face_matters": "BOOLEAN"},
+                                                                                          "held_item_json": "TEXT", "equipment_json": "TEXT", "hair_json": "TEXT", "face_matters": "BOOLEAN",
+                                                                                          "wears_armour": "BOOLEAN", "body_is_metal": "BOOLEAN"},
                   "job": {"result_json": "TEXT"}}
 
 
@@ -418,6 +434,12 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
         "equipment": a.equipment,
         "hair": a.hair,
         "face_matters": a.face_matters is not False,
+        # The answer in force (the person's tick, else what the description says); wears_armour_set / body_is_metal_set
+        # say whether the person has answered, so the card can tell "you said" from "the app read your description".
+        "wears_armour": a.armour_in_force,
+        "body_is_metal": a.metal_in_force,
+        "wears_armour_set": a.wears_armour is not None,
+        "body_is_metal_set": a.body_is_metal is not None,
         "created_at": _iso(a.created_at),
         "selected": {},
         "stages": {s: [] for s in STAGES},

@@ -72,7 +72,13 @@ export function OwnPictures({
   act: Act
   onCreated: (versionId: string) => void
 }) {
-  if (stage === 'concept') return <ConceptUpload asset={asset} busy={busy} act={act} onCreated={onCreated} />
+  if (stage === 'concept')
+    return (
+      <>
+        <ConceptUpload asset={asset} busy={busy} act={act} onCreated={onCreated} />
+        {asset.category === 'humanoid' && <BodyMaterial asset={asset} busy={busy} act={act} />}
+      </>
+    )
   if (stage === 'mesh' && asset.category !== 'material')
     return (
       <>
@@ -90,6 +96,34 @@ export function OwnPictures({
       </>
     )
   return null
+}
+
+// "What the character is made of" (step 1): two plain tick boxes the clean-up reads instead of guessing from colour. Neither
+// ticked is a person in ordinary clothes. A described character starts ticked when its description already says so
+// (asset.wears_armour is the answer in force); a tick or untick is stored as the person's own answer on the asset.
+export function BodyMaterial({ asset, busy, act }: { asset: Asset; busy: boolean; act: Act }) {
+  const set = (body: { wears_armour?: boolean; body_is_metal?: boolean }) => act(() => api.updateAsset(asset.id, body))
+  const read = (given?: boolean) => (given ? '' : ' (read from your description; untick if that is wrong)')
+  return (
+    <div className="own-pictures body-material" role="group" aria-label="What the character is made of">
+      <label className="check-item" title="Keeps the metal the 3D step puts on the body; the clean-up clears it only from the face, neck and hands">
+        <input type="checkbox" checked={asset.wears_armour === true} disabled={busy} onChange={(e) => set({ wears_armour: e.target.checked })} />
+        <span>
+          This character wears metal armour
+          {asset.wears_armour && <span className="muted small">{read(asset.wears_armour_set)}</span>}
+        </span>
+      </label>
+      <label className="check-item" title="Keeps all the metal: a robot, an android, a statue">
+        <input type="checkbox" checked={asset.body_is_metal === true} disabled={busy} onChange={(e) => set({ body_is_metal: e.target.checked })} />
+        <span>
+          This character&apos;s body is metal (a robot, a statue)
+          {asset.body_is_metal && <span className="muted small">{read(asset.body_is_metal_set)}</span>}
+        </span>
+        <Info term="term.body_material" />
+      </label>
+      <div className="muted small">Neither ticked means a person in ordinary clothes. The clean-up in step 4 uses this instead of guessing from colour.</div>
+    </div>
+  )
 }
 
 // "The face matters": on by default. Off for a character whose face is hidden or too simple to gain from the face pass
