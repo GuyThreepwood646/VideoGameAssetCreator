@@ -98,7 +98,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
           <strong>{s.name}</strong>
           <span className="muted small">
             {s.complete ? 'all there' : `${size(s.remaining)} to get, ${size(s.total)} in all`}
-            {s.covered > 0 ? ` (${s.covered} earlier cop${s.covered === 1 ? 'y stands' : 'ies stand'} in for the publisher's file${s.covered === 1 ? '' : 's'}; getting ${s.covered === 1 ? 'it is' : 'them is'} optional, ${size(s.covered_size)})` : ''}
+            {s.covered > 0 ? ` (${s.covered} earlier cop${s.covered === 1 ? 'y stands' : 'ies stand'} in for the original file${s.covered === 1 ? '' : 's'}; getting ${s.covered === 1 ? 'it is' : 'them is'} optional, ${size(s.covered_size)})` : ''}
             {s.required ? ' - needed' : ' - optional'}
           </span>
         </div>
@@ -159,16 +159,16 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                 <span className="muted small setup-row-detail">
                   {size(i.size)} - {STATE_WORD[i.state]}
                   {i.reused && !i.chosen && !i.renamed ? ` (used where it is: ${i.path})` : ''}
-                  {i.chosen && i.state === 'present' && !i.yours ? ` - your file at ${i.path}; it is the same as the published one` : ''}
+                  {i.chosen && i.state === 'present' && !i.yours ? ` - your file at ${i.path}; it is the same as the original file` : ''}
                   {i.source ? ` (${i.placed === 'link' ? 'linked from' : 'copied from'} ${i.source})` : ''}
                   {i.chosen && i.state === 'present' && i.yours ? ` - your own file at ${i.path}, not the one this app was tested with (you chose to use it)` : ''}
-                  {i.chosen && i.state === 'checking' ? ` - your file at ${i.path}; checking it against the published one in the background` : ''}
+                  {i.chosen && i.state === 'checking' ? ` - your file at ${i.path}; checking it against the original file in the background` : ''}
                   {i.chosen && i.state === 'differs' ? ` - your own file at ${i.path}. This is not the file the app was tested with. Results may differ or the step may fail. It is not used until you press Use it anyway.` : ''}
-                  {!i.chosen && i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the published size' : ''}
-                  {!i.chosen && i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the published one' : ''}
-                  {i.renamed ? ` - the publisher's file, which you have as ${i.path}` : ''}
-                  {i.covered && i.state === 'checking' ? ` - checking whether ${i.older} is the publisher's file; the app uses it meanwhile` : ''}
-                  {i.covered && i.state === 'missing' ? ` - the publisher's file is not here; the app is using an earlier copy at ${i.older} (getting the publisher's file is optional)` : ''}
+                  {!i.chosen && i.state === 'differs' && i.check === 'size' ? ' - a file with this name is there but is not the original size' : ''}
+                  {!i.chosen && i.state === 'differs' && i.check === 'differs' ? ' - a file with this name is there but differs from the original file' : ''}
+                  {i.renamed ? ` - the original file, which you have as ${i.path}` : ''}
+                  {i.covered && i.state === 'checking' ? ` - checking whether ${i.older} is the original file; the app uses it meanwhile` : ''}
+                  {i.covered && i.state === 'missing' ? ` - the original file is not here; the app is using an earlier copy at ${i.older} (getting the original file is optional)` : ''}
                   {!i.publisher ? ' - community upload, check the page' : ''}
                 </span>
                 {i.state === 'differs' && (
@@ -183,7 +183,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
                     disabled={busy || !data?.models_folder}
                     onClick={() => void run(async () => void (await api.startModelSet(s.id, typed, [i.id])))}
                   >
-                    Get the publisher&apos;s file ({size(i.size)})
+                    Get the original file ({size(i.size)})
                   </button>
                 )}
                 {data?.copying?.[i.id]?.state === 'working' && (
@@ -224,7 +224,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
       {data?.models_folder && (
         <div className="row-gap">
           <button type="button" className="small-btn" disabled={busy || data.verify.state === 'working'} onClick={() => void run(async () => void (await api.verifyModels()))}>
-            Check my files against the published ones
+            Check my files against the original files
           </button>
           {data.verify.state === 'working' && (
             <span className="muted small">

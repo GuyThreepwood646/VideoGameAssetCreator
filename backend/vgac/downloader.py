@@ -221,7 +221,7 @@ def verify_pin(part: Path, want: str, name: str, page: str, cancel: threading.Ev
     """The file is accepted only if its SHA-256 is the pinned one; otherwise it is deleted and DownloadError is raised."""
     if sha256_of(part, cancel).lower() != want.lower():
         part.unlink(missing_ok=True)
-        raise DownloadError("bad_checksum", f"{name} was downloaded, but it is not the published file (it may be damaged or changed). It has been deleted.",
+        raise DownloadError("bad_checksum", f"{name} was downloaded, but it is not the original file (it may be damaged or changed). It has been deleted.",
                             f"Press Try again. If it happens again, check {page or 'the source page'}.")
 
 
