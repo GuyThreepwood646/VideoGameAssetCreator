@@ -5,7 +5,11 @@ the texture before the pictures are painted on) and for Low-poly's face_keeps_te
 pass is asked first (face.find_face_checked on a render of the head); stylised heads often defeat it (a hat filling the
 top of the figure, a block-shaped head), so the fallback is plain geometry: the triangles of the head (down to where the
 figure first gets much wider than the head: the shoulders, or the arms of a T pose) that face the camera and lie within
-the head's width of its middle line.
+the head's width of its middle line. With whole_front (Low-poly's face_keeps_texture) the finder's region is added to
+that geometry instead of replacing it: on the library's two Low-poly characters the finder's region alone was 11 and 42
+triangles of about 1,500 and missed the eyes and mouth (0 of 14 eye triangles on L1), so one colour per triangle turned
+each eye into a single dark triangle; the front of the head (170 and 213 triangles) holds every eye triangle. The Retro
+64 face layout keeps the finder's region alone, as before.
 
 colour_per_face: every triangle one colour, the median of the texels inside it (Low-poly: each plane one tone); the
 kept triangles keep their texels. Look research 2026-11-16 (docs/research/looks/retro64-lowpoly.md, sheet
@@ -29,12 +33,18 @@ SHOULDER_JUMP = 2.5         # a slice this many times wider than the head is the
 SLICE = 0.02                # of the height: the slices the width is measured in
 FRONT_FACING = 0.25        # cosine between a triangle's normal and the view: at least this to count as facing forward
 FRONT_HALF_WIDTH = 0.5     # of the band's width (5th to 95th percentile across): how far from the middle line counts
+NECK_NARROW = 0.5          # with whole_front the head also ends at the first slice below HEAD_TOP narrower than this share
+                           # of the head's width: the neck. L1 Farmer's is 0.36 of its head's width at 0.22 of the height,
+                           # where the shoulders (SHOULDER_JUMP) never come in its A pose and the band ran on to the collar
+                           # at 0.40; the dwarf L2's beard has no such slice and its band still runs to 0.40
 
 
-def front_of_head(mesh: dict[str, np.ndarray], tex: np.ndarray | None = None, head_yaw: float = 0.0) -> dict[str, Any]:
-    """{tris (indices into mesh faces), how: "face finder" | "front of the head" | None}. tex: the colour the finder
-    looks at (the finder is not asked without one)."""
-    v, f = mesh["verts"], mesh["faces"]
+def front_of_head(mesh: dict[str, np.ndarray], tex: np.ndarray | None = None, head_yaw: float = 0.0,
+                  whole_front: bool = False) -> dict[str, Any]:
+    """{tris (indices into mesh faces), how: "face finder" | "front of the head" | "face finder and front of the head" |
+    None}. tex: the colour the finder looks at (the finder is not asked without one). whole_front: the finder's region
+    together with the front of the head, not instead of it."""
+    v = mesh["verts"]
     head = face.find_head(v)
     if tex is not None and head is not None:
         try:
@@ -42,43 +52,58 @@ def front_of_head(mesh: dict[str, np.ndarray], tex: np.ndarray | None = None, he
             view = face.render_view(mesh, tex, cam)
             info = face.find_face_checked(view, mesh, cam, head)
             if info.get("found"):
-                tris = face.face_triangles(view, info["region"])
+                tris = np.asarray(face.face_triangles(view, info["region"]), dtype=np.int64)
                 if len(tris) >= FINDER_MIN_TRIANGLES:
-                    return {"tris": np.asarray(tris, dtype=np.int64), "how": "face finder"}
+                    if not whole_front:
+                        return {"tris": tris, "how": "face finder"}
+                    geo = front_geometry(mesh, head_yaw, neck=True)
+                    return {"tris": np.union1d(tris, geo), "how": "face finder and front of the head" if len(geo) else "face finder"}
         except Exception:  # noqa: BLE001  (the finder is a help here, never a reason to fail the step)
             pass
+    tris = front_geometry(mesh, head_yaw, neck=whole_front)
+    return {"tris": tris, "how": "front of the head" if len(tris) else None}
+
+
+def front_geometry(mesh: dict[str, np.ndarray], head_yaw: float = 0.0, neck: bool = False) -> np.ndarray:
+    """The triangles of the head band (down to the shoulders, FRONT_SHARE; with neck, also no further than the neck,
+    NECK_NARROW) that face a camera at head_yaw (FRONT_FACING) and lie within the head's width of its middle line
+    (FRONT_HALF_WIDTH): front_of_head's geometry."""
+    v, f = mesh["verts"], mesh["faces"]
     y = v[:, 1]
     top, h = float(y.max()), float(y.max() - y.min())
     if h <= 0:
-        return {"tris": np.zeros(0, dtype=np.int64), "how": None}
+        return np.zeros(0, dtype=np.int64)
     a = math.radians(head_yaw)
     toward = np.array([math.sin(a), 0.0, math.cos(a)])   # from the model toward a camera at head_yaw (face.Camera)
     across = np.array([math.cos(a), 0.0, -math.sin(a)])
     x = v @ across
     upper = y >= top - HEAD_TOP * h
     if upper.sum() < 3:
-        return {"tris": np.zeros(0, dtype=np.int64), "how": None}
+        return np.zeros(0, dtype=np.int64)
     mid = float(np.median(x[upper]))
     head_w = float(np.percentile(x[upper], 95) - np.percentile(x[upper], 5))
-    share = head_share(y, x, top, h, head_w)
+    share = head_share(y, x, top, h, head_w, neck)
     half = FRONT_HALF_WIDTH * head_w
     c = v[f].mean(axis=1)
     n = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
     sel = (c[:, 1] >= top - share * h) & (n @ toward >= FRONT_FACING) & (np.abs(c @ across - mid) <= half)
-    tris = np.flatnonzero(sel)
-    return {"tris": tris, "how": "front of the head" if len(tris) else None}
+    return np.flatnonzero(sel).astype(np.int64)
 
 
-def head_share(y: np.ndarray, x: np.ndarray, top: float, h: float, head_w: float) -> float:
+def head_share(y: np.ndarray, x: np.ndarray, top: float, h: float, head_w: float, neck: bool = False) -> float:
     """How far down from the top, as a share of the height, the head goes: to the first slice below HEAD_TOP that is
-    SHOULDER_JUMP times wider than the head, within FRONT_SHARE."""
+    SHOULDER_JUMP times wider than the head (or, with neck, narrower than NECK_NARROW of it), within FRONT_SHARE."""
     lo, hi = FRONT_SHARE
     s = HEAD_TOP
     while s < hi:
         band = (y < top - s * h) & (y >= top - (s + SLICE) * h)
-        if band.sum() >= 3 and float(np.percentile(x[band], 95) - np.percentile(x[band], 5)) > SHOULDER_JUMP * max(head_w, 1e-9):
-            return max(lo, s)
+        if band.sum() >= 3:
+            w = float(np.percentile(x[band], 95) - np.percentile(x[band], 5))
+            if w > SHOULDER_JUMP * max(head_w, 1e-9):
+                return max(lo, s)
+            if neck and w < NECK_NARROW * head_w:
+                return max(lo, s + SLICE)   # the narrow slice itself kept: a chin's triangles reach into it
         s += SLICE
     return hi
 

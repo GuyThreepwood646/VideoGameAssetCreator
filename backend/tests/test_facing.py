@@ -234,7 +234,7 @@ def test_an_unsure_decision_warns_in_plain_words_with_a_turn_round_fix():
     assert r["face_yaw_applied"] == 0 and r["face_decision_sure"] is False and r["face_decided_by"] == "as built"
     c = {c["name"]: c for c in prep.prep_checks({}, {}, r, "humanoid", None)}["facing_tests"]
     assert not c["passed"] and c["severity"] == "warn" and c["vars"]["unsure"] and c["fix"]["params"] == {"face_yaw": 180}
-    assert c["fix_label"] == "Turn it round" and "front and its back look almost the same" in c["help"]
+    assert c["fix_label"] == "Turn it round" and "looks almost the same from the front and from behind" in c["help"]
     assert "the legs cannot be told apart" in c["help"] and "turned 0 degrees" in c["help"]
     flat = prep.resolve_facing(CAT, "auto", m, {"found": False, "reason": "the model is flat", "flat": True})
     c = {c["name"]: c for c in prep.prep_checks({}, {}, flat, "humanoid", None)}["facing_tests"]
@@ -250,3 +250,87 @@ def test_autopilot_stops_on_an_unsure_facing_in_plain_words():
     assert "could not tell the character's front from its back" in text(c)
     old = quality.facing_tests_check(180, 1, 179.0, 0, 180)
     assert "disagree by about 179 degrees" in text(old)
+
+
+# --- facing_tests says what happened, branch by branch -----------------------------------------------------------
+
+
+def facing_help(m: dict) -> dict:
+    return {c["name"]: c for c in prep.prep_checks({}, {}, m, "humanoid", None)}["facing_tests"]
+
+
+ROBE = {"found": False, "reason": "the legs cannot be told apart (a robe, a long skirt, or legs together)"}
+NEAR_TIE = {"silhouette_offset": 195, "silhouette_sign": 1, "silhouette_iou": 0.78,
+            "silhouette_turn_scores": {"165": 0.80, "345": 0.786, "0": 0.785, "15": 0.787}}   # R1: outline 165 by 0.014
+
+
+def test_branch_clear_outline_without_toes_names_the_turn_applied():
+    m = {"silhouette_offset": 345, "silhouette_sign": 1, "silhouette_iou": 0.8, "silhouette_turn_scores": {"15": 0.8, "195": 0.6}}
+    c = facing_help(prep.resolve_facing(CAT, "auto", m, ROBE))
+    assert not c["passed"] and c["vars"]["measured"] is False
+    h = c["help"]
+    assert "alone clearly says turn 15 degrees" in h and "it was turned 0 degrees, as the clean-up turns by quarter turns only" in h
+    assert "(" not in h.split("because", 1)[1].replace("(where the toes point)", "")   # no bracketed examples
+
+
+def test_branch_toes_agree_names_the_turn_applied():
+    c = facing_help(prep.resolve_facing(CAT, "auto", {"silhouette_offset": 0, "silhouette_sign": 1, "silhouette_iou": 0.8,
+                                                      "silhouette_turn_scores": {"0": 0.8, "180": 0.6}}, TOES_FRONT))
+    assert c["passed"] and "agree. It was turned 0 degrees." in c["help"]
+
+
+def test_branch_toes_decided_a_disagreement_says_which_it_went_with():
+    m = {"silhouette_offset": 180, "silhouette_sign": 1, "silhouette_iou": 0.78, "silhouette_turn_scores": {str(k): v for k, v in SCORES.items()}}
+    c = facing_help(prep.resolve_facing(CAT, "auto", m, TOES_FRONT))
+    assert not c["passed"] and "It went with the toes and was turned 0 degrees." in c["help"]
+    assert "says turn it 180 degrees, but its toes say 1 degrees" in c["help"]
+
+
+def test_branch_colour_confirmed_passes_and_names_the_turn_applied_not_the_outlines():
+    colour = lambda t: {"turn": t, "head": 11.2, "all": 3.2, "views": {}}   # noqa: E731
+    r = prep.resolve_facing(CAT, "auto", NEAR_TIE, ROBE, colour)
+    assert r["face_yaw_applied"] == 0 and r["face_decision_sure"]
+    c = facing_help(r)
+    assert c["passed"] and c["vars"]["state"] == "colour"
+    h = c["help"]
+    assert "confirm the side the 3D step built as its front. It was turned 0 degrees." in h
+    assert "165" not in h and "because the legs cannot be told apart," in h and "(" not in h
+
+
+def test_branch_colour_overruled_passes_and_says_it_was_turned_round():
+    m = {"silhouette_offset": 0, "silhouette_sign": 1, "silhouette_iou": 0.78, "silhouette_turn_scores": {"0": 0.80, "180": 0.79}}
+    r = prep.resolve_facing(CAT, "auto", m, ROBE, lambda t: {"turn": t, "head": -6.0, "all": -2.0, "views": {}})
+    assert r["face_yaw_applied"] == 180 and r["face_decided_by"] == "colour"
+    c = facing_help(r)
+    assert c["passed"] and "built it facing backwards, so it was turned round: 180 degrees." in c["help"]
+
+
+def test_branch_not_sure_is_plain_with_no_nested_brackets():
+    c = facing_help(prep.resolve_facing(CAT, "auto", NEAR_TIE, ROBE))
+    h = c["help"]
+    assert not c["passed"] and c["fix"]["params"] == {"face_yaw": 180} and c["fix_label"] == "Turn it round"
+    assert "its toes could not be read because the legs cannot be told apart, and the colours" in h
+    assert "(" not in h and "It was turned 0 degrees" in h
+
+
+def test_branch_flat_model_says_so():
+    c = facing_help(prep.resolve_facing(CAT, "auto", NEAR_TIE, {"found": False, "reason": "the model is flat", "flat": True}))
+    assert not c["passed"] and "flat, like a card" in c["help"] and "(" not in c["help"]
+
+
+def test_branch_chosen_by_the_person_passes_and_says_what_the_app_would_have_done():
+    c = facing_help(prep.resolve_facing(CAT, 180, NEAR_TIE, ROBE))
+    assert c["passed"] and c["vars"]["state"] == "chosen"
+    assert c["help"] == "It was turned 180 degrees, as you chose. The app's own tests would have turned it 0 degrees."
+    same = facing_help(prep.resolve_facing(CAT, 0, NEAR_TIE, ROBE))
+    assert same["help"] == "It was turned 0 degrees, as you chose."
+
+
+def test_branch_toes_without_an_outline_says_it_was_left_as_built():
+    c = facing_help(prep.resolve_facing(CAT, "auto", {"silhouette_offset": 0, "silhouette_iou": 0.2}, TOES_FRONT))
+    assert not c["passed"] and "left as the 3D step built it" in c["help"] and "turned 0 degrees" in c["help"]
+
+
+def test_plain_reason_drops_bracketed_examples():
+    assert quality.plain_reason("the legs cannot be told apart (a robe, a long skirt, or legs together)") == "the legs cannot be told apart"
+    assert quality.plain_reason(None) == "they were not found"

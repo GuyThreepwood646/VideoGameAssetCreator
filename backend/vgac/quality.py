@@ -85,26 +85,50 @@ def auto_turn(best: float | None) -> int:
     return q if angle_diff(best, q) <= AUTO_TURN_WINDOW_DEG else 0
 
 
-def facing_tests_check(outline_turn: float, toes_turn: float, differ: float, decided: float | None, applied: float) -> Check:
+def plain_reason(reason: str | None) -> str:
+    """A test's reason as a plain clause for a check sentence: the bracketed examples dropped ("the legs cannot be told
+    apart (a robe, ...)" -> "the legs cannot be told apart")."""
+    import re
+
+    return re.sub(r"\s*\([^)]*\)", "", str(reason or "")).strip().rstrip(".") or "they were not found"
+
+
+def facing_tests_check(outline_turn: float, toes_turn: float, differ: float, decided: float | None, applied: float,
+                       by: str | None = None) -> Check:
     """facing_tests: the two independent facing tests (the outline against the drawn views, and where the toes point)
     agree to within facing.DISAGREE_DEG. Fails when they do not: the model may face the wrong way and nothing else
     would say so (the outline test alone cannot fail, it is compared with itself). value is the angle between them;
-    vars carry both turns and the fix, the turn that was decided on."""
+    vars carry both turns, the turn applied, which test the decision went with (by: "outline" or "toes") and the fix,
+    the turn that was decided on when it is not the one applied."""
     from .facing import DISAGREE_DEG
 
     q = nearest_quarter(decided) if decided is not None else None
     fix_yaw = q if q is not None and angle_diff(q, applied) > 0 else None
     return check("facing_tests", float(differ) <= DISAGREE_DEG, round(float(differ), 1), DISAGREE_DEG,
-                 vars={"outline_turn": int(round(outline_turn)) % 360, "toes_turn": int(round(toes_turn)) % 360, "fix_yaw": fix_yaw})
+                 vars={"state": "tests", "outline_turn": int(round(outline_turn)) % 360, "toes_turn": int(round(toes_turn)) % 360,
+                       "applied": int(round(float(applied))) % 360, "by": by if by in ("outline", "toes") else None,
+                       "fix_yaw": fix_yaw})
 
 
 def facing_unsure_check(decided: float | None, applied: float, flat: bool = False, toes_reason: str = "") -> Check:
     """facing_tests when the front could not be told from the back (facing.decide's `sure` False): a warning, measured,
     whose fix turns the model half a circle from where it was put. value is the turn applied."""
     a = int(round(float(applied))) % 360
-    return check("facing_tests", False, a, None, vars={"unsure": True, "flat": bool(flat), "toes_reason": toes_reason,
+    return check("facing_tests", False, a, None, vars={"state": "unsure", "unsure": True, "flat": bool(flat),
+                                                       "toes_reason": plain_reason(toes_reason),
                                                        "decided": None if decided is None else int(decided) % 360,
                                                        "fix_yaw": (a + 180) % 360})
+
+
+def facing_settled_check(state: str, applied: float, toes_reason: str = "", decided: float | None = None) -> Check:
+    """facing_tests when the turn was settled without the two tests agreeing, and rightly so (passes): "colour" (a
+    near-tie the colours of the front and back pictures confirmed as built), "colour_overruled" (they showed the model
+    was built facing backwards and it was turned round), "chosen" (the person chose the turn). value is the turn
+    applied; decided is the turn the app's own decision would have made (for "chosen")."""
+    a = int(round(float(applied))) % 360
+    d = None if decided is None else int(round(float(decided))) % 360
+    return check("facing_tests", True, a, None, vars={"state": state, "toes_reason": plain_reason(toes_reason),
+                                                      "decided": d, "differs": d is not None and angle_diff(d, a) > 20})
 
 
 def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, size_m: float | None = None,
