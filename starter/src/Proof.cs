@@ -55,6 +55,20 @@ namespace Vgac.Starter
             catch (Exception) { return null; }
         }
 
+        public static string ReadMarkerMove(string folder)
+        {
+            try
+            {
+                string p = Path.Combine(folder, MarkerName);
+                if (!File.Exists(p) || SafeFs.IsLink(p)) return null;
+                var d = Json.ParseObject(File.ReadAllText(p, Encoding.UTF8));
+                object who, mv;
+                if (!d.TryGetValue("made_by", out who) || Convert.ToString(who) != "VGAC") return null;
+                return d.TryGetValue("move", out mv) ? Convert.ToString(mv) : null;
+            }
+            catch (Exception) { return null; }
+        }
+
         // Any of the fixed names is at the top of this folder (used to decide whether a refusal needs explaining).
         public static bool FixedNamesPresent(string folder)
         {
@@ -93,7 +107,10 @@ namespace Vgac.Starter
 
         // Writes the id into the settings FIRST, then the marker, so a crash between the two leaves an empty folder that the next
         // start simply finishes claiming (the settings' id is reused). Does not look at the folder's contents: callers have decided.
-        public static void Stamp(string folder, MachineFile machine)
+        public static void Stamp(string folder, MachineFile machine) { Stamp(folder, machine, null); }
+
+        // `moveId`: the move that made this folder its new place (only a move that carries the same id may remove what it copied there).
+        public static void Stamp(string folder, MachineFile machine, string moveId)
         {
             string id = SettingsId(machine);
             if (string.IsNullOrEmpty(id))
@@ -105,7 +122,8 @@ namespace Vgac.Starter
             Directory.CreateDirectory(folder);
             var d = new Dictionary<string, object>();
             d["made_by"] = "VGAC"; d["id"] = id;
-            File.WriteAllText(Path.Combine(folder, MarkerName), Json.Write(d), new UTF8Encoding(false));
+            if (!string.IsNullOrEmpty(moveId)) d["move"] = moveId;
+            SafeFs.WriteAtomic(Path.Combine(folder, MarkerName), Json.Write(d), null);
         }
 
         // The person picked a folder. The claim is kept when that folder carries this install's own marker (the same folder re-picked

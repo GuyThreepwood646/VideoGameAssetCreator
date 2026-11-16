@@ -1588,3 +1588,11 @@ def test_percent_rule_never_expands_a_real_folder_or_the_cleaned_families(box, m
     real = box["tmp"] / "%VGACOK%"
     real.mkdir()
     assert ci.expand_percent(str(real)) == str(real)  # a folder that really has this name is taken as it is
+
+
+def test_a_crash_between_the_ledger_and_the_marker_of_a_new_claim_is_finished_by_the_next_install(box):
+    box["root"].mkdir(parents=True)
+    downloader.record("VGAC's own ComfyUI", box["root"], "added", 0)  # what is on disk when the claim was cut off after its first write
+    job = install(box)
+    assert job.state == "done", job.error
+    assert ci.read_marker(box["root"]) is not None and ci._in_ledger(box["root"])

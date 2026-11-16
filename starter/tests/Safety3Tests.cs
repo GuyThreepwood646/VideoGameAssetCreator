@@ -263,7 +263,7 @@ public static partial class T
         Check(DataFolders.ReadMarkerId(copy) == DataFolders.SettingsId(s.M), "(the copy carries the same id)");
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         Check(plan.Groups.SelectMany(g => g.Items).Where(i => i.Kind == "data-folder").All(i => i.Path.StartsWith(s.Data)), "Remove looks only at the folder the settings point at");
-        RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(!Directory.Exists(s.L.PythonDir) && Directory.Exists(Path.Combine(copy, "python")) && Directory.Exists(Path.Combine(copy, "tools", "uv")), "the copy is untouched");
         var s2 = Installed(); string copy2 = Path.Combine(Tmp("copied"), "copy2");
         SafeFs.CopyTree(s2.Data, copy2, null, new FsReport());

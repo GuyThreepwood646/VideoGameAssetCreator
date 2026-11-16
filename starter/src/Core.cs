@@ -176,16 +176,7 @@ namespace Vgac.Starter
                 catch (Exception) { /* unreadable now: what is in memory is written, as before */ }
             }
             changes.Clear();
-            string dir = System.IO.Path.GetDirectoryName(Path);
-            Directory.CreateDirectory(dir);
-            string tmp = Path + ".tmp";
-            File.WriteAllText(tmp, Json.Write(Data), new UTF8Encoding(false));
-            if (File.Exists(Path))
-            {
-                File.Copy(Path, Path + ".bak", true);
-                File.Delete(Path);
-            }
-            File.Move(tmp, Path);
+            SafeFs.WriteAtomic(Path, Json.Write(Data), Path + ".bak");
         }
     }
 
@@ -333,10 +324,7 @@ namespace Vgac.Starter
             ops.Clear();
             var root = new Dictionary<string, object>();
             root["items"] = Items;
-            string tmp = Path + ".tmp";
-            File.WriteAllText(tmp, Json.Write(root), new UTF8Encoding(false));
-            if (File.Exists(Path)) File.Delete(Path);
-            File.Move(tmp, Path);
+            SafeFs.WriteAtomic(Path, Json.Write(root), null);
         }
     }
 

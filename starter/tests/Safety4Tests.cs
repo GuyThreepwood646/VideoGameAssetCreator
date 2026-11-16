@@ -21,6 +21,7 @@ public static partial class T
         VgacsOwnComfyUIWentThroughTheBackendEverywhere();
         TheFifthReviewsFixes();
         TheSixthReviewsFixes();
+        TheSeventhReviewsFindings();
         TheMoveStateMachineSurvivesACrashAfterEveryWrite();
         ContinueNeedsTheSettingsToFitTheJournal();
         DialogsAnswerNoByDefault();
@@ -311,6 +312,7 @@ public static partial class T
     {
         public Func<string, string> Answer;          // args -> text for the log (null: nothing)
         public int HangMs;
+        public string WriteFirst;
         public int ExitCode;
         public bool Aborted;
         public string LastArgs; public Dictionary<string, string> LastEnv;
@@ -319,6 +321,7 @@ public static partial class T
         public int Run(string exe, string args, string cwd, Dictionary<string, string> env, string log)
         {
             LastArgs = args; LastEnv = env;
+            if (WriteFirst != null) File.WriteAllText(log, WriteFirst);
             if (HangMs > 0) { int waited = 0; while (waited < HangMs && !Aborted) { Thread.Sleep(50); waited += 50; } }
             string text = Answer == null ? null : Answer(args);
             if (text != null) File.WriteAllText(log, text);
@@ -529,6 +532,148 @@ public static partial class T
         Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && !File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models, and removed the rest of the folder");
     }
 
+
+    // ---- the seventh review: each finding as a test that fails on e3fc6b9 --------------------------------------------------------------
+
+    static string RootOf(InstallScene s) { return s.Root; }
+
+    static void TheSeventhReviewsFindings()
+    {
+        // N1: "Delete the old copy" half ran (a file was locked): the move can no longer be undone, and Undo never points back at a gutted place
+        var s = Movable(); string to = Path.Combine(Tmp("target"), "n1");
+        Check(Mover(s, null).Start(to, new Progress()) == null, "(N1: a finished move)");
+        string locked = Path.Combine(s.Data, "comfyui", "main.py");
+        string said;
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+            said = Mover(s, null).DeleteOld();
+        Check(said != null && said.Contains("in use"), "N1: the delete stopped on a locked file: " + said);
+        Check(!Directory.Exists(Path.Combine(s.Data, "python")), "(and what came before it is already gone)");
+        string cancelled = Mover(s, null).Cancel();
+        Check(cancelled != null && cancelled.Contains("cannot be undone"), "N1: Cancel/Undo is refused once deleting has begun: " + cancelled);
+        Eq(Layout.From(s.Root, MachineFile.Load(s.Root)).DataFolder.TrimEnd('\\'), to.TrimEnd('\\'), "N1: the settings still name the complete new place");
+        Check(Directory.Exists(Path.Combine(to, "python")) && File.Exists(Path.Combine(to, "comfyui", "main.py")), "N1: and it holds everything");
+        Check(Mover(s, null).Forget() != null, "N1: 'keep both copies' is refused too (the old copy is half gone)");
+        Check(Mover(s, null).DeleteOld() == null && !Directory.Exists(Path.Combine(s.Data, "comfyui")), "N1: pressing Delete again finishes it");
+        Check(MoveRunner.Load(s.Root) == null, "N1: and the journal is gone");
+
+        // N2: a link in the new copy that leads back into the old copy never makes the old files "match" themselves
+        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "n2");
+        Check(Mover(s2, null).Start(to2, new Progress()) == null, "(N2: a finished move)");
+        SafeFs.DeleteTree(Path.Combine(to2, "python"));
+        Junction(Path.Combine(to2, "python"), Path.Combine(s2.Data, "python"));
+        string refused = Mover(s2, null).DeleteOld();
+        Check(refused != null && File.Exists(Path.Combine(s2.Data, "python", "f3.bin")), "N2: DeleteOld refuses and the real files are still there: " + refused);
+        // a file-level link in the new copy (a hard link would be a file, a junction a folder): the folder case inside a folder
+        var s2b = Movable(); string to2b = Path.Combine(Tmp("target"), "n2b");
+        Mover(s2b, null).Start(to2b, new Progress());
+        SafeFs.DeleteTree(Path.Combine(to2b, "tools", "node"));
+        Junction(Path.Combine(to2b, "tools", "node"), Path.Combine(s2b.Data, "tools", "node"));
+        Check(Mover(s2b, null).DeleteOld() != null && File.Exists(Path.Combine(s2b.Data, "tools", "node", "node.exe")), "N2: also a link deeper in the new copy");
+        // and the new place itself reached through a link
+        var s2c = Movable(); string to2c = Path.Combine(Tmp("target"), "n2c");
+        Mover(s2c, null).Start(to2c, new Progress());
+        string lnk = Path.Combine(Tmp("lk"), "lnk"); Junction(lnk, Path.Combine(s2c.Data, "python"));
+        Check(SafeFs.Compare(Path.Combine(s2c.Data, "python"), lnk, null, true, true).Count > 0, "N2: a folder is never 'the same' as a link to itself");
+
+        // a link deeper inside the new copy, where the old copy has a real folder, is not followed either
+        string oldTree = Tmp("cmp-old"), newTree = Tmp("cmp-new");
+        Put(Path.Combine(oldTree, "sub", "a.txt"), "same"); Put(Path.Combine(newTree, "other.txt"), "x");
+        Junction(Path.Combine(newTree, "sub"), Path.Combine(oldTree, "sub"));
+        var deep = SafeFs.Compare(oldTree, newTree, null, true, true);
+        Check(deep.Count > 0 && deep[0].Contains("link"), "N2: a link in the new copy at any depth is a mismatch: " + string.Join(",", deep.ToArray()));
+
+        // N3: a crash between the .part rename and the journal save
+        var s3 = Movable(); string to3 = Path.Combine(Tmp("target"), "n3");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "move" && pth == "before-rename:python") throw new Boom("crash"); };
+        try { Mover(s3, null).Start(to3, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Directory.Move(Path.Combine(to3, "python.part"), Path.Combine(to3, "python"));      // the rename happened, the journal save did not
+        Check(Mover(s3, null).Continue(new Progress()) == null, "N3: Continue is not stuck after that crash");
+        var s3b = Movable(); string to3b = Path.Combine(Tmp("target"), "n3b");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "move" && pth == "before-rename:python") throw new Boom("crash"); };
+        try { Mover(s3b, null).Start(to3b, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Directory.Move(Path.Combine(to3b, "python.part"), Path.Combine(to3b, "python"));
+        Mover(s3b, null).Cancel();
+        Check(!Directory.Exists(to3b) || Directory.GetFileSystemEntries(to3b).Length == 0, "N3: and Cancel leaves nothing behind");
+
+        // N4: a crash after the first journal save leaves the new place unstamped; Continue stamps it
+        var s4 = Movable(); string to4 = Path.Combine(Tmp("target"), "n4");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "move" && pth == "journal:copying") throw new Boom("crash"); };
+        try { Mover(s4, null).Start(to4, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Check(DataFolders.ReadMarkerId(to4) == null, "(N4: the crash left the new place without its marker)");
+        Check(Mover(s4, null).Continue(new Progress()) == null, "N4: Continue finishes the move");
+        Eq(DataFolders.ReadMarkerId(to4), DataFolders.SettingsId(MachineFile.Load(s4.Root)), "N4: and the new place carries this install's marker");
+        Check(DataFolders.Check(to4, MachineFile.Load(s4.Root), s4.Root).State == DataState.Ours, "N4: it is VGAC's");
+
+        // N5: a junction cannot be chosen as the target
+        var s5 = Movable(); string real5 = Tmp("realtarget"); string link5 = Path.Combine(Tmp("links"), "target");
+        Junction(link5, real5);
+        string r5 = Mover(s5, null).Start(link5, new Progress());
+        Check(r5 != null && r5.Contains("link") && MoveRunner.Load(s5.Root) == null, "N5: a link as the new folder is refused, nothing started: " + r5);
+
+        // N6: a crash inside a save leaves the old file, never none
+        var s6 = Movable(); string to6 = Path.Combine(Tmp("target"), "n6");
+        var seen = new List<string>(); int journalWrites = 0;
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "save") { seen.Add(pth); if (pth.EndsWith("move.json (written)") && ++journalWrites == 2) throw new Boom("crash inside the second save"); } };
+        try { Mover(s6, null).Start(to6, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Check(seen.Count > 0, "N6: saves have crash points inside them (" + seen.Count + ")");
+        Check(File.Exists(MoveRunner.JournalPath(s6.Root)), "N6: a crash between writing the journal's new text and replacing leaves the journal that was there");
+        var m6 = MachineFile.Load(s6.Root); m6.Set("starter", "x", "1");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "save" && pth.EndsWith("machine.json (written)")) throw new Boom("crash"); };
+        try { m6.Save(); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Check(File.Exists(Path.Combine(s6.Root, "local", "machine.json")) && MachineFile.Load(s6.Root).GetString("starter", "dataFolder") != null, "N6: a crash between writing and replacing leaves the settings file as it was");
+
+        // the same class of fault elsewhere: Remove while a move is unfinished offers nothing in the data folder or of VGAC's own ComfyUI
+        var m9 = Movable(); string to9 = Path.Combine(Tmp("target"), "n9");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "move" && pth == "journal:verified") throw new Boom("stop"); };
+        try { Mover(m9, null).Start(to9, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        var plan9 = RemovalPlanner.Build(m9.L, MachineFile.Load(m9.Root), m9.Led, m9.Comfy);
+        Check(!plan9.Groups.SelectMany(g => g.Items).Any(i => i.Kind == "data-folder" || i.Kind == "comfy-remove") && plan9.Notes.Any(n => n.Contains("not finished")), "an unfinished move: nothing in the data folder or of ComfyUI is offered for removal, and it says why");
+        var res9 = RemovalRunner.Run(plan9, new List<string> { "tools", "comfy" }, null, m9.L, MachineFile.Load(m9.Root), m9.Led, m9.Comfy, new FakeRecycler(), new SetupLog(m9.Root), null, null);
+        Check(Directory.Exists(Path.Combine(m9.Data, "python")) && Directory.Exists(Path.Combine(to9, "python")), "and a removal run then changes neither place");
+
+        // the same class: a folder above the old copy turned into a link is not followed by "Delete the old copy"
+        var s10 = Movable(); string to10 = Path.Combine(Tmp("target"), "n10");
+        Mover(s10, null).Start(to10, new Progress());
+        string elsewhere = Tmp("elsewhere");
+        SafeFs.CopyTree(Path.Combine(s10.Data, "tools"), Path.Combine(elsewhere, "tools"), null, new FsReport());
+        SafeFs.DeleteTree(Path.Combine(s10.Data, "tools"));
+        Junction(Path.Combine(s10.Data, "tools"), Path.Combine(elsewhere, "tools"));
+        string r10 = Mover(s10, null).DeleteOld();
+        Check(r10 != null && File.Exists(Path.Combine(elsewhere, "tools", "uv", "uv.exe")), "'Delete the old copy' does not delete through a link above the old copy: " + r10);
+
+        // N7: another command's log is not deleted by a second command that has to wait
+        string proot; var lay = ProjectWithPython(out proot);
+        var first = new ScriptedHost(); first.HangMs = 2500; first.WriteFirst = "{\"ok\": true, \"first\": 1}\r\n";
+        var thr = new Thread(delegate() { ComfyCli.Run(first, lay, proot, "rebuild-venv", 60000, null); });
+        thr.Start(); Thread.Sleep(500);
+        string logPath = Path.Combine(proot, "runtime", "logs", "comfy-install-cli.log");
+        string busy = ComfyCli.Run(new ScriptedHost(), lay, proot, "check", 5000, null);
+        Check(busy != null && busy.Contains("busy") && File.Exists(logPath) && File.ReadAllText(logPath).Contains("\"first\": 1"), "N7: a command that has to wait leaves the running one's log alone");
+        thr.Join();
+
+        // N7: removing "tools" with VGAC's own ComfyUI left installed keeps the private Python its environment points at
+        var r7 = Installed();
+        var p7 = RemovalPlanner.Build(r7.L, r7.M, r7.Led, r7.Comfy);
+        var res7 = RemovalRunner.Run(p7, new List<string> { "tools" }, null, r7.L, MachineFile.Load(r7.Root), r7.Led, r7.Comfy, new FakeRecycler(), new SetupLog(r7.Root), null, null);
+        Check(Directory.Exists(r7.L.PythonDir) && res7.Skipped.Any(x => x.Contains("kept, because") && x.Contains("still installed")), "N7: the private Python stays while ComfyUI stays: " + string.Join(" | ", res7.Skipped.ToArray()));
+
+        // N7: a journal from another time cannot make Cancel delete anything: the new place must carry THIS move's id
+        var s8 = Movable(); string to8 = Path.Combine(Tmp("target"), "n8");
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "move" && pth == "journal:verified") throw new Boom("stop"); };
+        try { Mover(s8, null).Start(to8, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        var jtxt = File.ReadAllText(MoveRunner.JournalPath(s8.Root));
+        File.WriteAllText(MoveRunner.JournalPath(s8.Root), System.Text.RegularExpressions.Regex.Replace(jtxt, "\"id\":\\s*\"[0-9a-f]+\"", "\"id\": \"someone-elses-move\""));
+        Mover(s8, null).Cancel();
+        Check(Directory.Exists(Path.Combine(to8, "python")), "N7: a journal with another move's id removes nothing");
+    }
+
     // ---- the sixth review --------------------------------------------------------------------------------------------------------
 
     class StopHere : Exception { }
@@ -694,66 +839,97 @@ public static partial class T
 
     // ---- the state machine, crashed after every write ----------------------------------------------------------------------------------
     //
-    // Every write of a move (the journal, the settings file, the ledger, the engine settings, the files) is followed by a "move" point
-    // (SafeFs.Point). Each scenario is run once to list its points, then again once per point with a crash right after that write, and
-    // the next start recovers it: by Continue, and by Cancel. After recovery the settings, the ledger and the engine settings must all
-    // name the same place, that place must hold the files, and the journal must be gone or at its end.
+    // Every write of a move (the journal, the settings file, the ledger, the engine settings, the marker, the files) is followed by a
+    // point (SafeFs.Point), and the saves have one inside them too (the new text written, the old file not yet replaced). Each scenario is
+    // run once to list its points, then again once per point with a crash right after it, and the next start recovers it: by Continue, by
+    // Cancel and (after "Delete the old copy" began) by pressing Delete again. After recovery the settings, the ledger and the engine
+    // settings must all name the same place, that place must hold the files and carry this install's marker, and the journal must be
+    // gone or at its end. The points of "move" and "save" are all tried; the very many "copy" and "delete" points (one per file) are
+    // sampled (at most 10 per scenario, spread over the whole run), because trying each of thousands would take hours and they all
+    // lie inside one journalled step.
+
+    static readonly string[] Scenarios = { "forward", "undo", "cancel-early", "undo-from-switching", "undo-from-switched", "cancel-part", "undo-refused", "deleteold", "forget", "stale" };
 
     static void TheMoveStateMachineSurvivesACrashAfterEveryWrite()
     {
         int runs = 0;
-        foreach (string kind in new[] { "forward", "undo", "cancel-early" })
+        foreach (string kind in Scenarios)
         {
             var points = RunScenario(kind, -1, null);
-            Check(points.Count >= 5, "scenario " + kind + " has its writes listed (" + points.Count + ")");
-            for (int k = 0; k < points.Count; k++)
-                foreach (string recover in new[] { "continue", "cancel" })
+            Check(points.Count >= 1, "scenario " + kind + " has its writes listed (" + points.Count + ")");
+            var pick = new List<int>(); var bulk = new List<int>();
+            for (int k = 0; k < points.Count; k++) { if (points[k].StartsWith("move:") || points[k].StartsWith("save:")) pick.Add(k); else bulk.Add(k); }
+            for (int q = 0; q < 10 && bulk.Count > 0; q++) pick.Add(bulk[(int)((long)q * bulk.Count / 10)]);
+            bool afterDelete = kind == "deleteold" || kind == "forget" || kind == "stale";
+            foreach (int k in pick)
+                foreach (string recover in kind == "deleteold" ? new[] { "continue", "cancel", "finish" } : new[] { "continue", "cancel" })
                 {
                     string label = kind + " crashed after " + points[k] + " (#" + k + "), recovered by " + recover;
-                    InstallScene s = null;
-                    try { RunScenario(kind, k, delegate(InstallScene sc) { s = sc; }); }
+                    InstallScene s = null; string to = null;
+                    try { RunScenario(kind, k, delegate(InstallScene sc, string t2) { s = sc; to = t2; }); }
                     catch (Exception e) { Check(false, label + ": the crash did not stop the scenario as planned: " + e.Message); continue; }
                     runs++;
                     if (s == null) continue;
+                    s.Comfy.RetargetBackError = null;       // the refused undo is refused only once
                     string said = null;
-                    if (recover == "continue") { for (int i = 0; i < 4; i++) { said = Mover(s, null).Continue(new Progress()); if (said == null) break; } }
-                    else { for (int i = 0; i < 3; i++) { said = Mover(s, null).Cancel(); if (said == null || said.Contains("points at the old place")) break; } }
+                    if (recover == "continue") { for (int i2 = 0; i2 < 4; i2++) { said = Mover(s, null).Continue(new Progress()); if (said == null) break; } }
+                    else if (recover == "cancel") { for (int i2 = 0; i2 < 3; i2++) { said = Mover(s, null).Cancel(); if (said == null || said.Contains("points at the old place") || said.Contains("cannot be undone")) break; } }
+                    else { for (int i2 = 0; i2 < 3; i2++) { said = Mover(s, null).DeleteOld(); if (said == null) break; } }
                     var m = MachineFile.Load(s.Root);
                     string cur = Layout.From(s.Root, m).DataFolder;
                     string ledgerPath = null;
                     foreach (object o in Ledger.Load(s.Root).Items) { var d = (Dictionary<string, object>)o; if (Convert.ToString(d["what"]).Contains("own ComfyUI")) ledgerPath = Convert.ToString(d["path"]); }
-                    bool ok = ledgerPath != null && SafeFs.Norm(ledgerPath) == SafeFs.Norm(Path.Combine(cur, "comfyui"))
-                              && SafeFs.Norm(s.Comfy.EngineAt) == SafeFs.Norm(cur) && Directory.Exists(Path.Combine(cur, "python")) && File.Exists(Path.Combine(cur, "comfyui", ComfyGuard.MarkerName));
-                    Check(ok, label + ": settings " + cur + ", ledger " + ledgerPath + ", engines " + s.Comfy.EngineAt + " must all be one place that holds the files");
+                    bool whole = Directory.Exists(Path.Combine(cur, "python")) && Directory.Exists(Path.Combine(cur, "tools", "uv")) && File.Exists(Path.Combine(cur, "comfyui", ComfyGuard.MarkerName));
+                    bool ok = ledgerPath != null && SafeFs.Norm(ledgerPath) == SafeFs.Norm(Path.Combine(cur, "comfyui")) && SafeFs.Norm(s.Comfy.EngineAt) == SafeFs.Norm(cur) && whole;
+                    Check(ok, label + ": settings " + cur + ", ledger " + ledgerPath + ", engines " + s.Comfy.EngineAt + " must all be one place that holds all the files (whole: " + whole + ") [" + said + "]");
+                    if (SafeFs.Norm(cur) == SafeFs.Norm(to))
+                        Check(DataFolders.ReadMarkerId(to) == DataFolders.SettingsId(m), label + ": the place in use carries this install's marker");
                     var j = MoveRunner.Load(s.Root, cur);
-                    if (recover == "cancel") Check(j == null && SafeFs.Norm(cur) == SafeFs.Norm(s.Data), label + ": cancelled means the old place is in use and the journal is gone (journal " + (j == null ? "gone" : j.State) + ", in use " + cur + ")");
-                    else Check(j == null || j.State == "rebuilt", label + ": continued means finished (journal " + (j == null ? "gone" : j.State) + ")");
+                    if (recover == "cancel" && !afterDelete) Check(j == null && SafeFs.Norm(cur) == SafeFs.Norm(s.Data), label + ": cancelled means the old place is in use and the journal is gone (journal " + (j == null ? "gone" : j.State) + ", in use " + cur + ")");
+                    else if (recover == "finish") Check(j == null && !Directory.Exists(Path.Combine(s.Data, "python")), label + ": finished means the old copy and the journal are gone (journal " + (j == null ? "gone" : j.State) + ")");
+                    else Check(j == null || j.State == "rebuilt" || j.State == "deleting-old", label + ": recovered means finished (journal " + (j == null ? "gone" : j.State) + ") [" + said + "]");
+                    if ((kind == "cancel-early" || kind == "cancel-part") && recover == "cancel")
+                        Check(!Directory.Exists(Path.Combine(to, "python")) && !Directory.Exists(Path.Combine(to, "python.part")) && !Directory.Exists(Path.Combine(to, "comfyui")), label + ": a cancelled copy leaves nothing of itself behind");
                 }
         }
-        Check(runs > 60, "the crash runs happened (" + runs + ")");
+        Check(runs > 150, "the crash runs happened (" + runs + ")");
     }
 
-    // Runs one scenario with a crash after the k-th write (k < 0: no crash, only list the points). `keep` gets the scene.
-    static List<string> RunScenario(string kind, int crashAt, Action<InstallScene> keep)
+    // Runs one scenario with a crash after the k-th point (k < 0: no crash, only list the points). `keep` gets the scene and the new place.
+    static List<string> RunScenario(string kind, int crashAt, Action<InstallScene, string> keep)
     {
         var s = Movable(); string to = Path.Combine(Tmp("target"), "crash");
         var rec = new List<string>(); int count = 0; bool armed = false; string stopAt = null;
         SafeFs.Hook = delegate(string what, string p)
         {
-            if (what != "move") return;
-            if (!armed) { if (stopAt != null && p == stopAt) throw new StopHere(); return; }
-            rec.Add(p);
+            if (what != "move" && what != "save" && what != "copy" && what != "delete") return;
+            if (!armed) { if (stopAt != null && what == "move" && p == stopAt) throw new StopHere(); return; }
+            rec.Add(what + ":" + p);
             if (count++ == crashAt) throw new Boom("crash after " + p);
         };
         try
         {
-            if (kind == "forward") { armed = true; Mover(s, null).Start(to, new Progress()); }
-            else if (kind == "undo") { Mover(s, null).Start(to, new Progress()); armed = true; Mover(s, null).Cancel(); }
-            else { stopAt = "journal:verified"; try { Mover(s, null).Start(to, new Progress()); } catch (StopHere) { } stopAt = null; armed = true; Mover(s, null).Cancel(); }
+            Action<string> startStopped = delegate(string at) { stopAt = at; try { Mover(s, null).Start(to, new Progress()); } catch (StopHere) { } stopAt = null; };
+            switch (kind)
+            {
+                case "forward": armed = true; Mover(s, null).Start(to, new Progress()); break;
+                case "undo": Mover(s, null).Start(to, new Progress()); armed = true; Mover(s, null).Cancel(); break;
+                case "cancel-early": startStopped("journal:verified"); armed = true; Mover(s, null).Cancel(); break;
+                case "undo-from-switching": startStopped("journal:switching"); armed = true; Mover(s, null).Cancel(); break;
+                case "undo-from-switched": startStopped("journal:switched"); armed = true; Mover(s, null).Cancel(); break;
+                case "cancel-part": startStopped("before-rename:python"); armed = true; Mover(s, null).Cancel(); break;
+                case "undo-refused": Mover(s, null).Start(to, new Progress()); s.Comfy.RetargetBackError = "refused for the test"; armed = true; Mover(s, null).Cancel(); break;
+                case "deleteold": Mover(s, null).Start(to, new Progress()); armed = true; Mover(s, null).DeleteOld(); break;
+                case "forget": Mover(s, null).Start(to, new Progress()); armed = true; Mover(s, null).Forget(); break;
+                case "stale":
+                    Mover(s, null).Start(to, new Progress());
+                    File.WriteAllText(MoveRunner.JournalPath(s.Root), System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(MoveRunner.JournalPath(s.Root)), "\"state\":\\s*\"rebuilt\"", "\"state\": \"bogus\""));
+                    armed = true; MoveRunner.Load(s.Root, Layout.From(s.Root, MachineFile.Load(s.Root)).DataFolder); break;
+            }
         }
         catch (Boom) { }
         finally { SafeFs.Hook = null; }
-        if (keep != null) keep(s);
+        if (keep != null) keep(s, to);
         return rec;
     }
 }

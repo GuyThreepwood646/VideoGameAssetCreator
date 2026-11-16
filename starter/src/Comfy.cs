@@ -93,7 +93,6 @@ namespace Vgac.Starter
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(logFile));
-                if (File.Exists(logFile)) File.Delete(logFile);
             }
             catch (Exception) { return null; }
             // one command at a time: they share one log, and a second must never take the first one's place as "the running program"
@@ -106,6 +105,8 @@ namespace Vgac.Starter
 
         static string RunLocked(IHost host, Layout lay, string projectRoot, string args, int timeoutMs, Func<bool> cancelled, string logFile)
         {
+            // the log is this command's own: deleted only now that this command holds the lock
+            try { if (File.Exists(logFile)) File.Delete(logFile); } catch (Exception) { return null; }
             var env = new Dictionary<string, string>();
             env["VGAC_CLEAN_ENVIRONMENT"] = "1";
             Exception failed = null;

@@ -290,7 +290,11 @@ namespace Vgac.Starter
             // the folder for the big files: VGAC's only when its marker matches this install's settings (necessary, not sufficient: each
             // item is also a real place inside it, never a link)
             DataStatus ds = DataFolders.Check(data, machine, l.ProjectRoot);
-            bool dataOurs = ds.State == DataState.Ours;
+            // While a move of the big files is unfinished, which place is whole depends on its step: nothing in the folder for the big files
+            // (nor VGAC's own ComfyUI) is offered until the move is finished or cancelled.
+            bool moving = MoveRunner.Load(l.ProjectRoot, l.DataFolder) != null;
+            if (moving) plan.Notes.Add("A move of the big files is not finished. Nothing in the folder for the big files, and not VGAC's own ComfyUI, is offered for removal until the move is finished or cancelled (Move the big files).");
+            bool dataOurs = ds.State == DataState.Ours && !moving;
             if (dataOurs)
             {
                 AddData(plan, g1, l, "uv", "tools\\uv", "The package tool (uv)");
@@ -326,7 +330,8 @@ namespace Vgac.Starter
             var g2 = new RemovalGroup(); g2.Id = "comfy"; g2.Title = "VGAC's own ComfyUI"; g2.DefaultOn = true;
             g2.Sentence = "The ComfyUI VGAC installed for itself, removed by VGAC's own installer.";
             string croot = comfy.Root(data);
-            if (ComfyGuard.MarkerPresent(croot))
+            if (moving && ComfyGuard.MarkerPresent(croot)) plan.ComfyUnconfirmed = true;     // its Python stays while a move is unfinished
+            else if (ComfyGuard.MarkerPresent(croot))
             {
                 ComfyState cs = comfy.State(data);
                 if (cs.Problem != null) plan.ComfyUnconfirmed = true;
@@ -672,12 +677,20 @@ namespace Vgac.Starter
             {
                 keepPython = "VGAC's own ComfyUI is installed but its installer did not confirm it (it could not be asked, or it refused), so it cannot be removed now, and it needs this Python";
             }
+            // The private Python (uv's) is also the Python of ComfyUI's own environment: while that stays installed, the Python stays.
+            string keepPythonDir = null;
+            { RemovalGroup cg = plan.Get("comfy"); if (cg != null && cg.Items.Count > 0 && !ticked.Contains("comfy")) keepPythonDir = "VGAC's own ComfyUI is still installed (not ticked), and its Python environment uses this Python"; }
             foreach (RemovalGroup g in plan.Groups)
             {
                 if (!ticked.Contains(g.Id) || g.Items.Count == 0) continue;
                 if (g.Id == "settings") { settingsTicked = true; continue; }   // after everything else
                 foreach (RemovalItem it in g.Items)
                 {
+                    if (keepPythonDir != null && it.Kind == "data-folder" && it.Tag == "python")
+                    {
+                        string k2 = it.Path + ": kept, because " + keepPythonDir + " (still installed). Tick VGAC's own ComfyUI as well to remove it.";
+                        res.Skipped.Add(k2); log.Line("remove: " + k2); continue;
+                    }
                     if (keepPython != null && ((it.Kind == "app-folder" && it.Tag == "venv") || (it.Kind == "data-folder" && it.Tag == "python")))
                     {
                         string keep = it.Path + ": kept, because " + keepPython + ". Remove VGAC's own ComfyUI first (or together), then remove this again.";

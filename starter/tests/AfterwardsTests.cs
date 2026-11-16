@@ -206,7 +206,8 @@ public static partial class T
         string copy = Path.Combine(b, "copy");
         var cr = new FsReport(); SafeFs.CopyTree(tree, copy, null, cr);
         Check(File.Exists(Path.Combine(copy, "sub", "b.txt")) && !Directory.Exists(Path.Combine(copy, "link")), "a copy does not follow the junction");
-        Eq(SafeFs.Compare(tree, copy, null, true).Count, 0, "the copy compares equal");
+        var cmp = SafeFs.Compare(tree, copy, null, true);
+        Check(cmp.Count == 1 && cmp[0].Contains("link not made again"), "the copy lacks the junction (a plain copy does not make links), and the compare says so: " + string.Join(",", cmp.ToArray()));
         File.WriteAllText(Path.Combine(copy, "sub", "b.txt"), "bb");
         Check(SafeFs.Compare(tree, copy, null, false).Any(x => x.StartsWith("different size")), "a different size is found");
         // deleting a tree with a junction inside unlinks it and leaves the target whole
@@ -762,10 +763,10 @@ public static partial class T
         var plan2 = RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy);
         RemovalResult r2;
         using (new FileStream(lockedFile, FileMode.Open, FileAccess.Read, FileShare.Read))
-            r2 = RemovalRunner.Run(plan2, new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, new List<string> { Path.Combine(s2.L.FrontendDir, "node_modules") });
+            r2 = RemovalRunner.Run(plan2, new List<string> { "tools", "comfy" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, new List<string> { Path.Combine(s2.L.FrontendDir, "node_modules") });
         Check(!r2.Complete && r2.Locked.Count >= 1, "a file in use is reported, not forced");
         Check(!Directory.Exists(s2.L.Venv), "and everything else was removed");
-        var r3 = RemovalRunner.Run(RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy), new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, null);
+        var r3 = RemovalRunner.Run(RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy), new List<string> { "tools", "comfy" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, null);
         Check(r3.Complete && !Directory.Exists(Path.Combine(s2.L.FrontendDir, "node_modules")), "once it is free a second run removes it");
         // settings last, and the empty folder VGAC made goes only when nothing else is in it
         var s4 = Installed();
@@ -886,7 +887,8 @@ public static partial class T
             Check(j != null, "a journal is left after a cut at " + where);
             Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), s2.Data, "the settings still name the old folder after a cut at " + where);
             Check(Directory.Exists(Path.Combine(s2.Data, "python")) && File.Exists(Path.Combine(s2.Data, "python", "f0.bin")), "and the old place is whole (" + where + ")");
-            Check(Mover(s2, null).Continue(new Progress()) == null, "Continue finishes the move after a cut at " + where);
+            string contSaid = Mover(s2, null).Continue(new Progress());
+            Check(contSaid == null, "Continue finishes the move after a cut at " + where + ": " + contSaid);
             Eq(MoveRunner.Load(s2.Root).State, "rebuilt", "to the end (" + where + ")");
             Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), to2, "and the new folder is in use (" + where + ")");
             Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).Count == 0, "with a complete copy (" + where + ")");

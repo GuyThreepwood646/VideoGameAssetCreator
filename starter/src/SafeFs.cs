@@ -24,6 +24,35 @@ namespace Vgac.Starter
         public static Action<string, string> Hook;
         public static void Point(string what, string path) { var h = Hook; if (h != null) h(what, path); }
 
+        // Writes a file so that a crash leaves either the old one or the new one, never none: the new text goes to a temporary file
+        // beside it, which then REPLACES the old (File.Replace; the old one kept as `backup` when asked).
+        public static void WriteAtomic(string path, string text, string backup)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, text, new UTF8Encoding(false));
+            Point("save", path + " (written)");
+            if (File.Exists(path))
+            {
+                // Windows (an antivirus, the indexer) can hold the file for a moment: try again, then overwrite in place (the old file is never
+                // deleted first, so there is always a file)
+                for (int i = 0; ; i++)
+                {
+                    try { File.Replace(tmp, path, backup); break; }
+                    catch (IOException)
+                    {
+                        if (i < 20) { System.Threading.Thread.Sleep(50); continue; }
+                        if (backup != null) { try { File.Copy(path, backup, true); } catch (IOException) { } }
+                        File.Copy(tmp, path, true);
+                        try { File.Delete(tmp); } catch (IOException) { }
+                        break;
+                    }
+                }
+            }
+            else File.Move(tmp, path);
+            Point("save", path + " (replaced)");
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -319,6 +348,8 @@ namespace Vgac.Starter
         public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo, bool ignoreExtra, Func<bool> cancelled, Action<string> say)
         {
             var bad = new List<string>();
+            // the new copy is compared as a real folder: reached through a link, it could be the old copy itself
+            if (IsLink(dst) || !PathHasNoLink(dst)) { bad.Add("the new copy is, or is reached through, a link: " + dst); return bad; }
             cmpCancel = cancelled; cmpSay = say;
             try { CompareInto(src, dst, skipTop, hashToo, ignoreExtra, bad, true); }
             finally { cmpCancel = null; cmpSay = null; }
@@ -354,10 +385,13 @@ namespace Vgac.Starter
                 {
                     // a link inside the folder is made again in the copy as a link (see CopyItem), not compared as content
                     names.Add(name);
+                    if (!IsLink(Path.Combine(dst, name))) bad.Add("link not made again in the copy " + Path.Combine(dst, name));
                     continue;
                 }
                 names.Add(name);
                 string to = Path.Combine(dst, name);
+                // a link where the old place has real files would make them "match" themselves (a link back into the old copy)
+                if (IsLink(to)) { bad.Add("a link in the new copy where the old place has real files: " + to); continue; }
                 if (Directory.Exists(k))
                 {
                     if (!Directory.Exists(to)) { bad.Add("missing folder " + to); continue; }

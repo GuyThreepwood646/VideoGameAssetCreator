@@ -353,9 +353,11 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
                             "Move those files somewhere else, or choose another data folder for VGAC.")
     root.mkdir(parents=True, exist_ok=True)
     m = fresh
-    (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
+    # The ledger first, the marker second: a crash between leaves an empty folder the ledger names (the next claim finishes it), not a
+    # marker without a ledger entry (which nothing would ever accept again, and the folder would then count as somebody else's).
     downloader.record("VGAC's own ComfyUI", root, "added", 0)
     _stamp_ledger_id(root, m["install_id"])
+    (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
     return m
 
 

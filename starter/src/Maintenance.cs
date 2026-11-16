@@ -169,6 +169,7 @@ namespace Vgac.Starter
                 if (!yes) { todo = todo.Where(c => c.FixId != "adoptlib").ToList(); if (todo.Count == 0) { status.Text = "The library was not marked."; return; } }
             }
             bool needsStop = todo.Any(c => c.FixId == "comfyvenv" || c.FixId == "venv" || c.FixId == "packages" || c.FixId == "uv" || c.FixId == "screens");
+            if (needsStop && busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (needsStop && !host.Quiesce(this, "fix")) return;
             Run(delegate
             {
@@ -209,6 +210,7 @@ namespace Vgac.Starter
         {
             var steps = Planner.Plan(ProbeReader.Read(host.Lay, host.Host), host.Lay.ProjectRoot);
             if (steps.Count == 0) { info.Text = "Nothing to apply."; return; }
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "update")) return;
             Run(delegate
             {
@@ -222,6 +224,7 @@ namespace Vgac.Starter
         {
             string root = host.Lay.ProjectRoot;
             if (GitUpdate.MidPull(root) != null) { info.Text = GitUpdate.MidPullText; return; }
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "update")) return;
             UpdateResult result = null;
             List<string> pending = new List<string>();
@@ -303,12 +306,14 @@ namespace Vgac.Starter
                 moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "   (" + RemovalSummary.Size(need) + ")\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it. Until then the old place is untouched and in use.";
             else
                 moveInfo.Text = "A move to " + j.To + " is at the step '" + j.State + "'. Continue it, or cancel it (cancelling removes only what the move copied).";
-            details.Text = j != null && j.State == "rebuilt" ? "The move is finished. The old copy (" + string.Join(", ", MoveRunner.OldCopy(j).ToArray()) + ") can be deleted to free room." : "";
+            details.Text = j != null && j.State == "rebuilt" ? "The move is finished. The old copy (" + string.Join(", ", MoveRunner.OldCopy(j).ToArray()) + ") can be deleted to free room."
+                : (j != null && j.State == "deleting-old" ? "The old copy is being deleted (" + string.Join(", ", MoveRunner.OldCopy(j).ToArray()) + " is left). The move cannot be undone any more: press 'Delete the old copy' to finish." : "");
         }
 
         void DoMoveStart(Label details)
         {
             string to = moveTo.Text.Trim();
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "move")) return;
             string result = null;
             Run(delegate { result = Mover().Start(to, ProgressToStatus()); Say(result ?? "Copied, checked and switched."); },
@@ -317,6 +322,7 @@ namespace Vgac.Starter
 
         void DoMoveContinue(Label details)
         {
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "move")) return;
             string result = null;
             Run(delegate { result = Mover().Continue(ProgressToStatus()); Say(result ?? "Copied, checked and switched."); },
@@ -332,10 +338,12 @@ namespace Vgac.Starter
         {
             var jc = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
             if (jc == null) { details.Text = "There is no move to cancel."; return; }
+            if (jc.State == "deleting-old") { details.Text = Mover().Cancel(); return; }       // refused, with the reason
             bool inUse = jc.State == "switching" || jc.State == "switched" || jc.State == "rebuilt";
             string q = inUse ? "Undo the move? VGAC points at the old place again. The copy in the new folder is NOT deleted (the app may have used it); you delete it yourself."
                 : "Cancel the move? What it copied into the new folder is removed. The old place is not changed.";
             if (MessageBox.Show(this, q, "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.CancelMove) != DialogResult.Yes) return;
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "move")) return;
             string said = null;
             Run(delegate { said = Mover().Cancel(); Say(said ?? "The move was cancelled."); }, delegate { details.Text = said ?? "The move was cancelled."; RefreshMove(details); host.Resume(); });
@@ -344,7 +352,7 @@ namespace Vgac.Starter
         void DoMoveDeleteOld(Label details)
         {
             var j = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
-            if (j == null || j.State != "rebuilt") { details.Text = "There is no finished move whose old copy can be deleted."; return; }
+            if (j == null || (j.State != "rebuilt" && j.State != "deleting-old")) { details.Text = "There is no finished move whose old copy can be deleted."; return; }
             long bytes = 0; foreach (string p in MoveRunner.OldCopy(j)) bytes += SafeFs.Size(p, null);
             string list = string.Join("\r\n   ", MoveRunner.OldCopy(j).ToArray());
             if (MessageBox.Show(this, "Delete the old copy?\r\n\r\n   " + list + "\r\n\r\n" + RemovalSummary.Size(bytes) + " will be freed. It is deleted for good and cannot be restored. Anything else you keep in the old folder stays.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.DeleteOldCopy) != DialogResult.Yes) return;
@@ -444,6 +452,7 @@ namespace Vgac.Starter
                 dlg.Controls.AddRange(new Control[] { box, ok, no }); dlg.AcceptButton = no; dlg.CancelButton = no;
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
             }
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             if (!host.Quiesce(this, "removal")) return;
             DoRemoval(summaryBox, ticked, typed.Text, null);
         }

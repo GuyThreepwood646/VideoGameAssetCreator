@@ -48,11 +48,11 @@ public static partial class T
         var s = Installed();
         var rec = new FakeRecycler(); rec.Refuse = true;
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        var res = RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(res.RecycleFailed.Count > 0 && !res.Complete, "when the bin does not take an item it is reported, not deleted for good");
         Check(Directory.Exists(s.L.PythonDir) && File.Exists(Path.Combine(s.L.PythonDir, "cpython-3.13", "python.exe")), "and the item is still there");
-        Eq(res.Removed.Count, 0, "nothing was removed");
-        var again = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string>(res.RecycleFailed));
+        Eq(res.Removed.Count, 1, "nothing went to the bin or was deleted by the starter (only ComfyUI, removed by its own installer, went)");
+        var again = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string>(res.RecycleFailed));
         Check(again.Complete && !Directory.Exists(s.L.PythonDir), "only after the person agrees (allowPermanent) is it deleted for good");
     }
 
@@ -67,7 +67,7 @@ public static partial class T
             string text = RemovalSummary.Text(plan, new List<string> { "tools" }, s.L);
             Check(text.Contains("deleted for good") && !text.Contains("goes to the Recycle Bin"), "on a drive that is not a fixed local one the summary says 'for good'");
             var rec = new FakeRecycler();
-            var res = RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+            var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
             Eq(rec.Sent.Count, 0, "and the Recycle Bin is not tried");
             Check(res.Complete && !Directory.Exists(s.L.PythonDir), "the item is deleted, as the summary said");
         }
