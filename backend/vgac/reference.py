@@ -675,14 +675,7 @@ SHADINGS = ("smooth", "flat")
 SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
 # Recipe fields a look may set that RECIPE_DEFAULTS leaves out (absent means today's behaviour; reference.recipe adds
 # them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
-RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture", "padding", "build_from"),
-                                               "surface": SURFACE_SWITCHES + ("palette_source", "clean_strays", "picture_projection")}
-# mesh.build_from: "shaded" has the 3D step redraw its picture as a smooth shaded render first (Pixel art: the 3D builder
-# makes a flat card from a pixel picture, 1 to 5 cm deep on a 1 m figure; from the shaded redraw 19 to 60 cm).
-BUILD_FROM = ("shaded",)
-# surface.palette_source: "concept" limits the texture to the concept picture's own colours.
-PALETTE_SOURCES = ("concept",)
-UNWRAP_PADDING_RANGE = (1, 16)  # the 3D step's unwrap node takes 1 to 16 texels
+RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
 TEXTURE_FILTERS = ("smooth", "crisp")
 FILTER_MODES = ("bilinear", "point")
 # The noun of the recipe's plain sentence, per category.
@@ -706,10 +699,9 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     """The fully resolved recipe for a style, category and platform:
     {id (short digest), style, category, platform, plain, concept {model, steps, prompt_block, negative},
      addons [{id, strength}], turnaround {lora_strength, prompt_suffix}, mesh {triangle_scale, triangle_floor,
-     triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map, [triangle_cap], [bake_texture],
-     [padding], [build_from]}, surface {shading, texture_filter, palette_colors, pixel_snap, delight, pbr_fix, [face_layout],
-     [colour_per_face], [face_keeps_texture], [palette_source], [clean_strays], [picture_projection]},
-     engine {filter_mode, mipmaps, compress}}; the keys in brackets only when the look sets them.
+     triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map, [triangle_cap], [bake_texture]},
+     surface {shading, texture_filter, palette_colors, pixel_snap, delight, pbr_fix, [face_layout], [colour_per_face],
+     [face_keeps_texture]}, engine {filter_mode, mipmaps, compress}}; the keys in brackets only when the look sets them.
     With strict=False an unknown style reads as today's defaults with the Z-Image Turbo painter (a custom style id on
     an older asset); unknown categories and platforms always raise KeyError."""
     try:
@@ -749,13 +741,6 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     bake = mesh_raw.get("bake_texture")
     if bake and int(bake) > tex:
         mesh["bake_texture"] = min(int(bake), tex_budget)
-    # Pixel art: a smaller gap between texture pieces (crisp looks have no mipmaps to bleed across it), and the build
-    # picture redrawn shaded first. Only when the look sets them (as above).
-    pad = mesh_raw.get("padding")
-    if pad not in (None, ""):
-        mesh["padding"] = max(UNWRAP_PADDING_RANGE[0], min(UNWRAP_PADDING_RANGE[1], int(pad)))
-    if mesh_raw.get("build_from") in BUILD_FROM:
-        mesh["build_from"] = mesh_raw["build_from"]
     sr = raw["surface"]
     crisp = sr.get("texture_filter") == "crisp"
     palette = sr.get("palette_colors")
@@ -768,14 +753,6 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     for key in SURFACE_SWITCHES:  # only when the look sets them (as above)
         if sr.get(key):
             surface[key] = True
-    # Pixel art: the concept picture's colours as the palette, single stray texels cleaned after it (passes), and the
-    # pictures painted on before the palette though the look is crisp. Only when the look sets them (as above).
-    if sr.get("palette_source") in PALETTE_SOURCES:
-        surface["palette_source"] = sr["palette_source"]
-    if sr.get("clean_strays"):
-        surface["clean_strays"] = max(0, min(4, int(sr["clean_strays"])))
-    if sr.get("picture_projection"):
-        surface["picture_projection"] = True
     er = raw["engine"] or {}
     engine = {"filter_mode": _as_choice(er.get("filter_mode"), FILTER_MODES, "point" if crisp else "bilinear"),
               "mipmaps": bool(er.get("mipmaps", not crisp)), "compress": bool(er.get("compress", not crisp))}

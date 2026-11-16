@@ -76,7 +76,7 @@ def test_reference_endpoints(client):
     assert len(client.get("/api/categories").json()) == 11
     cat = client.get("/api/categories").json()[0]
     assert set(cat) >= {"id", "label", "rig_engine", "symmetric", "pose_block", "size_m", "parts_default", "budgets"}
-    assert len(client.get("/api/styles").json()) == 7
+    assert len(client.get("/api/styles").json()) == 6
     assert [p["id"] for p in client.get("/api/platforms").json()] == ["mobile_low", "pc_mid", "high"]
     st = client.get("/api/stages").json()
     assert [s["id"] for s in st] == ["concept", "turnaround", "mesh", "prep", "rig", "export"]

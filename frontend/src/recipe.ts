@@ -50,7 +50,6 @@ export function strengthsEqual(a: AddonEntry): boolean {
 const LOOK_WORD: Record<string, string> = {
   painted: 'Painted',
   cel: 'Cel-shaded',
-  pixel: 'Pixel-art',
   retro64: 'Retro 64',
   lowpoly_flat: 'Low-poly',
   realistic_pbr: 'Photoreal',

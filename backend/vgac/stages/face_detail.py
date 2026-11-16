@@ -17,7 +17,7 @@ mouth as a smear. This pass makes the face match the painted picture (vgac/face.
    squarely the surface faces the camera and feathered at the edges, with its broad tone matched to the old texture.
 
 Skipped, with the reason recorded, when the option is off, for categories other than humanoid, for crisp or flat
-looks (pixel and low-poly recipes), without a painted picture, when no face is found or it is covered (helmet, hood,
+looks (the low-poly recipe), without a painted picture, when no face is found or it is covered (helmet, hood,
 mask). Metrics under "face_detail"; the before and after picture is the version file "face_before_after".
 """
 

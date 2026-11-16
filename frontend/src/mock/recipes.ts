@@ -113,13 +113,6 @@ type StyleRecipe = {
 }
 
 const STYLE_RECIPES: Record<string, StyleRecipe> = {
-  pixel: {
-    look: 'Pixel-art',
-    model: 'pixel',
-    plain: 'small crisp textures with a limited palette, chunky shapes, no smoothing.',
-    mesh: { triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false },
-    surface: { texture_filter: 'crisp', palette_colors: 32, pixel_snap: true },
-  },
   retro64: {
     look: 'Retro 64',
     model: 'zturbo',

@@ -29,9 +29,12 @@ def test_smooth_full_budget_humanoids_get_it(style):
     assert headtris.applies(rec(style), "humanoid")
 
 
-@pytest.mark.parametrize("style", ["lowpoly_flat", "pixel"])
+@pytest.mark.parametrize("style", ["lowpoly_flat", "crisp"])
 def test_flat_crisp_and_reduced_looks_do_not(style):
-    assert not headtris.applies(rec(style), "humanoid")
+    r = rec("lowpoly_flat") if style == "lowpoly_flat" else rec("painted")
+    if style == "crisp":  # no look is crisp today; a recipe that sets it, as a look could
+        r = {**r, "surface": {**r["surface"], "texture_filter": "crisp"}}
+    assert not headtris.applies(r, "humanoid")
 
 
 def test_retro64_with_its_triangle_cap_does():

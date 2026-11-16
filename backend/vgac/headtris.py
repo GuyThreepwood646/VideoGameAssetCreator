@@ -10,7 +10,7 @@ model is over the budget on purpose and its check says so.
 
 Who gets it (applies): humanoids whose look keeps the full triangle budget, smooth shading and smooth textures
 (Painted, Cel-shaded, Clay, Photoreal and custom looks). Not Low-poly (flat shading, where even triangle size is the
-look), Pixel-art (crisp texels) or Retro 64 (a fraction of the budget). Only when the 3D step chose its own target
+look) or Retro 64 (a fraction of the budget). Only when the 3D step chose its own target
 (a person's own triangle count is never raised) and with the TRELLIS builder.
 
 The head is the top HEAD_SHARE of the model's height, the same rule as face.find_head; blender/prep.py builds the
@@ -50,7 +50,7 @@ def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
     r = rec or {}
     mesh, srf = r.get("mesh") or {}, r.get("surface") or {}
     if float(mesh.get("triangle_scale") or 1.0) < 1.0 and not mesh.get("triangle_cap"):
-        return False  # Pixel-art asks for a fraction of the budget; a look with a fixed cap (Retro 64) keeps its head
+        return False  # a look asking for a fraction of the budget; a look with a fixed cap (Retro 64) keeps its head
     if (srf.get("shading") or "smooth") != "smooth":
         return False  # flat shading: even triangle size is the look
     if srf.get("texture_filter") == "crisp":

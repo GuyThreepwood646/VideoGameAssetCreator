@@ -26,7 +26,7 @@ from vgac.stages import turnaround as turn_stage
 
 BACKEND = Path(__file__).resolve().parent.parent
 IMPORTER = BACKEND.parent / "unity-sandbox" / "Assets" / "Editor" / "VgacImport.cs"
-STYLES = ("painted", "cel", "pixel", "retro64", "lowpoly_flat", "realistic_pbr", "clay")
+STYLES = ("painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay")
 
 
 # --- the recipe -------------------------------------------------------------------------------------------------
@@ -72,12 +72,6 @@ def test_low_poly_retro_and_pixel_recipes():
     assert retro["mesh"]["triangles"] == 3000 and retro["mesh"]["texture"] == 256 and not retro["mesh"]["normal_map"]
     assert retro["mesh"]["bake_texture"] == 1024 and retro["mesh"]["triangle_cap"] == 3000
     assert retro["surface"]["texture_filter"] == "smooth" and retro["engine"]["mipmaps"]
-    px = reference.recipe("pixel", "quadruped", "mobile_low")
-    assert px["plain"].startswith("Pixel-art creature: small crisp textures")
-    assert px["mesh"]["texture"] == 256 and not px["mesh"]["normal_map"]
-    assert px["surface"] == {**px["surface"], "texture_filter": "crisp", "palette_colors": 32, "pixel_snap": True}
-    assert px["engine"] == {"filter_mode": "point", "mipmaps": False, "compress": False}
-    assert [a["id"] for a in px["addons"]] == ["pixel_art", "qwen_lightning", "qwen_angles"]
 
 
 def test_by_category_override_and_unknown_style():
@@ -93,20 +87,18 @@ def test_by_category_override_and_unknown_style():
 def test_recipe_digest_changes_with_the_settings():
     a = reference.recipe("painted", "humanoid", "pc_mid")
     assert a["id"] == reference.recipe("painted", "humanoid", "pc_mid")["id"]
-    assert a["id"] != reference.recipe("painted", "humanoid", "mobile_low")["id"] != reference.recipe("pixel", "humanoid", "mobile_low")["id"]
+    assert a["id"] != reference.recipe("painted", "humanoid", "mobile_low")["id"] != reference.recipe("retro64", "humanoid", "mobile_low")["id"]
 
 
 def test_recipe_public_lists_the_addons_for_the_painter():
-    r = reference.recipe_public("pixel", "humanoid", "pc_mid")
+    r = reference.recipe_public("painted", "humanoid", "pc_mid")
     by = {e["id"]: e for e in r["addon_entries"]}
     # turnaround_sheet: the character turnaround sheet, a second way of turning the views offered for characters.
-    assert set(by) == {"pixel_art", "qwen_lightning", "qwen_angles", "turnaround_sheet"}
+    assert {"pixel_art", "qwen_lightning", "qwen_angles", "turnaround_sheet"} <= set(by)
     assert not by["turnaround_sheet"]["on"] and by["turnaround_sheet"]["turn_method"] == "sheet"
-    assert by["pixel_art"]["required"] and by["pixel_art"]["on"] and by["pixel_art"]["strength"] == "normal"
     assert by["qwen_angles"]["required"] and by["qwen_lightning"]["required"]
     assert "file" not in by["pixel_art"] and set(by["pixel_art"]["help"]) == {"meaning", "why", "technical"}
-    painted = {e["id"]: e for e in reference.recipe_public("painted", "humanoid", "pc_mid")["addon_entries"]}
-    assert not painted["pixel_art"]["on"] and not painted["pixel_art"]["required"]  # works with Z-Image Turbo, off by default
+    assert not by["pixel_art"]["on"] and not by["pixel_art"]["required"]  # works with Z-Image Turbo, off by default
     cel = {e["id"] for e in reference.recipe_public("cel", "humanoid", "pc_mid")["addon_entries"]}
     assert cel == {"qwen_lightning", "qwen_angles", "turnaround_sheet"}  # no concept add-on works with Anima
 
@@ -271,9 +263,9 @@ def test_triangle_and_texture_checks_speak_of_the_look():
     assert bad["help"].startswith("Your full model has 2,500 triangles, 1,000 more than the Low-poly look's limit of 1,500")
     assert mesh_stage.triangle_target(low, {"target_faces": 9000, "target_faces_source": "chosen"}, b) == (20000, None)
     assert mesh_stage.triangle_target(reference.recipe("painted", "humanoid", "pc_mid"), {}, b) == (20000, None)
-    tl, tv = mesh_stage.texture_target(reference.recipe("pixel", "humanoid", "pc_mid"), b)
+    tl, tv = mesh_stage.texture_target(reference.recipe("retro64", "humanoid", "pc_mid"), b)
     t = guidance.describe_check({"name": "texture_base_color_budget", "passed": True, "value": 256, "limit": tl, "vars": tv})
-    assert t["help"] == "The base color texture is 256 px, the Pixel-art look's size (your platform would allow 2,048 px)."
+    assert t["help"] == "The base color texture is 256 px, the Retro 64 look's size (your platform would allow 2,048 px)."
     plain = guidance.describe_check({"name": "texture_base_color_budget", "passed": True, "value": 1024, "limit": 2048})
     assert plain["help"] == "The base color texture is 1,024 px, within the 2,048 px budget."
 
@@ -288,10 +280,13 @@ def test_prep_limit_and_shading():
     assert prep_stage.resolve_shading(low, {"shading": "smooth"}) == {"shading": "smooth", "source": "chosen"}
     assert prep_stage.resolve_shading(low, {"shading": "auto"})["shading"] == "flat"
     # A small project palette stays a prompt hint: forced onto the textures it repaints the model.
-    look = prep_stage.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"), ["#000000", "#ffffff", "nothex"])
+    # No look is crisp today (texture_filter: crisp); a recipe that sets it, as a look could.
+    retro = reference.recipe("retro64", "humanoid", "pc_mid")
+    crisp = {**retro, "surface": {**retro["surface"], "texture_filter": "crisp", "palette_colors": 32, "pixel_snap": True}}
+    look = prep_stage.texture_look(crisp, ["#000000", "#ffffff", "nothex"])
     assert look["crisp"] and look["cap"] == 256 and look["palette"] is None and look["palette_colors"] == 32 and not look["normal_map"]
     big = [f"#{i * 16:02x}{i * 16:02x}{i * 16:02x}" for i in range(16)]
-    look = prep_stage.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"), big)
+    look = prep_stage.texture_look(crisp, big)
     assert look["palette"] is not None and len(look["palette"]) == 16
     assert prep_stage.texture_look(reference.recipe("retro64", "humanoid", "pc_mid"), ["#000000"])["palette"] is None
 
@@ -362,7 +357,7 @@ def test_texture_pass_gives_the_pixel_look(tmp_path):
     Image.fromarray(np.full((64, 64), 200, np.uint8)).save(maps["roughness"])
     out = tmp_path / "out"
     out.mkdir()
-    look = {"cap": 16, "crisp": True, "pixel_snap": True, "palette": None, "palette_colors": 8, "normal_map": False, "style": "pixel"}
+    look = {"cap": 16, "crisp": True, "pixel_snap": True, "palette": None, "palette_colors": 8, "normal_map": False, "style": "crisp_test"}
     res = prep_stage.texture_pass(glb, glb, maps, out, 64, "keep", False, False, look)
     m, files = res["metrics"], res["files"]
     assert imaging.image_size(files["base_color"]) == (16, 16) and imaging.image_size(files["metallic"]) == (16, 16)
@@ -417,8 +412,14 @@ def _export_sc(tmp_path, style, prep_metrics=None):
                            stage_version=lambda s: prep_v if s == "prep" else None)
 
 
-def test_export_engine_args_and_pack_look(tmp_path):
-    px = _export_sc(tmp_path, "pixel")
+def test_export_engine_args_and_pack_look(tmp_path, monkeypatch):
+    # No look is crisp today; a recipe that sets texture_filter: crisp, as a look could, with the engine it resolves to.
+    retro = reference.recipe("retro64", "humanoid", "pc_mid")
+    crisp = {**retro, "surface": {**retro["surface"], "texture_filter": "crisp"},
+             "engine": {"filter_mode": "point", "mipmaps": False, "compress": False}}
+    real = export_stage.export_recipe
+    monkeypatch.setattr(export_stage, "export_recipe", lambda sc: crisp if (getattr(sc, "style", None) or {}).get("id") == "crisp_test" else real(sc))
+    px = _export_sc(tmp_path, "crisp_test")
     args, _, _ = export_stage._unity_args(px, {}, "gob")
     assert {k: args[k] for k in ("-vgacFilter", "-vgacMipmaps", "-vgacCompress", "-vgacNormalMap")} == \
         {"-vgacFilter": "point", "-vgacMipmaps": "off", "-vgacCompress": "off", "-vgacNormalMap": "off"}
@@ -450,8 +451,8 @@ def test_importer_version_7_takes_the_engine_settings():
 
 
 def test_suggest_carries_the_recipe_line():
-    s = guidance.suggest("quadruped", "pixel", "mobile_low", reference.categories(), reference.styles(), reference.platforms())
-    assert s["recipe_plain"] == reference.recipe("pixel", "quadruped", "mobile_low")["plain"]
+    s = guidance.suggest("quadruped", "retro64", "mobile_low", reference.categories(), reference.styles(), reference.platforms())
+    assert s["recipe_plain"] == reference.recipe("retro64", "quadruped", "mobile_low")["plain"]
     assert guidance.suggest("humanoid", "nope", "pc_mid", reference.categories(), reference.styles(), reference.platforms())["recipe_plain"] == ""
 
 

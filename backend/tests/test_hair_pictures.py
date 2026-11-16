@@ -55,7 +55,7 @@ def test_photoreal_asks_for_tidy_hair_and_has_a_negative():
                                                   "transparent hair, hair covering the collar")
 
 
-@pytest.mark.parametrize("look", ["pixel", "retro64", "lowpoly_flat"])
+@pytest.mark.parametrize("look", ["retro64", "lowpoly_flat"])
 def test_plain_looks_ask_for_one_simple_shape(look):
     assert sentence(KNIGHT, look) == "Hair as one simple solid shape."
     assert sentence("a grey wolf", look, QUADRUPED) == "Fur as one simple solid shape."
@@ -133,7 +133,7 @@ def test_dreadlocks_curls_mohawk_and_wild_hair():
     "a ranger in a green hooded cloak", "an assassin with her hood up", "a rusty robot", "a skeleton warrior",
     "a woman in a blue hijab"])
 def test_bald_helmeted_hooded_or_hairless_characters_get_no_sentence(text):
-    for look in ("painted", "realistic_pbr", "pixel"):
+    for look in ("painted", "realistic_pbr", "retro64"):
         assert sentence(text, look) == "" and negative(text, look) == "", (text, look)
 
 

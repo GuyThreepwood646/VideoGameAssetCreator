@@ -139,7 +139,7 @@ def test_family_of_word_table(text, fam):
 
 
 def test_styles_for_platform_and_look():
-    assert hairstyles.styles_for(None, "pc_mid", "pixel") == []
+    assert hairstyles.styles_for(None, "pc_mid", "retro64") == []
     phone = hairstyles.styles_for(None, "mobile_low", "painted")
     assert phone and all(e["kind"] == "shell" and e["phone_ok"] for e in phone)
     bobs = hairstyles.styles_for("bob", "pc_mid", "painted")

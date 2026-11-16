@@ -267,22 +267,16 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         sc.progress(0.7, "Checking the textures")
         bake_glb = src if not rebaked else out
         look = texture_look(rec, (sc.project.style_lock or {}).get("palette"))
-        look = concept_palette(look, sc.lineage_file("cutout", ("concept",)))
         # A look that paints at a larger size than it ships (Retro 64: recipe mesh.bake_texture) keeps the bake size
         # through the painting and is shrunk to its size at the end (ship_late); every other look as before.
         late_cap = late_cap_of(rec, look, tex)
-        # A look that asks for the pictures to be painted on (Pixel art) gets its whole treatment after the painting.
-        after_painting = look_after_painting(look, params, sc.asset.category)
-        pass_look = look
         if late_cap:
-            pass_look = {**look, "cap": None}
-        if after_painting:
-            pass_look = {**look, "cap": None, "palette": None, "palette_colors": None, "clean_strays": None}
+            look = {**look, "cap": None}
         # Light is removed after the painting (vgac/lightfix.py) when the pictures are painted on: the projection paints
         # their light back in over a de-light done here. The de-light here stays for models nothing is painted on.
         light_after = surface["delight"] == "remove" and srcproject.on(params, sc.asset.category, look)
         result = await asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"], surface["pbr_fix"],
-                                         rebaked, pass_look, light_after)
+                                         rebaked, look, light_after)
         for key, p in result["files"].items():
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
@@ -303,8 +297,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             if fl["relayout"]:
                 sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "face layout"))
         if srcproject.on(params, sc.asset.category, look):
-            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
-                                                 crisp=bool(look.get("crisp")))
+            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
             return await srcproject.run_again(sc, glb_, maps_, body_views)
@@ -357,8 +350,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             final = await remove_light(sc, out, final, hf)
         if (rec.get("surface") or {}).get("colour_per_face") and final.get("base_color"):
             final = await colour_faces(sc, out, final, rec, head_yaw)
-        if late_cap or after_painting:
-            final = await ship_late(sc, out, final, {**look, "cap": late_cap or look.get("cap") or tex}, tex)
+        if late_cap:
+            final = await ship_late(sc, out, final, {**look, "cap": late_cap}, tex)
         if final.get("metallic") != maps.get("metallic") or final.get("base_color") != maps.get("base_color"):
             # metal was cleared (skin, hair) and colours painted after the texture pass measured them: measure again, so the
             # metal and colour-range checks read the finished maps
@@ -386,11 +379,10 @@ def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | No
 
 
 async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: dict[str, Any], tex: int) -> dict[str, Path]:
-    """The look's texture treatment (apply_look: shrink to look.cap, the palette and the stray clean) after everything was
-    painted (at the bake size, Retro 64; at the shipped size, Pixel art); a base colour larger than look.cap shrunk by
-    area within each texture piece (imaging.shrink_by_island) and the pieces grown into the empty space again, so no
-    piece takes in a neighbour's colour or the background. The GLB (sampled nearest for a crisp look), the version's
-    files and the metrics follow. -> the maps from here."""
+    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; the
+    base colour shrunk by area within each texture piece (imaging.shrink_by_island) and the pieces grown into the empty
+    space again, so no piece takes in a neighbour's colour or the background. The GLB, the version's files and the
+    metrics follow. -> the maps from here."""
     def work() -> tuple[dict[str, Any], dict[str, Path], int | None]:
         out_dir = sc.dir / "shipped"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -399,13 +391,13 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
         files: dict[str, Path] = {}
         m, mr_size = apply_look(look, uvf, maps, files, base, int(base.shape[0]), out_dir)
         cap = int(look["cap"])
-        if files.get("base_color") is not None and uvf is not None and int(base.shape[0]) > cap:
+        if files.get("base_color") is not None and uvf is not None:
             # each texel from its own texture piece only (an area average across pieces lying a texel apart left slivers
             # of the neighbouring piece's colour on Bob's hat), then the pieces grown into the empty space again
             imaging.write_map(imaging.shrink_by_island(base, uvf, cap), files["base_color"])
             imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, cap)["labels"] > 0, imaging.dilation_px(cap))
         imaging.glb_replace_images(glb, base_color=files.get("base_color"), metallic=files.get("metallic"), roughness=files.get("roughness"),
-                                   mr_size=mr_size, nearest=bool(look.get("crisp")))
+                                   mr_size=mr_size)
         return m, files, mr_size
 
     m, files, _ = await asyncio.to_thread(work)
@@ -711,55 +703,9 @@ def texture_look(rec: dict[str, Any], palette: Any = None) -> dict[str, Any]:
     # as the texture palette; a smaller one stays a prompt hint and the textures keep their own limited colours.
     if len(pal) < MIN_TEXTURE_PALETTE:
         pal = []
-    out = {"cap": m.get("texture"), "crisp": crisp, "pixel_snap": bool(srf.get("pixel_snap", crisp)),
-           "palette": pal or None, "palette_colors": srf.get("palette_colors") if crisp else None,
-           "normal_map": bool(m.get("normal_map", True)), "style": rec.get("style")}
-    # Pixel art (only when the look sets them, so every other look's treatment reads as before): the concept picture's
-    # colours as the palette (concept_palette fills it in, unless the style lock's palette is the texture palette), the stray clean after
-    # it, and the pictures painted on first (srcproject.on reads `projection`; the treatment then runs after the painting).
-    if crisp and srf.get("palette_source"):
-        out["palette_source"] = srf["palette_source"]
-    if crisp and srf.get("clean_strays"):
-        out["clean_strays"] = int(srf["clean_strays"])
-    if srf.get("picture_projection"):
-        out["projection"] = True
-    return out
-
-
-# The concept picture's colours are its palette only when they cover nearly all of it. Measured: the three pixel concepts
-# are covered 100% by their own 13 to 27 colours; the same pictures smoothed (5x bilinear, 7,290 to 15,201 colours) only
-# 72 to 81% by their top 32; 40 other concept pictures in the library, median 2.5%.
-CONCEPT_PALETTE_COVER_MIN = 0.95
-
-
-def concept_palette(look: dict[str, Any], concept_cutout: Path | None) -> dict[str, Any]:
-    """The look with the concept picture's own colours as its palette (look.palette_source: concept): up to
-    palette_colors of them, any number at all (MIN_TEXTURE_PALETTE is for the style lock's few hint colours). The look
-    stays as it was (palette_colors picked from the texture), with the reason in concept_palette_skipped, when: the
-    project's style lock palette is already the texture palette (the project's choice keeps priority), there is no
-    concept picture, it has under two colours, or its top colours cover under CONCEPT_PALETTE_COVER_MIN of it (a soft
-    picture: the top 32 of thousands of shades would be near-identical)."""
-    if look.get("palette_source") != "concept":
-        return look
-    if look.get("palette"):
-        return {**look, "concept_palette_skipped": "the project's own palette is used"}
-    if concept_cutout is None or not Path(concept_cutout).is_file():
-        return {**look, "concept_palette_skipped": "no concept picture"}
-    pal, cover = imaging.picture_palette_cover(concept_cutout, int(look.get("palette_colors") or 32))
-    if len(pal) < 2:
-        return {**look, "concept_palette_skipped": "the concept picture has under two colours"}
-    if cover < CONCEPT_PALETTE_COVER_MIN:
-        return {**look, "concept_palette_skipped": f"the concept picture is not drawn in a few colours (its top {len(pal)} "
-                                                   f"cover {cover:.0%} of it, under {CONCEPT_PALETTE_COVER_MIN:.0%})"}
-    return {**look, "palette": pal, "palette_from": "concept picture", "concept_palette_cover": round(cover, 4)}
-
-
-def look_after_painting(look: dict[str, Any], params: dict[str, Any], category: str | None) -> bool:
-    """Whether the look's texture treatment (shrink, palette, stray clean) waits until the pictures are painted on: a look
-    that asks for the painting (recipe surface.picture_projection) when the painting runs. Measured on Pixel art: the
-    palette applied after the painting is closest to the pictures on three of three characters; before it, the painting
-    puts smooth colour over the palette."""
-    return bool(look.get("projection")) and srcproject.on(params, category, look)
+    return {"cap": m.get("texture"), "crisp": crisp, "pixel_snap": bool(srf.get("pixel_snap", crisp)),
+            "palette": pal or None, "palette_colors": srf.get("palette_colors") if crisp else None,
+            "normal_map": bool(m.get("normal_map", True)), "style": rec.get("style")}
 
 
 def texture_size_of(maps: dict[str, Path], mesh_params: dict[str, Any], budget_texture: int | None) -> int:
@@ -902,16 +848,9 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
         mask_t = imaging.rasterise_uv(uvf, target)["labels"] > 0
         if limit_colours:
             arr = imaging.quantise_colours(arr, mask_t, colours, palette)
-            if look.get("clean_strays"):
-                # single stray texels joined to their surroundings, inside each texture piece (Pixel art)
-                labels_t = imaging.rasterise_uv(uvf, target)["labels"]
-                arr = imaging.clean_strays(arr, labels_t, int(look["clean_strays"]))
-                m["strays_cleaned"] = int(look["clean_strays"])
         files["base_color"] = imaging.write_map(arr, out_dir / "base_color.png")
         m["texture_colours"] = imaging.colour_count(files["base_color"], mask_t)
-        m["palette_source"] = (look.get("palette_from") or "style lock") if palette else ("recipe" if limit_colours else None)
-        if look.get("concept_palette_skipped"):
-            m["concept_palette_skipped"] = look["concept_palette_skipped"]
+        m["palette_source"] = "style lock" if palette else ("recipe" if limit_colours else None)
         m["palette_limit"] = len(palette) if palette else (int(colours) if limit_colours else None)
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
@@ -943,9 +882,7 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
                                  vars={"rebaked": bool(m.get("rebaked"))}))
     pad = int(m.get("texture_padding_target_px") or imaging.unwrap_padding(int(m.get("texture_size") or 2048)))
     gap = m.get("texture_padding_px")
-    # A crisp look ships without mipmaps (point sampling), so a far-away texel never reaches across the gap into the
-    # neighbouring piece: the gap check does not apply (Pixel art packs its pieces 2 texels apart on purpose).
-    if gap is not None and not m.get("texture_crisp"):
+    if gap is not None:
         out.append(quality.check("texture_padding", int(gap) >= math.ceil(PADDING_PASS_FRACTION * pad), int(gap), pad))
     if m.get("atlas_used") is not None:
         out.append(quality.check("atlas_used", float(m["atlas_used"]) >= ATLAS_USED_MIN, round(float(m["atlas_used"]), 4), ATLAS_USED_MIN,
