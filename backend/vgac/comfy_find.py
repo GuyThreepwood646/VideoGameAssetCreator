@@ -40,14 +40,14 @@ PORTS = (8188, 8189, 8190, 8191, 8000)
 PYTHON_PLACES = ("standalone-env/python.exe", "python_embeded/python.exe", "ComfyUI/.venv/Scripts/python.exe",
                  ".venv/Scripts/python.exe", "venv/Scripts/python.exe", "../.venv/Scripts/python.exe", "../venv/Scripts/python.exe")
 CHOICES = [
-    {"id": "A", "name": "Share my models, separate engine", "available": False, "recommended": True,
+    {"id": "A", "name": "Share my models, separate engine", "available": True, "recommended": True,
      "text": "VGAC installs its own ComfyUI (about 5 to 6 GB) and points it at your models folder, so the large model files are not copied. "
-             "Your ComfyUI is never changed. This needs VGAC's own ComfyUI install, which is not built yet."},
+             "Your ComfyUI and its models folder are only read, never changed."},
     {"id": "B", "name": "Use my ComfyUI as the engine", "available": True, "recommended": False,
      "text": "VGAC starts your ComfyUI itself. It needs three node packs in your custom_nodes folder and their Python packages in your Python; "
              "that can change package versions your other workflows rely on. VGAC shows what would change first and changes nothing until you press Go ahead."},
-    {"id": "C", "name": "A fresh VGAC ComfyUI, nothing shared", "available": False, "recommended": False,
-     "text": "Everything separate, and every model downloaded again. This needs VGAC's own ComfyUI install, which is not built yet."},
+    {"id": "C", "name": "A fresh VGAC ComfyUI, nothing shared", "available": True, "recommended": False,
+     "text": "VGAC installs its own ComfyUI (about 5 to 6 GB). Everything separate, and every model downloaded again."},
 ]
 
 
@@ -316,7 +316,7 @@ def link_comfy(c: dict[str, Any], cards: dict[str, int] | None = None, runner: C
 
 def link_choice(choice: str) -> None:
     if choice in ("A", "C"):
-        raise setup_settings.SettingError("That choice needs VGAC's own ComfyUI install, which is not built yet. Choose B for now, or wait.")
+        raise setup_settings.SettingError("That choice is VGAC's own ComfyUI: start it with Install VGAC's ComfyUI in this panel.")
     if choice != "B":
         raise setup_settings.SettingError("Choose A, B or C.")
 
@@ -345,10 +345,23 @@ def pack_present(app_dir: Path, pack: dict[str, Any]) -> str:
     return ""
 
 
+def left_out(c: dict[str, Any]) -> dict[str, str]:
+    """Packs VGAC's own install leaves out on purpose (pack id -> plain reason); empty for anyone else's ComfyUI."""
+    from .comfy_install import MARKER, MADE_BY
+
+    try:
+        mine = json.loads((Path(c["folder"]) / MARKER).read_text(encoding="utf-8")).get("made_by") == MADE_BY
+    except (OSError, ValueError, AttributeError):
+        mine = False
+    return {str(k): str(v) for k, v in ((downloader.catalogue().get("comfyui_install") or {}).get("left_out") or {}).items()} if mine else {}
+
+
 def packs_state(c: dict[str, Any]) -> list[dict[str, Any]]:
     app = (Path(c["folder"]) / c["main"]).parent
+    out = left_out(c)
     return [{"id": p["id"], "name": p.get("name", p["id"]), "what": p.get("what", ""), "licence": p.get("licence", ""),
-             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", "")} for p in pack_list()]
+             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", ""),
+             "left_out": out.get(p["id"], "")} for p in pack_list()]
 
 
 def pack_cache(pack: dict[str, Any]) -> Path:
@@ -428,9 +441,13 @@ def packs_report(c: dict[str, Any], opener: Callable[[str, int], Any] | None = N
     py = Path(c["python"]) if c.get("python") else None
     out = []
     all_req: list[str] = []
+    skip = left_out(c)
     for p in pack_list():
         present = bool(pack_present((Path(c["folder"]) / c["main"]).parent, p))
-        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present}
+        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present, "left_out": skip.get(p["id"], "")}
+        if p["id"] in skip and not present:
+            out.append(item)
+            continue
         if not present:
             z = fetch_pack(p, opener)
             req = pack_requirements(p, z)
@@ -438,7 +455,7 @@ def packs_report(c: dict[str, Any], opener: Callable[[str, int], Any] | None = N
             all_req.append(req)
         out.append(item)
     combined = "\n".join(all_req)
-    report = dry_run(py, combined, pip) if py and any(not i["present"] for i in out) else {"checked": True, "adds": [], "changes": [], "note": "Nothing to add."}
+    report = dry_run(py, combined, pip) if py and any(not i["present"] and not i["left_out"] for i in out) else {"checked": True, "adds": [], "changes": [], "note": "Nothing to add."}
     return {"packs": out, "python": report}
 
 
@@ -452,8 +469,9 @@ def apply_packs(c: dict[str, Any], opener: Callable[[str, int], Any] | None = No
         raise DownloadError("no_python", "The Python of this ComfyUI was not found, so nothing was installed.", "Check the ComfyUI in the list again.")
     runner = pip or _real_pip
     added: list[str] = []
+    skip = left_out(c)
     for p in pack_list():
-        if pack_present(app, p):
+        if pack_present(app, p) or p["id"] in skip:
             continue
         target = app / "custom_nodes" / str(p.get("folder") or p["id"])
         if target.exists():

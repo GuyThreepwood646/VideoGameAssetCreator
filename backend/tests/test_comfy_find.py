@@ -192,13 +192,13 @@ def test_a_comfy_that_fails_its_check_is_not_linked(box):
     assert "TRELLIS" in str(e.value) and not machine.exists()
 
 
-def test_a_and_c_say_they_need_the_install_step_and_b_is_the_only_one_linked_now(box):
-    with pytest.raises(setup_settings.SettingError, match="not built yet"):
+def test_a_and_c_go_through_the_install_and_b_is_the_only_one_linked_here(box):
+    with pytest.raises(setup_settings.SettingError, match="Install VGAC's ComfyUI"):
         comfy_find.link_choice("A")
-    with pytest.raises(setup_settings.SettingError, match="not built yet"):
+    with pytest.raises(setup_settings.SettingError, match="Install VGAC's ComfyUI"):
         comfy_find.link_choice("C")
     comfy_find.link_choice("B")
-    assert [c["id"] for c in comfy_find.CHOICES if c["available"]] == ["B"]
+    assert [c["id"] for c in comfy_find.CHOICES if c["available"]] == ["A", "B", "C"]
     assert next(c for c in comfy_find.CHOICES if c["recommended"])["id"] == "A"
 
 
@@ -333,7 +333,7 @@ def test_apply_over_http_needs_the_go_ahead(box):
     r = TestClient(app).post("/api/comfy/packs/apply", json={"id": "c-nothing"})
     assert r.status_code == 400 and "Go ahead" in r.json()["detail"]
     r = TestClient(app).post("/api/comfy/choice/A")
-    assert r.status_code == 400 and "not built yet" in r.json()["detail"]
+    assert r.status_code == 400 and "Install VGAC's ComfyUI" in r.json()["detail"]
 
 
 def test_a_node_pack_with_no_pin_is_not_fetched(box):

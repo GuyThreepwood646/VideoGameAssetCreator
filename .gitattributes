@@ -1,0 +1,2 @@
+# Files whose bytes are pinned by a SHA-256 must be checked out exactly as committed, whatever core.autocrlf says.
+setup/comfy-tree-*.json -text
