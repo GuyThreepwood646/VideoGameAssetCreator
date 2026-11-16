@@ -33,11 +33,12 @@ public class StandInComfy : IComfyInstall
         if (st.Present && st.Problem == null) foreach (string k in KeepRel) { string p = Path.Combine(Root(data), k); if (Directory.Exists(p)) st.Keeps.Add(p); }
         return st;
     }
-    public string Remove()
+    public string Remove(string installRoot)
     {
         Calls.Add("remove");
         if (RemoveError != null) return RemoveError;
         string root = Root(Data);
+        if (SafeFs.Norm(installRoot) != SafeFs.Norm(root)) return "The settings name another folder than " + installRoot + " (" + root + "), so nothing was removed.";   // as the real command does
         var keeps = new List<string>(); foreach (string k in KeepRel) keeps.Add(SafeFs.Norm(Path.Combine(root, k)));
         Sweep(root, keeps);
         return null;
@@ -249,13 +250,13 @@ public static partial class T
         say = "{\"ok\": false, \"code\": \"not_ours\", \"reason\": \"VGAC did not install a ComfyUI there.\"}";
         ask.Forget();
         Eq(ask.State(data).Problem, "VGAC did not install a ComfyUI there.", "a refusal's reason is passed on as it is");
-        Eq(ask.Remove(), "VGAC did not install a ComfyUI there.", "also for remove");
+        Eq(ask.Remove("x"), "VGAC did not install a ComfyUI there.", "also for remove");
         Eq(ask.Retarget("a", "b"), "VGAC did not install a ComfyUI there.", "and retarget");
         say = "not json";
         ask.Forget();
-        Check(ask.State(data).Problem != null && ask.Remove() != null && ask.RebuildVenv("b") != null, "an answer that cannot be read is a refusal, never a yes");
+        Check(ask.State(data).Problem != null && ask.Remove("x") != null && ask.RebuildVenv("b") != null, "an answer that cannot be read is a refusal, never a yes");
         say = "{\"ok\": true, \"rebuilt\": true}";
-        Check(ask.RebuildVenv("b") == null && ask.Remove() == null, "an ok answer is a yes");
+        Check(ask.RebuildVenv("b") == null && ask.Remove("x") == null, "an ok answer is a yes");
         string seen = null;
         var spy = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { seen = a; return "{\"ok\": true}"; });
         spy.Retarget("C:\\old data", "D:\\new data");

@@ -35,7 +35,7 @@ namespace Vgac.Starter
         string Root(string dataFolder);                   // <data>/comfyui
         ComfyState State(string dataFolder);              // runs `check` (a recent answer may be reused; adopts a renamed install first)
         void Forget();                                    // the next State asks again
-        string Remove();                                  // runs `remove`: null when done, else a plain sentence
+        string Remove(string installRoot);                // runs `remove` on exactly this folder (the one shown): null when done, else a plain sentence
         string Retarget(string oldData, string newData);  // runs `retarget`: the same
         string RebuildVenv(string newData);               // runs `rebuild-venv`: the same
         Func<bool> Cancelled { get; set; }                // asked while a command runs: true stops it
@@ -199,13 +199,13 @@ namespace Vgac.Starter
             st.Present = ComfyGuard.MarkerPresent(Root(data));
             if (!st.Present) { st.Problem = "There is no ComfyUI of VGAC's here."; return st; }
             Dictionary<string, object> r;
-            st.Problem = Reason(Ask("check", CheckMs), out r);
+            st.Problem = Reason(Ask("check --install " + ComfyCli.Quote(Root(data)), CheckMs), out r);
             if (st.Problem != null && Adoptable(r))
             {
                 // renamed folder or a drive letter that changed: the backend proves it is VGAC's by its id and moves its ledger entry
                 Dictionary<string, object> r2;
                 string adopt = Reason(Ask("adopt", CheckMs), out r2);
-                if (adopt == null) st.Problem = Reason(Ask("check", CheckMs), out r);
+                if (adopt == null) st.Problem = Reason(Ask("check --install " + ComfyCli.Quote(Root(data)), CheckMs), out r);
                 else st.Problem = adopt;                       // its refusal is the reason to show
             }
             if (st.Problem == null && r != null)
@@ -222,11 +222,11 @@ namespace Vgac.Starter
 
         string Tell(string words) { Action<string> s = Say; if (s != null) s(words); return null; }
 
-        public string Remove()
+        public string Remove(string installRoot)
         {
             Forget();
             Tell("Removing VGAC's own ComfyUI with its installer...");
-            Dictionary<string, object> r; return Reason(AskAdopting("remove", RemoveMs), out r);
+            Dictionary<string, object> r; return Reason(AskAdopting("remove --install " + ComfyCli.Quote(installRoot), RemoveMs), out r);
         }
 
         public string Retarget(string oldData, string newData)
@@ -240,7 +240,7 @@ namespace Vgac.Starter
         {
             Forget();
             Tell("Making VGAC's own ComfyUI's Python again. This fetches its packages, needs the internet and can take several minutes. Stop cancels it.");
-            Dictionary<string, object> r; return Reason(AskAdopting("rebuild-venv", RebuildMs), out r);
+            Dictionary<string, object> r; return Reason(AskAdopting("rebuild-venv --install " + ComfyCli.Quote(Root(newData)), RebuildMs), out r);
         }
     }
 }

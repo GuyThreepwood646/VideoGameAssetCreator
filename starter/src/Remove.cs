@@ -702,7 +702,7 @@ namespace Vgac.Starter
                     Mark(l.ProjectRoot, it.Path, true);
                     if (it.Kind == "comfy-remove")
                     {
-                        string cwhy = comfy.Remove();
+                        string cwhy = comfy.Remove(it.Path);
                         if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); keepPython = "VGAC's own ComfyUI could not be removed, and its installer needs this Python"; continue; }
                         res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: VGAC's own ComfyUI was removed by its installer (what it keeps stays: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag) + ")");
                         Mark(l.ProjectRoot, it.Path, false);   // the ledger entry stays: the backend's own record of what it installed (it may be installed again)

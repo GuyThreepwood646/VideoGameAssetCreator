@@ -1346,9 +1346,25 @@ def rebuild_venv(ops: Ops | None = None) -> dict[str, Any]:
     return {"rebuilt": True}
 
 
+def _require_install(shown: str | None) -> None:
+    """The caller shows a person a folder and then asks for exactly that one: if the settings name another, nothing is done."""
+    if shown is not None and _real(Path(shown)) != _real(install_root()):
+        raise DownloadError("not_current", f"The settings name {install_root()} for VGAC's own ComfyUI, not {shown}, so nothing was done.", "")
+
+
 def main(argv: list[str], ops: Ops | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    shown: str | None = None
+    if "--install" in argv:
+        k = argv.index("--install")
+        if k + 1 >= len(argv):
+            print(json.dumps({"ok": False, "code": "usage", "reason": "--install needs a folder."}))
+            return 2
+        shown = argv[k + 1]
+        argv = argv[:k] + argv[k + 2:]
     try:
+        if argv and argv[0] in ("check", "remove", "rebuild-venv", "adopt"):
+            _require_install(shown)
         cmd = argv[0] if argv else ""
         if cmd == "check" and len(argv) == 1:
             r = check()

@@ -390,7 +390,7 @@ public static partial class T
         Check(h.Aborted && line != null && line.Contains("\"stopped\""), "Stop ends a long command: " + line);
         h = new ScriptedHost(); h.Answer = delegate(string a) { return "Traceback (most recent call last)\r\nValueError: nope\r\n{ not json\r\n"; }; h.ExitCode = 1;
         Check(ComfyCli.Run(h, lay, root, "check", 5000, null) == null, "garbage and a non-zero exit without a result line is no answer");
-        Check(!new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(h, lay, root, a, ms, c); }).Remove().Contains("older version"), "which is a refusal with a plain reason");
+        Check(!new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(h, lay, root, a, ms, c); }).Remove("x").Contains("older version"), "which is a refusal with a plain reason");
         h = new ScriptedHost(); h.Answer = delegate(string a) { return "some log line\r\n{\"ok\": true, \"rebuilt\": true}\r\n"; };
         Check((ComfyCli.Run(h, lay, root, "rebuild-venv", 5000, null) ?? "").Contains("rebuilt"), "the last result line is the answer");
         // the state is remembered briefly, so the window does not ask on every redraw, and forgotten when anything changes
@@ -475,10 +475,10 @@ public static partial class T
         var comfy2 = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(host, lay2, root2, a, ms, c); });
         ComfyState st2 = comfy2.State(theirs);
         Check(st2.Problem != null && !st2.Problem.Contains("older version"), "a copied marker in a folder that is not VGAC's is refused by the real command: " + st2.Problem);
-        Check(comfy2.Remove() != null && File.Exists(Path.Combine(theirs, "comfyui", "theirs.txt")), "and the real remove deletes nothing there");
+        Check(comfy2.Remove(Path.Combine(theirs, "comfyui")) != null && File.Exists(Path.Combine(theirs, "comfyui", "theirs.txt")), "and the real remove deletes nothing there");
         // the real retarget and remove, from here on the folder is VGAC's: retarget (nothing to change), then remove keeps the models
         Check(comfy.Retarget(Path.Combine(root, "local", "old data"), data) == null, "the real retarget answers ok");
-        Check(comfy.Remove() == null, "the real remove succeeds");
+        Check(comfy.Remove(croot) == null, "the real remove succeeds");
         Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && !File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models, and removed the rest of the folder");
     }
 
