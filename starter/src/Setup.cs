@@ -50,6 +50,16 @@ namespace Vgac.Starter
             return Path.Combine(projectRoot, "local", "data");
         }
 
+        // How a data folder is written to the settings: relative to the project when it lies inside it (so the settings follow a project
+        // that is moved), else absolute.
+        public static string Stored(string projectRoot, string folder)
+        {
+            string full = Path.GetFullPath(folder).TrimEnd('\\');
+            string root = Path.GetFullPath(projectRoot).TrimEnd('\\');
+            if (full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) return full.Substring(root.Length + 1);
+            return full;
+        }
+
         // The data folder: the person's choice in machine.json, else local/data in the project. Relative values are
         // read against the project folder.
         public static Layout From(string projectRoot, MachineFile machine)
@@ -313,7 +323,6 @@ namespace Vgac.Starter
                     }
                     if (hadVenv) SafeFs.DeleteTree(venvOld);
                     ledger.Add("The app's Python environment", l.Venv, "added", 0);
-                    if (Directory.Exists(l.PythonDir)) ledger.Add("The app's private Python " + Pins.PythonVersion, l.PythonDir, "added", 0);
                     break;
                 case "packages":
                     Exec(l.UvExe, "pip install --python \"" + l.VenvPython + "\" -r \"" + l.Requirements + "\"", l.ProjectRoot, UvEnv(), "packages",
@@ -361,7 +370,6 @@ namespace Vgac.Starter
             host.Unzip(zip, tmp);
             // uv's zip holds the files at its top level.
             SwapFolder(tmp, targetDir, mustExist, "The downloaded " + what + " did not hold the file it should (" + Path.GetFileName(mustExist) + ").");
-            ledger.Add(what, targetDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }
 
@@ -407,7 +415,6 @@ namespace Vgac.Starter
             if (subs.Length == 1 && !File.Exists(Path.Combine(tmp, "node.exe"))) inner = subs[0];
             SwapFolder(inner, l.NodeDir, Path.Combine(l.NodeDir, "node.exe"), "The downloaded Node.js did not hold node.exe.");
             if (inner != tmp && Directory.Exists(tmp)) Directory.Delete(tmp, true);
-            ledger.Add("Node.js (used to build the screens)", l.NodeDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }
 

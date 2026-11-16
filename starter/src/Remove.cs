@@ -139,7 +139,7 @@ namespace Vgac.Starter
         // ---- the person's own work: only what its own content proves is VGAC's ----------------------------------------------
 
         // null when `folder` is acceptable as a place VGAC's library or exports may be removed from.
-        static string WorkPlaceProblem(Layout l, string folder)
+        public static string WorkPlaceProblem(Layout l, string folder)
         {
             string p = Proof.DataFolderProblem(folder, l.ProjectRoot);
             if (p != null && !p.Contains("inside a part of the project")) return "it is " + (p.Contains("whole drive") ? "a whole drive" : (p.Contains("contains or is the project") ? "or holds the project folder" : "a shared place"));
@@ -162,6 +162,17 @@ namespace Vgac.Starter
         {
             foreach (string n in LibraryNames) if (string.Equals(n, name, StringComparison.OrdinalIgnoreCase)) return true;
             return name.StartsWith("vgac_moves_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("vgac_hair_", StringComparison.OrdinalIgnoreCase);   // the app's temporary folders
+        }
+
+        public static bool IsLibraryMarker(string name) { return string.Equals(name, LibraryFolders.MarkerName, StringComparison.OrdinalIgnoreCase); }
+
+        // A library that carries this install's marker: a fit place, and a vgac.sqlite that is a real database when there is one.
+        public static string LibraryOursProblem(Layout l, string folder)
+        {
+            string p = WorkPlaceProblem(l, folder);
+            if (p != null) return p;
+            string db = System.IO.Path.Combine(folder, "vgac.sqlite");
+            return File.Exists(db) ? LibraryProblem(l, folder) : null;
         }
 
         // The library: a folder whose vgac.sqlite really is an SQLite database (its first bytes say so), in a place that is not shared.
@@ -393,20 +404,21 @@ namespace Vgac.Starter
             string lib = LibraryFolder(l, machine);
             if (Directory.Exists(lib))
             {
-                string why = LibraryProblem(l, lib);
+                string why = LibraryFolders.Ours(lib, machine) ? LibraryOursProblem(l, lib) : (LibraryProblem(l, lib) ?? "VGAC cannot show that it made this folder (it has no VGAC library marker that matches this install), so nothing in it is removed. Delete what you want gone yourself");
                 if (why != null) plan.NotRemoved.Add(lib + ": " + why);
                 else
                 {
                     // A library is touched only when it is dedicated: every entry at its top is something the app makes. If anything else is
                     // there (a person's own folders, even one called "projects"), nothing in it is removed.
                     var others = new List<string>();
-                    foreach (string e in Directory.GetFileSystemEntries(lib)) if (!IsLibraryName(System.IO.Path.GetFileName(e))) others.Add(System.IO.Path.GetFileName(e));
+                    foreach (string e in Directory.GetFileSystemEntries(lib)) if (!IsLibraryName(System.IO.Path.GetFileName(e)) && !IsLibraryMarker(System.IO.Path.GetFileName(e))) others.Add(System.IO.Path.GetFileName(e));
                     if (others.Count > 0)
                         plan.NotRemoved.Add(lib + ": it also holds things VGAC did not make (" + string.Join(", ", others.ToArray()) + "), so nothing in it is removed. Delete what you want gone yourself.");
                     else
                         foreach (string e in Directory.GetFileSystemEntries(lib))
                         {
                             string name = System.IO.Path.GetFileName(e);
+                            if (IsLibraryMarker(name)) continue;      // the marker goes last, with the folder's tidy-up
                             if (SafeFs.IsLink(e)) { plan.NotRemoved.Add(e + ": it is a link"); continue; }
                             var it = new RemovalItem(); it.Id = "work:library:" + name; it.GroupId = "work"; it.Kind = "work-library"; it.Path = e; it.What = "Your library: " + name;
                             it.IsFile = File.Exists(e); it.Bytes = SafeFs.Size(e, null);
@@ -499,7 +511,8 @@ namespace Vgac.Starter
                     return SafeFs.Inside(it.Path, l.ProjectRoot) && !SafeFs.IsLink(it.Path) ? null : "it is not inside the project folder";
                 case "work-library":
                     if (!IsLibraryName(System.IO.Path.GetFileName(it.Path))) return "it is not something the app makes in its library";
-                    return LibraryProblem(l, System.IO.Path.GetDirectoryName(it.Path)) ?? (SafeFs.IsLink(it.Path) ? "it is a link" : null);
+                    if (!LibraryFolders.Ours(System.IO.Path.GetDirectoryName(it.Path), machine)) return "the library folder is not shown to be VGAC's";
+                    return LibraryOursProblem(l, System.IO.Path.GetDirectoryName(it.Path)) ?? (SafeFs.IsLink(it.Path) ? "it is a link" : null);
                 case "work-export":
                     if (!IsVgacExport(it.Path)) return "it no longer holds VGAC's manifest";
                     return WorkPlaceProblem(l, System.IO.Path.GetDirectoryName(it.Path)) ?? (SafeFs.IsLink(it.Path) ? "it is a link" : null);
@@ -701,7 +714,7 @@ namespace Vgac.Starter
             {
                 if (recycler != null && recycler.Send(it.Path) && !File.Exists(it.Path) && !Directory.Exists(it.Path))
                 {
-                    res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: " + it.Path + " to the Recycle Bin");
+                    res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: " + it.Path + " removed through Windows (the Recycle Bin, or deleted for good if Windows asked and you agreed)");
                     return;
                 }
                 // The bin did not take it. Never fall back to permanent deletion silently: stop for this item and let the person choose.

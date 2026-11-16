@@ -181,6 +181,10 @@ namespace Vgac.Starter
                 string cur = SafeFs.Norm(currentData);
                 string other = cur == SafeFs.Norm(j.From) ? j.To : (cur == SafeFs.Norm(j.To) ? j.From : null);
                 if (other == null) return "places do not fit the settings";
+                // Before the switch the old place is the one in use; after it, the new one. A record that says otherwise is not acted on.
+                bool usingFrom = cur == SafeFs.Norm(j.From);
+                if ((j.State == "copying" || j.State == "copied" || j.State == "verified") && !usingFrom) return "the settings already use the new place";
+                if ((j.State == "switched" || j.State == "rebuilt") && usingFrom) return "the settings still use the old place";
                 if (Proof.DataFolderProblem(other, null) != null) return "the other place is not an acceptable folder";
                 if (SafeFs.Inside(other, currentData) || SafeFs.Inside(currentData, other)) return "the two places overlap";
             }
@@ -317,7 +321,7 @@ namespace Vgac.Starter
         {
             j.State = "switching"; Save(j);
             SafeFs.Point("move", "before-switch");
-            machine.Set("starter", "dataFolder", j.To);
+            machine.Set("starter", "dataFolder", Layout.Stored(l.ProjectRoot, j.To));   // relative inside the project, so a moved project keeps working
             machine.Save();
             SafeFs.Point("move", "after-settings-saved");
             RewriteLedger(j.From, j.To);
@@ -370,7 +374,7 @@ namespace Vgac.Starter
             if (j.State == "switched" || j.State == "rebuilt" || j.State == "switching" || UsingNewPlace(j))
             {
                 var m = MachineFile.Load(l.ProjectRoot);
-                m.Set("starter", "dataFolder", j.From); m.Save();
+                m.Set("starter", "dataFolder", Layout.Stored(l.ProjectRoot, j.From)); m.Save();
                 RewriteLedger(j.To, j.From);
                 try { File.Delete(JournalPath(l.ProjectRoot)); } catch (Exception) { }
                 log.Line("move: undone, pointing back at " + j.From + "; the copy in " + j.To + " was left in place");

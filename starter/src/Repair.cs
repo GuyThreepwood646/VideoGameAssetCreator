@@ -96,6 +96,8 @@ namespace Vgac.Starter
             else res.Add(new CheckLine("screens", "fix", "The screens are missing or incomplete (" + missing[0] + "). They can be built again (about a minute).", "screens"));
             // places and records
             res.Add(DataFolderLine(l, host));
+            CheckLine lib = LibraryLine(l);
+            if (lib != null) res.Add(lib);
             try { MachineFile.Load(l.ProjectRoot); res.Add(new CheckLine("machine", "ok", "This computer's settings file reads.", null)); }
             catch (StarterError e) { res.Add(new CheckLine("machine", "info", e.Message + " " + e.Fix, null)); }
             if (File.Exists(l.StatePath))
@@ -111,6 +113,17 @@ namespace Vgac.Starter
             foreach (object o in ledger.Items) { var d = o as Dictionary<string, object>; if (d != null && Convert.ToString(d.ContainsKey("kind") ? d["kind"] : "") == "linked") linked++; }
             if (linked > 0) res.Add(new CheckLine("linked", "notmine", linked + " tool(s) were linked, not installed by VGAC. They are never changed here; the app's own check tells you if one stops working.", null));
             return res;
+        }
+
+        // A library that exists but is not marked as VGAC's: offered for adoption only when it holds a real VGAC database and nothing else.
+        static CheckLine LibraryLine(Layout l)
+        {
+            MachineFile m = Recovery.SettingsOrEmpty(l.ProjectRoot);
+            string lib = RemovalPlanner.LibraryFolder(l, m);
+            if (!Directory.Exists(lib) || LibraryFolders.Ours(lib, m)) return null;
+            if (LibraryFolders.AdoptProblem(l, m) == null)
+                return new CheckLine("library", "fix", "Your library (" + lib + ") is not marked as VGAC's yet, but it holds a VGAC database and nothing except what the app makes. It can be adopted: Remove (with the word REMOVE typed) can then remove it.", "adoptlib");
+            return new CheckLine("library", "info", "Your library (" + lib + ") is not shown to be VGAC's alone, so Remove will leave everything in it. That is the safe way.", null);
         }
 
         static CheckLine DataFolderLine(Layout l, IHost host)
@@ -181,6 +194,12 @@ namespace Vgac.Starter
                     // the window has shown the person exactly what will be treated as VGAC's and had a yes; checked again here
                     DataFolders.Adopt(l.DataFolder, machine, l.ProjectRoot);
                     log.Line("repair: the folder for the big files was adopted as VGAC's: " + l.DataFolder);
+                    return null;
+                }
+                if (fixId == "adoptlib")
+                {
+                    LibraryFolders.Adopt(l, machine);
+                    log.Line("repair: the library folder was adopted as VGAC's: " + RemovalPlanner.LibraryFolder(l, machine));
                     return null;
                 }
                 if (fixId == "state")

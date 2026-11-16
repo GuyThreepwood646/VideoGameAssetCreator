@@ -111,8 +111,8 @@ namespace Vgac.Starter
 
         public List<string> Kept(string data)
         {
-            // What is kept is at least models, output, input and user; a marker can add to that, never take from it.
-            var kept = new List<string>(new[] { "models", "output", "input", "user" });
+            // What is kept is at least models, output, input, user and custom_nodes; a marker can add to that, never take from it.
+            var kept = new List<string>(new[] { "models", "output", "input", "user", "custom_nodes" });
             var m = Marker(data); object o;
             if (m != null && m.TryGetValue("kept", out o))
             {

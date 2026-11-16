@@ -13,6 +13,16 @@ using System.Windows.Forms;
 namespace Vgac.Starter
 {
     // What the window needs from the launcher.
+    // Every question that could lead to deleting, moving or claiming something answers No when the person just presses Enter.
+    public static class MaintenanceDefaults
+    {
+        public const MessageBoxDefaultButton Adopt = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton CancelMove = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton DeleteOldCopy = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton PermanentDelete = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton RunSteps = MessageBoxDefaultButton.Button2;
+    }
+
     public interface IMaintenanceHost
     {
         Layout Lay { get; }
@@ -140,8 +150,14 @@ namespace Vgac.Starter
             {
                 DataStatus ds = DataFolders.Check(host.Lay.DataFolder, MachineFile.Load(host.Lay.ProjectRoot), host.Lay.ProjectRoot);
                 string list = ds.Adoptable ? string.Join("\r\n   - ", ds.AdoptList.ToArray()) : "(nothing: it can no longer be adopted)";
-                bool yes = ds.Adoptable && MessageBox.Show(this, "Use " + host.Lay.DataFolder + " for VGAC only?\r\n\r\nVGAC will treat ONLY these as its own, and Remove and Move will act on them (they are removed or moved whole):\r\n   - " + list + "\r\n\r\nNothing else in the folder is touched.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+                bool yes = ds.Adoptable && MessageBox.Show(this, "Use " + host.Lay.DataFolder + " for VGAC only?\r\n\r\nVGAC will treat ONLY these as its own, and Remove and Move will act on them (they are removed or moved whole):\r\n   - " + list + "\r\n\r\nNothing else in the folder is touched.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.Adopt) == DialogResult.Yes;
                 if (!yes) { todo = todo.Where(c => c.FixId != "adopt").ToList(); if (todo.Count == 0) { status.Text = "The folder was not adopted."; return; } }
+            }
+            if (todo.Any(c => c.FixId == "adoptlib"))
+            {
+                string libp = RemovalPlanner.LibraryFolder(host.Lay, MachineFile.Load(host.Lay.ProjectRoot));
+                bool yes = MessageBox.Show(this, "Mark " + libp + " as VGAC's library?\r\n\r\nIt holds only what the app makes. After this, Remove can delete its contents (only after you type the word REMOVE there). Nothing is deleted now.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.Adopt) == DialogResult.Yes;
+                if (!yes) { todo = todo.Where(c => c.FixId != "adoptlib").ToList(); if (todo.Count == 0) { status.Text = "The library was not marked."; return; } }
             }
             bool needsStop = todo.Any(c => c.FixId == "venv" || c.FixId == "packages" || c.FixId == "uv" || c.FixId == "screens");
             if (needsStop && !host.Quiesce(this, "fix")) return;
@@ -214,7 +230,7 @@ namespace Vgac.Starter
                 if (result != null && pending.Count > 0)
                 {
                     string list = string.Join("\r\n   - ", pending.Select(s => Planner.Plain(s)).ToArray());
-                    if (MessageBox.Show(this, "The update needs these steps, which install packages and build the screens from the files just pulled:\r\n   - " + list + "\r\n\r\nRun them now?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                    if (MessageBox.Show(this, "The update needs these steps, which install packages and build the screens from the files just pulled:\r\n   - " + list + "\r\n\r\nRun them now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RunSteps) == DialogResult.Yes)
                     {
                         List<string> steps = pending;
                         Run(delegate
@@ -310,7 +326,7 @@ namespace Vgac.Starter
             bool inUse = jc.State == "switching" || jc.State == "switched" || jc.State == "rebuilt";
             string q = inUse ? "Undo the move? VGAC points at the old place again. The copy in the new folder is NOT deleted (the app may have used it); you delete it yourself."
                 : "Cancel the move? What it copied into the new folder is removed. The old place is not changed.";
-            if (MessageBox.Show(this, q, "VGAC", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            if (MessageBox.Show(this, q, "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.CancelMove) != DialogResult.Yes) return;
             if (!host.Quiesce(this, "move")) return;
             string said = null;
             Run(delegate { said = Mover().Cancel(); Say(said ?? "The move was cancelled."); }, delegate { details.Text = said ?? "The move was cancelled."; RefreshMove(details); host.Resume(); });
@@ -322,7 +338,7 @@ namespace Vgac.Starter
             if (j == null || j.State != "rebuilt") { details.Text = "There is no finished move whose old copy can be deleted."; return; }
             long bytes = 0; foreach (string p in MoveRunner.OldCopy(j)) bytes += SafeFs.Size(p, null);
             string list = string.Join("\r\n   ", MoveRunner.OldCopy(j).ToArray());
-            if (MessageBox.Show(this, "Delete the old copy?\r\n\r\n   " + list + "\r\n\r\n" + RemovalSummary.Size(bytes) + " will be freed. It is deleted for good and cannot be restored. Anything else you keep in the old folder stays.", "VGAC", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            if (MessageBox.Show(this, "Delete the old copy?\r\n\r\n   " + list + "\r\n\r\n" + RemovalSummary.Size(bytes) + " will be freed. It is deleted for good and cannot be restored. Anything else you keep in the old folder stays.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.DeleteOldCopy) != DialogResult.Yes) return;
             string result = null;
             Run(delegate { result = Mover().DeleteOld(delegate { return stopRequested; }, delegate(string f) { Say("Checking " + System.IO.Path.GetFileName(f) + "..."); }); Say(result ?? "The old copy was deleted."); }, delegate { details.Text = result ?? "The old copy was deleted."; RefreshMove(details); });
         }
@@ -404,7 +420,7 @@ namespace Vgac.Starter
                 {
                     string list = string.Join("\r\n   ", res.RecycleFailed.ToArray());
                     // No is the default: the box names exactly the items it is about, and only those may be deleted for good
-                    if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete exactly these for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+                    if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete exactly these for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.PermanentDelete) == DialogResult.Yes)
                     {
                         BuildPlanKeepingChecks();
                         DoRemoval(summaryBox, ticked, typedWord, new List<string>(res.RecycleFailed));

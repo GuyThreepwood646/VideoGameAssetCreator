@@ -357,6 +357,8 @@ namespace Vgac.Starter
                     if (dstat.Problem)
                         MessageBox.Show("The folder for the big files (" + lay.DataFolder + ") is not one VGAC will set up in, move or remove from.\r\n\r\n" + dstat.Why + "\r\n\r\nChoose another folder when you have a moment. VGAC carries on with what is already there.", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
+                // a library folder that is new or empty is claimed before the app puts anything in it; one that already holds things is not
+                try { LibraryFolders.ClaimIfNew(lay, machine); } catch (Exception ex) { log.Line("start: the library folder was not claimed: " + ex.Message); }
                 string note = GitUpdate.ExeDiffersNote(Application.ExecutablePath, Path.Combine(root, "starter", "CHECKSUMS.txt"));
                 if (note != null) log.Line("start: " + note);
                 if (GitUpdate.MidPull(root) != null)
@@ -447,9 +449,7 @@ namespace Vgac.Starter
                 if (unfit != null) { MessageBox.Show(this, unfit, "VGAC"); return; }
                 try
                 {
-                    machine.Set("starter", "dataFolder", d.SelectedPath);
-                    machine.Set("starter", "dataFolderId", "");          // a new folder gets its own claim
-                    machine.Save();
+                    DataFolders.Choose(machine, d.SelectedPath, root);          // keeps the claim only when the folder's marker is this install's
                     lay = Vgac.Starter.Layout.From(root, machine);
                     backend = null;
                     if (afterChooseBegins) { afterChooseBegins = false; Begin(); return; }

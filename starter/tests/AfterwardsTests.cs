@@ -221,9 +221,9 @@ public static partial class T
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\"main.py\",\".venv\",\"../evil\",\"C:\\\\Windows\",\"custom_nodes/vgac-nodes\"],\"kept\":[\"models\"]}");
         Check(real.Offered(data), "with the owned list it is offered");
         var o = real.Owned(data);
-        Eq(o.Count, 3, "only names inside the install folder are taken (a climbing and a rooted name are dropped)");
+        Eq(o.Count, 2, "only names inside the install folder are taken (a climbing and a rooted name are dropped)");
         Check(o.All(p => SafeFs.Inside(p, real.Root(data))), "every owned path is inside the install folder");
-        Eq(string.Join(",", real.Kept(data).ToArray()), "models,output,input,user", "the kept names are at least the four defaults (a marker can add, never take away)");
+        Eq(string.Join(",", real.Kept(data).ToArray()), "models,output,input,user,custom_nodes", "the kept names are at least the five defaults (a marker can add, never take away)");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\",\"owned\":[\"main.py\"]}");
         Check(!real.Present(data) && !real.Offered(data), "a marker that is not VGAC's is not a marker");
     }
@@ -595,6 +595,8 @@ public static partial class T
         Put(Path.Combine(s.Ext, "blender", "blender.exe"), "b");
         DataFolders.Stamp(s.Data, MachineFile.Load(s.Root));   // the folder for the big files is VGAC's (its marker matches the settings)
         s.M = MachineFile.Load(s.Root); s.L = Layout.From(s.Root, s.M);
+        LibraryFolders.Stamp(Path.Combine(s.Root, "library"), MachineFile.Load(s.Root));   // the library is VGAC's (its marker matches the settings)
+        s.M = MachineFile.Load(s.Root);
         s.Led = Ledger.Load(s.Root);
         s.Led.Add("The folder for the big files", s.Data, "folder", 0);
         s.Led.Add("The app's Python environment", l.Venv, "added", 0);

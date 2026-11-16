@@ -156,7 +156,7 @@ public static partial class T
         string data = Tmp("markerkept");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\".\",\"models\",\"models/a\",\"main.py\",\"custom_nodes/x\"],\"kept\":[\"models\"]}");
         var real = new MarkerComfyInstall(delegate(string a, string c) { return null; });
-        Eq(string.Join(",", real.Owned(data).Select(p => Path.GetFileName(p)).ToArray()), "main.py,x", "the marker reader never returns the folder itself or anything kept");
+        Eq(string.Join(",", real.Owned(data).Select(p => Path.GetFileName(p)).ToArray()), "main.py", "the marker reader never returns the folder itself or anything kept");
     }
 
     static void RealFailsClosed()

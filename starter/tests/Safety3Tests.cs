@@ -100,8 +100,7 @@ public static partial class T
         if (customFolder) { var m0 = MachineFile.Load(s.Root); m0.Set("starter", "dataFolder", s.Data); m0.Save(); }
         s.M = MachineFile.Load(s.Root); s.L = Layout.From(s.Root, s.M);
         var l = s.L;
-        string home = Path.Combine(l.PythonDir, "cpython-3.13.1-windows-x86_64-none");
-        Directory.CreateDirectory(home); File.WriteAllBytes(Path.Combine(home, "python.exe"), Mz());
+        string home = FakeHost.MakeUvPython(l.PythonDir, "3.13.1");     // with uv's own .temp, .lock and .gitignore, as the real tool leaves it
         FakeHost.MakeUvCache(l.UvCache);
         Directory.CreateDirectory(Path.GetDirectoryName(l.UvExe)); File.WriteAllBytes(l.UvExe, Mz());
         Directory.CreateDirectory(l.NodeDir); File.WriteAllBytes(Path.Combine(l.NodeDir, "node.exe"), Mz());
@@ -304,6 +303,7 @@ public static partial class T
         string lib = Path.Combine(Tmp("libs"), "library");
         WriteSqlite(Path.Combine(lib, "vgac.sqlite")); Put(Path.Combine(lib, "projects", "mine", "a.txt"), "the person's own projects folder"); Put(Path.Combine(lib, "notes.txt"), "n");
         var m = MachineFile.Load(s.Root); m.Set("backend", "library_path", lib); m.Save();
+        LibraryFolders.Stamp(lib, MachineFile.Load(s.Root));
         s.M = MachineFile.Load(s.Root);
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         Check(plan.Get("work").Items.All(i => i.Kind != "work-library"), "a library folder holding a person's own 'projects' next to other files offers nothing");
@@ -313,6 +313,7 @@ public static partial class T
         string lib2 = Path.Combine(Tmp("libs"), "library2");
         WriteSqlite(Path.Combine(lib2, "vgac.sqlite")); Put(Path.Combine(lib2, "projects", "p1", "a.txt"), "p"); Put(Path.Combine(lib2, "prefs.json"), "{}");
         var m2 = MachineFile.Load(s.Root); m2.Set("backend", "library_path", lib2); m2.Save();
+        LibraryFolders.Stamp(lib2, MachineFile.Load(s.Root));
         var plan2 = RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy);
         Check(plan2.Get("work").Items.Count(i => i.Kind == "work-library") == 3, "a dedicated library lists its own entries");
         RemovalRunner.Run(plan2, new List<string> { "work" }, "REMOVE", s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);

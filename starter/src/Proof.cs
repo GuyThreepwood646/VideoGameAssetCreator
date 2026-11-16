@@ -108,6 +108,16 @@ namespace Vgac.Starter
             File.WriteAllText(Path.Combine(folder, MarkerName), Json.Write(d), new UTF8Encoding(false));
         }
 
+        // The person picked a folder. The claim is kept when that folder carries this install's own marker (the same folder re-picked
+        // after an interrupted setup, or the same folder at another drive letter); any other folder starts without a claim.
+        public static void Choose(MachineFile machine, string folder, string projectRoot)
+        {
+            string sid = SettingsId(machine), mid = ReadMarkerId(folder);
+            machine.Set("starter", "dataFolder", Layout.Stored(projectRoot, folder));
+            if (string.IsNullOrEmpty(sid) || sid != mid) machine.Set("starter", "dataFolderId", "");
+            machine.Save();
+        }
+
         // New or empty: VGAC claims it now (before any step puts anything in it).
         public static void Claim(string folder, MachineFile machine, string projectRoot)
         {
@@ -208,7 +218,8 @@ namespace Vgac.Starter
             {
                 string n = Path.GetFileName(e).ToLowerInvariant();
                 if (n.StartsWith("cpython-") && Directory.Exists(e) && File.Exists(Path.Combine(e, "python.exe"))) { found = true; continue; }
-                if (n == ".lock" || n == ".cache" || n == ".temp" || n == ".tmp") continue;
+                // what uv 0.8 really writes beside its cpython-* folders: .temp (folder), .lock, .gitignore (checked by running uv here)
+                if (n == ".lock" || n == ".cache" || n == ".temp" || n == ".tmp" || n == ".gitignore") continue;
                 return "it holds " + Path.GetFileName(e);
             }
             if (!found) return "it holds no Python";
@@ -234,6 +245,87 @@ namespace Vgac.Starter
         public static string ExplainNotClaimed(string folder, DataStatus st)
         {
             return "The folder for the big files (" + folder + ") is not one VGAC will set up in, move or remove from. " + st.Why;
+        }
+    }
+
+    // The library (the person's own work) gets the same proof as the data folder before anything in it is removed: a marker file with a
+    // random id that is also in the settings (starter.libraryId). Names alone prove nothing: a person's own "projects" folder has a name
+    // the app uses too.
+    public static class LibraryFolders
+    {
+        public const string MarkerName = ".vgac-library.json";
+
+        public static string SettingsId(MachineFile m) { return m.GetString("starter", "libraryId"); }
+
+        public static string ReadMarkerId(string folder)
+        {
+            try
+            {
+                string p = Path.Combine(folder, MarkerName);
+                if (!File.Exists(p) || SafeFs.IsLink(p)) return null;
+                var d = Json.ParseObject(File.ReadAllText(p, Encoding.UTF8));
+                object who, id;
+                if (!d.TryGetValue("made_by", out who) || Convert.ToString(who) != "VGAC") return null;
+                return d.TryGetValue("id", out id) ? Convert.ToString(id) : null;
+            }
+            catch (Exception) { return null; }
+        }
+
+        public static bool Ours(string folder, MachineFile m)
+        {
+            string sid = SettingsId(m);
+            return !string.IsNullOrEmpty(sid) && Directory.Exists(folder) && !SafeFs.IsLink(folder) && sid == ReadMarkerId(folder);
+        }
+
+        // Id into the settings first, then the marker (a crash between the two is finished by the next start).
+        public static void Stamp(string folder, MachineFile m)
+        {
+            string id = SettingsId(m);
+            if (string.IsNullOrEmpty(id)) { id = Guid.NewGuid().ToString("N"); m.Set("starter", "libraryId", id); m.Save(); }
+            Directory.CreateDirectory(folder);
+            var d = new Dictionary<string, object>();
+            d["made_by"] = "VGAC"; d["id"] = id; d["kind"] = "library";
+            File.WriteAllText(Path.Combine(folder, MarkerName), Json.Write(d), new UTF8Encoding(false));
+        }
+
+        // At every start, before the app can put anything there: a library folder that is new or empty (and a fit place) is claimed.
+        // A folder that already holds things is never claimed here; it can be adopted by the person's click when it holds only what the
+        // app makes (see AdoptProblem).
+        public static void ClaimIfNew(Layout l, MachineFile m)
+        {
+            string lib = RemovalPlanner.LibraryFolder(l, m);
+            if (Ours(lib, m)) return;
+            if (RemovalPlanner.WorkPlaceProblem(l, lib) != null) return;
+            if (Directory.Exists(lib))
+            {
+                if (SafeFs.IsLink(lib)) return;
+                foreach (string e in Directory.GetFileSystemEntries(lib)) if (!string.Equals(Path.GetFileName(e), MarkerName, StringComparison.OrdinalIgnoreCase)) return;
+            }
+            Stamp(lib, m);
+        }
+
+        // null: this existing, unmarked library holds a real VGAC database and nothing but what the app makes, so it may be adopted.
+        public static string AdoptProblem(Layout l, MachineFile m)
+        {
+            string lib = RemovalPlanner.LibraryFolder(l, m);
+            if (!Directory.Exists(lib)) return "there is no library folder";
+            string why = RemovalPlanner.LibraryProblem(l, lib);
+            if (why != null) return why;
+            foreach (string e in Directory.GetFileSystemEntries(lib))
+            {
+                string n = Path.GetFileName(e);
+                if (string.Equals(n, MarkerName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!RemovalPlanner.IsLibraryName(n)) return "it also holds " + n + ", which the app does not make";
+                if (SafeFs.IsLink(e)) return n + " is a link";
+            }
+            return null;
+        }
+
+        public static void Adopt(Layout l, MachineFile m)
+        {
+            string why = AdoptProblem(l, m);
+            if (why != null) throw new StarterError("The library folder cannot be adopted: " + why + ".", "Nothing was changed.");
+            Stamp(RemovalPlanner.LibraryFolder(l, m), m);
         }
     }
 

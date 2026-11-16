@@ -17,6 +17,18 @@ public class FakeHost : IHost
     public int ExitCode;
     public bool FailPip;
     public static byte[] Mz() { return new byte[] { 0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00 }; }
+    // The Python folder as a real uv 0.8.2 leaves it (listed by running "uv venv --managed-python" with UV_PYTHON_INSTALL_DIR set):
+    // .temp (a folder), .lock, .gitignore, and cpython-<version>-windows-x86_64-none holding python.exe. Returns the cpython folder.
+    public static string MakeUvPython(string pyDir, string version)
+    {
+        string home = Path.Combine(pyDir, "cpython-" + version + "-windows-x86_64-none");
+        Directory.CreateDirectory(home);
+        File.WriteAllBytes(Path.Combine(home, "python.exe"), Mz());
+        Directory.CreateDirectory(Path.Combine(pyDir, ".temp"));
+        File.WriteAllText(Path.Combine(pyDir, ".gitignore"), "*");
+        File.WriteAllText(Path.Combine(pyDir, ".lock"), "");
+        return home;
+    }
     public static void MakeUvCache(string dir)
     {
         Directory.CreateDirectory(dir);
@@ -38,12 +50,12 @@ public class FakeHost : IHost
     {
         Calls.Add("unzip " + Path.GetFileName(zip));
         Directory.CreateDirectory(destDir);
-        if (zip.Contains("uv")) File.WriteAllText(Path.Combine(destDir, "uv.exe"), "uv");
+        if (zip.Contains("uv")) File.WriteAllBytes(Path.Combine(destDir, "uv.exe"), Mz());   // a real download holds a real program
         else
         {
             string inner = Path.Combine(destDir, "node-v22-win-x64");
             Directory.CreateDirectory(inner);
-            File.WriteAllText(Path.Combine(inner, "node.exe"), "node");
+            File.WriteAllBytes(Path.Combine(inner, "node.exe"), Mz());
         }
     }
 
@@ -63,9 +75,7 @@ public class FakeHost : IHost
             string home = null;
             if (pyDir != null)
             {
-                home = Path.Combine(pyDir, "cpython-3.13.1-windows-x86_64-none");
-                Directory.CreateDirectory(home);
-                File.WriteAllBytes(Path.Combine(home, "python.exe"), Mz());
+                home = MakeUvPython(pyDir, "3.13.1");
             }
             Directory.CreateDirectory(Path.Combine(venv, "Scripts"));
             File.WriteAllText(Path.Combine(venv, "Scripts", "python.exe"), "py");
@@ -166,6 +176,7 @@ public static partial class T
             SafetyAll();
             Safety2All();
             Safety3All();
+            Safety4All();
         }
         finally
         {
@@ -247,7 +258,7 @@ public static partial class T
         Check(File.Exists(Path.Combine(l.NodeDir, "node.exe")), "node.exe in the data folder (inner folder flattened)");
         Check(File.Exists(Path.Combine(root, "local", "installed.json")), "ledger written");
         string ledger = File.ReadAllText(Path.Combine(root, "local", "installed.json"));
-        Check(ledger.Contains("\"kind\": \"added\"") && ledger.Contains("Node.js") && ledger.Contains(".venv"), "ledger lists what was added");
+        Check(ledger.Contains("\"kind\": \"added\"") && !ledger.Contains("Node.js") && ledger.Contains(".venv"), "ledger lists what was added in the project (nothing inside the data folder)");
         Check(File.Exists(new SetupLog(root).Path) && File.ReadAllText(new SetupLog(root).Path).Contains("step screens done"), "setup.log has the steps");
         Check(!Directory.Exists(l.Downloads) || Directory.GetFiles(l.Downloads).Length == 0, "downloaded zips removed after unpacking");
     }

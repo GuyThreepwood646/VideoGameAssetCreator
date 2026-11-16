@@ -69,6 +69,7 @@ namespace Vgac.Starter
         public static string Real(string path)
         {
             string full = Path.GetFullPath(path).TrimEnd('\\', '/');
+            if (full.Length == 2 && full[1] == ':') full += "\\";           // "F:" alone means the current folder on F; a drive root is "F:\"
             string tail = "";
             string cur = full;
             while (cur != null && !Directory.Exists(cur) && !File.Exists(cur))

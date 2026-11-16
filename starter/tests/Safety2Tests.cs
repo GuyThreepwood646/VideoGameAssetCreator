@@ -118,6 +118,7 @@ public static partial class T
         WriteSqlite(Path.Combine(broad, "vgac.sqlite")); Put(Path.Combine(broad, "projects", "p1", "a.txt"), "p"); Put(Path.Combine(broad, "prefs.json"), "{}");
         Put(Path.Combine(broad, "Saves", "slot1.sav"), "the person's saves"); Put(Path.Combine(broad, "photos", "me.jpg"), "photo"); Put(Path.Combine(broad, "notes.txt"), "notes");
         m = MachineFile.Load(s.Root); m.Set("backend", "library_path", broad); m.Save();
+        LibraryFolders.Stamp(broad, MachineFile.Load(s.Root));      // claimed, and the person's own things are in it as well
         s.M = MachineFile.Load(s.Root);
         plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
 Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemoved.Any(n => n.Contains("My Games") && n.Contains("Saves") && n.Contains("nothing in it is removed")), "a library folder that also holds the person's own things is not touched at all, and the summary says so");

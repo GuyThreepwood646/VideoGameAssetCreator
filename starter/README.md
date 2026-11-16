@@ -117,11 +117,12 @@ program has open.
   is compared with the new copy again; "Keep both copies" closes the move without deleting anything.
 - Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Items in the
   data folder are listed only when it is VGAC's (its marker matches); otherwise the list says why and nothing in it is removed. Ticked by
-  default: the app's Python, tools and screens, and VGAC's own ComfyUI (its own files only; models, outputs and your own custom nodes
+  default: the app's Python, tools and screens, and VGAC's own ComfyUI (its own files only; models, outputs, inputs, user data and everything in custom_nodes
   inside it stay). Not ticked: models and packs VGAC downloaded, node packs it put into a ComfyUI you linked, its settings, and your own
-  work (the word REMOVE must be typed). Your own work is a library folder that holds ONLY things the app makes (its database vgac.sqlite,
-  which must really be an SQLite file, and the app's own projects, hair, moves and settings entries): if anything else is in that folder,
-  nothing in it is removed. Exports are removed one export folder at a time, only those holding VGAC's manifest.json; the folder an export
+  work (the word REMOVE must be typed). Your own work is a library folder that carries VGAC's own marker (`.vgac-library.json`, whose id is also in
+  `starter.libraryId`; made at start for a library that is new or empty, or by the "mark as VGAC's library" click in Check and repair for an
+  existing one that holds a real vgac.sqlite and only things the app makes) AND holds only things the app makes (the database, projects,
+  hair, moves and settings entries): without the marker, or with anything else in the folder, nothing in it is removed (names alone prove nothing). Exports are removed one export folder at a time, only those holding VGAC's manifest.json; the folder an export
   sits in (for example a Unity project's Assets) is never removed. Links are unlinked, never followed. Small amounts go to the Recycle Bin;
   more than 2 GB, a drive that is not a fixed local one, or a folder with a link inside is deleted for good, and the list says so per item.
   If the Recycle Bin cannot take an item it is NOT deleted: you are asked (the answer is No unless you click Yes) whether to delete exactly
