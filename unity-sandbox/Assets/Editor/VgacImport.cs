@@ -143,6 +143,8 @@ public static class VgacImport
         public List<string> locomotion = new List<string>();  // "clip@speed" for each blend tree child
         public List<string> roles = new List<string>();       // "Attack=Rig|Sword_Attack" and so on
         public int moreMoves;
+        public string idleUsed = "";                          // Version 20: "own" (the app's own idle from the model), "library" or "none"
+        public string idleClip = "";                          // the clip that plays as Stand still
         public List<string> added = new List<string>();       // "SwordBlock:Trigger", "SitIdle:Bool": moves the person added
         public bool applyRootMotion;
     }
@@ -604,7 +606,7 @@ public static class VgacImport
             // Clips: the shared library for a valid Humanoid, else the clips baked into the model FBX itself.
             List<AnimationClip> clipSet = null;
             HashSet<string> addedClips = null;  // moves the person added ("Add a move"), by clip name
-            string ownIdle = null;              // Version 20: the app's own idle, when it is this character's Stand still
+            AnimationClip ownIdle = null;       // Version 20: the app's own idle (the clip from the character's own model), when it is Stand still
             var clipsSrc = a.clips;
             if (clipsSrc != null && File.Exists(clipsSrc) && avatar != null && avatar.isHuman && avatar.isValid)
             {
@@ -627,17 +629,18 @@ public static class VgacImport
                 // Moves the person added are only in the model's own FBX: add those to the shared set.
                 var side = ReadClipInfo(a.clipInfo, report);
                 addedClips = AddedClips(side);
-                ownIdle = OwnIdleName(side);
+                var ownIdleName = OwnIdleName(side);
                 var fromOwn = new HashSet<string>(addedClips, StringComparer.OrdinalIgnoreCase);
-                if (ownIdle != null) fromOwn.Add(ownIdle);
+                if (ownIdleName != null) fromOwn.Add(ownIdleName);
                 if (fromOwn.Count > 0) SetClipLoops(importer, report, side, fromOwn);
                 FaceForward(fbxPath, new[] { ci, importer }, report);
                 clipSet = LoadClips(clipsPath);
                 if (fromOwn.Count > 0) clipSet.AddRange(LoadClips(fbxPath).Where(c => fromOwn.Contains(ShortName(c.name))));
-                if (ownIdle != null && !clipSet.Any(c => AssetDatabase.GetAssetPath(c) == fbxPath && string.Equals(ShortName(c.name), ownIdle, StringComparison.OrdinalIgnoreCase)))
+                if (ownIdleName != null)
                 {
-                    report.warnings.Add("the character's own idle was not found in its model; the library's idle is used");
-                    ownIdle = null;
+                    // By asset path, so a library clip with the same short name can never be taken for it.
+                    ownIdle = clipSet.FirstOrDefault(c => AssetDatabase.GetAssetPath(c) == fbxPath && string.Equals(ShortName(c.name), ownIdleName, StringComparison.OrdinalIgnoreCase));
+                    if (ownIdle == null) report.warnings.Add("the character's own idle was not found in its model; the library's idle is used");
                 }
             }
             else
@@ -2197,7 +2200,7 @@ public static class VgacImport
     }
 
     static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info,
-                                              HashSet<string> added = null, string ownIdle = null)
+                                              HashSet<string> added = null, AnimationClip ownIdle = null)
     {
         AssetDatabase.DeleteAsset(path);
         var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
@@ -2209,8 +2212,9 @@ public static class VgacImport
         AnimationClip Take(AnimationClip c) { if (c != null) used.Add(c); return c; }
 
         // Version 20: the character's own idle (from its model) is Stand still when the sidecar says the app made it.
-        var own = ownIdle == null ? null : clips.FirstOrDefault(c => string.Equals(ShortName(c.name), ownIdle, StringComparison.OrdinalIgnoreCase) && !used.Contains(c));
-        var idle = Take(own != null ? own : Pick(clips, used, "idle"));
+        var idle = Take(ownIdle != null ? ownIdle : Pick(clips, used, "idle"));
+        info.idleUsed = idle == null ? "none" : (ownIdle != null && idle == ownIdle ? "own" : "library");
+        info.idleClip = idle == null ? "" : idle.name;
         var walk = Take(Pick(clips, used, "walk") ?? Pick(clips, used, "slither"));
         var run = Take(Pick(clips, used, "run") ?? Pick(clips, used, "jog") ?? Pick(clips, used, "sprint"));
         var attack = Take(Pick(clips, used, "attack") ?? Pick(clips, used, "punch", "slash", "bite", "strike"));

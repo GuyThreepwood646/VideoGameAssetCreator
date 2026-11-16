@@ -143,12 +143,19 @@ def test_the_importer_takes_the_own_idle_from_the_sidecar_and_makes_it_the_locom
     # the rule: the sidecar's idle row made by the app ("procedural") is the character's own idle
     assert 'string.Equals(c.source, "procedural", StringComparison.OrdinalIgnoreCase) ? c.name : null' in IMPORTER
     # its clip comes from the model's own FBX into the shared set, with loop settings from the sidecar
-    assert "if (ownIdle != null) fromOwn.Add(ownIdle);" in IMPORTER
+    assert "if (ownIdleName != null) fromOwn.Add(ownIdleName);" in IMPORTER
     assert "SetClipLoops(importer, report, side, fromOwn)" in IMPORTER
     assert "clipSet.AddRange(LoadClips(fbxPath).Where(c => fromOwn.Contains(ShortName(c.name))))" in IMPORTER
+    # the clip is chosen by its asset path being the character's own model, never by name alone, and the clip object itself goes
+    # to the controller, so a library clip with the same short name cannot be taken for it
+    assert "ownIdle = clipSet.FirstOrDefault(c => AssetDatabase.GetAssetPath(c) == fbxPath && string.Equals(ShortName(c.name), ownIdleName" in IMPORTER
+    assert "AnimationClip ownIdle = null" in IMPORTER and "HashSet<string> added = null, AnimationClip ownIdle = null" in IMPORTER
     # and it is the idle of the Locomotion blend tree (idle at speed 0; walk and run from the library blend from it)
-    assert 'var idle = Take(own != null ? own : Pick(clips, used, "idle"));' in IMPORTER
-    assert "if (idle) cycle.Add((idle, 0f));" in IMPORTER and "HashSet<string> added = null, string ownIdle = null" in IMPORTER
+    assert 'var idle = Take(ownIdle != null ? ownIdle : Pick(clips, used, "idle"));' in IMPORTER
+    assert "if (idle) cycle.Add((idle, 0f));" in IMPORTER
+    # which idle played is in unity_report.json (controller.idleUsed: own, library or none; controller.idleClip)
+    assert 'info.idleUsed = idle == null ? "none" : (ownIdle != null && idle == ownIdle ? "own" : "library");' in IMPORTER
+    assert "public string idleUsed" in IMPORTER and "public string idleClip" in IMPORTER
     # it is not one of the person's added moves: no state or parameter of its own
     assert "addedClips.Add(ownIdle)" not in IMPORTER
 
