@@ -1306,7 +1306,6 @@ on('POST', '/api/my-addons', (_m, body) => {
     strengths: { ...MOCK_ADDON_STRENGTHS },
     default_strength: strength,
     required: false,
-    required_for: [],
     trigger: String(body.trigger ?? ''),
     licence: 'Your own file: not checked by the app. You are responsible for being allowed to use it in your game.',
     source: String(body.source ?? ''),

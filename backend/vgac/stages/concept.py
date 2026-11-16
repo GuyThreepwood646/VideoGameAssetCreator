@@ -164,8 +164,7 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
                    addons_unknown=adds["unknown"], prompt_final=prompt_with_triggers(prompt, applied))
     sc.use_model(model)
     for a in applied:
-        if not a.get("built_in"):
-            sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])
+        sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])
     graph = concept_graph(model, prompt, seed, sc.prefix("image"), width=width, height=height, steps=steps, negative=negative,
                           addons=applied)
     entry = await sc.comfy(graph, message="concept image", base=0.05, span=0.6)

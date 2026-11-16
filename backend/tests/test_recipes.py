@@ -139,7 +139,7 @@ def test_registry_files_match_the_wired_graphs_and_models_yaml():
 def test_resolve_addons_order_strengths_and_reports():
     r = reference.resolve_addons("zturbo", "concept", [{"id": "stylised_3d", "strength": "subtle"}], ["stylised_3d:strong", "mystery", {"id": "nope"}])
     assert [(a["id"], a["strength"], a["value"]) for a in r["applied"]] == [("stylised_3d", "strong", 1.0)]
-    assert r["unknown"] == ["mystery", "nope"] and not r["applied"][0]["built_in"]
+    assert r["unknown"] == ["mystery", "nope"] and "built_in" not in r["applied"][0]
     # A number from the lock, then the version switches it off.
     r = reference.resolve_addons("zturbo", "concept", None, ["stylised_3d:0.7"])
     assert r["applied"][0]["strength"] == "custom" and r["applied"][0]["value"] == 0.7

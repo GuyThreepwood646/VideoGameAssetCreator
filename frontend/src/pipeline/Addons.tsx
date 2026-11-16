@@ -25,7 +25,7 @@ export function addonRows(catalog: AddonEntry[], recipe: Pick<Recipe, 'addons' |
     .map((a) => {
       const r = fromRecipe.get(a.id)
       const recipeOn = (r?.on ?? false) || defaults.has(a.id)
-      const locked = addonLocked(a, painter)
+      const locked = addonLocked(a)
       const base: StrengthName = r?.strength ?? defaults.get(a.id) ?? a.default_strength ?? 'normal'
       const pick = chosen[a.id]
       const on = locked ? true : pick ? pick !== 'off' : recipeOn

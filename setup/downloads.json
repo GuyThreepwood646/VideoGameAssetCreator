@@ -480,7 +480,6 @@
   "installed_bytes": 5050000000,
   "installed_note": "The Python environment of a working ComfyUI 0.45.3 with SkinToken (with a few more packages than this lock) measured 4.68 GB on 2026-11-15.",
   "packs": ["skintoken", "vgac"],
-  "left_out": {},
   "first_port": 8288,
   "max_root_chars": 90
  },

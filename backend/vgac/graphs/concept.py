@@ -153,17 +153,17 @@ def lora_name(path: str) -> str:
 
 
 def prompt_with_triggers(prompt: str, addons: list[dict[str, Any]] | None) -> str:
-    """The prompt with each chained add-on's trigger words appended (built-in add-ons carry their own)."""
-    extra = [a["trigger"].strip() for a in addons or [] if a.get("trigger") and not a.get("built_in")]
+    """The prompt with each chained add-on's trigger words appended."""
+    extra = [a["trigger"].strip() for a in addons or [] if a.get("trigger")]
     extra = [t for t in extra if t and t not in prompt]
     return " ".join([prompt.strip()] + extra) if extra else prompt
 
 
 def chain_addons(graph: dict[str, Any], addons: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Insert a LoraLoaderModelOnly per add-on (in order, each at its `value`) right after the graph's model loader,
-    and point everything that read the loader's MODEL output at the end of the chain. Built-in add-ons are skipped
-    (their builder already loads them). The graph is changed in place and returned."""
-    chained = [a for a in addons or [] if not a.get("built_in") and a.get("file")]
+    and point everything that read the loader's MODEL output at the end of the chain. The graph is changed in place
+    and returned."""
+    chained = [a for a in addons or [] if a.get("file")]
     if not chained:
         return graph
     loader = next((nid for nid, n in graph.items() if n.get("class_type") in MODEL_LOADERS), None)
@@ -190,17 +190,11 @@ def concept_graph(model: str, prompt: str, seed: int, prefix: str, width: int = 
                   steps: int | None = None, negative: str | None = None, addons: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Dispatch to the builder for `model`. `negative` applies to models that use a real negative prompt. `addons` is
     reference.resolve_addons(...)["applied"]: each chained after the model loader at its strength, its trigger
-    appended to the prompt; a built-in one (the pixel painter's own LoRA) sets the builder's strength instead."""
-    import inspect
-
+    appended to the prompt."""
     fn = builder(model)
     kwargs: dict[str, Any] = {"width": width, "height": height, "steps": steps or default_steps(model)}
     if negative and _spec(model).get("negative"):
         kwargs["neg"] = negative
-    accepts = inspect.signature(fn).parameters
-    for a in addons or []:
-        if a.get("built_in") and "strength" in accepts:
-            kwargs["strength"] = float(a.get("value", 1.0))
     return chain_addons(fn(prompt_with_triggers(prompt, addons), seed, prefix, **kwargs), addons)
 
 

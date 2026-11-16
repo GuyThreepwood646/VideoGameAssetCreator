@@ -128,7 +128,7 @@ export default function ComfyPanel({ onChanged, onClose }: { onChanged?: () => v
         <div className="setup-field">
           {report.r.packs.map((p) => (
             <div key={p.id} className="small">
-              {p.name}: {p.present ? 'already there' : p.left_out ? p.left_out : 'missing'}
+              {p.name}: {p.present ? 'already there' : 'missing'}
             </div>
           ))}
           {report.r.python.note && <div className="muted small">{report.r.python.note}</div>}
@@ -136,7 +136,7 @@ export default function ComfyPanel({ onChanged, onClose }: { onChanged?: () => v
             <div className="warn small">Would change in your Python: {report.r.python.changes.map((x) => `${x.name} ${x.from} to ${x.to}`).join(', ')}.</div>
           )}
           {report.r.python.adds.length > 0 && <div className="small">Would add: {report.r.python.adds.map((x) => x.name).join(', ')}.</div>}
-          {report.r.packs.some((p) => !p.present && !p.left_out) && (
+          {report.r.packs.some((p) => !p.present) && (
             <button type="button" className="small-btn" disabled={busy} onClick={() => void go(report.id)}>
               Go ahead
             </button>

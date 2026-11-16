@@ -519,9 +519,9 @@ def addon(aid: str) -> dict[str, Any] | None:
     return _data()["addons"].get(aid) or _user_addons().get(aid)
 
 
-def addon_required(a: dict[str, Any], model: str | None = None) -> bool:
-    """True when the step cannot run without it: `required`, or the model is in its `required_for`."""
-    return bool(a.get("required")) or (model is not None and model in (a.get("required_for") or []))
+def addon_required(a: dict[str, Any]) -> bool:
+    """True when the step cannot run without it (`required`)."""
+    return bool(a.get("required"))
 
 
 def addon_strength(a: dict[str, Any], name: str) -> float:
@@ -532,14 +532,13 @@ def addon_strength(a: dict[str, Any], name: str) -> float:
     return float(s.get(name, 1.0))
 
 
-def addon_public(a: dict[str, Any], model: str | None = None) -> dict[str, Any]:
+def addon_public(a: dict[str, Any]) -> dict[str, Any]:
     """What the app shows about an add-on: id, label, help, stage, base_models, strengths, default_strength,
-    required (for `model` when given, else always-required only), required_for, trigger, licence, source. The file
-    name is not shown."""
+    required, trigger, licence, source. The file name is not shown."""
     return {"id": a["id"], "label": a.get("label") or a["id"], "help": a.get("help") or {}, "stage": a.get("stage", "concept"),
             "base_models": list(a.get("base_models") or []), "strengths": dict(a.get("strengths") or {}),
-            "default_strength": a.get("default_strength") or "normal", "required": addon_required(a, model),
-            "required_for": list(a.get("required_for") or []), "trigger": a.get("trigger") or "",
+            "default_strength": a.get("default_strength") or "normal", "required": addon_required(a),
+            "trigger": a.get("trigger") or "",
             "licence": a.get("licence") or "unknown", "source": a.get("source") or "", "mine": bool(a.get("mine")),
             "turn_method": a.get("turn_method")}
 
@@ -595,7 +594,7 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
     `addons` choices ({id: off | subtle | normal | strong}). Later sources change the strength of an earlier entry or
     add one; "off" removes it unless it is required. Only add-ons for this stage whose base_models hold `model` apply.
     Required add-ons for this model are always there. ->
-    {applied: [{id, label, strength (step name or "custom"), value, file, trigger, built_in, required}],
+    {applied: [{id, label, strength (step name or "custom"), value, file, trigger, required}],
      ignored: [{id, reason}], unknown: [ids from the lock or the choices that the registry does not know]}"""
     order: list[str] = []
     picked: dict[str, dict[str, Any]] = {}
@@ -620,7 +619,7 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
             picked.pop(aid, None)
             return
         if name == "off":
-            if addon_required(a, model):
+            if addon_required(a):
                 ignored.append({"id": aid, "reason": "required, cannot be switched off", "source": source})
                 return
             picked.pop(aid, None)
@@ -631,7 +630,7 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
         picked[aid] = {"strength": name, "value": value if value is not None else addon_strength(a, name), "source": source}
 
     for a in addons():
-        if a.get("stage", "concept") == stage and model in (a.get("base_models") or []) and addon_required(a, model):
+        if a.get("stage", "concept") == stage and model in (a.get("base_models") or []) and addon_required(a):
             put(a["id"], None, None, "required")
     for d in defaults or []:
         parsed = _parse_strength(d.get("strength"))
@@ -650,8 +649,8 @@ def resolve_addons(model: str, stage: str, defaults: list[dict[str, Any]] | None
         a = addon(aid) or {}
         p = picked[aid]
         applied.append({"id": aid, "label": a.get("label") or aid, "strength": p["strength"], "value": round(float(p["value"]), 4),
-                        "file": a.get("file") or "", "trigger": a.get("trigger") or "", "built_in": model in (a.get("built_in") or []),
-                        "required": addon_required(a, model), "source": p["source"]})
+                        "file": a.get("file") or "", "trigger": a.get("trigger") or "",
+                        "required": addon_required(a), "source": p["source"]})
     return {"applied": applied, "ignored": ignored, "unknown": unknown}
 
 
@@ -751,7 +750,7 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
         if isinstance(d, dict) and d.get("id") and addon(d["id"]) is not None:
             defaults.append({"id": d["id"], "strength": d.get("strength") or addon(d["id"]).get("default_strength") or "normal"})
     for a in addons():
-        if addon_required(a, concept["model"]) and a.get("stage") == "concept" and concept["model"] in (a.get("base_models") or []) \
+        if addon_required(a) and a.get("stage") == "concept" and concept["model"] in (a.get("base_models") or []) \
                 or (a.get("required") and a.get("stage") == "turnaround"):
             if not any(d["id"] == a["id"] for d in defaults):
                 defaults.append({"id": a["id"], "strength": a.get("default_strength") or "normal"})
@@ -833,7 +832,7 @@ def recipe_public(style_id: str, category_id: str, platform_id: str) -> dict[str
         works = model in (a.get("base_models") or []) if stage == "concept" else (a.get("turn_method") or "standard") in turns
         if not works:
             continue
-        e = addon_public(a, model if stage == "concept" else None)
+        e = addon_public(a)
         e["on"] = a["id"] in chosen
         e["strength"] = chosen.get(a["id"], e["default_strength"])
         entries.append(e)

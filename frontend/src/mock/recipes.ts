@@ -15,7 +15,6 @@ export const ADDONS: AddonEntry[] = [
     strengths: { subtle: 1.0, normal: 1.0, strong: 1.0 },
     default_strength: 'normal',
     required: true,
-    required_for: [],
     trigger: '',
     licence: 'Apache-2.0',
     source: 'models.yaml entry "qwen_lightning_lora"',
@@ -33,7 +32,6 @@ export const ADDONS: AddonEntry[] = [
     strengths: { subtle: 0.75, normal: 0.9, strong: 1.05 },
     default_strength: 'normal',
     required: true,
-    required_for: [],
     trigger: '',
     licence: 'Apache-2.0',
     source: 'models.yaml entry "qwen_angles_lora"',
@@ -52,7 +50,6 @@ export const ADDONS: AddonEntry[] = [
     strengths: { subtle: 1.0, normal: 1.0, strong: 1.0 },
     default_strength: 'normal',
     required: false,
-    required_for: [],
     trigger: '',
     licence: 'Apache-2.0',
     source: 'https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511',
@@ -71,7 +68,6 @@ export const ADDONS: AddonEntry[] = [
     strengths: { subtle: 1.0, normal: 1.0, strong: 1.0 },
     default_strength: 'normal',
     required: false,
-    required_for: [],
     trigger: '',
     licence: 'Apache-2.0',
     source: 'https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora',
@@ -139,14 +135,13 @@ export function mockRecipe(style: string, category: string, platform: string, bu
   const cap = s.mesh?.texture_cap ?? null
   const addons: { id: string; strength: StrengthName }[] = [...(s.addons ?? [])]
   for (const a of ADDONS) {
-    const conceptLocked = a.stage === 'concept' && a.base_models.includes(s.model) && (a.required || a.required_for.includes(s.model))
+    const conceptLocked = a.stage === 'concept' && a.base_models.includes(s.model) && a.required
     if ((conceptLocked || (a.required && a.stage === 'turnaround')) && !addons.some((d) => d.id === a.id)) addons.push({ id: a.id, strength: a.default_strength })
   }
   const chosen = new Map(addons.map((d) => [d.id, d.strength]))
   const turns = TURN_METHODS_BY_CATEGORY[category] ?? ['standard']
   const entries: AddonEntry[] = ADDONS.filter((a) => (a.stage === 'concept' ? a.base_models.includes(s.model) : turns.includes(a.turn_method ?? 'standard'))).map((a) => ({
     ...a,
-    required: a.required || (a.stage === 'concept' && a.required_for.includes(s.model)),
     on: chosen.has(a.id),
     strength: chosen.get(a.id) ?? a.default_strength,
   }))

@@ -36,9 +36,9 @@ export function useRecipe(style: string | null | undefined, category: string | n
   return recipe
 }
 
-// Whether an add-on is part of this painter (or of the turnaround) and cannot be switched off.
-export function addonLocked(a: AddonEntry, painter: string | null | undefined): boolean {
-  return a.required || (!!painter && a.required_for.includes(painter))
+// Whether an add-on is part of the step (the turnaround's helpers) and cannot be switched off.
+export function addonLocked(a: AddonEntry): boolean {
+  return a.required
 }
 
 export function strengthsEqual(a: AddonEntry): boolean {

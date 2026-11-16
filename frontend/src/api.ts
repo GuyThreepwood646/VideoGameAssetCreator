@@ -382,7 +382,6 @@ export type AddonEntry = {
   strengths: Record<StrengthName, number>
   default_strength: StrengthName
   required: boolean
-  required_for: string[]
   trigger: string
   licence: string
   source: string
@@ -648,7 +647,7 @@ export type HardwarePlan = {
 export type HardwareChoice = { use?: number[]; three_d?: number; min_free_ram_gb?: number }
 export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
 export type ComfyPacksReport = {
-  packs: { id: string; name: string; present: boolean; left_out?: string; requirements?: string[] }[]
+  packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
   python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
 }
 export type ComfyInstallStep = { id: string; label: string; download_bytes: number; done: boolean }
@@ -660,7 +659,7 @@ export type ComfyInstallStatus = {
 }
 export type ComfyInstallOffer = {
   version: string; goes_to: string; hosts: string[]; download_bytes: number; needs_bytes: number; licence: string
-  needs_admin: boolean; ready: boolean; missing: string[]; left_out: string[]; status: ComfyInstallStatus
+  needs_admin: boolean; ready: boolean; missing: string[]; status: ComfyInstallStatus
 }
 
 export type ModelItem = {

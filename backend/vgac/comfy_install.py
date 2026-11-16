@@ -1000,11 +1000,10 @@ def offer() -> dict[str, Any]:
     e = entry()
     root = install_root()
     total = sum(int(w.get("size") or 0) for w in lock())
-    left_out = e.get("left_out") or {}
     return {"version": e.get("version", ""), "goes_to": str(root), "hosts": ["github.com", "download.pytorch.org", "files.pythonhosted.org"],
             "download_bytes": total + _zip_bytes(e), "needs_bytes": space_needed(root),
             "licence": e.get("licence", ""), "needs_admin": False, "ready": not pins_missing(), "missing": pins_missing(),
-            "left_out": [str(v) for v in left_out.values()], "status": status()}
+            "status": status()}
 
 
 # --- removing ------------------------------------------------------------------------------------------------------------

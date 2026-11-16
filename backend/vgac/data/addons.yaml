@@ -14,9 +14,6 @@
 #   strengths        {subtle, normal, strong}: the strength each step loads the add-on at
 #   default_strength one of subtle, normal, strong
 #   required         true when the step cannot run without it (shown locked, cannot be switched off)
-#   built_in         model ids whose graph already loads this add-on (data/models.yaml builder); for those the
-#                    strength is passed to the graph instead of adding a second loader, and no trigger is appended
-#   required_for     model ids for which the LoRA is part of the model itself (shown locked for those)
 #   turn_method      turnaround only: the way of turning the views (stages/turnaround.py TURN_METHODS) that loads
 #                    it; absent means every way. The person picks the way, not the add-on ("How to turn the views").
 #   licence, source  recorded in the export manifest

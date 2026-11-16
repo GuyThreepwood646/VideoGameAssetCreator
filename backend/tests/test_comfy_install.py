@@ -545,7 +545,7 @@ def test_status_and_offer_before_anything(box):
     assert st["state"] == "idle" and [s["id"] for s in st["steps"]] == [s for s, _ in ci.STEPS]
     off = ci.offer()
     assert off["ready"] and off["goes_to"] == str(box["root"]) and not off["needs_admin"]
-    assert off["left_out"] == []
+    assert "left_out" not in off
     assert off["download_bytes"] >= sum(len(b) for b in WHEELS.values())
 
 
