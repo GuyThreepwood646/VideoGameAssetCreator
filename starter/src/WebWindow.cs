@@ -131,7 +131,30 @@ namespace Vgac.Starter
         public string Problem;   // why the window could not open, if it could not
         // When set, the X on the window asks this instead of closing (it means "quit").
         public Action CloseRequested;
+        public Action QuitRequested, StatusRequested;   // Ctrl+Q and Ctrl+Shift+S pressed while this window has focus
         public bool Quitting;
+        FormBorderStyle borderBefore; FormWindowState stateBefore; bool full;
+
+        // F11: the page fills the screen and back.
+        public void ToggleFullscreen()
+        {
+            if (!full)
+            {
+                borderBefore = FormBorderStyle; stateBefore = WindowState;
+                if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;
+                FormBorderStyle = FormBorderStyle.None; WindowState = FormWindowState.Maximized; full = true;
+            }
+            else
+            {
+                FormBorderStyle = borderBefore; WindowState = stateBefore; full = false;
+            }
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (QuitRequested != null && Shortcuts.Handle(keyData, "app window", log, QuitRequested, StatusRequested, ToggleFullscreen)) return true;
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
 
         // True when Microsoft's WebView2 runtime is installed. False (never an exception) when it is not.
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -161,7 +184,7 @@ namespace Vgac.Starter
             Shown += async delegate { await Init(); };
             FormClosing += delegate(object s, FormClosingEventArgs e)
             {
-                if (Quitting || CloseRequested == null) return;
+                if (LauncherRules.AppWindowClosing(Quitting, CloseRequested != null) == CloseOutcome.Allow) return;
                 e.Cancel = true;
                 CloseRequested();
             };
@@ -198,6 +221,20 @@ namespace Vgac.Starter
                 core.NavigationStarting += OnNavigating;
                 core.NewWindowRequested += delegate(object s, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; OpenOutside(e.Uri); };
                 // Every permission the page could ask for (camera, location, ...) is refused; the title stays fixed.
+                // Keys pressed while the page itself has focus never reach the form, so ask the web view to tell us.
+                CoreWebView2Controller ctl = null;
+                foreach (FieldInfo f in typeof(WebView2).GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                    if (f.FieldType == typeof(CoreWebView2Controller)) ctl = f.GetValue(view) as CoreWebView2Controller;
+                if (ctl == null) log.Line("page shortcuts (Ctrl+Q, F11) are not available in this WebView2 version; they work while a window outside the page has focus");
+                else ctl.AcceleratorKeyPressed += delegate(object s, CoreWebView2AcceleratorKeyPressedEventArgs e)
+                {
+                    if (e.KeyEventKind != CoreWebView2KeyEventKind.KeyDown && e.KeyEventKind != CoreWebView2KeyEventKind.SystemKeyDown) return;
+                    Keys k = (Keys)e.VirtualKey;
+                    if ((Control.ModifierKeys & Keys.Control) != 0) k |= Keys.Control;
+                    if ((Control.ModifierKeys & Keys.Shift) != 0) k |= Keys.Shift;
+                    if ((Control.ModifierKeys & Keys.Alt) != 0) k |= Keys.Alt;
+                    if (QuitRequested != null && Shortcuts.Handle(k, "app page", log, QuitRequested, StatusRequested, ToggleFullscreen)) e.Handled = true;
+                };
                 core.PermissionRequested += delegate(object s, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
                 core.Navigate(url);
                 log.Line("app window open at " + url);
@@ -243,6 +280,25 @@ namespace Vgac.Starter
                 view.CoreWebView2.PostWebMessageAsJson(ser.Serialize(reply));
             }
             catch (Exception ex) { log.Line("bridge error: " + ex.Message); }
+        }
+    }
+
+    // Keys the launcher answers itself, with a log line for each so a hand test can tell "no key arrived" from "arrived,
+    // nothing happened". Used by both windows.
+    public static class Shortcuts
+    {
+        public static bool Handle(Keys keyData, string where, SetupLog log, Action quit, Action status, Action fullscreen)
+        {
+            Keys key = keyData & Keys.KeyCode;
+            string name = key == Keys.F11 ? "F11" : key.ToString();
+            ShortcutAction a = LauncherRules.Shortcut((keyData & Keys.Control) != 0, (keyData & Keys.Shift) != 0, (keyData & Keys.Alt) != 0, name);
+            if (a == ShortcutAction.None) return false;
+            if (a == ShortcutAction.Fullscreen && fullscreen == null) return false;
+            log.Line("shortcut received in the " + where + ": " + a);
+            if (a == ShortcutAction.Quit) quit();
+            else if (a == ShortcutAction.StatusWindow) status();
+            else fullscreen();
+            return true;
         }
     }
 }

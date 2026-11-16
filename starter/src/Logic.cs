@@ -336,6 +336,65 @@ namespace Vgac.Starter
         }
     }
 
+    // ---- what the windows do with closes, clicks, keys and restarts (decided here, acted on in Program.cs) -----------------
+
+    public enum CloseOutcome { Allow, AskQuit, Hide }
+    public enum RestartStart { Go, Refused, BuildRunning }
+    public enum FrontWindow { App, Status }
+    public enum ShortcutAction { None, Quit, StatusWindow, Fullscreen }
+
+    public static class LauncherRules
+    {
+        // The status window's X. Windows ending the session (or Task Manager) is never argued with. Before the app window
+        // exists (or in the browser fallback) closing it means quit; afterwards it only hides, the tray stays.
+        public static CloseOutcome StatusWindowClosing(bool quitting, bool systemEnding, bool appWindowOpen)
+        {
+            if (quitting || systemEnding) return CloseOutcome.Allow;
+            return appWindowOpen ? CloseOutcome.Hide : CloseOutcome.AskQuit;
+        }
+
+        // The app window's X always means "quit" (asked first), never a plain close, unless quitting is already under way.
+        public static CloseOutcome AppWindowClosing(bool quitting, bool hasQuitHandler)
+        {
+            return quitting || !hasQuitHandler ? CloseOutcome.Allow : CloseOutcome.AskQuit;
+        }
+
+        // Whether a restart may begin right now. Refused while another start or restart runs, after quit began, with no
+        // backend object, or (separately told to the person) while the screens are being built.
+        public static RestartStart Restart(bool engineBusy, bool hasBackend, bool quitting, bool buildRunning)
+        {
+            if (engineBusy || !hasBackend || quitting) return RestartStart.Refused;
+            return buildRunning ? RestartStart.BuildRunning : RestartStart.Go;
+        }
+
+        // Which window a tray click, a double click or a second start brings forward.
+        public static FrontWindow Target(bool appWindowOpen) { return appWindowOpen ? FrontWindow.App : FrontWindow.Status; }
+
+        // Keys the launcher answers itself: Ctrl+Q quit, Ctrl+Shift+S status window, F11 fullscreen (app window).
+        public static ShortcutAction Shortcut(bool ctrl, bool shift, bool alt, string key)
+        {
+            if (alt || key == null) return ShortcutAction.None;
+            if (ctrl && !shift && key == "Q") return ShortcutAction.Quit;
+            if (ctrl && shift && key == "S") return ShortcutAction.StatusWindow;
+            if (!ctrl && !shift && key == "F11") return ShortcutAction.Fullscreen;
+            return ShortcutAction.None;
+        }
+
+        // The log line for the end of a quit.
+        public static string QuitLine(bool hadBackend, int pid, List<int> stopped)
+        {
+            if (!hadBackend) return "quit; no backend of ours was running";
+            if (stopped != null && stopped.Contains(pid)) return "stopped on quit: backend (pid " + pid + ") and " + (stopped.Count - 1) + " process(es) below it";
+            return "on quit the backend (pid " + pid + ") was not stopped";
+        }
+
+        // The log line when a page asks for a notification: tells "not asked for" from "asked for but Windows did not show it".
+        public static string NotifyLine(string title, bool shown, string why)
+        {
+            return "notification requested by the page (title \"" + title + "\"): " + (shown ? "handed to Windows" : "not shown, " + why);
+        }
+    }
+
     // ---- one copy per project folder -------------------------------------------------------------------------------
 
     // A second start signals the first, waits a moment for the first to say it brought its window forward, and leaves.
