@@ -27,9 +27,22 @@ namespace Vgac.Starter
         [StructLayout(LayoutKind.Sequential)]
         struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd,
-            ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+            ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+        [DllImport("kernel32.dll")]
+        static extern void DeleteProcThreadAttributeList(IntPtr list);
+
+        const uint EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+        static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = (IntPtr)0x20002;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CreateFileW(string name, uint access, uint share, ref SECURITY_ATTRIBUTES sa, uint disposition, uint flags, IntPtr template);
@@ -67,17 +80,33 @@ namespace Vgac.Starter
             IntPtr log = CreateFileW(logFile, 0x4 /* FILE_APPEND_DATA */, 3 /* share read+write */, ref sa, 4 /* OPEN_ALWAYS */, 0x80, IntPtr.Zero);
             if (log == (IntPtr)(-1)) throw new IOException("Windows did not allow opening " + logFile + " (error " + Marshal.GetLastWin32Error() + ").");
             IntPtr nul = CreateFileW("NUL", 0x80000000 /* GENERIC_READ */, 3, ref sa, 3 /* OPEN_EXISTING */, 0x80, IntPtr.Zero);
-            IntPtr envBlock = IntPtr.Zero;
+            IntPtr envBlock = IntPtr.Zero, attrList = IntPtr.Zero, handleArray = IntPtr.Zero;
+            bool attrReady = false;
             try
             {
-                var si = new STARTUPINFO();
-                si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
-                si.dwFlags = STARTF_USESTDHANDLES;
-                si.hStdInput = nul; si.hStdOutput = log; si.hStdError = log;
+                var si = new STARTUPINFOEX();
+                si.StartupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+                si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+                si.StartupInfo.hStdInput = nul; si.StartupInfo.hStdOutput = log; si.StartupInfo.hStdError = log;
+                // Only these handles are inherited by the child. Without the list every inheritable handle of this program
+                // (another program's pipe, a file being written) would be passed on and held by the backend for its lifetime.
+                var inheritable = new List<IntPtr>();
+                inheritable.Add(log);
+                if (nul != (IntPtr)(-1)) inheritable.Add(nul);
+                handleArray = Marshal.AllocHGlobal(IntPtr.Size * inheritable.Count);
+                for (int i = 0; i < inheritable.Count; i++) Marshal.WriteIntPtr(handleArray, i * IntPtr.Size, inheritable[i]);
+                IntPtr size = IntPtr.Zero;
+                InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+                attrList = Marshal.AllocHGlobal(size);
+                if (!InitializeProcThreadAttributeList(attrList, 1, 0, ref size)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                attrReady = true;
+                if (!UpdateProcThreadAttribute(attrList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handleArray, (IntPtr)(IntPtr.Size * inheritable.Count), IntPtr.Zero, IntPtr.Zero))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                si.lpAttributeList = attrList;
                 envBlock = Marshal.StringToHGlobalUni(EnvBlock(extraEnv));
                 var cmd = new StringBuilder("\"" + exe + "\" " + args);
                 PROCESS_INFORMATION pi;
-                if (!CreateProcessW(exe, cmd, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, envBlock, cwd, ref si, out pi))
+                if (!CreateProcessW(exe, cmd, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, envBlock, cwd, ref si, out pi))
                     throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 CloseHandle(pi.hThread);
                 var r = new Started();
@@ -86,6 +115,9 @@ namespace Vgac.Starter
             }
             finally
             {
+                if (attrReady) DeleteProcThreadAttributeList(attrList);
+                if (attrList != IntPtr.Zero) Marshal.FreeHGlobal(attrList);
+                if (handleArray != IntPtr.Zero) Marshal.FreeHGlobal(handleArray);
                 if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
                 CloseHandle(log);
                 if (nul != (IntPtr)(-1)) CloseHandle(nul);

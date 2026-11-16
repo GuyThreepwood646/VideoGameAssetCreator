@@ -72,6 +72,9 @@ public static partial class T
         RestartIsAskedWhenSomethingWouldBeLost();
         KillerWorksOnARealTree();
         SmallQuitAndStartRules();
+        WindowDecisionsAreRules();
+        ShortcutsAreLoggedAndRouted();
+        TheBackendInheritsOnlyItsLogHandles();
         ARunningBackendIsNotStartedTwiceAndItsEnginesAreSwept();
         QuitCannotBeFollowedByAStart();
         RealProcessListIsReadable();
@@ -515,6 +518,104 @@ public static partial class T
     {
         var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); l.Start();
         int p = ((System.Net.IPEndPoint)l.LocalEndpoint).Port; l.Stop(); return p;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetHandleInformation(IntPtr h, out uint flags);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct SA { public int n; public IntPtr d; public bool inherit; }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateEventW(ref SA sa, bool manual, bool initial, string name);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr h);
+
+    // Helper mode of this program: says whether the given handle value is open in this process (that is, was inherited).
+    static int ReportHandle(string value)
+    {
+        uint flags;
+        bool open = GetHandleInformation((IntPtr)long.Parse(value), out flags);
+        Console.WriteLine("inherited=" + (open ? "yes" : "no"));
+        Console.Out.Flush();
+        return 0;
+    }
+
+    static void TheBackendInheritsOnlyItsLogHandles()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vgac-inherit-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        temps.Add(dir); Directory.CreateDirectory(dir);
+        string me = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        // a handle of this program that could leak: inheritable, like a pipe or file another part of the program has open
+        var sa = new SA(); sa.n = System.Runtime.InteropServices.Marshal.SizeOf(typeof(SA)); sa.inherit = true;
+        IntPtr leak = CreateEventW(ref sa, true, false, null);
+        try
+        {
+            Check(leak != IntPtr.Zero, "an inheritable handle was made for the check");
+            string args = "--report-handle " + (long)leak;
+            // the control: an ordinary launch that passes every inheritable handle on does leak it (so the check can see a leak)
+            var psi = new ProcessStartInfo(me, args); psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true;
+            string plain;
+            using (var p = Process.Start(psi)) { plain = p.StandardOutput.ReadToEnd(); p.WaitForExit(); }
+            Check(plain.Contains("inherited=yes"), "control: a launch that inherits everything passes the handle on (" + plain.Trim() + ")");
+            // the backend's launch: the log still works and the extra handle is not passed on
+            string log = Path.Combine(dir, "child.log");
+            int pid = NativeProcess.StartLogged(me, args, dir, log, null);
+            for (int i = 0; i < 50 && IsAlive(pid); i++) Thread.Sleep(100);
+            string text = File.ReadAllText(log);
+            Check(text.Contains("inherited=no"), "the launch hands the child only its log handles, not the extra one (" + text.Trim().Replace("\r\n", " | ") + ")");
+        }
+        finally { CloseHandle(leak); }
+    }
+
+    static void WindowDecisionsAreRules()
+    {
+        Eq(LauncherRules.StatusWindowClosing(false, false, false), CloseOutcome.AskQuit, "status window closed before the app opens: quit");
+        Eq(LauncherRules.StatusWindowClosing(false, false, true), CloseOutcome.Hide, "status window closed while the app is open: hides");
+        Eq(LauncherRules.StatusWindowClosing(true, false, true), CloseOutcome.Allow, "closing while quitting is allowed");
+        Eq(LauncherRules.StatusWindowClosing(false, true, true), CloseOutcome.Allow, "Windows ending the session is never argued with");
+        Eq(LauncherRules.AppWindowClosing(false, true), CloseOutcome.AskQuit, "the app window's X means quit");
+        Eq(LauncherRules.AppWindowClosing(true, true), CloseOutcome.Allow, "the app window closes once quitting began");
+        Eq(LauncherRules.AppWindowClosing(false, false), CloseOutcome.Allow, "a window with no quit handler (the check window) just closes");
+        Eq(LauncherRules.Restart(false, true, false, false), RestartStart.Go, "a restart may begin");
+        Eq(LauncherRules.Restart(true, true, false, false), RestartStart.Refused, "not while another start runs");
+        Eq(LauncherRules.Restart(false, false, false, false), RestartStart.Refused, "not without a backend object");
+        Eq(LauncherRules.Restart(false, true, true, false), RestartStart.Refused, "not after quit began");
+        Eq(LauncherRules.Restart(false, true, false, true), RestartStart.BuildRunning, "not while the screens are being built (and the person is told)");
+        Eq(LauncherRules.Target(true), FrontWindow.App, "a click goes to the app window when there is one");
+        Eq(LauncherRules.Target(false), FrontWindow.Status, "else to the status window");
+        Eq(LauncherRules.Shortcut(true, false, false, "Q"), ShortcutAction.Quit, "Ctrl+Q");
+        Eq(LauncherRules.Shortcut(true, true, false, "S"), ShortcutAction.StatusWindow, "Ctrl+Shift+S");
+        Eq(LauncherRules.Shortcut(false, false, false, "F11"), ShortcutAction.Fullscreen, "F11");
+        Eq(LauncherRules.Shortcut(true, false, true, "Q"), ShortcutAction.None, "Ctrl+Alt+Q is not ours");
+        Eq(LauncherRules.Shortcut(false, false, false, "Q"), ShortcutAction.None, "Q alone is not ours");
+        Eq(LauncherRules.Shortcut(true, false, false, "S"), ShortcutAction.None, "Ctrl+S (save in a page) is not ours");
+        Eq(LauncherRules.QuitLine(false, 0, null), "quit; no backend of ours was running", "quit line, nothing owned");
+        Check(LauncherRules.QuitLine(true, 7, new List<int> { 8, 7 }).Contains("1 process(es) below"), "quit line, stopped");
+        Check(LauncherRules.QuitLine(true, 7, new List<int>()).Contains("was not stopped"), "quit line, not stopped");
+        Check(LauncherRules.NotifyLine("Done", true, "").Contains("handed to Windows"), "notification line: handed on");
+        Check(LauncherRules.NotifyLine("Done", false, "the app window is in front").Contains("not shown, the app window is in front"), "notification line: not shown, and why");
+    }
+
+    static void ShortcutsAreLoggedAndRouted()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "vgac-keys-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        temps.Add(root);
+        var log = new SetupLog(root);
+        string got = "";
+        Action quit = delegate { got += "quit;"; }, status = delegate { got += "status;"; }, full = delegate { got += "full;"; };
+        var K = typeof(System.Windows.Forms.Keys);
+        System.Windows.Forms.Keys ctrl = System.Windows.Forms.Keys.Control, shift = System.Windows.Forms.Keys.Shift;
+        Check(Shortcuts.Handle(ctrl | System.Windows.Forms.Keys.Q, "app page", log, quit, status, full), "Ctrl+Q is handled");
+        Check(Shortcuts.Handle(ctrl | shift | System.Windows.Forms.Keys.S, "app window", log, quit, status, full), "Ctrl+Shift+S is handled");
+        Check(Shortcuts.Handle(System.Windows.Forms.Keys.F11, "app window", log, quit, status, full), "F11 is handled where there is fullscreen");
+        Check(!Shortcuts.Handle(System.Windows.Forms.Keys.F11, "status window", log, quit, status, null), "F11 is left alone where there is no fullscreen");
+        Check(!Shortcuts.Handle(ctrl | System.Windows.Forms.Keys.C, "app page", log, quit, status, full), "Ctrl+C is not ours");
+        Eq(got, "quit;status;full;", "each shortcut ran its own action");
+        string text = File.ReadAllText(log.Path);
+        Check(text.Contains("shortcut received in the app page: Quit") && text.Contains("in the app window: StatusWindow") && text.Contains("Fullscreen"), "every shortcut that arrived is in the log");
+        Check(text.Split('\n').Length <= 4, "keys that are not ours are not logged");
     }
 
     static void SmallQuitAndStartRules()

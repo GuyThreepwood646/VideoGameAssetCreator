@@ -501,6 +501,8 @@ namespace Vgac.Starter
             }
             var w = new AppWindow(backend.Url, Path.Combine(lay.DataFolder, "webview2"), log, this);
             w.CloseRequested = delegate { BeginInvokeSafe(RequestQuit); };
+            w.QuitRequested = delegate { BeginInvokeSafe(RequestQuit); };
+            w.StatusRequested = delegate { BeginInvokeSafe(ShowStatusWindow); };
             w.FormClosed += delegate
             {
                 bool problem = w.Problem != null;
@@ -541,8 +543,9 @@ namespace Vgac.Starter
             try
             {
                 if (quitting) return;
-                log.Line("second start: bringing the " + (appWindow != null ? "app" : "status") + " window forward");
-                if (appWindow != null) appWindow.Bring(); else ShowStatusWindow();
+                bool toApp = LauncherRules.Target(appWindow != null) == FrontWindow.App;
+                log.Line("second start: bringing the " + (toApp ? "app" : "status") + " window forward");
+                if (toApp) appWindow.Bring(); else ShowStatusWindow();
             }
             finally { gate.Ack(); }
         }
@@ -599,7 +602,7 @@ namespace Vgac.Starter
             menu.Items.Add("-");
             menu.Items.Add("Quit", null, delegate { RequestQuit(); });
             tray.ContextMenuStrip = menu;
-            tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { if (appWindow != null) appWindow.Bring(); else ShowStatusWindow(); } };
+            tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { if (LauncherRules.Target(appWindow != null) == FrontWindow.App) appWindow.Bring(); else ShowStatusWindow(); } };
             tray.DoubleClick += delegate { OpenApp2(); };
             tray.BalloonTipClicked += delegate { if (appWindow != null) appWindow.Bring(); };
             tray.Visible = true;
@@ -643,12 +646,13 @@ namespace Vgac.Starter
         // progress. Cancel is the default in both. Not while the screens are being built.
         bool RestartBackend()
         {
-            if (engineBusy || backend == null || quitting) return false;
-            if (setupRunning)
+            RestartStart gate0 = LauncherRules.Restart(engineBusy, backend != null, quitting, setupRunning);
+            if (gate0 == RestartStart.BuildRunning)
             {
                 MessageBox.Show("The screens are being built. Try again when that has finished.", "VGAC");
                 return false;
             }
+            if (gate0 != RestartStart.Go) return false;
             engineBusy = true;
             Background(delegate
             {
@@ -723,8 +727,10 @@ namespace Vgac.Starter
 
         public bool Notify(string titleText, string bodyText)
         {
-            if (tray == null || appWindow == null || appWindow.InFront) return false; // the page already shows a toast
+            if (tray == null || appWindow == null) { log.Line(LauncherRules.NotifyLine(titleText, false, "no tray icon or app window")); return false; }
+            if (appWindow.InFront) { log.Line(LauncherRules.NotifyLine(titleText, false, "the app window is in front (the page shows its own message)")); return false; }
             tray.ShowBalloonTip(5000, string.IsNullOrEmpty(titleText) ? "VGAC" : titleText, string.IsNullOrEmpty(bodyText) ? " " : bodyText, ToolTipIcon.None);
+            log.Line(LauncherRules.NotifyLine(titleText, true, ""));
             return true;
         }
 
@@ -739,10 +745,11 @@ namespace Vgac.Starter
 
         void OnFormClosing(object sender, FormClosingEventArgs e)
         {
-            if (quitting || e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing) return;
+            bool ending = e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing;
+            CloseOutcome o = LauncherRules.StatusWindowClosing(quitting, ending, appWindow != null);
+            if (o == CloseOutcome.Allow) return;
             e.Cancel = true;
-            // Before the app is open, closing this window means quit; afterwards it only hides (the tray stays).
-            if (appWindow == null) BeginInvokeSafe(RequestQuit); else Hide();
+            if (o == CloseOutcome.AskQuit) BeginInvokeSafe(RequestQuit); else Hide();
         }
 
         // Asks when something would be lost, then stops what this launcher started and exits.
@@ -789,8 +796,7 @@ namespace Vgac.Starter
                 var th = new Thread(delegate() { try { stopped = backend.Shutdown(log); } catch (Exception e) { log.Line("stopping the backend failed: " + e.Message); } });
                 th.IsBackground = true; th.Start();
                 if (!th.Join(15000)) log.Line("stopping the backend took too long; quitting anyway");
-                if (had && stopped.Contains(pid)) log.Line("stopped on quit: backend (pid " + pid + ") and " + (stopped.Count - 1) + " process(es) below it");
-                else if (had) log.Line("on quit the backend (pid " + pid + ") was not stopped");
+                log.Line(LauncherRules.QuitLine(had, pid, stopped));
             }
             if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
             log.Line("quit");
@@ -800,7 +806,7 @@ namespace Vgac.Starter
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (keyData == (Keys.Control | Keys.Q)) { RequestQuit(); return true; }
+            if (Shortcuts.Handle(keyData, "status window", log, RequestQuit, ShowStatusWindow, null)) return true;
             return base.ProcessCmdKey(ref msg, keyData);
         }
 

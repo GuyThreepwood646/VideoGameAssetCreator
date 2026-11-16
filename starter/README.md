@@ -51,12 +51,17 @@ After the app opens the starter stays in the tray (the V icon). It does what the
   Left click on the tray icon brings the app forward; the tray tooltip says how many services are up.
 - Taskbar badge and notifications for the app's pages (`window.vgacDesktop`: `setWork`, `notify`, `startEngine`, the same
   three calls the Electron window gave). A notification is shown only while the app window is not in front.
+- Keys: Ctrl+Q quits (asked first), Ctrl+Shift+S shows the status window, F11 makes the app window full screen and back;
+  they work also while the page has focus. Each key that arrives, and each notification the page asks for (and whether it
+  was handed to Windows or why not), is a line in `runtime/logs/setup.log`, so a missing popup can be told from one that
+  Windows did not show.
 - One copy per project folder: starting VGAC.exe a second time says nothing and brings the first window forward.
 - Closing the app window means quit. Before the app has opened (or when it opened in the browser) closing the status
   window means quit; afterwards it hides to the tray.
 
 What it starts and stops. It starts one thing: the backend (and it asks the backend, never a program of its own, to bring
-up ComfyUI B). The backend's output goes straight to `runtime/logs/backend.log`.
+up ComfyUI B). The backend's output goes straight to `runtime/logs/backend.log`, and it inherits only its log handles, nothing else this
+program has open.
 
 - Quit asks first when it would stop something: "This stops the app's engine ... ComfyUI Desktop and anything else you
   started yourself is left running", and it says how many jobs are running or waiting and will be lost (Cancel is then the
