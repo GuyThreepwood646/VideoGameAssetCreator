@@ -347,6 +347,8 @@ namespace Vgac.Starter
             try
             {
                 foreach (string n in Recovery.AtStart(lay, Application.ExecutablePath)) log.Line("start: " + n);
+                // a move that switched needed this restart: from here the new place is the one in use
+                try { if (MoveRules.RestartPending(root)) { File.Delete(MoveRules.RestartPath(root)); log.Line("start: restarted after a move of the big files"); } } catch (Exception) { }
                 // the screens or the Python may have been put right by the recovery: look again
                 steps = Planner.Plan(ProbeReader.Read(lay, host), root);
                 // the folder for the big files is looked at again at every start, not only when it was chosen
@@ -365,12 +367,10 @@ namespace Vgac.Starter
                     MessageBox.Show(GitUpdate.MidPullText + "\r\n\r\n(Git left a pull open in the project folder. VGAC carries on, but the files may be a mix of two versions.)", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 var jm = MoveRunner.Load(root, lay.DataFolder);
                 if (jm == null && MoveRunner.StaleFound)
-                    MessageBox.Show("A record of an earlier move of the big files does not fit this install, so VGAC set it aside (local\\move.json.stale) and changed nothing.", "VGAC");
+                    log.Line("start: a record of an earlier move of the big files does not fit this install and is ignored");
                 if (jm != null)
                 {
-                    var j = jm;
-                    if (j.State != "rebuilt" && MessageBox.Show("A move of the big files was interrupted (at '" + j.State + "'). Open Maintenance to continue it or cancel it?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) pendingTab = 2;
-                    else if (j.State == "rebuilt") log.Line("start: a finished move still has an old copy that can be deleted");
+                    if (MessageBox.Show("A move of the big files was interrupted (" + (jm.State == "switching" ? "while switching to the new folder" : "while copying") + "). Open Maintenance to continue it" + (jm.State == "copying" ? " or abandon it" : "") + "?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) pendingTab = 2;
                 }
                 else if (File.Exists(RemovalRunner.JournalPath(root)) && RemovalRunner.InProgress(root).Count > 0)
                 {
@@ -814,7 +814,8 @@ namespace Vgac.Starter
         MaintenanceForm maintenance;
         readonly IComfyInstall comfyInstall;
 
-        public Layout Lay { get { return lay; } }
+        // Built from the settings file at each use: a layout loaded earlier would still name the place before a move.
+        public Layout Lay { get { return Vgac.Starter.Layout.From(root, MachineFile.Load(root)); } }
         public MachineFile Machine { get { return machine; } }
         public IHost Host { get { return host; } }
         public SetupLog Log { get { return log; } }

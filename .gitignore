@@ -56,3 +56,5 @@ bakeoff/BAKEOFF.md
 
 # Starter build output
 starter/obj/
+
+starter/bin/*.dll.old

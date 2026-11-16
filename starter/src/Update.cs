@@ -210,6 +210,58 @@ namespace Vgac.Starter
         }
     }
 
+    // The libraries VGAC.exe has loaded (starter\bin\*.dll) cannot be overwritten while it runs, so a pull that changes one would stop
+    // halfway and leave a mix of two versions. They are stepped aside like VGAC.exe (a loaded file can be renamed), the committed copy is put
+    // back under the name by git, the pull can then replace it, and the old ones are deleted at the next start. If nothing came, the person's
+    // own files go back.
+    public static class BinAside
+    {
+        public const string Suffix = ".old";
+
+        public static List<string> Files(string root)
+        {
+            var res = new List<string>();
+            string bin = Path.Combine(root, "starter", "bin");
+            if (Directory.Exists(bin)) foreach (string f in Directory.GetFiles(bin, "*.dll")) res.Add(f);
+            return res;
+        }
+
+        // null: all stepped aside and their committed copies are back under the names; else a plain sentence and everything is put back.
+        public static string Aside(string root, IGit git, List<string> done)
+        {
+            foreach (string f in Files(root))
+            {
+                try
+                {
+                    if (File.Exists(f + Suffix)) File.Delete(f + Suffix);
+                    File.Move(f, f + Suffix);
+                    done.Add(f);
+                    string rel = f.Substring(Path.GetFullPath(root).TrimEnd('\\').Length + 1).Replace('\\', '/'), co;
+                    if (git.Run("checkout -- \"" + rel + "\"", root, out co) != 0) { Restore(done); return "VGAC could not prepare the update (" + GitUpdate.LastLines(co, 2) + "). Nothing was changed."; }
+                }
+                catch (Exception e) { Restore(done); return "VGAC could not step its libraries aside to let the update in (" + e.Message + "). Nothing was changed."; }
+            }
+            return null;
+        }
+
+        // Nothing came (or the update did not go through before it changed anything): the files go back under their names.
+        public static void Restore(List<string> done)
+        {
+            foreach (string f in done)
+            {
+                try { if (File.Exists(f + Suffix)) { if (File.Exists(f)) File.Delete(f); File.Move(f + Suffix, f); } } catch (Exception) { }
+            }
+            done.Clear();
+        }
+
+        public static void CleanupAtStart(string root)
+        {
+            string bin = Path.Combine(root, "starter", "bin");
+            if (!Directory.Exists(bin)) return;
+            foreach (string f in Directory.GetFiles(bin, "*.dll" + Suffix)) { try { File.Delete(f); } catch (Exception) { } }
+        }
+    }
+
     public interface IGit
     {
         // Runs git with these arguments in `cwd`; returns the exit code (-1: git could not be started) and its output.
@@ -329,10 +381,14 @@ namespace Vgac.Starter
                     return r;
                 }
             }
+            var binsAside = new List<string>();
+            string binWhy = BinAside.Aside(root, git, binsAside);
+            if (binWhy != null) { if (exeInside) ExeAside.RestoreOver(exePath, root); r.Message = binWhy; return r; }
             int code = git.Run("pull --ff-only", root, out output);
             string after; git.Run("rev-parse HEAD", root, out after);
             bool exeBack = exeInside && File.Exists(exePath);
             bool headMoved = (before ?? "").Trim() != (after ?? "").Trim();
+            if (!headMoved) BinAside.Restore(binsAside);     // nothing came: the libraries go back exactly as they were
             if (exeInside && File.Exists(exePath)) ExeAside.ClearRestoreNote(root);   // VGAC.exe is there: the note would only mislead
             if (code == -1)
             {

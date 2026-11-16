@@ -34,7 +34,6 @@ public static partial class T
         APersonsFilesBesideTheFixedNamesSurviveRemoveAndMove();
         ALibraryIsTouchedOnlyWhenDedicated();
         LeftoversAreRecoveredInsideTheClaimedFolderOnly();
-        MoveLinkFailureLeavesAJournalledCopy();
         TheRestoreNoteGoesWhenVgacExeIsThere();
     }
 
@@ -284,7 +283,7 @@ public static partial class T
         var mv = Mover(s, null);
         Check(mv.Start(to, new Progress()) == null, "the move runs");
         Check(!File.Exists(Path.Combine(to, "notes.txt")) && !Directory.Exists(Path.Combine(to, "MyStuff")), "the person's things are not copied");
-        Check(mv.DeleteOld() == null && File.Exists(Path.Combine(s.Data, "notes.txt")) && File.Exists(Path.Combine(s.Data, "MyStuff", "a.txt")) && Directory.Exists(s.Data), "deleting the old copy leaves them and the folder");
+        Check(File.Exists(Path.Combine(s.Data, "notes.txt")) && File.Exists(Path.Combine(s.Data, "MyStuff", "a.txt")) && Directory.Exists(s.Data), "the old folder, with the person's things, is left exactly as it was");
         // Remove in an untouched scene
         var s2 = Installed();
         Put(Path.Combine(s2.Data, "notes.txt"), "the person's notes"); Put(Path.Combine(s2.Data, "MyStuff", "a.txt"), "the person's stuff");
@@ -339,31 +338,6 @@ public static partial class T
         Recovery.AtStart(l2, null);
         Check(File.Exists(Path.Combine(other, "tools", "node.old", "x.txt")) && File.Exists(Path.Combine(other, "tools", "uv.new", "y.txt")), "in an unclaimed folder they are left alone");
         Check(Repair.Leftovers(l2, false).Count == 0, "and not listed as leftovers");
-    }
-
-    static void MoveLinkFailureLeavesAJournalledCopy()
-    {
-        var s = Movable(); string to = Path.Combine(Tmp("target"), "newbig");
-        string py = Path.Combine(s.Data, "python");
-        Put(Path.Combine(py, "cpython-3.13.1-windows", "python.exe"), "py");
-        Junction(Path.Combine(py, "cpython-3.13-windows"), Path.Combine(py, "cpython-3.13.1-windows"));
-        SafeFs.Hook = delegate(string what, string p) { if (what == "move" && p == "before-links:python") throw new Boom("links failed"); };
-        try { Mover(s, null).Start(to, new Progress()); } catch (Boom) { }
-        SafeFs.Hook = null;
-        var j = MoveRunner.Load(s.Root, s.Data);
-        Check(j != null && j.Created.Contains("python") && !j.Done.Contains("python"), "the copy is in the journal as created, not as done");
-        Check(Mover(s, null).Continue(new Progress()) == null, "Continue throws that copy away and does it again");
-        Check(SafeFs.IsLink(Path.Combine(to, "python", "cpython-3.13-windows")), "with its link");
-        // and Cancel after the failure removes it (the new place is VGAC's by its marker)
-        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig");
-        Put(Path.Combine(s2.Data, "python", "cpython-3.13.1-windows", "python.exe"), "py");
-        Junction(Path.Combine(s2.Data, "python", "cpython-3.13-windows"), Path.Combine(s2.Data, "python", "cpython-3.13.1-windows"));
-        SafeFs.Hook = delegate(string what, string p) { if (what == "move" && p == "before-links:python") throw new Boom("links failed"); };
-        try { Mover(s2, null).Start(to2, new Progress()); } catch (Boom) { }
-        SafeFs.Hook = null;
-        Mover(s2, null).Cancel();
-        Check(!Directory.Exists(Path.Combine(to2, "python")) && !Directory.Exists(to2), "Cancel removes the unfinished copy and the new place");
-        Check(Directory.Exists(Path.Combine(s2.Data, "python")), "the old place is untouched");
     }
 
     // git stand-in whose checkout writes the file, as the real one does, and whose pull answers as told

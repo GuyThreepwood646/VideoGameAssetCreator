@@ -34,9 +34,7 @@ public static partial class T
         LibraryIsOnlyWhatTheAppMade();
         HalfRemovedFolderIsNotWaivedForAReplacement();
         UpdateWordingAndOwnBuildAfterUpToDate();
-        MoveJournalNeedsBothPlacesToFit();
         DataFolderIsJudgedByRealPath();
-        MoveChecksCanBeStopped();
         MoveCopiesLinksInsideAFolderAndRefusesOutsideOnes();
     }
 
@@ -199,35 +197,6 @@ Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemov
 
     // ---- S5, S6, S7, M3 ------------------------------------------------------------------------------------------------------
 
-    static void MoveJournalNeedsBothPlacesToFit()
-    {
-        var s = Movable(); string to = Path.Combine(Tmp("target"), "newbig");
-        Func<string, string> Q = delegate(string x) { return x.Replace("\\", "\\\\"); };
-        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        // To names a place that is not acceptable (the person's Documents), From is the one in use
-        WriteJournal(s.Root, "{\"from\":\"" + Q(s.Data) + "\",\"to\":\"" + Q(docs) + "\",\"state\":\"copying\",\"done\":[],\"created\":[\"python\"]}");
-        Check(MoveRunner.Load(s.Root, s.Data) == null && MoveRunner.StaleFound, "a journal whose other place is not an acceptable folder is not acted on, although one place fits");
-        // a drive root
-        WriteJournal(s.Root, "{\"from\":\"" + Q(s.Data) + "\",\"to\":\"" + Q(Path.GetPathRoot(Path.GetTempPath())) + "\",\"state\":\"copying\",\"done\":[],\"created\":[\"python\"]}");
-        Check(MoveRunner.Load(s.Root, s.Data) == null, "nor one that points at a drive root");
-        // an acceptable To, with an unproven 'python' folder in it (the person's): Cancel leaves it
-        string other = Path.Combine(Tmp("someones"), "stuff");
-        Put(Path.Combine(other, "python", "python.exe"), "the person's own python");
-        WriteJournal(s.Root, "{\"from\":\"" + Q(s.Data) + "\",\"to\":\"" + Q(other) + "\",\"state\":\"copied\",\"done\":[\"python\"],\"created\":[\"python\"]}");
-        Check(MoveRunner.Load(s.Root, s.Data) != null, "(a journal with a fitting, acceptable place loads)");
-        Mover(s, null).Cancel();
-        Check(File.Exists(Path.Combine(other, "python", "python.exe")), "Cancel deletes only folders VGAC can prove it made: that python folder has no VGAC stamp, so it stays");
-        // a folder VGAC stamped for its own place is removed by Cancel
-        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig");
-        int c = 0;
-        SafeFs.Hook = delegate(string what, string p) { if (what == "move" && p == "verify:python") throw new Boom("cut"); };
-        try { Mover(s2, null).Start(to2, new Progress()); } catch (Boom) { }
-        SafeFs.Hook = null;
-        Check(DataFolders.ReadMarkerId(to2) == DataFolders.SettingsId(MachineFile.Load(s2.Root)), "the new place was claimed under this install's id when the move began");
-        Mover(s2, null).Cancel();
-        Check(!Directory.Exists(Path.Combine(to2, "python")), "and Cancel removes it (the new place is VGAC's by its marker)");
-    }
-
     static void DataFolderIsJudgedByRealPath()
     {
         string root = NewProject();
@@ -262,26 +231,6 @@ Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemov
     {
         var sb = new StringBuilder(260);
         return GetShortPathNameW(p, sb, 260) > 0 ? sb.ToString() : null;
-    }
-
-    static void MoveChecksCanBeStopped()
-    {
-        string d = Tmp("cmp"); Put(Path.Combine(d, "a", "x.bin"), "1"); Put(Path.Combine(d, "b", "x.bin"), "1");
-        bool threw = false;
-        try { SafeFs.Compare(Path.Combine(d, "a"), Path.Combine(d, "b"), null, true, false, delegate { return true; }, null); } catch (OperationCanceledException) { threw = true; }
-        Check(threw, "a comparison asked to stop stops");
-        var s = Movable(); string to = Path.Combine(Tmp("target"), "newbig");
-        bool cancel = false; var seen = new List<string>();
-        var prog = new Progress(); prog.Cancelled = delegate { return cancel; }; prog.Say = delegate(string t) { seen.Add(t); if (t.Contains("python")) cancel = true; };
-        string msg = Mover(s, null).Start(to, prog);
-        Check(msg != null && msg.Contains("stopped") && MachineFile.Load(s.Root).GetString("starter", "dataFolder") == s.Data, "a stop during the move changes nothing that is in use: " + msg);
-        Check(seen.Any(t => t.StartsWith("Checking") || t.StartsWith("Copying")), "progress was reported (" + seen.Count + " messages)");
-        Check(Mover(s, null).Cancel() == null && !Directory.Exists(to), "and the move can then be cancelled");
-        // deleting the old copy can be stopped, and nothing is deleted
-        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig");
-        var mv = Mover(s2, null); mv.Start(to2, new Progress());
-        string stopped = mv.DeleteOld(delegate { return true; }, null);
-        Check(stopped != null && stopped.Contains("stopped") && Directory.Exists(Path.Combine(s2.Data, "python")), "stopping while the old copy is being checked deletes nothing: " + stopped);
     }
 
     static void MoveCopiesLinksInsideAFolderAndRefusesOutsideOnes()

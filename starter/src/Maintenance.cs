@@ -17,8 +17,8 @@ namespace Vgac.Starter
     public static class MaintenanceDefaults
     {
         public const MessageBoxDefaultButton Adopt = MessageBoxDefaultButton.Button2;
-        public const MessageBoxDefaultButton CancelMove = MessageBoxDefaultButton.Button2;
-        public const MessageBoxDefaultButton DeleteOldCopy = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton AbandonMove = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton RestartAfterMove = MessageBoxDefaultButton.Button2;
         public const MessageBoxDefaultButton PermanentDelete = MessageBoxDefaultButton.Button2;
         public const MessageBoxDefaultButton RunSteps = MessageBoxDefaultButton.Button2;
     }
@@ -266,29 +266,30 @@ namespace Vgac.Starter
         }
 
         // ---- move ------------------------------------------------------------------------------------------------------------
+        // Copy, check, switch, restart. Once the settings are switched the window offers nothing but Restart: everything here reads the
+        // settings file afresh (host.Lay is built from it at each use), and nothing is built from a layout loaded before the move.
 
         TextBox moveTo;
         Label moveInfo;
+        Button moveGo, moveCont, moveAbandon, moveRestart, moveChoose;
 
         TabPage MoveTab()
         {
             var tab = new TabPage("Move the big files");
             moveInfo = Info("", 12, 10, 700, 110);
             moveTo = new TextBox(); moveTo.SetBounds(12, 130, 560, 24);
-            var choose = Btn("Choose...", 582, 127, 100);
-            var go = Btn("Copy, check, then switch", 12, 170, 220);
-            var cont = Btn("Continue an interrupted move", 242, 170, 220);
-            var cancel = Btn("Cancel it", 472, 170, 100);
-            var del = Btn("Delete the old copy", 12, 210, 220);
-            var keep = Btn("Keep both copies", 242, 210, 160);
-            var details = Info("", 12, 255, 700, 220);
-            choose.Click += delegate { using (var d = new FolderBrowserDialog()) { d.Description = "Choose an empty folder for the big files."; if (d.ShowDialog(this) == DialogResult.OK) moveTo.Text = d.SelectedPath; } };
-            go.Click += delegate { DoMoveStart(details); };
-            cont.Click += delegate { DoMoveContinue(details); };
-            cancel.Click += delegate { DoMoveCancel(details); };
-            del.Click += delegate { DoMoveDeleteOld(details); };
-            keep.Click += delegate { string r = Mover().Forget(); details.Text = r ?? "Done. Both copies are kept."; RefreshMove(details); };
-            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, choose, go, cont, cancel, del, keep, details });
+            moveChoose = Btn("Choose...", 582, 127, 100);
+            moveGo = Btn("Copy, check, then switch", 12, 170, 220);
+            moveCont = Btn("Continue an interrupted move", 242, 170, 220);
+            moveAbandon = Btn("Abandon it", 472, 170, 100);
+            moveRestart = Btn("Restart VGAC now", 12, 170, 220); moveRestart.Visible = false;
+            var details = Info("", 12, 215, 700, 260);
+            moveChoose.Click += delegate { using (var d = new FolderBrowserDialog()) { d.Description = "Choose an empty folder for the big files."; if (d.ShowDialog(this) == DialogResult.OK) moveTo.Text = d.SelectedPath; } };
+            moveGo.Click += delegate { DoMoveStart(details); };
+            moveCont.Click += delegate { DoMoveContinue(details); };
+            moveAbandon.Click += delegate { DoMoveAbandon(details); };
+            moveRestart.Click += delegate { host.RestartVgac(); };
+            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, moveChoose, moveGo, moveCont, moveAbandon, moveRestart, details });
             tab.Enter += delegate { RefreshMove(details); };
             return tab;
         }
@@ -298,16 +299,39 @@ namespace Vgac.Starter
             return new MoveRunner(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, host.Procs, host.Log);
         }
 
+        // After a switch the whole window is locked except the Restart button. Read from the files each time.
+        void ApplyRestartLock()
+        {
+            bool pending = MoveRules.RestartPending(host.Lay.ProjectRoot);
+            for (int i = 0; i < tabs.TabPages.Count; i++) tabs.TabPages[i].Enabled = !pending || tabs.TabPages[i].Text == "Move the big files";
+            if (pending) tabs.SelectedIndex = 2;
+            moveGo.Visible = moveCont.Visible = moveAbandon.Visible = moveTo.Visible = moveChoose.Visible = !pending;
+            moveRestart.Visible = pending;
+        }
+
         void RefreshMove(Label details)
         {
-            var j = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
+            string root = host.Lay.ProjectRoot;
+            ApplyRestartLock();
+            if (MoveRules.RestartPending(root))
+            {
+                string to = "the new folder", old = null;
+                try { var d = Json.ParseObject(File.ReadAllText(MoveRules.RestartPath(root), Encoding.UTF8)); to = Convert.ToString(d["moved_to"]); old = Convert.ToString(d["old_folder"]); } catch (Exception) { }
+                moveInfo.Text = "The big files are now in " + to + ". VGAC has to be restarted to use them: close this window and press the button below.";
+                details.Text = old == null ? "" : MoveView.OldFolderSentence(old);
+                return;
+            }
+            var j = MoveRunner.Load(root, host.Lay.DataFolder);
             long need = Mover().NeedBytes();
             if (j == null)
-                moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "   (" + RemovalSummary.Size(need) + ")\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it. Until then the old place is untouched and in use.";
+                moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "   (" + RemovalSummary.Size(need) + ")\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it, and it has to be restarted. The old folder is left as it is. Until the switch the old place is untouched and in use.";
+            else if (j.State == "switching")
+                moveInfo.Text = "A move to " + j.To + " has copied and checked everything and is part way through switching. Press Continue to finish it.";
             else
-                moveInfo.Text = "A move to " + j.To + " is at the step '" + j.State + "'. Continue it, or cancel it (cancelling removes only what the move copied).";
-            details.Text = j != null && j.State == "rebuilt" ? "The move is finished. The old copy (" + string.Join(", ", MoveRunner.OldCopy(j).ToArray()) + ") can be deleted to free room."
-                : (j != null && j.State == "deleting-old" ? "The old copy is being deleted (" + string.Join(", ", MoveRunner.OldCopy(j).ToArray()) + " is left). The move cannot be undone any more: press 'Delete the old copy' to finish." : "");
+                moveInfo.Text = "A move to " + j.To + " was interrupted while copying. Continue it, or abandon it (abandoning forgets the move only; what was copied stays in " + j.To + ").";
+            details.Text = MoveRunner.StaleFound ? "An old record of a move did not fit this install and was ignored." : "";
+            moveAbandon.Enabled = j != null && j.State == "copying";
+            moveCont.Enabled = j != null;
         }
 
         void DoMoveStart(Label details)
@@ -317,7 +341,7 @@ namespace Vgac.Starter
             if (!host.Quiesce(this, "move")) return;
             string result = null;
             Run(delegate { result = Mover().Start(to, ProgressToStatus()); Say(result ?? "Copied, checked and switched."); },
-                delegate { details.Text = result ?? "The move is done. Restart VGAC so the app's Python is made again in the new place."; RefreshMove(details); if (result == null) FinishMove(); else host.Resume(); });
+                delegate { MoveDone(details, result); });
         }
 
         void DoMoveContinue(Label details)
@@ -326,38 +350,26 @@ namespace Vgac.Starter
             if (!host.Quiesce(this, "move")) return;
             string result = null;
             Run(delegate { result = Mover().Continue(ProgressToStatus()); Say(result ?? "Copied, checked and switched."); },
-                delegate { details.Text = result ?? "The move is done."; RefreshMove(details); if (result == null) FinishMove(); else host.Resume(); });
+                delegate { MoveDone(details, result); });
         }
 
-        void FinishMove()
+        void MoveDone(Label details, string result)
         {
-            if (MessageBox.Show(this, "The big files are now in the new folder. VGAC has to restart to make the app's Python again in the new place (about a minute).\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) host.RestartVgac();
+            RefreshMove(details);
+            if (result == null)
+            {
+                // switched: the app is NOT started again (it would run on the old place); only a restart uses the new one
+                if (MessageBox.Show(this, "The big files are now in the new folder. VGAC has to restart to use them.\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RestartAfterMove) == DialogResult.Yes) host.RestartVgac();
+            }
+            else { details.Text = result; host.Resume(); }
         }
 
-        void DoMoveCancel(Label details)
+        void DoMoveAbandon(Label details)
         {
-            var jc = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
-            if (jc == null) { details.Text = "There is no move to cancel."; return; }
-            if (jc.State == "deleting-old") { details.Text = Mover().Cancel(); return; }       // refused, with the reason
-            bool inUse = jc.State == "switching" || jc.State == "switched" || jc.State == "rebuilt";
-            string q = inUse ? "Undo the move? VGAC points at the old place again. The copy in the new folder is NOT deleted (the app may have used it); you delete it yourself."
-                : "Cancel the move? What it copied into the new folder is removed. The old place is not changed.";
-            if (MessageBox.Show(this, q, "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.CancelMove) != DialogResult.Yes) return;
             if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
-            if (!host.Quiesce(this, "move")) return;
-            string said = null;
-            Run(delegate { said = Mover().Cancel(); Say(said ?? "The move was cancelled."); }, delegate { details.Text = said ?? "The move was cancelled."; RefreshMove(details); host.Resume(); });
-        }
-
-        void DoMoveDeleteOld(Label details)
-        {
-            var j = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
-            if (j == null || (j.State != "rebuilt" && j.State != "deleting-old")) { details.Text = "There is no finished move whose old copy can be deleted."; return; }
-            long bytes = 0; foreach (string p in MoveRunner.OldCopy(j)) bytes += SafeFs.Size(p, null);
-            string list = string.Join("\r\n   ", MoveRunner.OldCopy(j).ToArray());
-            if (MessageBox.Show(this, "Delete the old copy?\r\n\r\n   " + list + "\r\n\r\n" + RemovalSummary.Size(bytes) + " will be freed. It is deleted for good and cannot be restored. Anything else you keep in the old folder stays.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.DeleteOldCopy) != DialogResult.Yes) return;
-            string result = null;
-            Run(delegate { result = Mover().DeleteOld(delegate { return stopRequested; }, delegate(string f) { Say("Checking " + System.IO.Path.GetFileName(f) + "..."); }); Say(result ?? "The old copy was deleted."); }, delegate { details.Text = result ?? "The old copy was deleted."; RefreshMove(details); });
+            if (MessageBox.Show(this, "Abandon the move? Nothing is deleted: what was copied stays in the new folder for you to delete by hand, and the old place is not changed.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.AbandonMove) != DialogResult.Yes) return;
+            details.Text = Mover().Abandon();
+            RefreshMove(details);
         }
 
         // ---- remove -----------------------------------------------------------------------------------------------------------

@@ -1,7 +1,15 @@
-// Moving the big files (the data folder) to another folder or drive. The old place stays whole and in use until the copy
-// is verified byte for byte and one small file is switched; every step is written to local/move.json so an interruption at any
-// point can be continued or cancelled. Only folders VGAC can prove it made are moved, nothing in move.json is trusted without
-// checking, and cancelling never deletes a copy that the app may already have been using. C# 5 (see Core.cs).
+// Moving the big files (the data folder) to another folder or drive. Copy, check, switch, restart: nothing else.
+//
+//   1. The target is checked (no link anywhere in its path, empty, room, not inside the old place or the project).
+//   2. The folders VGAC made are copied and every file is compared (size and SHA-256). An interrupted copy is continued where it
+//      stopped (a file already copied is not copied again); it can also be abandoned, which only forgets the journal: what was copied so
+//      far stays in the new folder (its path is said) and is the person's to delete. Move deletes nothing, ever.
+//   3. The settings, the ledger and VGAC's own ComfyUI (through its installer) are switched to the new place, and VGAC must be restarted:
+//      until it is, the window offers nothing else.
+//   4. The old folder is left as it is. It is no longer used and the person may delete it by hand. To go back, move again.
+//
+// Two journal states only (local/move.json): "copying" and "switching". There is no undo, no cancel after the switch, no deleting of the
+// old copy. C# 5 (see Core.cs).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,11 +20,9 @@ namespace Vgac.Starter
     public class MoveJournal
     {
         public string From, To;
-        public string State = "copying";            // copying | copied | verified | cancelling | switching | switched | rebuilt | undoing
-        public string Prev = "";                    // while undoing: the state to go back to if the undo is refused
-        public string Id = "";                      // this move (not this install): written into the new place's marker, checked before Cancel removes anything
-        public List<string> Done = new List<string>();      // names completely copied (renamed in from their .part)
-        public List<string> Created = new List<string>();   // everything this move made in the new folder (so Cancel removes only that)
+        public string State = "copying";                    // copying | switching
+        public string Id = "";                              // this move: written into the new place's marker, so a copy of another move is never continued
+        public List<string> Done = new List<string>();      // names completely copied and linked
     }
 
     public class MoveItem
@@ -36,10 +42,13 @@ namespace Vgac.Starter
 
         public static bool IsKnownName(string name)
         {
-            string n = name.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ? name.Substring(0, name.Length - 5) : name;
-            foreach (MoveItem i in Items) if (string.Equals(i.Name, n, StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (MoveItem i in Items) if (string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
         }
+
+        // Written when the settings have been switched: from then until VGAC is started again, the window offers nothing but Restart.
+        public static string RestartPath(string root) { return Path.Combine(root, "local", "restart-needed.json"); }
+        public static bool RestartPending(string root) { return File.Exists(RestartPath(root)); }
 
         // A fixed-name folder that is there (the app's own ComfyUI also needs the backend's install marker, which the backend writes).
         static bool PresentAt(string folder, MoveItem it)
@@ -59,14 +68,17 @@ namespace Vgac.Starter
 
         public static string SkipFor(string name) { return name == "comfyui" ? ".venv" : null; }
 
-        public static MoveItem ItemFor(string name)
+        // True when a link is in the path of `p`, or of the nearest folder above it that exists (a target that is not made yet can still lie
+        // under a junction).
+        public static bool LinkInPath(string p)
         {
-            string n = name.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ? name.Substring(0, name.Length - 5) : name;
-            foreach (MoveItem i in Items) if (string.Equals(i.Name, n, StringComparison.OrdinalIgnoreCase)) return i;
-            return null;
+            string e = p;
+            while (e != null && !Directory.Exists(e)) e = Path.GetDirectoryName(e);
+            return e != null && (SafeFs.IsLink(e) || !SafeFs.PathHasNoLink(e));
         }
 
-        // Plain problems with a chosen folder (empty list: fine).
+        // Plain problems with a chosen folder (empty list: fine). `resuming`: the journal of the move that is being continued; only its own
+        // unfinished copy may already be in the folder.
         public static List<string> Problems(string from, string to, string projectRoot, long freeBytes, long needBytes, MoveJournal resuming, IComfyInstall comfy)
         {
             var bad = new List<string>();
@@ -78,7 +90,7 @@ namespace Vgac.Starter
             else if (SafeFs.Inside(from, t)) bad.Add("The new folder cannot contain the old one.");
             if (SafeFs.Inside(projectRoot, t)) bad.Add("The new folder cannot contain the project folder.");
             else if (SafeFs.Inside(t, projectRoot) && !SafeFs.Inside(t, Path.Combine(projectRoot, "local"))) bad.Add("Inside the project folder, only its local folder can hold the big files.");
-            if (Directory.Exists(t) && (SafeFs.IsLink(t) || !SafeFs.PathHasNoLink(t))) bad.Add("That folder is, or is reached through, a link (a junction or a mapped folder). Choose a real folder.");
+            if (LinkInPath(t)) bad.Add("That folder is, or lies under, a link (a junction or a mapped folder). Choose a real folder.");
             if (t.Length > 110) bad.Add("That folder's name is too long: ComfyUI's files have long names and Windows would stop at its limit. Choose a shorter path.");
             string shared = Proof.DataFolderProblem(t, null);
             if (shared != null && bad.Count == 0) bad.Add(shared);
@@ -90,11 +102,13 @@ namespace Vgac.Starter
                     foreach (string e in Directory.GetFileSystemEntries(t))
                     {
                         string n = Path.GetFileName(e);
-                        if (string.Equals(n, DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase) || string.Equals(n, DataFolders.MarkerName + ".tmp", StringComparison.OrdinalIgnoreCase)) continue;   // the new place's own marker (or its half-written replacement)
+                        if (string.Equals(n, DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase) || string.Equals(n, DataFolders.MarkerName + ".tmp", StringComparison.OrdinalIgnoreCase)) continue;
                         bool known = false;
-                        foreach (string c in resuming.Created) if (c.Split('\\')[0].Replace(".part", "") == n.Replace(".part", "")) known = true;
+                        foreach (MoveItem it in Items) if (string.Equals(it.Name.Split('\\')[0], n, StringComparison.OrdinalIgnoreCase)) known = true;
                         if (!known) { bad.Add("That folder has files in it that VGAC did not put there (" + n + ")."); break; }
                     }
+                    string mid = DataFolders.ReadMarkerMove(t);
+                    if (mid != null && mid != resuming.Id) bad.Add("That folder holds the unfinished copy of another move, not this one.");
                 }
                 else bad.Add("That folder already has files in it. Choose an empty or new folder.");
             }
@@ -105,10 +119,10 @@ namespace Vgac.Starter
                 string cwhy = comfy.State(from).Problem;
                 if (cwhy != null) bad.Add("VGAC's own ComfyUI is in this folder, and its installer did not confirm that it can be moved: " + cwhy + " Nothing was changed.");
             }
-            // links are never copied; a folder that holds one is not moved at all rather than losing what it points to
+            // a folder that holds a link leading outside it is not moved at all rather than losing what it points to
             foreach (string name in NamesIn(from))
             {
-                // links between places inside the same folder (uv's Python keeps some) are copied as links; any other is refused
+                // links between places inside the same folder (uv's Python folder keeps some) are copied as links; any other is refused
                 string link = SafeFs.FirstExternalLink(Path.Combine(from, name), SkipFor(name));
                 if (link != null) { bad.Add("There is a link inside " + name + " (" + link + ") that leads outside it. VGAC does not copy such links, so it will not move this folder. Replace the link with the real files first."); break; }
             }
@@ -130,21 +144,34 @@ namespace Vgac.Starter
         }
     }
 
+    // What the window shows about a move, read fresh from the files each time (never from a layout loaded earlier).
+    public static class MoveView
+    {
+        public static string OldFolderSentence(string oldFolder)
+        {
+            return "The old folder (" + oldFolder + ") is no longer used by VGAC. You can delete it by hand once you are happy with the new place.";
+        }
+    }
+
     public class MoveRunner
     {
-        readonly Layout l; readonly MachineFile machine; readonly Ledger ledger; readonly IComfyInstall comfy; readonly IProcessSource procs; readonly SetupLog log;
+        readonly Layout l; readonly IComfyInstall comfy; readonly IProcessSource procs; readonly SetupLog log;
         public Func<string, long> Free = delegate(string f) { try { return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(f))).AvailableFreeSpace; } catch (Exception) { return -1; } };
         public Func<int> OwnPid = delegate { return System.Diagnostics.Process.GetCurrentProcess().Id; };
 
+        // The layout given only says where the project is: which data folder is in use is read from the settings file at each use.
         public MoveRunner(Layout layout, MachineFile machine, Ledger ledger, IComfyInstall comfy, IProcessSource procs, SetupLog log)
         {
-            l = layout; this.machine = machine; this.ledger = ledger; this.comfy = comfy; this.procs = procs; this.log = log;
+            l = layout; this.comfy = comfy; this.procs = procs; this.log = log;
         }
+
+        string Root { get { return l.ProjectRoot; } }
+        string DataNow() { return Layout.From(Root, MachineFile.Load(Root)).DataFolder; }
 
         public static string JournalPath(string root) { return Path.Combine(root, "local", "move.json"); }
 
-        // The journal, or null. A journal that is not a plain list of this program's own fixed names, or whose places do not
-        // fit the current settings, is never acted on: it is set aside as move.json.stale and StaleFound says so.
+        // The journal, or null. A journal that is not a plain list of this program's own fixed names, or whose places do not fit the
+        // current settings, is ignored (StaleFound says so); nothing is renamed or written by reading it.
         public static bool StaleFound;
 
         public static MoveJournal Load(string root) { return Load(root, null); }
@@ -160,44 +187,26 @@ namespace Vgac.Starter
                 var d = Json.ParseObject(File.ReadAllText(p, Encoding.UTF8));
                 j = new MoveJournal();
                 j.From = Convert.ToString(d["from"]); j.To = Convert.ToString(d["to"]); j.State = Convert.ToString(d["state"]);
-                object prev; if (d.TryGetValue("prev", out prev) && prev != null) j.Prev = Convert.ToString(prev);
                 object mid; if (d.TryGetValue("id", out mid) && mid != null) j.Id = Convert.ToString(mid);
                 foreach (object o in (System.Collections.IEnumerable)d["done"]) j.Done.Add(Convert.ToString(o));
-                foreach (object o in (System.Collections.IEnumerable)d["created"]) j.Created.Add(Convert.ToString(o));
             }
             catch (Exception) { return null; }
-            string why = Validate(j, currentData);
-            if (why != null)
-            {
-                StaleFound = true;
-                try { string stale = p + ".stale"; if (File.Exists(stale)) File.Delete(stale); File.Move(p, stale); } catch (Exception) { }
-                SafeFs.Point("move", "stale-set-aside");
-                return null;
-            }
+            if (Validate(j, currentData) != null) { StaleFound = true; return null; }
             return j;
         }
 
-        static readonly string[] States = { "copying", "copied", "verified", "switching", "switched", "rebuilt", "undoing", "cancelling", "deleting-old" };
-        static readonly string[] GoBackTo = { "", "switched", "rebuilt" };
-
         static string Validate(MoveJournal j, string currentData)
         {
-            if (Array.IndexOf(States, j.State) < 0) return "unknown state";
-            if (Array.IndexOf(GoBackTo, j.Prev ?? "") < 0) return "unknown state to go back to";
+            if (j.State != "copying" && j.State != "switching") return "unknown state";
             if (!Path.IsPathRooted(j.From ?? "") || !Path.IsPathRooted(j.To ?? "")) return "places are not absolute";
-            foreach (string n in j.Done) if (!MoveRules.IsKnownName(n) || n.EndsWith(".part")) return "unknown name";
-            foreach (string n in j.Created) if (!MoveRules.IsKnownName(n)) return "unknown name";
+            foreach (string n in j.Done) if (!MoveRules.IsKnownName(n)) return "unknown name";
             if (currentData != null)
             {
-                // The settings name one of the two places, and the OTHER one must be an acceptable folder as well (not a drive, a
-                // profile or a system place, and not inside or around the one in use), so a journal cannot point at anything.
                 string cur = SafeFs.Norm(currentData);
-                string other = cur == SafeFs.Norm(j.From) ? j.To : (cur == SafeFs.Norm(j.To) ? j.From : null);
-                if (other == null) return "places do not fit the settings";
-                // Before the switch the old place is the one in use; after it, the new one. A record that says otherwise is not acted on.
-                bool usingFrom = cur == SafeFs.Norm(j.From);
-                if ((j.State == "copying" || j.State == "copied" || j.State == "verified" || j.State == "cancelling") && !usingFrom) return "the settings already use the new place";
-                if ((j.State == "switched" || j.State == "rebuilt" || j.State == "deleting-old") && usingFrom) return "the settings still use the old place";
+                bool usingFrom = cur == SafeFs.Norm(j.From), usingTo = cur == SafeFs.Norm(j.To);
+                if (!usingFrom && !usingTo) return "places do not fit the settings";
+                if (j.State == "copying" && !usingFrom) return "the settings already use the new place";
+                string other = usingFrom ? j.To : j.From;
                 if (Proof.DataFolderProblem(other, null) != null) return "the other place is not an acceptable folder";
                 if (SafeFs.Inside(other, currentData) || SafeFs.Inside(currentData, other)) return "the two places overlap";
             }
@@ -206,94 +215,100 @@ namespace Vgac.Starter
 
         void Save(MoveJournal j)
         {
-            string p = JournalPath(l.ProjectRoot);
-            Directory.CreateDirectory(Path.GetDirectoryName(p));
             var d = new Dictionary<string, object>();
-            d["from"] = j.From; d["to"] = j.To; d["state"] = j.State; d["done"] = j.Done; d["created"] = j.Created; d["prev"] = j.Prev ?? ""; d["id"] = j.Id ?? "";
-            SafeFs.WriteAtomic(p, Json.Write(d), null);
+            d["from"] = j.From; d["to"] = j.To; d["state"] = j.State; d["done"] = j.Done; d["id"] = j.Id ?? "";
+            SafeFs.WriteAtomic(JournalPath(Root), Json.Write(d), null);
             SafeFs.Point("move", "journal:" + j.State);
         }
 
-        MoveJournal Current() { return Load(l.ProjectRoot, CurrentDataFolder()); }
-
         void DeleteJournal()
         {
-            try { File.Delete(JournalPath(l.ProjectRoot)); } catch (Exception) { }
+            try { File.Delete(JournalPath(Root)); } catch (Exception) { }
             SafeFs.Point("move", "journal-deleted");
         }
 
-        // The settings file and the ledger are read again for every change: the backend's commands rewrite them too, and a copy held
-        // from before would put old values back. (MachineFile and Ledger also lay only their own changes over the file as it is.)
+        MoveJournal Current() { return Load(Root, DataNow()); }
+
+        // The settings file and the ledger are read again for every change: the backend's commands rewrite them too.
         void SetDataFolder(string place)
         {
-            var m = MachineFile.Load(l.ProjectRoot);
-            m.Set("starter", "dataFolder", Layout.Stored(l.ProjectRoot, place));
+            var m = MachineFile.Load(Root);
+            m.Set("starter", "dataFolder", Layout.Stored(Root, place));
             m.Save();
             SafeFs.Point("move", "settings:" + place);
         }
 
-        // The data folder the settings name now (the layout given to this runner may predate a switch).
-        string CurrentDataFolder() { return Layout.From(l.ProjectRoot, MachineFile.Load(l.ProjectRoot)).DataFolder; }
+        void RewriteLedger(string oldRoot, string newRoot)
+        {
+            Ledger fresh = Ledger.Load(Root);
+            fresh.RewritePaths(oldRoot, newRoot);
+            fresh.Save();
+            SafeFs.Point("move", "ledger:" + newRoot);
+        }
 
         public long NeedBytes()
         {
             long n = 0;
-            foreach (string name in MoveRules.NamesIn(l.DataFolder)) n += SafeFs.Size(Path.Combine(l.DataFolder, name), null);
+            string data = DataNow();
+            foreach (string name in MoveRules.NamesIn(data)) n += SafeFs.Size(Path.Combine(data, name), null);
             return n;
         }
 
-        // Begins a move to `to` (null when it ran to the end of the copy, verification and switch; else one plain sentence).
+        // Begins a move to `to` (null when it ran to the end; else one plain sentence).
         public string Start(string to, Progress prog)
         {
-            if (Current() != null) return "A move is already under way. Continue it or cancel it first.";
+            if (MoveRules.RestartPending(Root)) return "VGAC has been moved and has to be restarted first. Close it and start it again, then move again if you want to.";
+            if (Current() != null) return "A move is already under way. Continue it or abandon it first.";
+            string from = DataNow();
             // Only a folder shown to be VGAC's (its marker matches this install's settings) is ever moved.
-            DataStatus ds = DataFolders.Check(l.DataFolder, MachineFile.Load(l.ProjectRoot), l.ProjectRoot);
-            if (ds.State != DataState.Ours) return DataFolders.ExplainNotClaimed(l.DataFolder, ds) + " Nothing was changed. Use 'Use this folder for VGAC only' in Check and repair if it holds only VGAC's own folders, or choose another folder.";
-            if (MoveRules.NamesIn(l.DataFolder).Count == 0) return "There is nothing of VGAC's in " + l.DataFolder + " to move. Nothing was changed.";
+            DataStatus ds = DataFolders.Check(from, MachineFile.Load(Root), Root);
+            if (ds.State != DataState.Ours) return DataFolders.ExplainNotClaimed(from, ds) + " Nothing was changed. Use 'Use this folder for VGAC only' in Check and repair if it holds only VGAC's own folders, or choose another folder.";
+            if (MoveRules.NamesIn(from).Count == 0) return "There is nothing of VGAC's in " + from + " to move. Nothing was changed.";
             string full = Path.GetFullPath(to);
-            List<string> bad = MoveRules.Problems(l.DataFolder, full, l.ProjectRoot, Free(full), NeedBytes(), null, comfy);
+            List<string> bad = MoveRules.Problems(from, full, Root, Free(full), NeedBytes(), null, comfy);
             if (bad.Count > 0) return string.Join(" ", bad.ToArray());
-            List<string> blockers = MoveRules.Blockers(l.DataFolder, procs, OwnPid());
+            List<string> blockers = MoveRules.Blockers(from, procs, OwnPid());
             if (blockers.Count > 0) return "Close these first, they have files open in the old folder: " + string.Join(", ", blockers.ToArray()) + ".";
-            var j = new MoveJournal(); j.From = l.DataFolder; j.To = full; j.Id = Guid.NewGuid().ToString("N");
+            var j = new MoveJournal(); j.From = from; j.To = full; j.Id = Guid.NewGuid().ToString("N");
             Save(j);
-            EnsureStamped(j);   // the new place is VGAC's from now on (it was new or empty), under the same id, and this move's
             log.Line("move: started " + j.From + " -> " + j.To);
             return Continue(prog);
         }
 
-        // The new place carries this install's marker with this move's id. Done again by Continue, so a crash between the journal and the
-        // marker cannot leave a new place that no later step recognises.
-        void EnsureStamped(MoveJournal j)
-        {
-            var m = MachineFile.Load(l.ProjectRoot);
-            string sid = DataFolders.SettingsId(m), mid = DataFolders.ReadMarkerId(j.To);
-            if (mid == null || (mid == sid && DataFolders.ReadMarkerMove(j.To) != j.Id)) DataFolders.Stamp(j.To, m, j.Id);
-            SafeFs.Point("move", "stamped");
-        }
-
-        // Carries on from the journal (also after an interruption). null when the copy is verified and switched.
+        // Carries on from the journal (also after an interruption). null when the move is complete and VGAC has to be restarted.
         public string Continue(Progress prog)
         {
             var j = Current();
-            if (j == null) return MoveRunner.StaleFound ? "The record of an earlier move does not fit this install, so it was set aside (move.json.stale). Nothing was changed." : "There is no move to continue.";
+            if (j == null) return MoveRunner.StaleFound ? "The record of an earlier move does not fit this install, so it is ignored. Nothing was changed." : "There is no move to continue.";
             if (j.State == "copying")
             {
-                List<string> foreignFiles = MoveRules.Problems(j.From, j.To, l.ProjectRoot, -1, 0, j, comfy);
+                List<string> foreignFiles = MoveRules.Problems(j.From, j.To, Root, -1, 0, j, comfy);
                 if (foreignFiles.Count > 0) return string.Join(" ", foreignFiles.ToArray());
                 List<string> blockers = MoveRules.Blockers(j.From, procs, OwnPid());
                 if (blockers.Count > 0) return "Close these first, they have files open in the old folder: " + string.Join(", ", blockers.ToArray()) + ".";
-                EnsureStamped(j);
-                string r = CopyAll(j, prog);
+                string r = EnsureStamped(j);
+                if (r == null) r = CopyAll(j, prog);
+                if (r == null) r = VerifyAll(j, prog);
                 if (r != null) return r;
+                j.State = "switching"; Save(j);
             }
-            if (j.State == "copied") { string r = VerifyAll(j, prog); if (r != null) return r; }
-            if (j.State == "undoing" || j.State == "cancelling") return Cancel();      // an undo or a cancel that was cut off is finished, never left half done
-            if (j.State == "verified" || j.State == "switching") Switch(j);
-            if (j.State == "switched") { string r = Rebuild(j); if (r != null) return r; }
+            return Finish(j);
+        }
+
+        // The new place carries this install's marker with this move's id (written first thing, and again by Continue when a crash came
+        // before it). A folder that carries another install's marker, or another move's id, is never used.
+        string EnsureStamped(MoveJournal j)
+        {
+            var m = MachineFile.Load(Root);
+            string sid = DataFolders.SettingsId(m), mid = DataFolders.ReadMarkerId(j.To);
+            if (mid == null) DataFolders.Stamp(j.To, m, j.Id);
+            else if (mid != sid || DataFolders.ReadMarkerMove(j.To) != j.Id) return "The new folder already carries a VGAC marker that is not this move's, so VGAC will not copy into it. Choose another folder.";
+            SafeFs.Point("move", "stamped");
             return null;
         }
 
+        // Each folder is copied straight into its final place; a file that is already there with the same size and time is not copied
+        // again, so an interrupted copy resumes. Nothing is deleted.
         string CopyAll(MoveJournal j, Progress prog)
         {
             var names = MoveRules.NamesIn(j.From);
@@ -301,44 +316,31 @@ namespace Vgac.Starter
             {
                 string name = names[i];
                 if (j.Done.Contains(name)) continue;
-                if (prog != null) { prog.Say("Copying " + name + "..."); prog.Fraction((double)i / names.Count); if (prog.Cancelled()) return "The copy was stopped. Continue it later, or cancel it."; }
-                string src = Path.Combine(j.From, name), part = Path.Combine(j.To, name + ".part"), final = Path.Combine(j.To, name);
+                if (prog != null) { prog.Say("Copying " + name + "..."); prog.Fraction((double)i / names.Count); if (prog.Cancelled()) return "The copy was stopped. Continue it later, or abandon it."; }
+                string src = Path.Combine(j.From, name), final = Path.Combine(j.To, name);
                 try
                 {
-                    // the journal names it BEFORE anything of it exists in the new place (even the folder above it, e.g. tools\)
-                    if (!j.Created.Contains(name + ".part")) { j.Created.Add(name + ".part"); Save(j); }
                     Directory.CreateDirectory(Path.GetDirectoryName(final));
-                    if (Directory.Exists(part)) SafeFs.DeleteTree(part);                      // a half copy from before: ours (named in the journal)
-                    // the finished copy of an earlier try (renamed from its .part, journal not yet saved when it was cut off) is ours as well
-                    if (Directory.Exists(final) && (j.Created.Contains(name) || j.Created.Contains(name + ".part"))) SafeFs.DeleteTree(final);
                     var rep = new FsReport();
                     string skip = MoveRules.SkipFor(name);
-                    List<string[]> links = SafeFs.CopyItem(src, part, skip == null ? null : new[] { skip }, rep);
+                    List<string[]> links = SafeFs.CopyItem(src, final, skip == null ? null : new[] { skip }, rep);
                     if (rep.Links.Count > 0) return "A link inside " + name + " could not be copied (" + rep.Links[0] + "). Nothing was changed in the old place.";
-                    SafeFs.Point("move", "before-rename:" + name);
-                    SafeFs.MoveDir(part, final);
-                    SafeFs.Point("move", "renamed:" + name);
-                    // journalled BEFORE the links are made, so a failure there leaves a copy that Cancel and a retry both know about
-                    j.Created.Remove(name + ".part");
-                    j.Created.Add(name);
-                    Save(j);
-                    SafeFs.Point("move", "before-links:" + name);
+                    SafeFs.Point("move", "copied:" + name);
                     SafeFs.MakeLinks(final, links, rep);
-                    if (rep.Links.Count > 0) return "A link inside " + name + " could not be made again in the copy (" + rep.Links[0] + "). Continue to try again, or cancel the move; the old place is untouched.";
+                    if (rep.Links.Count > 0) return "A link inside " + name + " could not be made again in the copy (" + rep.Links[0] + "). Continue to try again, or abandon the move; the old place is untouched.";
                     j.Done.Add(name);
                     Save(j);
                 }
                 catch (IOException e) { return "Copying " + name + " stopped: " + e.Message + " Nothing was changed in the old place. Free some room or choose another folder, then continue."; }
                 catch (UnauthorizedAccessException e) { return "Windows did not allow writing " + name + " in the new folder (" + e.Message + ")."; }
             }
-            j.State = "copied"; Save(j);
             return null;
         }
 
         // Every file compared by size and SHA-256 (the folders hold the person's models too, so size alone is not enough).
         string VerifyAll(MoveJournal j, Progress prog)
         {
-            foreach (string name in j.Done)
+            foreach (string name in new List<string>(j.Done))
             {
                 string src = Path.Combine(j.From, name), dst = Path.Combine(j.To, name);
                 if (!Directory.Exists(src)) continue;
@@ -346,224 +348,58 @@ namespace Vgac.Starter
                 SafeFs.Point("move", "verify:" + name);
                 string skip = MoveRules.SkipFor(name);
                 List<string> bad;
-                try
+                try { bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, false, prog == null ? null : prog.Cancelled, prog == null ? null : prog.Say); }
+                catch (OperationCanceledException) { return "The check was stopped. Nothing was switched. Continue it later, or abandon the move."; }
+                if (bad.Count > 0)
                 {
-                    bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, false, prog == null ? null : prog.Cancelled, prog == null ? null : prog.Say);
+                    j.Done.Remove(name); Save(j);      // copied again by the next Continue
+                    return "The copy of " + name + " does not match the original (" + bad[0] + "). Nothing was switched; the old place is untouched. Continue to copy it again, or abandon the move.";
                 }
-                catch (OperationCanceledException) { return "The check was stopped. Nothing was switched. Continue it later, or cancel the move."; }
-                if (bad.Count > 0) return "The copy of " + name + " does not match the original (" + bad[0] + "). Nothing was switched; the old place is untouched. Cancel and try again.";
             }
-            j.State = "verified"; Save(j);
             return null;
         }
 
-        // The one decision: from now on the big files are in the new folder. The journal says "switching" BEFORE the settings
-        // change, so a crash in between is recognised (the settings, not the journal, say which place is in use).
-        void Switch(MoveJournal j)
+        // The one decision. The journal says "switching" first; every step after it is safe to repeat, so Continue finishes it from wherever
+        // it stopped. There is no way back: to go back, move again.
+        //   journal "switching", settings, ledger, restart marker, ComfyUI's engine settings (installer), ComfyUI's Python (installer), journal gone
+        string Finish(MoveJournal j)
         {
-            j.State = "switching"; Save(j);
             SafeFs.Point("move", "before-switch");
-            SetDataFolder(j.To);          // relative inside the project when it lies there, so a moved project keeps working
-            SafeFs.Point("move", "after-settings-saved");
+            SetDataFolder(j.To);
             RewriteLedger(j.From, j.To);
-            j.State = "switched"; Save(j);
-            log.Line("move: switched to " + j.To);
-        }
-
-        void RewriteLedger(string oldRoot, string newRoot)
-        {
-            Ledger fresh = Ledger.Load(l.ProjectRoot);
-            fresh.RewritePaths(oldRoot, newRoot);
-            fresh.Save();
-            SafeFs.Point("move", "ledger:" + newRoot);
-        }
-
-        // The app's own ComfyUI is told where it is now and makes its Python again (its installer fetches and checks its packages again). The backend's own Python is
-        // made again by the normal start, which sees that the data folder changed.
-        string Rebuild(MoveJournal j)
-        {
+            WriteRestartMarker(j);
             if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.To)))
             {
-                // The commands run with the app's own Python, whose environment still points into the old place: the old copy is
-                // deleted only after this step, and only on the person's confirmation.
+                // the installer's commands run with the app's own Python, whose environment points into the old place, which is still there
                 SafeFs.Point("move", "before-retarget");
                 string r = comfy.Retarget(j.From, j.To);
                 if (r != null) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Continue to try again.";
                 SafeFs.Point("move", "after-retarget");
                 r = comfy.RebuildVenv(j.To);
-                if (r != null) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " VGAC itself works; its own ComfyUI will not start until this is done (it needs the internet). Continue to try again, or Cancel to go back to the old place.";
+                if (r != null) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " VGAC itself works; its own ComfyUI will not start until this is done (it needs the internet). Continue to try again.";
             }
-            j.State = "rebuilt"; Save(j);
+            DeleteJournal();
+            log.Line("move: switched to " + j.To + "; the old folder " + j.From + " is no longer used");
             return null;
         }
 
-        // Which place the settings really use (the settings file, not the journal, is the truth).
-        bool UsingNewPlace(MoveJournal j)
+        void WriteRestartMarker(MoveJournal j)
         {
-            string now = MachineFile.Load(l.ProjectRoot).GetString("starter", "dataFolder");
-            return now != null && SafeFs.Norm(now) == SafeFs.Norm(j.To);
+            var d = new Dictionary<string, object>();
+            d["moved_to"] = j.To; d["old_folder"] = j.From;
+            SafeFs.WriteAtomic(MoveRules.RestartPath(Root), Json.Write(d), null);
+            SafeFs.Point("move", "restart-marker");
         }
 
-        // Cancel. Before the switch: remove only what this move copied into the new folder (the old place was never changed).
-        // Once the new place is, or may have been, in use: point the settings back at the old place and LEAVE the new copy
-        // alone, because the app may have written to it; it is the person's to delete.
-        public string Cancel()
+        // Gives up a move that has not switched: only the journal is forgotten. What was copied stays where it is, and its folder is said.
+        public string Abandon()
         {
             var j = Current();
-            if (j == null) return null;
-            if (j.State == "deleting-old") return "The old copy is already being deleted, so the move cannot be undone any more: the new place now holds the only complete copy. Press 'Delete the old copy' to finish, or leave it as it is.";
-            if (j.State == "switched" || j.State == "rebuilt" || j.State == "switching" || j.State == "undoing" || UsingNewPlace(j)) return Undo(j);
-            // Before the first thing is removed the journal says "cancelling": a cut-off cancel is finished by the next Cancel or Continue,
-            // and never continued forward into a copy that is half removed.
-            if (j.State != "cancelling") { j.State = "cancelling"; Save(j); }
-            // The new place was claimed by this move (new or empty, stamped with this install's id). Only then are the names this
-            // journal lists removed from it, and only as real places inside it.
-            string sid = DataFolders.SettingsId(MachineFile.Load(l.ProjectRoot));
-            // this install's marker AND this move's id: a journal from another time proves nothing
-            bool claimedByThisMove = !string.IsNullOrEmpty(sid) && DataFolders.ReadMarkerId(j.To) == sid && !string.IsNullOrEmpty(j.Id) && DataFolders.ReadMarkerMove(j.To) == j.Id;
-            var removed = new HashSet<string>();
-            foreach (string created in j.Created)
-            {
-                if (!MoveRules.IsKnownName(created)) continue;
-                string baseName = created.EndsWith(".part") ? created.Substring(0, created.Length - 5) : created;
-                foreach (string n in new[] { baseName, baseName + ".part" })     // the finished copy and its half-made .part
-                {
-                    if (!removed.Add(n)) continue;
-                    string p = Path.Combine(j.To, n);
-                    if (!Directory.Exists(p) || SafeFs.IsLink(p) || !SafeFs.Inside(p, j.To)) continue;
-                    if (!claimedByThisMove) { log.Line("move: left " + p + " alone: VGAC cannot show that this new place is its own"); continue; }
-                    SafeFs.DeleteTree(p);
-                    SafeFs.Point("move", "cancel-removed:" + n);
-                }
-            }
-            if (claimedByThisMove) { try { File.Delete(Path.Combine(j.To, DataFolders.MarkerName)); } catch (Exception) { } SafeFs.Point("move", "cancel-marker"); }
-            try { string t = Path.Combine(j.To, "tools"); if (Directory.Exists(t) && Directory.GetFileSystemEntries(t).Length == 0) Directory.Delete(t); } catch (Exception) { }
-            try { if (Directory.Exists(j.To) && Directory.GetFileSystemEntries(j.To).Length == 0) Directory.Delete(j.To); } catch (Exception) { }
+            if (j == null) return "There is no move to abandon.";
+            if (j.State != "copying") return "The settings already name the new place, so the move cannot be abandoned: continue it to finish.";
             DeleteJournal();
-            return null;
-        }
-
-        // Undoing a move whose new place is, or may have been, in use. The journal says "undoing" BEFORE the first change, and every step is
-        // safe to do again, so a cut-off undo is finished by the next Cancel (or Continue) from wherever it stopped:
-        //   1 journal "undoing" (remembers the state it came from)   2 settings -> old place   3 ledger -> old place
-        //   4 ComfyUI's engine settings -> old place (its installer)  5 journal deleted
-        // If step 4 is refused, 2 and 3 are put back (the new place, in use and consistent) and the journal returns to its earlier state.
-        string Undo(MoveJournal j)
-        {
-            // never point the app back at an old place that is not whole (a half deleted old copy, or one the person changed)
-            foreach (string n in j.Done)
-                if (MoveRules.IsKnownName(n) && !Directory.Exists(Path.Combine(j.From, n)))
-                    return "The move cannot be undone: " + Path.Combine(j.From, n) + " is not in the old place any more, so the new place holds the only complete copy. Keep using the new place.";
-            if (j.State != "undoing") { j.Prev = j.State == "rebuilt" ? "rebuilt" : "switched"; j.State = "undoing"; Save(j); }
-            SetDataFolder(j.From);
-            RewriteLedger(j.To, j.From);
-            if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.From)))
-            {
-                SafeFs.Point("move", "before-undo-retarget");
-                string back = comfy.Retarget(j.To, j.From);
-                if (back != null)
-                {
-                    SetDataFolder(j.To);
-                    RewriteLedger(j.From, j.To);
-                    j.State = string.IsNullOrEmpty(j.Prev) ? "switched" : j.Prev; j.Prev = ""; Save(j);
-                    log.Line("move: the undo was refused by ComfyUI's installer (" + back + "); staying on " + j.To);
-                    return "The move was not undone: VGAC's own ComfyUI could not be pointed back at the old place (" + back + "). Everything stays in the new place and works as it was. Try Cancel again, or Continue the move.";
-                }
-                SafeFs.Point("move", "after-undo-retarget");
-            }
-            DeleteJournal();
-            log.Line("move: undone, pointing back at " + j.From + "; the copy in " + j.To + " was left in place");
-            return "VGAC points at the old place again. The copy in " + j.To + " was left as it is, because the app may have used it. Delete it yourself if you do not want it.";
-        }
-
-        // The move is finished and the person keeps both copies: the journal goes, nothing else.
-        public string Forget()
-        {
-            var j = Current();
-            if (j == null || j.State != "rebuilt") return "There is no finished move to close.";
-            DeleteJournal();
-            log.Line("move: finished; the old copy in " + j.From + " was kept");
-            return null;
-        }
-
-        // What is left in the old folder after a finished move, by name.
-        public static List<string> OldCopy(MoveJournal j)
-        {
-            var res = new List<string>();
-            foreach (string n in j.Done) { string p = Path.Combine(j.From, n); if (MoveRules.IsKnownName(n) && Directory.Exists(p)) res.Add(p); }
-            return res;
-        }
-
-        string NewPlaceProblem(MoveJournal j)
-        {
-            if (!Directory.Exists(j.To)) return "the new place is not there.";
-            if (SafeFs.IsLink(j.To) || !SafeFs.PathHasNoLink(j.To)) return "the new place is, or is reached through, a link.";
-            string rt = SafeFs.Real(j.To), rf = SafeFs.Real(j.From);
-            if (rt == null || rf == null) return "VGAC cannot tell where the new or the old place really is.";
-            if (SafeFs.Inside(rt, rf) || SafeFs.Inside(rf, rt)) return "the new place and the old place are not separate folders.";
-            foreach (string n in j.Done)
-            {
-                string d = Path.Combine(j.To, n);
-                if (!Directory.Exists(d)) continue;
-                string rd = SafeFs.Real(d);
-                if (rd == null || !SafeFs.Inside(rd, rt)) return "the new copy of " + n + " is not really inside the new place (a link).";
-            }
-            return null;
-        }
-
-        // After "rebuilt": delete the old copy, but only names that were copied, only after comparing every file with the new
-        // copy again (extra files in the new place, added since, do not matter; a file that differs does).
-        public string DeleteOld() { return DeleteOld(null, null); }
-
-        public string DeleteOld(Func<bool> cancelled, Action<string> say)
-        {
-            var j = Current();
-            if (j == null || (j.State != "rebuilt" && j.State != "deleting-old")) return "There is no finished move whose old copy can be deleted.";
-            // the new copy must be a real place of its own, not reached through a link and not inside the old copy: otherwise "the same
-            // files" could be the old files themselves
-            string newWhy = NewPlaceProblem(j);
-            if (newWhy != null) return "The old copy was not deleted: " + newWhy;
-            foreach (string n in j.Done)
-            {
-                string src = Path.Combine(j.From, n), dst = Path.Combine(j.To, n);
-                if (!Directory.Exists(src)) continue;
-                // the old copy is reached by real folders only: a folder above it (tools\) turned into a link would lead the delete elsewhere
-                if (SafeFs.IsLink(src) || !SafeFs.PathHasNoLink(src)) return "The old copy was not deleted: " + src + " is, or is reached through, a link.";
-                string skip = MoveRules.SkipFor(n);
-                List<string> bad;
-                try { bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, true, cancelled, say); }
-                catch (OperationCanceledException) { return "The check was stopped. Nothing was deleted."; }
-                if (bad.Count > 0) return "The old copy of " + n + " was not deleted: it no longer matches the new one (" + bad[0] + ").";
-            }
-            var blockers = MoveRules.Blockers(j.From, procs, OwnPid());
-            if (blockers.Count > 0) return "Close these first: " + string.Join(", ", blockers.ToArray()) + ".";
-            // the old place must still carry this install's marker: it was VGAC's, so its fixed-name folders may go
-            string sid = DataFolders.SettingsId(MachineFile.Load(l.ProjectRoot));
-            if (string.IsNullOrEmpty(sid) || DataFolders.ReadMarkerId(j.From) != sid) return "The old place no longer carries VGAC's marker, so nothing in it was deleted.";
-            // From here the move cannot be undone: the journal says so BEFORE the first delete, and Cancel and Undo refuse from then on
-            if (j.State != "deleting-old") { j.State = "deleting-old"; Save(j); }
-            foreach (string n in j.Done)
-            {
-                string src = Path.Combine(j.From, n);
-                if (!MoveRules.IsKnownName(n) || !Directory.Exists(src) || SafeFs.IsLink(src) || !SafeFs.Inside(src, j.From)) continue;
-                FsReport r = SafeFs.DeleteTree(src);
-                if (r.Locked.Count > 0) return "Some old files are in use and were kept: " + r.Locked[0] + " Press 'Delete the old copy' again when they are free; the move cannot be undone any more.";
-                SafeFs.Point("move", "deleted-old:" + n);
-            }
-            try { string tools = Path.Combine(j.From, "tools"); if (Directory.Exists(tools) && !SafeFs.IsLink(tools) && Directory.GetFileSystemEntries(tools).Length == 0) Directory.Delete(tools); } catch (Exception) { }
-            try
-            {
-                Ledger lg = Ledger.Load(l.ProjectRoot);
-                if (!Proof.IsDangerousFolder(j.From) && Directory.Exists(j.From) && lg.Has(j.From, "folder"))
-                {
-                    bool onlyMarker = true;
-                    foreach (string e in Directory.GetFileSystemEntries(j.From)) if (!string.Equals(Path.GetFileName(e), DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase)) onlyMarker = false;
-                    if (onlyMarker) { File.Delete(Path.Combine(j.From, DataFolders.MarkerName)); Directory.Delete(j.From); lg.RemoveUnder(j.From); lg.Save(); }
-                }
-            } catch (Exception) { }
-            DeleteJournal();
-            log.Line("move: the old copy was deleted");
-            return null;
+            log.Line("move: abandoned; what was copied stays in " + j.To);
+            return "The move was abandoned. Nothing was changed in the old place. What was copied so far is still in " + j.To + "; delete it by hand if you do not want it.";
         }
     }
 }

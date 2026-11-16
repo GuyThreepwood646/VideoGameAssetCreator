@@ -289,6 +289,7 @@ namespace Vgac.Starter
                 string linkPath = Path.Combine(finalDir, lk[0]), target = Path.Combine(finalDir, lk[1]);
                 if (!Directory.Exists(target)) { rep.Links.Add(lk[0]); continue; }
                 Directory.CreateDirectory(Path.GetDirectoryName(linkPath));
+                if (IsLink(linkPath) && Real(linkPath) == Real(target)) continue;      // made by an earlier try
                 if (!MakeJunction(linkPath, target)) { rep.Links.Add(lk[0]); continue; }
                 string a = Real(linkPath), b = Real(target);
                 if (a == null || a != b) rep.Links.Add(lk[0]);
@@ -314,6 +315,8 @@ namespace Vgac.Starter
                 else
                 {
                     Point("copy", k);
+                    // already there with the same size and time (an earlier, interrupted copy): not copied again
+                    if (File.Exists(to) && new FileInfo(to).Length == new FileInfo(k).Length && File.GetLastWriteTimeUtc(to) == File.GetLastWriteTimeUtc(k)) { rep.Files++; continue; }
                     string tmp = to + ".copying";
                     File.Copy(k, tmp, true);
                     if (File.Exists(to)) File.Delete(to);
