@@ -325,9 +325,15 @@ def test_refuses_when_the_file_list_does_not_match_its_pin(box):
     _nothing_fetched(box)
 
 
-def test_the_shipped_list_refuses_until_the_owner_pins_comfyui(tmp_path, monkeypatch):
+def test_the_shipped_list_has_both_comfyui_pins_and_they_match(tmp_path, monkeypatch):
     monkeypatch.setattr(downloader, "project_dir", lambda: ROOT_DIR)
-    assert ci.entry()["sha256"] == "" and ci.pins_missing()  # until the owner's one download is approved
+    e = ci.entry()
+    assert ci.pins_missing() == []
+    listing = ci.tree_list()  # None unless the committed list matches its pinned SHA-256
+    assert listing is not None and len(listing["files"]) == e["files"] == 1346
+    assert sum(f["size"] for f in listing["files"]) == e["unpacked_bytes"]
+    assert e["commit"] in e["zip"] and e["zip"].startswith("https://github.com/Comfy-Org/ComfyUI/archive/")
+    assert {"main.py", "comfy_extras/nodes_trellis2.py", "requirements.txt"} <= {f["path"] for f in listing["files"]}
 
 
 def test_no_nvidia_card_downloads_nothing(box):

@@ -373,6 +373,11 @@ def _done(m: dict[str, Any] | None, step: str) -> bool:
     return bool(m and (m.get("steps") or {}).get(step) == "done")
 
 
+def _zip_bytes(e: dict[str, Any]) -> int:
+    """The ComfyUI zip's size: as pinned, else a third of the unpacked size."""
+    return int(e.get("size") or 0) or int(e.get("unpacked_bytes") or 0) // 3
+
+
 def plan(root: Path | None = None) -> list[dict[str, Any]]:
     """The steps with their plain names, download sizes and state (done / to do)."""
     root = root or install_root()
@@ -380,7 +385,7 @@ def plan(root: Path | None = None) -> list[dict[str, Any]]:
     e = entry()
     ws = wheel_specs(root)
     left_wheels = sum(max(0, s.size - (s.part.stat().st_size if s.part.exists() else 0)) for s in ws if not s.present())
-    sizes = {"source": int(e.get("unpacked_bytes") or 0) // 3 if not _done(m, "source") else 0,
+    sizes = {"source": _zip_bytes(e) if not _done(m, "source") else 0,
              "wheels": left_wheels if not _done(m, "packages") else 0}
     return [{"id": sid, "label": label, "download_bytes": sizes.get(sid, 0), "done": _done(m, sid)} for sid, label in STEPS]
 
@@ -820,7 +825,7 @@ def offer() -> dict[str, Any]:
     total = sum(int(w.get("size") or 0) for w in lock())
     left_out = e.get("left_out") or {}
     return {"version": e.get("version", ""), "goes_to": str(root), "hosts": ["github.com", "download.pytorch.org", "files.pythonhosted.org"],
-            "download_bytes": total + int(e.get("unpacked_bytes") or 0) // 3, "needs_bytes": space_needed(root),
+            "download_bytes": total + _zip_bytes(e), "needs_bytes": space_needed(root),
             "licence": e.get("licence", ""), "needs_admin": False, "ready": not pins_missing(), "missing": pins_missing(),
             "left_out": [str(v) for v in left_out.values()], "status": status()}
 
