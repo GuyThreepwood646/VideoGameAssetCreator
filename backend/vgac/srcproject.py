@@ -147,6 +147,15 @@ EAR_MOVE_MIN_CM = 1.0
 EAR_MOVE_FULL_CM = 1.0
 EAR_MOVE_FADE = 0.85
 EAR_POSE_N = 1024          # the picture is shown to the pose finder at this size
+# The pose finder gives an ear point with full visibility whether or not an ear shows (stored runs: 1.0 on all 17
+# sides, also under hair). An ear is taken as seen only where at least EAR_SKIN_SHARE of the picture within
+# EAR_SKIN_CM of the point lies within EAR_SKIN_DE (Lab) of the head's own skin (the median round the middle of its eyes
+# and mouth, the same image); both the picture's point and the model's must pass. On W2 R3 the right ear is under hair
+# (0.0 of skin): moved, it dragged the hair, the cheek and the glasses arm. Known miss: an ear in deep shadow reads as
+# unseen (M1 R4's right side), which leaves it as before.
+EAR_SKIN_CM = 1.0
+EAR_SKIN_DE = 15.0
+EAR_SKIN_SHARE = 0.5
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
@@ -1528,6 +1537,23 @@ def near_ear(pts: dict[str, tuple[float, float, float]]) -> str | None:
     return max(seen, key=lambda n: abs(pts[n][0] - mid_x)) if seen else None
 
 
+def skin_share(img: np.ndarray, mask: np.ndarray, at: np.ndarray, pins: np.ndarray, px_per_cm: float) -> float:
+    """The share of img's figure (mask) within EAR_SKIN_CM of `at` whose colour lies within EAR_SKIN_DE (Lab) of the
+    head's own skin: the median of the figure within 0.6 of the eyes' distance of the middle of its eyes and mouth
+    (pins: two eyes, then the mouth). 0 when too little of the figure is there."""
+    lab_img = face.to_lab(np.clip(img, 0.0, 1.0))
+    S = img.shape[0]
+    yy, xx = np.mgrid[0:S, 0:S]
+    c = np.asarray(pins, dtype=np.float64).mean(axis=0)
+    eyes = float(np.hypot(*(np.asarray(pins[0]) - np.asarray(pins[1]))))
+    face_px = (np.hypot(xx + 0.5 - c[0], yy + 0.5 - c[1]) < 0.6 * eyes) & mask
+    ring = (np.hypot(xx + 0.5 - at[0], yy + 0.5 - at[1]) < EAR_SKIN_CM * px_per_cm) & mask
+    if face_px.sum() < 20 or ring.sum() < 20:
+        return 0.0
+    skin = np.median(lab_img[face_px], axis=0)
+    return float((np.linalg.norm(lab_img[ring] - skin, axis=1) < EAR_SKIN_DE).mean())
+
+
 def ear_move_maps(size: int, ear_from: np.ndarray, ear_to: np.ndarray, pins: np.ndarray,
                   px_per_cm: float) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any]]:
     """The backward maps (for a remap of the picture) that move the picture's ear at ear_from onto ear_to: in full
@@ -1564,11 +1590,21 @@ def ear_onto_model(v: View) -> dict[str, Any]:
     pm = pose_points(v.render, v.raster.mask)
     if pm is None or pm[side][2] <= 0.5:
         return {"ear": side, "moved": False, "why": "the model's ear was not seen"}
-    pins = head_points(np.where((v.alpha_img > 0.5)[..., None], v.pic_aligned, 0.5))
+    pmask = v.alpha_img > 0.5
+    pins = head_points(np.where(pmask[..., None], v.pic_aligned, 0.5))
     if pins is None:
         return {"ear": side, "moved": False, "why": "the picture's eyes and mouth were not found"}
-    mx, my, rec = ear_move_maps(S, np.array(pp[side][:2]), np.array(pm[side][:2]), pins, S / (v.cam.scale * 100.0))
-    rec = {"ear": side, **rec}
+    pins_m = head_points(np.where(v.raster.mask[..., None], v.render, 0.5))
+    if pins_m is None:
+        return {"ear": side, "moved": False, "why": "the model's eyes and mouth were not found"}
+    px_cm = S / (v.cam.scale * 100.0)
+    ear_p, ear_m = np.array(pp[side][:2]), np.array(pm[side][:2])
+    seen = {"picture": round(skin_share(v.pic_aligned, pmask, ear_p, pins, px_cm), 2),
+            "model": round(skin_share(v.render, v.raster.mask, ear_m, pins_m, px_cm), 2)}
+    if min(seen.values()) < EAR_SKIN_SHARE:
+        return {"ear": side, "skin_share": seen, "moved": False, "why": "no ear shows at the finder's point"}
+    mx, my, rec = ear_move_maps(S, ear_p, ear_m, pins, px_cm)
+    rec = {"ear": side, "skin_share": seen, **rec}
     if mx is None:
         return rec
     v.pic_aligned = v.pic_affine = np.clip(np.stack(
