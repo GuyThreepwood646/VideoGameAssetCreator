@@ -128,21 +128,28 @@ styles:
     example_prompt: "A stout adventurer in a green tunic with a short sword and a wooden shield."
     lock:
       model: zturbo
-      # The same words as the look's own prompt_block below: the older short block here gave voxel block figures on four of
-      # four pictures for two characters (look research, 2026-11-16); a project takes its words from this lock.
-      prompt_block: "An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading with soft glossy specular highlights, slightly angular silhouettes, chunky simplified hands and details, blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light with one warm key light from the upper left, a soft round blob shadow underneath, the whole image slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels."
+      # The same words as the look's own prompt_block below (a project takes its words from this lock). The picture model
+      # (Z-Image Turbo) takes no negative prompt, so words like "not built from cubes, no voxels" were read as what to draw;
+      # they are left out, as is "soft glossy specular highlights" (no effect on the look). The look itself comes from the
+      # late-90s add-on in the recipe below. palette is empty on purpose: with the add-on, the palette sentence ("mostly
+      # dark blue, red, yellow, green and white") painted yellow legs and gloves, green arm bands and yellow beards; without
+      # it 24 of 24 pictures kept the described colours and 24 of 24 were rounded low-poly figures, not block figures (three
+      # characters, eight seeds each; look research 2026-11-16, row K). Sentences asking to keep the described colours and
+      # for a plain backdrop were tested too (row J) and had no measurable effect, so they are left out: the colours come
+      # right by leaving out the palette, and the lit backdrop comes with the add-on whatever the words say.
+      prompt_block: "An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading, slightly angular silhouettes, chunky simplified hands and details, blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light with one warm key light from the upper left, a soft round blob shadow underneath, the whole image slightly soft like a low-resolution frame upscaled."
       loras: []
-      palette: ["#2b3a67", "#e84855", "#f9dc5c", "#3bb273", "#f4f1de"]
+      palette: []
       negative: "photographic, realistic skin, pixel art, voxels, cubes, text, logos"
     plain: chunky shapes with fewer triangles, small soft textures, no surface bumps.
-    # Bake-off 6: starting with the medium stops the cube-headed voxel figures the old block gave.
+    # Bake-off 6: starting with the medium (a real-time 3D game model) stops the voxel figures of the old block; cubes and
+    # voxels are never named (no negative prompt on the picture model). Keep it equal to lock.prompt_block above.
     prompt_block: >-
-      An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh
-      rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading with soft
-      glossy specular highlights, slightly angular silhouettes, chunky simplified hands and details,
-      blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light
-      with one warm key light from the upper left, a soft round blob shadow underneath, the whole image
-      slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels.
+      An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in
+      real time, not a drawing or illustration. Smooth gouraud vertex shading, slightly angular silhouettes,
+      chunky simplified hands and details, blurry low-resolution bilinear-filtered textures, bold saturated
+      colours, bright ambient light with one warm key light from the upper left, a soft round blob shadow
+      underneath, the whole image slightly soft like a low-resolution frame upscaled.
     # Plain looks want a plain shape (docs/HAIR-RESEARCH.md 5.2).
     hair: &hair_simple
       head: [hair as one simple solid shape]
@@ -156,6 +163,9 @@ styles:
       mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false, triangle_cap: 3000, bake_texture: 1024}
       # face_layout: the face gets more of the texture (blender/faceuv.py) before the pictures are painted on.
       surface: {face_layout: true}
+      # The late-90s low-poly add-on at normal strength (0.6) gives the look the owner picked: faceted, period shading
+      # (row B of the look research). It is in the required downloads (setup/downloads.json starter set).
+      addons: [{id: retro_lowpoly, strength: normal}]
   - id: lowpoly_flat
     delight_default: keep
     pbr_fix_default: false
