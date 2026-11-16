@@ -649,7 +649,7 @@ namespace Vgac.Starter
                 try { d = Json.ParseObject(File.ReadAllText(jp, Encoding.UTF8)); } catch (Exception) { d = new Dictionary<string, object>(); }
                 d["inprogress"] = stored;
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(jp));
-                File.WriteAllText(jp, Json.Write(d), new UTF8Encoding(false));
+                SafeFs.WriteAtomic(jp, Json.Write(d), null);
             }
             catch (Exception) { }
         }
@@ -809,7 +809,7 @@ namespace Vgac.Starter
                     keep.Add(ip + "|" + SafeFs.FileId(ip));
                 }
                 d["inprogress"] = keep;
-                File.WriteAllText(p, Json.Write(d), new UTF8Encoding(false));
+                SafeFs.WriteAtomic(p, Json.Write(d), null);
             }
             catch (Exception) { }
         }

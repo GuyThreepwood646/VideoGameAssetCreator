@@ -173,10 +173,7 @@ namespace Vgac.Starter
             var d = new Dictionary<string, object>();
             d["pid"] = r.Pid; d["created"] = r.CreatedTicks.ToString(); d["exe"] = r.Exe; d["cmd"] = r.CommandLine;
             d["starterPid"] = r.StarterPid; d["starterCreated"] = r.StarterCreatedTicks.ToString();
-            string tmp = p + ".tmp";
-            File.WriteAllText(tmp, Json.Write(d), new UTF8Encoding(false));
-            if (File.Exists(p)) File.Delete(p);
-            File.Move(tmp, p);
+            SafeFs.WriteAtomic(p, Json.Write(d), null);
         }
 
         public static OwnedRecord Load(string projectRoot)

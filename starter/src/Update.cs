@@ -119,7 +119,7 @@ namespace Vgac.Starter
                 var d = new Dictionary<string, object>();
                 d["sha256"] = sha; d["path"] = aside; d["published"] = published; d["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
                 Directory.CreateDirectory(Path.GetDirectoryName(record));
-                File.WriteAllText(record, Json.Write(d), new UTF8Encoding(false));
+                SafeFs.WriteAtomic(record, Json.Write(d), null);
                 // If the computer dies between the rename and the checkout there is no VGAC.exe for a shortcut to start; this note says
                 // what to do, in plain words, beside the project's files. It is removed as soon as the update is through.
                 try { File.WriteAllText(RestoreNotePath(root), "VGAC.exe is missing because an update stopped halfway.\r\nRename " + AsideName + " to VGAC.exe (or run: git checkout VGAC.exe), then start VGAC again.\r\n"); } catch (Exception) { }

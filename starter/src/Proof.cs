@@ -303,7 +303,7 @@ namespace Vgac.Starter
             Directory.CreateDirectory(folder);
             var d = new Dictionary<string, object>();
             d["made_by"] = "VGAC"; d["id"] = id; d["kind"] = "library";
-            File.WriteAllText(Path.Combine(folder, MarkerName), Json.Write(d), new UTF8Encoding(false));
+            SafeFs.WriteAtomic(Path.Combine(folder, MarkerName), Json.Write(d), null);
         }
 
         // At every start, before the app can put anything there: a library folder that is new or empty (and a fit place) is claimed.

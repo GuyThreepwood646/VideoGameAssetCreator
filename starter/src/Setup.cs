@@ -446,10 +446,7 @@ namespace Vgac.Starter
             d["source"] = p.SourceHash;
             d["dataFolder"] = l.DataFolder;
             Directory.CreateDirectory(Path.GetDirectoryName(l.StatePath));
-            string tmp = l.StatePath + ".tmp";
-            File.WriteAllText(tmp, Json.Write(d), new UTF8Encoding(false));
-            if (File.Exists(l.StatePath)) File.Delete(l.StatePath);
-            File.Move(tmp, l.StatePath);
+            SafeFs.WriteAtomic(l.StatePath, Json.Write(d), null);
             // Only a folder the person chose is recorded; the default stays implicit so the project can be moved.
             if (!Planner.SamePath(l.DataFolder, Layout.DefaultDataFolder(l.ProjectRoot)) && machine.GetString("starter", "dataFolder") == null)
             {
