@@ -199,3 +199,47 @@ def test_move_speed_and_size_factors():
     fast = gait.clip_frames("walk", "quadruped", 24, gait.MOVE_SPEED["fast"])[0]
     assert slow > 24 > fast
     assert math.isclose(gait.MOVE_SIZE["small"], 0.7)
+
+
+# ---- the built-in idle's stance -----------------------------------------------------------------------------------
+
+def test_stance_targets_narrow_a_wide_stance_about_its_midline():
+    t = gait.stance_targets((0.30, -0.06), (0.10, -0.10), shoulder=0.30)  # ankles 0.36 apart, shoulders 0.30 apart
+    assert t is not None
+    assert abs(t[0] - t[1]) == pytest.approx(gait.IDLE_STANCE_RATIO * 0.30)
+    assert (t[0] + t[1]) / 2 == pytest.approx(0.12)  # the midline stays where it was
+    assert t[0] > t[1]  # the same foot stays on the same side
+
+
+def test_stance_targets_leave_a_narrow_stance_alone():
+    assert gait.stance_targets((0.12, -0.12), (0.09, -0.09), shoulder=0.40) is None
+    near = gait.IDLE_STANCE_RATIO * 0.30 * 1.04  # within the tolerance of the target
+    assert gait.stance_targets((near / 2, -near / 2), (0.05, -0.05), shoulder=0.30) is None
+    assert gait.stance_targets((0.3, -0.3), (0.1, -0.1), shoulder=0.0) is None  # no shoulder width: nothing to compare with
+
+
+def test_stance_targets_never_cross_the_hips_or_squeeze_wide_feet():
+    t = gait.stance_targets((0.5, -0.5), (0.2, -0.2), shoulder=0.2)  # target 0.17 is narrower than the hips (0.4)
+    assert abs(t[0] - t[1]) == pytest.approx(gait.STANCE_MIN_HIP * 0.4)
+    t = gait.stance_targets((0.5, -0.5), (0.05, -0.05), shoulder=0.3, foot_width=0.3)  # big feet need room
+    assert abs(t[0] - t[1]) == pytest.approx(gait.STANCE_FOOT_GAP * 0.3)
+
+
+def test_leg_roll_puts_the_ankle_where_asked_and_keeps_the_leg_length():
+    for dl, dz, new_dl in ((0.2, -0.85, 0.09), (-0.25, -0.8, -0.1), (0.1, -0.9, 0.1), (0.3, -0.7, 0.0)):
+        a, dz_change = gait.leg_roll(dl, dz, new_dl)
+        l2 = dl * math.cos(a) - dz * math.sin(a)
+        z2 = dl * math.sin(a) + dz * math.cos(a)
+        assert l2 == pytest.approx(new_dl, abs=1e-9)
+        assert math.hypot(l2, z2) == pytest.approx(math.hypot(dl, dz))
+        assert dz_change == pytest.approx(z2 - dz)
+
+
+def test_leg_roll_turns_a_left_leg_one_way_and_a_right_leg_the_other_and_the_body_rises():
+    left, drop_l = gait.leg_roll(0.2, -0.85, 0.09)
+    right, drop_r = gait.leg_roll(-0.2, -0.85, -0.09)
+    assert left < 0 < right and left == pytest.approx(-right)
+    # a straighter leg puts the ankle lower, so the hips must come up by the same amount on both sides
+    assert drop_l < 0 and drop_l == pytest.approx(drop_r)
+    assert gait.leg_roll(0.2, -0.85, 0.2) == (pytest.approx(0.0, abs=1e-9), pytest.approx(0.0, abs=1e-9))
+    assert gait.leg_roll(0.0, 0.0, 0.0) == (0.0, 0.0)

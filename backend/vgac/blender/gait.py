@@ -301,6 +301,46 @@ def clip_table(clips: list[str], motion: str, fps: int, speed: float = 1.0) -> l
     return rows
 
 
+# ---- the built-in idle's stance (procanim.clip_idle) ----------------------------------------------------------
+# A character is built in whatever rest stance its picture had, so some stand with their feet far apart. The idle
+# turns the upper legs in until the ankles are IDLE_STANCE_RATIO of the shoulder width apart (shoulder joint to
+# shoulder joint). A stance that is already that narrow is left alone, and the ankles never come closer than the hip
+# joints are (STANCE_MIN_HIP: a leg hanging straight down) or than the widest foot allows (STANCE_FOOT_GAP).
+IDLE_STANCE_RATIO = 0.85
+STANCE_TOLERANCE = 1.05   # a stance up to this much wider than the target counts as already right
+STANCE_MIN_HIP = 1.1
+STANCE_FOOT_GAP = 1.6     # ankles stay at least this many foot widths apart, so big cartoon feet do not touch
+
+
+def stance_targets(ankle_l: tuple[float, float], hip_l: tuple[float, float], shoulder: float,
+                   ratio: float = IDLE_STANCE_RATIO, foot_width: float = 0.0) -> tuple[float, float] | None:
+    """New lateral coordinates for the two ankles, or None when the stance stays as it is. Lateral coordinates are
+    along the body's side axis; the ankle midline is kept, so a stance that sits off centre is narrowed about it."""
+    sep = abs(ankle_l[0] - ankle_l[1])
+    want = max(ratio * shoulder, STANCE_MIN_HIP * abs(hip_l[0] - hip_l[1]), STANCE_FOOT_GAP * foot_width)
+    if shoulder <= 1e-6 or sep <= want * STANCE_TOLERANCE:
+        return None
+    mid = (ankle_l[0] + ankle_l[1]) / 2
+    sgn = 1.0 if ankle_l[0] >= ankle_l[1] else -1.0
+    return (mid + sgn * want / 2, mid - sgn * want / 2)
+
+
+def leg_roll(dl: float, dz: float, new_dl: float) -> tuple[float, float]:
+    """Turn a leg about the hip in the side-to-up plane. (dl, dz) is the ankle's lateral and vertical offset from the
+    hip; the result is (angle in radians, ankle height change) for the smallest turn that puts the ankle new_dl to the
+    side. The angle is the rotation about the forward axis (side axis toward up is positive). A negative height
+    change means the ankle goes down, so the body has to rise by that much to keep the foot on the ground."""
+    r = math.hypot(dl, dz)
+    if r < 1e-9:
+        return 0.0, 0.0
+    c = max(-1.0, min(1.0, new_dl / r))
+    psi = math.atan2(-dz, dl)
+    cands = [psi + math.acos(c), psi - math.acos(c)]
+    a = min(cands, key=lambda x: abs(math.atan2(math.sin(x), math.cos(x))))
+    a = math.atan2(math.sin(a), math.cos(a))
+    return a, dl * math.sin(a) + dz * math.cos(a) - dz
+
+
 # ---- vectors and quaternions (w, x, y, z), for the retarget and the IK ---------------------------------------
 
 def v_add(a, b):
