@@ -12,18 +12,47 @@ using Vgac.Starter;
 
 public class Boom : Exception { public Boom(string m) : base(m) { } }
 
-// Stand-in for the app's own ComfyUI as the design note's N1 to N5 describe it.
+// Stand-in for the backend's ComfyUI commands (check, remove, retarget, rebuild-venv) on a fake install. `remove` does what the real one
+// does: everything in the install folder goes except the marker and what it keeps (here: KeepRel); with nothing kept the folder goes too.
 public class StandInComfy : IComfyInstall
 {
-    public bool IsOffered = true;
-    public List<string> OwnedRel = new List<string> { "main.py", ".venv", "custom_nodes/vgac-nodes", "logs" };
-    public string RetargetError, RebuildError;
+    public string Data;                        // the data folder the stand-in "settings" name now
+    public string Problem;                     // what `check` refuses with (null: it confirms)
+    public string RetargetError, RebuildError, RemoveError;
+    public List<string> KeepRel = new List<string> { "models" };
     public List<string> Calls = new List<string>();
     public string Root(string data) { return Path.Combine(data, "comfyui"); }
-    public bool Present(string data) { return ComfyGuard.MarkerPresent(Root(data)); }
-    public bool Offered(string data) { return Present(data) && IsOffered; }
-    public List<string> Owned(string data) { return IsOffered ? OwnedRel.Select(r => Path.Combine(Root(data), r.Replace('/', '\\'))).ToList() : new List<string>(); }
-    public List<string> Kept(string data) { return new List<string> { "models", "output", "input", "user" }; }
+    public ComfyState State(string data)
+    {
+        Calls.Add("check");
+        var st = new ComfyState();
+        st.Present = ComfyGuard.MarkerPresent(Root(data));
+        st.Problem = st.Present ? Problem : "There is no ComfyUI of VGAC's here.";
+        if (st.Present && st.Problem == null) foreach (string k in KeepRel) { string p = Path.Combine(Root(data), k); if (Directory.Exists(p)) st.Keeps.Add(p); }
+        return st;
+    }
+    public string Remove()
+    {
+        Calls.Add("remove");
+        if (RemoveError != null) return RemoveError;
+        string root = Root(Data);
+        var keeps = new List<string>(); foreach (string k in KeepRel) keeps.Add(SafeFs.Norm(Path.Combine(root, k)));
+        Sweep(root, keeps);
+        return null;
+    }
+    void Sweep(string dir, List<string> keeps)
+    {
+        foreach (string e in Directory.GetFileSystemEntries(dir))
+        {
+            string n = SafeFs.Norm(e);
+            if (string.Equals(Path.GetFileName(e), ComfyGuard.MarkerName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (keeps.Contains(n)) continue;
+            if (keeps.Exists(k => k.StartsWith(n + "\\"))) { Sweep(e, keeps); continue; }
+            SafeFs.DeleteTree(e);
+        }
+        bool any = false; foreach (string e in Directory.GetFileSystemEntries(dir)) any = true;
+        if (!any) Directory.Delete(dir);
+    }
     public string Retarget(string a, string b) { Calls.Add("retarget"); return RetargetError; }
     public string RebuildVenv(string b) { Calls.Add("rebuild"); return RebuildError; }
 }
@@ -91,8 +120,7 @@ public static partial class T
     static void AfterwardsAll()
     {
         SafeFsNeverFollowsLinks();
-        GuardCasesFromTheSharedFile();
-        MarkerReadingAndOwnedList();
+        TheBackendsAnswersAreRead();
         ScreensSwapSurvivesInterruptions();
         BuildAndVenvFailuresKeepTheOldOnes();
         DataFolderChangeRebuildsTheVenv();
@@ -169,63 +197,36 @@ public static partial class T
         Check(!Directory.Exists(locked), "and once it is closed it can be removed");
     }
 
-    // ---- the guard (N2) ---------------------------------------------------------------------------------------------------
+    // ---- the backend's commands, as the starter reads them (the guard cases themselves run in backend/tests/test_comfy_guard_cases.py) ----
 
-    static void GuardCasesFromTheSharedFile()
+    static void TheBackendsAnswersAreRead()
     {
-        string file = null;
-        string dir = AppDomain.CurrentDomain.BaseDirectory;
-        for (int i = 0; i < 8 && file == null; i++)
-        {
-            string c = Path.Combine(dir, "setup", "guard-cases.json");
-            if (File.Exists(c)) file = c;
-            dir = Path.GetDirectoryName(dir.TrimEnd('\\')) ?? dir;
-        }
-        if (file == null) { string root = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "setup", "guard-cases.json")); if (File.Exists(root)) file = root; }
-        Check(file != null, "the shared guard cases file is found (setup\\guard-cases.json)");
-        if (file == null) return;
-        var d = Json.ParseObject(File.ReadAllText(file, Encoding.UTF8));
-        int n = 0;
-        foreach (object co in (System.Collections.IEnumerable)d["cases"])
-        {
-            var c = (Dictionary<string, object>)co;
-            string tmp = Tmp("guard");
-            foreach (object so in (System.Collections.IEnumerable)c["setup"])
-            {
-                var step = ((System.Collections.IEnumerable)so).Cast<object>().Select(x => x.ToString()).ToArray();
-                string p = Path.Combine(tmp, step[1].Replace('/', '\\'));
-                switch (step[0])
-                {
-                    case "mkdir": Directory.CreateDirectory(p); break;
-                    case "file": Put(p, "x"); break;
-                    case "marker": Put(Path.Combine(p, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}"); break;
-                    case "junction": Directory.CreateDirectory(Path.GetDirectoryName(p)); Junction(p, Path.Combine(tmp, step[2].Replace('/', '\\'))); break;
-                }
-            }
-            var fence = ((System.Collections.IEnumerable)c["fence"]).Cast<object>().Select(x => Path.Combine(tmp, x.ToString().Replace('/', '\\'))).ToList();
-            bool allowed = ComfyGuard.Allows(Path.Combine(tmp, c["target"].ToString().Replace('/', '\\')), Path.Combine(tmp, c["root"].ToString().Replace('/', '\\')), fence);
-            Eq(allowed ? "allow" : "refuse", c["expect"].ToString(), "guard case: " + c["name"]);
-            n++;
-        }
-        Check(n >= 10, "the guard cases were run (" + n + ")");
-    }
-
-    static void MarkerReadingAndOwnedList()
-    {
-        string data = Tmp("marker");
-        var real = new MarkerComfyInstall(delegate(string a, string c) { return null; });
-        Check(!real.Present(data) && !real.Offered(data), "no marker: not present");
+        string data = Tmp("backendanswers");
+        var real = new BackendComfyInstall(delegate(string a) { return null; });
+        Check(!real.State(data).Present && real.State(data).Problem != null, "no marker: nothing there, and a reason");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
-        Check(real.Present(data) && !real.Offered(data), "a marker without the owned list (the version before N1): present, not offered");
-        Eq(real.Owned(data).Count, 0, "so nothing in it is owned");
-        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\"main.py\",\".venv\",\"../evil\",\"C:\\\\Windows\",\"custom_nodes/vgac-nodes\"],\"kept\":[\"models\"]}");
-        Check(real.Offered(data), "with the owned list it is offered");
-        var o = real.Owned(data);
-        Eq(o.Count, 2, "only names inside the install folder are taken (a climbing and a rooted name are dropped)");
-        Check(o.All(p => SafeFs.Inside(p, real.Root(data))), "every owned path is inside the install folder");
-        Eq(string.Join(",", real.Kept(data).ToArray()), "models,output,input,user,custom_nodes", "the kept names are at least the five defaults (a marker can add, never take away)");
-        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\",\"owned\":[\"main.py\"]}");
-        Check(!real.Present(data) && !real.Offered(data), "a marker that is not VGAC's is not a marker");
+        string say = null;
+        var ask = new BackendComfyInstall(delegate(string a) { return say; });
+        say = null;
+        string noPython = ask.State(data).Problem;
+        Check(noPython != null && !noPython.Contains("older version"), "no answer at all (no Python): a plain reason that does not blame an older version: " + noPython);
+        say = "{\"ok\": true, \"root\": \"r\", \"keeps\": [\"" + Path.Combine(data, "comfyui", "ComfyUI", "models").Replace("\\", "\\\\") + "\"]}";
+        var st = ask.State(data);
+        Check(st.Present && st.Problem == null && st.Keeps.Count == 1 && st.Keeps[0].EndsWith("models"), "an ok answer: confirmed, and what it keeps comes from the answer");
+        say = "{\"ok\": false, \"code\": \"not_ours\", \"reason\": \"VGAC did not install a ComfyUI there.\"}";
+        Eq(ask.State(data).Problem, "VGAC did not install a ComfyUI there.", "a refusal's reason is passed on as it is");
+        Eq(ask.Remove(), "VGAC did not install a ComfyUI there.", "also for remove");
+        Eq(ask.Retarget("a", "b"), "VGAC did not install a ComfyUI there.", "and retarget");
+        say = "not json";
+        Check(ask.State(data).Problem != null && ask.Remove() != null && ask.RebuildVenv("b") != null, "an answer that cannot be read is a refusal, never a yes");
+        say = "{\"ok\": true, \"rebuilt\": true}";
+        Check(ask.RebuildVenv("b") == null && ask.Remove() == null, "an ok answer is a yes");
+        string seen = null;
+        var spy = new BackendComfyInstall(delegate(string a) { seen = a; return "{\"ok\": true}"; });
+        spy.Retarget("C:\\old data", "D:\\new data");
+        Eq(seen, "retarget \"C:\\old data\" \"D:\\new data\"", "retarget passes both places, quoted");
+        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\"}");
+        Check(!ask.State(data).Present, "a marker that is not VGAC's is not a marker");
     }
 
     // ---- update: the screens ---------------------------------------------------------------------------------------------
@@ -582,7 +583,8 @@ public static partial class T
         Put(Path.Combine(l.FrontendDir, "node_modules", ".package-lock.json"), "{}"); Put(Path.Combine(l.FrontendDir, "dist", "index.html"), "<html>");
         // VGAC's own ComfyUI: owned pieces and the person's things inside it
         string c = Path.Combine(s.Data, "comfyui");
-        Put(Path.Combine(c, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[]}");
+        Put(Path.Combine(c, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
+        s.Comfy.Data = s.Data;
         Put(Path.Combine(c, "main.py"), "m"); Put(Path.Combine(c, ".venv", "pyvenv.cfg"), "v"); Put(Path.Combine(c, "custom_nodes", "vgac-nodes", "n.py"), "n"); Put(Path.Combine(c, "logs", "l.txt"), "l");
         Put(Path.Combine(c, "models", "mine.safetensors"), "the person's own model"); Put(Path.Combine(c, "output", "out.png"), "their picture");
         Put(Path.Combine(c, "custom_nodes", "their-node", "t.py"), "theirs");
@@ -618,7 +620,7 @@ public static partial class T
     {
         var s = Installed();
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        Eq(string.Join(",", plan.Groups.Select(g => g.Id).ToArray()), "tools,comfy,models,packs,settings,work", "the groups, in order");
+        Eq(string.Join(",", plan.Groups.Select(g => g.Id).ToArray()), "comfy,tools,models,packs,settings,work", "the groups, in order (VGAC's own ComfyUI first: its installer needs the app's Python)");
         Check(plan.Get("tools").DefaultOn && plan.Get("comfy").DefaultOn, "tools, Python, screens and VGAC's own ComfyUI are ticked by default");
         Check(!plan.Get("models").DefaultOn && !plan.Get("packs").DefaultOn && !plan.Get("settings").DefaultOn && !plan.Get("work").DefaultOn, "models, node packs, settings and the person's work are not");
         Check(plan.Get("work").NeedsTypedWord && !plan.Get("tools").NeedsTypedWord, "only the person's work needs the typed word");
@@ -627,26 +629,27 @@ public static partial class T
         Check(!paths.Any(p => p.EndsWith("vgac.exe")), "VGAC.exe is never listed");
         Check(!paths.Any(p => p.Contains("theirs.safetensors")), "a model the person added is never listed");
         Check(!paths.Any(p => p.Contains("blender")), "a linked tool is never listed");
-        Check(!paths.Any(p => p.Contains("mine.safetensors") || p.EndsWith("\\output") || p.Contains("their-node")), "what the person keeps inside VGAC's ComfyUI is never listed");
-        Check(plan.Get("comfy").Items.Select(i => Path.GetFileName(i.Path)).OrderBy(x => x).SequenceEqual(new[] { ".venv", "logs", "main.py", "vgac-nodes" }), "VGAC's own ComfyUI is listed by its owned names only");
+        Check(!paths.Any(p => p.Contains("mine.safetensors") || p.Contains("their-node")), "nothing inside VGAC's ComfyUI is listed by the starter");
+        Check(plan.Get("comfy").Items.Count == 1 && plan.Get("comfy").Items[0].Path == Path.Combine(s.Data, "comfyui") && plan.Get("comfy").Items[0].Tag.EndsWith("models"), "VGAC's own ComfyUI is one item, and what it keeps is what the backend said");
         Check(plan.Get("models").Items.Count == 1 && plan.Get("models").Items[0].Path.EndsWith("vgac.safetensors"), "the model VGAC downloaded is the only one in the models group");
         Check(plan.Get("packs").Items.Count == 1 && plan.Get("packs").Items[0].Path.EndsWith("ComfyUI-SkinToken"), "the node pack VGAC added is its own group");
         Check(plan.NotRemoved.Any(n => n.Contains("odd")), "a ledger entry that is neither a file VGAC added nor a pack is left for the person, with a reason");
         Check(plan.Get("work").Items.Count == 2, "the library and the exports are in the work group, separately");
         Check(plan.Get("tools").Bytes > 5000, "sizes are counted");
         // a ComfyUI whose install record does not list what VGAC made is not offered
-        s.Comfy.IsOffered = false;
+        s.Comfy.Problem = "VGAC did not install a ComfyUI there, so nothing is done there.";
         var p2 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        Check(p2.Get("comfy").Items.Count == 0 && p2.Notes.Any(n => n.Contains("not removed here yet")), "an install record without the owned list: not offered, and said");
+        Check(p2.Get("comfy").Items.Count == 0 && p2.Notes.Any(n => n.Contains("not removed here") && n.Contains("did not install") && !n.Contains("older version")), "when the backend refuses, nothing is listed, and its reason is shown");
         // a folder that only has the same name is not taken
-        s.Comfy.IsOffered = true;
+        s.Comfy.Problem = null;
         Directory.Delete(s.L.Venv, true); Directory.CreateDirectory(s.L.Venv); Put(Path.Combine(s.L.Venv, "readme.txt"), "somebody's folder");
         var p3 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         Check(!AllPaths(p3).Any(p => p == s.L.Venv) && p3.NotRemoved.Any(n => n.Contains("Python environment")), "a folder with the right name but the wrong contents is left alone, with a reason");
         // the summary names every folder, sizes, how it goes, and what is not touched
         var ticked = new List<string> { "tools", "comfy", "models" };
         string text = RemovalSummary.Text(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), ticked, s.L);
-        Check(text.Contains(s.L.PythonDir) && text.Contains(Path.Combine(s.Data, "comfyui", ".venv")), "the summary names each folder (full path)");
+        Check(text.Contains(s.L.PythonDir) && text.Contains(Path.Combine(s.Data, "comfyui")), "the summary names each folder (full path)");
+        Check(text.Contains("Everything in this folder is deleted") && text.Contains("except what VGAC's installer keeps") && text.Contains("models"), "and says truthfully what stays in VGAC's ComfyUI");
         Check(text.Contains("checkpoints: 1 file(s)"), "files are listed by their folder with a count");
         Check(text.Contains("Total:") && text.Contains("never followed") && text.Contains("Not touched: the project folder"), "it gives the total and what stays");
         Check(text.Contains("Recycle Bin") || text.Contains("cannot be restored"), "and says which way each group goes");
@@ -664,11 +667,13 @@ public static partial class T
         var rec = new FakeRecycler();
         var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(File.Exists(Path.Combine(outside, "precious.txt")), "what links inside VGAC's folders pointed at is untouched");
-        Check(res.Unlinked.Count >= 2, "the links were unlinked, not followed (" + res.Unlinked.Count + ")");
+        Check(res.Unlinked.Count >= 1, "the links in the starter's own folders were unlinked, not followed (" + res.Unlinked.Count + ")");
         Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir) && !Directory.Exists(s.L.NodeDir) && !Directory.Exists(Path.Combine(s.L.FrontendDir, "dist")), "the ticked app folders are gone");
         string c = Path.Combine(s.Data, "comfyui");
-        Check(!File.Exists(Path.Combine(c, "main.py")) && !Directory.Exists(Path.Combine(c, ".venv")) && !Directory.Exists(Path.Combine(c, "custom_nodes", "vgac-nodes")), "VGAC's own ComfyUI pieces are gone");
-        Check(File.Exists(Path.Combine(c, "models", "mine.safetensors")) && File.Exists(Path.Combine(c, "output", "out.png")) && File.Exists(Path.Combine(c, "custom_nodes", "their-node", "t.py")), "the person's models, outputs and own custom nodes inside it stay");
+        Check(!File.Exists(Path.Combine(c, "main.py")) && !Directory.Exists(Path.Combine(c, ".venv")) && !Directory.Exists(Path.Combine(c, "custom_nodes", "vgac-nodes")), "VGAC's own ComfyUI pieces are gone (removed by its installer)");
+        Check(s.Comfy.Calls.Contains("remove"), "through the backend's remove command");
+        Check(File.Exists(Path.Combine(c, "models", "mine.safetensors")) && File.Exists(Path.Combine(c, ComfyGuard.MarkerName)), "what the installer keeps (models) and its install record stay");
+        Check(!File.Exists(Path.Combine(c, "output", "out.png")) && !Directory.Exists(Path.Combine(c, "custom_nodes", "their-node")), "the rest of that folder goes with it, as the summary said");
         Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && File.Exists(Path.Combine(s.Root, "exports", "hero", "hero.glb")), "the person's library and exports stay");
         Check(File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors")) && File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors")), "models are not touched unless asked for");
         Check(File.Exists(Path.Combine(s.Ext, "blender", "blender.exe")), "a linked tool is never touched");
@@ -793,9 +798,10 @@ public static partial class T
         Check(tryTo(Path.Combine(s.Root, "backend", "x")).Contains("only its local folder"), "a place inside the project other than local is refused");
         var mvFree = Mover(s, null); mvFree.Free = delegate(string f) { return 100; };
         Check(mvFree.Start(newPlace, new Progress()).Contains("is free there"), "not enough room is said with both sizes");
-        s.Comfy.IsOffered = false;
-        Check(tryTo(newPlace).Contains("older version"), "a ComfyUI install that cannot be moved yet blocks the move, and says why");
-        s.Comfy.IsOffered = true;
+        s.Comfy.Problem = "VGAC did not install a ComfyUI there.";
+        string refused = tryTo(newPlace);
+        Check(refused.Contains("did not confirm") && refused.Contains("did not install a ComfyUI") && !refused.Contains("older version"), "a ComfyUI install the backend does not confirm blocks the move, and says why: " + refused);
+        s.Comfy.Problem = null;
         Check(MoveRunner.Load(s.Root) == null && !Directory.Exists(newPlace), "none of these changed anything");
         // programs with files open in the old folder block it
         var fp = new FakeProcs(); fp.All.Add(new ProcInfo { Pid = 77, Name = "python.exe", ExePath = Path.Combine(s.Data, "python", "python.exe"), CommandLine = "python.exe" });
@@ -818,7 +824,7 @@ public static partial class T
         Eq(MachineFile.Load(s.Root).GetString("starter", "dataFolder"), to, "the settings file now names the new folder");
         Check(Ledger.Load(s.Root).Items.Select(o => Convert.ToString(((Dictionary<string, object>)o)["path"])).Any(p => p.StartsWith(to)), "the ledger paths were rewritten");
         Eq(MoveRunner.Load(s.Root).State, "rebuilt", "the move is at the end; the ComfyUI was told and rebuilt");
-        Eq(string.Join(",", s.Comfy.Calls.ToArray()), "retarget,rebuild", "in that order");
+        Eq(string.Join(",", s.Comfy.Calls.Where(c => c != "check").ToArray()), "retarget,rebuild", "in that order");
         Check(Directory.Exists(Path.Combine(s.Data, "python")) && File.Exists(Path.Combine(s.Data, "keepme.txt")), "the old folder is whole until the person agrees to remove it");
         Check(mv.DeleteOld() == null, "the old copy can be deleted");
         Check(!Directory.Exists(Path.Combine(s.Data, "python")) && !Directory.Exists(Path.Combine(s.Data, "comfyui")), "the VGAC folders of the old place are gone");

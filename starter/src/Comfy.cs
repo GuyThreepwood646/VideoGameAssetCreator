@@ -1,18 +1,14 @@
-// The app's own ComfyUI, as the maintenance jobs see it. Everything here is behind IComfyInstall so the jobs can be built and
-// tested before the backend side (backend/vgac/comfy_install.py) carries the pieces below. The text of what is needed from
-// that side (N1 to N5) is in the phase 9 design note and is the specification:
+// The app's own ComfyUI, as the maintenance jobs see it. The backend (backend/vgac/comfy_install.py) is the one owner of everything
+// about it: what VGAC made there, what stays, how it is removed and how it is moved. The starter keeps no second model of that: it
+// asks the backend's command line (`python -m vgac.comfy_install <command>`, usable with the backend not running) and shows what it
+// answers. Each command prints one json line and exits non-zero with a plain reason when it refuses.
 //
-//   N1  the marker `<data>/comfyui/vgac-install.json` lists `owned` (paths, relative to the install folder, of everything VGAC
-//       made there: source files by the pinned list, .venv, wheels, custom_nodes/ComfyUI-SkinToken, custom_nodes/vgac-nodes,
-//       logs) and `kept` (top-level names that are never VGAC's to delete: models, output, input, user), updated per step.
-//   N2  the guard rules (inside the install folder by real path, marker present, outside every foreign ComfyUI) as shared test
-//       cases in `setup/guard-cases.json`, used by the Python tests and by these C# tests.
-//   N3  `python -m vgac.comfy_install retarget <old_data> <new_data>` and `python -m vgac.comfy_install rebuild-venv`.
-//   N4  engine entries written relative to the data folder where possible.
-//   N5  comfy_find records, for a node pack VGAC put into a linked ComfyUI, the linked ComfyUI's root and the Python packages
-//       it installed there (ledger kind `pip-note`).
+//   check                    is there a ComfyUI VGAC made here (marker and ledger)? what does remove keep?
+//   remove                   removes it (models kept)
+//   retarget <old> <new>     the data folder moved: the settings now point into the new place
+//   rebuild-venv             makes its Python environment again
 //
-// Remove needs N1, N2, N5. Move needs N1, N2, N3, N4. C# 5 (see Core.cs).
+// Until a command succeeds the starter does the safe thing: a move is refused and nothing is listed for removal. C# 5 (see Core.cs).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -20,23 +16,28 @@ using System.Text;
 
 namespace Vgac.Starter
 {
-    public interface IComfyInstall
+    // What `check` said (or why it could not).
+    public class ComfyState
     {
-        bool Present(string dataFolder);                  // the folder has VGAC's marker
-        bool Offered(string dataFolder);                  // the marker has the N1 lists, so remove and move may touch it
-        string Root(string dataFolder);                   // <data>/comfyui
-        List<string> Owned(string dataFolder);            // N1: absolute paths of what VGAC made inside the root (empty when not offered)
-        List<string> Kept(string dataFolder);             // N1: names that are never deleted
-        string Retarget(string oldData, string newData);  // N3: null when done, else a plain sentence
-        string RebuildVenv(string newData);               // N3: the same
+        public bool Present;                     // the install folder has a VGAC marker (a hint only; the backend decides)
+        public string Problem;                   // null: the backend confirmed it is VGAC's and can be handled; else a plain sentence
+        public List<string> Keeps = new List<string>();   // what a removal keeps (absolute paths), as the backend says
     }
 
-    // The guard (N2): a path may be written or deleted only when it is inside the install folder (real path), the install
-    // folder has VGAC's marker, and it is not inside, or around, a ComfyUI VGAC did not install.
+    public interface IComfyInstall
+    {
+        string Root(string dataFolder);                   // <data>/comfyui
+        ComfyState State(string dataFolder);              // runs `check`
+        string Remove();                                  // runs `remove`: null when done, else a plain sentence
+        string Retarget(string oldData, string newData);  // runs `retarget`: the same
+        string RebuildVenv(string newData);               // runs `rebuild-venv`: the same
+    }
+
     public static class ComfyGuard
     {
         public const string MarkerName = "vgac-install.json";
 
+        // Only a hint that a folder might be VGAC's ComfyUI (used to tell what to show); the backend's own proof (marker AND ledger) decides.
         public static bool MarkerPresent(string root)
         {
             try
@@ -47,91 +48,78 @@ namespace Vgac.Starter
             }
             catch (Exception) { return false; }
         }
+    }
 
-        public static bool Allows(string target, string root, IEnumerable<string> foreignFolders)
+    public static class ComfyCli
+    {
+        // Runs `python -m vgac.comfy_install <args>` with the app's own Python in the backend folder, output into a log, and returns the
+        // last json result line the command printed, or null (no Python, could not start, no result).
+        public static string Run(IHost host, Layout lay, string projectRoot, string args)
         {
-            if (!SafeFs.Inside(target, root)) return false;
-            if (!MarkerPresent(root)) return false;
-            if (foreignFolders != null)
-                foreach (string f in foreignFolders)
-                    if (!string.IsNullOrEmpty(f) && (SafeFs.Inside(target, f) || SafeFs.Inside(f, target))) return false;
-            return true;
+            if (lay == null || !File.Exists(lay.VenvPython)) return null;
+            string logFile = Path.Combine(projectRoot, "runtime", "logs", "comfy-install-cli.log");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(logFile));
+                if (File.Exists(logFile)) File.Delete(logFile);
+                host.Run(lay.VenvPython, "-m vgac.comfy_install " + args, Path.Combine(projectRoot, "backend"), null, logFile);
+                string last = null;
+                foreach (string line in File.ReadAllLines(logFile, Encoding.UTF8))
+                    if (line.StartsWith("{\"ok\"")) last = line;
+                return last;
+            }
+            catch (Exception) { return null; }
         }
     }
 
-    // The real one: reads the marker. Until the backend writes the N1 lists, nothing in the install folder is offered.
-    public class MarkerComfyInstall : IComfyInstall
+    // The real one. `runCli` runs the command and returns its one json line (null when nothing could be run).
+    public class BackendComfyInstall : IComfyInstall
     {
-        readonly Func<string, string, string> runCli;   // (arguments, working folder) -> null when done, else a plain sentence
+        readonly Func<string, string> runCli;
 
-        public MarkerComfyInstall(Func<string, string, string> runCli) { this.runCli = runCli; }
+        public BackendComfyInstall(Func<string, string> runCli) { this.runCli = runCli; }
 
         public string Root(string data) { return Path.Combine(data, "comfyui"); }
 
-        public bool Present(string data) { return ComfyGuard.MarkerPresent(Root(data)); }
-
-        Dictionary<string, object> Marker(string data)
+        // null: ok. Else the plain reason the command gave, or why it could not be asked.
+        static string Reason(string line, out Dictionary<string, object> result)
         {
-            try { return Json.ParseObject(File.ReadAllText(Path.Combine(Root(data), ComfyGuard.MarkerName), Encoding.UTF8)); }
-            catch (Exception) { return null; }
-        }
-
-        static List<string> Strings(object o)
-        {
-            var res = new List<string>();
-            var arr = o as System.Collections.IEnumerable;
-            if (arr == null || o is string) return null;
-            foreach (object x in arr) if (x != null) res.Add(x.ToString());
-            return res;
-        }
-
-        public bool Offered(string data)
-        {
-            var m = Marker(data);
-            object owned;
-            return m != null && Present(data) && m.TryGetValue("owned", out owned) && Strings(owned) != null;
-        }
-
-        public List<string> Owned(string data)
-        {
-            var res = new List<string>();
-            var m = Marker(data); object o;
-            if (m == null || !Offered(data) || !m.TryGetValue("owned", out o)) return res;
-            string root = Root(data);
-            List<string> kept = Kept(data);
-            foreach (string rel in Strings(o))
+            result = null;
+            if (string.IsNullOrEmpty(line)) return "The app's installer for ComfyUI did not answer (is the app's Python there?).";
+            try
             {
-                if (rel.Length == 0 || Path.IsPathRooted(rel) || rel.Contains("..")) continue;   // only names inside the install folder
-                string full = Path.Combine(root, rel.Replace('/', '\\'));
-                if (RemovalPlanner.KeptProblem(full, root, kept) != null) continue;               // the folder itself, or anything it keeps
-                res.Add(full);
+                result = Json.ParseObject(line);
+                object ok, why;
+                if (result.TryGetValue("ok", out ok) && ok is bool && (bool)ok) return null;
+                return result.TryGetValue("reason", out why) && Convert.ToString(why).Length > 0 ? Convert.ToString(why) : "The app's installer for ComfyUI refused.";
             }
-            return res;
+            catch (Exception) { return "The app's installer for ComfyUI gave an answer VGAC could not read."; }
         }
 
-        public List<string> Kept(string data)
+        public ComfyState State(string data)
         {
-            // What is kept is at least models, output, input, user and custom_nodes; a marker can add to that, never take from it.
-            var kept = new List<string>(new[] { "models", "output", "input", "user", "custom_nodes" });
-            var m = Marker(data); object o;
-            if (m != null && m.TryGetValue("kept", out o))
+            var st = new ComfyState();
+            st.Present = ComfyGuard.MarkerPresent(Root(data));
+            if (!st.Present) { st.Problem = "There is no ComfyUI of VGAC's here."; return st; }
+            Dictionary<string, object> r;
+            st.Problem = Reason(runCli("check"), out r);
+            if (st.Problem == null && r != null)
             {
-                var k = Strings(o);
-                if (k != null) foreach (string x in k) if (!kept.Contains(x) && x.Length > 0 && !Path.IsPathRooted(x) && !x.Contains("..")) kept.Add(x);
+                object keeps;
+                if (r.TryGetValue("keeps", out keeps) && keeps is System.Collections.IEnumerable && !(keeps is string))
+                    foreach (object k in (System.Collections.IEnumerable)keeps) if (k != null) st.Keeps.Add(k.ToString());
             }
-            return kept;
+            return st;
         }
+
+        public string Remove() { Dictionary<string, object> r; return Reason(runCli("remove"), out r); }
 
         public string Retarget(string oldData, string newData)
         {
-            if (!Offered(newData)) return "The app's ComfyUI cannot be moved yet: its install record is from an older version.";
-            return runCli("retarget \"" + oldData + "\" \"" + newData + "\"", null);
+            Dictionary<string, object> r;
+            return Reason(runCli("retarget \"" + oldData + "\" \"" + newData + "\""), out r);
         }
 
-        public string RebuildVenv(string newData)
-        {
-            if (!Offered(newData)) return "The app's ComfyUI cannot be rebuilt yet: its install record is from an older version.";
-            return runCli("rebuild-venv", null);
-        }
+        public string RebuildVenv(string newData) { Dictionary<string, object> r; return Reason(runCli("rebuild-venv"), out r); }
     }
 }

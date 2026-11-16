@@ -96,7 +96,12 @@ namespace Vgac.Starter
                 else bad.Add("That folder already has files in it. Choose an empty or new folder.");
             }
             if (freeBytes >= 0 && freeBytes < needBytes + needBytes / 10) bad.Add("The copy needs about " + RemovalSummary.Size(needBytes + needBytes / 10) + "; only " + RemovalSummary.Size(freeBytes) + " is free there.");
-            if (comfy != null && comfy.Present(from) && !comfy.Offered(from)) bad.Add("VGAC's own ComfyUI is installed, and its install record is from an older version, so it cannot be moved yet.");
+            // VGAC's own ComfyUI: moved only when the backend's installer confirms it is VGAC's and can be handled; else the move is refused.
+            if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(from)))
+            {
+                string cwhy = comfy.State(from).Problem;
+                if (cwhy != null) bad.Add("VGAC's own ComfyUI is in this folder, and its installer did not confirm that it can be moved: " + cwhy + " Nothing was changed.");
+            }
             // links are never copied; a folder that holds one is not moved at all rather than losing what it points to
             foreach (string name in NamesIn(from))
             {
@@ -342,12 +347,14 @@ namespace Vgac.Starter
             ledger.Save();
         }
 
-        // The app's own ComfyUI is told where it is now and makes its Python again (offline). The backend's own Python is
+        // The app's own ComfyUI is told where it is now and makes its Python again (its installer fetches and checks its packages again). The backend's own Python is
         // made again by the normal start, which sees that the data folder changed.
         string Rebuild(MoveJournal j)
         {
-            if (comfy != null && comfy.Present(j.To))
+            if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.To)))
             {
+                // The commands run with the app's own Python, whose environment still points into the old place: the old copy is
+                // deleted only after this step, and only on the person's confirmation.
                 string r = comfy.Retarget(j.From, j.To);
                 if (r != null) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Continue to try again.";
                 r = comfy.RebuildVenv(j.To);

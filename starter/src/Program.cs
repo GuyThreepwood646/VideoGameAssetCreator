@@ -192,7 +192,7 @@ namespace Vgac.Starter
 
         public MainForm(string projectRoot, int port, InstanceGate gate, int exitAfter, string stateOut, bool keepStatus)
         {
-            comfyInstall = new MarkerComfyInstall(delegate(string a, string c) { return RunComfyCli(a, c); });
+            comfyInstall = new BackendComfyInstall(delegate(string a) { return RunComfyCli(a); });
             root = projectRoot; this.port = port; this.gate = gate; this.exitAfter = exitAfter; this.stateOut = stateOut; this.keepStatus = keepStatus;
             log = new SetupLog(root);
             Text = "VGAC status";
@@ -870,12 +870,10 @@ namespace Vgac.Starter
         }
 
         // The app's own ComfyUI is moved and rebuilt by the backend's own code (python -m vgac.comfy_install), run with the app's Python.
-        string RunComfyCli(string args, string cwd)
+        // Runs one of the backend's ComfyUI commands (the backend itself need not be running) and returns its one json line, or null.
+        string RunComfyCli(string args)
         {
-            if (lay == null || !File.Exists(lay.VenvPython)) return "The app's Python is not there.";
-            string logFile = Path.Combine(root, "runtime", "logs", "comfy-install-cli.log");
-            int code = host.Run(lay.VenvPython, "-m vgac.comfy_install " + args, Path.Combine(root, "backend"), null, logFile);
-            return code == 0 ? null : "It stopped with an error (code " + code + "). The log is " + logFile + ".";
+            return ComfyCli.Run(host, lay, root, args);
         }
 
         // ---- quit ------------------------------------------------------------------------------------------------------

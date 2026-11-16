@@ -1217,3 +1217,145 @@ def test_a_fresh_clone_with_crlf_checkout_passes_the_pins(tmp_path, monkeypatch)
     _git("checkout", "--quiet", "HEAD", "--", "setup", ".gitattributes", cwd=clone)
     monkeypatch.setattr(downloader, "project_dir", lambda: clone)
     assert ci.pins_missing() == []
+
+
+# --- the command line the starter's Move and Remove call ---------------------------------------------------------------------------
+
+
+def _cli(argv: list[str], capsys, box=None) -> tuple[int, dict]:
+    code = ci.main(argv, box["ops"] if box else None)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) == 1, lines  # one machine-readable line
+    return code, json.loads(lines[0])
+
+
+def _move_data_folder(box, name: str = "Moved data") -> Path:
+    """What the starter's Move does to the files, the settings and the ledger, before it calls retarget and rebuild-venv."""
+    old, new = box["data"], box["tmp"] / name
+    shutil.move(str(old), str(new))
+    m = machine(box)
+    m["starter"]["dataFolder"] = str(new)
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    lp = downloader.ledger_path()
+    lp.write_text(lp.read_text(encoding="utf-8").replace(json.dumps(str(old))[1:-1], json.dumps(str(new))[1:-1]), encoding="utf-8")
+    config.reset_settings()
+    return new
+
+
+def test_cli_check_says_whether_vgac_made_it_and_what_remove_would_keep(box, capsys):
+    code, out = _cli(["check"], capsys, box)
+    assert code == 2 and out["ok"] is False and out["code"] == "not_ours" and out["reason"]  # nothing there yet
+    install(box)
+    code, out = _cli(["check"], capsys, box)
+    assert code == 0 and out["ok"] is True and out["keeps"] == []
+    models = box["root"] / "ComfyUI" / "models" / "checkpoints"
+    models.mkdir(parents=True, exist_ok=True)
+    (models / "big.safetensors").write_bytes(b"w")
+    code, out = _cli(["check"], capsys, box)
+    assert out["keeps"] == [str(box["root"] / "ComfyUI" / "models")]
+    r = ci.remove(False, box["ops"])  # and that is exactly what remove() then keeps
+    assert r["kept_models"] == out["keeps"][0] and (models / "big.safetensors").is_file()
+
+
+def test_cli_a_marker_without_the_ledger_is_refused_by_every_command(box, capsys):
+    root = box["root"]
+    root.mkdir(parents=True)
+    (root / ci.MARKER).write_text(json.dumps({"made_by": "VGAC"}), encoding="utf-8")
+    (root / "keep.txt").write_text("x", encoding="utf-8")
+    for argv in (["check"], ["remove"], ["rebuild-venv"], ["retarget", str(box["tmp"] / "elsewhere"), str(box["data"])]):
+        code, out = _cli(argv, capsys)
+        assert code == 2 and out["ok"] is False and out["code"] == "not_ours", argv
+    assert (root / "keep.txt").is_file() and not (root / ".venv").exists()
+
+
+def test_cli_remove_is_remove_and_keeps_models(box, capsys):
+    install(box)
+    mdl = box["root"] / "ComfyUI" / "models" / "checkpoints" / "big.safetensors"
+    mdl.parent.mkdir(parents=True, exist_ok=True)
+    mdl.write_bytes(b"w")
+    code, out = _cli(["remove"], capsys, box)
+    assert code == 0 and out["ok"] is True and out["kept_models"] and mdl.is_file()
+    assert not (box["root"] / ".venv").exists() and not (box["root"] / "ComfyUI" / "main.py").exists()
+    code, out = _cli(["remove", "--models"], capsys, box)
+    assert code == 0 and not box["root"].exists()
+
+
+def test_cli_retarget_points_the_settings_into_the_moved_install(box, capsys):
+    install(box)
+    old = box["data"]
+    new = _move_data_folder(box)
+    code, out = _cli(["retarget", str(old), str(new)], capsys, box)
+    assert code == 0 and out["ok"] is True and out["changed"] > 0, out
+    s = config.load_settings(create_library=False)
+    nroot = new / "comfyui"
+    a = s.instances["a"]
+    assert Path(a.engine.comfy_dir) == nroot and Path(a.engine.python) == nroot / ".venv" / "Scripts" / "python.exe"
+    assert Path(a.engine.user_dir) == nroot / "user" / "a" and Path(a.engine.output_dir) == nroot / "output" / "a"
+    assert s.comfy_input_dir == nroot / "input" and s.loras_dir == nroot / "ComfyUI" / "models" / "loras"
+    assert str(old) not in box["machine"].read_text(encoding="utf-8").replace("\\\\", "\\")
+    code, out = _cli(["retarget", str(old), str(new)], capsys, box)  # again: nothing left to change
+    assert code == 0 and out["changed"] == 0
+
+
+def test_cli_retarget_refuses_when_the_settings_do_not_name_the_new_place(box, capsys):
+    install(box)
+    before = box["machine"].read_text(encoding="utf-8")
+    code, out = _cli(["retarget", str(box["data"]), str(box["tmp"] / "not the data folder")], capsys)
+    assert code == 2 and out["code"] == "not_current" and box["machine"].read_text(encoding="utf-8") == before
+
+
+def test_cli_retarget_leaves_other_programs_settings_alone(box, capsys):
+    install(box)
+    m = machine(box)
+    theirs = str(box["theirs"] / "ComfyUI" / "output")
+    m["backend"]["comfy_input_dir"] = theirs
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    config.reset_settings()
+    old = box["data"]
+    new = _move_data_folder(box)
+    code, out = _cli(["retarget", str(old), str(new)], capsys, box)
+    assert code == 0
+    assert machine(box)["backend"]["comfy_input_dir"] == theirs  # not inside the old install: not touched
+
+
+def test_cli_rebuild_venv_makes_it_again_from_checked_wheels(box, capsys):
+    install(box)
+    old = box["data"]
+    new = _move_data_folder(box)
+    _cli(["retarget", str(old), str(new)], capsys, box)
+    box["runner"].calls.clear()
+    box["net"].seen.clear()
+    code, out = _cli(["rebuild-venv"], capsys, box)
+    assert code == 0 and out["rebuilt"] is True, out
+    nroot = new / "comfyui"
+    kinds = [c[1:3] for c in box["runner"].calls]
+    assert ["venv", str(nroot / ".venv")] in kinds and ["pip", "install"] in kinds
+    assert any(u.endswith(".whl") for u, _ in box["net"].seen)  # fetched again and checked: an install removes them
+    assert not (nroot / "wheels").exists() and (nroot / ".venv" / "Lib" / "site-packages" / "installed.txt").is_file()
+    m = ci.read_marker(nroot)
+    assert all(m["steps"][s] == "done" for s in ("venv", "wheels", "packages"))
+
+
+def test_cli_rebuild_venv_that_fails_does_not_claim_the_environment_is_done(box, capsys):
+    install(box)
+    box["runner"].fail["pip"] = (1, "boom")
+    code, out = _cli(["rebuild-venv"], capsys, box)
+    assert code == 2 and out["ok"] is False and out["reason"]
+    assert "packages" not in ci.read_marker(box["root"])["steps"]
+
+
+def test_cli_usage_is_a_refusal(box, capsys):
+    for argv in ([], ["nope"], ["retarget", "only-one"], ["remove", "--everything"]):
+        code, out = _cli(argv, capsys)
+        assert code == 2 and out["code"] == "usage"
+
+
+def test_cli_runs_as_a_module_with_the_backend_not_running(box):
+    import subprocess
+
+    env = dict(os.environ, VGAC_CONFIG=str(box["tmp"] / "config.yaml"), VGAC_MACHINE=str(box["machine"]))
+    p = subprocess.run([sys.executable, "-m", "vgac.comfy_install", "check"], cwd=Path(__file__).resolve().parents[1], env=env,
+                       capture_output=True, text=True, timeout=120)
+    lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
+    assert p.returncode == 2 and len(lines) == 1, (p.stdout, p.stderr)
+    assert json.loads(lines[0])["code"] == "not_ours"

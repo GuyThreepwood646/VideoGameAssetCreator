@@ -15,7 +15,7 @@ namespace Vgac.Starter
     {
         public string Id;          // stable name of the item
         public string GroupId;
-        public string Kind;        // app-folder | comfy-owned | ledger-file | ledger-pack | settings | work-library | work-export
+        public string Kind;        // app-folder | comfy-remove | ledger-file | ledger-pack | settings | work-library | work-export
         public string Path;
         public string What;
         public long Bytes;
@@ -63,6 +63,7 @@ namespace Vgac.Starter
         // link inside (that is deleted link by link). The summary and the deleting both use this, so what is said is what happens.
         public static bool ItemUsesBin(RemovalGroup g, RemovalItem it)
         {
+            if (it.Kind == "comfy-remove") return false;   // VGAC's own ComfyUI is removed by its own installer, for good
             if (!UseRecycleBin(g.Bytes, IsFixedDrive(it.Path))) return false;
             return !(Directory.Exists(it.Path) && SafeFs.ContainsLink(it.Path));
         }
@@ -318,28 +319,25 @@ namespace Vgac.Starter
             }
             plan.Groups.Add(g1);
 
-            // 2. the app's own ComfyUI: by the install record's owned list only, never what it keeps
+            // 2. the app's own ComfyUI: removed by the backend's own installer (`comfy_install remove`), which proves it is VGAC's (marker AND
+            // ledger) and decides what stays. The starter lists what the backend says and keeps no model of what is owned. It goes FIRST in
+            // the run: the command needs the app's own Python, which the first group removes.
             var g2 = new RemovalGroup(); g2.Id = "comfy"; g2.Title = "VGAC's own ComfyUI"; g2.DefaultOn = true;
-            g2.Sentence = "The ComfyUI VGAC installed for itself. Your models, outputs and your own custom nodes inside it stay.";
-            if (comfy.Present(data))
+            g2.Sentence = "The ComfyUI VGAC installed for itself, removed by VGAC's own installer.";
+            string croot = comfy.Root(data);
+            if (ComfyGuard.MarkerPresent(croot))
             {
-                if (!comfy.Offered(data)) plan.Notes.Add("VGAC's own ComfyUI is not removed here yet: its install record does not list what VGAC made.");
+                ComfyState cs = comfy.State(data);
+                if (cs.Problem != null) plan.Notes.Add("VGAC's own ComfyUI is not removed here: " + cs.Problem + " Nothing in " + croot + " was touched.");
+                else if (SafeFs.IsLink(croot) || !SafeFs.PathHasNoLink(croot)) plan.NotRemoved.Add(croot + ": it is, or is reached through, a link");
+                else if (OnlyKeptLeft(croot, cs.Keeps)) { }      // an earlier removal kept the models: nothing more to remove
                 else
                 {
-                    string root = comfy.Root(data);
-                    var seen = new HashSet<string>();
-                    List<string> kept = comfy.Kept(data);
-                    foreach (string p in comfy.Owned(data))
-                    {
-                        string keptWhy = KeptProblem(p, root, kept);
-                        if (keptWhy != null) { plan.NotRemoved.Add(p + ": " + keptWhy); continue; }
-                        if (!ComfyGuard.Allows(p, root, ForeignComfy(ledger))) { plan.NotRemoved.Add(p + ": it is not inside VGAC's own ComfyUI folder"); continue; }
-                        if (!seen.Add(SafeFs.Norm(p)) || (!Directory.Exists(p) && !File.Exists(p))) continue;
-                        if (SafeFs.IsLink(p) || !SafeFs.PathHasNoLink(p)) { plan.NotRemoved.Add(p + ": it is, or is reached through, a link"); continue; }
-                        var it = new RemovalItem(); it.Id = "comfy:" + p; it.GroupId = "comfy"; it.Kind = "comfy-owned"; it.Path = p;
-                        it.What = System.IO.Path.GetFileName(p); it.IsFile = File.Exists(p); it.Bytes = SafeFs.Size(p, null);
-                        g2.Items.Add(it);
-                    }
+                    long keptBytes = 0;
+                    foreach (string k in cs.Keeps) if (Directory.Exists(k)) keptBytes += SafeFs.Size(k, null);
+                    var it = new RemovalItem(); it.Id = "comfy:remove"; it.GroupId = "comfy"; it.Kind = "comfy-remove"; it.Path = croot;
+                    it.What = "VGAC's own ComfyUI"; it.Bytes = Math.Max(0, SafeFs.Size(croot, null) - keptBytes); it.Tag = string.Join("|", cs.Keeps.ToArray());
+                    g2.Items.Add(it);
                 }
             }
             plan.Groups.Add(g2);
@@ -444,20 +442,28 @@ namespace Vgac.Starter
                 }
             }
             plan.Groups.Add(g6);
+            plan.Groups.Remove(g2); plan.Groups.Insert(0, g2);    // see the note on group 2
             return plan;
         }
 
-        // An owned entry that is, holds or sits in what the ComfyUI install keeps (models, output, input, user) is refused.
-        public static string KeptProblem(string path, string root, List<string> kept)
+        // True when the install folder holds nothing but its marker and what the installer keeps (only a read of the folder).
+        static bool OnlyKeptLeft(string root, List<string> keeps)
         {
-            string p = SafeFs.Norm(path), r = SafeFs.Norm(root);
-            if (p == r) return "it is the whole install folder, which also holds what you keep";
-            foreach (string k in kept)
+            var kn = new List<string>(); foreach (string k in keeps) kn.Add(SafeFs.Norm(k));
+            return OnlyKept(root, kn);
+        }
+
+        static bool OnlyKept(string dir, List<string> keeps)
+        {
+            foreach (string e in Directory.GetFileSystemEntries(dir))
             {
-                string kp = SafeFs.Norm(System.IO.Path.Combine(root, k));
-                if (p == kp || p.StartsWith(kp + "\\")) return "it is something you keep (" + k + ")";
+                string n = SafeFs.Norm(e);
+                if (string.Equals(System.IO.Path.GetFileName(e), ComfyGuard.MarkerName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (keeps.Contains(n)) continue;
+                if (keeps.Exists(delegate(string k) { return k.StartsWith(n + "\\"); }) && !SafeFs.IsLink(e) && OnlyKept(e, keeps)) continue;
+                return false;
             }
-            return null;
+            return true;
         }
 
         // Paths of the fixed app folders (so a ledger item for one of them is not listed twice).
@@ -467,18 +473,6 @@ namespace Vgac.Starter
                 System.IO.Path.Combine(l.DataFolder, "webview2"), System.IO.Path.Combine(l.FrontendDir, "node_modules"), System.IO.Path.Combine(l.FrontendDir, "dist") })
                 if (SafeFs.Inside(path, p)) return true;
             return false;
-        }
-
-        // Linked tools' folders are fenced off from anything the app's own ComfyUI work might reach.
-        static List<string> ForeignComfy(Ledger ledger)
-        {
-            var res = new List<string>();
-            foreach (object o in ledger.Items)
-            {
-                var d = Entry(o);
-                if (d != null && S(d, "kind") == "linked" && S(d, "path").Length > 0) res.Add(S(d, "path"));
-            }
-            return res;
         }
 
         // Checked again just before an item is deleted. null: still fine; else the plain reason it is skipped.
@@ -496,11 +490,10 @@ namespace Vgac.Starter
                     if (DataFolders.Check(l.DataFolder, machine, l.ProjectRoot).State != DataState.Ours) return "the folder for the big files is not shown to be VGAC's";
                     if (SafeFs.IsLink(it.Path) || !SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
                     return SafeFs.Inside(it.Path, l.DataFolder) ? null : "it is not inside the folder for the big files";
-                case "comfy-owned":
-                    string kw = KeptProblem(it.Path, comfy.Root(l.DataFolder), comfy.Kept(l.DataFolder));
-                    if (kw != null) return kw;
-                    if (!ComfyGuard.Allows(it.Path, comfy.Root(l.DataFolder), ForeignComfy(ledger))) return "it is not inside VGAC's own ComfyUI folder";
-                    return SafeFs.IsLink(it.Path) || !SafeFs.PathHasNoLink(it.Path) ? "it is, or is reached through, a link" : null;
+                case "comfy-remove":
+                    if (SafeFs.Norm(it.Path) != SafeFs.Norm(comfy.Root(l.DataFolder)) || !SafeFs.Inside(it.Path, l.DataFolder)) return "it is not VGAC's own ComfyUI folder in the folder for the big files";
+                    if (SafeFs.IsLink(it.Path) || !SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
+                    return comfy.State(l.DataFolder).Problem;
                 case "ledger-file":
                     if (!File.Exists(it.Path)) return "it is not a file now";
                     if (!SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
@@ -554,6 +547,8 @@ namespace Vgac.Starter
                         int c; counts.TryGetValue(dir, out c); counts[dir] = c + 1;
                     }
                     else sb.AppendLine("   " + it.Path + "   " + Size(it.Bytes) + mark);
+                    if (it.Kind == "comfy-remove")
+                        sb.AppendLine("      Everything in this folder is deleted (its output, input and user folders and its custom nodes too), except what VGAC's installer keeps: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag.Replace("|", ", ")) + ".");
                 }
                 foreach (var kv in byFolder) sb.AppendLine("   " + kv.Key + ": " + counts[kv.Key] + " file(s), " + Size(kv.Value));
             }
@@ -677,6 +672,14 @@ namespace Vgac.Starter
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
                     if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); continue; }
                     Mark(l.ProjectRoot, it.Path, true);
+                    if (it.Kind == "comfy-remove")
+                    {
+                        string cwhy = comfy.Remove();
+                        if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); continue; }
+                        res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: VGAC's own ComfyUI was removed by its installer (what it keeps stays: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag) + ")");
+                        Mark(l.ProjectRoot, it.Path, false);   // the ledger entry stays: the backend's own record of what it installed (it may be installed again)
+                        continue;
+                    }
                     RemoveOne(g, it, recycler, permanentFor, res, log);
                     if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) { Mark(l.ProjectRoot, it.Path, false); ledger.RemoveUnder(it.Path); ledger.Save(); parentsTouched.Add(SafeFs.Norm(System.IO.Path.GetDirectoryName(it.Path))); }
                 }

@@ -143,20 +143,23 @@ public static partial class T
 
     static void KeptIsEnforcedEverywhere()
     {
+        // The starter keeps no list of what is owned or kept: it removes VGAC's own ComfyUI only through the backend's command, and a
+        // refusal there deletes nothing.
         var s = Installed();
-        s.Comfy.OwnedRel = new List<string> { ".", "models", "models/sub", "output", "user", "custom_nodes/vgac-nodes", "main.py" };
+        s.Comfy.RemoveError = "VGAC's ComfyUI is still running on port 8288.";
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        string[] names = plan.Get("comfy").Items.Select(i => Path.GetFileName(i.Path)).OrderBy(x => x).ToArray();
-        Eq(string.Join(",", names), "main.py,vgac-nodes", "an owned list that names the install folder or what it keeps is cut down to the rest");
-        Check(plan.NotRemoved.Any(n => n.Contains("whole install folder")) && plan.NotRemoved.Any(n => n.Contains("you keep")), "with reasons");
-        // at the moment of deleting, too
-        var item = new RemovalItem(); item.Kind = "comfy-owned"; item.Path = Path.Combine(s.Data, "comfyui", "models"); item.GroupId = "comfy";
-        Check(RemovalPlanner.Revalidate(item, s.L, s.Comfy, s.Led, s.M) != null, "a kept folder is refused again just before deleting");
-        // the real marker reader drops them too
-        string data = Tmp("markerkept");
-        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\".\",\"models\",\"models/a\",\"main.py\",\"custom_nodes/x\"],\"kept\":[\"models\"]}");
-        var real = new MarkerComfyInstall(delegate(string a, string c) { return null; });
-        Eq(string.Join(",", real.Owned(data).Select(p => Path.GetFileName(p)).ToArray()), "main.py", "the marker reader never returns the folder itself or anything kept");
+        var res = RemovalRunner.Run(plan, new List<string> { "comfy" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        Check(res.Skipped.Any(x => x.Contains("still running")), "the backend's reason is shown");
+        string c = Path.Combine(s.Data, "comfyui");
+        Check(File.Exists(Path.Combine(c, "main.py")) && File.Exists(Path.Combine(c, "models", "mine.safetensors")) && File.Exists(Path.Combine(c, "output", "out.png")), "and the starter itself deleted nothing in it");
+        // at the moment of deleting
+        var item = plan.Get("comfy").Items[0];
+        s.Comfy.RemoveError = null;
+        Check(RemovalPlanner.Revalidate(item, s.L, s.Comfy, s.Led, s.M) == null, "(the item is fine while the backend confirms)");
+        var other = new RemovalItem(); other.Kind = "comfy-remove"; other.Path = Path.Combine(s.Data, "comfyui", "models"); other.GroupId = "comfy";
+        Check(RemovalPlanner.Revalidate(other, s.L, s.Comfy, s.Led, s.M) != null, "a comfy item that is not the install folder itself is refused");
+        s.Comfy.Problem = "VGAC did not install a ComfyUI there.";
+        Check(RemovalPlanner.Revalidate(item, s.L, s.Comfy, s.Led, s.M) != null, "and so is the install folder when the backend stops confirming it");
     }
 
     static void RealFailsClosed()

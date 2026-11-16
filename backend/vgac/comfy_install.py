@@ -1077,6 +1077,144 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
             "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")}
 
 
+# --- the command line (the starter's Move and Remove call these; the backend need not be running) -------------------------
+#
+# `python -m vgac.comfy_install <command>` prints ONE json line on stdout and exits 0, or prints {"ok": false, "code", "reason"}
+# and exits non-zero (2 for a refusal). The commands change nothing the guard does not allow; the only deleting is remove().
+#   check                    is there a ComfyUI VGAC made here (marker and ledger)? what would remove() keep?
+#   remove [--models]        remove(): the same proof, models kept unless --models
+#   retarget <old> <new>     the data folder was moved from <old> to <new> (the settings already name <new>): the settings that
+#                            pointed into <old>/comfyui now point into the same places in <new>/comfyui
+#   rebuild-venv             make its Python environment again (the old one holds the old place's paths)
+
+
+def _require_own(root: Path) -> None:
+    if not root.exists() or read_marker(root) is None or not _in_ledger(root):
+        raise DownloadError("not_ours", "VGAC did not install a ComfyUI in " + str(root) + ", so nothing is done there.", "")
+
+
+def _models_dir(root: Path) -> Path:
+    return root / "ComfyUI" / "models"
+
+
+def check() -> dict[str, Any]:
+    root = install_root()
+    _require_own(root)
+    models = _models_dir(root)
+    return {"root": str(root), "keeps": [str(models)] if models.is_dir() else []}
+
+
+def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, Any]:
+    ops = ops or Ops()
+    root = install_root()
+    if _real(Path(new_data)) != _real(data_folder()):
+        raise DownloadError("not_current", f"The settings do not name {new_data} as the data folder, so nothing was changed.", "")
+    _require_own(root)
+    old_root = os.path.abspath(str(Path(old_data) / "comfyui"))
+    if os.path.normcase(old_root) == os.path.normcase(os.path.abspath(str(root))):
+        return {"changed": 0}
+    fence = fence_for(ops)
+
+    def moved(v: Any) -> Any:
+        if not isinstance(v, str) or not v:
+            return v
+        a = os.path.abspath(v)
+        if os.path.normcase(a) == os.path.normcase(old_root) or os.path.normcase(a).startswith(os.path.normcase(old_root) + os.sep):
+            return str(guard(Path(str(root) + a[len(old_root):]), fence))  # refused unless the new place is inside VGAC's own folder
+        return v
+
+    with setup_settings._lock:
+        mpath = config.machine_path()
+        if mpath is None:
+            raise DownloadError("settings", "This copy of the app has no machine settings file.", "")
+        try:
+            backend = config.read_machine(mpath).get("backend") or {}
+            change: dict[str, Any] = {}
+            n = 0
+            for key in ("comfy_input_dir", "loras_dir"):
+                if moved(backend.get(key)) != backend.get(key):
+                    change[key] = moved(backend.get(key))
+                    n += 1
+            insts: dict[str, Any] = {}
+            for name, inst in (backend.get("instances") or {}).items():
+                if not isinstance(inst, dict):
+                    continue
+                one: dict[str, Any] = {}
+                if moved(inst.get("output_dir")) != inst.get("output_dir"):
+                    one["output_dir"] = moved(inst.get("output_dir"))
+                    n += 1
+                eng = inst.get("engine")
+                if isinstance(eng, dict):
+                    e2 = {k: moved(eng.get(k)) for k in ("comfy_dir", "python", "user_dir", "output_dir", "extra_model_paths") if k in eng}
+                    e2 = {k: v for k, v in e2.items() if v != eng.get(k)}
+                    if e2:
+                        one["engine"] = e2
+                        n += len(e2)
+                if one:
+                    insts[name] = one
+            if insts:
+                change["instances"] = insts
+            if change:
+                config.update_machine({"backend": change}, mpath)
+        except config.ConfigError as err:
+            raise DownloadError("settings", f"The settings could not be updated ({err}).", "Nothing was changed.") from None
+    return {"changed": n}
+
+
+def rebuild_venv(ops: Ops | None = None) -> dict[str, Any]:
+    ops = ops or Ops()
+    root = install_root()
+    _require_own(root)
+    fence = fence_for(ops)
+    with _lock:
+        if _current is not None and _current.state == "working":
+            raise DownloadError("busy", "The install is running.", "Stop it first.")
+        job = Install(state="working")
+        m = read_marker(root) or {}
+        steps = m.setdefault("steps", {})
+        for s in ("venv", "wheels", "packages"):
+            steps.pop(s, None)  # until all three are done again, nothing says the environment is finished
+        save_marker(m, fence)
+        step_venv(job, ops, fence)
+        steps["venv"] = "done"
+        save_marker(m, fence)
+        step_wheels(job, ops, fence)
+        step_packages(job, ops, fence)
+        steps["wheels"] = steps["packages"] = "done"
+        save_marker(m, fence)
+        _cleanup_wheels(ops, fence)
+    return {"rebuilt": True}
+
+
+def main(argv: list[str], ops: Ops | None = None) -> int:
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    try:
+        cmd = argv[0] if argv else ""
+        if cmd == "check" and len(argv) == 1:
+            r = check()
+        elif cmd == "remove" and set(argv[1:]) <= {"--models"}:
+            r = remove(also_models="--models" in argv[1:], ops=ops)
+        elif cmd == "retarget" and len(argv) == 3:
+            r = retarget(argv[1], argv[2], ops)
+        elif cmd == "rebuild-venv" and len(argv) == 1:
+            r = rebuild_venv(ops)
+        else:
+            print(json.dumps({"ok": False, "code": "usage", "reason": "Commands: check, remove [--models], retarget <old> <new>, rebuild-venv."}))
+            return 2
+    except DownloadError as e:
+        print(json.dumps({"ok": False, "code": e.code, "reason": f"{e.message} {e.fix}".strip()}))
+        return 2
+    except config.ConfigError as e:
+        print(json.dumps({"ok": False, "code": "settings", "reason": f"The app's settings could not be read ({e})."}))
+        return 2
+    except Exception as e:  # noqa: BLE001
+        log.exception("comfy_install command failed")
+        print(json.dumps({"ok": False, "code": "unexpected", "reason": f"Something unexpected went wrong ({type(e).__name__})."}))
+        return 1
+    print(json.dumps({"ok": True, **r}))
+    return 0
+
+
 # --- starting the engines in the running app ----------------------------------------------------------------------------
 
 
@@ -1179,3 +1317,7 @@ def post_remove(body: RemoveIn) -> dict[str, Any]:
         return remove(body.also_models, supervisor=q.supervisor if q else None)
     except DownloadError as e:
         raise _bad(e) from None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

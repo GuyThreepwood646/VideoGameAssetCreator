@@ -16,7 +16,7 @@ public static partial class T
         ChooseKeepsTheClaimOfTheSameFolder();
         AMoveIntoTheProjectIsStoredRelative();
         TheLibraryNeedsItsOwnMarker();
-        CustomNodesAreKeptByDefault();
+        VgacsOwnComfyUIWentThroughTheBackendEverywhere();
         ContinueNeedsTheSettingsToFitTheJournal();
         DialogsAnswerNoByDefault();
         SetupWritesNoLedgerEntriesInsideTheDataFolder();
@@ -164,17 +164,40 @@ public static partial class T
         Check(pl.Get("work").Items.All(i => i.Kind != "work-library") && pl.NotRemoved.Any(n => n.Contains("notes.txt")), "a claimed library that also holds the person's own file is left whole");
     }
 
-    // ---- S4 ----------------------------------------------------------------------------------------------------------------------
+    // ---- VGAC's own ComfyUI: only through the backend's commands ----------------------------------------------------------------
 
-    static void CustomNodesAreKeptByDefault()
+    static void VgacsOwnComfyUIWentThroughTheBackendEverywhere()
     {
-        string data = Tmp("customkept");
-        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\"custom_nodes\",\"main.py\",\"custom_nodes/x\"]}");
-        var real = new MarkerComfyInstall(delegate(string a, string c) { return null; });
-        Check(real.Kept(data).Contains("custom_nodes"), "custom_nodes is one of the kept names without the marker saying so");
-        Eq(string.Join(",", real.Owned(data).Select(p => Path.GetFileName(p)).ToArray()), "main.py", "an owned list naming custom_nodes (or inside it) is cut down");
-        Check(RemovalPlanner.KeptProblem(Path.Combine(data, "comfyui", "custom_nodes"), Path.Combine(data, "comfyui"), real.Kept(data)) != null, "and the folder is refused as an item");
+        // a move with VGAC's own ComfyUI present, end to end on fakes: check before copying, retarget, then rebuild
+        var s = Movable(); string to = Path.Combine(Tmp("target"), "newbig");
+        Check(Mover(s, null).Start(to, new Progress()) == null, "the move runs");
+        Eq(string.Join(",", s.Comfy.Calls.ToArray()), "check,check,retarget,rebuild", "asked before copying and again before the first file, then retarget, then rebuild");
+        Check(File.Exists(Path.Combine(to, "comfyui", ComfyGuard.MarkerName)) && Eq2(MoveRunner.Load(s.Root).State, "rebuilt"), "the install record came along and the move is at its end");
+        // until a command succeeds: the move is refused before anything is copied
+        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig2");
+        s2.Comfy.Problem = "The app's installer for ComfyUI did not answer (is the app's Python there?).";
+        string said = Mover(s2, null).Start(to2, new Progress());
+        Check(said != null && said.Contains("did not answer") && !said.Contains("older version") && !Directory.Exists(to2) && MoveRunner.Load(s2.Root) == null, "refused, nothing copied, no journal, and the reason is the backend's: " + said);
+        // retarget refused: the move stops at 'switched' with the reason; Continue tries again, and rebuild is not asked before retarget worked
+        var s3 = Movable(); string to3 = Path.Combine(Tmp("target"), "newbig3");
+        s3.Comfy.RetargetError = "The settings could not be updated.";
+        said = Mover(s3, null).Start(to3, new Progress());
+        Check(said != null && said.Contains("The settings could not be updated") && !s3.Comfy.Calls.Contains("rebuild"), "a refused retarget is reported and rebuild is not asked: " + said);
+        Eq(MoveRunner.Load(s3.Root).State, "switched", "the move waits at 'switched'");
+        s3.Comfy.RetargetError = null;
+        Check(Mover(s3, null).Continue(new Progress()) == null && Eq2(MoveRunner.Load(s3.Root).State, "rebuilt"), "Continue finishes it once the backend agrees");
+        // the starter has no list of what is owned or kept any more
+        string src = FindSource("src\\Comfy.cs");
+        if (src != null) { string text = File.ReadAllText(src); Check(!text.Contains("\"owned\"") && !text.Contains("Kept(") && !text.Contains("Owned("), "Comfy.cs has no owned or kept handling"); }
+        // Remove: the plan after a removal that kept the models lists nothing more to do
+        var s4 = Installed();
+        var plan = RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy);
+        RemovalRunner.Run(plan, new List<string> { "comfy" }, null, s4.L, MachineFile.Load(s4.Root), s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null, null);
+        Check(RemovalPlanner.Build(s4.L, MachineFile.Load(s4.Root), s4.Led, s4.Comfy).Get("comfy").Items.Count == 0, "what is left (the models and the install record) is not offered for removal again");
+        Check(Directory.Exists(Path.Combine(s4.Data, "comfyui", "models")), "and the models are there");
     }
+
+    static bool Eq2(string a, string b) { return a == b; }
 
     // ---- S5 ----------------------------------------------------------------------------------------------------------------------
 
