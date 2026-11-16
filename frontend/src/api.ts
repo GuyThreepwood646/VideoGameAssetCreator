@@ -1203,6 +1203,8 @@ export type CharacterMoves = {
   added: { clip: string; name: string; loop: boolean }[]
   removed: string[]
   others: { asset_id: string; name: string; added: number; removed: number }[]
+  // Where Stand still comes from: 'builtin' (the app's own), 'library' (the hand-made library's) or a library clip id.
+  idle_source: string
 }
 export type MyMoveClip = { id: string; action: string; label: string; loop: boolean; seconds: number; preview: string | null; frames: number; still: number }
 export type MyMoveFile = {
@@ -1224,7 +1226,7 @@ export type MyMoveUpdate = { label?: string; source?: string; clips?: { action: 
 export const movesApi = {
   library: () => get<MoveLibrary>('/api/moves/library'),
   ofAsset: (aid: string) => get<CharacterMoves>(`/api/assets/${aid}/moves`),
-  change: (aid: string, body: { add?: string[]; remove?: string[]; copy_from?: string }) => post<RunResult>(`/api/assets/${aid}/moves`, body),
+  change: (aid: string, body: { add?: string[]; remove?: string[]; copy_from?: string; idle?: string }) => post<RunResult>(`/api/assets/${aid}/moves`, body),
   mine: () => get<MyMovesListing>('/api/my-moves'),
   updateMine: (id: string, body: MyMoveUpdate) => put<MyMoveFile>(`/api/my-moves/${encodeURIComponent(id)}`, body),
   removeMine: (id: string) => del<{ removed: string }>(`/api/my-moves/${encodeURIComponent(id)}`),

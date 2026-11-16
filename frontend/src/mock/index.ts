@@ -1355,7 +1355,7 @@ on('POST', '/api/assets/:id/moves', (m, body) => {
   const v = keptRig(a)
   if (!v) throw new HttpError(409, 'Make the skeleton first: the moves are added to the kept version of the Make it move step.')
   if (rigBusy(a)) throw new HttpError(409, 'The moves are already being made again. Wait for that to finish.')
-  let next: { added_moves: unknown[]; removed_moves: string[] }
+  let next: { added_moves: unknown[]; removed_moves: string[]; idle_source?: string }
   try {
     if (typeof body.copy_from === 'string' && body.copy_from) {
       const src = keptRig(findAsset(body.copy_from))
@@ -1364,8 +1364,9 @@ on('POST', '/api/assets/:id/moves', (m, body) => {
     } else {
       const add = Array.isArray(body.add) ? body.add.map(String) : []
       const remove = Array.isArray(body.remove) ? body.remove.map(String) : []
-      if (!add.length && !remove.length) throw new Error('Choose at least one move to add or take off.')
-      next = changeMoves(v.params, add, remove)
+      const idle = typeof body.idle === 'string' ? body.idle : ''
+      if (!add.length && !remove.length && !idle) throw new Error('Choose at least one move to add or take off.')
+      next = { ...changeMoves(v.params, add, remove), ...(idle ? { idle_source: idle } : {}) }
     }
   } catch (e) {
     if (e instanceof HttpError) throw e

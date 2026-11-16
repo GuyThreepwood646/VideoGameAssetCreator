@@ -842,7 +842,7 @@ def clip_idle(P, t):
         spine_yaw(P, 3 * A * math.sin(2 * math.pi * t + 0.5))
         for n in spine[1:2]:
             P.r(n, forward, -3 * A * math.sin(2 * math.pi * t))
-        arms_relax(P, (6 + 3 * breath) * A)
+        arms_relax(P, (18 + 3 * breath) * A)
         arms_swing(P, t, 2 * A, elbow=(8 + 4 * breath) * A, phase_from_legs=False)
     if wing_info:
         wings_folded(P, 1.0)
