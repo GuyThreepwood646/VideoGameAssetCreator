@@ -137,7 +137,9 @@ def test_unity_checks_for_a_prop():
 def test_unity_howto_names_only_the_moves_that_exist():
     lines = export.unity_howto("Assets/VGAC/k/k.prefab", KNIGHT["controller"])
     assert lines == [
+        "Open the project in Unity Hub with Add > Add project from disk; New project makes an empty one.",
         "Drag the prefab from Assets/VGAC/k/k.prefab into your scene.",
+        "Drag the .prefab, not the .fbx with the same name: the model file shows its collision shape as a white block.",
         'In your movement script, set the speed every frame: animator.SetFloat("Speed", speed);',
         'For one-off moves, call animator.SetTrigger("Attack"); (or "Hit", "Die").',
     ]

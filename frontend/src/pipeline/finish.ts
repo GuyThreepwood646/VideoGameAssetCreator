@@ -395,7 +395,12 @@ function unityHowtoLines(asset: Asset): string[] | null {
   const moves = controllerMoves(rep, clipNamesOf(exp))
   if (!moves) return null
   const prefab = rep?.prefab ?? exp.files.prefab
-  const out = [prefab ? `Drag the prefab from \`${prefab}\` into your scene.` : 'Drag the prefab into your scene.', 'In your movement script, set the speed every frame: `animator.SetFloat("Speed", speed);`']
+  const out = [
+    'Open the project in Unity Hub with Add > Add project from disk; New project makes an empty one.',
+    prefab ? `Drag the prefab from \`${prefab}\` into your scene.` : 'Drag the prefab into your scene.',
+    'Drag the .prefab, not the .fbx with the same name: the model file shows its collision shape as a white block.',
+    'In your movement script, set the speed every frame: `animator.SetFloat("Speed", speed);`',
+  ]
   const [first, ...rest] = moves.triggers.filter((t) => t !== 'Jump' || asset.category === 'humanoid')
   if (first) out.push(`For one-off moves, call \`animator.SetTrigger("${first}");\`${rest.length ? ` (or ${rest.map((t) => `\`"${t}"\``).join(', ')})` : ''}.`)
   if (hitboxSummary(asset)) out.push('Hit boxes are trigger colliders named Hit_Head, Hit_Chest and so on under the bones; check the name in OnTriggerEnter to know where a hit landed.')

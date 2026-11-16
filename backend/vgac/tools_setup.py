@@ -430,6 +430,7 @@ def unity_guide(env: Env | None = None) -> dict[str, Any]:
                                "activating a licence, and those are yours to do."),
             "steps": ["Install Unity Hub from unity.com and sign in.",
                       f"In the Hub, install the editor {UNITY_TESTED} (another Unity 6 version also works, untested).",
+                      "To look at a project VGAC made, open it in the Hub with Add > Add project from disk; New project makes an empty one.",
                       "Come back here and press Check again."]}
 
 
