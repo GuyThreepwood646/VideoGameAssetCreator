@@ -36,6 +36,7 @@ export default function CreditsPage() {
             <section key={g.id} className="credits-group" id={g.id}>
               <h2 className="section-title">{g.title}</h2>
               <p className="muted small">{g.intro}</p>
+              <div className="table-scroll">
               <table className="table credits-table">
                 <thead>
                   <tr>
@@ -45,6 +46,7 @@ export default function CreditsPage() {
                 </thead>
                 <tbody>{g.entries.map((e) => <Row key={e.name} e={e} />)}</tbody>
               </table>
+              </div>
             </section>
           ))}
         </>
