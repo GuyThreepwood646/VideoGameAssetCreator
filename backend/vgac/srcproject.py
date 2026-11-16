@@ -88,6 +88,11 @@ TURN_YAWS = {
     "back": list(range(140, 221, 10)),
 }
 PICTURE_YAWS = list(range(0, 360, 10))
+FRONT_HALF = 100.0       # with the model's facing decided (front_known), the original picture and the picture the model was
+                         # built from are fitted only within this of the front: a front picture fitted from behind paints
+                         # the face onto the back of the head and then refuses the true back view as contradicting it (the
+                         # Low-poly dwarf L2 of 2026-11-16: the original fitted at 185 by the head's own match, its colour
+                         # 26.7 there against 20.6 from the front). 100, not 90, leaves room for a picture from the side.
 FRONT_YAWS = [-20, -10, 0, 10, 20]
 SOURCE_MIN_IOU = 0.82    # the original picture is taken at a slightly looser outline match than the drawn views (the
                          # photo boy: 0.843, and with it colour difference 9.0 to 4.7 and his own face on the model)
@@ -1814,6 +1819,11 @@ def _signed(a: float) -> float:
     return float((a + 180.0) % 360.0 - 180.0)
 
 
+def front_half(yaws: list[float], front_yaw: float, half: float = FRONT_HALF) -> list[float]:
+    """The yaws within `half` degrees of the front, as signed angles about it (the turn search reads them as camera yaws)."""
+    return [float(front_yaw + d) for d in sorted({_signed(float(y) - front_yaw) for y in yaws}) if abs(d) <= half]
+
+
 def front_turn(fitted: dict[str, View], head_yaw: float = 0.0) -> tuple[float, str]:
     """The camera yaw the model's front is seen from, and what says so: the first frontal picture that fitted (the
     original, the drawn front view, or the built-from picture when it is a front view), else the head's turn."""
@@ -1892,14 +1902,17 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
           mode: str = "detail", size: int = SIZE, picture_yaws: list[float] | None = None, min_iou: float = MIN_IOU,
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           pic_n: int | None = None, log: Callable[[str], None] | None = None,
-          keep: dict[str, Any] | None = None, head_yaw: float = 0.0, built_from: str | None = None) -> dict[str, Any]:
+          keep: dict[str, Any] | None = None, head_yaw: float = 0.0, built_from: str | None = None,
+          front_known: bool = False) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
     model was built from. `source` is the original picture when that is a different one (a character is built from the
     three-quarter view drawn from it): it paints first, in full colour, at whatever turn it fits; `front_view` (the
     front view drawn from the original) stands in for it when the original does not fit the model. head_yaw: the camera
-    yaw the model's face is seen straight on from (face_detail.HEAD_YAW); the face region is found from there."""
+    yaw the model's face is seen straight on from (face_detail.HEAD_YAW); the face region is found from there.
+    front_known: the clean-up decided which way the model faces (facing.decide, or a turn chosen by hand), so its front is
+    at head_yaw and the original picture and the built-from picture are fitted only within FRONT_HALF of it."""
     from . import facemarks
 
     t0 = time.time()
@@ -1919,8 +1932,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were
     # measured and are no faster, the large images saturate memory either way); which ones are used, and in which
     # order, is decided afterwards exactly as if they had been fitted one after another.
-    wanted: list[tuple[str, Any, list[float]]] = [("picture", picture, picture_yaws or PICTURE_YAWS)]
-    wanted += [(n, s, y) for n, s, y in (("source", source, PICTURE_YAWS), ("front", front_view, FRONT_YAWS)) if s is not None]
+    wide = front_half(PICTURE_YAWS, head_yaw) if front_known else PICTURE_YAWS
+    wanted: list[tuple[str, Any, list[float]]] = [("picture", picture, picture_yaws or wide)]
+    wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, FRONT_YAWS)) if s is not None]
     if mode != "off":
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -2087,7 +2101,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
                 out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
                 front_view: Path | str | None = None, pic_n: int | None = None,
                 log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None,
-                head_yaw: float = 0.0, built_from: str | None = None) -> dict[str, Any]:
+                head_yaw: float = 0.0, built_from: str | None = None, front_known: bool = False) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -2104,7 +2118,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
               mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep,
-              head_yaw=head_yaw, built_from=built_from)
+              head_yaw=head_yaw, built_from=built_from, front_known=front_known)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -2256,7 +2270,8 @@ def upscale_note(info: dict[str, Any]) -> str | None:
 
 
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
-                    keep: dict[str, Any] | None = None, head_yaw: float = 0.0) -> dict[str, Path]:
+                    keep: dict[str, Any] | None = None, head_yaw: float = 0.0,
+                    front_known: bool = False) -> dict[str, Path]:
     """The pass inside the prep stage (stages/prep.py), after the last rebake and before the face pass: paints the picture
     the asset started from, the picture the 3D step was given and the turnaround views into the current base colour; replaces it in the GLB and in
     `current` when it applies, and records the before and after numbers in the stage metrics. head_yaw: the camera yaw
@@ -2312,7 +2327,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
                                     front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw,
-                                    built_from=built_from)
+                                    built_from=built_from, front_known=front_known)
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current

@@ -388,7 +388,7 @@ GOLDEN_OFF = {
              "files": ["ao", "base_color", "glb", "metallic", "normal", "report", "roughness"],
              "metrics": ["atlas_used", "bake_match", "bake_mesh_hash", "bones", "boundary_edges", "checks",
                          "checks_failed", "checks_passed", "decimated", "degenerate_faces", "delight_applied",
-                         "delight_mode", "delight_source", "dims", "export_mesh_hash", "face_best_turn", "face_decided_by", "face_decision_note", "face_detail",
+                         "delight_mode", "delight_source", "dims", "export_mesh_hash", "face_best_turn", "face_colour", "face_decided_by", "face_decision_note", "face_decision_sure", "face_detail", "face_model_flat",
                          "face_outline_margin", "face_outline_turn", "face_remainder_deg", "face_tests_agree", "face_tests_differ_deg",
                          "face_toes_found", "face_toes_reason", "face_toes_turn",
                          "face_yaw_applied", "facing_source", "gate_ok", "hair_detail", "head_triangles",

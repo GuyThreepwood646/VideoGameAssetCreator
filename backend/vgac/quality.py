@@ -98,6 +98,15 @@ def facing_tests_check(outline_turn: float, toes_turn: float, differ: float, dec
                  vars={"outline_turn": int(round(outline_turn)) % 360, "toes_turn": int(round(toes_turn)) % 360, "fix_yaw": fix_yaw})
 
 
+def facing_unsure_check(decided: float | None, applied: float, flat: bool = False, toes_reason: str = "") -> Check:
+    """facing_tests when the front could not be told from the back (facing.decide's `sure` False): a warning, measured,
+    whose fix turns the model half a circle from where it was put. value is the turn applied."""
+    a = int(round(float(applied))) % 360
+    return check("facing_tests", False, a, None, vars={"unsure": True, "flat": bool(flat), "toes_reason": toes_reason,
+                                                       "decided": None if decided is None else int(decided) % 360,
+                                                       "fix_yaw": (a + 180) % 360})
+
+
 def geometry_checks(report: dict[str, Any], triangle_budget: int | None = None, size_m: float | None = None,
                     size_tolerance: float = SIZE_TOLERANCE, size_axis: str = "height", axis_word: str | None = None,
                     *, height_m: float | None = None, height_tolerance: float | None = None) -> list[Check]:

@@ -80,6 +80,20 @@ FACING_STOP_REASON = (
     "drawn views says one thing and where the feet point says another. The character may be facing the wrong way. "
     "Look at the clean-up step (step 4) and its facing check, and turn the character with its fix if it is wrong; or press "
     "Resume to carry on as it is.")
+FACING_UNSURE_STOP_REASON = (
+    "The app could not tell the character's front from its back: its outline looks almost the same both ways round, and "
+    "nothing else settled it. It kept the side the 3D step built as the front. Look at the clean-up step (step 4) and its "
+    "facing check; if the face is on the back, turn it round with the check's fix; or press Resume to carry on as it is.")
+
+
+def _facing_stop_reason(c: dict[str, Any]) -> str:
+    if (c.get("vars") or {}).get("unsure"):
+        return FACING_UNSURE_STOP_REASON
+    value, limit = c.get("value"), c.get("limit")
+    return FACING_STOP_REASON.format(value=f"{value:g}" if isinstance(value, (int, float)) else value,
+                                     limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit)
+
+
 FACE_HELD_STOP_REASON = (
     "The face was left as it was, not painted from the picture, because the picture could not be lined up with the "
     "model's face well enough (fit {value} of 1, needs {limit}). The character may be left with a blurry or less "
@@ -113,7 +127,7 @@ def _pose_stop_reason(c: dict[str, Any]) -> str:
 # function of the check). The step 1 pose check asks once per picture; see ASK_ON_EXISTING.
 STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
-    ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, FACING_STOP_REASON),
+    ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, _facing_stop_reason),
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
     # a pose that was measured and fails; "not measured" (the cut-out could not be read) is a note on the card
     ("concept", "pose_for_3d", lambda c: (c.get("vars") or {}).get("measured") is not False, _pose_stop_reason),
