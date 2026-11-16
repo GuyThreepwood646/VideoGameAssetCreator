@@ -59,8 +59,12 @@ SPACE_SLACK = 1.10  # 10 percent on top of what the install needs
 RETRIES = 6  # tries for a rename or delete that Windows or an antivirus holds
 TEST_TIMEOUT = 900
 TORCH_CODE = "import torch;print('VGAC', torch.__version__, torch.cuda.is_available())"
-STEPS = [("check", "Check this computer"), ("source", "Get ComfyUI"), ("wheels", "Get its Python packages"),
-         ("venv", "Make its Python environment"), ("packages", "Install its Python packages"),
+# Python started for the test runs: no user site-packages (-s), no PYTHON* variables (-E), UTF-8 (-X utf8).
+PY_FLAGS = ["-s", "-E", "-X", "utf8"]
+# Inherited variables that could steer uv, pip or Python somewhere else; dropped before any program runs (F8).
+DROP_ENV = ("UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_")
+STEPS = [("check", "Check this computer"), ("source", "Get ComfyUI"), ("venv", "Make its Python environment"),
+         ("wheels", "Get its Python packages"), ("packages", "Install its Python packages"),
          ("packs", "Add the node packs VGAC needs"), ("test", "Test it"), ("engines", "Set up the engines")]
 MODEL_FOLDERS = ("checkpoints", "clip", "clip_vision", "configs", "controlnet", "diffusion_models", "embeddings", "loras",
                  "text_encoders", "unet", "upscale_models", "vae", "vae_approx", "style_models", "gligen", "hypernetworks",
@@ -79,21 +83,24 @@ class NotOurs(DownloadError):
 
 
 def _port_in_use(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
-            return True
-    except OSError:
-        return False
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=0.3):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _run(argv: list[str], cwd: Path, env: dict[str, str], log_path: Path, cancel: threading.Event, timeout: float) -> int:
-    """Run a program hidden, its output into `log_path`. Stopped when `cancel` is set (its own process tree only)."""
+    """Run a program hidden with exactly `env` (clean_env()), its output into `log_path`. Stopped when `cancel` is set
+    (its own process tree only)."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     with open(log_path, "ab") as out:
         out.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {subprocess.list2cmdline(argv)} in {cwd}\n".encode("utf-8"))
         out.flush()
-        proc = subprocess.Popen(argv, cwd=str(cwd), env={**os.environ, **env}, stdin=subprocess.DEVNULL, stdout=out,
+        proc = subprocess.Popen(argv, cwd=str(cwd), env=dict(env), stdin=subprocess.DEVNULL, stdout=out,
                                 stderr=subprocess.STDOUT, creationflags=flags)
         end = time.monotonic() + timeout
         while proc.poll() is None:
@@ -133,8 +140,22 @@ class Ops:
 # --- where -----------------------------------------------------------------------------------------------------------
 
 
+def shipped() -> dict[str, Any]:
+    """setup/downloads.json alone. The install's pins (the ComfyUI zip, its file list, the package list, the node packs)
+    are never taken from the person's downloads.local.json: an overlay must not be able to swap a pinned file."""
+    try:
+        d = json.loads((downloader.project_dir() / "setup" / "downloads.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
 def entry() -> dict[str, Any]:
-    return dict(downloader.catalogue().get("comfyui_install") or {})
+    return dict(shipped().get("comfyui_install") or {})
+
+
+def shipped_packs() -> list[dict[str, Any]]:
+    return [dict(v, id=k) for k, v in (shipped().get("node_packs") or {}).items() if isinstance(v, dict)]
 
 
 def data_folder() -> Path:
@@ -237,7 +258,7 @@ def g_write(p: Path, text: str, fence: Fence | None = None) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, p)
+    _retry(p, lambda: os.replace(tmp, p), Ops())
 
 
 def g_rmtree(p: Path, ops: Ops, fence: Fence | None = None) -> None:
@@ -272,6 +293,12 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     m = read_marker(root)
     if m is not None:
         return m
+    fresh = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
+             "steps": {}, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if (root / MARKER).is_file() and _in_ledger(root):
+        log.warning("the marker of VGAC's own ComfyUI could not be read; writing a fresh one (every step checks again)")
+        (root / MARKER).write_text(json.dumps(fresh, indent=2), encoding="utf-8")
+        return fresh
     r = _real(root)
     for f in fence.foreign:
         if _within(r, f) or _within(f, r):
@@ -280,8 +307,7 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
         raise DownloadError("folder_used", f"{root} already has files in it that VGAC did not put there, so VGAC will not install into it.",
                             "Move those files somewhere else, or choose another data folder for VGAC.")
     root.mkdir(parents=True, exist_ok=True)
-    m = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
-         "steps": {}, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    m = fresh
     (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
     downloader.record("VGAC's own ComfyUI", root, "added", 0)
     return m
@@ -366,6 +392,38 @@ def check_tree(folder: Path, listing: dict[str, Any]) -> list[str]:
     return problems
 
 
+def zip_problems(zip_path: Path, listing: dict[str, Any]) -> list[str]:
+    """Without unpacking: the zip's entries against the pinned list, both ways, by name and size. A zip that cannot be
+    read (cut short, damaged) is a problem too."""
+    want = {str(f["path"]).replace("\\", "/"): int(f["size"]) for f in listing["files"]}
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            infos = [i for i in z.infolist() if not i.is_dir()]
+            if len({i.filename.split("/", 1)[0] for i in z.infolist()}) != 1:
+                return ["the zip is not one folder"]
+            have = {i.filename.split("/", 1)[1] if "/" in i.filename else i.filename: i.file_size for i in infos}
+    except (zipfile.BadZipFile, OSError, ValueError, EOFError):
+        return ["the zip cannot be read (it may be incomplete or damaged)"]
+    problems = [f"missing {k}" for k in sorted(set(want) - set(have))]
+    problems += [f"not in the published files: {k}" for k in sorted(set(have) - set(want))]
+    problems += [f"changed {k}" for k in sorted(set(want) & set(have)) if want[k] != have[k]]
+    return problems
+
+
+def pinned_problems(app: Path, listing: dict[str, Any]) -> list[str]:
+    """The pinned files of an installed ComfyUI folder that are missing or changed. Other files there (models,
+    custom_nodes, user, caches) are not looked at."""
+    out = []
+    for f in listing["files"]:
+        p = app / str(f["path"])
+        try:
+            if p.stat().st_size != int(f["size"]) or downloader.sha256_of(p) != str(f["sha256"]).lower():
+                out.append(f"changed {f['path']}")
+        except OSError:
+            out.append(f"missing {f['path']}")
+    return out
+
+
 # --- planning: what is still to do, and how big ------------------------------------------------------------------------
 
 
@@ -439,11 +497,22 @@ _current: Install | None = None
 _lock = threading.Lock()
 
 
-def _env() -> dict[str, str]:
+def uv_cache() -> Path:
+    """uv's cache lives inside the install (guarded, and deleted after a successful install and by Remove). uv
+    hard-links from it into the venv, which works because both are on the same drive; deleting the cache afterwards
+    leaves the venv's files in place."""
+    return install_root() / ".uv-cache"
+
+
+def clean_env() -> dict[str, str]:
+    """This process's environment without anything that could steer uv, pip or Python elsewhere (UV_*, PIP_*,
+    PYTHON*, VIRTUAL_ENV, CONDA_*), plus the app's own settings for uv."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(DROP_ENV)}
     d = data_folder()
-    return {"UV_PYTHON_INSTALL_DIR": str(d / "python"), "UV_CACHE_DIR": str(d / "uv-cache"), "UV_PYTHON_PREFERENCE": "only-managed",
-            "UV_PYTHON_DOWNLOADS": "never", "UV_OFFLINE": "1", "UV_NO_CONFIG": "1", "UV_PYTHON_INSTALL_REGISTRY": "0",
-            "UV_NO_PROGRESS": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    env.update({"UV_PYTHON_INSTALL_DIR": str(d / "python"), "UV_CACHE_DIR": str(uv_cache()), "UV_PYTHON_PREFERENCE": "only-managed",
+                "UV_PYTHON_DOWNLOADS": "never", "UV_OFFLINE": "1", "UV_NO_CONFIG": "1", "UV_PYTHON_INSTALL_REGISTRY": "0",
+                "UV_LINK_MODE": "hardlink", "UV_NO_PROGRESS": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
+    return env
 
 
 def _log_file(name: str) -> Path:
@@ -504,16 +573,34 @@ def step_check(job: Install, ops: Ops, fence: Fence) -> hardware_setup.Plan:
     return p
 
 
+def _bad_source(detail: str) -> DownloadError:
+    return DownloadError("bad_checksum", f"The ComfyUI download is not the published one ({detail}). It has been deleted and not used.",
+                         "Press Try again. If it happens again, GitHub may be serving something else; do not install it.")
+
+
 def step_source(job: Install, ops: Ops, fence: Fence) -> None:
+    """Get the pinned ComfyUI files into <root>/ComfyUI. Only the pinned files are ever written there: the models,
+    node packs, user folders and anything else in it are left as they are (a repair never costs a model)."""
     root = install_root()
     e = entry()
     app = root / "ComfyUI"
     listing = tree_list()
     assert listing is not None  # step_check refused otherwise
+    if app.is_dir() and not pinned_problems(app, listing):
+        return  # every pinned file is there and unchanged
     zip_path = root / "downloads" / f"ComfyUI-{e.get('commit', 'source')}.zip"
     g_mkdir(zip_path.parent, fence)
     part = zip_path.with_name(zip_path.name + ".part")
     guard(part, fence)
+    unpack, staging = root / "ComfyUI.unpack", root / "ComfyUI.new"
+
+    def discard() -> None:
+        for p in (part, zip_path):
+            if p.exists():
+                _retry(p, lambda p=p: guard(p, fence).unlink(), ops)
+        g_rmtree(unpack, ops, fence)
+        g_rmtree(staging, ops, fence)
+
     if not zip_path.is_file():
         job.text = "Downloading ComfyUI from github.com"
 
@@ -523,35 +610,46 @@ def step_source(job: Install, ops: Ops, fence: Fence) -> None:
         downloader.try_each([str(e["zip"])], lambda url: downloader.stream_to_part(url, part, "ComfyUI", job.cancel, on_bytes,
                                                                                   ops.opener or downloader.default_open),
                             "ComfyUI", str(e.get("page", "")), where=zip_path.parent)
-        same = downloader.sha256_of(part, job.cancel) == str(e["sha256"]).lower()
-        if not same:
-            log.info("ComfyUI zip: the bytes differ from the pin; checking every file against the published list")
+        if downloader.sha256_of(part, job.cancel) != str(e["sha256"]).lower():
+            # GitHub keeps the files of a commit's zip but not its bytes. The same size with other bytes is damage; any
+            # other difference must still hold exactly the pinned files (names and sizes here, contents after unpacking).
+            if int(e.get("size") or 0) and part.stat().st_size == int(e["size"]):
+                discard()
+                raise _bad_source("same size as the published zip but other bytes")
+            problems = zip_problems(part, listing)
+            if problems:
+                discard()
+                raise _bad_source(f"{len(problems)} differences, for example: {problems[0]}")
+            log.info("ComfyUI zip: the bytes differ from the pin, the file names and sizes match; checking every file after unpacking")
         _retry(zip_path, lambda: os.replace(part, zip_path), ops)
-    staging = root / "ComfyUI.new"
-    g_rmtree(staging, ops, fence)
     job.text = "Unpacking ComfyUI and checking every file"
-    unpack = root / "ComfyUI.unpack"
-    g_rmtree(unpack, ops, fence)
-    g_unzip(zip_path, unpack, fence)
-    tops = [k for k in unpack.iterdir()]
-    if len(tops) != 1 or not tops[0].is_dir():
-        g_rmtree(unpack, ops, fence)
-        zip_path.unlink(missing_ok=True)
-        raise DownloadError("bad_checksum", "The ComfyUI download is not laid out as the published one (it may be damaged or changed). It has been deleted.",
-                            "Press Try again.")
-    g_move(tops[0], staging, ops, fence)
-    g_rmtree(unpack, ops, fence)
-    problems = check_tree(staging, listing)
-    if problems:
+    try:
         g_rmtree(staging, ops, fence)
-        zip_path.unlink(missing_ok=True)
-        log.warning("ComfyUI source does not match the published files: %s", problems[:20])
-        raise DownloadError("bad_checksum", f"The ComfyUI download is not the published one ({len(problems)} files differ, for example: {problems[0]}). It has been deleted and not used.",
-                            "Press Try again. If it happens again, GitHub may be serving something else; do not install it.")
-    if app.exists():
-        g_rmtree(app, ops, fence)
-    g_move(staging, app, ops, fence)
-    zip_path.unlink(missing_ok=True)
+        g_rmtree(unpack, ops, fence)
+        g_unzip(zip_path, unpack, fence)
+        tops = list(unpack.iterdir())
+        if len(tops) != 1 or not tops[0].is_dir():
+            raise _bad_source("not laid out as the published zip")
+        g_move(tops[0], staging, ops, fence)
+        problems = check_tree(staging, listing)
+        if problems:
+            log.warning("ComfyUI source does not match the published files: %s", problems[:20])
+            raise _bad_source(f"{len(problems)} files differ, for example: {problems[0]}")
+    except DownloadError as err:
+        discard()
+        if err.code in ("locked", "not_ours", "bad_zip", "bad_checksum"):
+            raise
+        raise _bad_source(err.message) from None
+    except (zipfile.BadZipFile, OSError, ValueError, EOFError) as err:
+        discard()
+        raise _bad_source(f"it could not be unpacked: {err}") from None
+    # Put the pinned files in place one by one; nothing else in the folder is touched.
+    for f in listing["files"]:
+        rel = str(f["path"])
+        dst = app / rel
+        g_mkdir(dst.parent, fence)
+        g_move(staging / rel, dst, ops, fence)
+    discard()
 
 
 def step_wheels(job: Install, ops: Ops, fence: Fence) -> None:
@@ -579,7 +677,7 @@ def step_venv(job: Install, ops: Ops, fence: Fence) -> None:
     g_rmtree(venv, ops, fence)  # a half-made one is ours: make it again
     guard(venv, fence)
     lp = _log_file("venv")
-    code = ops.run([str(uv_exe()), "venv", str(venv), "--python", "3.13"], root, _env(), lp, job.cancel, 600)
+    code = ops.run([str(uv_exe()), "venv", str(venv), "--python", "3.13"], root, clean_env(), lp, job.cancel, 600)
     if code != 0 or not venv_python(root).is_file():
         raise _program_failed("Making ComfyUI's Python environment", lp)
 
@@ -593,19 +691,17 @@ def step_packages(job: Install, ops: Ops, fence: Fence) -> None:
     job.text = "Installing its Python packages (this takes a few minutes)"
     code = ops.run([str(uv_exe()), "pip", "install", "--python", str(venv_python(root)), "--offline", "--no-index",
                     "--find-links", str(wheels), "--require-hashes", "--no-deps", "--only-binary", ":all:", "-r", str(req)],
-                   root, _env(), lp, job.cancel, 3600)
+                   root, clean_env(), lp, job.cancel, 3600)
     if code != 0:
         raise _program_failed("Installing ComfyUI's Python packages", lp)
 
 
 def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
-    from . import comfy_find
-
     root = install_root()
     cn = root / "ComfyUI" / "custom_nodes"
     g_mkdir(cn, fence)
     wanted = [str(x) for x in (entry().get("packs") or ["skintoken", "vgac"])]
-    for p in comfy_find.pack_list():
+    for p in shipped_packs():
         if p["id"] not in wanted:
             continue
         target = cn / str(p.get("folder") or p["id"])
@@ -615,9 +711,13 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         job.text = f"Adding {p.get('name', p['id'])}"
         if p.get("local"):
             src = downloader.project_dir() / str(p["local"])
+            g_rmtree(target, ops, fence)
             shutil.copytree(src, guard(target, fence), ignore=shutil.ignore_patterns("__pycache__"))
             continue
-        z = comfy_find.fetch_pack(p, ops.opener)
+        z = guard(root / "downloads" / f"pack-{p['id']}.zip", fence)
+        spec = Spec(id="pack-" + p["id"], name=str(p.get("name", p["id"])), urls=[str(p["zip"])], dest=z, sha256=str(p.get("sha256", "")),
+                    page=str(p.get("repo", "")), licence=str(p.get("licence", "")), kind="addon")
+        downloader.fetch(spec, job.cancel, None, ops.opener)
         tmp = cn / (target.name + ".vgac-tmp")
         g_rmtree(tmp, ops, fence)
         g_unzip(z, tmp, fence)  # type: ignore[arg-type]
@@ -635,7 +735,7 @@ def step_test(job: Install, ops: Ops, fence: Fence, card_expected: bool) -> None
                                 "Restore it from your antivirus' quarantine, or press Try again to put it back.")
     lp = _log_file("test")
     g_mkdir(root / "test", fence)
-    code = ops.run([str(py), "-c", TORCH_CODE], root, _env(), lp, job.cancel, 300)
+    code = ops.run([str(py), *PY_FLAGS, "-c", TORCH_CODE], root, clean_env(), lp, job.cancel, 300)
     found = re.findall(r"VGAC (\S+) (True|False)", _tail(lp, 20_000))
     if code != 0 or not found:
         raise _program_failed("ComfyUI's Python could not load torch", lp)
@@ -644,8 +744,8 @@ def step_test(job: Install, ops: Ops, fence: Fence, card_expected: bool) -> None
         raise DownloadError("no_cuda", f"ComfyUI's Python (torch {ver}) cannot use the graphics card.",
                             "Update the NVIDIA driver (CUDA 13.0 needs a recent one), restart the computer, then press Try again.")
     job.text = "Starting ComfyUI once to load every node"
-    code = ops.run([str(py), "-s", "ComfyUI/main.py", "--quick-test-for-ci", "--user-directory", str(guard(root / "test" / "user", fence)),
-                    "--output-directory", str(guard(root / "test" / "output", fence))], root, _env(), lp, job.cancel, TEST_TIMEOUT)
+    code = ops.run([str(py), *PY_FLAGS, "ComfyUI/main.py", "--quick-test-for-ci", "--user-directory", str(guard(root / "test" / "user", fence)),
+                    "--output-directory", str(guard(root / "test" / "output", fence))], root, clean_env(), lp, job.cancel, TEST_TIMEOUT)
     failed = re.findall(r"IMPORT FAILED[: ]+(.*)", _tail(lp, 200_000))
     if code != 0 or failed:
         raise DownloadError("test", "ComfyUI was installed but did not load everything" + (f" ({failed[0].strip()})" if failed else "") + ".",
@@ -664,26 +764,35 @@ def free_ports(ops: Ops, count: int, taken: set[int]) -> list[int]:
     return out
 
 
-def engine_patch(p: hardware_setup.Plan, ports: list[int], extra_yaml: Path | None) -> dict[str, Any]:
-    """The machine settings for VGAC's own engines: one per engine of the hardware plan, on its card and port."""
+def engine_settings(p: hardware_setup.Plan, ports: list[int], extra_yaml: Path | None) -> dict[str, dict[str, Any]]:
+    """The whole `engine` block of each of VGAC's own engines, one per engine of the hardware plan. It replaces what
+    was there, so nothing from an earlier choice survives (another ComfyUI's model-folders file, input or output
+    folder, extra arguments)."""
     root = install_root()
-    inst: dict[str, Any] = {}
-    for (eng, port) in zip(p.engines, ports):
+    out: dict[str, dict[str, Any]] = {}
+    for eng, port in zip(p.engines, ports):
         e: dict[str, Any] = {"comfy_dir": str(root), "python": str(venv_python(root)), "main": "ComfyUI/main.py", "port": port,
-                             "cuda_device": eng["card"], "user_dir": str(root / "user" / eng["name"])}
+                             "listen": "127.0.0.1", "cuda_device": eng["card"], "user_dir": str(root / "user" / eng["name"]),
+                             "extra_args": []}
         if extra_yaml is not None:
             e["extra_model_paths"] = str(extra_yaml)
-        inst[eng["name"]] = {"url": f"http://127.0.0.1:{port}", "engine": e, "process_match": None, "external_owner": "",
-                             "start_script": None}
-    return inst
+        out[eng["name"]] = e
+    return out
+
+
+def _outside_fence(value: Any, fence: Fence) -> bool:
+    return value is not None and not any(_within(_real(Path(value)), f) for f in fence.foreign)
 
 
 def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -> None:
     root = install_root()
-    extra = None
+    extra = root / "shared-models.yaml"
     if job.choice == "A" and job.shared_models:
-        extra = root / "shared-models.yaml"
         g_write(extra, shared_models_yaml(Path(job.shared_models)), fence)
+    else:
+        if extra.exists():  # choice C: nothing shared any more
+            _retry(extra, lambda: guard(extra, fence).unlink(), ops)
+        extra = None  # type: ignore[assignment]
     for eng in p.engines:
         g_mkdir(root / "user" / eng["name"], fence)
     g_mkdir(root / "input", fence)
@@ -691,22 +800,37 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
         saved = config.load_settings(create_library=False)
     except config.ConfigError as err:
         raise DownloadError("settings", f"The app's settings could not be read ({err}).", "Fix or remove local/machine.json, then press Try again.") from None
+    names = {e["name"] for e in p.engines}
     ours = {n for n, i in saved.instances.items() if i.engine is not None and _within(_real(Path(i.engine.comfy_dir)), _real(root))}
-    taken = {_port(i) for n, i in saved.instances.items() if n not in ours and n not in {e["name"] for e in p.engines}}
+    taken = {_port(i) for n, i in saved.instances.items() if n not in ours and n not in names}
     ports = [_port(saved.instances[e["name"]]) for e in p.engines if e["name"] in ours]
     if len(ports) != len(p.engines) or any(x is None for x in ports):
         ports = free_ports(ops, len(p.engines), {x for x in taken if x})
-    patch: dict[str, Any] = {"instances": engine_patch(p, ports, extra)}
-    if saved.comfy_input_dir is None:
-        patch["comfy_input_dir"] = str(root / "input")
-    if saved.loras_dir is None:
-        patch["loras_dir"] = str(root / "ComfyUI" / "models" / "loras")
+    if len(ports) < len(p.engines):
+        raise DownloadError("no_port", "There are not enough free ports on this computer for VGAC's engines.",
+                            "Close programs that listen on ports 8288 and up, then press Try again.")
+    engines = engine_settings(p, ports, extra)
+    top: dict[str, Any] = {}
+    # The app's input and add-on folders: VGAC's own, unless the person chose folders outside every other ComfyUI.
+    if not _outside_fence(saved.comfy_input_dir, fence):
+        top["comfy_input_dir"] = str(root / "input")
+    if not _outside_fence(saved.loras_dir, fence):
+        top["loras_dir"] = str(root / "ComfyUI" / "models" / "loras")
     with setup_settings._lock:
         mpath = config.machine_path()
         if mpath is None:
             raise DownloadError("settings", "This copy of the app has no machine settings file to write to.", "")
         try:
-            config.update_machine({"backend": patch}, mpath)
+            data = config.merge(config.read_machine(mpath), {"backend": top})
+            insts = data.setdefault("backend", {}).setdefault("instances", {})
+            for name, e in engines.items():
+                inst = insts.get(name) if isinstance(insts.get(name), dict) else {}
+                for k in ("process_match", "external_owner", "start_script"):
+                    inst.pop(k, None)
+                inst["url"] = f"http://127.0.0.1:{e['port']}"
+                inst["engine"] = e  # replaced whole, never merged
+                insts[name] = inst
+            config.write_machine(data, mpath)
         except config.ConfigError as err:
             raise DownloadError("settings", f"The engines could not be saved ({err}).", "Press Try again.") from None
     try:
@@ -738,9 +862,11 @@ def run(job: Install, ops: Ops) -> None:
         p = step_check(job, ops, fence)
         m = claim(install_root(), job.choice, fence)
         m["choice"] = job.choice
+        m.setdefault("steps", {})["check"] = "done"
+        save_marker(m, fence)
         steps: list[tuple[str, Callable[[], None]]] = [
-            ("source", lambda: step_source(job, ops, fence)), ("wheels", lambda: step_wheels(job, ops, fence)),
-            ("venv", lambda: step_venv(job, ops, fence)), ("packages", lambda: step_packages(job, ops, fence)),
+            ("source", lambda: step_source(job, ops, fence)), ("venv", lambda: step_venv(job, ops, fence)),
+            ("wheels", lambda: step_wheels(job, ops, fence)), ("packages", lambda: step_packages(job, ops, fence)),
             ("packs", lambda: step_packs(job, ops, fence)), ("test", lambda: step_test(job, ops, fence, bool(p.engines))),
             ("engines", lambda: step_engines(job, ops, fence, p))]
         for sid, fn in steps:
@@ -750,12 +876,16 @@ def run(job: Install, ops: Ops) -> None:
             job.text = dict(STEPS)[sid]
             if sid in ("wheels", "packages") and _done(m, "packages"):
                 continue  # installed already
-            if sid in ("source", "venv") and _done(m, sid) and _result_there(sid):
-                continue  # finished before; a step that stopped half-way is done again from its start
+            if sid == "venv" and _done(m, sid) and venv_python().is_file():
+                continue  # made before; a venv that stopped half-way is made again from its start
             m["steps"][sid] = "working"
             save_marker(m, fence)
             fn()
             m["steps"][sid] = "done"
+            if sid in ("source", "venv"):
+                # A new environment has none of the packages, and new files need testing again.
+                for later in (("wheels", "packages", "test") if sid == "venv" else ("test",)):
+                    m["steps"].pop(later, None)
             save_marker(m, fence)
         _cleanup_wheels(ops, fence)
         job.state, job.step, job.text = "done", "", "VGAC's own ComfyUI is installed."
@@ -769,16 +899,11 @@ def run(job: Install, ops: Ops) -> None:
         job.error = {"code": "unexpected", "message": f"Something unexpected went wrong ({type(e).__name__}).", "fix": "Press Try again."}
 
 
-def _result_there(sid: str) -> bool:
-    root = install_root()
-    return (root / "ComfyUI" / "main.py").is_file() if sid == "source" else venv_python(root).is_file()
-
-
 def _cleanup_wheels(ops: Ops, fence: Fence) -> None:
-    """After success the downloaded packages are not needed (uv's cache keeps what a repair needs)."""
+    """After success the downloaded packages, the zip and uv's cache are not needed: a repair downloads again."""
     try:
-        g_rmtree(install_root() / "wheels", ops, fence)
-        g_rmtree(install_root() / "downloads", ops, fence)
+        for name in ("wheels", "downloads", ".uv-cache"):
+            g_rmtree(install_root() / name, ops, fence)
     except DownloadError:
         log.info("could not remove the downloaded packages; they are left in place")
 
@@ -790,6 +915,9 @@ def start(choice: str = "C", shared_models: str = "", ops: Ops | None = None, wa
     if choice == "A":
         if not shared_models or not Path(shared_models).is_dir():
             raise DownloadError("choice", "Choice A needs the models folder of your ComfyUI.", "Choose your ComfyUI in the list first.")
+        r, m = _real(install_root()), _real(Path(shared_models))
+        if _within(m, r) or _within(r, m):
+            raise DownloadError("choice", "That is VGAC's own ComfyUI; choose your own ComfyUI to share its models.", "")
     with _lock:
         if _current is not None and _current.state == "working":
             raise DownloadError("busy", "The install is already running.", "Wait for it, or stop it first.")
@@ -842,41 +970,63 @@ def _in_ledger(root: Path) -> bool:
 
 
 def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = None) -> dict[str, Any]:
-    """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it. Its engines are stopped
-    first (only processes the app started), the settings pointing at it cleared, the models kept unless asked."""
+    """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it, and only once none of its
+    engines runs (the app stops the ones it started; any other is the person's to close). The files go first, then the
+    settings that point at them; the models are kept unless asked."""
     ops = ops or Ops()
-    root = install_root()
-    if _current is not None and _current.state == "working":
-        raise DownloadError("busy", "The install is running.", "Stop it first.")
-    if read_marker(root) is None or not _in_ledger(root):
-        raise DownloadError("not_ours", "VGAC did not install a ComfyUI there, so it removes nothing.", "")
-    fence = Fence()
-    for f in ops.found_comfies():
-        if not _within(_real(Path(f)), _real(root)):
-            fence.add(f)
-    saved = config.load_settings(create_library=False)
-    mine = [n for n, i in saved.instances.items() if i.engine is not None and _within(_real(Path(i.engine.comfy_dir)), _real(root))]
-    for n in mine:
-        if supervisor is not None:
-            supervisor.stop_if_owned(n)
-    if mine:
-        with setup_settings._lock:
-            mpath = config.machine_path()
-            if mpath is not None:
-                config.update_machine({"backend": {"instances": {n: {"engine": None} for n in mine}}}, mpath)
-    kept = ""
-    for child in list(root.iterdir()):
-        if child.name in (MARKER,):
-            continue
-        if child.name == "ComfyUI" and not also_models and (child / "models").is_dir():
-            for sub in list(child.iterdir()):
-                if sub.name != "models":
-                    (g_rmtree(sub, ops, fence) if sub.is_dir() else _retry(sub, lambda s=sub: guard(s, fence).unlink(), ops))
-            kept = str(child / "models")
-            continue
-        g_rmtree(child, ops, fence) if child.is_dir() else _retry(child, lambda c=child: guard(c, fence).unlink(), ops)
-    if not kept:
-        _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
+    with _lock:  # no install can start while this runs
+        if _current is not None and _current.state == "working":
+            raise DownloadError("busy", "The install is running.", "Stop it first.")
+        root = install_root()
+        if read_marker(root) is None or not _in_ledger(root):
+            raise DownloadError("not_ours", "VGAC did not install a ComfyUI there, so it removes nothing.", "")
+        fence = Fence()
+        for f in ops.found_comfies():
+            if not _within(_real(Path(f)), _real(root)):
+                fence.add(f)
+        saved = config.load_settings(create_library=False)
+        r = _real(root)
+        mine = [n for n, i in saved.instances.items() if i.engine is not None and _within(_real(Path(i.engine.comfy_dir)), r)]
+        for n in mine:
+            if supervisor is not None:
+                supervisor.stop_if_owned(n)
+        ports = [x for x in (_port(saved.instances[n]) for n in mine) if x]
+        for _ in range(10):
+            busy = [x for x in ports if ops.port_in_use(x)]
+            if not busy:
+                break
+            ops.sleep(0.5)
+        else:
+            raise DownloadError("engine_running", f"VGAC's ComfyUI is still running on port {busy[0]}, and the app did not start it, so it "
+                                "cannot stop it. Nothing was removed.", "Close that ComfyUI window or program, then press Remove again.")
+        kept = ""
+        for child in list(root.iterdir()):
+            if child.name == MARKER:
+                continue
+            if child.name == "ComfyUI" and not also_models and (child / "models").is_dir():
+                for sub in list(child.iterdir()):
+                    if sub.name != "models":
+                        (g_rmtree(sub, ops, fence) if sub.is_dir() else _retry(sub, lambda s=sub: guard(s, fence).unlink(), ops))
+                kept = str(child / "models")
+                continue
+            g_rmtree(child, ops, fence) if child.is_dir() else _retry(child, lambda c=child: guard(c, fence).unlink(), ops)
+        if kept:
+            m = read_marker(root) or {}
+            m.update({"made_by": MADE_BY, "steps": {}})  # only the models are left: every step is to do again
+            save_marker(m, fence)
+        else:
+            _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
+        # Only now that the files are gone: the settings that pointed at them.
+        changes: dict[str, Any] = {"instances": {n: {"engine": None} for n in mine}} if mine else {}
+        for key in ("comfy_input_dir", "loras_dir"):
+            v = getattr(saved, key)
+            if v is not None and _within(_real(Path(v)), r):
+                changes[key] = None
+        if changes:
+            with setup_settings._lock:
+                mpath = config.machine_path()
+                if mpath is not None:
+                    config.update_machine({"backend": changes}, mpath)
     return {"removed": True, "kept_models": kept, "engines_cleared": mine,
             "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")}
 

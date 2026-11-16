@@ -89,13 +89,16 @@ class Runner:
 
     def __init__(self):
         self.calls: list[list[str]] = []
+        self.envs: list[dict] = []
         self.cuda = True
         self.fail: dict[str, tuple[int, str]] = {}
         self.on: dict[str, object] = {}
 
     def __call__(self, argv, cwd, env, log_path, cancel, timeout):
         self.calls.append(list(argv))
-        key = "venv" if argv[1:2] == ["venv"] else "pip" if argv[1:3] == ["pip", "install"] else "torch" if argv[1:2] == ["-c"] else "quick"
+        key = ("venv" if argv[1:2] == ["venv"] else "pip" if argv[1:3] == ["pip", "install"] else "torch" if "-c" in argv
+               else "quick" if "--quick-test-for-ci" in argv else "other")
+        self.envs.append(dict(env))
         hook = self.on.get(key)
         if callable(hook):
             hook(cancel)
@@ -110,6 +113,13 @@ class Runner:
             py = Path(argv[2]) / "Scripts" / "python.exe"
             py.parent.mkdir(parents=True, exist_ok=True)
             py.write_bytes(b"MZ python")
+        elif key == "pip":  # uv fills its cache and the venv
+            cache = Path(env["UV_CACHE_DIR"])
+            cache.mkdir(parents=True, exist_ok=True)
+            (cache / "wheel-cache.txt").write_text("cached", encoding="utf-8")
+            site = Path(argv[argv.index("--python") + 1]).parent.parent / "Lib" / "site-packages"
+            site.mkdir(parents=True, exist_ok=True)
+            (site / "installed.txt").write_text("torch", encoding="utf-8")
         elif key == "torch":
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"VGAC 2.12.1+cu130 {self.cuda}\n")
@@ -431,8 +441,8 @@ def test_a_zip_entry_that_escapes_is_refused(box):
         z.writestr("ComfyUI-c0ffee/../../escaped.txt", b"x")
     box["net"].files[ZIP_URL] = buf.getvalue()
     job = install(box)
-    assert job.state == "failed" and job.error["code"] == "bad_zip"
-    assert not (box["data"] / "escaped.txt").exists()
+    assert job.state == "failed" and job.error["code"] in ("bad_zip", "bad_checksum")  # refused before it is opened
+    assert not (box["data"] / "escaped.txt").exists() and not (box["tmp"] / "escaped.txt").exists()
 
 
 def test_a_file_held_by_an_antivirus_is_retried_then_explained(box, monkeypatch):
@@ -707,3 +717,299 @@ def test_the_shipped_lock_is_complete_pinned_and_from_official_hosts():
         assert w["file"].endswith((".whl")) and ("win_amd64" in w["file"] or "none-any" in w["file"]), w["file"]
         assert "cp313" in w["file"] or "abi3" in w["file"] or "-none-" in w["file"], w["file"]
     assert len(names) == len(ws), "one wheel per package"
+
+
+# --- review fixes ------------------------------------------------------------------------------------------------------------
+
+
+def _their_file(box, rel: str, text: str) -> Path:
+    """A file in the pretend person's ComfyUI, made before the install runs (and counted in the unchanged check)."""
+    p = box["theirs"] / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    box["before"].clear()
+    box["before"].update(snapshot(box["theirs"]))
+    return p
+
+
+def _model(box) -> Path:
+    m = box["root"] / "ComfyUI" / "models" / "checkpoints" / "downloaded.safetensors"
+    m.parent.mkdir(parents=True, exist_ok=True)
+    m.write_bytes(b"a model the person downloaded")
+    return m
+
+
+def test_f1_install_again_after_remove_keeps_the_kept_models(box):
+    assert install(box).state == "done"
+    model = _model(box)
+    ci.remove(False, box["ops"])
+    job = install(box)
+    assert job.state == "done", job.error
+    assert model.read_bytes() == b"a model the person downloaded"
+    assert (box["root"] / "ComfyUI" / "main.py").read_bytes() == SOURCE["main.py"]
+
+
+def test_f1_try_again_after_a_quarantined_file_keeps_models_and_packs(box):
+    assert install(box).state == "done"
+    model = _model(box)
+    (box["root"] / "ComfyUI" / "main.py").unlink()  # the antivirus took it
+    (box["root"] / "ComfyUI" / "user" / "default").mkdir(parents=True)
+    (box["root"] / "ComfyUI" / "user" / "default" / "settings.json").write_text("{}", encoding="utf-8")
+    job = install(box)
+    assert job.state == "done", job.error
+    assert (box["root"] / "ComfyUI" / "main.py").read_bytes() == SOURCE["main.py"]
+    assert model.is_file() and (box["root"] / "ComfyUI" / "custom_nodes" / "ComfyUI-SkinToken" / "__init__.py").is_file()
+    assert (box["root"] / "ComfyUI" / "user" / "default" / "settings.json").is_file()
+
+
+def test_f1_nothing_to_fetch_when_every_pinned_file_is_there(box):
+    assert install(box).state == "done"
+    box["net"].seen.clear()
+    assert install(box).state == "done"
+    assert not any(u == ZIP_URL for u, _ in box["net"].seen)
+
+
+def test_f2_a_rebuilt_environment_gets_its_packages_again(box):
+    assert install(box).state == "done"
+    shutil.rmtree(box["root"] / ".venv")
+    box["runner"].calls.clear()
+    job = install(box)
+    assert job.state == "done", job.error
+    kinds = [c[1:3] for c in box["runner"].calls]
+    assert ["venv", str(box["root"] / ".venv")] in kinds and ["pip", "install"] in kinds
+    assert (box["root"] / ".venv" / "Lib" / "site-packages" / "installed.txt").is_file()
+
+
+def test_f2_and_f9_remove_keeping_models_resets_the_steps_and_status_says_so(box):
+    assert install(box).state == "done"
+    ci._current = None  # as after a restart of the app
+    assert ci.status()["state"] == "done"  # F9: "check" is recorded, so a finished install says done
+    _model(box)
+    ci.remove(False, box["ops"])
+    m = ci.read_marker(box["root"])
+    assert m is not None and m["steps"] == {}
+    assert ci.status()["state"] == "unfinished"
+
+
+def _link_b(box, extra: Path) -> None:
+    """Choice B as comfy_find links it, plus an engine input folder, extra arguments and folders inside their ComfyUI."""
+    from vgac import setup_settings
+
+    setup_settings.set_engines(str(box["theirs"]), str(box["theirs"] / "python.exe"), "ComfyUI/main.py", str(extra), {"a": 0, "b": 1})
+    data = machine(box)
+    for n in ("a", "b"):
+        data["backend"]["instances"][n]["engine"].update({"extra_args": ["--their-flag"], "input_dir": str(box["theirs"] / "input"),
+                                                          "output_dir": str(box["theirs"] / "output")})
+    data["backend"]["loras_dir"] = str(box["theirs"] / "ComfyUI" / "models" / "loras")
+    box["machine"].write_text(json.dumps(data), encoding="utf-8")
+    config.reset_settings()
+
+
+def _engine_block(box, name="a") -> dict:
+    return machine(box)["backend"]["instances"][name]["engine"]
+
+
+def test_f3_a_then_c_shares_nothing(box):
+    models = box["theirs"] / "ComfyUI" / "models"
+    assert install(box, "A", str(models)).state == "done"
+    assert install(box, "C").state == "done"
+    e = _engine_block(box)
+    assert "extra_model_paths" not in e and not (box["root"] / "shared-models.yaml").exists()
+
+
+def test_f3_b_then_c_drops_everything_of_their_comfyui(box):
+    extra = _their_file(box, "extra_models_config.yaml", "comfyui:\n    base_path: x\n    is_default: true\n")
+    _link_b(box, extra)
+    assert install(box, "C").state == "done"
+    for n in ("a", "b"):
+        e = _engine_block(box, n)
+        assert set(e) == {"comfy_dir", "python", "main", "port", "listen", "cuda_device", "user_dir", "extra_args"}, e
+        assert e["extra_args"] == [] and Path(e["comfy_dir"]) == box["root"]
+    s = config.load_settings(create_library=False)
+    assert all(str(box["theirs"]) not in str(v) for v in (s.loras_dir, s.comfy_input_dir))
+    assert all(i.engine.extra_model_paths is None and i.engine.input_dir is None and i.engine.output_dir is None for i in s.instances.values())
+
+
+def test_f3_b_then_a_uses_vgacs_own_models_file_not_theirs(box):
+    extra = _their_file(box, "extra_models_config.yaml", "comfyui:\n    base_path: x\n    is_default: true\n")
+    _link_b(box, extra)
+    models = box["theirs"] / "ComfyUI" / "models"
+    assert install(box, "A", str(models)).state == "done"
+    e = _engine_block(box)
+    assert Path(e["extra_model_paths"]) == box["root"] / "shared-models.yaml" and "input_dir" not in e and e["extra_args"] == []
+
+
+def test_f4_a_cut_short_zip_is_deleted_and_the_next_try_downloads_again(box):
+    box["net"].files[ZIP_URL] = ZIP[: len(ZIP) // 2]  # codeload sends no length, so a short download looks complete
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "bad_checksum"
+    assert not list((box["root"] / "downloads").glob("*")) and not (box["root"] / "ComfyUI.unpack").exists()
+    box["net"].files[ZIP_URL] = ZIP
+    assert install(box).state == "done"
+
+
+def test_f4_same_size_other_bytes_is_refused(box):
+    bad = bytearray(ZIP)
+    bad[len(bad) // 2] ^= 0xFF
+    box["net"].files[ZIP_URL] = bytes(bad)
+    p = box["tmp"] / "setup" / "downloads.json"
+    cat = json.loads(p.read_text(encoding="utf-8"))
+    cat["comfyui_install"]["size"] = len(ZIP)
+    p.write_text(json.dumps(cat), encoding="utf-8")
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "bad_checksum" and "same size" in job.error["message"]
+
+
+def test_f6_a_missing_or_extra_file_is_refused_before_unpacking(box, monkeypatch):
+    opened = []
+    monkeypatch.setattr(ci, "g_unzip", lambda *a, **k: opened.append(a))
+    for files in ({k: v for k, v in SOURCE.items() if k != "main.py"}, {**SOURCE, "extra/big.bin": b"x" * 1000}):
+        box["net"].files[ZIP_URL] = make_zip(files)
+        job = install(box)
+        assert job.state == "failed" and job.error["code"] == "bad_checksum"
+    assert opened == []
+
+
+def test_f5_uvs_cache_is_inside_the_install_and_gone_after_it(box):
+    assert install(box).state == "done"
+    pip_env = box["runner"].envs[[c[1:3] for c in box["runner"].calls].index(["pip", "install"])]
+    assert Path(pip_env["UV_CACHE_DIR"]) == box["root"] / ".uv-cache"
+    assert not (box["root"] / ".uv-cache").exists()
+
+
+def test_f8_inherited_variables_are_dropped_and_python_ignores_them(box, monkeypatch):
+    for k, v in {"PYTHONPATH": "C:/evil", "PYTHONHOME": "C:/evil", "UV_INDEX_URL": "https://evil.example", "PIP_INDEX_URL": "https://evil.example",
+                 "UV_CACHE_DIR": "C:/elsewhere", "VIRTUAL_ENV": "C:/other"}.items():
+        monkeypatch.setenv(k, v)
+    assert install(box).state == "done"
+    for env in box["runner"].envs:
+        assert not any(k in env for k in ("PYTHONPATH", "PYTHONHOME", "UV_INDEX_URL", "PIP_INDEX_URL", "VIRTUAL_ENV"))
+        assert Path(env["UV_CACHE_DIR"]) == box["root"] / ".uv-cache" and env["UV_OFFLINE"] == "1"
+    torch = next(c for c in box["runner"].calls if "-c" in c)
+    quick = next(c for c in box["runner"].calls if "--quick-test-for-ci" in c)
+    for argv in (torch, quick):
+        assert argv[1:5] == ["-s", "-E", "-X", "utf8"]
+
+
+def test_pins_cannot_be_overridden_by_the_local_list(box):
+    evil = "https://evil.example/ComfyUI.zip"
+    (box["tmp"] / "setup" / "downloads.local.json").write_text(json.dumps({
+        "comfyui_install": {"zip": evil, "sha256": sha(b"other"), "tree_list": "setup/other.json", "lock": "setup/other-lock.json"},
+        "node_packs": {"skintoken": {"zip": "https://evil.example/pack.zip", "sha256": sha(b"pack")}}}), encoding="utf-8")
+    assert ci.entry()["zip"] == ZIP_URL
+    job = install(box)
+    assert job.state == "done", job.error
+    assert all(not u.startswith("https://evil.example") for u, _ in box["net"].seen)
+    assert PACK_URL in {u for u, _ in box["net"].seen}
+
+
+def test_f7_remove_refuses_while_an_engine_it_did_not_start_runs(box):
+    assert install(box).state == "done"
+    before = box["machine"].read_text(encoding="utf-8")
+    box["ops"].port_in_use = lambda p: p == 8288
+    with pytest.raises(DownloadError) as e:
+        ci.remove(True, box["ops"])
+    assert e.value.code == "engine_running" and "8288" in e.value.message
+    assert (box["root"] / ".venv").exists() and box["machine"].read_text(encoding="utf-8") == before
+
+
+def test_f7_remove_stops_its_own_engine_then_deletes_then_clears_settings(box):
+    assert install(box).state == "done"
+    running = {8288, 8289}
+
+    class Sup:
+        def __init__(self):
+            self.stopped: list[str] = []
+
+        def stop_if_owned(self, name):
+            self.stopped.append(name)
+            running.discard({"a": 8288, "b": 8289}[name])
+            return True
+
+    box["ops"].port_in_use = lambda p: p in running
+    sup = Sup()
+    r = ci.remove(True, box["ops"], sup)
+    assert sorted(sup.stopped) == ["a", "b"] and not box["root"].exists()
+    s = config.load_settings(create_library=False)
+    assert s.instances["a"].engine is None and s.comfy_input_dir is None and s.loras_dir is None
+    assert set(r["engines_cleared"]) == {"a", "b"}
+
+
+def test_f7_remove_under_choice_a_leaves_their_models(box):
+    models = box["theirs"] / "ComfyUI" / "models"
+    assert install(box, "A", str(models)).state == "done"
+    ci.remove(True, box["ops"])
+    assert not box["root"].exists() and (models / "checkpoints" / "mine.safetensors").is_file()
+
+
+def test_f10_too_few_free_ports_is_an_error_not_a_lost_engine(box):
+    box["ops"].port_in_use = lambda p: p != 8288  # only one port free for two engines
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "no_port"
+
+
+def test_f10_vgacs_own_install_cannot_be_the_shared_models(box):
+    assert install(box).state == "done"
+    with pytest.raises(DownloadError):
+        ci.start("A", str(box["root"] / "ComfyUI" / "models"), box["ops"], wait=True)
+
+
+def test_f10_the_pack_download_can_be_stopped(box):
+    ref = {}
+    orig = ci.Install
+
+    class Grab(orig):  # type: ignore[misc,valid-type]
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            ref["job"] = self
+
+    def hook(pos):
+        if box["net"].seen and box["net"].seen[-1][0] == PACK_URL:
+            ref["job"].cancel.set()
+
+    box["net"].hook = hook
+    ci.Install = Grab
+    try:
+        job = install(box)
+    finally:
+        ci.Install = orig
+    assert job.state == "stopped"
+    box["net"].hook = None
+    assert install(box).state == "done"
+
+
+def test_a_damaged_marker_of_a_recorded_install_is_written_again(box):
+    assert install(box).state == "done"
+    (box["root"] / ci.MARKER).write_text("{ not json", encoding="utf-8")
+    job = install(box)
+    assert job.state == "done", job.error
+    assert ci.read_marker(box["root"])["steps"]["engines"] == "done"
+
+
+def test_a_damaged_marker_without_the_ledger_is_not_taken_over(box):
+    box["root"].mkdir(parents=True)
+    (box["root"] / ci.MARKER).write_text("{ not json", encoding="utf-8")
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "folder_used"
+
+
+def test_the_http_endpoints(box, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(ci, "Ops", lambda: box["ops"])
+    app = FastAPI()
+    app.include_router(ci.router)
+    c = TestClient(app)
+    off = c.get("/api/comfy/install").json()
+    assert off["ready"] and off["status"]["state"] == "idle"
+    assert c.post("/api/comfy/install/start", json={"choice": "B"}).status_code == 400
+    assert c.post("/api/comfy/install/start", json={"choice": "A"}).status_code == 400  # no ComfyUI chosen
+    assert c.post("/api/comfy/install/remove", json={}).status_code == 400  # not confirmed
+    assert c.post("/api/comfy/install/start", json={"choice": "C"}).status_code == 200
+    ci._current.thread.join()
+    assert c.get("/api/comfy/install/status").json()["state"] == "done"
+    assert c.post("/api/comfy/install/stop", json={}).status_code == 200
+    assert c.post("/api/comfy/install/engines", json={}).json()["engines"] == []  # no running app here
+    r = c.post("/api/comfy/install/remove", json={"confirm": True, "also_models": True})
+    assert r.status_code == 200 and r.json()["removed"]
