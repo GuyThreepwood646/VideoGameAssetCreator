@@ -5,7 +5,7 @@ knight came out about 7 percent brighter). After the build, a flat render of the
 (texfidelity) is compared with the picture, and ONE global correction is applied to the base colour atlas: a shift of
 the mean in Lab (never a gain, which flattens contrast). It is capped so
 no colour moves by more than MAX_MOVE_DE (about 8 dE), and only made when the silhouette fit is good (so the render and
-the picture really show the same figure). Looks that change colour on purpose (crisp, palette) are not touched.
+the picture really show the same figure).
 
 plan() and apply() are pure; match_base_colour() does the file work.
 """

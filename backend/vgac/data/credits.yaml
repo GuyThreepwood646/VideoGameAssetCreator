@@ -38,7 +38,6 @@ models:
   zbase: {author: "Tongyi-MAI (Alibaba)", link: "https://huggingface.co/Tongyi-MAI/Z-Image", does: "Paints the concept picture at higher quality, more slowly.", confirmed: records}
   klein: {author: "Black Forest Labs", link: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B", does: "Paints quick draft concept pictures.", confirmed: lookup}
   anima: {author: "circlestone-labs", link: "https://huggingface.co/circlestone-labs/Anima", does: "Paints anime line-art concept pictures.", attribution_required: false, note: "The model is non-commercial; what it makes may be used commercially. Do not sell or host the model itself.", confirmed: lookup}
-  pixel: {author: "Tongyi-MAI (Alibaba) with a community pixel-art add-on", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo", does: "Z-Image Turbo with a pixel-art add-on built in, for blocky pixel concept pictures.", confirmed: records}
   chroma: {author: "lodestones", link: "https://huggingface.co/lodestones/Chroma1-HD", does: "Paints loose, painterly concept pictures.", confirmed: lookup}
   qwen_edit: {author: "Qwen team (Alibaba)", link: "https://huggingface.co/Qwen/Qwen-Image-Edit-2511", does: "Edits a picture and draws the side, back and other views of your concept (the turnaround).", confirmed: records}
   qwen_angles_lora: {author: "fal", link: "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", does: "Helps the side-view model turn the character to exact camera angles.", confirmed: records}
@@ -58,7 +57,6 @@ models:
   hair_library: {skip: true}
 
 addons:
-  pixel_art: {author: "community add-on for Z-Image Turbo", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo"}
   qwen_lightning: {author: "lightx2v", link: "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning"}
   qwen_angles: {author: "fal", link: "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA"}
   turnaround_sheet: {author: "tarn59", link: "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511"}
@@ -66,7 +64,6 @@ addons:
   stylised_3d: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE"}
   clay_finish: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE"}
   retro_lowpoly: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO"}
-  chunky_pixels: {author: "artificialguybr", link: "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO"}
 
 # Ready-made data that is not a model. Hairstyles are not listed here: they come from the hair library catalogue.
 data:
@@ -84,7 +81,6 @@ tools:
   - {name: "Unity Editor", does: "Imports the finished asset in a sandbox project to prove it works, and makes the Unity showcase.", author: "Unity Technologies", licence: "Unity Personal or Pro terms", link: "https://unity.com/legal", attribution_required: false, in_your_assets: false, note: "Each person needs their own Unity install and plan; the app does not include Unity. Unity's plans page (checked 2026-11-06) says Personal is for hobbyists and small teams and Pro is required above 200,000 dollars in annual revenue or funding. Your game falls under Unity's terms for the plan you use.", confirmed: records}
   - {name: ComfyUI, does: "The engine that runs every AI model on your graphics card. The app sends it a recipe and gets the picture or 3D model back. Its built-in parts also supply the nodes used for the 3D steps and the picture check.", author: "Comfy Org and contributors", licence: "GPL-3.0", link: "https://github.com/Comfy-Org/ComfyUI", attribution_required: false, in_your_assets: false, note: "Called over its local web address; not included in this app.", confirmed: lookup}
   - {name: ComfyUI-SkinToken, does: "The ComfyUI add-on (custom node pack) that lets ComfyUI run the SkinToken rigging model.", author: "Rizzlord", licence: "not confirmed", link: "https://github.com/Rizzlord/ComfyUI-SkinToken", attribution_required: false, in_your_assets: false, note: "The pack has no licence file and says to read the SkinTokens project's terms, which are MIT. Not confirmed as its own licence.", confirmed: "not confirmed"}
-  - {name: ComfyUI-PixelArt-Detector, does: "The ComfyUI add-on (custom node pack) that shrinks a picture to a small palette for the pixel-art concept look.", author: dimtoneff, licence: MIT, link: "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector", attribution_required: false, in_your_assets: false, note: "Used by the pixel-art concept graph. Called inside ComfyUI; not included in this app.", confirmed: lookup}
   - {name: "vgac-nodes (VGACLoadTrimesh, VGACSaveTrimesh)", does: "Two small ComfyUI nodes written for this app to load and save 3D files.", author: "This project", licence: "GPL-3.0-or-later (chosen)", link: "", attribution_required: false, in_your_assets: false, note: "Your own code, runs inside ComfyUI. Source: comfy-nodes/vgac-nodes/ in this repository (a copy lives in the ComfyUI install).", confirmed: records}
   - {name: "Gemma 3 12B (instruction tuned)", does: "The local vision model that looks at pictures and judges them for the review checks and hairstyle choice. Runs inside ComfyUI.", author: "Google DeepMind", licence: "Gemma Terms of Use (Google's own terms, with a Prohibited Use Policy)", link: "https://ai.google.dev/gemma/terms", attribution_required: false, in_your_assets: false, note: "Google states it claims no rights in what you generate with it. The terms must be accepted by whoever downloads the model.", confirmed: lookup}
 

@@ -2139,12 +2139,11 @@ AUTO_CATEGORIES = ("humanoid",)
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character
-    on a smooth look (never a crisp or limited-palette one, which it would undo)."""
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character.
+    `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
-    lk = look or {}
-    return category in AUTO_CATEGORIES and not lk.get("crisp") and not lk.get("palette")
+    return category in AUTO_CATEGORIES
 
 
 def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]:

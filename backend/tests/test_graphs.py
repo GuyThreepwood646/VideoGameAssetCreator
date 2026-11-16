@@ -64,7 +64,7 @@ def test_zimage_is_three_split_files_and_otherwise_matches_gen_concepts(bakeoff_
 def test_concept_dispatch_and_save_nodes():
     from vgac import reference
 
-    assert reference.concept_models() == ("zturbo", "zbase", "klein", "anima", "pixel", "chroma")
+    assert reference.concept_models() == ("zturbo", "zbase", "klein", "anima", "chroma")
     for model in reference.concept_models():
         g = concept.concept_graph(model, "p", 1, "pre", width=1024, height=1024)
         node = g[concept.save_node(model)]

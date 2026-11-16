@@ -112,7 +112,6 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             </div>
             <div className={'small' + (look.ok ? '' : ' warn-text')}>
               {look.sentence}
-              {look.crisp && <Info term="term.texture_crisp" />}
             </div>
           </div>
         )}

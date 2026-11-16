@@ -14,7 +14,7 @@ scripts they were ported from.
 | File | Builder | Instance | Ported from |
 |---|---|---|---|
 | `zimage_concept.json` | `graphs.concept.zimage_graph` | B | `bakeoff/gen_concepts.py` |
-| `zbase_concept.json`, `klein_concept.json`, `anima_concept.json`, `pixel_concept.json`, `chroma_concept.json` | `graphs.concept.*` | B | comfyui-game-art skill `stylemodels.py` |
+| `zbase_concept.json`, `klein_concept.json`, `anima_concept.json`, `chroma_concept.json` | `graphs.concept.*` | B | comfyui-game-art skill `stylemodels.py` |
 | `qwen_angles.json` | `graphs.qwen_edit.angle_graph` | B | `bakeoff/turnaround.py` |
 | `qwen_edit.json` | `graphs.qwen_edit.edit_graph` (angles LoRA removed) | B | `bakeoff/turnaround.py` |
 | `birefnet_cutout.json` | `graphs.birefnet.cutout_graph` | B | `bakeoff/turnaround.py` |

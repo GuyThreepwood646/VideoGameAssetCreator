@@ -3,24 +3,6 @@ import type { AddonEntry, Recipe, StrengthName } from '../api'
 
 export const ADDONS: AddonEntry[] = [
   {
-    id: 'pixel_art',
-    label: 'Pixel-art LoRA',
-    help: {
-      meaning: 'Pushes the image model toward crisp 16-bit pixel art with a small palette.',
-      why: 'Gives the blocky, hand-placed pixel look; the Z-Image Pixel Art model is built on it.',
-      technical: 'Z-Image Turbo pixel art style LoRA, model only, trigger "Pixel art style."',
-    },
-    stage: 'concept',
-    base_models: ['zturbo', 'pixel'],
-    strengths: { subtle: 0.6, normal: 1.0, strong: 1.2 },
-    default_strength: 'normal',
-    required: false,
-    required_for: ['pixel'],
-    trigger: 'Pixel art style.',
-    licence: 'Apache-2.0',
-    source: 'models.yaml entry "pixel" (Z-Image Turbo + pixel art LoRA)',
-  },
-  {
     id: 'qwen_lightning',
     label: 'Lightning LoRA (fast turnaround)',
     help: {
@@ -107,7 +89,7 @@ type StyleRecipe = {
   model: string
   plain: string
   mesh?: { triangle_scale?: number; triangle_floor?: number; texture_cap?: number; normal_map?: boolean }
-  surface?: { shading?: 'smooth' | 'flat'; texture_filter?: 'smooth' | 'crisp'; palette_colors?: number; pixel_snap?: boolean }
+  surface?: { shading?: 'smooth' | 'flat' }
   addons?: { id: string; strength: StrengthName }[]
   delight?: 'remove' | 'keep'
 }
@@ -155,7 +137,6 @@ export function mockRecipe(style: string, category: string, platform: string, bu
   const floor = s.mesh?.triangle_floor ?? 0
   const tris = budget.triangles ? Math.min(budget.triangles, Math.max(floor, Math.round(budget.triangles * scale))) : null
   const cap = s.mesh?.texture_cap ?? null
-  const crisp = s.surface?.texture_filter === 'crisp'
   const addons: { id: string; strength: StrengthName }[] = [...(s.addons ?? [])]
   for (const a of ADDONS) {
     const conceptLocked = a.stage === 'concept' && a.base_models.includes(s.model) && (a.required || a.required_for.includes(s.model))
@@ -192,33 +173,28 @@ export function mockRecipe(style: string, category: string, platform: string, bu
     },
     surface: {
       shading: s.surface?.shading ?? 'smooth',
-      texture_filter: crisp ? 'crisp' : 'smooth',
-      palette_colors: s.surface?.palette_colors ?? null,
-      pixel_snap: s.surface?.pixel_snap ?? crisp,
       delight: s.delight ?? 'keep',
       pbr_fix: style === 'realistic_pbr',
     },
-    engine: { filter_mode: crisp ? 'point' : 'bilinear', mipmaps: !crisp, compress: !crisp },
     addon_entries: entries,
   }
 }
 
 // metrics.recipe as a version records it: id, style, category, platform, plain and the named sections.
-export function recipeRecord(r: Recipe, ...sections: ('concept' | 'addons' | 'turnaround' | 'mesh' | 'surface' | 'engine')[]): Record<string, unknown> {
+export function recipeRecord(r: Recipe, ...sections: ('concept' | 'addons' | 'turnaround' | 'mesh' | 'surface')[]): Record<string, unknown> {
   const out: Record<string, unknown> = { id: r.id, style: r.style, category: r.category, platform: r.platform, plain: r.plain }
   for (const s of sections) out[s] = r[s]
   return out
 }
 
 // What a look changes, as the prep look_applied check says it; null for looks that keep the full pipeline.
-export function lookSummary(r: Recipe, shading: string, colours: number | null): string | null {
-  const special = r.mesh.triangle_scale < 1 || shading === 'flat' || !r.mesh.normal_map || r.surface.texture_filter === 'crisp' || (r.mesh.texture_cap !== null && r.mesh.texture_cap < (r.mesh.budget_texture ?? 0))
+export function lookSummary(r: Recipe, shading: string): string | null {
+  const special = r.mesh.triangle_scale < 1 || shading === 'flat' || !r.mesh.normal_map || (r.mesh.texture_cap !== null && r.mesh.texture_cap < (r.mesh.budget_texture ?? 0))
   if (!special) return null
   const parts: string[] = []
   if (r.mesh.triangle_scale < 1 && r.mesh.triangles) parts.push(`about ${r.mesh.triangles.toLocaleString('en-US')} triangles`)
   if (shading === 'flat') parts.push('flat faces')
   if (r.mesh.texture) parts.push(`${r.mesh.texture} px textures`)
-  if (r.surface.texture_filter === 'crisp') parts.push('crisp pixels' + (colours ? ` in ${colours} colours` : ''))
   if (!r.mesh.normal_map) parts.push('no surface bumps')
   return parts.join(', ')
 }

@@ -289,7 +289,6 @@ def test_skip_rules():
     assert fd.skip_reason("humanoid", REC, {}, True) is None
     assert fd.skip_reason("humanoid", REC, {"face_detail": False}, True) == "off"
     assert fd.skip_reason("quadruped", REC, {}, True) == "not_humanoid"
-    assert fd.skip_reason("humanoid", {"surface": {"texture_filter": "crisp"}}, {}, True) == "style"
     assert fd.skip_reason("humanoid", {"surface": {"shading": "flat"}}, {}, True) == "style"
     assert fd.skip_reason("humanoid", REC, {}, False) == "no_picture"
     assert fd.strength_of({"face_strength": 3}) == 1.0 and fd.strength_of({"face_strength": "x"}) == 1.0

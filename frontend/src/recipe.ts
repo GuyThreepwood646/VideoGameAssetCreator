@@ -59,7 +59,7 @@ const LOOK_WORD: Record<string, string> = {
 
 type RecipeRecord = Partial<Pick<Recipe, 'style' | 'plain'>> & { mesh?: Partial<Recipe['mesh']>; surface?: Partial<Recipe['surface']> }
 
-export type LookSummary = { look: string; summary: string; sentence: string; ok: boolean; crisp: boolean }
+export type LookSummary = { look: string; summary: string; sentence: string; ok: boolean }
 
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null)
 
@@ -78,25 +78,22 @@ export function lookFromRecipe(raw: unknown, metrics: Record<string, unknown> = 
   const srf = rec.surface ?? {}
   const scale = num(mesh.triangle_scale) ?? 1
   const shading = (typeof metrics.shading_applied === 'string' ? metrics.shading_applied : null) ?? srf.shading
-  const crisp = srf.texture_filter === 'crisp'
   const noBumps = mesh.normal_map === false
   const cap = num(mesh.texture_cap)
   const budgetTex = num(mesh.budget_texture)
-  const special = scale < 1 || shading === 'flat' || noBumps || crisp || (cap !== null && budgetTex !== null && cap < budgetTex)
+  const special = scale < 1 || shading === 'flat' || noBumps || (cap !== null && budgetTex !== null && cap < budgetTex)
   if (!special) return null
   const parts: string[] = []
   const tris = num(mesh.triangles)
   if (scale < 1 && tris) parts.push(`about ${tris.toLocaleString('en-US')} triangles`)
   if (shading === 'flat') parts.push('flat faces')
   const tex = num(mesh.texture) ?? cap
-  const colours = num(srf.palette_colors) ?? num(metrics.texture_colours)
-  if (tex) parts.push(`${tex} px ${crisp ? 'crisp ' : ''}textures${crisp && colours ? ` in ${colours} colours` : ''}`)
-  else if (crisp) parts.push('crisp pixels')
+  if (tex) parts.push(`${tex} px textures`)
   if (noBumps) parts.push('no surface bumps')
   if (!parts.length) return null
   const look = lookWord(rec)
   const summary = parts.join(', ')
-  return { look, summary, sentence: `${look} look: ${summary}.`, ok: true, crisp }
+  return { look, summary, sentence: `${look} look: ${summary}.`, ok: true }
 }
 
 // The look line for a mesh or prep version: the look_applied check's sentence when the backend sent one, else built
@@ -109,7 +106,7 @@ export function versionLook(v: Version | undefined | null): LookSummary | null {
   if (check) {
     const look = typeof check.vars?.look === 'string' ? check.vars.look : (built?.look ?? '')
     const summary = typeof check.vars?.summary === 'string' ? check.vars.summary : typeof check.value === 'string' ? check.value : (built?.summary ?? '')
-    return { look, summary, sentence: checkSentence(check), ok: checkPassed(check), crisp: built?.crisp ?? /crisp/.test(summary) }
+    return { look, summary, sentence: checkSentence(check), ok: checkPassed(check) }
   }
   return built
 }

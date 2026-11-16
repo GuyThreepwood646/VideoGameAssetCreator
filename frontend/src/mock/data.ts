@@ -240,7 +240,7 @@ export const stages: StageInfo[] = [
     label: 'Concept',
     estimate_seconds: 25,
     adjust_schema: [
-      { name: 'model', label: 'Model', type: 'select', options: ['zturbo', 'zbase', 'klein', 'anima', 'pixel', 'chroma'], default: 'zturbo' },
+      { name: 'model', label: 'Model', type: 'select', options: ['zturbo', 'zbase', 'klein', 'anima', 'chroma'], default: 'zturbo' },
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 1234 },
       { name: 'width', label: 'Width', type: 'integer', min: 512, max: 2048, step: 64, default: 1024 },
       { name: 'height', label: 'Height', type: 'integer', min: 512, max: 2048, step: 64, default: 1024 },
@@ -845,12 +845,7 @@ export function fabricate(asset: Asset, version: Version) {
         m.shading_applied = shading
         m.shading_source = choice === 'smooth' || choice === 'flat' ? 'chosen' : 'recipe'
         m.recipe = recipeRecord(recipe, 'mesh', 'surface')
-        const colours = recipe.surface.palette_colors
-        if (colours) {
-          m.palette_limit = colours
-          m.texture_colours = colours
-        }
-        const summary = lookSummary(recipe, shading, colours)
+        const summary = lookSummary(recipe, shading)
         if (summary) {
           if (recipe.mesh.triangles && recipe.mesh.triangle_scale < 1) m.triangles = recipe.mesh.triangles - 40 + (seed % 5) * 10
           if (!recipe.mesh.normal_map) delete f.normal
@@ -977,7 +972,7 @@ export function fabricate(asset: Asset, version: Version) {
         errors: [],
       }
       m.checks = checksFor('export', seed, 20000, asset.category)
-      m.recipe = recipeRecord(recipe, 'surface', 'engine')
+      m.recipe = recipeRecord(recipe, 'surface')
       m.gate_ok = true
       break
     }

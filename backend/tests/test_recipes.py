@@ -38,9 +38,8 @@ def test_every_style_category_platform_resolves_with_a_plain_sentence():
             for p in reference.platforms():
                 r = reference.recipe(s["id"], c["id"], p["id"])
                 assert r["plain"].endswith(".") and "{" not in r["plain"] and ":" in r["plain"], r["plain"]
-                assert set(r) >= {"id", "plain", "concept", "addons", "turnaround", "mesh", "surface", "engine"}
-                assert r["surface"]["shading"] in ("smooth", "flat") and r["surface"]["texture_filter"] in ("smooth", "crisp")
-                assert r["engine"]["filter_mode"] in ("bilinear", "point")
+                assert set(r) >= {"id", "plain", "concept", "addons", "turnaround", "mesh", "surface"} and "engine" not in r
+                assert r["surface"]["shading"] in ("smooth", "flat") and "texture_filter" not in r["surface"]
                 b = reference.budget(c["id"], p["id"])
                 if b["triangles"]:
                     assert r["mesh"]["triangles"] <= b["triangles"]
@@ -53,25 +52,23 @@ def test_full_pipeline_styles_keep_todays_behaviour():
     for sid in ("painted", "cel", "clay", "realistic_pbr"):
         r = reference.recipe(sid, "humanoid", "pc_mid")
         assert r["mesh"]["triangles"] == 20000 and r["mesh"]["texture"] == 2048 and r["mesh"]["normal_map"]
-        assert r["surface"]["shading"] == "smooth" and r["surface"]["texture_filter"] == "smooth" and r["surface"]["palette_colors"] is None
-        assert r["engine"] == {"filter_mode": "bilinear", "mipmaps": True, "compress": True}
+        assert r["surface"]["shading"] == "smooth"
         assert r["turnaround"] == {"lora_strength": 0.9, "prompt_suffix": ""}
         assert r["concept"]["model"] == reference.style(sid)["model"]
     assert reference.recipe("realistic_pbr", "humanoid", "pc_mid")["surface"]["delight"] == "remove"
     assert reference.recipe("painted", "humanoid", "pc_mid")["surface"]["delight"] == "keep"
 
 
-def test_low_poly_retro_and_pixel_recipes():
+def test_low_poly_and_retro_recipes():
     low = reference.recipe("lowpoly_flat", "humanoid", "pc_mid")
     assert low["mesh"]["triangles"] == 1500 and low["mesh"]["texture"] == 512 and not low["mesh"]["normal_map"]
-    assert low["surface"]["shading"] == "flat" and low["engine"]["filter_mode"] == "bilinear"
+    assert low["surface"]["shading"] == "flat"
     assert low["plain"] == "Low-poly character: faceted shapes with one flat colour per face, at most 1,500 triangles, simple textures."
     # The floor: a phone prop's quarter (250) is raised to 300.
     assert reference.recipe("lowpoly_flat", "prop_rigid", "mobile_low")["mesh"]["triangles"] == 300
     retro = reference.recipe("retro64", "humanoid", "pc_mid")
     assert retro["mesh"]["triangles"] == 3000 and retro["mesh"]["texture"] == 256 and not retro["mesh"]["normal_map"]
     assert retro["mesh"]["bake_texture"] == 1024 and retro["mesh"]["triangle_cap"] == 3000
-    assert retro["surface"]["texture_filter"] == "smooth" and retro["engine"]["mipmaps"]
 
 
 def test_by_category_override_and_unknown_style():
@@ -94,11 +91,11 @@ def test_recipe_public_lists_the_addons_for_the_painter():
     r = reference.recipe_public("painted", "humanoid", "pc_mid")
     by = {e["id"]: e for e in r["addon_entries"]}
     # turnaround_sheet: the character turnaround sheet, a second way of turning the views offered for characters.
-    assert {"pixel_art", "qwen_lightning", "qwen_angles", "turnaround_sheet"} <= set(by)
+    assert {"stylised_3d", "qwen_lightning", "qwen_angles", "turnaround_sheet"} <= set(by)
     assert not by["turnaround_sheet"]["on"] and by["turnaround_sheet"]["turn_method"] == "sheet"
     assert by["qwen_angles"]["required"] and by["qwen_lightning"]["required"]
-    assert "file" not in by["pixel_art"] and set(by["pixel_art"]["help"]) == {"meaning", "why", "technical"}
-    assert not by["pixel_art"]["on"] and not by["pixel_art"]["required"]  # works with Z-Image Turbo, off by default
+    assert "file" not in by["stylised_3d"] and set(by["stylised_3d"]["help"]) == {"meaning", "why", "technical"}
+    assert not by["stylised_3d"]["on"] and not by["stylised_3d"]["required"]  # works with Z-Image Turbo, off by default
     cel = {e["id"] for e in reference.recipe_public("cel", "humanoid", "pc_mid")["addon_entries"]}
     assert cel == {"qwen_lightning", "qwen_angles", "turnaround_sheet"}  # no concept add-on works with Anima
 
@@ -117,14 +114,14 @@ def test_recipe_public_lists_the_turn_loras_where_the_way_is_offered():
 
 def test_registry_seeds_the_three_wired_addons_with_every_field():
     reg = {a["id"]: a for a in reference.addons()}
-    assert {"pixel_art", "qwen_lightning", "qwen_angles"} <= set(reg)
+    assert {"stylised_3d", "qwen_lightning", "qwen_angles"} <= set(reg)
     for a in reg.values():
         assert a["label"] and set(a["help"]) == {"meaning", "why", "technical"}
         assert a["stage"] in ("concept", "turnaround") and a["file"] and "\\" not in a["file"]
         assert set(a["strengths"]) == set(reference.STRENGTH_NAMES) and a["default_strength"] in reference.STRENGTH_NAMES
         assert a["licence"] and a["source"] and a["base_models"]
         assert set(a["base_models"]) <= set(reference.models())
-    assert reg["qwen_lightning"]["required"] and reg["qwen_angles"]["required"] and not reg["pixel_art"].get("required")
+    assert reg["qwen_lightning"]["required"] and reg["qwen_angles"]["required"] and not reg["stylised_3d"].get("required")
     assert reg["qwen_angles"]["strengths"]["normal"] == 0.9
 
 
@@ -134,26 +131,22 @@ def test_registry_files_match_the_wired_graphs_and_models_yaml():
     g = qwen_edit.angle_graph("i.png", "p", 1, "x")
     assert cg.lora_name(reg["qwen_lightning"]["file"]) == g["l1"]["inputs"]["lora_name"]
     assert cg.lora_name(reg["qwen_angles"]["file"]) == g["l2"]["inputs"]["lora_name"]
-    assert cg.lora_name(reg["pixel_art"]["file"]) == cg.pixel_graph("p", 1, "x")["2"]["inputs"]["lora_name"]
     files = {m.get("file") for m in reference.models().values()}
-    for aid in ("pixel_art", "qwen_lightning", "qwen_angles"):
+    for aid in ("qwen_lightning", "qwen_angles"):
         assert Path(reg[aid]["file"]).name in files
 
 
 def test_resolve_addons_order_strengths_and_reports():
-    r = reference.resolve_addons("zturbo", "concept", [{"id": "pixel_art", "strength": "subtle"}], ["pixel_art:strong", "mystery", {"id": "nope"}])
-    assert [(a["id"], a["strength"], a["value"]) for a in r["applied"]] == [("pixel_art", "strong", 1.2)]
+    r = reference.resolve_addons("zturbo", "concept", [{"id": "stylised_3d", "strength": "subtle"}], ["stylised_3d:strong", "mystery", {"id": "nope"}])
+    assert [(a["id"], a["strength"], a["value"]) for a in r["applied"]] == [("stylised_3d", "strong", 1.0)]
     assert r["unknown"] == ["mystery", "nope"] and not r["applied"][0]["built_in"]
     # A number from the lock, then the version switches it off.
-    r = reference.resolve_addons("zturbo", "concept", None, ["pixel_art:0.7"])
+    r = reference.resolve_addons("zturbo", "concept", None, ["stylised_3d:0.7"])
     assert r["applied"][0]["strength"] == "custom" and r["applied"][0]["value"] == 0.7
-    assert reference.resolve_addons("zturbo", "concept", None, ["pixel_art"], {"pixel_art": "off"})["applied"] == []
-    # Required for the pixel painter: shown, built in, cannot be switched off.
-    r = reference.resolve_addons("pixel", "concept", None, None, {"pixel_art": "off"})
-    assert r["applied"][0]["built_in"] and r["applied"][0]["required"] and r["ignored"][0]["reason"].startswith("required")
+    assert reference.resolve_addons("zturbo", "concept", None, ["stylised_3d"], {"stylised_3d": "off"})["applied"] == []
     # Only applied when the model is in base_models.
-    r = reference.resolve_addons("anima", "concept", None, ["pixel_art"])
-    assert r["applied"] == [] and r["ignored"][0]["id"] == "pixel_art"
+    r = reference.resolve_addons("anima", "concept", None, ["stylised_3d"])
+    assert r["applied"] == [] and r["ignored"][0]["id"] == "stylised_3d"
     # The turnaround's helpers are always there and cannot be switched off.
     t = reference.resolve_addons("qwen_edit", "turnaround", None, None, {"qwen_angles": "off", "qwen_lightning": "off"})
     assert [a["id"] for a in t["applied"]] == ["qwen_lightning", "qwen_angles"] and len(t["ignored"]) == 2
@@ -162,9 +155,9 @@ def test_resolve_addons_order_strengths_and_reports():
 
 
 def test_validate_addons_param():
-    ok = reference.validate_params("concept", {"addons": {"pixel_art": "Strong", "gone_from_registry": "off"}})
-    assert ok["addons"] == {"pixel_art": "strong", "gone_from_registry": "off"}
-    for bad in ({"addons": ["pixel_art"]}, {"addons": {"pixel_art": "loud"}}, {"addons": {"pixel_art": 1}}):
+    ok = reference.validate_params("concept", {"addons": {"stylised_3d": "Strong", "gone_from_registry": "off"}})
+    assert ok["addons"] == {"stylised_3d": "strong", "gone_from_registry": "off"}
+    for bad in ({"addons": ["stylised_3d"]}, {"addons": {"stylised_3d": "loud"}}, {"addons": {"stylised_3d": 1}}):
         with pytest.raises(ValueError):
             reference.validate_params("concept", bad)
 
@@ -173,7 +166,7 @@ def test_schemas_carry_the_addon_catalog_and_the_shading_knob():
     stages = {s["id"]: {p["name"]: p for p in s["adjust_schema"]} for s in reference.stages()}
     a = stages["concept"]["addons"]
     assert a["type"] == "addons" and a["options"] == ["off", "subtle", "normal", "strong"] and not a["simple"]
-    assert {e["id"] for e in a["catalog"]} == {"pixel_art", "stylised_3d", "clay_finish", "retro_lowpoly", "chunky_pixels"} and a["help"]["meaning"]
+    assert {e["id"] for e in a["catalog"]} == {"stylised_3d", "clay_finish", "retro_lowpoly"} and a["help"]["meaning"]
     sh = stages["prep"]["shading"]
     assert sh["options"] == ["auto", "smooth", "flat"] and sh["option_labels"]["flat"] == "Flat faces" and not sh["simple"]
     assert 256 in stages["mesh"]["texture_size"]["options"] and stages["mesh"]["texture_size"]["option_labels"]["256"]
@@ -188,12 +181,12 @@ def _addons(model, **choices):
 
 
 def test_addon_chain_after_a_checkpoint_loader():
-    g = cg.concept_graph("zturbo", "a goblin", 1, "p", addons=_addons("zturbo", pixel_art="subtle"))
+    g = cg.concept_graph("zturbo", "a goblin", 1, "p", addons=_addons("zturbo", stylised_3d="subtle"))
     assert g["addon1"]["class_type"] == "LoraLoaderModelOnly" and g["addon1"]["inputs"]["model"] == ["1", 0]
-    assert g["addon1"]["inputs"]["strength_model"] == 0.6 and g["addon1"]["inputs"]["lora_name"].startswith("ZImage\\")
+    assert g["addon1"]["inputs"]["strength_model"] == 0.5 and g["addon1"]["inputs"]["lora_name"].startswith("VGAC\\")
     assert g["2"]["inputs"]["model"] == ["addon1", 0]  # ModelSamplingAuraFlow now reads the chain
     assert g["3"]["inputs"]["clip"] == ["1c", 0] and g["7"]["inputs"]["vae"] == ["1v", 0]  # CLIP and VAE untouched
-    assert g["3"]["inputs"]["text"] == "a goblin Pixel art style."
+    assert g["3"]["inputs"]["text"] == "a goblin 3D Render Style. 3DRenderAF."
     assert cg.concept_graph("zturbo", "a goblin", 1, "p") == cg.zimage_graph("a goblin", 1, "p")
 
 
@@ -209,13 +202,6 @@ def test_addon_chain_after_a_unet_loader_in_order():
         assert g["addon1"]["inputs"]["lora_name"] == "X\\a.safetensors"
 
 
-def test_pixel_painter_sets_its_own_lora_strength():
-    g = cg.concept_graph("pixel", "p", 1, "pre", addons=_addons("pixel", pixel_art="subtle"))
-    assert g["2"]["inputs"]["strength_model"] == 0.6 and "addon1" not in g
-    assert g["4"]["inputs"]["text"] == "Pixel art style. p"  # the builder's own trigger, not a second copy
-    assert cg.concept_graph("pixel", "p", 1, "pre", addons=_addons("pixel"))["2"]["inputs"]["strength_model"] == 1.0
-
-
 def test_palette_sentence_and_prompt():
     assert concept_stage.palette_sentence(["#5b3a1e", "#c9a35c", "#2e4a6b", "#8a1c1c", "#e8dcc3"]) == \
         "Colour palette: mostly dark brown, gold, steel blue, dark red and cream."
@@ -226,11 +212,11 @@ def test_palette_sentence_and_prompt():
 
 
 def test_concept_addons_from_recipe_lock_and_version():
-    sc = SimpleNamespace(project=SimpleNamespace(style_lock={"loras": ["pixel_art:subtle", "who_knows"]}), style={"id": "painted"},
+    sc = SimpleNamespace(project=SimpleNamespace(style_lock={"loras": ["stylised_3d:subtle", "who_knows"]}), style={"id": "painted"},
                          asset=SimpleNamespace(style_preset="painted", category="humanoid"), platform="pc_mid")
     r = concept_stage.resolve_concept_addons(sc, "zturbo", {})
-    assert [(a["id"], a["strength"], a["source"]) for a in r["applied"]] == [("pixel_art", "subtle", "style lock")] and r["unknown"] == ["who_knows"]
-    r = concept_stage.resolve_concept_addons(sc, "zturbo", {"addons": {"pixel_art": "strong"}})
+    assert [(a["id"], a["strength"], a["source"]) for a in r["applied"]] == [("stylised_3d", "subtle", "style lock")] and r["unknown"] == ["who_knows"]
+    r = concept_stage.resolve_concept_addons(sc, "zturbo", {"addons": {"stylised_3d": "strong"}})
     assert r["applied"][0]["strength"] == "strong" and r["applied"][0]["source"] == "version"
     assert concept_stage.resolve_concept_addons(sc, "klein", {})["applied"] == []
 
@@ -279,16 +265,8 @@ def test_prep_limit_and_shading():
     assert prep_stage.resolve_shading(low, {}) == {"shading": "flat", "source": "recipe"}
     assert prep_stage.resolve_shading(low, {"shading": "smooth"}) == {"shading": "smooth", "source": "chosen"}
     assert prep_stage.resolve_shading(low, {"shading": "auto"})["shading"] == "flat"
-    # A small project palette stays a prompt hint: forced onto the textures it repaints the model.
-    # No look is crisp today (texture_filter: crisp); a recipe that sets it, as a look could.
-    retro = reference.recipe("retro64", "humanoid", "pc_mid")
-    crisp = {**retro, "surface": {**retro["surface"], "texture_filter": "crisp", "palette_colors": 32, "pixel_snap": True}}
-    look = prep_stage.texture_look(crisp, ["#000000", "#ffffff", "nothex"])
-    assert look["crisp"] and look["cap"] == 256 and look["palette"] is None and look["palette_colors"] == 32 and not look["normal_map"]
-    big = [f"#{i * 16:02x}{i * 16:02x}{i * 16:02x}" for i in range(16)]
-    look = prep_stage.texture_look(crisp, big)
-    assert look["palette"] is not None and len(look["palette"]) == 16
-    assert prep_stage.texture_look(reference.recipe("retro64", "humanoid", "pc_mid"), ["#000000"])["palette"] is None
+    # The project palette is a prompt hint only; the texture treatment is the size and the normal map.
+    assert prep_stage.texture_look(reference.recipe("retro64", "humanoid", "pc_mid")) == {"cap": 256, "normal_map": False, "style": "retro64"}
 
 
 def test_turnaround_inherit_drops_a_recipe_strength():
@@ -299,20 +277,15 @@ def test_turnaround_inherit_drops_a_recipe_strength():
 # --- textures ----------------------------------------------------------------------------------------------------------
 
 
-def test_quantise_and_shrink(tmp_path):
+def test_shrink(tmp_path):
     rng = np.random.default_rng(3)
     base = rng.uniform(0, 1, (64, 64, 3)).astype(np.float32)
-    q = imaging.quantise_colours(base, None, 16)
-    assert len(np.unique((q * 255).round().reshape(-1, 3), axis=0)) <= 16
-    fixed = imaging.quantise_colours(base, None, palette=[(0, 0, 0), (255, 255, 255)])
-    assert set(np.unique((fixed * 255).round())) <= {0.0, 255.0}
     p = imaging.write_map(base, tmp_path / "b.png")
-    src = np.array(Image.open(p))
-    small = np.array(Image.open(imaging.shrink_image(p, 16, True, tmp_path / "n.png")))
-    assert small.shape == (16, 16, 3) and {tuple(c) for c in small.reshape(-1, 3)} <= {tuple(c) for c in src.reshape(-1, 3)}
-    soft = imaging.shrink_image(p, 16, False, tmp_path / "s.png")
+    soft = imaging.shrink_image(p, 16, tmp_path / "s.png")
     assert imaging.image_size(soft) == (16, 16)
-    assert imaging.image_size(imaging.shrink_image(p, 128, True, tmp_path / "same.png")) == (64, 64)
+    box = np.asarray(Image.open(p).resize((16, 16), Image.BOX))
+    assert np.array_equal(np.asarray(Image.open(soft)), box)  # an even box average
+    assert imaging.image_size(imaging.shrink_image(p, 128, tmp_path / "same.png")) == (64, 64)
     assert imaging.palette_names(["#ff0000", "#c82828", "#00f"]) == ["red", "blue"]
 
 
@@ -334,20 +307,19 @@ def _gltf(path: Path) -> dict:
     return json.loads(data[20:20 + n])
 
 
-def test_glb_drop_normal_and_nearest(tmp_path):
+def test_glb_drop_normal(tmp_path):
     rng = np.random.default_rng(1)
     glb = _uv_glb(tmp_path / "m.glb", rng.integers(0, 255, (64, 64, 3), dtype=np.uint8))
     assert "normalTexture" in _gltf(glb)["materials"][0]
     before = glb.stat().st_size
-    assert imaging.glb_replace_images(glb, drop_normal=True, nearest=True, mr_size=16)
+    assert imaging.glb_replace_images(glb, drop_normal=True, mr_size=16)
     g = _gltf(glb)
     assert "normalTexture" not in g["materials"][0] and glb.stat().st_size < before
-    assert all(s["magFilter"] == imaging.GL_NEAREST and s["minFilter"] == imaging.GL_NEAREST for s in g["samplers"])
     assert imaging.load_uv_mesh(glb) is not None  # still a valid GLB with its layout
     assert not imaging.glb_replace_images(tmp_path / "missing.txt") if (tmp_path / "missing.txt").write_bytes(b"x") else True
 
 
-def test_texture_pass_gives_the_pixel_look(tmp_path):
+def test_texture_pass_gives_a_small_look(tmp_path):
     rng = np.random.default_rng(2)
     base = rng.integers(0, 255, (64, 64, 3), dtype=np.uint8)
     glb = _uv_glb(tmp_path / "prep.glb", base)
@@ -357,22 +329,15 @@ def test_texture_pass_gives_the_pixel_look(tmp_path):
     Image.fromarray(np.full((64, 64), 200, np.uint8)).save(maps["roughness"])
     out = tmp_path / "out"
     out.mkdir()
-    look = {"cap": 16, "crisp": True, "pixel_snap": True, "palette": None, "palette_colors": 8, "normal_map": False, "style": "crisp_test"}
+    look = {"cap": 16, "normal_map": False, "style": "retro64"}
     res = prep_stage.texture_pass(glb, glb, maps, out, 64, "keep", False, False, look)
     m, files = res["metrics"], res["files"]
     assert imaging.image_size(files["base_color"]) == (16, 16) and imaging.image_size(files["metallic"]) == (16, 16)
-    assert m["texture_size_shipped"] == 16 and m["texture_colours"] <= 8 and m["palette_limit"] == 8 and m["palette_source"] == "recipe"
+    assert m["texture_size_shipped"] == 16 and not m["normal_map"]
     assert np.array_equal(np.array(Image.open(files["base_color_original"])), base)
     g = _gltf(glb)
-    assert "normalTexture" not in g["materials"][0] and g["samplers"][0]["magFilter"] == imaging.GL_NEAREST
+    assert "normalTexture" not in g["materials"][0]
     assert m["texture_padding_target_px"] == imaging.unwrap_padding(64)  # the layout is still measured at the bake size
-
-    # A fixed palette from the style lock.
-    out2 = tmp_path / "out2"
-    out2.mkdir()
-    res2 = prep_stage.texture_pass(_uv_glb(tmp_path / "b.glb", base), tmp_path / "b.glb", maps, out2, 64, "keep", False, False,
-                                   {**look, "palette": [(0, 0, 0), (255, 255, 255)]})
-    assert res2["metrics"]["palette_source"] == "style lock" and res2["metrics"]["texture_colours"] <= 2
 
 
 def test_texture_pass_without_a_look_is_unchanged(tmp_path):
@@ -412,25 +377,17 @@ def _export_sc(tmp_path, style, prep_metrics=None):
                            stage_version=lambda s: prep_v if s == "prep" else None)
 
 
-def test_export_engine_args_and_pack_look(tmp_path, monkeypatch):
-    # No look is crisp today; a recipe that sets texture_filter: crisp, as a look could, with the engine it resolves to.
-    retro = reference.recipe("retro64", "humanoid", "pc_mid")
-    crisp = {**retro, "surface": {**retro["surface"], "texture_filter": "crisp"},
-             "engine": {"filter_mode": "point", "mipmaps": False, "compress": False}}
-    real = export_stage.export_recipe
-    monkeypatch.setattr(export_stage, "export_recipe", lambda sc: crisp if (getattr(sc, "style", None) or {}).get("id") == "crisp_test" else real(sc))
-    px = _export_sc(tmp_path, "crisp_test")
-    args, _, _ = export_stage._unity_args(px, {}, "gob")
-    assert {k: args[k] for k in ("-vgacFilter", "-vgacMipmaps", "-vgacCompress", "-vgacNormalMap")} == \
-        {"-vgacFilter": "point", "-vgacMipmaps": "off", "-vgacCompress": "off", "-vgacNormalMap": "off"}
-    assert export_stage.pack_look(px) == {"shading": "smooth", "texture_filter": "crisp"} and not export_stage.ships_normal(px)
+def test_export_engine_args_and_pack_look(tmp_path):
+    retro = _export_sc(tmp_path, "retro64")
+    args, _, _ = export_stage._unity_args(retro, {}, "gob")
+    assert args["-vgacNormalMap"] == "off" and not any(k in args for k in ("-vgacFilter", "-vgacMipmaps", "-vgacCompress"))
+    assert export_stage.pack_look(retro) == {"shading": "smooth"} and not export_stage.ships_normal(retro)
     low = _export_sc(tmp_path, "lowpoly_flat", {"shading_applied": "flat"})
-    assert export_stage.pack_look(low) == {"shading": "flat", "texture_filter": "smooth"}
+    assert export_stage.pack_look(low) == {"shading": "flat"}
     painted = _export_sc(tmp_path, "painted")
-    assert export_stage.engine_args(painted)["-vgacFilter"] == "bilinear" and export_stage.ships_normal(painted)
+    assert export_stage.engine_args(painted) == {"-vgacNormalMap": "on"} and export_stage.ships_normal(painted)
     # A context with no style (older test doubles) gets today's defaults.
-    assert export_stage.engine_args(SimpleNamespace(dir=tmp_path)) == {"-vgacFilter": "bilinear", "-vgacMipmaps": "on", "-vgacCompress": "on",
-                                                                        "-vgacNormalMap": "on"}
+    assert export_stage.engine_args(SimpleNamespace(dir=tmp_path)) == {"-vgacNormalMap": "on"}
     assert export_stage.ships_normal(SimpleNamespace())
 
 
@@ -442,12 +399,13 @@ def test_materials_connected_without_a_bump_map():
     assert not c["passed"] and c["vars"] == {"missing": "bump", "effect": "flat"}
 
 
-def test_importer_version_7_takes_the_engine_settings():
+def test_importer_sets_bilinear_mipmaps_and_compression():
     src = IMPORTER.read_text(encoding="utf-8")
-    assert export_stage.importer_version(IMPORTER) >= 7
-    for token in ("-vgacFilter", "-vgacMipmaps", "-vgacCompress", "-vgacNormalMap", "FilterMode.Point", "mipmapEnabled",
-                  "TextureImporterCompression.Uncompressed", "textureFilter"):
+    assert export_stage.importer_version(IMPORTER) >= 21
+    for token in ("-vgacNormalMap", "FilterMode.Bilinear", "mipmapEnabled = true", "TextureImporterCompression.Compressed", "textureFilter"):
         assert token in src, token
+    for gone in ("FilterMode.Point", "-vgacFilter\")", "TextureImporterCompression.Uncompressed"):
+        assert gone not in src, gone
 
 
 def test_suggest_carries_the_recipe_line():
@@ -462,6 +420,6 @@ def test_styles_yaml_recipes_only_use_known_fields():
         assert set(s.get("recipe") or {}) <= set(reference.RECIPE_DEFAULTS), s["id"]
         for sec, body in (s.get("recipe") or {}).items():
             if isinstance(reference.RECIPE_DEFAULTS[sec], dict) and reference.RECIPE_DEFAULTS[sec]:
-                assert set(body) <= set(reference.RECIPE_DEFAULTS[sec]) | set(reference.RECIPE_OPTIONAL.get(sec, ())) | {"filter_mode", "mipmaps", "compress"}, (s["id"], sec)
+                assert set(body) <= set(reference.RECIPE_DEFAULTS[sec]) | set(reference.RECIPE_OPTIONAL.get(sec, ())), (s["id"], sec)
         for cid in s.get("by_category") or {}:
             assert cid in {c["id"] for c in reference.categories()}

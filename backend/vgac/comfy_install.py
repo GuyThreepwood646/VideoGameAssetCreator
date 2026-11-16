@@ -10,7 +10,7 @@ What it installs, in order (docs/INSTALLER-PLAN.md B3; setup/downloads.json "com
 3. wheels    every Python package in setup/comfyui-lock.json, through the shared downloader (resume, SHA-256).
 4. venv      `uv venv` from the app's private Python 3.13 (made by VGAC.exe), offline.
 5. packages  `uv pip install --offline --no-index --find-links <wheels> --require-hashes --no-deps --only-binary :all:`.
-6. packs     ComfyUI-SkinToken (pinned zip) and vgac-nodes (this project). The PixelArt pack is left out on purpose.
+6. packs     ComfyUI-SkinToken (pinned zip) and vgac-nodes (this project).
 7. test      its Python imports torch and sees the card; `main.py --quick-test-for-ci` loads every node and exits.
 8. engines   one engine per card of the hardware plan, on free ports from 8288 up, written to the machine settings.
 

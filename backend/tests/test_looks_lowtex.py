@@ -3,7 +3,9 @@
 Paint standard D1: nothing may change for any other look. tests/data/looks_golden.json was written by
 tests/make_looks_golden.py on master's code (commit 2493e44): the recipe digest and every step 3 and step 4 decision this
 branch touches, for realistic_pbr, painted, cel, clay and pixel, every category and platform. The branch must give the
-same. The Pixel art look was removed later; its rows went with it and no other row changed."""
+same. The Pixel art look was removed later; its rows went with it and no other row changed.
+The crisp texture fields (surface texture_filter, palette_colors, pixel_snap; the engine section) were removed after
+that: the file was written again, and against the earlier one only those fields and the recipe id differ."""
 
 from __future__ import annotations
 

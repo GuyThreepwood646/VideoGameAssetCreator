@@ -16,7 +16,7 @@
   -ComfyInstall  the ComfyUI install folder that holds ComfyUI\main.py (used for the proposed start scripts only).
   -HairPacks     with -Packs -Install: keep only these hair pack ids (for example -HairPacks quaternius_ubc,makehuman_system) without asking;
                  -QuaterniusZip, -MakeHumanZip and -Hair01Zip give the downloaded zips (or unpacked folders) instead of a download or a question.
-  -Only          with -Models: only these ids (for example -Only pixel_art,birefnet); ids are in the first column of downloads.json
+  -Only          with -Models: only these ids (for example -Only clay_finish,birefnet); ids are in the first column of downloads.json
   -ProjectRoot   defaults to the folder above this script (for tests against a throwaway copy).
 
   Licence questions: Hunyuan3D-2mv, Anima and Gemma 3 each need a sentence typed by you. This script never accepts
@@ -216,7 +216,7 @@ $OptIn = @{
                    'This helper never accepts terms for you. Read them, and accept only if you agree.') }
 }
 $requiredModels = @('zturbo', 'zimage_te', 'flux_ae', 'qwen_edit', 'birefnet', 'trellis2', 'skintoken', 'trellis2_dino')
-$loraAsAddon = @{ pixel = 'pixel_art'; qwen_angles_lora = 'qwen_angles'; qwen_lightning_lora = 'qwen_lightning' }
+$loraAsAddon = @{ qwen_angles_lora = 'qwen_angles'; qwen_lightning_lora = 'qwen_lightning' }
 $altFolder = @{ diffusion_models = 'unet'; text_encoders = 'clip' }
 
 function New-Item2($Kind, $Id, $Name, $RelPath, $Licence, $Required, $Dl) {

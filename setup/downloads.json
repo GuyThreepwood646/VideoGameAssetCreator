@@ -327,16 +327,6 @@
   }
  },
  "addons": {
-  "pixel_art": {
-   "name": "Pixel art style add-on",
-   "url": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo/resolve/main/pixel_art_style_z_image_turbo.safetensors",
-   "page": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo",
-   "size": 170128328,
-   "sha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
-   "dest": "loras/ZImage/pixel_art_style_z_image_turbo.safetensors",
-   "save_as": "pixel_art_style_z_image_turbo.safetensors",
-   "publisher": false
-  },
   "qwen_lightning": {
    "name": "Qwen Lightning 4-step add-on",
    "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
@@ -408,16 +398,6 @@
    "dest": "loras/VGAC/zit_ps1_redmond.safetensors",
    "save_as": "zit_ps1_redmond.safetensors",
    "publisher": true
-  },
-  "chunky_pixels": {
-   "name": "Chunky pixels add-on",
-   "url": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO/resolve/main/%5BZImage.Turbo%5DPixelArt_Redmond.safetensors",
-   "page": "https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO",
-   "size": 85094896,
-   "sha256": "767c914d816f8f4f0862eb8aa63c2b629595303d724546864671811c01461b84",
-   "dest": "loras/VGAC/zit_pixelart_redmond.safetensors",
-   "save_as": "zit_pixelart_redmond.safetensors",
-   "publisher": true
   }
  },
  "project_files": {
@@ -474,15 +454,6 @@
    "folder": "ComfyUI-SkinToken",
    "licence": "No licence file in the pack; it defers to the MIT SkinTokens project (not confirmed as its own licence)"
   },
-  "pixelart": {
-   "name": "ComfyUI-PixelArt-Detector",
-   "what": "Shrinks a picture to a small palette for the pixel-art look.",
-   "repo": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector",
-   "zip": "https://github.com/dimtoneff/ComfyUI-PixelArt-Detector/archive/d5ed602cb2eb67c05fbe8f5eae5c3b77ee257897.zip",
-   "sha256": "d5a7bc7861fb7c678a2b94511dd44cca6e684ea21ec0ba54c042b115ed0d4785",
-   "folder": "ComfyUI-PixelArt-Detector",
-   "licence": "MIT"
-  },
   "vgac": {
    "name": "vgac-nodes (this project)",
    "what": "The project's own mesh loader nodes.",
@@ -509,7 +480,7 @@
   "installed_bytes": 5050000000,
   "installed_note": "The Python environment of a working ComfyUI 0.45.3 with SkinToken (with a few more packages than this lock) measured 4.68 GB on 2026-11-15.",
   "packs": ["skintoken", "vgac"],
-  "left_out": {"pixelart": "The pixel-art look is not included in this install: its node pack needs pyclustering, which has no ready-made package for Windows and would have to be built from source."},
+  "left_out": {},
   "first_port": 8288,
   "max_root_chars": 90
  },
@@ -717,11 +688,9 @@
     "model:chroma",
     "model:flux2_vae",
     "model:chroma_te",
-    "addon:pixel_art",
     "addon:stylised_3d",
     "addon:clay_finish",
     "addon:retro_lowpoly",
-    "addon:chunky_pixels",
     "addon:turnaround_sheet",
     "addon:turnaround_white",
     "model:upscale_photo",

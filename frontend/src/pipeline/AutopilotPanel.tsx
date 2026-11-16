@@ -439,7 +439,6 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
                   <span className="finish-line-text">
                     Look: {look.ok && look.look && look.summary ? `${look.look}, ${look.summary}.` : look.sentence}
                     <Info term="term.recipe" />
-                    {look.crisp && <Info term="term.texture_crisp" />}
                   </span>
                 </li>
               )}

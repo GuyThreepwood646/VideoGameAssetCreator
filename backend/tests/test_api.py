@@ -492,7 +492,7 @@ def test_parent_walkback_only_over_skipped_stages(client):
 
 def test_suggest_and_pause_and_autopilot_stop(client):
     s = client.get("/api/suggest", params={"category": "quadruped", "style": "painted", "platform": "mobile_low"}).json()
-    assert s["model"] in ("zturbo", "zbase", "klein", "anima", "pixel", "chroma") and s["budgets"]["triangles"] and s["total_minutes"] > 0
+    assert s["model"] in ("zturbo", "zbase", "klein", "anima", "chroma") and s["budgets"]["triangles"] and s["total_minutes"] > 0
     h = client.post("/api/queue/b/pause", params={"paused": True}).json()
     assert h["b"]["paused"] is True
     assert client.post("/api/queue/b/pause", params={"paused": False}).json()["b"]["paused"] is False

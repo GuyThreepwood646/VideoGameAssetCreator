@@ -615,7 +615,6 @@ def clamp_roughness(roughness: np.ndarray) -> np.ndarray:
 # --- GLB image replacement --------------------------------------------------------------------------------------
 
 
-GL_NEAREST = 9728
 # A 1 x 1 flat normal (128, 128, 255) PNG: what a dropped normal map's image becomes, so the file loses its bytes
 # without renumbering every buffer view.
 _FLAT_NORMAL_PNG: bytes | None = None
@@ -633,7 +632,7 @@ def _flat_normal_png() -> bytes:
 
 
 def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, metallic: Path | str | None = None,
-                       roughness: Path | str | None = None, *, drop_normal: bool = False, nearest: bool = False,
+                       roughness: Path | str | None = None, *, drop_normal: bool = False,
                        mr_size: int | None = None) -> bool:
     """Swap, in place, the base colour image and the green (roughness) and blue (metallic) channels of the
     metallic-roughness image of a GLB's first material. The binary chunk is rebuilt view by view; every other view
@@ -641,7 +640,7 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
 
     Recipes: mr_size resizes the metallic-roughness image (and with it the occlusion in its red channel, when the
     material shares it) to mr_size square first; drop_normal removes every material's normal map (its image becomes a
-    1 x 1 flat normal, unreferenced); nearest sets every texture sampler to nearest-neighbour without mipmaps."""
+    1 x 1 flat normal, unreferenced)."""
     import io
     import struct
 
@@ -667,16 +666,6 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
             if ref is None:
                 continue
             changed_json = True
-    if nearest and gltf.get("textures"):
-        samplers = gltf.setdefault("samplers", [])
-        if not samplers:
-            samplers.append({})
-        for s in samplers:
-            s["magFilter"] = GL_NEAREST
-            s["minFilter"] = GL_NEAREST
-        for t in gltf["textures"]:
-            t.setdefault("sampler", 0)
-        changed_json = True
 
     def image_index(ref: dict[str, Any] | None) -> int | None:
         if not ref:
@@ -707,7 +696,7 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
         with Image.open(io.BytesIO(view_bytes(images[mi]["bufferView"]))) as im:
             rgb = im.convert("RGB")
             if mr_size and rgb.size != (mr_size, mr_size):
-                rgb = rgb.resize((mr_size, mr_size), Image.NEAREST if nearest else Image.LANCZOS)
+                rgb = rgb.resize((mr_size, mr_size), Image.LANCZOS)
             arr = np.array(rgb)
         for path, ch in ((roughness, 1), (metallic, 2)):
             if path:
@@ -822,56 +811,14 @@ def shrink_by_island(base: np.ndarray, uvmesh: dict[str, np.ndarray], size: int)
     return np.where((n > 0)[..., None], summed / np.maximum(n, 1)[..., None], plain).astype(np.float32)
 
 
-def shrink_image(path: Path | str, size: int, crisp: bool, dest: Path | str | None = None) -> Path:
-    """Resize a map to size x size when it is larger: nearest neighbour for crisp looks (every texel is one whole
-    source texel, no blended in-between colours), a box filter otherwise (an even average, the classic small soft
+def shrink_image(path: Path | str, size: int, dest: Path | str | None = None) -> Path:
+    """Resize a map to size x size when it is larger, with a box filter (an even average, the classic small soft
     texture). Writes dest (default: in place) in the same mode; a map already at or under the size is copied as is."""
     p = Path(path)
     out = Path(dest) if dest else p
     with Image.open(p) as im:
         im.load()
         if max(im.size) > size:
-            im = im.resize((size, size), Image.NEAREST if crisp else Image.BOX)
+            im = im.resize((size, size), Image.BOX)
         im.save(out)
     return out
-
-
-def quantise_colours(base: np.ndarray, mask: np.ndarray | None = None, colours: int | None = None,
-                     palette: list[tuple[int, int, int]] | None = None) -> np.ndarray:
-    """A base colour (h, w, 3, floats 0..1) limited to a few colours, without dithering: to the fixed `palette` when
-    given (each texel takes the nearest palette colour), else to `colours` picked from the texels inside `mask` (median
-    cut). Texels outside the mask take their nearest colour too, so the gutter matches its piece."""
-    a = np.clip(np.round(base * 255.0), 0, 255).astype(np.uint8)
-    h, w = a.shape[:2]
-    if palette:
-        pal = np.asarray(palette, dtype=np.float32)
-    else:
-        n = max(2, min(256, int(colours or 32)))
-        sample = a[mask] if mask is not None and mask.any() else a.reshape(-1, 3)
-        side = int(np.ceil(np.sqrt(len(sample))))
-        pad = np.zeros((side * side, 3), np.uint8)
-        pad[:len(sample)] = sample
-        pad[len(sample):] = sample[0] if len(sample) else 0
-        q = Image.fromarray(pad.reshape(side, side, 3), "RGB").quantize(colors=n, method=Image.Quantize.MEDIANCUT,
-                                                                        dither=Image.Dither.NONE)
-        pal = np.asarray(q.getpalette()[:3 * n], dtype=np.float32).reshape(-1, 3)
-        used = np.unique(np.asarray(q))
-        pal = pal[used[used < len(pal)]]
-    flat = a.reshape(-1, 3).astype(np.float32)
-    best = np.zeros(len(flat), dtype=np.int64)
-    best_d = np.full(len(flat), np.inf, dtype=np.float32)
-    for i, c in enumerate(pal):  # a loop over palette colours keeps memory at one distance row
-        rm = (flat[:, 0] + c[0]) / 2
-        d = (2 + rm / 256) * (flat[:, 0] - c[0]) ** 2 + 4 * (flat[:, 1] - c[1]) ** 2 + (2 + (255 - rm) / 256) * (flat[:, 2] - c[2]) ** 2
-        closer = d < best_d
-        best[closer] = i
-        best_d[closer] = d[closer]
-    return (pal[best].reshape(h, w, 3) / 255.0).astype(np.float32)
-
-
-def colour_count(path: Path | str, mask: np.ndarray | None = None) -> int:
-    """How many different colours a map uses (inside mask when given)."""
-    with Image.open(path) as im:
-        a = np.asarray(im.convert("RGB"))
-    px = a[mask] if mask is not None and mask.shape == a.shape[:2] else a.reshape(-1, 3)
-    return int(len(np.unique(px.reshape(-1, 3), axis=0)))

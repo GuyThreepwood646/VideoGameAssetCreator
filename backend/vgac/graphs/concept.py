@@ -104,25 +104,6 @@ def anima_graph(prompt: str, seed: int, prefix: str, width: int = 896, height: i
     }
 
 
-def pixel_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8,
-                lora: str = "ZImage" + BS + "pixel_art_style_z_image_turbo.safetensors", trigger: str = "Pixel art style.",
-                strength: float = 1.0, colors: int = 32) -> dict[str, Any]:
-    return {
-        **zimage_loaders(ZTURBO_UNET),
-        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": lora, "strength_model": strength}},
-        "3": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["2", 0], "shift": 3.0}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": trigger + " " + prompt}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": ""}},
-        "6": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-        "7": {"class_type": "KSampler", "inputs": {"model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0],
-              "seed": seed, "steps": steps, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
-        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["1v", 0]}},
-        "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": prefix + "_raw"}},
-        "10": {"class_type": "PixelArtDetectorToImage", "inputs": {"images": ["8", 0], "reduce_palette": True, "reduce_palette_max_colors": colors}},
-        "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": prefix}},
-    }
-
-
 def chroma_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 30, cfg: float = 3.5,
                  neg: str = PAINT_NEG) -> dict[str, Any]:
     return {

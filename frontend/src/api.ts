@@ -27,7 +27,7 @@ export function stageEstimateSeconds(stage: StageId, info?: Pick<StageInfo, 'est
 
 // The concept models as of this build. The backend's data/models.yaml is the source and GET /api/models serves it
 // (api.models()); this list is the fallback for the pickers and the mock.
-export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'pixel', 'chroma'] as const
+export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'chroma'] as const
 export type StyleModel = (typeof STYLE_MODELS)[number]
 
 // One concept model (GET /api/models), from the backend's data/models.yaml.
@@ -430,8 +430,7 @@ export type Recipe = {
     budget_texture: number | null
     normal_map: boolean
   }
-  surface: { shading: 'smooth' | 'flat'; texture_filter: 'smooth' | 'crisp'; palette_colors: number | null; pixel_snap: boolean; delight: string; pbr_fix: boolean }
-  engine: { filter_mode: 'bilinear' | 'point'; mipmaps: boolean; compress: boolean }
+  surface: { shading: 'smooth' | 'flat'; delight: string; pbr_fix: boolean }
   addon_entries: AddonEntry[]
 }
 

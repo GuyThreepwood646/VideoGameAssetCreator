@@ -32,7 +32,7 @@ def decisions() -> dict:
                 budget = reference.budget(cat, plat)
                 targets = mesh.resolve_targets(rec, {}, budget, cat)
                 mp = {**targets, "target_faces_source": targets["target_faces_source"]}
-                look = prep.texture_look(rec, None)
+                look = prep.texture_look(rec)
                 row = {"recipe_id": rec["id"], "mesh": rec["mesh"], "surface": rec["surface"], "targets": targets,
                        "head_applies": headtris.applies(rec, cat), "triangle_limit": prep.prep_triangle_limit(rec, mp, budget),
                        "texture_look": look, "srcproject_on": srcproject.on({}, cat, look),

@@ -105,7 +105,7 @@ Data files in `backend/vgac/data/` drive these; editing them needs a backend res
 |---|---|
 | `styles.yaml` | The looks offered in **New project** (Painted, Cel shaded, Retro 64, Low-poly flat, Photoreal, Clay): picture model, prompt block, and the recipe that carries the look through the later steps |
 | `models.yaml` | Every model file the app knows, with its exact file name, engine, licence line and whether it is required |
-| `addons.yaml` | LoRA add-ons (the pixel-art painter's own add-on, the clay, low-poly and stylised 3D finishes, and the ones the side views need) |
+| `addons.yaml` | LoRA add-ons (the clay, low-poly and stylised 3D finishes, and the ones the side views need) |
 | `platforms.yaml` | Triangle and texture budgets per platform (Phone, PC and console, and so on) |
 | `categories/` | Per-category rules: height, whether it gets a skeleton, which steps it skips |
 | `items.yaml` | Item kinds for **Add an item** and where they attach |
@@ -114,7 +114,7 @@ Data files in `backend/vgac/data/` drive these; editing them needs a backend res
 
 A project's **style lock** (its look) fixes the picture model, prompt block, palette and add-ons for every asset in it. Under **Advanced** in the New asset form you can override the model for one asset.
 
-Picture models available: Z-Image Turbo (default, fast painted), Z-Image Base, FLUX.2 Klein 4B, Anima Turbo, Z-Image Pixel Art, Chroma1-HD. Licences differ; see [FIRST-TIME-SETUP.md](FIRST-TIME-SETUP.md#5-comfyui-its-node-packs-and-the-models-by-hand).
+Picture models available: Z-Image Turbo (default, fast painted), Z-Image Base, FLUX.2 Klein 4B, Anima Turbo, Chroma1-HD. Licences differ; see [FIRST-TIME-SETUP.md](FIRST-TIME-SETUP.md#5-comfyui-its-node-packs-and-the-models-by-hand).
 
 ---
 

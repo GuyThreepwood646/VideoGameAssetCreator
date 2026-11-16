@@ -14,7 +14,7 @@ Two calls from prep:
    texels (eyes, brows, nose, mouth) are never written, and its measures are taken before and after.
 
 Skipped, with the reason recorded and said in plain words, when the option is off, the strength is 0, for categories
-other than humanoid, for crisp and flat looks (as the face pass), and when the hair cannot be told from skin or
+other than humanoid, for flat looks (as the face pass), and when the hair cannot be told from skin or
 clothes with confidence (hair.REASONS). Metrics under "hair_detail"; version files "hair_mask" (what was taken as hair)
 and "hair_before_after".
 """
@@ -60,7 +60,7 @@ def skip_reason(category_id: str, rec: dict[str, Any] | None, params: dict[str, 
         return "not_category"
     srf = (rec or {}).get("surface") or {}
     mesh = (rec or {}).get("mesh") or {}
-    if srf.get("texture_filter") == "crisp" or srf.get("shading") == "flat" or (mesh.get("texture") or 2048) < 512:
+    if srf.get("shading") == "flat" or (mesh.get("texture") or 2048) < 512:
         return "style"
     if strength_of(params) <= 0.0:
         return "strength_zero"
@@ -117,7 +117,7 @@ def pictures(sc: StageContext) -> dict[str, Path]:
 
 def hair_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     """hair_matches_picture (warn), from the "hair_detail" metrics block. Nothing when the pass does not apply (off,
-    strength 0, not a humanoid, a crisp or flat look). When the hair could not be told apart from the skin or the
+    strength 0, not a humanoid, a flat look). When the hair could not be told apart from the skin or the
     clothes, a passing check that says why in plain words (nothing is wrong with the model; the pass stood back).
     A soft failure when something went wrong, or when the face's own measures changed."""
     hd = (metrics or {}).get("hair_detail") or {}

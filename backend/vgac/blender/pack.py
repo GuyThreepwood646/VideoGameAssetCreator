@@ -3,7 +3,7 @@
 Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|parts|mesh|none]
      [--collider-obj collider_parts.obj] [--formats fbx,glb]
      [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
-     [--shading smooth|flat] [--texture-filter smooth|crisp] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
+     [--shading smooth|flat] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
      [--hair-layout hair_layout.json --hair-base-color hair_base_color.png [--hair-normal ...] [--hair-orm ...]]
      [--hair-object VGAC_Hair --hair-mesh hair_mesh.npz --hair-base-color ... [--hair-kind cards] [--hair-alpha cutout]
       [--hair-two-sided]]
@@ -30,9 +30,7 @@ bounding boxes, each face takes the source face with the nearest centre, and eac
 corner. Without this every texture samples one texel on a rigged character.
 
 Recipes (reference.recipe): --shading flat (low-poly) makes every face flat after the weld, so every LOD and both
-formats keep the facets whatever the input's normals were; --texture-filter crisp (a crisp look) samples the GLB's
-textures nearest-neighbour (Image Texture interpolation Closest, which the glTF exporter writes as a NEAREST sampler).
-A look without surface bumps simply gets no --normal, so its GLB has no normal texture.
+formats keep the facets whatever the input's normals were. A look without surface bumps simply gets no --normal, so its GLB has no normal texture.
 
 Sockets (--sockets <category>, rigged assets only): vgac/sockets.py places the attachment points (Socket_Hand_R,
 Socket_Back and so on) from the rest pose; each becomes an empty (no geometry) parented to its bone in the FBX and in
@@ -82,7 +80,6 @@ tex_normal = _common.opt("--normal", "")
 tex_orm = _common.opt("--orm", "")
 uv_source = _common.opt("--uv-source", "")
 shading = _common.opt("--shading", "smooth")
-texture_filter = _common.opt("--texture-filter", "smooth")
 socket_category = _common.opt("--sockets", "none")
 hair_layout = _common.opt("--hair-layout", "")
 hair_base = _common.opt("--hair-base-color", "")
@@ -297,7 +294,7 @@ if not library_hair and hair_layout and os.path.isfile(hair_layout) and mesh.dat
 
 
 report = {"asset": name, "lods": {}, "lod_ratios": lods, "bones": len(arm.data.bones) if arm else 0, "clips": [],
-          "uvs": bool(mesh.data.uv_layers), "uv_transfer": uv_report, "shading": shading, "texture_filter": texture_filter,
+          "uvs": bool(mesh.data.uv_layers), "uv_transfer": uv_report, "shading": shading,
           "normal_map": bool(tex_normal and os.path.isfile(tex_normal))}
 report["lods"]["LOD0"] = tri_count(mesh)
 report["hair_material"] = hair_report
@@ -711,8 +708,6 @@ def _image(path, colorspace):
 def _tex_node(nt, path, colorspace):
     t = nt.nodes.new("ShaderNodeTexImage")
     t.image = _image(path, colorspace)
-    if texture_filter == "crisp":
-        t.interpolation = "Closest"
     return t
 
 

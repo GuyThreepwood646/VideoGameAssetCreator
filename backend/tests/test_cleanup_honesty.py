@@ -122,9 +122,8 @@ def test_projection_check_says_why_it_was_refused_and_what_to_do():
     assert "outline match 0.82, it needs 0.85" in c["help"] and "redraw the front view in step 2" in c["help"]
     ok = prep.projection_check({"srcproject_applied": True, "srcproject_painted_share": 0.83, "export_mesh_hash": "h"}, {}, "humanoid", {})
     assert ok["passed"] and "83%" in ok["help"]
-    # off by the person's choice, a crisp look or another category: nothing to say
+    # off by the person's choice or another category: nothing to say
     assert prep.projection_check(m, {srcproject.PARAM: False}, "humanoid", {}) is None
-    assert prep.projection_check(m, {}, "humanoid", {"crisp": True}) is None
     assert prep.projection_check(m, {}, "quadruped", {}) is None
     # the pass never recorded an answer: not measured, not a pass
     lost = prep.projection_check({"export_mesh_hash": "h"}, {}, "humanoid", {})

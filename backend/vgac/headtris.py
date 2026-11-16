@@ -8,7 +8,7 @@ modifier's collapse mode raises the collapse cost of the group's edges), so the 
 triangles an even decimation leaves it and the body pays for them. The total stays inside the budget; the 3D step's
 model is over the budget on purpose and its check says so.
 
-Who gets it (applies): humanoids whose look keeps the full triangle budget, smooth shading and smooth textures
+Who gets it (applies): humanoids whose look keeps the full triangle budget and smooth shading
 (Painted, Cel-shaded, Clay, Photoreal and custom looks). Not Low-poly (flat shading, where even triangle size is the
 look) or Retro 64 (a fraction of the budget). Only when the 3D step chose its own target
 (a person's own triangle count is never raised) and with the TRELLIS builder.
@@ -44,7 +44,7 @@ HAND_PARAM = "hand_triangles"
 
 def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
     """Whether the look and the category get more triangles on the head: humanoids whose recipe keeps the full
-    triangle budget, or sets a fixed triangle cap, with smooth shading and smooth (not crisp) textures."""
+    triangle budget, or sets a fixed triangle cap, with smooth shading."""
     if category_id != "humanoid":
         return False
     r = rec or {}
@@ -53,8 +53,6 @@ def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
         return False  # a look asking for a fraction of the budget; a look with a fixed cap (Retro 64) keeps its head
     if (srf.get("shading") or "smooth") != "smooth":
         return False  # flat shading: even triangle size is the look
-    if srf.get("texture_filter") == "crisp":
-        return False
     return True
 
 

@@ -49,7 +49,7 @@ A second script does the rest of the list. Same rules as the first: the default 
 |------|--------------|--------------------|
 | Models and add-ons | A select list of every model in `models.yaml` and add-on in `addons.yaml` (exact file names), with size, the licence line from the yaml, and the source. Yes or no per item; files already there are skipped; nothing is replaced. Downloads resume after an interruption and are checked against the published size and SHA-256. It shows "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." and a `[!] Warning` line when `nvidia-smi` shows under 10 GB. `-Only id,id` picks items. Your own additions go in `setup/downloads.local.json` | Links, sizes and checksums are in `setup/downloads.json`, read from the Hugging Face file lists on 6 Nov 2026. Edit a link there; no code change |
 | Licence steps | Hunyuan3D-2mv (type "I have read this and I am not in the EU, UK or South Korea"), Anima ("I have read this"), Gemma 3 12B ("I accept the Gemma terms myself", with Google's terms link). You type the sentence; the helper never accepts for you, and `-Yes` skips these items | Hunyuan3D-2mv is off unless you type it |
-| Node packs | `ComfyUI-SkinToken`, `ComfyUI-PixelArt-Detector` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | Both GitHub repositories' default branch is `main` (checked) |
+| Node packs | `ComfyUI-SkinToken` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | The GitHub repository's default branch is `main` (checked) |
 | Blender | Accepts an existing Blender 5.0 or newer (tested with 5.2.3), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
 | Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
 | Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json`. Then it gets the packs you kept (the two MakeHuman zips by direct link after asking; the Quaternius zip you download yourself and give with `-QuaterniusZip`), unpacks them into `runtime/hairpacks` and builds the hair library into `library/hairlib` (needs Blender 5 and the backend venv), checks it with `tools/hairlib_verify.py` and swaps it in. Safe to run again: a pack already unpacked or a library already built is skipped. `-HairPacks id,id` picks without asking | See "Hair packs" below |
@@ -62,7 +62,7 @@ Could not be confirmed (so left to you, or guarded):
    file is not readable, and says to download from blender.org/download by hand.
 2. `anima-turbo-v1.1.safetensors` was not found in the publisher's repository. It is listed as by hand, with the Anima
    page.
-3. `z-image-turbo-fp8-aio.safetensors`, `z_image_int8_convrot.safetensors` and the pixel-art LoRA are community
+3. `z-image-turbo-fp8-aio.safetensors`, `z_image_int8_convrot.safetensors` are community
    uploads, and the Gemma 3 file is a Comfy-Org repack. The picker marks them "community or repack" and shows the page.
 4. Where ComfyUI looks: the folders used are `checkpoints`, `diffusion_models`, `loras`, `clip_vision`,
    `text_encoders`, `background_removal` (as the Comfy-Org repositories lay them out) and `skintoken` (from the node
@@ -123,7 +123,7 @@ Blender and Unity it found.
 | 16 | ComfyUI Desktop 0.34.0 or newer (tested with 0.45.3) | The engine that runs the picture, 3D and rigging models. The app talks to it over HTTP at the ports in `backend/config.yaml` | about 5 GB with its Python | comfy.org (its own installer) | GPL-3.0 | By hand |
 | 17 | Custom node packs: `ComfyUI-SkinToken` (rigging), `vgac-nodes` (the project's own mesh loader, in this repo), plus the packs that supply the TRELLIS.2, Hunyuan3D and background-removal nodes | Parts of the graphs the app sends | small each | ComfyUI Manager, or each pack's GitHub page | Each pack's own licence | By hand. The app's own "Is everything ready?" check lists which node classes are missing |
 | 18 | Models, exact file names from `backend/vgac/data/models.yaml` | The picture, side-view, 3D and rigging models | About 60 to 100 GB in all (estimate) | Each model's official page (Hugging Face) | See the next table | By hand |
-| 19 | Add-ons (small LoRA files), names from `backend/vgac/data/addons.yaml` | Extra looks (pixel art, clay, PS1 style) and the two the side views need | tens to hundreds of MB each | Hugging Face pages named in `addons.yaml` | Apache-2.0 | By hand |
+| 19 | Add-ons (small LoRA files), names from `backend/vgac/data/addons.yaml` | Extra looks (clay, PS1 style) and the two the side views need | tens to hundreds of MB each | Hugging Face pages named in `addons.yaml` | Apache-2.0 | By hand |
 
 Model files the check looks for (exact names, no folder is ever listed):
 
@@ -133,7 +133,6 @@ Model files the check looks for (exact names, no folder is ever listed):
 | `z_image_int8_convrot.safetensors` | Z-Image Base | B | Apache-2.0 | Optional |
 | `flux-2-klein-4b-fp8.safetensors` | FLUX.2 Klein 4B | B | Apache-2.0 | Optional |
 | `anima-turbo-v1.1.safetensors` | Anima Turbo | B | Non-commercial model; its outputs are usable commercially | Optional |
-| `pixel_art_style_z_image_turbo.safetensors` | Z-Image Pixel Art | B | Apache-2.0 | Optional |
 | `Chroma1-HD-fp8mixed.safetensors` | Chroma1-HD | B | Apache-2.0 | Optional |
 | `qwen_image_edit_2511_fp8mixed.safetensors` | Side views and picture edits | B | Apache-2.0 | Yes |
 | `qwen-image-edit-2511-multiple-angles-lora.safetensors` | Side views | B | Apache-2.0 | Yes |
@@ -173,7 +172,7 @@ GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
 
 1. Model files are never bundled. Each is downloaded from its original source and used under its own licence. Before
    a download, show the licence line from `models.yaml`.
-2. Models the code really uses: Z-Image Turbo and Base, FLUX.2 Klein, Chroma1-HD, Anima, the Z-Image pixel LoRA,
+2. Models the code really uses: Z-Image Turbo and Base, FLUX.2 Klein, Chroma1-HD, Anima,
    Qwen-Image-Edit-2511 with its angles and Lightning LoRAs, BiRefNet, TRELLIS.2, SkinToken, Hunyuan3D-2mv (opt-in
    3D engine) and Gemma 3 12B (the local picture judge; optional, and not yet in the helper's model check).
 3. Hunyuan3D-2mv: off by default, an explicit opt-in. The Tencent licence is not granted in the EU, UK or South Korea
@@ -190,8 +189,8 @@ GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
    in one place; the 200,000 figure is the current one. Say so plainly in setup, and link Unity's page rather than
    quoting the number as ours.
 7. ComfyUI node packs beyond ComfyUI: `ComfyUI-SkinToken` (github.com/Rizzlord/ComfyUI-SkinToken; licence not
-   confirmed, it defers to the MIT SkinTokens project), `ComfyUI-PixelArt-Detector` (MIT) and `vgac-nodes` (ours,
-   GPL-3.0-or-later, source in `comfy-nodes/vgac-nodes/`). `Setup-Extras.ps1 -Nodes` installs these three
+   confirmed, it defers to the MIT SkinTokens project) and `vgac-nodes` (ours,
+   GPL-3.0-or-later, source in `comfy-nodes/vgac-nodes/`). `Setup-Extras.ps1 -Nodes` installs these two
    (after asking).
 
 ## Optional content packs: hair and animation (the person picks)

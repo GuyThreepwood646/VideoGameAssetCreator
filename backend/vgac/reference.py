@@ -143,7 +143,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # look. On: any model. Off: never.
         _param("source_project", "boolean", None, categories=SURFACE_CATEGORIES, label="Paint the picture onto the model",
                description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters"),
-        # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for crisp and flat looks.
+        # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for flat looks.
         _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
         _param("face_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Face strength",
@@ -157,7 +157,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
         _param("face_sides", "boolean", True, categories=["humanoid"], label="Paint the cheeks from the side views (optional)",
                description="Hides the seam where the front painting ends on the cheek; turn off if it leaves smudges by the ears or neck"),
-        # The hair detail pass (stages/hair_detail.py): humanoids; skipped by itself for crisp and flat looks.
+        # The hair detail pass (stages/hair_detail.py): humanoids; skipped by itself for flat looks.
         _param("hair_detail", "boolean", True, categories=["humanoid"], label="Hair detail (strands and shading painted on)",
                description="Paints strands, clumps and shading along the hair; skipped when the hair cannot be told from skin or clothes"),
         _param("hair_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Hair strength",
@@ -665,8 +665,7 @@ RECIPE_DEFAULTS: dict[str, Any] = {
     "addons": [],
     "turnaround": {"lora_strength": None, "prompt_suffix": ""},
     "mesh": {"triangle_scale": 1.0, "triangle_floor": 0, "texture_cap": None, "normal_map": True, "upsample": 1024},
-    "surface": {"shading": "smooth", "texture_filter": "smooth", "palette_colors": None, "pixel_snap": False},
-    "engine": {},  # filled from surface.texture_filter (crisp: point, no mipmaps, no compression) unless the style sets it
+    "surface": {"shading": "smooth"},
 }
 SHADINGS = ("smooth", "flat")
 # Clean-up switches a look may turn on (styles.yaml recipe.surface): face_layout gives the face more of the texture before
@@ -676,8 +675,6 @@ SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
 # Recipe fields a look may set that RECIPE_DEFAULTS leaves out (absent means today's behaviour; reference.recipe adds
 # them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
 RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
-TEXTURE_FILTERS = ("smooth", "crisp")
-FILTER_MODES = ("bilinear", "point")
 # The noun of the recipe's plain sentence, per category.
 CATEGORY_NOUNS = {"humanoid": "character", "quadruped": "creature", "winged": "flying creature", "multileg": "creature",
                   "serpent": "creature", "vehicle": "vehicle", "prop_rigid": "prop", "prop_articulated": "prop",
@@ -700,8 +697,8 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     {id (short digest), style, category, platform, plain, concept {model, steps, prompt_block, negative},
      addons [{id, strength}], turnaround {lora_strength, prompt_suffix}, mesh {triangle_scale, triangle_floor,
      triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map, [triangle_cap], [bake_texture]},
-     surface {shading, texture_filter, palette_colors, pixel_snap, delight, pbr_fix, [face_layout], [colour_per_face],
-     [face_keeps_texture]}, engine {filter_mode, mipmaps, compress}}; the keys in brackets only when the look sets them.
+     surface {shading, delight, pbr_fix, [face_layout], [colour_per_face], [face_keeps_texture]}}; the keys in
+     brackets only when the look sets them.
     With strict=False an unknown style reads as today's defaults with the Z-Image Turbo painter (a custom style id on
     an older asset); unknown categories and platforms always raise KeyError."""
     try:
@@ -742,20 +739,12 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     if bake and int(bake) > tex:
         mesh["bake_texture"] = min(int(bake), tex_budget)
     sr = raw["surface"]
-    crisp = sr.get("texture_filter") == "crisp"
-    palette = sr.get("palette_colors")
     surface = {"shading": _as_choice(sr.get("shading"), SHADINGS, "smooth"),
-               "texture_filter": "crisp" if crisp else "smooth",
-               "palette_colors": int(palette) if palette else None,
-               "pixel_snap": bool(sr.get("pixel_snap", crisp)),
                "delight": "remove" if s.get("delight_default") == "remove" else "keep",
                "pbr_fix": bool(s.get("pbr_fix_default", False))}
     for key in SURFACE_SWITCHES:  # only when the look sets them (as above)
         if sr.get(key):
             surface[key] = True
-    er = raw["engine"] or {}
-    engine = {"filter_mode": _as_choice(er.get("filter_mode"), FILTER_MODES, "point" if crisp else "bilinear"),
-              "mipmaps": bool(er.get("mipmaps", not crisp)), "compress": bool(er.get("compress", not crisp))}
 
     defaults: list[dict[str, Any]] = []
     for d in raw.get("addons") or []:
@@ -789,7 +778,7 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     if wanted and platform_id not in wanted and s.get("platform_note"):
         notes.append(" ".join(str(s["platform_note"]).split()))
     out = {"style": s["id"], "category": category_id, "platform": platform_id, "plain": plain, "notes": notes, "concept": concept,
-           "addons": defaults, "turnaround": turnaround, "mesh": mesh, "surface": surface, "engine": engine}
+           "addons": defaults, "turnaround": turnaround, "mesh": mesh, "surface": surface}
     out["id"] = recipe_digest(out)
     return out
 
@@ -802,8 +791,7 @@ def default_recipe(style_id: str = "") -> dict[str, Any]:
                       if a.get("required") and a.get("stage") == "turnaround"],
            "turnaround": {"lora_strength": addon_strength(addon("qwen_angles"), "normal") if addon("qwen_angles") else 0.9, "prompt_suffix": ""},
            "mesh": {**d["mesh"], "triangles": None, "budget_triangles": None, "texture": None, "budget_texture": None},
-           "surface": {**d["surface"], "delight": "keep", "pbr_fix": False},
-           "engine": {"filter_mode": "bilinear", "mipmaps": True, "compress": True}}
+           "surface": {**d["surface"], "delight": "keep", "pbr_fix": False}}
     out["id"] = recipe_digest(out)
     return out
 
