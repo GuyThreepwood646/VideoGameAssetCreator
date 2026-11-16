@@ -669,6 +669,13 @@ RECIPE_DEFAULTS: dict[str, Any] = {
     "engine": {},  # filled from surface.texture_filter (crisp: point, no mipmaps, no compression) unless the style sets it
 }
 SHADINGS = ("smooth", "flat")
+# Clean-up switches a look may turn on (styles.yaml recipe.surface): face_layout gives the face more of the texture before
+# the pictures are painted, with no face paint pass; colour_per_face gives every triangle one colour after the painting;
+# face_keeps_texture leaves the front of a character's head as painted.
+SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
+# Recipe fields a look may set that RECIPE_DEFAULTS leaves out (absent means today's behaviour; reference.recipe adds
+# them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
+RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
 TEXTURE_FILTERS = ("smooth", "crisp")
 FILTER_MODES = ("bilinear", "point")
 # The noun of the recipe's plain sentence, per category.
@@ -692,8 +699,9 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
     """The fully resolved recipe for a style, category and platform:
     {id (short digest), style, category, platform, plain, concept {model, steps, prompt_block, negative},
      addons [{id, strength}], turnaround {lora_strength, prompt_suffix}, mesh {triangle_scale, triangle_floor,
-     triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map}, surface {shading, texture_filter,
-     palette_colors, pixel_snap, delight, pbr_fix}, engine {filter_mode, mipmaps, compress}}.
+     triangles, budget_triangles, texture_cap, texture, budget_texture, normal_map, [triangle_cap], [bake_texture]},
+     surface {shading, texture_filter, palette_colors, pixel_snap, delight, pbr_fix, [face_layout], [colour_per_face],
+     [face_keeps_texture]}, engine {filter_mode, mipmaps, compress}}; the keys in brackets only when the look sets them.
     With strict=False an unknown style reads as today's defaults with the Z-Image Turbo painter (a custom style id on
     an older asset); unknown categories and platforms always raise KeyError."""
     try:
@@ -722,6 +730,17 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
             "normal_map": bool(mesh_raw.get("normal_map", True)),
             # Detail level of the 3D builder: 1536 is several times slower and only worth it for the Photoreal look.
             "upsample": 1536 if int(mesh_raw.get("upsample") or 1024) >= 1536 else 1024}
+    # A look that sets them (Retro 64, Low-poly): a fixed triangle ceiling whatever the platform, and a bake size above
+    # the shipped texture (the 3D step bakes and the clean-up paints at it; the colour is shrunk to `texture` at the end).
+    # Left out of the recipe otherwise, so every other look's recipe and its digest stay as they were.
+    tcap = mesh_raw.get("triangle_cap")
+    if tcap:
+        mesh["triangle_cap"] = int(tcap)
+        if tris:
+            mesh["triangles"] = max(min(floor, tris_budget), min(tris, int(tcap)))
+    bake = mesh_raw.get("bake_texture")
+    if bake and int(bake) > tex:
+        mesh["bake_texture"] = min(int(bake), tex_budget)
     sr = raw["surface"]
     crisp = sr.get("texture_filter") == "crisp"
     palette = sr.get("palette_colors")
@@ -731,6 +750,9 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
                "pixel_snap": bool(sr.get("pixel_snap", crisp)),
                "delight": "remove" if s.get("delight_default") == "remove" else "keep",
                "pbr_fix": bool(s.get("pbr_fix_default", False))}
+    for key in SURFACE_SWITCHES:  # only when the look sets them (as above)
+        if sr.get(key):
+            surface[key] = True
     er = raw["engine"] or {}
     engine = {"filter_mode": _as_choice(er.get("filter_mode"), FILTER_MODES, "point" if crisp else "bilinear"),
               "mipmaps": bool(er.get("mipmaps", not crisp)), "compress": bool(er.get("compress", not crisp))}

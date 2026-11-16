@@ -1773,6 +1773,72 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             "layout": layout_report}
 
 
+# --- Face layout alone (a look's recipe.surface.face_layout: Retro 64) ------------------------------------------------
+# The look ships a 256 px texture, too small for this pass to paint a face into (skip_reason "style"), and at 256 its
+# eyes came out as two-texel crosses. Giving the face more of the layout before the pictures are painted on is the part
+# of this pass that helps: look research 2026-11-16 (docs/research/looks/retro64-lowpoly.md, Bob and R1 sheets row 4:
+# the face 2.3x and 1.6x across, the rest kept 1.05x and 0.90x).
+FACE_LAYOUT_GAIN = 2.0
+LAYOUT_SHIP_GAP = 2  # texels between the pieces at the shipped size
+
+
+def layout_only_on(rec: dict[str, Any] | None, category_id: str | None) -> bool:
+    """Whether the look asks for the face layout without the face paint pass (a character only)."""
+    return category_id in CATEGORIES and bool(((rec or {}).get("surface") or {}).get("face_layout"))
+
+
+async def layout_only(sc: StageContext, glb: Path, maps: dict[str, Path], head_yaw: float = 0.0,
+                      ship: int | None = None) -> dict[str, Any]:
+    """Lay the texture out again with the face bigger (blender/faceuv.py, every map baked again), before the pictures are
+    painted on. The face's triangles: looktex.front_of_head (the face finder, else the front of the head). ship: the size
+    the texture is shrunk to afterwards; the pieces are then kept LAYOUT_SHIP_GAP texels apart at that size (4 apart at
+    1024 is 1 apart at 256, and smooth filtering at a piece's edge read the neighbour: lines on Bob's hat). Replaces the
+    GLB in place when the layout changed. -> {maps (the maps to use from here), relayout (bool), metrics {face_layout}}."""
+    from .. import looktex
+
+    t0 = time.time()
+    out_dir = sc.dir / "face_layout"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = maps.get("base_color")
+    record: dict[str, Any] = {"ran": False, "gain_asked": FACE_LAYOUT_GAIN}
+    mesh = face.load_mesh(glb)
+    if mesh is None or base is None:
+        record.update(skipped="no_layout", seconds=round(time.time() - t0, 1))
+        return {"maps": maps, "relayout": False, "metrics": {"face_layout": record}}
+    found = await asyncio.to_thread(looktex.front_of_head, mesh, face.read_rgb(base), head_yaw)
+    tris = found["tris"]
+    record.update(found_by=found["how"], face_triangles=int(len(tris)))
+    if not len(tris):
+        record.update(skipped="no_face", seconds=round(time.time() - t0, 1))
+        return {"maps": maps, "relayout": False, "metrics": {"face_layout": record}}
+    atlas = int(imaging.image_size(base)[0])
+    padding = imaging.unwrap_padding(atlas)
+    if ship and int(ship) < atlas:
+        padding = max(padding, LAYOUT_SHIP_GAP * atlas // int(ship))
+    record["padding_px"] = padding
+    (out_dir / "face_points.json").write_text(json.dumps(face.triangle_centres(mesh, tris).round(6).tolist()), encoding="utf-8")
+    (out_dir / "face_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
+    new_glb = out_dir / "face.glb"
+    sc.progress(None, "Giving the face more of the texture")
+    await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
+                                   "--gain", FACE_LAYOUT_GAIN, "--tex", atlas, "--padding", padding,
+                                   "--margin", max(imaging.dilation_px(atlas), 2 * padding), "--max-loss", MAX_LOSS], log_name="faceuv.log")
+    rep_path = out_dir / "face_report.json"
+    rep = json.loads(rep_path.read_text()) if rep_path.is_file() else {}
+    record["layout"] = {k: rep.get(k) for k in ("layout_mode", "gain", "rest_scale", "island_scale", "islands", "rebake_seconds")}
+    new_maps = {k: Path(p) for k, p in (rep.get("rebake_maps") or {}).items() if Path(p).is_file()}
+    if rep.get("layout_mode") in (None, "unchanged") or not new_glb.is_file() or "base_color" not in new_maps:
+        record.update(skipped="unchanged", seconds=round(time.time() - t0, 1))
+        return {"maps": maps, "relayout": False, "metrics": {"face_layout": record}}
+    shutil.copy2(new_glb, glb)
+    await asyncio.to_thread(imaging.glb_replace_images, glb, base_color=new_maps["base_color"], metallic=new_maps.get("metallic"),
+                            roughness=new_maps.get("roughness"))
+    for key, p in new_maps.items():
+        sc.register(key, p)
+    record.update(ran=True, seconds=round(time.time() - t0, 1))
+    return {"maps": {**maps, **new_maps}, "relayout": True, "metrics": {"face_layout": record}}
+
+
 def enlarge(src: Path, size: int, dest: Path) -> Path:
     """The base colour at size (Lanczos): the atlas's own colours, more texels for the face to be painted into."""
     Image.open(src).convert("RGB").resize((size, size), Image.LANCZOS).save(dest)

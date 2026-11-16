@@ -267,6 +267,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         sc.progress(0.7, "Checking the textures")
         bake_glb = src if not rebaked else out
         look = texture_look(rec, (sc.project.style_lock or {}).get("palette"))
+        # A look that paints at a larger size than it ships (Retro 64: recipe mesh.bake_texture) keeps the bake size
+        # through the painting and is shrunk to its size at the end (ship_late); every other look as before.
+        late_cap = late_cap_of(rec, look, tex)
+        if late_cap:
+            look = {**look, "cap": None}
         # Light is removed after the painting (vgac/lightfix.py) when the pictures are painted on: the projection paints
         # their light back in over a de-light done here. The de-light here stays for models nothing is painted on.
         light_after = surface["delight"] == "remove" and srcproject.on(params, sc.asset.category, look)
@@ -284,6 +289,13 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # the camera yaw the face is seen straight on from: the picture projection finds the face region from there, and
         # the face pass paints from there
         head_yaw = face_detail.head_yaw_from_remainder(facing_.get("face_remainder_deg"))
+        if face_detail.layout_only_on(rec, sc.asset.category):
+            # the look's face layout (Retro 64): the face gets more of the texture before the pictures are painted on
+            fl = await face_detail.layout_only(sc, out, current, head_yaw, ship=late_cap)
+            current = fl["maps"]
+            sc.set_metrics(**fl["metrics"])
+            if fl["relayout"]:
+                sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "face layout"))
         if srcproject.on(params, sc.asset.category, look):
             current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw)
 
@@ -336,6 +348,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         final = {**after_face, **{k: Path(p) for k, p in hd["files"].items() if k in TEXTURE_KEYS}}
         if light_after and final.get("base_color"):
             final = await remove_light(sc, out, final, hf)
+        if (rec.get("surface") or {}).get("colour_per_face") and final.get("base_color"):
+            final = await colour_faces(sc, out, final, rec, head_yaw)
+        if late_cap:
+            final = await ship_late(sc, out, final, {**look, "cap": late_cap}, tex)
         if final.get("metallic") != maps.get("metallic") or final.get("base_color") != maps.get("base_color"):
             # metal was cleared (skin, hair) and colours painted after the texture pass measured them: measure again, so the
             # metal and colour-range checks read the finished maps
@@ -350,6 +366,70 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     if hair is not None:
         await attach_hair(sc, out, hair, mesh_v.metrics if mesh_v else {})
     await judge(sc)
+
+
+def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | None:
+    """The size a look that bakes larger than it ships (recipe mesh.bake_texture) is shrunk to at the end of the
+    clean-up, or None: shrunk in the texture pass as before (every look without a bake size, and a model whose maps are
+    already at the shipped size)."""
+    cap = look.get("cap")
+    if not (rec.get("mesh") or {}).get("bake_texture") or not cap or int(tex) <= int(cap):
+        return None
+    return int(cap)
+
+
+async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: dict[str, Any], tex: int) -> dict[str, Path]:
+    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; the
+    base colour shrunk by area within each texture piece (imaging.shrink_by_island) and the pieces grown into the empty
+    space again, so no piece takes in a neighbour's colour or the background. The GLB, the version's files and the
+    metrics follow. -> the maps from here."""
+    def work() -> tuple[dict[str, Any], dict[str, Path], int | None]:
+        out_dir = sc.dir / "shipped"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        uvf = imaging.load_uv_mesh(glb)
+        base = imaging.read_map(maps["base_color"])
+        files: dict[str, Path] = {}
+        m, mr_size = apply_look(look, uvf, maps, files, base, int(base.shape[0]), out_dir)
+        cap = int(look["cap"])
+        if files.get("base_color") is not None and uvf is not None:
+            # each texel from its own texture piece only (an area average across pieces lying a texel apart left slivers
+            # of the neighbouring piece's colour on Bob's hat), then the pieces grown into the empty space again
+            imaging.write_map(imaging.shrink_by_island(base, uvf, cap), files["base_color"])
+            imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, cap)["labels"] > 0, imaging.dilation_px(cap))
+        imaging.glb_replace_images(glb, base_color=files.get("base_color"), metallic=files.get("metallic"), roughness=files.get("roughness"),
+                                   mr_size=mr_size)
+        return m, files, mr_size
+
+    m, files, _ = await asyncio.to_thread(work)
+    for key, p in files.items():
+        sc.register(key, p)
+    sc.set_metrics(**m, texture_painted_size=int(tex))
+    return {**maps, **{k: Path(p) for k, p in files.items() if k in TEXTURE_KEYS}}
+
+
+async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], head_yaw: float) -> dict[str, Path]:
+    """The look's one colour per triangle (recipe surface.colour_per_face, Low-poly; vgac/looktex.py), the front of a
+    character's head left as painted when surface.face_keeps_texture. -> the maps from here."""
+    from .. import looktex
+
+    def work() -> tuple[Path, dict[str, Any]]:
+        mesh = face.load_mesh(glb)
+        base = face.read_rgb(maps["base_color"])
+        keep, how = None, None
+        if (rec.get("surface") or {}).get("face_keeps_texture") and sc.asset.category == "humanoid":
+            found = looktex.front_of_head(mesh, base, head_yaw)
+            keep, how = found["tris"], found["how"]
+        r = looktex.colour_per_face(base, mesh, keep)
+        out_dir = sc.dir / "faces"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = face.save_rgb(r["base_color"], out_dir / "base_color.png")
+        imaging.glb_replace_images(glb, base_color=path)
+        return path, {"ran": True, "faces": r["faces"], "kept_texels": r["kept"], "face_kept_by": how}
+
+    path, record = await asyncio.to_thread(work)
+    sc.register("base_color", path)
+    sc.set_metrics(colour_per_face=record)
+    return {**maps, "base_color": path}
 
 
 HAIR_FILE_PREFIXES = ("hair_", "with_hair_")

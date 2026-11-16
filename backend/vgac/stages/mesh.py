@@ -222,7 +222,8 @@ def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     if params.get("texture_size"):
         tex, tsrc = int(params["texture_size"]), "chosen"
     else:
-        tex, tsrc = int(m.get("texture") or budget.get("texture") or 2048), "recipe"
+        # a look that paints at a larger size than it ships (Retro 64) bakes at that size; the clean-up shrinks it
+        tex, tsrc = int(m.get("bake_texture") or m.get("texture") or budget.get("texture") or 2048), "recipe"
     out = {"target_faces": faces, "target_faces_source": fsrc, "texture_size": tex, "texture_source": tsrc}
     if room:
         out["head_room"] = room
@@ -648,10 +649,12 @@ def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     return platform, None
 
 
-def texture_target(rec: dict[str, Any], budget: dict[str, Any]) -> tuple[int | None, dict[str, Any] | None]:
-    """The texture size limit a check measures against: the recipe's when smaller than the platform's."""
+def texture_target(rec: dict[str, Any], budget: dict[str, Any], baked: bool = False) -> tuple[int | None, dict[str, Any] | None]:
+    """The texture size limit a check measures against: the recipe's when smaller than the platform's. baked: the 3D
+    step's own maps, which a look with a bake size (Retro 64) makes at that size before the clean-up shrinks them."""
     platform = budget.get("texture")
-    tex = (rec.get("mesh") or {}).get("texture")
+    m = rec.get("mesh") or {}
+    tex = (m.get("bake_texture") if baked else None) or m.get("texture")
     if tex and platform and int(tex) < int(platform):
         return int(tex), {**look_vars(rec, budget), "recipe": True}
     return platform, None
@@ -669,7 +672,7 @@ def with_vars(checks: list[dict[str, Any]], vars: dict[str, Any] | None, suffix:
 
 async def judge(sc: StageContext) -> None:
     rec = stage_recipe(sc)
-    tex_limit, tex_vars = texture_target(rec, sc.budget)
+    tex_limit, tex_vars = texture_target(rec, sc.budget, baked=True)
     checks = with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                        tex_vars, "_budget")
     tris = sc.version.metrics.get("triangles")

@@ -29,9 +29,14 @@ def test_smooth_full_budget_humanoids_get_it(style):
     assert headtris.applies(rec(style), "humanoid")
 
 
-@pytest.mark.parametrize("style", ["lowpoly_flat", "pixel", "retro64"])
+@pytest.mark.parametrize("style", ["lowpoly_flat", "pixel"])
 def test_flat_crisp_and_reduced_looks_do_not(style):
     assert not headtris.applies(rec(style), "humanoid")
+
+
+def test_retro64_with_its_triangle_cap_does():
+    # a fraction of the budget, but a fixed cap and smooth shading: the head is kept (look research 2026-11-16)
+    assert headtris.applies(rec("retro64"), "humanoid")
 
 
 @pytest.mark.parametrize("category", ["quadruped", "prop_rigid", "winged", "environment"])
@@ -65,9 +70,9 @@ def test_the_3d_step_asks_for_room_only_where_it_applies():
     # Without the category (older callers) and for other categories: unchanged.
     assert "head_room" not in mesh_stage.resolve_targets(painted, {}, B)
     assert mesh_stage.resolve_targets(rec("painted", "prop_rigid"), {}, reference.budget("prop_rigid", "pc_mid"), "prop_rigid").get("head_room") is None
-    # Low-poly keeps its quarter of the budget and no room.
+    # Low-poly keeps its capped count (1,500 less the usual headroom) and no room.
     low = mesh_stage.resolve_targets(rec("lowpoly_flat"), {}, B, "humanoid")
-    assert low["target_faces"] == 4900 and "head_room" not in low
+    assert low["target_faces"] == 1470 and "head_room" not in low
     # A chosen count is never raised.
     chosen = mesh_stage.resolve_targets(painted, {"target_faces": 15000}, B, "humanoid")
     assert chosen["target_faces"] == 15000 and "head_room" not in chosen

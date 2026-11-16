@@ -63,13 +63,14 @@ def test_full_pipeline_styles_keep_todays_behaviour():
 
 def test_low_poly_retro_and_pixel_recipes():
     low = reference.recipe("lowpoly_flat", "humanoid", "pc_mid")
-    assert low["mesh"]["triangles"] == 5000 and low["mesh"]["texture"] == 512 and not low["mesh"]["normal_map"]
+    assert low["mesh"]["triangles"] == 1500 and low["mesh"]["texture"] == 512 and not low["mesh"]["normal_map"]
     assert low["surface"]["shading"] == "flat" and low["engine"]["filter_mode"] == "bilinear"
-    assert low["plain"] == "Low-poly character: faceted shapes with one flat colour per face, a quarter of the usual triangles, simple textures."
+    assert low["plain"] == "Low-poly character: faceted shapes with one flat colour per face, at most 1,500 triangles, simple textures."
     # The floor: a phone prop's quarter (250) is raised to 300.
     assert reference.recipe("lowpoly_flat", "prop_rigid", "mobile_low")["mesh"]["triangles"] == 300
     retro = reference.recipe("retro64", "humanoid", "pc_mid")
-    assert retro["mesh"]["triangles"] == 8000 and retro["mesh"]["texture"] == 256 and not retro["mesh"]["normal_map"]
+    assert retro["mesh"]["triangles"] == 3000 and retro["mesh"]["texture"] == 256 and not retro["mesh"]["normal_map"]
+    assert retro["mesh"]["bake_texture"] == 1024 and retro["mesh"]["triangle_cap"] == 3000
     assert retro["surface"]["texture_filter"] == "smooth" and retro["engine"]["mipmaps"]
     px = reference.recipe("pixel", "quadruped", "mobile_low")
     assert px["plain"].startswith("Pixel-art creature: small crisp textures")
@@ -248,7 +249,7 @@ def test_concept_addons_from_recipe_lock_and_version():
 def test_mesh_targets_follow_the_recipe_unless_chosen():
     b = reference.budget("humanoid", "pc_mid")
     low = reference.recipe("lowpoly_flat", "humanoid", "pc_mid")
-    assert mesh_stage.resolve_targets(low, {}, b) == {"target_faces": 4900, "target_faces_source": "recipe", "texture_size": 512, "texture_source": "recipe"}
+    assert mesh_stage.resolve_targets(low, {}, b) == {"target_faces": 1470, "target_faces_source": "recipe", "texture_size": 512, "texture_source": "recipe"}
     assert mesh_stage.resolve_targets(low, {"target_faces": 9000, "texture_size": 1024}, b)["target_faces_source"] == "chosen"
     painted = reference.recipe("painted", "humanoid", "pc_mid")
     assert mesh_stage.resolve_targets(painted, {}, b)["target_faces"] == mesh_stage.default_target_faces(20000) == 19600
@@ -263,11 +264,11 @@ def test_triangle_and_texture_checks_speak_of_the_look():
     b = reference.budget("humanoid", "pc_mid")
     low = reference.recipe("lowpoly_flat", "humanoid", "pc_mid")
     limit, vars_ = mesh_stage.triangle_target(low, {}, b)
-    assert limit == 5000 and vars_["look"] == "Low-poly" and vars_["recipe"]
-    c = guidance.describe_check({"name": "triangle_budget", "passed": True, "value": 4890, "limit": limit, "vars": vars_})
-    assert c["help"] == "Your full model has 4,890 triangles, inside the Low-poly look's limit of 5,000 (your platform would allow up to 20,000)."
-    bad = guidance.describe_check({"name": "triangle_budget", "passed": False, "value": 6000, "limit": limit, "vars": vars_})
-    assert bad["help"].startswith("Your full model has 6,000 triangles, 1,000 more than the Low-poly look's limit of 5,000")
+    assert limit == 1500 and vars_["look"] == "Low-poly" and vars_["recipe"]
+    c = guidance.describe_check({"name": "triangle_budget", "passed": True, "value": 1490, "limit": limit, "vars": vars_})
+    assert c["help"] == "Your full model has 1,490 triangles, inside the Low-poly look's limit of 1,500 (your platform would allow up to 20,000)."
+    bad = guidance.describe_check({"name": "triangle_budget", "passed": False, "value": 2500, "limit": limit, "vars": vars_})
+    assert bad["help"].startswith("Your full model has 2,500 triangles, 1,000 more than the Low-poly look's limit of 1,500")
     assert mesh_stage.triangle_target(low, {"target_faces": 9000, "target_faces_source": "chosen"}, b) == (20000, None)
     assert mesh_stage.triangle_target(reference.recipe("painted", "humanoid", "pc_mid"), {}, b) == (20000, None)
     tl, tv = mesh_stage.texture_target(reference.recipe("pixel", "humanoid", "pc_mid"), b)
@@ -280,7 +281,7 @@ def test_triangle_and_texture_checks_speak_of_the_look():
 def test_prep_limit_and_shading():
     b = reference.budget("humanoid", "pc_mid")
     low = reference.recipe("lowpoly_flat", "humanoid", "pc_mid")
-    assert prep_stage.prep_triangle_limit(low, {"target_faces": 4900, "target_faces_source": "recipe"}, b) == {"limit": 5000, "source": "recipe"}
+    assert prep_stage.prep_triangle_limit(low, {"target_faces": 1470, "target_faces_source": "recipe"}, b) == {"limit": 1500, "source": "recipe"}
     assert prep_stage.prep_triangle_limit(low, {"target_faces": 12000, "target_faces_source": "chosen"}, b) == {"limit": 20000, "source": "platform"}
     assert prep_stage.prep_triangle_limit(reference.recipe("painted", "humanoid", "pc_mid"), {}, b) == {"limit": 20000, "source": "platform"}
     assert prep_stage.resolve_shading(low, {}) == {"shading": "flat", "source": "recipe"}
@@ -394,7 +395,7 @@ def test_look_check_sentences(tmp_path):
     p = tmp_path / "b.png"
     Image.new("RGB", (512, 512)).save(p)
     ok = [guidance.describe_check(c) for c in prep_stage.look_checks(low, {"shading": "flat"}, {"shading_applied": "flat"}, {"base_color": p})]
-    assert ok[0]["passed"] and ok[0]["help"] == "Low-poly look applied: about 5,000 triangles, flat faces, 512 px textures, no surface bumps."
+    assert ok[0]["passed"] and ok[0]["help"] == "Low-poly look applied: about 1,500 triangles, flat faces, 512 px textures, no surface bumps."
     big = tmp_path / "big.png"
     Image.new("RGB", (1024, 1024)).save(big)
     bad = guidance.describe_check(prep_stage.look_checks(low, {}, {"shading_applied": "smooth", "shading_source": "recipe"},
@@ -460,6 +461,6 @@ def test_styles_yaml_recipes_only_use_known_fields():
         assert set(s.get("recipe") or {}) <= set(reference.RECIPE_DEFAULTS), s["id"]
         for sec, body in (s.get("recipe") or {}).items():
             if isinstance(reference.RECIPE_DEFAULTS[sec], dict) and reference.RECIPE_DEFAULTS[sec]:
-                assert set(body) <= set(reference.RECIPE_DEFAULTS[sec]) | {"filter_mode", "mipmaps", "compress"}, (s["id"], sec)
+                assert set(body) <= set(reference.RECIPE_DEFAULTS[sec]) | set(reference.RECIPE_OPTIONAL.get(sec, ())) | {"filter_mode", "mipmaps", "compress"}, (s["id"], sec)
         for cid in s.get("by_category") or {}:
             assert cid in {c["id"] for c in reference.categories()}

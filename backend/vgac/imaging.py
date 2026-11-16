@@ -802,6 +802,26 @@ def palette_names(palette: Any, limit: int = 8) -> list[str]:
     return out[:limit]
 
 
+def shrink_by_island(base: np.ndarray, uvmesh: dict[str, np.ndarray], size: int) -> np.ndarray:
+    """A colour map (S, S, 3) shrunk to size x size by area, each texel averaged only from the source texels of its own
+    UV island (rasterise_uv labels at both sizes), so a piece never takes in its neighbour's colour or the background
+    where the pieces lie a texel apart after shrinking (Retro 64: packed 4 texels apart at 1024, 1 at 256). Texels no
+    island covers take the plain average. S must be a whole multiple of size, else the plain area average (box)."""
+    S = base.shape[0]
+    if S % size or S == size:
+        return np.asarray(Image.fromarray(np.clip(np.round(base * 255), 0, 255).astype(np.uint8)).resize((size, size), Image.BOX),
+                          dtype=np.float32) / 255.0
+    k = S // size
+    big = rasterise_uv(uvmesh, S)["labels"].reshape(size, k, size, k)
+    small = rasterise_uv(uvmesh, size)["labels"]
+    blocks = base.reshape(size, k, size, k, -1)
+    same = (big == small[:, None, :, None]) & (small[:, None, :, None] > 0)
+    n = same.sum(axis=(1, 3))
+    summed = (blocks * same[..., None]).sum(axis=(1, 3))
+    plain = blocks.mean(axis=(1, 3))
+    return np.where((n > 0)[..., None], summed / np.maximum(n, 1)[..., None], plain).astype(np.float32)
+
+
 def shrink_image(path: Path | str, size: int, crisp: bool, dest: Path | str | None = None) -> Path:
     """Resize a map to size x size when it is larger: nearest neighbour for crisp looks (every texel is one whole
     source texel, no blended in-between colours), a box filter otherwise (an even average, the classic small soft
