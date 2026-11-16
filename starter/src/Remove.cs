@@ -709,6 +709,7 @@ namespace Vgac.Starter
                         continue;
                     }
                     RemoveOne(g, it, recycler, permanentFor, res, log);
+                    SafeFs.Point("remove", "item:" + it.What);
                     if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) { Mark(l.ProjectRoot, it.Path, false); ledger.RemoveUnder(it.Path); ledger.Save(); parentsTouched.Add(SafeFs.Norm(System.IO.Path.GetDirectoryName(it.Path))); }
                 }
                 if (g.Id == "tools") TidyEmptyParents(l, ledger, log, parentsTouched);

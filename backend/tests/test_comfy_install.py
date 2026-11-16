@@ -1596,3 +1596,29 @@ def test_a_crash_between_the_ledger_and_the_marker_of_a_new_claim_is_finished_by
     job = install(box)
     assert job.state == "done", job.error
     assert ci.read_marker(box["root"]) is not None and ci._in_ledger(box["root"])
+
+
+def test_the_commands_act_only_on_the_folder_that_was_shown(box, capsys):
+    install(box)
+    other = box["tmp"] / "Somewhere else" / "comfyui"
+    other.mkdir(parents=True)
+    (other / "keep.txt").write_text("x", encoding="utf-8")
+    for argv in (["check", "--install", str(other)], ["remove", "--install", str(other)], ["rebuild-venv", "--install", str(other)]):
+        code, out = _cli(argv, capsys, box)
+        assert code == 2 and out["code"] == "not_current", argv
+    assert (other / "keep.txt").is_file() and (box["root"] / "ComfyUI" / "main.py").is_file()
+    code, out = _cli(["check", "--install", str(box["root"])], capsys, box)  # the very folder the settings name: fine
+    assert code == 0
+    code, out = _cli(["remove", "--install"], capsys, box)
+    assert code == 2 and out["code"] == "usage"
+
+
+def test_the_marker_is_replaced_not_half_written(box, monkeypatch):
+    install(box)
+    m = ci.read_marker(box["root"])
+    real_replace = os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (_ for _ in ()).throw(OSError("stopped")))
+    with pytest.raises(OSError):
+        ci._write_marker(box["root"], dict(m, install_id="changed"))
+    monkeypatch.setattr(os, "replace", real_replace)
+    assert ci.read_marker(box["root"]) == m  # the old marker is whole

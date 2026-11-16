@@ -107,15 +107,15 @@ program has open.
   that VGAC's own Python environment uses, uv's cache with its tag, uv.exe and node.exe, only the setup's own downloads, only the
   window's EBWebView folder, ComfyUI with the backend's marker). Otherwise it offers another folder. A whole drive, your profile,
   Documents, Downloads, Public, Program Files, the project or a part of it are never accepted (checked by real path, at every start).
-- Move the big files (with VGAC's own ComfyUI present, the backend's installer must confirm it first: `check`; after the switch the starter
-  asks it to `retarget` the settings and `rebuild-venv`; if it cannot, the move is refused before anything is copied, or waits with the reason): copies the fixed-name folders of a claimed data folder (comfyui without its Python) to another folder or
-  drive, checks every file by size and SHA-256, and only then switches (one file write). The new place is claimed (same id) when the move
-  begins. A folder that holds a link leading outside it is not moved; links between places inside one folder (uv's Python keeps some)
-  are copied as links. Until the switch the old place is whole and in use. Interrupted at any point, the next start offers to continue
-  or cancel (`local/move.json`; a journal whose two places do not both fit this install is set aside, never acted on). Cancel before
-  the switch removes only what the move copied into the new place it claimed. Cancel after the switch only points the settings back:
-  the new copy is left alone, because the app may have written to it. The old copy is deleted only after you confirm and after every file
-  is compared with the new copy again; "Keep both copies" closes the move without deleting anything.
+- Move the big files: copy, check, switch, restart, and nothing else. The target must be a real folder (no link anywhere in its path, whether
+  or not it exists yet), empty, with room, and not inside the old place or the project. The fixed-name folders of a claimed data folder
+  (ComfyUI without its Python) are copied and every file is compared by size and SHA-256. An interrupted copy is continued where it stopped
+  (a file already copied is not copied again; the new folder's marker carries this move's id, so a copy of another move is never continued
+  into). "Abandon" only forgets the journal: what was copied stays in the new folder, its path is said, and it is yours to delete. Move
+  deletes nothing, ever. When the copy is checked, the settings, the ledger and VGAC's own ComfyUI (through the backend's installer:
+  `check`, `retarget`, `rebuild-venv`) switch to the new place, and VGAC has to be restarted: until then the window offers only Restart.
+  The old folder is left as it is and its path is shown: it is no longer used and can be deleted by hand. There is no undo, no cancel
+  after the switch and no deleting of the old copy; to go back, move again. `local/move.json` has two states, copying and switching.
 - Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Items in the
   data folder are listed only when it is VGAC's (its marker matches); otherwise the list says why and nothing in it is removed. Ticked by
   default: the app's Python, tools and screens, and VGAC's own ComfyUI, which is removed by the backend's own installer (`python -m vgac.comfy_install remove`, which proves

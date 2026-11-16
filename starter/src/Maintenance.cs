@@ -73,7 +73,7 @@ namespace Vgac.Starter
         // Runs `work` on a thread with the window locked, then `done` on the window's thread.
         void Run(Action work, Action done)
         {
-            if (busy) return;
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
             busy = true; UseWaitCursor = true; stopRequested = false; stopBtn.Visible = true;
             host.Comfy.Cancelled = delegate { return stopRequested; };     // the Stop button also stops VGAC's own ComfyUI installer
             host.Comfy.Say = delegate(string s) { Say(s); };

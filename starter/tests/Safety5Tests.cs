@@ -15,6 +15,8 @@ public static partial class T
         MoveDeletesNothingAndHasNoWayBack();
         TheNewMoveSurvivesACrashAfterEveryWrite();
         StateFilesAreWrittenAtomically();
+        RemoveSurvivesACrashAfterEveryWrite();
+        UpdateSurvivesACrashAfterEveryWrite();
     }
 
     // What the folders of an install hold: relative path and SHA-256 of every file (links are listed, not followed).
@@ -212,5 +214,111 @@ public static partial class T
             int direct = System.Text.RegularExpressions.Regex.Matches(text, @"File\.WriteAllText\((jp|l\.StatePath|record|p, Json|tmp)").Count;
             Check(direct == 0, Path.GetFileName(f) + ": no state file is written straight onto its name (" + direct + " left)");
         }
+    }
+
+    // ---- Remove, crashed after every write -------------------------------------------------------------------------------------------------
+
+    static List<string> RunRemoveScenario(int crashAt, Action<InstallScene> keep)
+    {
+        var s = Installed(); var rec = new List<string>(); int count = 0;
+        SafeFs.Hook = delegate(string what, string p)
+        {
+            if (what != "remove" && what != "save" && what != "delete") return;
+            rec.Add(what + ":" + p);
+            if (count++ == crashAt) throw new Boom("crash after " + p);
+        };
+        try { RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
+        catch (Boom) { }
+        finally { SafeFs.Hook = null; }
+        if (keep != null) keep(s);
+        return rec;
+    }
+
+    static void RemoveSurvivesACrashAfterEveryWrite()
+    {
+        var points = RunRemoveScenario(-1, null);
+        Check(points.Count > 5, "Remove lists its writes (" + points.Count + ")");
+        var pick = new List<int>(); var bulk = new List<int>();
+        for (int k = 0; k < points.Count; k++) { if (points[k].StartsWith("remove:") || points[k].StartsWith("save:")) pick.Add(k); else bulk.Add(k); }
+        for (int q = 0; q < 10 && bulk.Count > 0; q++) pick.Add(bulk[(int)((long)q * bulk.Count / 10)]);
+        int runs = 0;
+        foreach (int k in pick)
+        {
+            string label = "remove crashed after " + points[k] + " (#" + k + ")";
+            InstallScene s = null;
+            RunRemoveScenario(k, delegate(InstallScene sc) { s = sc; });
+            runs++;
+            // the next time: the plan is built again from what is on disk, and the same boxes ticked
+            RemovalResult res = null;
+            try { res = RemovalRunner.Run(RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
+            catch (Exception e) { Check(false, label + ": running Remove again failed: " + e.Message); continue; }
+            Check(res.Complete && !Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir) && !Directory.Exists(s.L.NodeDir), label + ": the second run finishes what was ticked (" + string.Join(" | ", res.Skipped.ToArray()) + ")");
+            // judged by contents: what must stay is whole
+            string c = Path.Combine(s.Data, "comfyui");
+            Check(File.ReadAllText(Path.Combine(c, "models", "mine.safetensors")) == "the person's own model" && File.Exists(Path.Combine(c, ComfyGuard.MarkerName)), label + ": the models and the install record are whole");
+            Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && File.ReadAllText(Path.Combine(s.Root, "exports", "notes.txt")) == "the person's own file" && File.Exists(Path.Combine(s.Root, "exports", "hero", "hero.glb")), label + ": the person's library and exports are whole");
+            Check(File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors")) && File.Exists(Path.Combine(s.Ext, "blender", "blender.exe")), label + ": a linked ComfyUI and tool are untouched");
+        }
+        Check(runs > 10, "the Remove crash runs happened (" + runs + ")");
+    }
+
+    // ---- Update, crashed after every write -------------------------------------------------------------------------------------------------
+
+    static void UpdateSurvivesACrashAfterEveryWrite()
+    {
+        if (!GitAvailable()) { Console.WriteLine("SKIPPED: the update crash test (git is not installed here)"); return; }
+        var points = RunUpdateScenario(-1, null);
+        Check(points.Count >= 3, "the update lists its writes (" + points.Count + ")");
+        int runs = 0;
+        for (int k = 0; k < points.Count; k++)
+        {
+            string label = "update crashed after " + points[k] + " (#" + k + ")";
+            string project = null, exe = null, newSha = null;
+            RunUpdateScenario(k, delegate(string p, string e, string n) { project = p; exe = e; newSha = n; });
+            runs++;
+            // the next start recovers what a stopped update left, then the update is pressed again
+            Layout lay = Layout.From(project, MachineFile.Load(project));
+            Recovery.AtStart(lay, exe);
+            if (!File.Exists(exe) && File.Exists(ExeAside.AsidePath(exe))) Recovery.AtStart(lay, ExeAside.AsidePath(exe));   // started from the note's advice
+            Check(File.Exists(exe), label + ": VGAC.exe is there after the next start");
+            UpdateResult r = null;
+            try { r = GitUpdate.Pull(project, exe, new RealGit()); } catch (Exception e) { Check(false, label + ": the second update failed: " + e.Message); continue; }
+            Check(File.ReadAllText(Path.Combine(project, "readme.txt")) == "two" && Hashing.Sha256File(exe) == newSha, label + ": the second update brings everything (readme and VGAC.exe), judged by contents (" + r.Message + ")");
+            Check(!Git(project, "status --porcelain").Split((char)10).Any(ln => ln.Contains("starter/bin") && !ln.Contains(".dll.old")), label + ": no library is left half changed (a stepped-aside .old copy is ignored by the project's .gitignore)");
+        }
+        Check(runs > 2, "the Update crash runs happened (" + runs + ")");
+    }
+
+    static List<string> RunUpdateScenario(int crashAt, Action<string, string, string> keep)
+    {
+        string b = Tmp("gitcrash");
+        string remote = Path.Combine(b, "remote.git"); Directory.CreateDirectory(remote); Git(remote, "init --bare -q --initial-branch=main");
+        string project = Path.Combine(b, "project");
+        Git(b, "clone -q \"" + remote + "\" project");
+        File.Copy(PingExe, Path.Combine(project, "VGAC.exe"));
+        string oldSha = Hashing.Sha256File(Path.Combine(project, "VGAC.exe"));
+        Put(Path.Combine(project, "starter", "CHECKSUMS.txt"), oldSha + "  VGAC.exe  (published)\n");
+        Directory.CreateDirectory(Path.Combine(project, "starter", "bin")); File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(project, "starter", "bin", "Microsoft.Web.WebView2.Core.dll"));
+        Put(Path.Combine(project, "readme.txt"), "one");
+        Git(project, "add -A"); Git(project, "commit -q -m one"); Git(project, "push -q -u origin main");
+        string dev = Path.Combine(b, "dev"); Git(b, "clone -q \"" + remote + "\" dev");
+        File.Copy(CmdExe, Path.Combine(dev, "VGAC.exe"), true); Put(Path.Combine(dev, "readme.txt"), "two");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "winmm.dll"), Path.Combine(dev, "starter", "bin", "Microsoft.Web.WebView2.Core.dll"), true);
+        string newSha = Hashing.Sha256File(Path.Combine(dev, "VGAC.exe"));
+        Put(Path.Combine(dev, "starter", "CHECKSUMS.txt"), newSha + "  VGAC.exe  (published)\n");
+        Git(dev, "add -A"); Git(dev, "commit -q -m two"); Git(dev, "push -q origin main");
+        string exe = Path.Combine(project, "VGAC.exe");
+        var rec = new List<string>(); int count = 0;
+        SafeFs.Hook = delegate(string what, string p)
+        {
+            if (what != "aside" && what != "save") return;
+            rec.Add(what + ":" + p);
+            if (count++ == crashAt) throw new Boom("crash after " + p);
+        };
+        try { GitUpdate.Pull(project, exe, new RealGit()); }
+        catch (Boom) { }
+        finally { SafeFs.Hook = null; }
+        if (keep != null) keep(project, exe, newSha);
+        return rec;
     }
 }

@@ -357,7 +357,7 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     # marker without a ledger entry (which nothing would ever accept again, and the folder would then count as somebody else's).
     downloader.record("VGAC's own ComfyUI", root, "added", 0)
     _stamp_ledger_id(root, m["install_id"])
-    (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
+    _write_marker(root, m)
     return m
 
 
@@ -1045,6 +1045,13 @@ def _in_ledger(root: Path) -> bool:
     return any(isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root) for i in items)
 
 
+def _write_marker(root: Path, m: dict[str, Any]) -> None:
+    """The marker is replaced, never half written: a stop (the starter ends a command that takes too long) leaves the old one or the new."""
+    tmp = root / (MARKER + ".tmp")
+    tmp.write_text(json.dumps(m, indent=2), encoding="utf-8")
+    os.replace(tmp, root / MARKER)
+
+
 def _ledger_items() -> list[Any]:
     try:
         return list(json.loads(downloader.ledger_path().read_text(encoding="utf-8-sig")).get("items", []))
@@ -1085,7 +1092,7 @@ def _ensure_id(root: Path, m: dict[str, Any]) -> None:
         iid = uuid.uuid4().hex
     if m.get("install_id") != iid:
         m["install_id"] = iid
-        (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
+        _write_marker(root, m)
     if _ledger_id(root) != iid:
         _stamp_ledger_id(root, iid)
 
