@@ -138,6 +138,24 @@ CHIN = (1.15, 0.45, 0.8)    # the chin's underside and the upper neck: between t
                             # below the nose tip, within this share of the head's width of its middle, facing down
 SIDE_AGREE_MAX = 0.12     # of the face's width: how far a three-quarter head view's own fit may put the eyes and mouth from
                           # where the front head view painted them before it is refused
+# A three-quarter head picture is lined up by its face, and its own ear can then land on the cheek in front of the
+# model's (the live M1 R4 run: about 3 cm, a second ear at the side). The picture round its near ear is moved onto the
+# model's ear (MediaPipe pose ear points on the picture and on the model's own colour), fully within EAR_MOVE_FULL_CM of
+# the ear, fading to nothing EAR_MOVE_FADE of the way to the nearest of its eyes and mouth, which do not move; not at all
+# when the two ears are under EAR_MOVE_MIN_CM apart (the clean stored runs: 0.3 to 0.8 cm).
+EAR_MOVE_MIN_CM = 1.0
+EAR_MOVE_FULL_CM = 1.0
+EAR_MOVE_FADE = 0.85
+EAR_POSE_N = 1024          # the picture is shown to the pose finder at this size
+# The pose finder gives an ear point with full visibility whether or not an ear shows (stored runs: 1.0 on all 17
+# sides, also under hair). An ear is taken as seen only where at least EAR_SKIN_SHARE of the picture within
+# EAR_SKIN_CM of the point lies within EAR_SKIN_DE (Lab) of the head's own skin (the median round the middle of its eyes
+# and mouth, the same image); both the picture's point and the model's must pass. On W2 R3 the right ear is under hair
+# (0.0 of skin): moved, it dragged the hair, the cheek and the glasses arm. Known miss: an ear in deep shadow reads as
+# unseen (M1 R4's right side), which leaves it as before.
+EAR_SKIN_CM = 1.0
+EAR_SKIN_DE = 15.0
+EAR_SKIN_SHARE = 0.5
 # The turn a drawn view was fitted at, against the front's (item 8). The side a view belongs on (+1: toward the
 # character's left, a positive camera yaw; every good stored run fits them so), the least turn from the front a full
 # side view may sit at, and the least for the back.
@@ -1480,11 +1498,125 @@ def fit_side_head(mesh: dict[str, np.ndarray], tex: np.ndarray, painted: np.ndar
                        lambda c: (face.painted_head(np.concatenate([pic, alpha[..., None]], axis=-1), head, c, size=c.size),
                                   face.render_view(mesh, tex, c)))
     rec.update(fit={kk: a.get(kk) for kk in ("sx", "tx", "ty")}, head_px=crop.get("head_px"))
+    rec["ear"] = ear_onto_model(v)
     rec["outline"] = head_outline_match(v, zone)  # a record only: how well its head lies on the model's
     v.info = rec
     if log:
         log(f"view {rec['name']}: yaw {yaw:.1f}, lined up to {rec['lined_up_to']}, residual {rec['residual']:.3f}")
     return v, rec
+
+
+def pose_points(img: np.ndarray, mask: np.ndarray) -> dict[str, tuple[float, float, float]] | None:
+    """The nose, both eyes and both ears of the one figure in img (the pose landmarker, buildpose's), as (x, y, visibility)
+    in img's pixels, the figure shown on grey outside mask; None without the finder or a figure."""
+    from . import buildpose
+
+    model = buildpose._model("pose")
+    if model is None:
+        return None
+    import mediapipe as mp
+
+    S = img.shape[0]
+    pic = np.where(mask[..., None], np.clip(img, 0.0, 1.0), 0.5)
+    small = np.asarray(Image.fromarray((pic * 255).astype(np.uint8)).resize((EAR_POSE_N, EAR_POSE_N), Image.BILINEAR))
+    r = model.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(small)))
+    if not r.pose_landmarks:
+        return None
+    lm = r.pose_landmarks[0]
+    k = S / float(EAR_POSE_N)
+    return {n: (lm[i].x * EAR_POSE_N * k, lm[i].y * EAR_POSE_N * k, float(lm[i].visibility))
+            for n, i in (("nose", 0), ("eye_a", 2), ("eye_b", 5), ("ear_L", 7), ("ear_R", 8))}
+
+
+def near_ear(pts: dict[str, tuple[float, float, float]]) -> str | None:
+    """Which ear a turned face shows: of the ears seen (visibility over a half), the one on the other side of the eyes'
+    middle from the nose (the nose points away from the near ear), the further out if both are; None when neither is."""
+    mid_x = 0.5 * (pts["eye_a"][0] + pts["eye_b"][0])
+    s = np.sign(pts["nose"][0] - mid_x)
+    seen = [n for n in ("ear_L", "ear_R") if pts[n][2] > 0.5 and (pts[n][0] - mid_x) * s < 0]
+    return max(seen, key=lambda n: abs(pts[n][0] - mid_x)) if seen else None
+
+
+def skin_share(img: np.ndarray, mask: np.ndarray, at: np.ndarray, pins: np.ndarray, px_per_cm: float) -> float:
+    """The share of img's figure (mask) within EAR_SKIN_CM of `at` whose colour lies within EAR_SKIN_DE (Lab) of the
+    head's own skin: the median of the figure within 0.6 of the eyes' distance of the middle of its eyes and mouth
+    (pins: two eyes, then the mouth). 0 when too little of the figure is there."""
+    lab_img = face.to_lab(np.clip(img, 0.0, 1.0))
+    S = img.shape[0]
+    yy, xx = np.mgrid[0:S, 0:S]
+    c = np.asarray(pins, dtype=np.float64).mean(axis=0)
+    eyes = float(np.hypot(*(np.asarray(pins[0]) - np.asarray(pins[1]))))
+    face_px = (np.hypot(xx + 0.5 - c[0], yy + 0.5 - c[1]) < 0.6 * eyes) & mask
+    ring = (np.hypot(xx + 0.5 - at[0], yy + 0.5 - at[1]) < EAR_SKIN_CM * px_per_cm) & mask
+    if face_px.sum() < 20 or ring.sum() < 20:
+        return 0.0
+    skin = np.median(lab_img[face_px], axis=0)
+    return float((np.linalg.norm(lab_img[ring] - skin, axis=1) < EAR_SKIN_DE).mean())
+
+
+def ear_move_maps(size: int, ear_from: np.ndarray, ear_to: np.ndarray, pins: np.ndarray,
+                  px_per_cm: float) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any]]:
+    """The backward maps (for a remap of the picture) that move the picture's ear at ear_from onto ear_to: in full
+    within EAR_MOVE_FULL_CM of ear_to, fading to nothing EAR_MOVE_FADE of the way to the nearest pin (the eyes and mouth,
+    which keep their place). (None, None, why) when the ears are under EAR_MOVE_MIN_CM apart or a pin is too close."""
+    d = np.asarray(ear_to, dtype=np.float64) - np.asarray(ear_from, dtype=np.float64)
+    off = float(np.hypot(*d)) / px_per_cm
+    rec: dict[str, Any] = {"offset_cm": round(off, 2)}
+    if off < EAR_MOVE_MIN_CM:
+        return None, None, {**rec, "moved": False, "why": f"the ears are {off:.1f} cm apart"}
+    r_full = EAR_MOVE_FULL_CM * px_per_cm
+    r_zero = EAR_MOVE_FADE * float(np.min(np.hypot(*(np.asarray(pins, dtype=np.float64) - ear_to).T)))
+    if r_zero <= r_full:
+        return None, None, {**rec, "moved": False, "why": "the face is too close to the ear"}
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    w = 1.0 - face.smoothstep(r_full, r_zero, np.hypot(xx + 0.5 - ear_to[0], yy + 0.5 - ear_to[1]))
+    gy, gx = np.gradient(w)
+    rec.update(moved=True, fade_cm=round(r_zero / px_per_cm, 2), stretch=round(1.0 + float(np.hypot(gx, gy).max() * np.hypot(*d)), 2))
+    return (xx - d[0] * w).astype(np.float32), (yy - d[1] * w).astype(np.float32), rec
+
+
+def ear_onto_model(v: View) -> dict[str, Any]:
+    """Move a three-quarter head view's picture round its own near ear onto the model's ear (EAR_MOVE_*), its eyes and
+    mouth held where the fit put them; the gates are set again for the moved picture. Returns the record."""
+    import cv2
+
+    S = v.cam.size
+    pp = pose_points(v.pic_aligned, v.alpha_img > 0.5)
+    if pp is None:
+        return {"moved": False, "why": "no pose finder or no figure on the picture"}
+    side = near_ear(pp)
+    if side is None:
+        return {"moved": False, "why": "the picture's near ear was not seen"}
+    pm = pose_points(v.render, v.raster.mask)
+    if pm is None or pm[side][2] <= 0.5:
+        return {"ear": side, "moved": False, "why": "the model's ear was not seen"}
+    pmask = v.alpha_img > 0.5
+    pins = head_points(np.where(pmask[..., None], v.pic_aligned, 0.5))
+    if pins is None:
+        return {"ear": side, "moved": False, "why": "the picture's eyes and mouth were not found"}
+    pins_m = head_points(np.where(v.raster.mask[..., None], v.render, 0.5))
+    if pins_m is None:
+        return {"ear": side, "moved": False, "why": "the model's eyes and mouth were not found"}
+    px_cm = S / (v.cam.scale * 100.0)
+    ear_p, ear_m = np.array(pp[side][:2]), np.array(pm[side][:2])
+    seen = {"picture": round(skin_share(v.pic_aligned, pmask, ear_p, pins, px_cm), 2),
+            "model": round(skin_share(v.render, v.raster.mask, ear_m, pins_m, px_cm), 2)}
+    if min(seen.values()) < EAR_SKIN_SHARE:
+        return {"ear": side, "skin_share": seen, "moved": False, "why": "no ear shows at the finder's point"}
+    mx, my, rec = ear_move_maps(S, ear_p, ear_m, pins, px_cm)
+    rec = {"ear": side, "skin_share": seen, **rec}
+    if mx is None:
+        return rec
+    v.pic_aligned = v.pic_affine = np.clip(np.stack(
+        [cv2.remap(v.pic_aligned[..., c].astype(np.float32), mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+         for c in range(3)], -1), 0.0, 1.0).astype(np.float64)
+    v.alpha_img = cv2.remap(v.alpha_img.astype(np.float32), mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                            borderValue=0).astype(np.float64)
+    v.valid = v.raster.mask & (v.alpha_img > 0.5)
+    r = max(2, S // 340)
+    v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
+    prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
+    return rec
 
 
 def head_outline_match(v: View, zone: dict[str, Any]) -> float | None:
