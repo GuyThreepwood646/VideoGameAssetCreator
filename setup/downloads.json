@@ -491,6 +491,26 @@
    "licence": "GPL-3.0-or-later"
   }
  },
+ "comfyui_install": {
+  "_comment": "VGAC's own ComfyUI (backend/vgac/comfy_install.py). The source is the zip of one commit; GitHub keeps the files inside such a zip the same but not its bytes (its compression may change after six months' notice), so the zip's SHA-256 is checked first and, if it differs, every unpacked file is checked against tree_list (path, size, SHA-256), whose own SHA-256 is pinned here. While sha256 or tree_sha256 is empty, the app refuses to install. The Python packages are in lock (one wheel each, SHA-256 pinned).",
+  "version": "0.45.3",
+  "commit": "71096d1af6c9d1c34fc42094ec4ec59768104786",
+  "zip": "https://github.com/Comfy-Org/ComfyUI/archive/71096d1af6c9d1c34fc42094ec4ec59768104786.zip",
+  "sha256": "",
+  "tree_list": "setup/comfy-tree-v0.45.3.json",
+  "tree_sha256": "",
+  "files": 1346,
+  "unpacked_bytes": 49925397,
+  "page": "https://github.com/Comfy-Org/ComfyUI",
+  "licence": "GPL-3.0",
+  "lock": "setup/comfyui-lock.json",
+  "installed_bytes": 5050000000,
+  "installed_note": "The Python environment of a working ComfyUI 0.45.3 with SkinToken (with a few more packages than this lock) measured 4.68 GB on 2026-11-15.",
+  "packs": ["skintoken", "vgac"],
+  "left_out": {"pixelart": "The pixel-art look is not included in this install: its node pack needs pyclustering, which has no ready-made package for Windows and would have to be built from source."},
+  "first_port": 8288,
+  "max_root_chars": 90
+ },
  "blender": {
   "version": "5.2.3",
   "zip": "https://download.blender.org/release/Blender5.2/blender-5.2.3-windows-x64.zip",
