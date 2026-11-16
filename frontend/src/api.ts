@@ -649,8 +649,19 @@ export type HardwarePlan = {
 export type HardwareChoice = { use?: number[]; three_d?: number; min_free_ram_gb?: number }
 export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
 export type ComfyPacksReport = {
-  packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
+  packs: { id: string; name: string; present: boolean; left_out?: string; requirements?: string[] }[]
   python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
+}
+export type ComfyInstallStep = { id: string; label: string; download_bytes: number; done: boolean }
+export type ComfyInstallStatus = {
+  state: 'idle' | 'working' | 'done' | 'failed' | 'stopped' | 'unfinished'
+  step: string; text: string; error: { code: string; message: string; fix: string } | null; choice: string
+  bytes_done: number; bytes_total: number; warnings: string[]
+  engines: { name: string; card: number; gpu: string; port: number }[]; steps: ComfyInstallStep[]
+}
+export type ComfyInstallOffer = {
+  version: string; goes_to: string; hosts: string[]; download_bytes: number; needs_bytes: number; licence: string
+  needs_admin: boolean; ready: boolean; missing: string[]; left_out: string[]; status: ComfyInstallStatus
 }
 
 export type ModelItem = {
@@ -832,6 +843,13 @@ export const api = {
   comfyLink: (id: string) => post<{ message: string }>('/api/comfy/link', { id }),
   comfyPacksReport: (id: string) => post<ComfyPacksReport>('/api/comfy/packs/report', { id }),
   comfyPacksApply: (id: string) => post<{ added: string[] }>('/api/comfy/packs/apply', { id, confirm: true }),
+  comfyInstallOffer: () => get<ComfyInstallOffer>('/api/comfy/install'),
+  comfyInstallStatus: () => get<ComfyInstallStatus>('/api/comfy/install/status'),
+  comfyInstallStart: (choice: 'A' | 'C', id?: string) => post<ComfyInstallStatus>('/api/comfy/install/start', { choice, id }),
+  comfyInstallStop: () => post<ComfyInstallStatus>('/api/comfy/install/stop', {}),
+  comfyInstallEngines: () => post<{ engines: { name: string; state: string; text: string }[]; message?: string }>('/api/comfy/install/engines', {}),
+  comfyInstallRemove: (alsoModels: boolean) =>
+    post<{ removed: boolean; kept_models: string; message: string }>('/api/comfy/install/remove', { confirm: true, also_models: alsoModels }),
   modelSets: () => get<ModelSets>('/api/model-sets'),
   startModelSet: (id: string, phrases: Record<string, string>, only?: string[]) => post<ModelJob>(`/api/model-sets/${id}/start`, { phrases, only }),
   stopModelSet: (id: string) => post<unknown>(`/api/model-sets/${id}/stop`),
