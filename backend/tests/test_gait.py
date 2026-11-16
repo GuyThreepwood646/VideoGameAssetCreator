@@ -243,3 +243,37 @@ def test_leg_roll_turns_a_left_leg_one_way_and_a_right_leg_the_other_and_the_bod
     assert drop_l < 0 and drop_l == pytest.approx(drop_r)
     assert gait.leg_roll(0.2, -0.85, 0.2) == (pytest.approx(0.0, abs=1e-9), pytest.approx(0.0, abs=1e-9))
     assert gait.leg_roll(0.0, 0.0, 0.0) == (0.0, 0.0)
+
+
+def test_stance_want_is_the_largest_of_the_shoulder_hip_and_foot_rules():
+    assert gait.stance_want(0.30, 0.10, 0.0) == pytest.approx(gait.IDLE_STANCE_RATIO * 0.30)
+    assert gait.stance_want(0.20, 0.30, 0.0) == pytest.approx(gait.STANCE_MIN_HIP * 0.30)
+    assert gait.stance_want(0.20, 0.10, 0.25) == pytest.approx(gait.STANCE_FOOT_GAP * 0.25)
+
+
+def test_narrowest_clear_finds_the_edge_and_never_leaves_the_range():
+    ok = lambda sep: sep >= 0.21  # the legs clear each other from 0.21 up
+    assert gait.narrowest_clear(0.10, 0.40, ok) == pytest.approx(0.21, abs=1e-6)
+    assert gait.narrowest_clear(0.25, 0.40, ok) == 0.25   # already clear at the narrow end
+    assert gait.narrowest_clear(0.10, 0.15, ok) == 0.15   # never clear: stays as wide as it was
+    # clear only above the wide end: the wide end is returned (no narrowing)
+    assert gait.narrowest_clear(0.10, 0.20, lambda s: False) == 0.20
+
+
+def test_stance_pair_keeps_the_midline_and_each_foot_on_its_side():
+    a, b = gait.stance_pair((0.30, -0.06), 0.20)
+    assert (a + b) / 2 == pytest.approx(0.12) and a - b == pytest.approx(0.20)
+    a, b = gait.stance_pair((-0.1, 0.3), 0.2)  # the first foot is the right one here
+    assert a < b and b - a == pytest.approx(0.2)
+
+
+def test_stance_targets_honour_a_clearance_floor_but_not_above_the_rest_spacing():
+    t = gait.stance_targets((0.30, -0.06), (0.10, -0.10), shoulder=0.30, min_sep=0.30)
+    assert abs(t[0] - t[1]) == pytest.approx(0.30)
+    # a floor at or above the rest spacing leaves the stance as it is
+    assert gait.stance_targets((0.30, -0.06), (0.10, -0.10), shoulder=0.30, min_sep=0.9) is None
+
+
+def test_knee_out_is_a_small_positive_bias_and_the_clearances_are_small_shares_of_height():
+    assert 0.0 < gait.STANCE_KNEE_OUT <= 0.5
+    assert 0.0 < gait.STANCE_THIGH_CLEAR < gait.STANCE_KNEE_CLEAR < 0.1
