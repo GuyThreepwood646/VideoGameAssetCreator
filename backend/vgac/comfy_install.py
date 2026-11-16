@@ -179,9 +179,24 @@ def shipped_packs() -> list[dict[str, Any]]:
     return [dict(v, id=k) for k, v in (shipped().get("node_packs") or {}).items() if isinstance(v, dict)]
 
 
+# The commands run in a cleaned environment (clean_env()), so a name in these families is never expanded, by either program.
+NOT_EXPANDED = ("VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_")
+
+
 def expand_percent(text: str) -> str:
-    """%NAME% is replaced by the environment variable (the starter's VGAC.exe does the same, and only this: no $NAME, no ~)."""
-    return re.sub(r"%([^%]+)%", lambda m: os.environ.get(m.group(1), m.group(0)), text)
+    """The one rule for a folder setting, the same in the starter's VGAC.exe: a folder that exists under exactly this name is taken as
+    it is (a real folder called %TEMP% stays); else %NAME% is replaced by that environment variable, except the families in
+    NOT_EXPANDED (they are cleaned out of the environment these commands run in). Nothing else is expanded: no $NAME, no ~."""
+    if "%" not in text or Path(text).is_dir():
+        return text
+
+    def one(m: "re.Match[str]") -> str:
+        name = m.group(1)
+        if name.upper().startswith(NOT_EXPANDED):
+            return m.group(0)
+        return os.environ.get(name, m.group(0))
+
+    return re.sub(r"%([^%]+)%", one, text)
 
 
 def data_folder() -> Path:
@@ -320,7 +335,7 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     if m is not None and _in_ledger(root):
         _ensure_id(root, m)
         return m
-    if m is not None and _adopt_if_proved(root):
+    if m is not None and _adopt_if_proved(root, Ops()):
         return read_marker(root) or m
     fresh = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
              "install_id": _ledger_id(root) or uuid.uuid4().hex,
@@ -1105,7 +1120,14 @@ def _adoptable(root: Path) -> tuple[dict[str, Any] | None, str]:
     return hits[0], ""
 
 
-def _adopt_if_proved(root: Path) -> bool:
+def _adopt_if_proved(root: Path, ops: Ops | None = None) -> bool:
+    hit, _ = _adoptable(root)
+    if hit is None:
+        return False
+    # The settings (engines, input and add-on folders) follow first, so that a repeat after a cut-off still finds the old ledger entry
+    # and finishes the job. Its Python environment still names the old place: `check` says venv_stale until rebuild-venv has run.
+    old_root = os.path.abspath(str(hit.get("path", "")))
+    _retarget_settings(old_root, root, fence_for(ops or Ops()))
     with downloader._ledger_lock:
         hit, _ = _adoptable(root)
         if hit is None:
@@ -1203,14 +1225,29 @@ def _models_dir(root: Path) -> Path:
     return root / "ComfyUI" / "models"
 
 
-def adopt() -> dict[str, Any]:
+def _venv_stale(root: Path) -> bool:
+    """Its Python environment names a Python outside this data folder's own (a drive letter or a folder name changed): it will not run
+    until rebuild-venv has made it again."""
+    cfg = root / ".venv" / "pyvenv.cfg"
+    try:
+        for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip().lower().startswith("home") and "=" in line:
+                home = os.path.normcase(os.path.abspath(line.split("=", 1)[1].strip()))
+                mine = os.path.normcase(os.path.abspath(str(data_folder() / "python")))
+                return not (home == mine or home.startswith(mine + os.sep))
+    except OSError:
+        return False
+    return False
+
+
+def adopt(ops: Ops | None = None) -> dict[str, Any]:
     """The install folder was renamed or its drive letter changed: the ledger entry with this install's id is pointed at it."""
     root = install_root()
     if _in_ledger(root) and read_marker(root) is not None:
         return {"adopted": False, "already": True}
-    if not _adopt_if_proved(root):
+    if not _adopt_if_proved(root, ops):
         raise DownloadError("not_ours", f"VGAC cannot show that it made the ComfyUI in {root} ({_adoptable(root)[1]}), so nothing is changed.", "")
-    return {"adopted": True}
+    return {"adopted": True, "venv_stale": _venv_stale(root)}
 
 
 def check() -> dict[str, Any]:
@@ -1218,19 +1255,11 @@ def check() -> dict[str, Any]:
     _require_own(root)
     _ensure_id(root, read_marker(root) or {})
     models = _models_dir(root)
-    return {"root": str(root), "keeps": [str(models)] if models.is_dir() else []}
+    return {"root": str(root), "keeps": [str(models)] if models.is_dir() else [], "venv_stale": _venv_stale(root)}
 
 
-def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, Any]:
-    ops = ops or Ops()
-    root = install_root()
-    if _real(Path(new_data)) != _real(data_folder()):
-        raise DownloadError("not_current", f"The settings do not name {new_data} as the data folder, so nothing was changed.", "")
-    _require_own(root)
-    old_root = os.path.abspath(str(Path(old_data) / "comfyui"))
-    if os.path.normcase(old_root) == os.path.normcase(os.path.abspath(str(root))):
-        return {"changed": 0}
-    fence = fence_for(ops)
+def _retarget_settings(old_root: str, root: Path, fence: Fence) -> int:
+    """The settings that point into `old_root` now point into the same places in `root`. Every new path goes through guard()."""
 
     def moved(v: Any) -> Any:
         if not isinstance(v, str) or not v:
@@ -1240,6 +1269,7 @@ def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, 
             return str(guard(Path(str(root) + a[len(old_root):]), fence))  # refused unless the new place is inside VGAC's own folder
         return v
 
+    n = 0
     with setup_settings._lock:
         mpath = config.machine_path()
         if mpath is None:
@@ -1247,7 +1277,6 @@ def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, 
         try:
             backend = config.read_machine(mpath).get("backend") or {}
             change: dict[str, Any] = {}
-            n = 0
             for key in ("comfy_input_dir", "loras_dir"):
                 if moved(backend.get(key)) != backend.get(key):
                     change[key] = moved(backend.get(key))
@@ -1275,7 +1304,19 @@ def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, 
                 config.update_machine({"backend": change}, mpath)
         except config.ConfigError as err:
             raise DownloadError("settings", f"The settings could not be updated ({err}).", "Nothing was changed.") from None
-    return {"changed": n}
+    return n
+
+
+def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, Any]:
+    ops = ops or Ops()
+    root = install_root()
+    if _real(Path(new_data)) != _real(data_folder()):
+        raise DownloadError("not_current", f"The settings do not name {new_data} as the data folder, so nothing was changed.", "")
+    _require_own(root)
+    old_root = os.path.abspath(str(Path(old_data) / "comfyui"))
+    if os.path.normcase(old_root) == os.path.normcase(os.path.abspath(str(root))):
+        return {"changed": 0}
+    return {"changed": _retarget_settings(old_root, root, fence_for(ops))}
 
 
 def rebuild_venv(ops: Ops | None = None) -> dict[str, Any]:
@@ -1312,7 +1353,7 @@ def main(argv: list[str], ops: Ops | None = None) -> int:
         elif cmd == "remove" and set(argv[1:]) <= {"--models"}:
             r = remove(also_models="--models" in argv[1:], ops=ops)
         elif cmd == "adopt" and len(argv) == 1:
-            r = adopt()
+            r = adopt(ops)
         elif cmd == "retarget" and len(argv) == 3:
             r = retarget(argv[1], argv[2], ops)
         elif cmd == "rebuild-venv" and len(argv) == 1:

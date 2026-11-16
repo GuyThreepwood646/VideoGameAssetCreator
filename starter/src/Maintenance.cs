@@ -130,6 +130,13 @@ namespace Vgac.Starter
             {
                 Say("Checking...");
                 var found = Repair.Check(host.Lay, host.Host, Ledger.Load(host.Lay.ProjectRoot));
+                if (ComfyGuard.MarkerPresent(host.Comfy.Root(host.Lay.DataFolder)))
+                {
+                    ComfyState cs = host.Comfy.State(host.Lay.DataFolder);
+                    if (cs.Problem != null) found.Add(new CheckLine("comfy", "info", "VGAC's own ComfyUI: its installer did not confirm it (" + cs.Problem + "). VGAC leaves it alone.", null));
+                    else if (cs.VenvStale) found.Add(new CheckLine("comfy", "fix", "VGAC's own ComfyUI's Python still points at a place that is not there any more (the folder was renamed or its drive letter changed), so it will not start. It can be made again: this needs the internet and takes several minutes.", "comfyvenv"));
+                    else found.Add(new CheckLine("comfy", "ok", "VGAC's own ComfyUI is confirmed by its installer.", null));
+                }
                 BeginInvoke((Action)delegate
                 {
                     lines = found; repairList.Items.Clear();
@@ -161,14 +168,14 @@ namespace Vgac.Starter
                 bool yes = MessageBox.Show(this, "Mark " + libp + " as VGAC's library?\r\n\r\nIt holds only what the app makes. After this, Remove can delete its contents (only after you type the word REMOVE there). Nothing is deleted now.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.Adopt) == DialogResult.Yes;
                 if (!yes) { todo = todo.Where(c => c.FixId != "adoptlib").ToList(); if (todo.Count == 0) { status.Text = "The library was not marked."; return; } }
             }
-            bool needsStop = todo.Any(c => c.FixId == "venv" || c.FixId == "packages" || c.FixId == "uv" || c.FixId == "screens");
+            bool needsStop = todo.Any(c => c.FixId == "comfyvenv" || c.FixId == "venv" || c.FixId == "packages" || c.FixId == "uv" || c.FixId == "screens");
             if (needsStop && !host.Quiesce(this, "fix")) return;
             Run(delegate
             {
                 foreach (CheckLine c in todo)
                 {
                     Say("Fixing: " + c.Text);
-                    string why = Repair.Fix(c.FixId, host.Lay, host.Host, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Log, ProgressToStatus());
+                    string why = c.FixId == "comfyvenv" ? host.Comfy.RebuildVenv(host.Lay.DataFolder) : Repair.Fix(c.FixId, host.Lay, host.Host, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Log, ProgressToStatus());
                     if (why != null) { Say("Could not fix it: " + why); return; }
                 }
                 Say("Done. Starting the app's engine again...");
@@ -366,26 +373,32 @@ namespace Vgac.Starter
             return tab;
         }
 
-        // Entering the tab: the plan is built on another thread (it asks VGAC's own ComfyUI installer, which can take a moment), so the window
-        // never freezes.
+        // Entering the tab: the plan is built inside Run (on its own thread, with the window busy), so the window never freezes, the Stop
+        // button reaches whatever is running, and no second command of ComfyUI's installer can start beside a running one.
         void BuildPlan(TextBox summaryBox)
         {
+            if (busy) return;
             summaryBox.Text = "Looking at what VGAC added...";
-            var th = new Thread(delegate()
-            {
-                RemovalPlan plan = null;
-                try { plan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy); }
-                catch (Exception e) { Say("Could not look at what VGAC added: " + e.Message); return; }
-                try { BeginInvoke((Action)delegate { removePlan = plan; ShowPlan(summaryBox); }); } catch (Exception) { }
-            });
-            th.IsBackground = true; th.Start();
+            RemovalPlan plan = null;
+            Run(delegate { plan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy); },
+                delegate { if (plan != null) { removePlan = plan; ShowPlan(summaryBox); } });
         }
 
-        // The same, in the caller's own thread (used where the answer is needed at once; ComfyUI's answer is remembered for a short while).
-        void BuildPlanNow(TextBox summaryBox)
+        // The plan again, keeping what the person ticked; `then` runs when it is there.
+        void RefreshPlan(Action then)
         {
-            removePlan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy);
-            ShowPlan(summaryBox);
+            var keep = Ticked();
+            RemovalPlan plan = null;
+            Run(delegate { plan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy); },
+                delegate
+                {
+                    if (plan != null)
+                    {
+                        removePlan = plan; ShowPlan(new TextBox());
+                        for (int i = 0; i < removeList.Items.Count; i++) removeList.SetItemChecked(i, keep.Contains(((string)removeList.Items[i]).Split(':')[0]));
+                    }
+                    if (then != null) then();
+                });
         }
 
         void ShowPlan(TextBox summaryBox)
@@ -410,7 +423,12 @@ namespace Vgac.Starter
 
         void DoReview(TextBox summaryBox)
         {
-            BuildPlanKeepingChecks();
+            if (busy) return;
+            RefreshPlan(delegate { ReviewDialog(summaryBox); });
+        }
+
+        void ReviewDialog(TextBox summaryBox)
+        {
             List<string> ticked = Ticked();
             if (ticked.Count == 0) { summaryBox.Text = "Nothing is ticked."; return; }
             string text = RemovalSummary.Text(removePlan, ticked, host.Lay);
@@ -445,8 +463,8 @@ namespace Vgac.Starter
                     // No is the default: the box names exactly the items it is about, and only those may be deleted for good
                     if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete exactly these for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.PermanentDelete) == DialogResult.Yes)
                     {
-                        BuildPlanKeepingChecks();
-                        DoRemoval(summaryBox, ticked, typedWord, new List<string>(res.RecycleFailed));
+                        var agreed = new List<string>(res.RecycleFailed);
+                        RefreshPlan(delegate { DoRemoval(summaryBox, ticked, typedWord, agreed); });
                         return;
                     }
                 }
@@ -458,16 +476,8 @@ namespace Vgac.Starter
                 if (!res.Complete) sb.AppendLine("Close whatever is using them and press Review again to finish.");
                 summaryBox.Text = sb.ToString();
                 status.Text = "Removal finished.";
-                BuildPlanKeepingChecks();
+                RefreshPlan(null);
             });
-        }
-
-        void BuildPlanKeepingChecks()
-        {
-            var keep = Ticked();
-            var tb = new TextBox();
-            BuildPlanNow(tb);
-            for (int i = 0; i < removeList.Items.Count; i++) removeList.SetItemChecked(i, keep.Contains(((string)removeList.Items[i]).Split(':')[0]));
         }
     }
 }

@@ -27,6 +27,7 @@ namespace Vgac.Starter
         public bool Present;                     // the install folder has a VGAC marker (a hint only; the backend decides)
         public string Problem;                   // null: the backend confirmed it is VGAC's and can be handled; else a plain sentence
         public List<string> Keeps = new List<string>();   // what a removal keeps (absolute paths), as the backend says
+        public bool VenvStale;                   // its Python environment still names another place: it will not run until it is made again
     }
 
     public interface IComfyInstall
@@ -95,6 +96,16 @@ namespace Vgac.Starter
                 if (File.Exists(logFile)) File.Delete(logFile);
             }
             catch (Exception) { return null; }
+            // one command at a time: they share one log, and a second must never take the first one's place as "the running program"
+            if (!Monitor.TryEnter(Gate, 2000)) return Fail("busy", "Another command of VGAC's own ComfyUI installer is still running. Wait for it, or stop it.");
+            try { return RunLocked(host, lay, projectRoot, args, timeoutMs, cancelled, logFile); }
+            finally { Monitor.Exit(Gate); }
+        }
+
+        static readonly object Gate = new object();
+
+        static string RunLocked(IHost host, Layout lay, string projectRoot, string args, int timeoutMs, Func<bool> cancelled, string logFile)
+        {
             var env = new Dictionary<string, string>();
             env["VGAC_CLEAN_ENVIRONMENT"] = "1";
             Exception failed = null;
@@ -145,6 +156,20 @@ namespace Vgac.Starter
 
         string Ask(string args, int ms) { return runCli(args, ms, Cancelled); }
 
+        // A command that was refused only because the install is VGAC's but its ledger entry names a folder it no longer has (renamed, or
+        // another drive letter) is asked again after the backend's own adoption, so no caller has to know about it.
+        string AskAdopting(string args, int ms)
+        {
+            string line = Ask(args, ms);
+            Dictionary<string, object> r;
+            Reason(line, out r);
+            if (!Adoptable(r)) return line;
+            string adopted = Ask("adopt", CheckMs);
+            Dictionary<string, object> ar;
+            if (Reason(adopted, out ar) != null) return adopted;     // its refusal is the answer
+            return Ask(args, ms);
+        }
+
         // null: ok. Else the plain reason the command gave, or why it could not be asked.
         static string Reason(string line, out Dictionary<string, object> result)
         {
@@ -184,6 +209,8 @@ namespace Vgac.Starter
             }
             if (st.Problem == null && r != null)
             {
+                object stale;
+                if (r.TryGetValue("venv_stale", out stale) && stale is bool) st.VenvStale = (bool)stale;
                 object keeps;
                 if (r.TryGetValue("keeps", out keeps) && keeps is System.Collections.IEnumerable && !(keeps is string))
                     foreach (object k in (System.Collections.IEnumerable)keeps) if (k != null) st.Keeps.Add(k.ToString());
@@ -198,21 +225,21 @@ namespace Vgac.Starter
         {
             Forget();
             Tell("Removing VGAC's own ComfyUI with its installer...");
-            Dictionary<string, object> r; return Reason(Ask("remove", RemoveMs), out r);
+            Dictionary<string, object> r; return Reason(AskAdopting("remove", RemoveMs), out r);
         }
 
         public string Retarget(string oldData, string newData)
         {
             Forget();
             Dictionary<string, object> r;
-            return Reason(Ask("retarget " + ComfyCli.Quote(oldData) + " " + ComfyCli.Quote(newData), RetargetMs), out r);
+            return Reason(AskAdopting("retarget " + ComfyCli.Quote(oldData) + " " + ComfyCli.Quote(newData), RetargetMs), out r);
         }
 
         public string RebuildVenv(string newData)
         {
             Forget();
             Tell("Making VGAC's own ComfyUI's Python again. This fetches its packages, needs the internet and can take several minutes. Stop cancels it.");
-            Dictionary<string, object> r; return Reason(Ask("rebuild-venv", RebuildMs), out r);
+            Dictionary<string, object> r; return Reason(AskAdopting("rebuild-venv", RebuildMs), out r);
         }
     }
 }

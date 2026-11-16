@@ -60,12 +60,28 @@ namespace Vgac.Starter
             return full;
         }
 
+        // The one rule for %NAME% in a folder setting, the same in the backend (comfy_install.expand_percent): a folder that exists under
+        // exactly this name is taken as it is; else %NAME% is the environment variable, except the families the backend's commands run
+        // without (VGAC_, UV_, PIP_, PYTHON, VIRTUAL_ENV, CONDA_), which stay as written. Nothing else is expanded.
+        public static string ExpandSetting(string text)
+        {
+            if (text.IndexOf('%') < 0 || Directory.Exists(text)) return text;
+            return System.Text.RegularExpressions.Regex.Replace(text, "%([^%]+)%", delegate(System.Text.RegularExpressions.Match m)
+            {
+                string name = m.Groups[1].Value;
+                string up = name.ToUpperInvariant();
+                foreach (string pre in new[] { "VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_" }) if (up.StartsWith(pre)) return m.Value;
+                string v = Environment.GetEnvironmentVariable(name);
+                return v ?? m.Value;
+            });
+        }
+
         // The data folder: the person's choice in machine.json, else local/data in the project. Relative values are
         // read against the project folder.
         public static Layout From(string projectRoot, MachineFile machine)
         {
             string chosen = machine.GetString("starter", "dataFolder");
-            if (!string.IsNullOrEmpty(chosen) && chosen.Contains("%")) chosen = Environment.ExpandEnvironmentVariables(chosen);   // %NAME% only, as the backend does
+            if (!string.IsNullOrEmpty(chosen)) chosen = ExpandSetting(chosen);
             string data = string.IsNullOrEmpty(chosen) ? DefaultDataFolder(projectRoot)
                 : (Path.IsPathRooted(chosen) ? chosen : Path.Combine(projectRoot, chosen));
             return new Layout(projectRoot, data);

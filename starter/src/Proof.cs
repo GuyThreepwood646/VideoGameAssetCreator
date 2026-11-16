@@ -403,6 +403,12 @@ namespace Vgac.Starter
                 string grand = parent == null ? null : Path.GetDirectoryName(parent);
                 string leaf = Path.GetFileName(r);
                 string[] shared = { "documents", "desktop", "downloads", "pictures", "music", "videos", "appdata", "onedrive", "saved games", "contacts", "favorites", "links", "searches", "3d objects" };
+                string great = grand == null ? null : Path.GetDirectoryName(grand);
+                string pname = parent == null ? "" : Path.GetFileName(parent);
+                if (grand != null && grand == usersRoot.ToLowerInvariant() && leaf.StartsWith("onedrive"))
+                    return "That folder is a synced OneDrive folder of a user profile. Choose or make a folder just for VGAC.";
+                if (great != null && great == usersRoot.ToLowerInvariant() && pname.StartsWith("onedrive") && Array.IndexOf(shared, leaf) >= 0)
+                    return "That folder is one of the shared folders of a user profile's OneDrive (" + leaf + "). Choose or make a folder just for VGAC.";
                 if (grand != null && grand == usersRoot.ToLowerInvariant() && Array.IndexOf(shared, leaf) >= 0)
                     return "That folder is one of the shared folders of a user profile (" + leaf + "). Choose or make a folder just for VGAC.";
             }

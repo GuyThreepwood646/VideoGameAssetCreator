@@ -37,6 +37,7 @@ namespace Vgac.Starter
         public List<RemovalGroup> Groups = new List<RemovalGroup>();
         public List<string> NotRemoved = new List<string>();     // "path: why", shown to the person
         public List<string> Notes = new List<string>();
+        public bool ComfyUnconfirmed;                            // VGAC's own ComfyUI is there but its installer did not confirm it (so none is planned)
         public RemovalGroup Get(string id) { foreach (RemovalGroup g in Groups) if (g.Id == id) return g; return null; }
     }
 
@@ -328,8 +329,9 @@ namespace Vgac.Starter
             if (ComfyGuard.MarkerPresent(croot))
             {
                 ComfyState cs = comfy.State(data);
+                if (cs.Problem != null) plan.ComfyUnconfirmed = true;
                 if (cs.Problem != null) plan.Notes.Add("VGAC's own ComfyUI is not removed here: " + cs.Problem + " Nothing in " + croot + " was touched.");
-                else if (SafeFs.IsLink(croot) || !SafeFs.PathHasNoLink(croot)) plan.NotRemoved.Add(croot + ": it is, or is reached through, a link");
+                else if (SafeFs.IsLink(croot) || !SafeFs.PathHasNoLink(croot)) { plan.ComfyUnconfirmed = true; plan.NotRemoved.Add(croot + ": it is, or is reached through, a link"); }
                 else if (OnlyKeptLeft(croot, cs.Keeps)) { }      // an earlier removal kept the models: nothing more to remove
                 else
                 {
@@ -663,26 +665,32 @@ namespace Vgac.Starter
             WriteJournal(l.ProjectRoot, ticked);
             bool settingsTicked = false;
             var parentsTouched = new HashSet<string>();
-            bool comfyFailed = false;     // VGAC's own ComfyUI is removed by a command that needs the app's Python: keep that Python until it worked
+            // VGAC's own ComfyUI is removed by a command that needs the app's Python: that Python stays while the ComfyUI is installed and is not
+            // going in this run (nothing planned for it because its check failed, timed out or was refused), and when its removal failed.
+            string keepPython = null;
+            if (plan.ComfyUnconfirmed)
+            {
+                keepPython = "VGAC's own ComfyUI is installed but its installer did not confirm it (it could not be asked, or it refused), so it cannot be removed now, and it needs this Python";
+            }
             foreach (RemovalGroup g in plan.Groups)
             {
                 if (!ticked.Contains(g.Id) || g.Items.Count == 0) continue;
                 if (g.Id == "settings") { settingsTicked = true; continue; }   // after everything else
                 foreach (RemovalItem it in g.Items)
                 {
-                    if (comfyFailed && ((it.Kind == "app-folder" && it.Tag == "venv") || (it.Kind == "data-folder" && it.Tag == "python")))
+                    if (keepPython != null && ((it.Kind == "app-folder" && it.Tag == "venv") || (it.Kind == "data-folder" && it.Tag == "python")))
                     {
-                        string keep = it.Path + ": kept, because VGAC's own ComfyUI could not be removed and its installer needs this Python. Fix that and remove again.";
+                        string keep = it.Path + ": kept, because " + keepPython + ". Remove VGAC's own ComfyUI first (or together), then remove this again.";
                         res.Skipped.Add(keep); log.Line("remove: " + keep); continue;
                     }
                     if (say != null) say("Removing " + it.What + "...");
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
-                    if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); if (it.Kind == "comfy-remove") comfyFailed = true; continue; }
+                    if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); if (it.Kind == "comfy-remove") keepPython = "VGAC's own ComfyUI could not be removed, and its installer needs this Python"; continue; }
                     Mark(l.ProjectRoot, it.Path, true);
                     if (it.Kind == "comfy-remove")
                     {
                         string cwhy = comfy.Remove();
-                        if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); comfyFailed = true; continue; }
+                        if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); keepPython = "VGAC's own ComfyUI could not be removed, and its installer needs this Python"; continue; }
                         res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: VGAC's own ComfyUI was removed by its installer (what it keeps stays: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag) + ")");
                         Mark(l.ProjectRoot, it.Path, false);   // the ledger entry stays: the backend's own record of what it installed (it may be installed again)
                         continue;

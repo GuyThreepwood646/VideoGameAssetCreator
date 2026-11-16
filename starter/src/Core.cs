@@ -153,14 +153,29 @@ namespace Vgac.Starter
             return null;
         }
 
+        readonly List<string[]> changes = new List<string[]>();
+
         public void Set(string section, string key, string value)
         {
             Section(section)[key] = value;
+            changes.Add(new[] { section, key, value });
         }
 
-        // Temporary file beside it, then swap; the old file stays as machine.json.bak.
+        // Temporary file beside it, then swap; the old file stays as machine.json.bak. Only what THIS object changed (Set) is laid over
+        // the file as it is now, so a copy held across something that rewrote the file (the backend's own settings, another window) never
+        // puts old values back.
         public void Save()
         {
+            if (File.Exists(Path))
+            {
+                try
+                {
+                    Data = Json.ParseObject(File.ReadAllText(Path, Encoding.UTF8));
+                    foreach (string[] c in changes) Section(c[0])[c[1]] = c[2];
+                }
+                catch (Exception) { /* unreadable now: what is in memory is written, as before */ }
+            }
+            changes.Clear();
             string dir = System.IO.Path.GetDirectoryName(Path);
             Directory.CreateDirectory(dir);
             string tmp = Path + ".tmp";
@@ -225,7 +240,16 @@ namespace Vgac.Starter
             return l;
         }
 
+        // What this object changed, laid over the file as it is now when it is saved (see MachineFile.Save).
+        readonly List<Action> ops = new List<Action>();
+
         public void Add(string what, string path, string kind, long bytes)
+        {
+            Action op = delegate { DoAdd(what, path, kind, bytes); };
+            ops.Add(op); op();
+        }
+
+        void DoAdd(string what, string path, string kind, long bytes)
         {
             foreach (object o in Items)
             {
@@ -243,6 +267,31 @@ namespace Vgac.Starter
 
         // Drops the entries for a path and everything below it (after that path has been deleted).
         public void RemoveUnder(string path)
+        {
+            Action op = delegate { DoRemoveUnder(path); };
+            ops.Add(op); op();
+        }
+
+        // Entries for oldRoot, or below it, now name newRoot (a folder that moved).
+        public void RewritePaths(string oldRoot, string newRoot)
+        {
+            Action op = delegate { DoRewritePaths(oldRoot, newRoot); };
+            ops.Add(op); op();
+        }
+
+        void DoRewritePaths(string oldRoot, string newRoot)
+        {
+            string o = System.IO.Path.GetFullPath(oldRoot).TrimEnd('\\').ToLowerInvariant();
+            for (int i = 0; i < Items.Count; i++)
+            {
+                var d = Items[i] as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("path")) continue;
+                string np = System.IO.Path.GetFullPath(Convert.ToString(d["path"])).TrimEnd('\\');
+                if (np.ToLowerInvariant() == o || np.ToLowerInvariant().StartsWith(o + "\\")) d["path"] = newRoot.TrimEnd('\\') + np.Substring(oldRoot.TrimEnd('\\').Length);
+            }
+        }
+
+        void DoRemoveUnder(string path)
         {
             string p = System.IO.Path.GetFullPath(path).TrimEnd(System.IO.Path.DirectorySeparatorChar).ToLowerInvariant();
             Items.RemoveAll(delegate(object o)
@@ -269,6 +318,19 @@ namespace Vgac.Starter
         public void Save()
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
+            if (File.Exists(Path))
+            {
+                try
+                {
+                    var d = Json.ParseObject(File.ReadAllText(Path, Encoding.UTF8));
+                    object items; var fresh = new List<object>();
+                    if (d.TryGetValue("items", out items)) { var arr = items as System.Collections.IEnumerable; if (arr != null) foreach (object o in arr) fresh.Add(o); }
+                    Items = fresh;                                   // the file as it is now (the backend writes it too) ...
+                    foreach (Action op in ops) op();                 // ... with this object's own changes laid over it
+                }
+                catch (Exception) { /* a damaged file is written again from memory */ }
+            }
+            ops.Clear();
             var root = new Dictionary<string, object>();
             root["items"] = Items;
             string tmp = Path + ".tmp";

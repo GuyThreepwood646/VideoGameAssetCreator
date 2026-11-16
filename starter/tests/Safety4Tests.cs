@@ -20,6 +20,8 @@ public static partial class T
         TheLibraryNeedsItsOwnMarker();
         VgacsOwnComfyUIWentThroughTheBackendEverywhere();
         TheFifthReviewsFixes();
+        TheSixthReviewsFixes();
+        TheMoveStateMachineSurvivesACrashAfterEveryWrite();
         ContinueNeedsTheSettingsToFitTheJournal();
         DialogsAnswerNoByDefault();
         SetupWritesNoLedgerEntriesInsideTheDataFolder();
@@ -525,5 +527,233 @@ public static partial class T
         Check(comfy.Retarget(Path.Combine(root, "local", "old data"), data) == null, "the real retarget answers ok");
         Check(comfy.Remove() == null, "the real remove succeeds");
         Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && !File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models, and removed the rest of the folder");
+    }
+
+    // ---- the sixth review --------------------------------------------------------------------------------------------------------
+
+    class StopHere : Exception { }
+
+    // A tiny stand-in for the real backend commands that, like the real ones, read and rewrite the ledger FILE (adoption) and refuse while
+    // the ledger names another place. `Engine` is where its engine settings point.
+    class LedgerAwareBackend
+    {
+        public string ProjectRoot, Engine; public int Adoptions;
+        public string Run(string args, int ms, Func<bool> c)
+        {
+            string cmd = args.Split(' ')[0];
+            var led = Ledger.Load(ProjectRoot);
+            string root = Path.Combine(Layout.From(ProjectRoot, MachineFile.Load(ProjectRoot)).DataFolder, "comfyui");
+            bool named = false; string oldPath = null;
+            foreach (object o in led.Items) { var d = (Dictionary<string, object>)o; if (Convert.ToString(d["what"]).Contains("own ComfyUI")) { oldPath = Convert.ToString(d["path"]); named = SafeFs.Norm(oldPath) == SafeFs.Norm(root); } }
+            if (cmd == "adopt")
+            {
+                if (named) return "{\"ok\": true, \"already\": true}";
+                led.RewritePaths(oldPath, root); led.Save(); Adoptions++;
+                Engine = Path.GetDirectoryName(root);                                // and the engine settings that named the old place follow it           // what the real command does to installed.json
+                return "{\"ok\": true, \"adopted\": true}";
+            }
+            if (!named) return "{\"ok\": false, \"code\": \"adoptable\", \"reason\": \"The ledger still names its old place.\", \"adoptable\": true}";
+            if (cmd == "retarget")
+            {
+                var parts = WindowsArgs("x " + args.Substring(cmd.Length));
+                if (SafeFs.Norm(parts[2]) != SafeFs.Norm(Layout.From(ProjectRoot, MachineFile.Load(ProjectRoot)).DataFolder)) return "{\"ok\": false, \"code\": \"not_current\", \"reason\": \"The settings do not name that place.\"}";
+                if (Engine != null && SafeFs.Norm(Engine) == SafeFs.Norm(parts[1])) Engine = parts[2];
+                return "{\"ok\": true, \"changed\": 1}";
+            }
+            return "{\"ok\": true, \"keeps\": []}";
+        }
+    }
+
+    static void TheSixthReviewsFixes()
+    {
+        // F1: a renamed install is adopted while the move starts; the runner's own ledger copy must not undo it
+        var s = Movable();
+        var gone = Path.Combine(Tmp("renamed-away"), "bigfiles");
+        { var led = Ledger.Load(s.Root); led.RewritePaths(Path.Combine(s.Data, "comfyui"), Path.Combine(gone, "comfyui")); led.Save(); }
+        var be = new LedgerAwareBackend { ProjectRoot = s.Root, Engine = gone };
+        var comfy = new BackendComfyInstall(be.Run);
+        var mv = new MoveRunner(s.L, MachineFile.Load(s.Root), Ledger.Load(s.Root), comfy, new NoProcs(), new SetupLog(s.Root));   // the ledger is loaded BEFORE the adoption
+        string to = Path.Combine(Tmp("target"), "after-adopt");
+        string said = mv.Start(to, new Progress());
+        Check(said == null && be.Adoptions == 1, "the move with a renamed install goes through, adopting once (" + be.Adoptions + "): " + said);
+        Eq(MoveRunner.Load(s.Root).State, "rebuilt", "all the way to the end (retarget was not refused as 'adoptable')");
+        Check(SafeFs.Norm(Convert.ToString(((Dictionary<string, object>)Ledger.Load(s.Root).Items.Cast<object>().First(o => Convert.ToString(((Dictionary<string, object>)o)["what"]).Contains("own ComfyUI")))["path"])) == SafeFs.Norm(Path.Combine(to, "comfyui")), "the ledger names the new place");
+        string back = new MoveRunner(s.L, MachineFile.Load(s.Root), Ledger.Load(s.Root), comfy, new NoProcs(), new SetupLog(s.Root)).Cancel();
+        Check(back != null && back.Contains("points at the old place again") && SafeFs.Norm(be.Engine) == SafeFs.Norm(s.Data), "and Cancel works too, with the engines back where the settings are: " + back);
+
+        // the same pattern, anywhere else: a copy of the settings or the ledger held across a write by somebody else never undoes it
+        string root = NewProject();
+        var held = MachineFile.Load(root); held.Set("starter", "a", "1");
+        var other = MachineFile.Load(root); other.Set("backend", "engine", "E"); other.Save();      // e.g. the backend's own command
+        held.Save();
+        var after = MachineFile.Load(root);
+        Check(after.GetString("backend", "engine") == "E" && after.GetString("starter", "a") == "1", "a settings copy saved late keeps what was written meanwhile");
+        var lh = Ledger.Load(root); lh.Add("mine", Path.Combine(root, "x"), "added", 1);
+        var lo = Ledger.Load(root); lo.Add("theirs", Path.Combine(root, "y"), "added", 1); lo.Save();
+        lh.Save();
+        var lf = Ledger.Load(root);
+        Check(lf.Has(Path.Combine(root, "x"), "added") && lf.Has(Path.Combine(root, "y"), "added"), "a ledger copy saved late keeps the other writer's entries");
+        lf.RemoveUnder(Path.Combine(root, "x")); lf.Save();
+        Check(!Ledger.Load(root).Has(Path.Combine(root, "x"), null) && Ledger.Load(root).Has(Path.Combine(root, "y"), null), "and removing is replayed too");
+
+        // F3: its check failed (timeout, refused, stopped): no ComfyUI item is planned, and the app's Python stays for the retry
+        var r = Installed();
+        r.Comfy.Problem = "The app's installer for ComfyUI did not finish within 1 minutes and was stopped.";
+        var plan = RemovalPlanner.Build(r.L, r.M, r.Led, r.Comfy);
+        Check(plan.Get("comfy").Items.Count == 0 && plan.ComfyUnconfirmed, "no ComfyUI item is planned when its installer did not confirm it");
+        var res = RemovalRunner.Run(plan, new List<string> { "tools" }, null, r.L, MachineFile.Load(r.Root), r.Led, r.Comfy, new FakeRecycler(), new SetupLog(r.Root), null, null);
+        Check(Directory.Exists(r.L.Venv) && Directory.Exists(r.L.PythonDir) && res.Skipped.Any(x => x.Contains("installer did not confirm")), "the Python stays, and the screen says why");
+        Check(!Directory.Exists(r.L.NodeDir), "the rest of the group goes");
+        // after a completed removal that kept only the models, nothing is left to confirm and the Python may go
+        var r2 = Installed();
+        RemovalRunner.Run(RemovalPlanner.Build(r2.L, r2.M, r2.Led, r2.Comfy), new List<string> { "comfy" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
+        RemovalRunner.Run(RemovalPlanner.Build(r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy), new List<string> { "tools" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
+        Check(!Directory.Exists(r2.L.Venv) && !Directory.Exists(r2.L.PythonDir), "a later removal of the rest, with only the kept models left in ComfyUI's folder, takes the Python too");
+
+        // F4: the answer of `check` says when the environment is stale, and the starter keeps it
+        var stale = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return "{\"ok\": true, \"keeps\": [], \"venv_stale\": true}"; });
+        string cdata = Tmp("stale"); Put(Path.Combine(cdata, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
+        Check(stale.State(cdata).VenvStale, "venv_stale in the answer reaches the screen");
+
+        // F5: one command of the installer at a time, so Stop always reaches the running one
+        string proot; var lay = ProjectWithPython(out proot);
+        var slow = new ScriptedHost(); slow.HangMs = 4000; slow.Answer = delegate(string a) { return "{\"ok\": true}\r\n"; };
+        string firstLine = null;
+        var th = new Thread(delegate() { firstLine = ComfyCli.Run(slow, lay, proot, "rebuild-venv", 60000, null); });
+        th.Start(); Thread.Sleep(400);
+        var quick = new ScriptedHost(); quick.Answer = delegate(string a) { return "{\"ok\": true}\r\n"; };
+        string secondLine = ComfyCli.Run(quick, lay, proot, "check", 5000, null);
+        Check(secondLine != null && secondLine.Contains("\"busy\"") && !slow.Aborted, "a second command does not start beside a running one, and does not touch it");
+        th.Join();
+        Check(firstLine != null && firstLine.Contains("\"ok\": true"), "the first one finished on its own");
+
+        // F6: one rule for %NAME% (the backend has the same test)
+        Environment.SetEnvironmentVariable("VGAC_SOMETHING", "X:\\nope"); Environment.SetEnvironmentVariable("PYTHONHOME", "X:\\nope2"); Environment.SetEnvironmentVariable("VGACOK", "C:\\ok");
+        Eq(Layout.ExpandSetting("%VGAC_SOMETHING%\\big"), "%VGAC_SOMETHING%\\big", "VGAC_ names are not expanded");
+        Eq(Layout.ExpandSetting("%PYTHONHOME%\\big"), "%PYTHONHOME%\\big", "nor PYTHON*");
+        Eq(Layout.ExpandSetting("%VGACOK%\\big"), "C:\\ok\\big", "an ordinary variable is");
+        string real = Path.Combine(Tmp("pct"), "%VGACOK%"); Directory.CreateDirectory(real);
+        Eq(Layout.ExpandSetting(real), real, "a folder that really has that name is never expanded");
+        Environment.SetEnvironmentVariable("VGAC_SOMETHING", null); Environment.SetEnvironmentVariable("PYTHONHOME", null); Environment.SetEnvironmentVariable("VGACOK", null);
+
+        // the usual shared folders of OneDrive
+        string usersRoot = Path.GetDirectoryName(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        Check(Proof.DataFolderProblem(Path.Combine(usersRoot, "Somebody Else", "OneDrive", "Documents"), root) != null, "another user's OneDrive\\Documents is refused");
+        Check(Proof.DataFolderProblem(Path.Combine(usersRoot, "Somebody Else", "OneDrive - Company"), root) != null, "and their OneDrive folder");
+
+        RealMoveAfterARename();
+    }
+
+    // The real commands again, with the whole Move: a renamed install, the real adoption, the real retarget, a rebuild that cannot run
+    // (no uv in the fake data folder), and the real undo. Skipped when no Python environment is found.
+    static void RealMoveAfterARename()
+    {
+        string venv = null, dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 10 && dir != null && venv == null; i++)
+        {
+            string cand = Path.Combine(dir, "backend", ".venv"); if (File.Exists(Path.Combine(cand, "Scripts", "python.exe"))) venv = cand;
+            dir = Path.GetDirectoryName(dir.TrimEnd('\\'));
+        }
+        if (venv == null) venv = @"F:\Projects\VideoGameAssetCreator\backend\.venv";
+        string pkg = FindSource("backend\\vgac\\comfy_install.py");
+        if (!File.Exists(Path.Combine(venv, "Scripts", "python.exe")) || pkg == null) { Console.WriteLine("SKIPPED: no Python environment or backend package found for the real move test"); return; }
+        string root = Tmp("e2emove");
+        SafeFs.CopyTree(Path.GetDirectoryName(pkg), Path.Combine(root, "backend", "vgac"), new[] { "__pycache__" }, new FsReport());
+        Junction(Path.Combine(root, "backend", ".venv"), venv);
+        File.Copy(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(pkg)), "config.yaml"), Path.Combine(root, "backend", "config.yaml"), true);
+        Put(Path.Combine(root, "backend", "requirements.txt"), "x"); Directory.CreateDirectory(Path.Combine(root, "frontend"));
+        string data = Path.Combine(Tmp("e2edata"), "renamed data");
+        string oldPlace = Path.Combine(Tmp("e2eold"), "bigfiles", "comfyui");
+        string croot = Path.Combine(data, "comfyui");
+        Func<string, string> js = delegate(string x) { return x.Replace("\\", "\\\\"); };
+        Put(Path.Combine(root, "local", "machine.json"), "{\"schema\":1,\"starter\":{\"dataFolder\":\"" + js(data) + "\",\"dataFolderId\":\"data-id-7\"},\"backend\":{\"comfy_input_dir\":\"" + js(Path.Combine(oldPlace, "input")) + "\",\"instances\":{\"a\":{\"url\":\"http://127.0.0.1:8288\",\"engine\":{\"comfy_dir\":\"" + js(oldPlace) + "\",\"python\":\"" + js(Path.Combine(oldPlace, ".venv", "Scripts", "python.exe")) + "\",\"main\":\"ComfyUI/main.py\",\"port\":8288}}}}}");
+        Put(Path.Combine(data, ".vgac-data.json"), "{\"made_by\":\"VGAC\",\"id\":\"data-id-7\"}");
+        Put(Path.Combine(data, "python", "cpython-3.13.1-windows-x86_64-none", "python.exe"), "py"); FakeHost.MakeUvCache(Path.Combine(data, "uv-cache"));
+        Put(Path.Combine(croot, "vgac-install.json"), "{\"made_by\":\"VGAC\",\"install_id\":\"id77\",\"steps\":{}}");
+        Put(Path.Combine(croot, "ComfyUI", "main.py"), "x"); Put(Path.Combine(croot, "ComfyUI", "models", "m.bin"), "weights");
+        Put(Path.Combine(root, "local", "installed.json"), "{\"items\":[{\"what\":\"VGAC's own ComfyUI\",\"path\":\"" + js(oldPlace) + "\",\"kind\":\"added\",\"bytes\":0,\"id\":\"id77\"}]}");
+        var m = MachineFile.Load(root); var lay = Layout.From(root, m);
+        Directory.CreateDirectory(Path.GetDirectoryName(lay.VenvPython)); if (!File.Exists(lay.VenvPython)) File.WriteAllText(lay.VenvPython, "x");
+        var host = new RealHost();
+        var comfy = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(host, lay, root, a, ms, c); });
+        var mv = new MoveRunner(lay, m, Ledger.Load(root), comfy, new NoProcs(), new SetupLog(root));    // the ledger is loaded before the real adoption runs
+        string to = Path.Combine(Tmp("e2eto"), "newbig");
+        string said = mv.Start(to, new Progress());
+        Check(said != null && said.Contains("could not be made again"), "the real rebuild cannot run without uv, and says so plainly: " + said);
+        Eq(MoveRunner.Load(root).State, "switched", "the move waits at 'switched' (the real adoption and retarget were not undone by the held ledger)");
+        string machineText = File.ReadAllText(Path.Combine(root, "local", "machine.json")).Replace("\\\\", "\\");
+        Check(machineText.Contains(Path.Combine(to, "comfyui")) && !machineText.Contains(oldPlace), "the real retarget moved the engine settings to the new place");
+        Check(File.ReadAllText(Path.Combine(root, "local", "installed.json")).Replace("\\\\", "\\").Contains(Path.Combine(to, "comfyui")), "and the ledger names the new place");
+        string undone = new MoveRunner(lay, MachineFile.Load(root), Ledger.Load(root), comfy, new NoProcs(), new SetupLog(root)).Cancel();
+        Check(undone != null && undone.Contains("points at the old place again"), "the real undo works: " + undone);
+        machineText = File.ReadAllText(Path.Combine(root, "local", "machine.json")).Replace("\\\\", "\\");
+        Check(machineText.Contains(Path.Combine(data, "comfyui")) && !machineText.Contains(Path.Combine(to, "comfyui")), "the engine settings went back with it (to the place the settings name)");
+        Check(File.ReadAllText(Path.Combine(root, "local", "installed.json")).Replace("\\\\", "\\").Contains(Path.Combine(data, "comfyui")), "and so did the ledger");
+        Check(MoveRunner.Load(root) == null, "and the move is closed");
+    }
+
+    // ---- the state machine, crashed after every write ----------------------------------------------------------------------------------
+    //
+    // Every write of a move (the journal, the settings file, the ledger, the engine settings, the files) is followed by a "move" point
+    // (SafeFs.Point). Each scenario is run once to list its points, then again once per point with a crash right after that write, and
+    // the next start recovers it: by Continue, and by Cancel. After recovery the settings, the ledger and the engine settings must all
+    // name the same place, that place must hold the files, and the journal must be gone or at its end.
+
+    static void TheMoveStateMachineSurvivesACrashAfterEveryWrite()
+    {
+        int runs = 0;
+        foreach (string kind in new[] { "forward", "undo", "cancel-early" })
+        {
+            var points = RunScenario(kind, -1, null);
+            Check(points.Count >= 5, "scenario " + kind + " has its writes listed (" + points.Count + ")");
+            for (int k = 0; k < points.Count; k++)
+                foreach (string recover in new[] { "continue", "cancel" })
+                {
+                    string label = kind + " crashed after " + points[k] + " (#" + k + "), recovered by " + recover;
+                    InstallScene s = null;
+                    try { RunScenario(kind, k, delegate(InstallScene sc) { s = sc; }); }
+                    catch (Exception e) { Check(false, label + ": the crash did not stop the scenario as planned: " + e.Message); continue; }
+                    runs++;
+                    if (s == null) continue;
+                    string said = null;
+                    if (recover == "continue") { for (int i = 0; i < 4; i++) { said = Mover(s, null).Continue(new Progress()); if (said == null) break; } }
+                    else { for (int i = 0; i < 3; i++) { said = Mover(s, null).Cancel(); if (said == null || said.Contains("points at the old place")) break; } }
+                    var m = MachineFile.Load(s.Root);
+                    string cur = Layout.From(s.Root, m).DataFolder;
+                    string ledgerPath = null;
+                    foreach (object o in Ledger.Load(s.Root).Items) { var d = (Dictionary<string, object>)o; if (Convert.ToString(d["what"]).Contains("own ComfyUI")) ledgerPath = Convert.ToString(d["path"]); }
+                    bool ok = ledgerPath != null && SafeFs.Norm(ledgerPath) == SafeFs.Norm(Path.Combine(cur, "comfyui"))
+                              && SafeFs.Norm(s.Comfy.EngineAt) == SafeFs.Norm(cur) && Directory.Exists(Path.Combine(cur, "python")) && File.Exists(Path.Combine(cur, "comfyui", ComfyGuard.MarkerName));
+                    Check(ok, label + ": settings " + cur + ", ledger " + ledgerPath + ", engines " + s.Comfy.EngineAt + " must all be one place that holds the files");
+                    var j = MoveRunner.Load(s.Root, cur);
+                    if (recover == "cancel") Check(j == null && SafeFs.Norm(cur) == SafeFs.Norm(s.Data), label + ": cancelled means the old place is in use and the journal is gone (journal " + (j == null ? "gone" : j.State) + ", in use " + cur + ")");
+                    else Check(j == null || j.State == "rebuilt", label + ": continued means finished (journal " + (j == null ? "gone" : j.State) + ")");
+                }
+        }
+        Check(runs > 60, "the crash runs happened (" + runs + ")");
+    }
+
+    // Runs one scenario with a crash after the k-th write (k < 0: no crash, only list the points). `keep` gets the scene.
+    static List<string> RunScenario(string kind, int crashAt, Action<InstallScene> keep)
+    {
+        var s = Movable(); string to = Path.Combine(Tmp("target"), "crash");
+        var rec = new List<string>(); int count = 0; bool armed = false; string stopAt = null;
+        SafeFs.Hook = delegate(string what, string p)
+        {
+            if (what != "move") return;
+            if (!armed) { if (stopAt != null && p == stopAt) throw new StopHere(); return; }
+            rec.Add(p);
+            if (count++ == crashAt) throw new Boom("crash after " + p);
+        };
+        try
+        {
+            if (kind == "forward") { armed = true; Mover(s, null).Start(to, new Progress()); }
+            else if (kind == "undo") { Mover(s, null).Start(to, new Progress()); armed = true; Mover(s, null).Cancel(); }
+            else { stopAt = "journal:verified"; try { Mover(s, null).Start(to, new Progress()); } catch (StopHere) { } stopAt = null; armed = true; Mover(s, null).Cancel(); }
+        }
+        catch (Boom) { }
+        finally { SafeFs.Hook = null; }
+        if (keep != null) keep(s);
+        return rec;
     }
 }

@@ -1513,3 +1513,78 @@ def test_arguments_with_a_trailing_backslash_arrive_whole(box):
     out = subprocess.run(f'"{sys.executable}" -c "import sys;print(sys.argv[1:])" {cmdline}', capture_output=True, text=True, shell=False)
     assert out.stdout.strip() == "['retarget', 'D:\\\\VGAC data\\\\', 'E:\\\\new place\\\\']", out.stdout
     assert p.returncode == 0
+
+
+# --- the sixth review: a drive letter change leaves a ComfyUI that runs, one rule for %NAME% ------------------------------------------
+
+
+def _venv_cfg(box, home: Path) -> None:
+    cfg = box["root"] / ".venv" / "pyvenv.cfg"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(f"home = {home}\nversion = 3.13.1\n", encoding="utf-8")
+
+
+def test_adoption_retargets_the_settings_and_says_the_python_is_stale(box, capsys):
+    install(box)
+    _vgac_data_marker(box, box["data"])
+    _venv_cfg(box, box["data"] / "python" / "cpython-3.13.1-windows-x86_64-none")
+    old = box["data"]
+    new = _rename_data_folder(box)
+    code, out = _cli(["check"], capsys, box)
+    assert out["adoptable"] is True
+    code, out = _cli(["adopt"], capsys, box)
+    assert code == 0 and out["adopted"] is True and out["venv_stale"] is True  # its pyvenv.cfg still names the old place's Python
+    s = config.load_settings(create_library=False)
+    nroot = new / "comfyui"
+    assert Path(s.instances["a"].engine.comfy_dir) == nroot and Path(s.instances["a"].engine.python) == nroot / ".venv" / "Scripts" / "python.exe"
+    assert s.comfy_input_dir == nroot / "input"
+    assert str(old) not in box["machine"].read_text(encoding="utf-8").replace("\\\\", "\\")
+    code, out = _cli(["check"], capsys, box)
+    assert code == 0 and out["venv_stale"] is True  # and `check` keeps saying so until the environment is made again
+    code, out = _cli(["rebuild-venv"], capsys, box)
+    assert code == 0
+    _venv_cfg(box, new / "python" / "cpython-3.13.1-windows-x86_64-none")  # what uv writes for the new place
+    code, out = _cli(["check"], capsys, box)
+    assert out["venv_stale"] is False
+
+
+def test_remove_after_adoption_clears_the_engines(box, capsys):
+    install(box)
+    _vgac_data_marker(box, box["data"])
+    _rename_data_folder(box)
+    _cli(["adopt"], capsys, box)
+    code, out = _cli(["remove", "--models"], capsys, box)
+    assert code == 0 and set(out["engines_cleared"]) == {"a", "b"}
+    s = config.load_settings(create_library=False)
+    assert s.instances["a"].engine is None and s.instances["b"].engine is None
+
+
+def test_a_cut_off_adoption_is_finished_by_the_next_one(box, capsys, monkeypatch):
+    install(box)
+    _vgac_data_marker(box, box["data"])
+    new = _rename_data_folder(box)
+    real = ci._write_ledger
+
+    def boom(items):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(ci, "_write_ledger", boom)
+    code, out = _cli(["adopt"], capsys, box)  # the settings moved, the ledger did not
+    assert code == 1 and not ci._in_ledger(new / "comfyui")
+    monkeypatch.setattr(ci, "_write_ledger", real)
+    code, out = _cli(["adopt"], capsys, box)
+    assert code == 0 and out["adopted"] is True and ci._in_ledger(new / "comfyui")
+    s = config.load_settings(create_library=False)
+    assert Path(s.instances["a"].engine.comfy_dir) == new / "comfyui"
+
+
+def test_percent_rule_never_expands_a_real_folder_or_the_cleaned_families(box, monkeypatch):
+    monkeypatch.setenv("VGAC_SOMETHING", "X:\\nope")
+    monkeypatch.setenv("PYTHONHOME", "X:\\nope2")
+    monkeypatch.setenv("VGACOK", str(box["tmp"] / "ok"))
+    assert ci.expand_percent("%VGAC_SOMETHING%\\big") == "%VGAC_SOMETHING%\\big"
+    assert ci.expand_percent("%PYTHONHOME%\\big") == "%PYTHONHOME%\\big"
+    assert ci.expand_percent("%VGACOK%\\big") == str(box["tmp"] / "ok") + "\\big"
+    real = box["tmp"] / "%VGACOK%"
+    real.mkdir()
+    assert ci.expand_percent(str(real)) == str(real)  # a folder that really has this name is taken as it is

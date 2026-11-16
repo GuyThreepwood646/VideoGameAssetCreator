@@ -17,6 +17,8 @@ public class Boom : Exception { public Boom(string m) : base(m) { } }
 public class StandInComfy : IComfyInstall
 {
     public string Data;                        // the data folder the stand-in "settings" name now
+    public string ProjectRoot;                 // where the settings file and the ledger are (read fresh, as the backend does)
+    public string EngineAt;                    // the place the engine settings point into (what retarget moves)
     public string Problem;                     // what `check` refuses with (null: it confirms)
     public string RetargetError, RebuildError, RemoveError;
     public List<string> KeepRel = new List<string> { "models" };
@@ -27,7 +29,7 @@ public class StandInComfy : IComfyInstall
         Calls.Add("check");
         var st = new ComfyState();
         st.Present = ComfyGuard.MarkerPresent(Root(data));
-        st.Problem = st.Present ? Problem : "There is no ComfyUI of VGAC's here.";
+        st.Problem = st.Present ? (Problem ?? LedgerProblem(data)) : "There is no ComfyUI of VGAC's here.";
         if (st.Present && st.Problem == null) foreach (string k in KeepRel) { string p = Path.Combine(Root(data), k); if (Directory.Exists(p)) st.Keeps.Add(p); }
         return st;
     }
@@ -58,10 +60,32 @@ public class StandInComfy : IComfyInstall
     public Func<bool> Cancelled { get; set; }
     public Action<string> Say { get; set; }
     public void Forget() { }
+    // what the real backend needs: the install is VGAC's by the ledger (the entry names THIS folder)
+    string LedgerProblem(string data)
+    {
+        if (ProjectRoot == null) return null;
+        foreach (object o in Ledger.Load(ProjectRoot).Items)
+        {
+            var d = o as Dictionary<string, object>;
+            if (d != null && Convert.ToString(d.ContainsKey("kind") ? d["kind"] : "") == "added" && SafeFs.Norm(Convert.ToString(d.ContainsKey("path") ? d["path"] : "x")) == SafeFs.Norm(Root(data))) return null;
+        }
+        return "VGAC did not install a ComfyUI in " + Root(data) + " (the ledger names another place).";
+    }
     public string Retarget(string a, string b)
     {
         Calls.Add("retarget"); RetargetArgs.Add(a + " -> " + b);
-        return RetargetArgs.Count >= 2 ? RetargetBackError : RetargetError;
+        string forced = RetargetArgs.Count >= 2 ? RetargetBackError : RetargetError;
+        if (forced != null) return forced;
+        if (ProjectRoot != null)
+        {
+            // like the real command: the settings must already name the new place, and the ledger must name it too
+            if (SafeFs.Norm(Layout.From(ProjectRoot, MachineFile.Load(ProjectRoot)).DataFolder) != SafeFs.Norm(b)) return "The settings do not name " + b + " as the data folder, so nothing was changed.";
+            string why = LedgerProblem(b); if (why != null) return why;
+        }
+        SafeFs.Point("move", "comfy-before-retarget");
+        if (EngineAt != null && SafeFs.Norm(EngineAt) == SafeFs.Norm(a)) EngineAt = b;
+        SafeFs.Point("move", "comfy-after-retarget");
+        return null;
     }
     public string RebuildVenv(string b) { Calls.Add("rebuild"); return RebuildError; }
 }
@@ -597,7 +621,7 @@ public static partial class T
         // VGAC's own ComfyUI: owned pieces and the person's things inside it
         string c = Path.Combine(s.Data, "comfyui");
         Put(Path.Combine(c, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
-        s.Comfy.Data = s.Data;
+        s.Comfy.Data = s.Data; s.Comfy.ProjectRoot = s.Root; s.Comfy.EngineAt = s.Data;
         Put(Path.Combine(c, "main.py"), "m"); Put(Path.Combine(c, ".venv", "pyvenv.cfg"), "v"); Put(Path.Combine(c, "custom_nodes", "vgac-nodes", "n.py"), "n"); Put(Path.Combine(c, "logs", "l.txt"), "l");
         Put(Path.Combine(c, "models", "mine.safetensors"), "the person's own model"); Put(Path.Combine(c, "output", "out.png"), "their picture");
         Put(Path.Combine(c, "custom_nodes", "their-node", "t.py"), "theirs");
@@ -729,7 +753,7 @@ public static partial class T
         Check(count(again) > 0 && count(again) <= count(plan), "the next plan lists what is left, including the half-deleted folder (" + count(again) + " of " + count(plan) + ")");
         Check(again.Get("tools").Items.Any(i => i.Path == s.L.Venv), "the half-deleted Python folder is still listed although it no longer looks like itself");
         var res = RemovalRunner.Run(again, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
-        Check(res.Complete, "the second run finishes");
+        Check(res.Complete, "the second run finishes: " + string.Join(" | ", res.Skipped.ToArray()) + " / " + string.Join(" | ", res.Locked.ToArray()));
         Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir), "everything ticked is gone");
         Check(!File.Exists(RemovalRunner.JournalPath(s.Root)), "and the journal is removed");
         // a locked file: skipped and reported, the rest goes, and a later run finishes
