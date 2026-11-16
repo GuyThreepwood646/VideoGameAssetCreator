@@ -229,8 +229,8 @@ public static partial class T
             if (!restart && !call.Contains("MaintenanceDefaults.")) { bad++; Console.WriteLine("  a yes/no box without a default: " + call.Substring(0, Math.Min(90, call.Length))); }
         }
         Check(total >= 6 && bad == 0, "every yes/no question about changing things names its default (" + total + " boxes, " + bad + " without)");
-        Check(Regex.Matches(text, @"MessageBoxDefaultButton \w+ = MessageBoxDefaultButton\.Button2;").Count == 5 && !text.Contains("= MessageBoxDefaultButton.Button1"), "and each of those defaults is the second button, No");
-        foreach (string name in new[] { "AbandonMove", "RestartAfterMove", "Adopt", "PermanentDelete", "RunSteps" })
+        Check(Regex.Matches(text, @"MessageBoxDefaultButton \w+ = MessageBoxDefaultButton\.Button2;").Count == 6 && !text.Contains("= MessageBoxDefaultButton.Button1"), "and each of those defaults is the second button, No");
+        foreach (string name in new[] { "AbandonMove", "FinishAnyway", "RestartAfterMove", "Adopt", "PermanentDelete", "RunSteps" })
             Check(text.Contains("MessageBoxDefaultButton " + name + " = MessageBoxDefaultButton.Button2;"), name + " defaults to No");
     }
 

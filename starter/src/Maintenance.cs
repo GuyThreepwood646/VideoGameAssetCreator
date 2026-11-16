@@ -17,6 +17,7 @@ namespace Vgac.Starter
     public static class MaintenanceDefaults
     {
         public const MessageBoxDefaultButton Adopt = MessageBoxDefaultButton.Button2;
+        public const MessageBoxDefaultButton FinishAnyway = MessageBoxDefaultButton.Button2;
         public const MessageBoxDefaultButton AbandonMove = MessageBoxDefaultButton.Button2;
         public const MessageBoxDefaultButton RestartAfterMove = MessageBoxDefaultButton.Button2;
         public const MessageBoxDefaultButton PermanentDelete = MessageBoxDefaultButton.Button2;
@@ -63,6 +64,9 @@ namespace Vgac.Starter
             tabs.TabPages.Add(UpdateTab());
             tabs.TabPages.Add(MoveTab());
             tabs.TabPages.Add(RemoveTab());
+            Shown += delegate { if (moveDetails != null) RefreshMove(moveDetails); };
+            Activated += delegate { if (!busy && moveDetails != null) ApplyMoveLock(); };
+            ApplyMoveLock();
             FormClosing += delegate(object s, FormClosingEventArgs e) { if (busy) { e.Cancel = true; MessageBox.Show(this, "Something is still running. Wait for it to finish.", "VGAC"); } };
         }
 
@@ -271,7 +275,8 @@ namespace Vgac.Starter
 
         TextBox moveTo;
         Label moveInfo;
-        Button moveGo, moveCont, moveAbandon, moveRestart, moveChoose;
+        Button moveGo, moveCont, moveAbandon, moveRestart, moveChoose, moveForce;
+        Label moveDetails;
 
         TabPage MoveTab()
         {
@@ -282,14 +287,16 @@ namespace Vgac.Starter
             moveGo = Btn("Copy, check, then switch", 12, 170, 220);
             moveCont = Btn("Continue an interrupted move", 242, 170, 220);
             moveAbandon = Btn("Abandon it", 472, 170, 100);
+            moveForce = Btn("Finish anyway (without ComfyUI)", 242, 210, 260); moveForce.Visible = false;
             moveRestart = Btn("Restart VGAC now", 12, 170, 220); moveRestart.Visible = false;
-            var details = Info("", 12, 215, 700, 260);
+            var details = Info("", 12, 255, 700, 220); moveDetails = details;
             moveChoose.Click += delegate { using (var d = new FolderBrowserDialog()) { d.Description = "Choose an empty folder for the big files."; if (d.ShowDialog(this) == DialogResult.OK) moveTo.Text = d.SelectedPath; } };
             moveGo.Click += delegate { DoMoveStart(details); };
             moveCont.Click += delegate { DoMoveContinue(details); };
             moveAbandon.Click += delegate { DoMoveAbandon(details); };
             moveRestart.Click += delegate { host.RestartVgac(); };
-            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, moveChoose, moveGo, moveCont, moveAbandon, moveRestart, details });
+            moveForce.Click += delegate { DoMoveForce(details); };
+            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, moveChoose, moveGo, moveCont, moveAbandon, moveForce, moveRestart, details });
             tab.Enter += delegate { RefreshMove(details); };
             return tab;
         }
@@ -299,20 +306,30 @@ namespace Vgac.Starter
             return new MoveRunner(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, host.Procs, host.Log);
         }
 
-        // After a switch the whole window is locked except the Restart button. Read from the files each time.
-        void ApplyRestartLock()
+        // The same rule as in the code that changes things (MoveGate): while a move is unfinished, or has switched and VGAC is not restarted,
+        // only the Move tab works, and on it only what fits (Continue, Finish anyway, Abandon, or Restart). Applied when the window is made,
+        // every time it is shown again, and after every step: reopening Maintenance from the tray never gives working tabs.
+        public bool Locked { get { return MoveGate.Blocking(host.Lay.ProjectRoot) != null; } }
+
+        void ApplyMoveLock()
         {
-            bool pending = MoveRules.RestartPending(host.Lay.ProjectRoot);
-            for (int i = 0; i < tabs.TabPages.Count; i++) tabs.TabPages[i].Enabled = !pending || tabs.TabPages[i].Text == "Move the big files";
-            if (pending) tabs.SelectedIndex = 2;
-            moveGo.Visible = moveCont.Visible = moveAbandon.Visible = moveTo.Visible = moveChoose.Visible = !pending;
+            string root = host.Lay.ProjectRoot;
+            bool pending = MoveRules.RestartPending(root);
+            MoveJournal j = pending ? null : MoveRunner.Load(root, host.Lay.DataFolder);
+            bool locked = pending || j != null;
+            for (int i = 0; i < tabs.TabPages.Count; i++) tabs.TabPages[i].Enabled = !locked || tabs.TabPages[i].Text == "Move the big files";
+            if (locked) tabs.SelectedIndex = 2;
+            moveGo.Visible = moveTo.Visible = moveChoose.Visible = !locked;
+            moveCont.Visible = j != null;
+            moveAbandon.Visible = j != null && j.State == "copying";
+            moveForce.Visible = j != null && j.State == "switching";
             moveRestart.Visible = pending;
         }
 
         void RefreshMove(Label details)
         {
             string root = host.Lay.ProjectRoot;
-            ApplyRestartLock();
+            ApplyMoveLock();
             if (MoveRules.RestartPending(root))
             {
                 string to = "the new folder", old = null;
@@ -322,16 +339,14 @@ namespace Vgac.Starter
                 return;
             }
             var j = MoveRunner.Load(root, host.Lay.DataFolder);
-            long need = Mover().NeedBytes();
             if (j == null)
-                moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "   (" + RemovalSummary.Size(need) + ")\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it, and it has to be restarted. The old folder is left as it is. Until the switch the old place is untouched and in use.";
+                moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it, and it has to be restarted. The old folder is left as it is. Until the switch the old place is untouched and in use.";
             else if (j.State == "switching")
-                moveInfo.Text = "A move to " + j.To + " has copied and checked everything and is part way through switching. Press Continue to finish it.";
+                moveInfo.Text = "A move to " + j.To + " is part way through switching. Nothing else runs until it is finished. Press Continue to finish it (everything is checked again first). If VGAC's own ComfyUI keeps refusing, 'Finish anyway' ends the move WITHOUT moving ComfyUI: it then keeps running from the old folder, which you must keep.";
             else
-                moveInfo.Text = "A move to " + j.To + " was interrupted while copying. Continue it, or abandon it (abandoning forgets the move only; what was copied stays in " + j.To + ").";
+                moveInfo.Text = "A move to " + j.To + " was interrupted while copying. Nothing else runs until it is continued or abandoned. Continue it, or abandon it (abandoning forgets the move only; what was copied stays in " + j.To + ").";
             details.Text = MoveRunner.StaleFound ? "An old record of a move did not fit this install and was ignored." : "";
-            moveAbandon.Enabled = j != null && j.State == "copying";
-            moveCont.Enabled = j != null;
+
         }
 
         void DoMoveStart(Label details)
@@ -361,7 +376,15 @@ namespace Vgac.Starter
                 // switched: the app is NOT started again (it would run on the old place); only a restart uses the new one
                 if (MessageBox.Show(this, "The big files are now in the new folder. VGAC has to restart to use them.\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RestartAfterMove) == DialogResult.Yes) host.RestartVgac();
             }
-            else { details.Text = result; host.Resume(); }
+            else details.Text = result;       // nothing is resumed: the app does not run while a move is unfinished
+        }
+
+        void DoMoveForce(Label details)
+        {
+            if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
+            if (MessageBox.Show(this, "Finish the move without moving VGAC's own ComfyUI?\r\n\r\nIt keeps running from the old folder, which you must then keep. Everything else is already in the new folder.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.FinishAnyway) != DialogResult.Yes) return;
+            string result = null;
+            Run(delegate { result = Mover().ContinueAnyway(ProgressToStatus()); Say(result ?? "The move is finished."); }, delegate { MoveDone(details, result); });
         }
 
         void DoMoveAbandon(Label details)
@@ -370,6 +393,7 @@ namespace Vgac.Starter
             if (MessageBox.Show(this, "Abandon the move? Nothing is deleted: what was copied stays in the new folder for you to delete by hand, and the old place is not changed.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.AbandonMove) != DialogResult.Yes) return;
             details.Text = Mover().Abandon();
             RefreshMove(details);
+            if (MoveGate.Blocking(host.Lay.ProjectRoot) == null && MessageBox.Show(this, "The move was abandoned. VGAC has to be started again to run on the old place.\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RestartAfterMove) == DialogResult.Yes) host.RestartVgac();
         }
 
         // ---- remove -----------------------------------------------------------------------------------------------------------

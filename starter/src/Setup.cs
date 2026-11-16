@@ -285,6 +285,11 @@ namespace Vgac.Starter
             // not only when it was chosen: a setting from an earlier version, or one edited by hand, can name a drive root or a shared
             // place, or a folder full of somebody's files. A new or empty folder is claimed here, BEFORE any step puts anything in it,
             // so an interrupted setup can always be continued. Anything else stops here (NotClaimedError) and nothing is changed.
+            string gateWhy = MoveGate.Blocking(l.ProjectRoot);
+            if (gateWhy != null) throw new StarterError(gateWhy, "Nothing was changed.");
+            // a folder the person chose (not the default inside the project) must not lie under a link either
+            if (!Planner.SamePath(l.DataFolder, Layout.DefaultDataFolder(l.ProjectRoot)) && MoveRules.LinkInPath(l.DataFolder))
+                throw new StarterError("The folder for the big files (" + l.DataFolder + ") is, or lies under, a link, so VGAC will not set up in it.", "Choose a real folder (Choose another folder).");
             bool existed = Directory.Exists(l.DataFolder);
             DataFolders.Claim(l.DataFolder, machine, l.ProjectRoot);
             if (!existed) ledger.Add("The folder for the big files", l.DataFolder, "folder", 0);   // removed later only if nothing but the marker is left

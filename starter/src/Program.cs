@@ -447,7 +447,7 @@ namespace Vgac.Starter
             {
                 d.Description = "Choose a folder just for VGAC's big files (Python, tools; later the models). Pick a drive with room.";
                 if (d.ShowDialog(this) != DialogResult.OK) return;
-                string unfit = Proof.DataFolderProblem(d.SelectedPath, root);
+                string unfit = Proof.DataFolderProblem(d.SelectedPath, root) ?? (MoveRules.LinkInPath(d.SelectedPath) ? "That folder is, or lies under, a link (a junction or a mapped folder). Choose a real folder." : null);
                 if (unfit != null) { MessageBox.Show(this, unfit, "VGAC"); return; }
                 try
                 {
