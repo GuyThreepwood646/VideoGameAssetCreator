@@ -345,23 +345,11 @@ def pack_present(app_dir: Path, pack: dict[str, Any]) -> str:
     return ""
 
 
-def left_out(c: dict[str, Any]) -> dict[str, str]:
-    """Packs VGAC's own install leaves out on purpose (pack id -> plain reason); empty for anyone else's ComfyUI."""
-    from .comfy_install import MARKER, MADE_BY
-
-    try:
-        mine = json.loads((Path(c["folder"]) / MARKER).read_text(encoding="utf-8")).get("made_by") == MADE_BY
-    except (OSError, ValueError, AttributeError):
-        mine = False
-    return {str(k): str(v) for k, v in ((downloader.catalogue().get("comfyui_install") or {}).get("left_out") or {}).items()} if mine else {}
-
-
 def packs_state(c: dict[str, Any]) -> list[dict[str, Any]]:
     app = (Path(c["folder"]) / c["main"]).parent
-    out = left_out(c)
     return [{"id": p["id"], "name": p.get("name", p["id"]), "what": p.get("what", ""), "licence": p.get("licence", ""),
-             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", ""),
-             "left_out": out.get(p["id"], "")} for p in pack_list()]
+             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", "")}
+            for p in pack_list()]
 
 
 def pack_cache(pack: dict[str, Any]) -> Path:
@@ -441,13 +429,9 @@ def packs_report(c: dict[str, Any], opener: Callable[[str, int], Any] | None = N
     py = Path(c["python"]) if c.get("python") else None
     out = []
     all_req: list[str] = []
-    skip = left_out(c)
     for p in pack_list():
         present = bool(pack_present((Path(c["folder"]) / c["main"]).parent, p))
-        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present, "left_out": skip.get(p["id"], "")}
-        if p["id"] in skip and not present:
-            out.append(item)
-            continue
+        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present}
         if not present:
             z = fetch_pack(p, opener)
             req = pack_requirements(p, z)
@@ -455,7 +439,7 @@ def packs_report(c: dict[str, Any], opener: Callable[[str, int], Any] | None = N
             all_req.append(req)
         out.append(item)
     combined = "\n".join(all_req)
-    report = dry_run(py, combined, pip) if py and any(not i["present"] and not i["left_out"] for i in out) else {"checked": True, "adds": [], "changes": [], "note": "Nothing to add."}
+    report = dry_run(py, combined, pip) if py and any(not i["present"] for i in out) else {"checked": True, "adds": [], "changes": [], "note": "Nothing to add."}
     return {"packs": out, "python": report}
 
 
@@ -469,9 +453,8 @@ def apply_packs(c: dict[str, Any], opener: Callable[[str, int], Any] | None = No
         raise DownloadError("no_python", "The Python of this ComfyUI was not found, so nothing was installed.", "Check the ComfyUI in the list again.")
     runner = pip or _real_pip
     added: list[str] = []
-    skip = left_out(c)
     for p in pack_list():
-        if pack_present(app, p) or p["id"] in skip:
+        if pack_present(app, p):
             continue
         target = app / "custom_nodes" / str(p.get("folder") or p["id"])
         if target.exists():

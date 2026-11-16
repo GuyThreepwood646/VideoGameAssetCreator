@@ -76,10 +76,8 @@ def test_graph_nodes_cover_every_stage_and_the_custom_nodes():
     assert {"Trellis2ShapeStage", "BakeTextureFromVoxel", "BakeNormalMapFromMesh", "UnwrapMesh"} <= set(trellis["classes"])
     hy3d = next(u for u in uses if u["stage"] == "mesh" and not u["required"])
     assert "Hunyuan3Dv2ConditioningMultiView" in hy3d["classes"]
-    pixel = next(u for u in uses if "pixel" in u["what"])
-    assert "PixelArtDetectorToImage" in pixel["classes"] and not pixel["required"]
     zturbo = next(u for u in uses if u["what"] == "the Z-Image Turbo image model")
-    assert "PixelArtDetectorToImage" not in zturbo["classes"] and zturbo["required"]
+    assert "Hunyuan3Dv2ConditioningMultiView" not in zturbo["classes"] and zturbo["required"]
 
 
 def test_combo_choices_and_has_file_in_both_forms():
@@ -132,15 +130,15 @@ def test_model_and_lora_rows_name_their_list_entry_and_the_file_in_use_for_the_s
 
 def test_missing_nodes_and_models_fail_or_warn(settings):
     files = [f for f in all_model_files() if "qwen-image-edit-2511-multiple-angles" not in f and "Chroma1-HD" not in f]
-    client = NodeClient("http://127.0.0.1:10", DEV_3080, missing={"SkinTokenRigTrimesh", "PixelArtDetectorToImage"}, files=files)
+    client = NodeClient("http://127.0.0.1:10", DEV_3080, missing={"SkinTokenRigTrimesh", "T5TokenizerOptions"}, files=files)
     items = asyncio.run(preflight.check_instance(settings, "b", client, set()))
     ids = by_id(items)
     rig = next(i for i in items if i["id"].startswith("nodes.b.rig"))
     assert rig["state"] == "fail" and rig["needed_for"] == ["rig"]
     assert "missing 1 part needed for rigging (SkinToken), so rigging cannot run" in rig["detail"]
     assert rig["technical"].endswith("missing: SkinTokenRigTrimesh")
-    pixel = next(i for i in items if "pixel art image model" in i["label"])
-    assert pixel["state"] == "warn" and "still works with the other choices" in pixel["detail"]
+    chroma = next(i for i in items if "Chroma image model" in i["label"])
+    assert chroma["state"] == "warn" and "still works with the other choices" in chroma["detail"]
     assert ids["model.b.qwen_angles_lora"]["state"] == "fail"
     assert "Download qwen-image-edit-2511-multiple-angles-lora.safetensors" in ids["model.b.qwen_angles_lora"]["fix"]
     assert ids["model.b.chroma"]["state"] == "warn"

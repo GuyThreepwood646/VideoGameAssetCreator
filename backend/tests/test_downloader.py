@@ -115,12 +115,12 @@ ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comf
     "Comfy-Org/BiRefNet", "Comfy-Org/Chroma1-HD", "Comfy-Org/Qwen-Image-Edit_ComfyUI", "Comfy-Org/Qwen-Image_ComfyUI", "Comfy-Org/TRELLIS.2",
     "Comfy-Org/flux2-klein-4b", "Comfy-Org/ltx-2", "Comfy-Org/mediapipe", "Comfy-Org/z_image_turbo", "Comfy-Org/z_image",
     "Phips/4xRealWebPhoto_v4_dat2", "VAST-AI/SkinTokens", "artificialguybr/3DRenderStyle-REDMOND-ZIMAGE",
-    "artificialguybr/ClayAnimation-Redmond-ZIMAGE", "artificialguybr/PIXELART-REDMOND-ZIMAGETURBO", "artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
+    "artificialguybr/ClayAnimation-Redmond-ZIMAGE", "artificialguybr/PS1Graphics-Redmond-ZimageTURBO",
     "berkerdooo/qwen-image-edit-2511-camera-angle-lora", "black-forest-labs/FLUX.2-klein-4b-fp8", "circlestone-labs/Anima",
     "comfyanonymous/flux_text_encoders", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", "lightx2v/Qwen-Image-Edit-2511-Lightning",
-    "tarn59/character_turnaround_sheet_qwen_edit_2511", "tarn59/pixel_art_style_lora_z_image_turbo", "tencent/Hunyuan3D-2mv",
+    "tarn59/character_turnaround_sheet_qwen_edit_2511", "tencent/Hunyuan3D-2mv",
 }
-ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "dimtoneff/ComfyUI-PixelArt-Detector", "Comfy-Org/ComfyUI"}
+ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "Comfy-Org/ComfyUI"}
 
 
 def test_every_address_in_the_shipped_list_is_on_an_allowed_host():

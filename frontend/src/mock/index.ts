@@ -439,7 +439,6 @@ on('GET', '/api/models', () => [
   { id: 'zbase', label: 'Z-Image Base', description: 'higher quality, slower', default_steps: 30, licence: 'Apache-2.0' },
   { id: 'klein', label: 'FLUX.2 Klein 4B', description: 'quick drafts', default_steps: 4, licence: 'Apache-2.0' },
   { id: 'anima', label: 'Anima Turbo', description: 'anime line art', default_steps: 10, licence: 'outputs commercial' },
-  { id: 'pixel', label: 'Z-Image Pixel Art', description: 'pixel art', default_steps: 8, licence: 'Apache-2.0' },
   { id: 'chroma', label: 'Chroma1-HD', description: 'loose painterly', default_steps: 30, licence: 'Apache-2.0' },
 ])
 on('GET', '/api/style-presets', () => lookPresets)
@@ -450,13 +449,12 @@ on('GET', '/api/suggest', (_m, _b, query) => {
   const platform = query.get('platform') ?? 'pc_mid'
   const preset = styles.find((s) => s.id === style) ?? styles[0]
   const model = preset.model
-  const labels: Record<string, string> = { zturbo: 'Z-Image Turbo', zbase: 'Z-Image Base', klein: 'FLUX.2 Klein 4B', anima: 'Anima Turbo', pixel: 'Z-Image Pixel Art', chroma: 'Chroma1-HD' }
+  const labels: Record<string, string> = { zturbo: 'Z-Image Turbo', zbase: 'Z-Image Base', klein: 'FLUX.2 Klein 4B', anima: 'Anima Turbo', chroma: 'Chroma1-HD' }
   const reasons: Record<string, string> = {
     zturbo: 'it gives the fastest painted look',
     zbase: 'it gives the highest quality for a realistic look',
     klein: 'it is quickest for drafts and toon looks',
     anima: 'it draws clean anime line art',
-    pixel: 'it draws crisp pixel art',
     chroma: 'it gives a loose painterly look',
   }
   const cat = categories.find((c) => c.id === category)
@@ -1245,7 +1243,6 @@ const MOCK_PAINTERS = [
   { id: 'zbase', label: 'Z-Image Base' },
   { id: 'klein', label: 'FLUX.2 Klein 4B' },
   { id: 'anima', label: 'Anima Turbo' },
-  { id: 'pixel', label: 'Z-Image Pixel Art' },
   { id: 'chroma', label: 'Chroma1-HD' },
 ]
 const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
@@ -1309,7 +1306,6 @@ on('POST', '/api/my-addons', (_m, body) => {
     strengths: { ...MOCK_ADDON_STRENGTHS },
     default_strength: strength,
     required: false,
-    required_for: [],
     trigger: String(body.trigger ?? ''),
     licence: 'Your own file: not checked by the app. You are responsible for being allowed to use it in your game.',
     source: String(body.source ?? ''),

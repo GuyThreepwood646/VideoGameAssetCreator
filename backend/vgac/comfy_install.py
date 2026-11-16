@@ -10,7 +10,7 @@ What it installs, in order (docs/INSTALLER-PLAN.md B3; setup/downloads.json "com
 3. wheels    every Python package in setup/comfyui-lock.json, through the shared downloader (resume, SHA-256).
 4. venv      `uv venv` from the app's private Python 3.13 (made by VGAC.exe), offline.
 5. packages  `uv pip install --offline --no-index --find-links <wheels> --require-hashes --no-deps --only-binary :all:`.
-6. packs     ComfyUI-SkinToken (pinned zip) and vgac-nodes (this project). The PixelArt pack is left out on purpose.
+6. packs     ComfyUI-SkinToken (pinned zip) and vgac-nodes (this project).
 7. test      its Python imports torch and sees the card; `main.py --quick-test-for-ci` loads every node and exits.
 8. engines   one engine per card of the hardware plan, on free ports from 8288 up, written to the machine settings.
 
@@ -1000,11 +1000,10 @@ def offer() -> dict[str, Any]:
     e = entry()
     root = install_root()
     total = sum(int(w.get("size") or 0) for w in lock())
-    left_out = e.get("left_out") or {}
     return {"version": e.get("version", ""), "goes_to": str(root), "hosts": ["github.com", "download.pytorch.org", "files.pythonhosted.org"],
             "download_bytes": total + _zip_bytes(e), "needs_bytes": space_needed(root),
             "licence": e.get("licence", ""), "needs_admin": False, "ready": not pins_missing(), "missing": pins_missing(),
-            "left_out": [str(v) for v in left_out.values()], "status": status()}
+            "status": status()}
 
 
 # --- removing ------------------------------------------------------------------------------------------------------------

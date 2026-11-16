@@ -1,5 +1,5 @@
 {
- "_comment": "The Python packages of VGAC's own ComfyUI, one exact wheel each for CPython 3.13 on 64-bit Windows. Versions are the ones the owner's working engine runs (ComfyUI 0.45.3, Python 3.13.12, torch 2.12.1+cu130, SkinToken), cut to the closure of ComfyUI 0.45.3's requirements.txt and ComfyUI-SkinToken's (the PixelArt pack is left out: pyclustering has no wheel). Sizes and SHA-256 were read from PyPI's JSON API and from the PyTorch cu130 index page on 2026-11-15; no file was downloaded to make this list. Every wheel is fetched by the app's downloader and checked against its SHA-256, then installed offline by uv with --require-hashes --no-deps.",
+ "_comment": "The Python packages of VGAC's own ComfyUI, one exact wheel each for CPython 3.13 on 64-bit Windows. Versions are the ones the owner's working engine runs (ComfyUI 0.45.3, Python 3.13.12, torch 2.12.1+cu130, SkinToken), cut to the closure of ComfyUI 0.45.3's requirements.txt and ComfyUI-SkinToken's. Sizes and SHA-256 were read from PyPI's JSON API and from the PyTorch cu130 index page on 2026-11-15; no file was downloaded to make this list. Every wheel is fetched by the app's downloader and checked against its SHA-256, then installed offline by uv with --require-hashes --no-deps.",
  "verified": "2026-11-15",
  "python": "3.13",
  "platform": "win_amd64",

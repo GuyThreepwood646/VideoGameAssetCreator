@@ -7,6 +7,7 @@ import json
 from sqlalchemy import text
 
 from vgac import db, reference
+from test_api import client, fake_execute  # noqa: F401  (fixtures)
 
 OLD_LOOK_IDS = {"painted_fantasy": "painted", "clean_cartoon": "cel", "realistic": "realistic_pbr", "clay_toy": "clay"}
 OLD_STYLE_IDS = {"painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
@@ -84,3 +85,25 @@ def test_a_removed_look_opens_as_a_custom_look_and_an_earlier_backup_is_kept(set
     assert lock["prompt_block"] == "Pixel art style." and style == "painted"
     assert earlier.read_bytes() == b"an earlier copy"
     assert len(list(settings.db_path.parent.glob(settings.db_path.name + ".before-looks-merge-*"))) == 1
+
+
+def test_a_project_whose_lock_names_the_removed_pixel_painter_still_opens(client):
+    """The two migrated ex-pixel projects keep the pixel painter in their lock (preset None, based on Painted). The
+    painter is gone from models.yaml: the project, its assets and the suggestion still answer; only a write that sends
+    that lock again is refused with a plain reason, as for any unknown painter."""
+    from vgac.db import Asset, Project, session_factory
+
+    with session_factory()() as s:
+        s.add(Project(id="p-px", name="old pixel", style_lock={"preset": None, "based_on": "painted", "model": "pixel",
+                                                              "prompt_block": "Pixel art style.", "loras": [], "palette": [], "negative": ""}))
+        s.flush()
+        s.add(Asset(id="a-px", project_id="p-px", name="guard", category="humanoid", style_preset="painted", prompt="a guard"))
+        s.commit()
+    assert client.get("/api/projects/p-px").json()["style_lock"]["model"] == "pixel"
+    assert [a["id"] for a in client.get("/api/projects/p-px/assets").json()] == ["a-px"]
+    assert client.get("/api/assets/a-px").status_code == 200
+    assert client.get("/api/suggest", params={"category": "humanoid", "style": "painted", "platform": "pc_mid"}).status_code == 200
+    assert client.put("/api/projects/p-px", json={"name": "renamed"}).status_code == 200
+    r = client.put("/api/projects/p-px", json={"style_lock": client.get("/api/projects/p-px").json()["style_lock"]})
+    assert r.status_code == 400 and "style_lock.model must be one of" in r.json()["detail"]
+

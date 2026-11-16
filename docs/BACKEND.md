@@ -49,7 +49,7 @@ Lineage: a stage finds its inputs with `sc.lineage_file(key, stages)`, which wal
 
 | Stage | Instance | Engine | Files | Metrics |
 |---|---|---|---|---|
-| concept | b | Z-Image Turbo default; zbase, klein, anima, pixel, chroma by style or style lock; BiRefNet cutout. Refine: Qwen-Image-Edit-2511 instruction edit, optional mask | `image`, `cutout`, `cutout_white` | seed, model, cutout bbox stats |
+| concept | b | Z-Image Turbo default; zbase, klein, anima, chroma by style or style lock; BiRefNet cutout. Refine: Qwen-Image-Edit-2511 instruction edit, optional mask | `image`, `cutout`, `cutout_white` | seed, model, cutout bbox stats |
 | turnaround | b (+ a second card lent for the other side) | Qwen-Image-Edit-2511 + angles LoRA (turn_method standard), the turnaround sheet LoRA (sheet) or the camera-angle LoRA (shadow_free), cutout per view | `<view>` (raw), `<view>_cutout`, `<view>_white`, `sheet` (sheet only), bald-copy files for library hair | `views{view: {height_ratio, hist_dist, mirror_iou, rerolls, passed, checks, method}}`, `views_passed`, `views_total`, `turn_method`, `sheet{seed, figures, split}` |
 | mesh | a (+host) | TRELLIS.2 full chain to the budget; hy3d alternative; silhouette audit | `glb`, `base_color`, `metallic`, `roughness`, `normal`, `ao`, `input`, `preview`, `sheet` | triangles, `silhouette_iou`, `views{view: {silhouette_iou}}`, checks |
 | prep | host | Blender prep, then the picture projection, face and hair passes and the library hairstyle fit | `glb`, `report`, texture maps, face and hair before-and-after pictures, hair files | triangles, manifold counts, dims, `face_detail`, `hair_detail`, checks |

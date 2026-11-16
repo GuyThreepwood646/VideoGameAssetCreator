@@ -59,8 +59,8 @@ def test_only_the_earlier_files_present_turbo_becomes_the_all_in_one_checkpoint_
     # only the bf16 one is there: that one
     only_bf16, _ = zf.adapt(g, [], [OLD_BF16])
     assert only_bf16["1"]["inputs"]["ckpt_name"] == OLD_BF16
-    # the same for the pixel route and the material route, which share the loaders
-    for other in (concept.pixel_graph("a coin", 3, "p"), material.t2i_graph("rust", 3, 512, "m")):
+    # the same for the material route, which shares the loaders
+    for other in (material.t2i_graph("rust", 3, 512, "m"),):
         folded, _ = zf.adapt(other, [], [OLD_AIO])
         assert folded["1"]["class_type"] == "CheckpointLoaderSimple" and "1c" not in folded
         assert not any(isinstance(v, list) and v[0] in ("1c", "1v") for n in folded.values() for v in n["inputs"].values())

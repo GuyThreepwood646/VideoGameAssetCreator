@@ -39,9 +39,8 @@ strong (remove_light, vgac/lightfix.py; the colour before is kept as base_color_
 Recipes (reference.recipe): the shading is the recipe's (flat for low-poly: every face its own flat normal), unless
 the shading knob chooses; the triangle limit is the recipe's target (the platform budget when the mesh version chose
 a larger count). The texture pass then gives the maps the recipe's look: no normal map when the look has no surface
-bumps; every map shrunk to the recipe's texture size (whole pixels, nearest neighbour, for crisp looks; an even box
-average otherwise); for crisp looks the base colour limited to the project palette (style lock colours) or to the
-recipe's number of colours, the original kept as base_color_original; and the prep GLB sampled nearest-neighbour.
+bumps; every map shrunk to the recipe's texture size (an even box average), the original base colour kept as
+base_color_original.
 The look_applied check says in plain words what the recipe did and whether the shipped files match it.
 
 More triangles on the head (vgac/headtris.py, blender/headweight.py): when the 3D model was built over the budget on
@@ -287,7 +286,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     if maps.get("base_color"):
         sc.progress(0.7, "Checking the textures")
         bake_glb = src if not rebaked else out
-        look = texture_look(rec, (sc.project.style_lock or {}).get("palette"))
+        look = texture_look(rec)
         # A look that paints at a larger size than it ships (Retro 64: recipe mesh.bake_texture) keeps the bake size
         # through the painting and is shrunk to its size at the end (ship_late); every other look as before.
         late_cap = late_cap_of(rec, look, tex)
@@ -713,23 +712,10 @@ def prep_triangle_limit(rec: dict[str, Any], mesh_params: dict[str, Any] | None,
     return {"limit": platform, "source": "platform"}
 
 
-MIN_TEXTURE_PALETTE = 16
-
-
-def texture_look(rec: dict[str, Any], palette: Any = None) -> dict[str, Any]:
-    """What texture_pass does to the maps for the recipe: {cap, crisp, pixel_snap, palette (rgb list or None),
-    palette_colors, normal_map, look}. The style lock's palette is the texture palette for crisp looks only."""
-    m, srf = rec.get("mesh") or {}, rec.get("surface") or {}
-    crisp = srf.get("texture_filter") == "crisp"
-    pal = imaging.parse_palette(palette) if crisp else []
-    # A handful of project colours guides the picture; forced onto the textures it repaints the model (an 8-colour
-    # preset turned the goblin's skin purple). Only a palette with enough colours to hold skin, cloth and metal is used
-    # as the texture palette; a smaller one stays a prompt hint and the textures keep their own limited colours.
-    if len(pal) < MIN_TEXTURE_PALETTE:
-        pal = []
-    return {"cap": m.get("texture"), "crisp": crisp, "pixel_snap": bool(srf.get("pixel_snap", crisp)),
-            "palette": pal or None, "palette_colors": srf.get("palette_colors") if crisp else None,
-            "normal_map": bool(m.get("normal_map", True)), "style": rec.get("style")}
+def texture_look(rec: dict[str, Any]) -> dict[str, Any]:
+    """What texture_pass does to the maps for the recipe: {cap, normal_map, style}."""
+    m = rec.get("mesh") or {}
+    return {"cap": m.get("texture"), "normal_map": bool(m.get("normal_map", True)), "style": rec.get("style")}
 
 
 def texture_size_of(maps: dict[str, Path], mesh_params: dict[str, Any], budget_texture: int | None) -> int:
@@ -750,9 +736,8 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     metallic toward 0 or 1; always, roughness up to 0.04. Changed maps are written to out_dir; a changed base colour
     keeps the previous one as base_color_original.png. With fill (maps re-baked in Blender, black past the bake
     margin), each map is first grown into the empty space and the far space filled (imaging.fill_empty), in place.
-    With look (texture_look: the recipe), last: maps shrunk to look.cap, the base colour limited to the palette for
-    crisp looks, the normal map dropped when the look has none, and the GLB sampled nearest-neighbour for crisp looks;
-    the layout measures above stay those of the bake size.
+    With look (texture_look: the recipe), last: maps shrunk to look.cap and the normal map dropped when the look has
+    none; the layout measures above stay those of the bake size.
     Returns {metrics, files: {key: path}}."""
     t0 = time.time()
     metrics: dict[str, Any] = {}
@@ -820,10 +805,10 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     mr_size = None
     if look:
         look_metrics, mr_size = apply_look(look, uvf, maps, files, new_base, size, out_dir)
-    if files or (look and (look.get("crisp") or not look.get("normal_map", True))):
+    if files or (look and not look.get("normal_map", True)):
         imaging.glb_replace_images(final_glb, base_color=files.get("base_color"), metallic=files.get("metallic"),
                                    roughness=files.get("roughness"), drop_normal=bool(look) and not look.get("normal_map", True),
-                                   nearest=bool(look and look.get("crisp")), mr_size=mr_size)
+                                   mr_size=mr_size)
     metrics.update(look_metrics)
     after = imaging.light_score(new_base, mask, ao, ras["up"]) if new_base is not base else light
     metrics.update(light_score=after["score"], delight_applied=strength > 0, delight_deferred=bool(light_after and delight_mode == "remove"), delight_strength=round(strength, 3),
@@ -854,35 +839,22 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
     out_dir = Path(out_dir)
     cap = int(look.get("cap") or size)
     target = min(size, cap)
-    crisp, snap = bool(look.get("crisp")), bool(look.get("pixel_snap"))
-    palette = look.get("palette")
-    colours = look.get("palette_colors")
-    limit_colours = crisp and bool(palette or colours)
-    m: dict[str, Any] = {"texture_size_shipped": target, "texture_crisp": crisp, "normal_map": bool(look.get("normal_map", True))}
-    if target < size or limit_colours:
+    m: dict[str, Any] = {"texture_size_shipped": target, "normal_map": bool(look.get("normal_map", True))}
+    if target < size:
         if "base_color_original" not in files:
             original = out_dir / "base_color_original.png"
             if Path(maps["base_color"]).resolve() != original.resolve():
                 shutil.copy2(maps["base_color"], original)
             files["base_color_original"] = original
-        im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB")
-        if target < size:
-            im = im.resize((target, target), Image.NEAREST if snap else Image.BOX)
-        arr = np.asarray(im, dtype="float32") / 255.0
-        mask_t = imaging.rasterise_uv(uvf, target)["labels"] > 0
-        if limit_colours:
-            arr = imaging.quantise_colours(arr, mask_t, colours, palette)
-        files["base_color"] = imaging.write_map(arr, out_dir / "base_color.png")
-        m["texture_colours"] = imaging.colour_count(files["base_color"], mask_t)
-        m["palette_source"] = "style lock" if palette else ("recipe" if limit_colours else None)
-        m["palette_limit"] = len(palette) if palette else (int(colours) if limit_colours else None)
+        im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
+        files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
         src = files.get(key) or maps.get(key)
         if src is None or not Path(src).is_file():
             continue
         if imaging.image_size(src)[0] > target:
-            files[key] = imaging.shrink_image(src, target, snap, out_dir / f"{key}.png")
+            files[key] = imaging.shrink_image(src, target, out_dir / f"{key}.png")
     return m, (target if target < size else None)
 
 
@@ -961,14 +933,14 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
 
 def look_checks(rec: dict[str, Any], report: dict[str, Any], metrics: dict[str, Any], files: dict[str, Path | None],
                 category_id: str | None = None) -> list[dict[str, Any]]:
-    """look_applied (warn): for a recipe that changes what good means (fewer triangles, flat shading, small or crisp
-    textures, no normal map), whether the shipped model matches it, in one plain sentence. Nothing for looks that
+    """look_applied (warn): for a recipe that changes what good means (fewer triangles, flat shading, small textures,
+    no normal map), whether the shipped model matches it, in one plain sentence. Nothing for looks that
     keep the full pipeline, or when the material category has no mesh."""
     if category_id == "material":
         return []
     mesh, srf = rec.get("mesh") or {}, rec.get("surface") or {}
     special = (mesh.get("triangle_scale", 1.0) < 1.0 or srf.get("shading") == "flat" or not mesh.get("normal_map", True)
-               or srf.get("texture_filter") == "crisp" or (mesh.get("texture_cap") and mesh["texture_cap"] < (mesh.get("budget_texture") or 0)))
+               or (mesh.get("texture_cap") and mesh["texture_cap"] < (mesh.get("budget_texture") or 0)))
     if not special:
         return []
     problems: list[str] = []
@@ -982,10 +954,6 @@ def look_checks(rec: dict[str, Any], report: dict[str, Any], metrics: dict[str, 
     shading = metrics.get("shading_applied") or report.get("shading")
     if srf.get("shading") == "flat" and shading not in (None, "flat") and metrics.get("shading_source") != "chosen":
         problems.append("its shading is smooth")
-    lim = metrics.get("palette_limit")
-    used = metrics.get("texture_colours")
-    if lim and used and int(used) > int(lim):
-        problems.append(f"its colours number {used}, more than {lim}")
     parts = []
     if mesh.get("triangle_scale", 1.0) < 1.0 and mesh.get("triangles"):
         parts.append(f"about {int(mesh['triangles']):,} triangles")
@@ -993,8 +961,6 @@ def look_checks(rec: dict[str, Any], report: dict[str, Any], metrics: dict[str, 
         parts.append("flat faces")
     if cap:
         parts.append(f"{int(size or cap)} px textures")
-    if srf.get("texture_filter") == "crisp":
-        parts.append("crisp pixels" + (f" in {used} colours" if used else ""))
     if not mesh.get("normal_map", True):
         parts.append("no surface bumps")
     known = {s["id"]: s for s in reference.styles()}
@@ -1223,7 +1189,7 @@ async def judge(sc: StageContext) -> None:
     sk = skin_metal_check(m, sc.asset.category)
     if sk is not None:
         checks.append(sk)
-    pc = projection_check(m, sc.version.params or {}, sc.asset.category, texture_look(rec, (sc.project.style_lock or {}).get("palette")))
+    pc = projection_check(m, sc.version.params or {}, sc.asset.category, texture_look(rec))
     if pc is not None:
         checks.append(pc)
         if m.get("srcproject_applied"):

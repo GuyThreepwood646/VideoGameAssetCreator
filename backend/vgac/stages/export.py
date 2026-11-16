@@ -6,10 +6,8 @@ Input mesh: the rig stage's animated GLB when present, else its (rigged or pass-
 Textures come from the prep stage in the lineage (the mesh stage when prep has none).
 
 Recipes (reference.recipe): a look without surface bumps ships no normal map (none is copied, packed or put in the
-GLB material, and the importer leaves the slot empty); pack.py gets the prep stage's shading (flat for low-poly) and
-the texture filter (crisp: nearest-neighbour samplers in the GLB); the Unity importer gets the engine settings
-(-vgacFilter point|bilinear, -vgacMipmaps, -vgacCompress, -vgacNormalMap). The manifest and metrics.recipe record the
-recipe that ran.
+GLB material, and the importer leaves the slot empty, -vgacNormalMap off); pack.py gets the prep stage's shading
+(flat for low-poly). The manifest and metrics.recipe record the recipe that ran.
 
 Sockets (vgac/sockets.py): a rigged character gets attachment points (Socket_Hand_R, Socket_Back and so on). pack.py
 places them as empties parented to the bones in the FBX and every GLB and writes sockets.json; this stage fills each
@@ -507,24 +505,20 @@ def ships_normal(sc: Any) -> bool:
 
 
 def pack_look(sc: Any) -> dict[str, str]:
-    """pack.py's --shading and --texture-filter: the shading the prep stage applied (else the recipe's), and the
-    recipe's texture filter."""
+    """pack.py's --shading: the shading the prep stage applied (else the recipe's)."""
     rec = export_recipe(sc)
     prep_v = sc.stage_version("prep") if hasattr(sc, "stage_version") else None
     shading = (getattr(prep_v, "metrics", None) or {}).get("shading_applied") or ((rec or {}).get("surface") or {}).get("shading") or "smooth"
-    filt = ((rec or {}).get("surface") or {}).get("texture_filter") or "smooth"
-    return {"shading": shading if shading in ("smooth", "flat") else "smooth", "texture_filter": filt if filt in ("smooth", "crisp") else "smooth"}
+    return {"shading": shading if shading in ("smooth", "flat") else "smooth"}
 
 
 def engine_args(sc: Any) -> dict[str, str]:
-    """The importer's texture settings from the recipe (nothing when there is no recipe, so the importer keeps its
-    own defaults)."""
+    """The importer's normal map setting from the recipe (nothing when there is no recipe, so the importer keeps its
+    own default)."""
     rec = export_recipe(sc)
     if rec is None:
         return {}
-    e = rec["engine"]
-    return {"-vgacFilter": e["filter_mode"], "-vgacMipmaps": "on" if e["mipmaps"] else "off",
-            "-vgacCompress": "on" if e["compress"] else "off", "-vgacNormalMap": "on" if rec["mesh"]["normal_map"] else "off"}
+    return {"-vgacNormalMap": "on" if rec["mesh"]["normal_map"] else "off"}
 
 
 def socket_category(sc: Any) -> str | None:
@@ -547,7 +541,7 @@ def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: s
     default chain); --sockets only for a rigged character; the hair's own material when `hair` has its layout and
     base colour ({layout, base_color, normal, orm})."""
     args: list[Any] = [src, out_dir, name, "--lods", ",".join(str(x) for x in lods) if lods else "none", "--collider", pack_mode,
-                       "--formats", ",".join(formats), "--shading", look["shading"], "--texture-filter", look["texture_filter"]]
+                       "--formats", ",".join(formats), "--shading", look["shading"]]
     if pack_mode == "parts" and collider_obj:
         args += ["--collider-obj", collider_obj]
     for flag, p in (("--base-color", base_color), ("--normal", normal), ("--orm", orm), ("--uv-source", uv_source)):
@@ -688,8 +682,8 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     look = pack_look(sc)
     rec = export_recipe(sc)
     if rec is not None:
-        sc.set_metrics(recipe=reference.recipe_record(rec, "mesh", "surface", "engine"), shading=look["shading"],
-                       texture_filter=look["texture_filter"], normal_map=keep_normal)
+        sc.set_metrics(recipe=reference.recipe_record(rec, "mesh", "surface"), shading=look["shading"],
+                       normal_map=keep_normal)
     for key in TEXTURE_KEYS:
         if key == "normal" and not keep_normal:
             stale = sc.dir / "normal.png"

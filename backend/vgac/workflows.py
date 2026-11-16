@@ -18,7 +18,6 @@ DEFAULTS = {
     "zbase_concept": lambda: concept.zbase_graph("PROMPT", 42, "vgac/concept/image"),
     "klein_concept": lambda: concept.klein_graph("PROMPT", 42, "vgac/concept/image"),
     "anima_concept": lambda: concept.anima_graph("PROMPT", 42, "vgac/concept/image"),
-    "pixel_concept": lambda: concept.pixel_graph("PROMPT", 42, "vgac/concept/image"),
     "chroma_concept": lambda: concept.chroma_graph("PROMPT", 42, "vgac/concept/image"),
     "qwen_angles": lambda: qwen_edit.angle_graph("concept.png", qwen_edit.VIEWS["front"], 42, "vgac/turnaround/front"),
     "qwen_edit": lambda: qwen_edit.edit_graph("image.png", "INSTRUCTION", 42, "vgac/concept/edit"),

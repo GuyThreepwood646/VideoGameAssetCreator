@@ -34,7 +34,6 @@ These run on your computer. Their files are not part of your game; what they mak
 | [Z-Image base](https://huggingface.co/Tongyi-MAI/Z-Image) | Paints the concept picture at higher quality, more slowly. | Tongyi-MAI (Alibaba) | Apache-2.0 | no | no |
 | [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | Paints quick draft concept pictures. | Black Forest Labs | Apache-2.0 | no | no |
 | [Anima turbo](https://huggingface.co/circlestone-labs/Anima) | Paints anime line-art concept pictures. | circlestone-labs | Non-commercial model, outputs usable commercially (The model is non-commercial; what it makes may be used commercially. Do not sell or host the model itself.) | no | no |
-| [Z-Image Turbo + pixel art LoRA](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) | Z-Image Turbo with a pixel-art add-on built in, for blocky pixel concept pictures. | Tongyi-MAI (Alibaba) with a community pixel-art add-on | Apache-2.0 | no | no |
 | [Chroma1-HD](https://huggingface.co/lodestones/Chroma1-HD) | Paints loose, painterly concept pictures. | lodestones | Apache-2.0 | no | no |
 | [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) | Edits a picture and draws the side, back and other views of your concept (the turnaround). | Qwen team (Alibaba) | Apache-2.0 | no | no |
 | [Qwen-Image-Edit-2511 multiple-angles LoRA](https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA) | Helps the side-view model turn the character to exact camera angles. | fal | Apache-2.0 | no | no |
@@ -54,7 +53,6 @@ Each one is loaded on top of a model above.
 
 | Name | What it does here | Author | Licence | Credit required | In your assets |
 |---|---|---|---|---|---|
-| [Pixel-art LoRA](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) | Pushes the image model toward crisp 16-bit pixel art with a small palette. | community add-on for Z-Image Turbo | Apache-2.0 | no | no |
 | [Lightning LoRA (fast turnaround)](https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning) | Lets the side-view model (Qwen-Image-Edit) finish each side view in 4 quick passes instead of 40. | lightx2v | Apache-2.0 | no | no |
 | [Multiple-angles LoRA (camera angles)](https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA) | Teaches the side-view model (Qwen-Image-Edit) to turn the camera around your asset for the side and back views. | fal | Apache-2.0 | no | no |
 | [Character turnaround sheet LoRA (all sides in one picture)](https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511) | Draws all five sides of a character in one picture, so the clothes and details match from side to side. | tarn59 | Apache-2.0 | no | no |
@@ -62,7 +60,6 @@ Each one is loaded on top of a model above.
 | [Stylised 3D look](https://huggingface.co/artificialguybr/3DRenderStyle-REDMOND-ZIMAGE) | Makes the picture look like a rendered stylised 3D game character or prop. | artificialguybr | Apache-2.0 | no | no |
 | [Hand-made clay finish](https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE) | Makes clay pictures look more matte and hand-sculpted. | artificialguybr | Apache-2.0 | no | no |
 | [Late-90s low-poly look](https://huggingface.co/artificialguybr/PS1Graphics-Redmond-ZimageTURBO) | Pushes the picture toward a late-1990s low-polygon game model with small blurry textures. | artificialguybr | Apache-2.0 | no | no |
-| [Chunky pixel sprites](https://huggingface.co/artificialguybr/PIXELART-REDMOND-ZIMAGETURBO) | Bigger, blockier pixels with a smaller palette than the standard pixel-art look. | artificialguybr | Apache-2.0 | no | no |
 
 ## Ready-made data (moves, light pictures)
 
@@ -120,7 +117,6 @@ None of these is included in the app.
 | [Unity Editor](https://unity.com/legal) | Imports the finished asset in a sandbox project to prove it works, and makes the Unity showcase. | Unity Technologies | Unity Personal or Pro terms (Each person needs their own Unity install and plan; the app does not include Unity. Unity's plans page (checked 2026-11-06) says Personal is for hobbyists and small teams and Pro is required above 200,000 dollars in annual revenue or funding. Your game falls under Unity's terms for the plan you use.) | no | no |
 | [ComfyUI](https://github.com/Comfy-Org/ComfyUI) | The engine that runs every AI model on your graphics card. The app sends it a recipe and gets the picture or 3D model back. Its built-in parts also supply the nodes used for the 3D steps and the picture check. | Comfy Org and contributors | GPL-3.0 (Called over its local web address; not included in this app.) | no | no |
 | [ComfyUI-SkinToken](https://github.com/Rizzlord/ComfyUI-SkinToken) | The ComfyUI add-on (custom node pack) that lets ComfyUI run the SkinToken rigging model. | Rizzlord | not confirmed (The pack has no licence file and says to read the SkinTokens project's terms, which are MIT. Not confirmed as its own licence.) | no | no |
-| [ComfyUI-PixelArt-Detector](https://github.com/dimtoneff/ComfyUI-PixelArt-Detector) | The ComfyUI add-on (custom node pack) that shrinks a picture to a small palette for the pixel-art concept look. | dimtoneff | MIT (Used by the pixel-art concept graph. Called inside ComfyUI; not included in this app.) | no | no |
 | vgac-nodes (VGACLoadTrimesh, VGACSaveTrimesh) | Two small ComfyUI nodes written for this app to load and save 3D files. | This project | GPL-3.0-or-later (chosen) (Your own code, runs inside ComfyUI. Source: comfy-nodes/vgac-nodes/ in this repository (a copy lives in the ComfyUI install).) | no | no |
 | [Gemma 3 12B (instruction tuned)](https://ai.google.dev/gemma/terms) | The local vision model that looks at pictures and judges them for the review checks and hairstyle choice. Runs inside ComfyUI. | Google DeepMind | Gemma Terms of Use (Google's own terms, with a Prohibited Use Policy) (Google states it claims no rights in what you generate with it. The terms must be accepted by whoever downloads the model.) | no | no |
 

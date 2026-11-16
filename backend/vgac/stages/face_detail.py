@@ -16,8 +16,8 @@ mouth as a smear. This pass makes the face match the painted picture (vgac/face.
 5. Paint the fitted picture back through the model's UVs from the same camera, only on the face, weighted by how
    squarely the surface faces the camera and feathered at the edges, with its broad tone matched to the old texture.
 
-Skipped, with the reason recorded, when the option is off, for categories other than humanoid, for crisp or flat
-looks (the low-poly recipe), without a painted picture, when no face is found or it is covered (helmet, hood,
+Skipped, with the reason recorded, when the option is off, for categories other than humanoid, for flat looks
+(the low-poly recipe), without a painted picture, when no face is found or it is covered (helmet, hood,
 mask). Metrics under "face_detail"; the before and after picture is the version file "face_before_after".
 """
 
@@ -201,7 +201,7 @@ def skip_reason(category_id: str, rec: dict[str, Any] | None, params: dict[str, 
         return "not_humanoid"
     srf = (rec or {}).get("surface") or {}
     mesh = (rec or {}).get("mesh") or {}
-    if srf.get("texture_filter") == "crisp" or srf.get("shading") == "flat" or (mesh.get("texture") or 2048) < 512:
+    if srf.get("shading") == "flat" or (mesh.get("texture") or 2048) < 512:
         return "style"
     if not has_picture:
         return "no_picture"
@@ -406,7 +406,7 @@ def side_words(used: list[str]) -> str:
 
 def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     """face_matches_picture (warn), from the "face_detail" metrics block. Nothing when the pass does not apply (off,
-    not a humanoid, a crisp or flat look, no picture, no face or a covered one): there is nothing to measure. A soft
+    not a humanoid, a flat look, no picture, no face or a covered one): there is nothing to measure. A soft
     failure when it was skipped for a reason the person can act on, or when the face is still blurry or does not
     follow the fitted picture by the measured numbers. It measures sharpness and how well the model's face carries
     the fitted picture's features, not whether it is the same person."""

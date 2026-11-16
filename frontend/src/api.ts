@@ -27,7 +27,7 @@ export function stageEstimateSeconds(stage: StageId, info?: Pick<StageInfo, 'est
 
 // The concept models as of this build. The backend's data/models.yaml is the source and GET /api/models serves it
 // (api.models()); this list is the fallback for the pickers and the mock.
-export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'pixel', 'chroma'] as const
+export const STYLE_MODELS = ['zturbo', 'zbase', 'klein', 'anima', 'chroma'] as const
 export type StyleModel = (typeof STYLE_MODELS)[number]
 
 // One concept model (GET /api/models), from the backend's data/models.yaml.
@@ -382,7 +382,6 @@ export type AddonEntry = {
   strengths: Record<StrengthName, number>
   default_strength: StrengthName
   required: boolean
-  required_for: string[]
   trigger: string
   licence: string
   source: string
@@ -430,8 +429,7 @@ export type Recipe = {
     budget_texture: number | null
     normal_map: boolean
   }
-  surface: { shading: 'smooth' | 'flat'; texture_filter: 'smooth' | 'crisp'; palette_colors: number | null; pixel_snap: boolean; delight: string; pbr_fix: boolean }
-  engine: { filter_mode: 'bilinear' | 'point'; mipmaps: boolean; compress: boolean }
+  surface: { shading: 'smooth' | 'flat'; delight: string; pbr_fix: boolean }
   addon_entries: AddonEntry[]
 }
 
@@ -649,7 +647,7 @@ export type HardwarePlan = {
 export type HardwareChoice = { use?: number[]; three_d?: number; min_free_ram_gb?: number }
 export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
 export type ComfyPacksReport = {
-  packs: { id: string; name: string; present: boolean; left_out?: string; requirements?: string[] }[]
+  packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
   python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
 }
 export type ComfyInstallStep = { id: string; label: string; download_bytes: number; done: boolean }
@@ -661,7 +659,7 @@ export type ComfyInstallStatus = {
 }
 export type ComfyInstallOffer = {
   version: string; goes_to: string; hosts: string[]; download_bytes: number; needs_bytes: number; licence: string
-  needs_admin: boolean; ready: boolean; missing: string[]; left_out: string[]; status: ComfyInstallStatus
+  needs_admin: boolean; ready: boolean; missing: string[]; status: ComfyInstallStatus
 }
 
 export type ModelItem = {

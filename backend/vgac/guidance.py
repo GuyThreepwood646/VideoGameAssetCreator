@@ -962,7 +962,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: None if _var(c, "pbr_fix_on") else {"stage": "prep", "params": {"pbr_fix": True}},
         "fix_label": "Make metal clearly metal",
     },
-    # Recipes: the look a style asks for after the concept (fewer triangles, flat faces, small or crisp textures, no
+    # Recipes: the look a style asks for after the concept (fewer triangles, flat faces, small textures, no
     # surface bumps), checked in prep. Only for looks that change something.
     "look_applied": {
         "severity": "warn",

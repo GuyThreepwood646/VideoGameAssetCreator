@@ -7,7 +7,7 @@
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]
 //      [-vgacFingerLimits <finger_limits.json>] [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
-//      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
+//      [-vgacNormalMap on|off]
 //      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
 //      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
@@ -22,11 +22,11 @@
 // request with the request id and renames the request to vgac_import.done.json. Menu: Tools/VGAC/Import pending assets.
 // Batch check of the same sweep: -executeMethod VgacImport.ImportPending.
 //
-// Recipes (Version 7): the style's engine settings. -vgacFilter point (crisp pixel looks) sets every texture to Point
-// filtering, -vgacMipmaps off and -vgacCompress off keep the small textures exact; -vgacNormalMap off (looks without
-// surface bumps) leaves the material's normal slot empty and removes a normal.png an earlier import of the same name
-// left in Assets/VGAC/<name>. The report records textureFilter, textureMipmaps, textureCompression and normalMap.
-// Without these arguments the importer keeps Unity's defaults (bilinear, mipmaps, compression) as before.
+// Recipes (Version 7): -vgacNormalMap off (looks without surface bumps) leaves the material's normal slot empty and
+// removes a normal.png an earlier import of the same name left in Assets/VGAC/<name>. Every texture imports Bilinear,
+// with mipmaps and compressed (Version 21: the Point, no-mipmap and uncompressed settings went with the crisp looks;
+// an older backend's -vgacFilter, -vgacMipmaps and -vgacCompress are ignored). The report records textureFilter,
+// textureMipmaps, textureCompression and normalMap.
 //
 // Sockets (Version 8): a rigged character's FBX carries attachment points, empties named Socket_Hand_R, Socket_Back
 // and so on, parented to their bones (backend/vgac/sockets.py). They arrive as plain child transforms under the bones
@@ -89,8 +89,7 @@
 // Version 18: sharper base colour on smooth looks. Base colour (and hair base colour) imports with the best compression
 // quality (BC7 on standalone; ASTC 4x4 on Android and iOS, the platform overrides ship with the texture) and anisotropic
 // filtering 8, so a surface seen at a slant keeps its detail. Normal maps keep the normal-map type; data maps are
-// unchanged. Crisp looks (-vgacFilter point), uncompressed imports and imports without mipmaps are left as they were
-// (no override, no anisotropy). The report's textureSettings lines for the base colour end with the new settings.
+// unchanged. The report's textureSettings lines for the base colour end with the new settings.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -107,7 +106,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "20";
+    public const string Version = "21";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -315,8 +314,7 @@ public static class VgacImport
     {
         public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments, springs, fingerLimits;
         public bool humanoid, keepPose;
-        public string filter = "bilinear";     // recipes: bilinear | point
-        public bool mipmaps = true, compress = true, normalMap = true;
+        public bool normalMap = true;
         public bool hair;                      // -vgacHair on: the hair's own material (Version 13)
         public string hairShader = "vgac";     // vgac | lit
         public bool hairCutout;                // -vgacHairCutout on: alpha cutout hair (Version 17)
@@ -357,9 +355,6 @@ public static class VgacImport
                 springs = F("-vgacSprings"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
-                filter = (A("-vgacFilter") ?? "bilinear").ToLowerInvariant() == "point" ? "point" : "bilinear",
-                mipmaps = (A("-vgacMipmaps") ?? "on").ToLowerInvariant() != "off",
-                compress = (A("-vgacCompress") ?? "on").ToLowerInvariant() != "off",
                 normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
                 hair = (A("-vgacHair") ?? "off").ToLowerInvariant() == "on",
                 hairShader = (A("-vgacHairShader") ?? "vgac").ToLowerInvariant() == "lit" ? "lit" : "vgac",
@@ -1298,13 +1293,10 @@ public static class VgacImport
 
     static void ConfigureTextures(string assetDir, string msName, Report report, ImportArgs a)
     {
-        var point = a != null && a.filter == "point";
-        var mips = a == null || a.mipmaps;
-        var compress = a == null || a.compress;
         report.normalMap = a == null || a.normalMap;
-        report.textureFilter = point ? "Point" : "Bilinear";
-        report.textureMipmaps = mips;
-        report.textureCompression = compress ? "Compressed" : "Uncompressed";
+        report.textureFilter = "Bilinear";
+        report.textureMipmaps = true;
+        report.textureCompression = "Compressed";
         var names = new List<string> { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", msName };
         var hairMs = "T_" + msName.Substring(2, msName.Length - 2 - "_MetallicSmoothness.png".Length) + "_Hair_MetallicSmoothness.png";
         names.AddRange(new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", hairMs });
@@ -1338,25 +1330,23 @@ public static class VgacImport
                 ti.alphaSource = TextureImporterAlphaSource.FromInput;
                 ti.alphaIsTransparency = false;
             }
-            // Recipes: crisp looks sample whole texels (Point) with no mipmaps or compression, so a 256 px pixel-art
-            // texture stays exact; other looks keep Unity's defaults (Bilinear, mipmaps, compressed).
-            ti.filterMode = point ? FilterMode.Point : FilterMode.Bilinear;
-            ti.mipmapEnabled = mips;
-            ti.textureCompression = compress ? TextureImporterCompression.Compressed : TextureImporterCompression.Uncompressed;
-            if (point) ti.npotScale = TextureImporterNPOTScale.None;
+            // Unity's defaults, set so a re-import of a folder an older Point (crisp) import left behind is reset too.
+            ti.filterMode = FilterMode.Bilinear;
+            ti.mipmapEnabled = true;
+            ti.textureCompression = TextureImporterCompression.Compressed;
             // Unity imports at most 2048 by default: a 4096 base colour (High face detail on a 4096 platform) would
             // silently arrive at half its size. The import keeps the file's own size, never more.
             int sw, sh;
             ti.GetSourceTextureWidthAndHeight(out sw, out sh);
             var need = Mathf.Min(16384, Mathf.NextPowerOfTwo(Mathf.Max(sw, sh)));
             if (need > ti.maxTextureSize) ti.maxTextureSize = need;
-            var sharpColour = (t == "base_color.png" || t == "hair_base_color.png") && !point && compress;
+            var sharpColour = t == "base_color.png" || t == "hair_base_color.png";
             var quality = "";
             if (sharpColour)
             {
                 // Version 18: smooth looks get the best block compression for the colour and anisotropic filtering.
                 ti.compressionQuality = (int)TextureCompressionQuality.Best;
-                if (mips) ti.anisoLevel = 8;
+                ti.anisoLevel = 8;
                 foreach (var plat in new[] { "Standalone", "Android", "iPhone" })
                 {
                     var ps = ti.GetPlatformTextureSettings(plat);
@@ -1367,17 +1357,6 @@ public static class VgacImport
                     ti.SetPlatformTextureSettings(ps);
                 }
                 quality = ", quality Best, BC7 standalone / ASTC 4x4 mobile";
-            }            else if (t == "base_color.png" || t == "hair_base_color.png")
-            {
-                // A re-import of the same folder with a crisp look must not keep the overrides of an earlier smooth one.
-                ti.anisoLevel = 1;
-                foreach (var plat in new[] { "Standalone", "Android", "iPhone" })
-                {
-                    var ps = ti.GetPlatformTextureSettings(plat);
-                    if (!ps.overridden) continue;
-                    ps.overridden = false;
-                    ti.SetPlatformTextureSettings(ps);
-                }
             }
             ti.SaveAndReimport();
             report.textureSizes.Add(t + ":" + Mathf.Max(sw, sh) + ":" + ti.maxTextureSize);

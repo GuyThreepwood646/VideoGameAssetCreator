@@ -61,12 +61,11 @@ def test_export_channel_resize_is_lanczos_and_keeps_flat_maps(tmp_path):
 
 
 def test_importer_smooth_colour_is_high_quality_and_anisotropic():
-    assert 'Version = "20"' in IMPORTER
+    assert 'Version = "21"' in IMPORTER
     assert "TextureCompressionQuality.Best" in IMPORTER and "TextureImporterFormat.BC7" in IMPORTER
     assert "TextureImporterFormat.ASTC_4x4" in IMPORTER and "anisoLevel = 8" in IMPORTER
-    # only base colour on smooth, compressed, mip-mapped looks; the crisp path resets what an earlier import set
-    assert 'var sharpColour = (t == "base_color.png" || t == "hair_base_color.png") && !point && compress;' in IMPORTER
-    assert "ti.anisoLevel = 1;" in IMPORTER and "ps.overridden = false;" in IMPORTER
+    # every base colour (the crisp looks and their Point path are gone)
+    assert 'var sharpColour = t == "base_color.png" || t == "hair_base_color.png";' in IMPORTER
     assert "TextureImporterType.NormalMap" in IMPORTER
 
 

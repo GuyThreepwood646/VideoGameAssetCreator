@@ -85,11 +85,6 @@ export default function ComfyInstall({ shareFrom, onChanged }: { shareFrom: Comf
           No administrator rights are needed. It takes about 10 to 20 minutes.
         </div>
       )}
-      {offer.left_out.map((t) => (
-        <div key={t} className="muted small">
-          {t}
-        </div>
-      ))}
       {!offer.ready && (
         <div className="warn small">
           This copy of the app cannot install it yet: {offer.missing.join(' and ')} {offer.missing.length === 1 ? 'is' : 'are'} not in it. Nothing will be downloaded.

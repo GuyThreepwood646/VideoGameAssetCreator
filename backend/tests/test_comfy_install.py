@@ -214,7 +214,6 @@ def test_full_install_c(box):
     assert (root / "ComfyUI" / "main.py").read_bytes() == SOURCE["main.py"]
     assert (root / "ComfyUI" / "custom_nodes" / "ComfyUI-SkinToken" / "__init__.py").is_file()
     assert (root / "ComfyUI" / "custom_nodes" / "vgac-nodes" / "__init__.py").is_file()
-    assert not (root / "ComfyUI" / "custom_nodes" / "ComfyUI-PixelArt-Detector").exists()  # left out on purpose
     m = ci.read_marker(root)
     assert m and all(m["steps"][s] == "done" for s, _ in ci.STEPS if s != "check")
     assert not (root / "wheels").exists()  # removed after success
@@ -546,7 +545,7 @@ def test_status_and_offer_before_anything(box):
     assert st["state"] == "idle" and [s["id"] for s in st["steps"]] == [s for s, _ in ci.STEPS]
     off = ci.offer()
     assert off["ready"] and off["goes_to"] == str(box["root"]) and not off["needs_admin"]
-    assert any("pixel-art look is not included" in t for t in off["left_out"])
+    assert "left_out" not in off
     assert off["download_bytes"] >= sum(len(b) for b in WHEELS.values())
 
 
@@ -676,21 +675,6 @@ def test_remove_refuses_a_folder_vgac_did_not_record(box):
 
 
 # --- the 5a panel's view of VGAC's own install ------------------------------------------------------------------------------
-
-
-def test_pixel_art_pack_is_left_out_not_missing_in_our_install(box):
-    install(box)
-    root = box["root"]
-    c = {"folder": str(root), "main": "ComfyUI/main.py", "python": str(ci.venv_python(root))}
-    st = {p["id"]: p for p in comfy_find.packs_state(c)}
-    assert "not included in this install" in st["pixelart"]["left_out"] and not st["pixelart"]["present"]
-    rep = comfy_find.packs_report(c, opener=box["net"], pip=lambda argv: (0, "[]"))
-    px = next(p for p in rep["packs"] if p["id"] == "pixelart")
-    assert px["left_out"] and "requirements" not in px
-    assert rep["python"]["note"] == "Nothing to add."
-    # someone else's ComfyUI: the pack is plainly missing, as before
-    theirs = {"folder": str(box["theirs"]), "main": "ComfyUI/main.py", "python": ""}
-    assert next(p for p in comfy_find.packs_state(theirs) if p["id"] == "pixelart")["left_out"] == ""
 
 
 def test_choices_a_and_c_are_offered(box):

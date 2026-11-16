@@ -229,7 +229,7 @@ class PackNet:
 def set_pins(tmp: Path, data: bytes) -> None:
     sha = hashlib.sha256(data).hexdigest()
     real = json.loads(REAL_LIST.read_text(encoding="utf-8-sig"))["node_packs"]
-    packs = {k: dict(real[k], sha256=sha) for k in ("skintoken", "pixelart")}
+    packs = {k: dict(real[k], sha256=sha) for k in ("skintoken",)}
     (tmp / "setup" / "downloads.local.json").write_text(json.dumps({"node_packs": packs}), encoding="utf-8")
     nodes = tmp / "comfy-nodes" / "vgac-nodes"
     nodes.mkdir(parents=True)
@@ -260,13 +260,13 @@ def test_the_report_names_the_packages_that_would_change_and_changes_nothing(box
     app = make_install(inst)
     data = pack_zip("transformers==4.50.0\nopen3d\n# a comment\n")
     set_pins(tmp, data)
-    (app / "custom_nodes" / "comfyui-pixelart-detector").mkdir()  # present under another capitalisation
+    (app / "custom_nodes" / "VGAC-NODES").mkdir()  # present under another capitalisation
     cand = comfy_find._candidate(inst, "desktop", "x")
     before = sorted(str(p) for p in app.rglob("*"))
     pip = FakePip({"transformers": "4.40.0", "torch": "2.12.1"}, {"transformers": "4.50.0", "open3d": "0.19.0", "torch": "2.12.1"})
     rep = comfy_find.packs_report(cand, PackNet(data), pip)
     present = {p["id"]: p["present"] for p in rep["packs"]}
-    assert present == {"skintoken": False, "pixelart": True, "vgac": False}
+    assert present == {"skintoken": False, "vgac": True}
     assert rep["python"]["checked"] and rep["python"]["changes"] == [{"name": "transformers", "from": "4.40.0", "to": "4.50.0"}]
     assert rep["python"]["adds"] == [{"name": "open3d", "to": "0.19.0"}]
     assert sorted(str(p) for p in app.rglob("*")) == before
@@ -289,7 +289,7 @@ def test_go_ahead_adds_only_missing_packs_and_installs_their_requirements(box):
     app = make_install(inst)
     data = pack_zip("open3d\n")
     set_pins(tmp, data)
-    mine = app / "custom_nodes" / "comfyui-pixelart-detector"
+    mine = app / "custom_nodes" / "SomeoneElsesPack"  # a folder of theirs is never touched
     mine.mkdir()
     (mine / "keep.txt").write_text("mine", encoding="utf-8")
     pip = FakePip({}, {})

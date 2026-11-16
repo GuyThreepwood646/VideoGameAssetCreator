@@ -8,7 +8,7 @@ Files are served from GET /api/library/{path} where path is relative to the libr
 Project
 ```
 { "id", "name", "created_at",
-  "style_lock": { "prompt_block": str, "model": "zturbo|zbase|klein|anima|pixel|chroma", "loras": [str], "palette": [str], "negative": str },
+  "style_lock": { "prompt_block": str, "model": "zturbo|zbase|klein|anima|chroma", "loras": [str], "palette": [str], "negative": str },
   "platform_target": "mobile_low|pc_mid|high" }
 ```
 

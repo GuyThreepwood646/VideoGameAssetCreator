@@ -17,13 +17,10 @@
 #                triangle_cap (optional, a fixed ceiling); texture_cap is the largest texture size shipped, under the
 #                platform's own; bake_texture (optional) is the size the 3D step bakes and the clean-up paints at, the
 #                colour then shrunk to texture_cap at the end of the clean-up
-#     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap,
-#                 face_layout, colour_per_face, face_keeps_texture}
-#                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended;
+#     surface    {shading: smooth | flat, face_layout, colour_per_face, face_keeps_texture}
 #                face_layout: the face gets more of the texture before the pictures are painted (no face paint pass);
 #                colour_per_face: every triangle one colour after the painting; face_keeps_texture: except the front
 #                of a character's head
-#     engine     {filter_mode: bilinear | point, mipmaps, compress}   what the Unity importer sets on the textures
 #   by_category  {category id: {plain, recipe}} overrides for one kind of asset, merged over the style's own
 styles:
   - id: painted

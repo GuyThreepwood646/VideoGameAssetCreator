@@ -158,7 +158,6 @@ const MODEL_LABEL_FALLBACK: Record<string, string> = {
   zbase: 'Z-Image Base',
   klein: 'FLUX.2 Klein 4B',
   anima: 'Anima Turbo',
-  pixel: 'Z-Image Pixel Art',
   chroma: 'Chroma1-HD',
 }
 
@@ -186,7 +185,6 @@ export const MODEL_HELP: Record<string, Omit<HelpEntry, 'plain'>> = {
   zbase: { meaning: 'Higher quality, slower.', why: 'Use it when the Turbo result is close but not detailed enough.', technical: 'zbase (Z-Image Base)' },
   klein: { meaning: 'Quick drafts.', why: 'Fastest way to try several ideas before committing.', technical: 'klein (FLUX.2 Klein 4B)' },
   anima: { meaning: 'Anime line art.', why: 'Pick it for cel-shaded, anime-style characters.', technical: 'anima (Anima Turbo)' },
-  pixel: { meaning: 'Pixel art sprites.', why: 'Pick it for retro, pixel-art games.', technical: 'pixel (Z-Image Pixel Art)' },
   chroma: { meaning: 'Loose painterly.', why: 'Pick it for a rough, expressive painted look.', technical: 'chroma (Chroma1-HD)' },
 }
 
@@ -531,7 +529,6 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   strength_subtle: H('Subtle', 'The LoRA pushes the picture a little.', 'Keeps more of the model\'s own look.', 'lower LoRA strength (strengths.subtle)'),
   strength_normal: H('Normal', 'The LoRA at the strength it was made for.', 'The safe choice; start here.', 'LoRA strength (strengths.normal)'),
   strength_strong: H('Strong', 'The LoRA pushes the picture harder.', 'Use it when the look does not come through enough; too strong can distort the picture.', 'higher LoRA strength (strengths.strong)'),
-  texture_crisp: H('Crisp textures', 'Every texture pixel stays a sharp square, even up close.', 'For a look whose texels are meant to show; smoothing would blur them.', 'Point filtering, no mipmaps, no compression'),
   texture_smooth: H('Smooth textures', 'Texture pixels blend into each other up close and at a distance.', 'The usual look for painted and realistic assets; it hides the pixel grid.', 'Bilinear filtering, mipmaps, compression'),
   shading: H('Shading', 'Whether the surface looks smooth and rounded or cut into flat faces.', 'Automatic follows your style: flat faces for low-poly, smooth for the rest.', 'smooth normals / flat per-face normals'),
   look_applied: H('Look applied', 'Whether the finished model matches your chosen look: its detail level, texture size, shading and surface bumps.', 'A low-poly or Retro 64 asset should stay that way in your game, not come out as a detailed model.', 'look_applied check (prep), metrics.recipe'),

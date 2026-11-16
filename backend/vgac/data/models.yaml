@@ -19,8 +19,6 @@ models:
     concept: true, label: FLUX.2 Klein 4B, description: quick drafts, default_steps: 4, builder: klein_graph, save_node: "12", negative: false}
   anima: {name: Anima turbo, file: anima-turbo-v1.1.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "1.1",
     concept: true, label: Anima Turbo, description: anime line art, default_steps: 10, builder: anima_graph, save_node: "9", negative: false}
-  pixel: {name: Z-Image Turbo + pixel art LoRA, file: pixel_art_style_z_image_turbo.safetensors, licence: Apache-2.0, version: "1.0",
-    concept: true, label: Z-Image Pixel Art, description: pixel art, default_steps: 8, builder: pixel_graph, save_node: "11", negative: false}
   chroma: {name: Chroma1-HD, file: Chroma1-HD-fp8mixed.safetensors, licence: Apache-2.0, version: "1.0",
     concept: true, label: Chroma1-HD, description: loose painterly, default_steps: 30, builder: chroma_graph, save_node: "9", negative: true}
   qwen_edit: {name: Qwen-Image-Edit-2511, file: qwen_image_edit_2511_fp8mixed.safetensors, licence: Apache-2.0, version: "2511"}

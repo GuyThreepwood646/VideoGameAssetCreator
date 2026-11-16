@@ -38,10 +38,10 @@ def client(settings, monkeypatch):
 
 
 def test_concept_models_come_from_models_yaml():
-    assert reference.concept_models() == ("zturbo", "zbase", "klein", "anima", "pixel", "chroma")
+    assert reference.concept_models() == ("zturbo", "zbase", "klein", "anima", "chroma")
     # The values the literal dicts in graphs/concept.py used to hold.
-    assert {m: concept.default_steps(m) for m in reference.concept_models()} == {"zturbo": 8, "zbase": 30, "klein": 4, "anima": 10, "pixel": 8, "chroma": 30}
-    assert {m: concept.save_node(m) for m in reference.concept_models()} == {"zturbo": "8", "zbase": "9", "klein": "12", "anima": "9", "pixel": "11", "chroma": "9"}
+    assert {m: concept.default_steps(m) for m in reference.concept_models()} == {"zturbo": 8, "zbase": 30, "klein": 4, "anima": 10, "chroma": 30}
+    assert {m: concept.save_node(m) for m in reference.concept_models()} == {"zturbo": "8", "zbase": "9", "klein": "12", "anima": "9", "chroma": "9"}
     assert [m for m in reference.concept_models() if reference.concept_model(m)["negative"]] == ["zbase", "chroma"]
     g = concept.concept_graph("zturbo", "p", 1, "pre")
     assert g["6"]["inputs"]["steps"] == 8

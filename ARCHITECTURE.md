@@ -33,7 +33,7 @@ Each is `backend/vgac/stages/<stage>.py` with `run`, `refine`, `adjust`, `judge`
 
 | Step (stage id) | In | Out | Work | Main modules |
 |---|---|---|---|---|
-| 1 Describe (`concept`) | description, or the person's own picture(s) | picture and cut-out | card B: one of six painters by look, BiRefNet cut-out; refine = Qwen-Image-Edit | `stages/concept.py`, `own_images.py`, `compose.py`, `readiness.py`, `buildpose.py` |
+| 1 Describe (`concept`) | description, or the person's own picture(s) | picture and cut-out | card B: one of five painters by look, BiRefNet cut-out; refine = Qwen-Image-Edit | `stages/concept.py`, `own_images.py`, `compose.py`, `readiness.py`, `buildpose.py` |
 | 2 Check all sides (`turnaround`) | kept picture | front, left, back, right, three-quarter views (two for humanoids) with cut-outs; bald copy for library hair | card B: Qwen-Image-Edit with a LoRA by `turn_method`; can borrow the other card to draw both sides at once; per-view checks incl. `same_side`, `pose_held`; redraws a failing view up to twice; pose check for the 3D build (`pose_for_3d`) and an optional guarded pose redraw (`pose_ready`: wide A pose, `buildpose.guard`, one retry, else the person's picture); after the views, marks on the body (chin, shoulders, elbows, wrists, groin, knees, ankles, heels, toes, fingertips) on the front and both side pictures, found on the processor and judged sure or not, in `marks.json` with the person's moves in their own layer; a redraw finds only the redrawn views again and marks moved marks on them stale; check `body_marks` (warn; autopilot stops on it only when `bodymarks.STOP_WHEN_UNSURE` or the version's `body_marks_stop` is on; nothing reads the marks yet) | `stages/turnaround.py`, `baldpic.py`, `bodymarks.py`, `bodymarks_api.py` |
 | 3 Build the 3D model (`mesh`) | kept views | `glb`, texture maps | card A: TRELLIS.2 (or Hunyuan3D-2mv); normal fix, colour match, rebuild when too dark; optional head built on its own; silhouette audit in Blender; or the person's own model | `stages/mesh.py`, `graphs/trellis.py`, `headgraft.py`, `texcolour.py`, `colourmatch.py`, `normalfix.py`, `model_import.py` |
 | 4 Clean up (`prep`) | kept 3D model | `prep.glb`, final maps, report | host (Blender) plus CPU and an image card for the face pass | `stages/prep.py` and the list below |
@@ -57,7 +57,7 @@ The **material** category (tileable surface) uses `stages/material.py` for steps
 12. library hairstyle fitted to the body (`hairfit.attach`)
 13. checks computed, incl. `picture_projection`, `skin_not_metal`, `facing_tests`, `face_finder`, `baked_light`; a texture check that cannot be measured says so (`quality.not_measured`)
 
-Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat looks, when off, or when nothing is found.
+Face and hair passes skip (reason recorded) for non-humanoids, flat looks, when off, or when nothing is found.
 
 ## 4. Job queue (`jobs.py`)
 
