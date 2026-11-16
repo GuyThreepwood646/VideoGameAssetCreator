@@ -373,12 +373,13 @@ GOLDEN_OFF = {
              "files": ["ao", "base_color", "glb", "input", "metallic", "normal", "preview", "roughness", "sheet",
                        "views_dir"],
              "metrics": ["atlas_used", "checks", "checks_failed", "checks_passed", "dims", "elapsed_seconds",
-                         "elapsed_seconds_all", "engine", "gate_ok", "models", "normal_fix", "normal_map",
+                         "builder", "elapsed_seconds_all", "engine", "gate_ok", "models", "normal_fix", "normal_map",
                          "picture_colour", "recipe", "seed", "silhouette_iou", "silhouette_offset", "silhouette_sign", "silhouette_turn_scores",
                          "target_faces", "target_faces_source", "texture_match", "texture_size", "texture_source",
                          "texture_tries", "texture_try_kept", "texture_try_ratios", "texture_try_seeds", "triangles",
                          "unwrap_padding_px", "views"],
-             "params": ["engine", "first_seed", "head_room", "input_view", "padding", "remesh", "seed", "target_faces",
+             # builder (TRELLIS.2 or Pixal3D) was added on 2026-11-16
+             "params": ["builder", "engine", "first_seed", "head_room", "input_view", "padding", "remesh", "seed", "target_faces",
                         "target_faces_source", "tex_steps", "texture_size", "texture_source", "upsample"]},
     # picture_projection, skin_not_metal and the two texture_* checks are there as "not measured" or measured: never silently missing
     "prep": {"checks": ["albedo_range", "atlas_used", "bake_matches", "baked_light", "degenerate_faces",
@@ -400,7 +401,7 @@ GOLDEN_OFF = {
              # face_closeup_guided and face_sides (the face pass's optional steps) were added later, on 2026-11-10.
              "params": ["delight", "face_closeup", "face_closeup_guided", "face_density", "face_detail", "face_sides",
                         "face_strength", "face_yaw",
-                        "hair_detail", "hair_material", "hair_strength", "hand_triangles", "head_triangles", "pbr_fix", "pivot", "rebake",
+                        "hair_detail", "hair_material", "hair_strength", "hand_triangles", "head_triangles", "pbr_fix", "pivot", "quarter_pictures", "rebake",
                         "shading", "size_axis", "size_m", "size_word", "smooth_angle", "symmetric"]},
     "turnaround": {"checks": [],
                    "files": ["back", "back_cutout", "back_white", "front", "front_cutout", "front_white", "left",

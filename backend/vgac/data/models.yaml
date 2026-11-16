@@ -30,6 +30,7 @@ models:
   upscale_photo: {name: 4xRealWebPhoto v4 (DAT2), file: 4xRealWebPhoto_v4_dat2.pth, licence: CC-BY-4.0, version: "4"}
   upscale_art: {name: Real-ESRGAN x2plus, file: RealESRGAN_x2plus.pth, licence: BSD-3-Clause, version: "0.2.1"}
   trellis2: {name: TRELLIS.2, file: trellis_2_int8_convrot.safetensors, licence: MIT, version: "2"}
+  pixal3d_mv: {name: Pixal3D multi-view, file: pixal3d_multiview_int8_convrot.safetensors, licence: MIT, version: "1.0"}
   hy3d_mv: {name: Hunyuan3D-2mv, file: Hunyuan3D-2mv.fp16.safetensors, licence: Tencent Hunyuan Community Licence, version: "2.0"}
   skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400}
   blender: {name: Blender, file: "", licence: GPL (tool), version: "5.2.3"}
@@ -47,6 +48,8 @@ companions:
   qwen_te: {name: Qwen 2.5 VL 7B text encoder (fp8 scaled), file: qwen_2.5_vl_7b_fp8_scaled.safetensors, licence: Apache-2.0, version: "2.5", used_by: [qwen_edit]}
   qwen_vae: {name: Qwen image VAE, file: qwen_image_vae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [qwen_edit, anima]}
   trellis2_dino: {name: DINOv3 ViT-L image encoder (TRELLIS.2), file: dino_v3_vit_l.safetensors, licence: MIT, version: "1.0", used_by: [trellis2]}
+  pixal3d_dino: {name: DINOv3 ViT-L image encoder with NAF weights (Pixal3D), file: dino_v3_L_naf_fp32.safetensors, licence: "DINOv3 License (Meta); NAF code Apache-2.0", version: "1.0", used_by: [pixal3d_mv]}
+  moge2: {name: MoGe-2 ViT-L (camera angle for Pixal3D), file: moge_2_vitl_normal_fp16.safetensors, licence: MIT, version: "2", used_by: [pixal3d_mv]}
   trellis2_shape_vae: {name: TRELLIS.2 shape VAE, file: trellis_2_shape_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
   trellis2_texture_vae: {name: TRELLIS.2 texture VAE, file: trellis_2_texture_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
   zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zturbo, zbase, klein]}
