@@ -1180,3 +1180,56 @@ def test_a_locked_file_half_way_through_remove_leaves_no_step_marked_done(box, m
     assert ci.read_marker(box["root"])["steps"] == {}
     assert ci.status()["state"] == "unfinished"
     assert config.load_settings(create_library=False).instances["a"].engine is not None  # settings cleared only after
+
+
+# --- line endings: a pin must not depend on how git wrote the file -----------------------------------------------------
+
+
+def _shipped_setup_copy(dest: Path, crlf: bool) -> None:
+    (dest / "setup").mkdir(parents=True)
+    for name in ("downloads.json", "comfyui-lock.json", "comfy-tree-v0.45.3.json"):
+        raw = (ROOT_DIR / "setup" / name).read_bytes().replace(b"\r\n", b"\n")
+        (dest / "setup" / name).write_bytes(raw.replace(b"\n", b"\r\n") if crlf else raw)
+
+
+@pytest.mark.parametrize("crlf", [False, True])
+def test_the_file_list_pin_holds_with_either_line_ending(tmp_path, monkeypatch, crlf):
+    _shipped_setup_copy(tmp_path, crlf)
+    monkeypatch.setattr(downloader, "project_dir", lambda: tmp_path)
+    assert ci.pins_missing() == [] and ci.tree_list() is not None
+
+
+def test_a_changed_file_list_still_fails_its_pin(tmp_path, monkeypatch):
+    _shipped_setup_copy(tmp_path, crlf=True)
+    p = tmp_path / "setup" / "comfy-tree-v0.45.3.json"
+    p.write_bytes(p.read_bytes().replace(b'"size": 0', b'"size": 1', 1) + b" ")
+    monkeypatch.setattr(downloader, "project_dir", lambda: tmp_path)
+    assert ci.tree_list() is None and ci.pins_missing()
+
+
+def _git(*args: str, cwd: Path) -> str:
+    import subprocess
+
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True).stdout
+
+
+def test_git_writes_the_pinned_list_byte_for_byte():
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    out = _git("check-attr", "text", "--", "setup/comfy-tree-v0.45.3.json", cwd=ROOT_DIR)
+    assert out.strip().endswith("text: unset"), out
+
+
+def test_a_fresh_clone_with_crlf_checkout_passes_the_pins(tmp_path, monkeypatch):
+    """What GitHub's Windows runner does: a clone with core.autocrlf=true. Only setup/ is checked out."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    try:
+        _git("rev-parse", "--is-inside-work-tree", cwd=ROOT_DIR)
+    except Exception:  # noqa: BLE001
+        pytest.skip("not a git checkout")
+    clone = tmp_path / "clone"
+    _git("clone", "--quiet", "--no-checkout", "--config", "core.autocrlf=true", str(ROOT_DIR), str(clone), cwd=tmp_path)
+    _git("checkout", "--quiet", "HEAD", "--", "setup", ".gitattributes", cwd=clone)
+    monkeypatch.setattr(downloader, "project_dir", lambda: clone)
+    assert ci.pins_missing() == []

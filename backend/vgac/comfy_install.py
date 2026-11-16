@@ -365,6 +365,12 @@ def requirements_text() -> str:
     return "".join(f"{w['name']}=={w['version']} --hash=sha256:{w['sha256']}\n" for w in lock())
 
 
+def list_sha256(raw: bytes) -> str:
+    """The SHA-256 of a pinned text list with its line endings made LF first, so a copy that git checked out with CRLF
+    (core.autocrlf=true, the Windows default) matches the same pin. Nothing else about the text is changed."""
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def tree_list() -> dict[str, Any] | None:
     """The pinned file list of the ComfyUI source, or None while it is missing or does not match its pin."""
     e = entry()
@@ -377,7 +383,7 @@ def tree_list() -> dict[str, Any] | None:
         raw = p.read_bytes()
     except OSError:
         return None
-    if hashlib.sha256(raw).hexdigest() != pin.lower():
+    if list_sha256(raw) != pin.lower():
         return None
     d = json.loads(raw.decode("utf-8"))
     return d if isinstance(d, dict) and isinstance(d.get("files"), list) else None

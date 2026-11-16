@@ -34,7 +34,8 @@ def main(zip_path: Path, version: str) -> None:
     out.write_text(text, encoding="utf-8", newline="\n")
     print(f"files: {len(files)}, bytes: {sum(f['size'] for f in files)}")
     print(f"sha256 (the zip): {hashlib.sha256(zip_path.read_bytes()).hexdigest()}")
-    print(f"tree_sha256 ({out.name}): {hashlib.sha256(out.read_bytes()).hexdigest()}")
+    lf = out.read_bytes().replace(b"\r\n", b"\n")  # the app hashes the list with LF line endings
+    print(f"tree_sha256 ({out.name}): {hashlib.sha256(lf).hexdigest()}")
 
 
 if __name__ == "__main__":
