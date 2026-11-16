@@ -2303,6 +2303,26 @@ def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]
     return other(sc.lineage_file("cutout", ("concept",))), other(sc.lineage_file("front_cutout", ("turnaround",)))
 
 
+# The version's choice to paint from the two three-quarter pictures (on unless false). Off leaves quarter and quarter2
+# out of this pass and of the face pass's side views (stages/face_detail.side_pictures): the head is then painted from
+# the front pictures alone, the body from the front, side and back views.
+QUARTER_PARAM = "quarter_pictures"
+
+
+def quarters_on(params: dict[str, Any] | None) -> bool:
+    return (params or {}).get(QUARTER_PARAM) is not False
+
+
+def painted_views(params: dict[str, Any] | None) -> tuple[str, ...]:
+    """The turnaround views this pass paints from: TURN_VIEWS, without the three-quarter views when they are off."""
+    return TURN_VIEWS if quarters_on(params) else tuple(v for v in TURN_VIEWS if v not in QUARTERS)
+
+
+def without_quarters(pictures: dict[str, Any], params: dict[str, Any] | None) -> dict[str, Any]:
+    """pictures by view name, without the three-quarter views when the version leaves them out."""
+    return dict(pictures) if quarters_on(params) else {k: p for k, p in pictures.items() if k not in QUARTERS}
+
+
 def mode_of(params: dict[str, Any]) -> str:
     m = params.get("source_project_mode")
     return m if m in MODES else DEFAULT_MODE
@@ -2419,7 +2439,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     if base is None or picture is None:
         sc.set_metrics(srcproject_applied=False, srcproject_reason="no base colour or no picture to paint from")
         return current
-    turn = {v: sc.lineage_file(f"{v}_cutout", ("turnaround",)) for v in TURN_VIEWS}
+    turn = {v: sc.lineage_file(f"{v}_cutout", ("turnaround",)) for v in painted_views(params)}
     try:
         source, front_view = original_pictures(sc, Path(picture))
     except Exception:  # noqa: BLE001  (no lineage to read: the pass paints from the model's own picture, as before)
@@ -2439,7 +2459,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     sc.set_metrics(srcproject_upscale=up)
     big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
     picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]
-    turn = {v: srcs.get(v) for v in TURN_VIEWS}
+    turn = {v: srcs.get(v) for v in painted_views(params)}
     # The head is fitted by its eyes and mouth (fit_head): MediaPipe on the processor (the mediapipe package), else on
     # the card that draws pictures, as the face pass asks it; else the darkest-spot finder.
     from . import facemarks

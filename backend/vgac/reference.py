@@ -49,6 +49,8 @@ DELIGHT_OPTIONS = ("auto", "remove", "keep")
 STRENGTH_NAMES = ("subtle", "normal", "strong")
 ADDON_CHOICES = ("off",) + STRENGTH_NAMES
 SHADING_OPTIONS = ("auto", "smooth", "flat")
+# Step 3's builders (stages/mesh.py): TRELLIS.2 from one picture (the default), Pixal3D from four views.
+MESH_BUILDERS = ("trellis2", "pixal3d")
 
 
 def _param(name: str, type_: str, default: Any, label: str | None = None, description: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -95,6 +97,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "mesh": [
         _param("engine", "select", "trellis", options=["trellis", "hy3d"]),
+        # Which model builds with the TRELLIS engine (vgac/pixal3d.py): TRELLIS.2 from one picture, or Pixal3D from the
+        # front, left, back and right views. Pixal3D is listed only when its files are present (_schema).
+        _param("builder", "select", "trellis2", label="3D builder", options=list(MESH_BUILDERS)),
         _param("input_view", "select", "concept", options=["concept", "front", "quarter", "quarter2"]),
         _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
         _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
@@ -155,6 +160,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
+        # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
+        # paints from the front, the sides and the back only.
+        _param("quarter_pictures", "boolean", True, categories=["humanoid"], label="Paint from the three-quarter pictures",
+               description="Off paints the model from the front, side and back pictures only"),
         _param("face_sides", "boolean", True, categories=["humanoid"], label="Paint the cheeks from the side views (optional)",
                description="Hides the seam where the front painting ends on the cheek; turn off if it leaves smudges by the ears or neck"),
         # The hair detail pass (stages/hair_detail.py): humanoids; skipped by itself for flat looks.
@@ -418,6 +427,10 @@ def _schema(stage: str) -> list[dict[str, Any]]:
             entry = {**entry, "options": list(concept_models())}
         if stage == "concept" and entry["name"] == "addons":
             entry = {**entry, "catalog": [addon_public(a) for a in addons() if a.get("stage") == "concept"]}
+        if stage == "mesh" and entry["name"] == "builder":
+            from . import pixal3d
+
+            entry = {**entry, "options": [b for b in entry["options"] if b != "pixal3d" or pixal3d.available()]}
         if stage == "prep" and entry["name"] == "size_m":
             entry = {**entry, "by_category": {cid: size_spec(cid) for cid in entry.get("categories") or []}}
         out.append(entry)

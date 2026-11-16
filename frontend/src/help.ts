@@ -327,6 +327,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
     'hand_edit: one Qwen-Image-Edit pass on the build\'s input picture before TRELLIS (stages/mesh.py HAND_EDIT)',
   ),
   head_crop: H('Head crop (share of the height)', 'How much of the figure, from the top, the head build sees.', 'Smaller crops give the face more detail; a crop that is too tight can come out flat, so it is built again once and otherwise the body\'s own head is kept.', 'Share of the figure\'s height, 0.18 to 0.4 (default 0.26)'),
+  builder: H('3D builder', 'Which model builds the 3D shape: TRELLIS.2 from one picture, or Pixal3D from the front, left, back and right pictures together.', 'Pixal3D sees all four sides, so the head and ears follow the side pictures; TRELLIS.2 guesses the sides from the front picture. Either way your pictures are painted on afterwards. Pixal3D is offered only when its model files are installed.', 'TRELLIS.2 (one picture) or Pixal3D multi-view (four views, camera angle estimated from the front picture by MoGe-2)'),
   tex_steps: H('Colour detail', 'How carefully the colours are painted: more steps give a richer, more detailed texture.', '24 (the default) gives clearly more detail than 12 for a few seconds more; the overall tone is then shifted back towards your picture. Use 12 if a model comes out too busy.', 'TRELLIS.2 texture sampler steps'),
   upsample: H('Finer colour and shape (slower)', 'Builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.', 'It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.', 'TRELLIS.2 upsample resolution'),
   remesh: H('Remesh (close holes)', 'Rebuild the surface so it is one closed shell.', 'Closed shells clean up and rig reliably.', 'remesh (watertight)'),
@@ -348,6 +349,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   source_project: H('Paint the picture onto the model', 'Puts the picture\'s own colours and detail onto the side of the model the picture shows, and the drawn views onto the other sides, so the model looks like the picture. Adds about 2 minutes.', 'The 3D builder makes up its colours and they come out soft. Automatic does this for characters on smooth looks (not Retro 64, Low-poly or a fixed palette); On tries it on any model; Off keeps the builder\'s own colours, for example if the drawn views leave patches.', 'Picture fitted to a render by outline and optical flow, projected through the UVs with depth, edge and stretch limits'),
   face_strength: H('Face strength', 'How much of the painted face goes onto the model.', 'Lower it if the painted face looks pasted on; 1 uses all of it.', 'Projection weight multiplier, 0 to 1'),
   face_closeup_guided: H('Guide the close-up by your face picture (optional)', 'With a picture of the real face (your own close-up in this step, or the Face picture in step 0.5), the close-up is drawn with that face\'s features.', 'On by default. The close-up keeps the painting\'s pose, expression and light and takes the eyes, nose, mouth, skin and hair from your picture, so the model looks more like the person. Without a face picture this changes nothing.', 'Qwen-Image-Edit with the painted crop as Picture 1 and the face picture as Picture 2; two tries, each checked like any close-up'),
+  quarter_pictures: H('Paint from the three-quarter pictures', 'Whether the two three-quarter pictures from step 2 are painted onto the model, the head included.', 'They fill in the cheeks and the sides of the head. If the head shows a second ear or a seam on the cheek, try it off: the front, side and back pictures still paint the model.', 'Leaves the quarter and quarter2 cut-outs out of the picture projection and the face pass\'s side views'),
   face_sides: H('Paint the cheeks from the side views (optional)', 'Paints the sides of the face from the side views of step 2, where the front picture cannot reach.', 'On by default: it hides the seam where the front painting ends on the cheek. Turn it off if it leaves smudges by the ears or the neck (it did on a bearded face whose side views placed the beard differently); the front of the face is unchanged either way.', 'Second projections from the quarter and side cut-outs, only where the front painted little'),
   face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
   face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024 (drawn once more in the look\'s own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting\'s resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)'),
@@ -1219,7 +1221,7 @@ export function metricPlain(name: string): string {
 export const SIMPLE_PARAMS: Record<StageId, string[]> = {
   concept: ['model', 'width', 'height', 'readiness_block'],
   turnaround: ['views', 'turn_method', 'auto_reroll', 'pose_ready', 'neutral_mouth'],
-  mesh: ['engine', 'target_faces', 'head_build'],
+  mesh: ['engine', 'builder', 'target_faces', 'head_build'],
   prep: ['size_m', 'height_m', 'grid_footprint', 'grid_height', 'face_yaw', 'symmetric', 'delight', 'face_detail', 'hair_detail'],
   rig: ['template', 'motion', 'moves', 'clips_source', 'hitboxes', 'hitbox_fit'],
   export: ['lods', 'collider', 'formats', 'sprites'],
@@ -1232,6 +1234,7 @@ export const SIMPLE_PARAMS: Record<StageId, string[]> = {
 
 export const OPTION_LABELS: Record<string, Record<string, string>> = {
   engine: { trellis: 'TRELLIS (most detail from one picture)', hy3d: 'Hunyuan (uses all four sides; good for long animals)' },
+  builder: { trellis2: 'TRELLIS.2 (from one picture)', pixal3d: 'Pixal3D (from all four sides)' },
   input_view: { concept: 'The first picture', front: 'Front view', quarter: 'Three-quarter view' },
   texture_size: { '512': '512 px (smallest)', '1024': '1024 px', '2048': '2048 px', '4096': '4096 px (largest)' },
   upsample: { '1024': 'Normal', '1536': 'Finer (about 2 to 3 times slower)' },
@@ -1401,6 +1404,13 @@ export function knobApplies(p: { categories?: string[] | null; by_category?: Rec
   if (Array.isArray(p.categories) && p.categories.length > 0) return p.categories.includes(category)
   if (p.by_category && typeof p.by_category === 'object' && Object.keys(p.by_category).length > 0) return category in p.by_category
   return true
+}
+
+// Whether Fine-tune shows a knob: it applies to the category, and a choice still has two options or more (the 3D builder
+// lists Pixal3D only when its files are installed, so with TRELLIS.2 alone there is nothing to choose).
+export function knobShown(p: { type?: string; options?: unknown[] | null; categories?: string[] | null; by_category?: Record<string, unknown> | null }, category: string): boolean {
+  if (!knobApplies(p, category)) return false
+  return !(p.type === 'select' && Array.isArray(p.options) && p.options.length < 2)
 }
 
 // ---------------------------------------------------------------------------

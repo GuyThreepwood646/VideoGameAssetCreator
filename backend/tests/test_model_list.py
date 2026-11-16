@@ -32,6 +32,10 @@ DEAD_REFERENCES = {
     # anima_graph(turbo=False); nothing calls it that way (workflows.py and the concept stage use the default turbo=True).
     "anima-aesthetic-v1.1.safetensors",
 }
+# Files the app uses when they are present but does not download yet: the Pixal3D four-view builder (vgac/pixal3d.py
+# offers it only when all three are installed). Their source and the DINOv3 licence of the encoder file are not settled.
+# Each moves to downloads.json, out of this set, once they are.
+NOT_DOWNLOADED_YET = {"pixal3d_multiview_int8_convrot.safetensors", "dino_v3_L_naf_fp32.safetensors", "moge_2_vitl_normal_fp16.safetensors"}
 # models.yaml / companions that are deliberately not asked of an engine (comments in preflight.MODEL_LOADERS say why).
 NOT_ASKED = {"skintoken_vae", "face_model", "face_landmarker",  # face_landmarker has its own check (check_face_landmarker)
              "pose_landmarker", "hand_landmarker"}  # optional: without them the pose check says what it did not measure
@@ -94,7 +98,7 @@ def test_the_scan_finds_the_known_references():
 
 def test_every_file_the_code_names_is_in_downloads_json():
     have = listed_downloads()
-    missing = sorted({n for _s, _p, n in referenced() if n not in have and n not in DEAD_REFERENCES})
+    missing = sorted({n for _s, _p, n in referenced() if n not in have and n not in DEAD_REFERENCES | NOT_DOWNLOADED_YET})
     assert not missing, f"named by the code but not in setup/downloads.json: {missing}"
 
 
@@ -123,7 +127,7 @@ def test_every_models_yaml_file_has_a_download_entry():
     for section in ("models", "companions"):
         for mid, m in MODELS_YAML[section].items():
             f = str(m.get("file") or "")
-            if not f.lower().endswith((".safetensors", ".pth", ".ckpt")):
+            if not f.lower().endswith((".safetensors", ".pth", ".ckpt")) or f in NOT_DOWNLOADED_YET:
                 continue  # tools and packs (Blender, Unity, animation packs, the hair library) are listed elsewhere
             d = by_id.get(mid) or next(iter(have.get(f, [])), None)
             if not d or d.get("save_as") != f:

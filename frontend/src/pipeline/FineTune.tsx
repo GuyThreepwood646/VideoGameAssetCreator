@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { libraryUrl, selectedVersion, type AddonChoice, type AdjustParam, type Asset, type StageId, type Suggestion, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, Field } from '../components/ui'
-import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobApplies, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
+import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobShown, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
 import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
@@ -49,7 +49,8 @@ export function FineTune({
   submitLabel?: string
 }) {
   // Knobs that apply to some categories only are left out for the others (2.3); they are never sent.
-  const visible = useMemo(() => schema.filter((p) => knobApplies(p, asset.category)), [schema, asset.category])
+  // A choice with one option left is no choice (the 3D builder lists Pixal3D only when its files are installed).
+  const visible = useMemo(() => schema.filter((p) => knobShown(p, asset.category)), [schema, asset.category])
   // Reset the form only when its content changes: another version, another schema or
   // other stored settings. Asset reloads hand over new objects with the same content,
   // and those must not wipe what the person is editing.

@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .. import face, facecloseup, facemarks, imaging, quality
+from .. import face, facecloseup, facemarks, imaging, quality, srcproject
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.qwen_edit import compose_graph, edit_graph
 from ..jobs import JobCancelled
@@ -1728,6 +1728,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     # beard sat elsewhere; it also lowers the front's match a little (0.96 to 0.90, 0.90 to 0.88, 0.67 to 0.63).
     # (not when the body was painted from the pictures: every view is already on the model there, in its own order)
     sides = side_pictures(sc) if params.get("face_sides") is not False and not body_painted else {}
+    sides = srcproject.without_quarters(sides, params)  # unless the version leaves the three-quarter pictures out
     facing = FACING_OVER_PICTURES if body_painted else FACING
     over = (facing,) if body_painted else ()  # the earlier hand-over, only when the body was painted from the pictures
     done = await asyncio.to_thread(fit_and_paint, work_glb, work_maps["base_color"], picture, Path(glb), Path(maps["base_color"]),
