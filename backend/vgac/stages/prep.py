@@ -440,7 +440,8 @@ async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: 
         base = face.read_rgb(maps["base_color"])
         keep, how = None, None
         if (rec.get("surface") or {}).get("face_keeps_texture") and sc.asset.category == "humanoid":
-            found = looktex.front_of_head(mesh, base, head_yaw)
+            # the finder's region together with the front of the head: the finder alone missed the eyes (looktex)
+            found = looktex.front_of_head(mesh, base, head_yaw, whole_front=True)
             keep, how = found["tris"], found["how"]
         r = looktex.colour_per_face(base, mesh, keep)
         out_dir = sc.dir / "faces"
@@ -1031,26 +1032,41 @@ def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dic
         return None  # no second test exists for this kind of model, and the outline test alone is not a check
     if m.get("face_outline_turn") is None and not m.get("face_toes_found"):
         return None
-    applied = m.get("face_yaw_applied") or 0
+    applied = int(m.get("face_yaw_applied") or 0) % 360
+    reason = quality.plain_reason(m.get("face_toes_reason") or "the feet were not found")
+    if m.get("facing_source") == "chosen":
+        # the person chose the turn: say so, and what the app's own tests would have done
+        return quality.facing_settled_check("chosen", applied, decided=quality.auto_turn(m.get("face_best_turn"))
+                                            if m.get("face_best_turn") is not None else None)
     if m.get("face_decision_sure") is False:
         # a near-tie nothing settled (facing.decide): it kept the side the 3D step built as the front, and says so
-        return quality.facing_unsure_check(m.get("face_best_turn"), applied, bool(m.get("face_model_flat")),
-                                           str(m.get("face_toes_reason") or ""))
+        return quality.facing_unsure_check(m.get("face_best_turn"), applied, bool(m.get("face_model_flat")), reason)
     if m.get("face_toes_found") and m.get("face_tests_differ_deg") is not None:
         return quality.facing_tests_check(m["face_outline_turn"], m["face_toes_turn"], m["face_tests_differ_deg"],
-                                          m.get("face_best_turn"), applied)
+                                          m.get("face_best_turn"), applied,
+                                          by="toes" if m.get("face_decided_by") == "toes" else "outline")
+    if m.get("face_colour") and m.get("face_decision_sure"):
+        # a near-tie with no toes that the colours of the front and back pictures settled (facing.decide)
+        return quality.facing_settled_check("colour_overruled" if m.get("face_decided_by") == "colour" else "colour",
+                                            applied, reason)
     if m.get("face_toes_reason") is None and "face_toes_found" not in m:
         return None  # a version made before the toes test existed: nothing to report
-    reason = str(m.get("face_toes_reason") or "the feet were not found")
-    if m.get("face_toes_found"):  # the toes have an answer and the outline has none
+    if m.get("face_toes_found"):  # the toes have an answer and the outline has none: the model was left as built
+        toes = int(round(float(m["face_toes_turn"]))) % 360
         return quality.not_measured("facing_tests", "the outline test of which way it faces",
-                                    "the drawn views did not fit the model well enough to read it; the toes say turn "
-                                    f"{int(round(float(m['face_toes_turn']))) % 360} degrees, with nothing to compare them with",
-                                    vars={"toes_turn": int(round(float(m["face_toes_turn"]))) % 360})
+                                    f"the drawn views did not fit the model well enough to read it. The toes say turn {toes} "
+                                    f"degrees, with nothing to compare them with, so it was left as the 3D step built it "
+                                    f"(turned {applied} degrees)",
+                                    vars={"toes_turn": toes, "applied": applied})
+    outline = int(m["face_outline_turn"]) % 360
+    margin = m.get("face_outline_margin")
+    clearly = " clearly" if margin is not None and float(margin) >= facing.MARGIN_MIN else ""
+    turned = (f"it was turned {applied} degrees" if facing.angle_diff(outline, applied) < 1 else
+              f"it was turned {applied} degrees, as the clean-up turns by quarter turns only")
     return quality.not_measured("facing_tests", "the second test of which way it faces (where the toes point)",
-                                f"{reason}. The outline of the drawn views alone says turn {int(m['face_outline_turn']) % 360} "
-                                "degrees, and nothing else confirms it",
-                                vars={"outline_turn": int(m["face_outline_turn"]) % 360})
+                                f"{reason}. The outline of the drawn views alone{clearly} says turn {outline} degrees, and "
+                                f"{turned}; nothing else confirms it",
+                                vars={"outline_turn": outline, "applied": applied})
 
 
 SKIN_METAL_LEFT_MAX = 0.05  # share of the skin-coloured surface still metal, on small separate pieces, that is not worth a warning

@@ -300,13 +300,46 @@ def _size_fix(c: dict[str, Any]) -> dict[str, Any]:
     return {"stage": "prep", "params": params}
 
 
-FACING_UNSURE = ("The model may face the wrong way: from the outline alone its front and its back look almost the same, and "
-                 "nothing else could tell them apart (the toes: {toes_reason}; the colours of the front and back pictures did not "
-                 "settle it either). It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
-                 "from the front; if the face is on the back of the head, turn it round.")
+FACING_UNSURE = ("The model may face the wrong way. Its outline looks almost the same from the front and from behind, its toes "
+                 "could not be read because {toes_reason}, and the colours of the front and back pictures did not settle it either. "
+                 "It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model from the front; "
+                 "if the face is on the back of the head, turn it round.")
 FACING_UNSURE_FLAT = ("The model may face the wrong way: the 3D step built it flat, like a card, so its front cannot be told from "
                       "its back. It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
                       "from the front; if the face is on the back, turn it round. A flat model may also be worth building again.")
+
+
+FACING_OK = {
+    "tests": ("The two ways of telling which way the model faces (its outline against the side pictures, and where its toes "
+              "point) agree. It was turned {applied} degrees."),
+    "colour": ("Its outline looks almost the same from the front and from behind, and its toes could not be read because "
+               "{toes_reason}, but the colours of the front and back pictures confirm the side the 3D step built as its front. "
+               "It was turned {value} degrees."),
+    "colour_overruled": ("Its outline looks almost the same from the front and from behind, and its toes could not be read "
+                         "because {toes_reason}, but the colours of the front and back pictures show the 3D step built it facing "
+                         "backwards, so it was turned round: {value} degrees."),
+    "chosen": "It was turned {value} degrees, as you chose.",
+}
+
+
+def _facing_ok(c: dict[str, Any]) -> str:
+    state = _var(c, "state") or "tests"
+    text = FACING_OK.get(state, FACING_OK["tests"])
+    if state == "chosen" and _var(c, "differs"):
+        text += " The app's own tests would have turned it {decided} degrees."
+    if state == "tests" and _var(c, "applied") is None:
+        text = text.split(" It was turned")[0]
+    return text
+
+
+def _facing_fail(c: dict[str, Any]) -> str:
+    if _var(c, "unsure"):
+        return FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE
+    text = ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but "
+            "its toes say {toes_turn} degrees, {value} degrees apart.")
+    if _var(c, "by") and _var(c, "applied") is not None:
+        text += " It went with the {by} and was turned {applied} degrees."
+    return text + " Look at the model from the front; if the face is on the back of the head, turn it."
 
 
 def _facing_fix(c: dict[str, Any]) -> dict[str, Any] | None:
@@ -490,11 +523,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "facing_tests": {
         "severity": "warn",
-        "ok": "The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.",
-        "fail": lambda c: (FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE) if _var(c, "unsure") else (
-                 "The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but its "
-                 "toes say {toes_turn} degrees, {value} degrees apart. Look at the model from the front; if the face is on the back "
-                 "of the head, turn it."),
+        "ok": _facing_ok,
+        "fail": _facing_fail,
         "fix_label": lambda c: "Turn it round" if _var(c, "unsure") else "Turn it to face forward",
         "vars": lambda c: {"outline_turn": _var(c, "outline_turn") if _var(c, "outline_turn") is not None else "?",
                            "toes_turn": _var(c, "toes_turn") if _var(c, "toes_turn") is not None else "?"},

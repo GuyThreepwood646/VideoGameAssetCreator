@@ -188,3 +188,54 @@ def test_shrink_by_island_never_mixes_neighbouring_pieces():
     assert np.allclose(small[red], (1, 0, 0)) and np.allclose(small[blue], (0, 0, 1))
     # the plain area average for a size that does not divide
     assert imaging.shrink_by_island(base, uvm, 100).shape == (100, 100, 3)
+
+
+def _dense_box(lo, hi, size=0.03):
+    import trimesh
+
+    b = trimesh.creation.box(bounds=[lo, hi])
+    v, f = trimesh.remesh.subdivide_to_size(b.vertices, b.faces, max_edge=size)
+    return np.asarray(v, dtype=np.float64), np.asarray(f, dtype=np.int64)
+
+
+def _figure_with_neck(neck_half: float = 0.03):
+    """A body, a thin neck and a head: L1 Farmer's shape (an A pose, so no slice is SHOULDER_JUMP times the head)."""
+    parts = [_dense_box([-0.3, 0.0, -0.15], [0.3, 1.2, 0.15]),            # body
+             _dense_box([-neck_half, 1.2, -neck_half], [neck_half, 1.3, neck_half], 0.01),  # neck
+             _dense_box([-0.2, 1.3, -0.2], [0.2, 1.7, 0.2])]                # head
+    verts, faces, n = [], [], 0
+    for v, f in parts:
+        verts.append(v); faces.append(f + n); n += len(v)
+    verts = np.vstack(verts)
+    return {"verts": verts, "faces": np.vstack(faces), "uv": np.zeros((len(verts), 2))}
+
+
+def test_whole_front_stops_at_the_neck_and_the_retro_path_does_not():
+    m = _figure_with_neck()
+    v, f = m["verts"], m["faces"]
+    low = looktex.front_geometry(m, 0.0, neck=True)
+    old = looktex.front_geometry(m, 0.0)
+    c_low, c_old = v[f[low]].mean(axis=1), v[f[old]].mean(axis=1)
+    assert (c_low[:, 1] > 1.2).all()                        # nothing of the body below the neck
+    assert (c_old[:, 1] < 1.2).any()                        # the old band ran on into the body
+    assert looktex.front_of_head(m, None, 0.0, whole_front=True)["tris"].tolist() == low.tolist()
+    assert looktex.front_of_head(m, None, 0.0)["tris"].tolist() == old.tolist()   # Retro 64's face layout: unchanged
+
+
+def test_a_figure_without_a_neck_keeps_the_band_to_the_shoulders():
+    m = _figure_with_neck(neck_half=0.19)                   # a beard or a thick neck: no slice under half the head
+    assert looktex.front_geometry(m, 0.0, neck=True).tolist() == looktex.front_geometry(m, 0.0).tolist()
+
+
+def test_whole_front_keeps_the_finders_region_together_with_the_front_of_the_head(monkeypatch):
+    m = _figure_with_neck()
+    finder = np.arange(10, 20)                              # the finder's own region (on L1: the front of the hair)
+    monkeypatch.setattr(looktex.face, "render_view", lambda *a, **k: None)
+    monkeypatch.setattr(looktex.face, "find_face_checked", lambda *a, **k: {"found": True, "region": None})
+    monkeypatch.setattr(looktex.face, "face_triangles", lambda *a, **k: finder)
+    tex = np.zeros((8, 8, 3))
+    alone = looktex.front_of_head(m, tex, 0.0)
+    assert alone["how"] == "face finder" and alone["tris"].tolist() == finder.tolist()   # Retro 64: as before
+    both = looktex.front_of_head(m, tex, 0.0, whole_front=True)
+    assert both["how"] == "face finder and front of the head"
+    assert set(finder) <= set(both["tris"]) and set(looktex.front_geometry(m, 0.0, neck=True)) <= set(both["tris"])
