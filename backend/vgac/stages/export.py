@@ -803,6 +803,23 @@ def _speed_scale(sc: StageContext, humanoid: bool) -> float | None:
     return size / 1.8 if size > 0 else None
 
 
+def _write_finger_limits(sc: StageContext, humanoid: bool) -> Path | None:
+    """finger_limits.json next to the FBX for a rigged humanoid (vgac/fingerlimits.py), from the rig version's finger_cap: Unity plays the
+    shared library clips, whose finger curl the app's own cap never reaches, so the importer writes the cap into the Humanoid description.
+    None for anything else, or when the person turned the cap off."""
+    if not humanoid:
+        return None
+    from .. import fingerlimits
+
+    rig_v = sc.stage_version("rig") if hasattr(sc, "stage_version") else None
+    cap = fingerlimits.cap_from_params(getattr(rig_v, "params", None))
+    if cap is None:
+        return None
+    path = Path(sc.dir) / "finger_limits.json"
+    path.write_text(json.dumps(fingerlimits.document(cap), indent=1), encoding="utf-8")
+    return path
+
+
 def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[dict[str, Any], list[str], list[str]]:
     """Arguments and flags for VgacImport.Run, the same for the sandbox import and the project import (CODE-AUDIT
     D7): -vgacInput, -vgacName, -nographics, -vgacHumanoid for a rigged humanoid, -vgacClips when the humanoid's
@@ -825,6 +842,9 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     warnings: list[str] = []
     # Hit boxes (G34): the rig stage's hitboxes.json, copied next to the FBX by _pack; the body shape for moving is
     # the export knob movement_shape (auto takes the file's movement.default).
+    fl = _write_finger_limits(sc, humanoid)
+    if fl is not None:
+        args["-vgacFingerLimits"] = fl
     hb = Path(sc.dir) / "hitboxes.json"
     if hb.is_file():
         args["-vgacHitboxes"] = hb
