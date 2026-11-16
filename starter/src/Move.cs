@@ -358,7 +358,7 @@ namespace Vgac.Starter
                 string r = comfy.Retarget(j.From, j.To);
                 if (r != null) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Continue to try again.";
                 r = comfy.RebuildVenv(j.To);
-                if (r != null) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " Continue to try again.";
+                if (r != null) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " VGAC itself works; its own ComfyUI will not start until this is done (it needs the internet). Continue to try again, or Cancel to go back to the old place.";
             }
             j.State = "rebuilt"; Save(j);
             return null;
@@ -383,6 +383,19 @@ namespace Vgac.Starter
                 var m = MachineFile.Load(l.ProjectRoot);
                 m.Set("starter", "dataFolder", Layout.Stored(l.ProjectRoot, j.From)); m.Save();
                 RewriteLedger(j.To, j.From);
+                // VGAC's own ComfyUI: its engine settings were pointed at the new place by retarget; they go back too. If that is
+                // refused, everything is put back on the new place (a consistent, working state) and the move stays open.
+                if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.From)))
+                {
+                    string back = comfy.Retarget(j.To, j.From);
+                    if (back != null)
+                    {
+                        m.Set("starter", "dataFolder", Layout.Stored(l.ProjectRoot, j.To)); m.Save();
+                        RewriteLedger(j.From, j.To);
+                        log.Line("move: the undo was refused by ComfyUI's installer (" + back + "); staying on " + j.To);
+                        return "The move was not undone: VGAC's own ComfyUI could not be pointed back at the old place (" + back + "). Everything stays in the new place and works as it was. Try Cancel again, or Continue the move.";
+                    }
+                }
                 try { File.Delete(JournalPath(l.ProjectRoot)); } catch (Exception) { }
                 log.Line("move: undone, pointing back at " + j.From + "; the copy in " + j.To + " was left in place");
                 return "VGAC points at the old place again. The copy in " + j.To + " was left as it is, because the app may have used it. Delete it yourself if you do not want it.";

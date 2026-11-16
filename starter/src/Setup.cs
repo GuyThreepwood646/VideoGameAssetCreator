@@ -65,6 +65,7 @@ namespace Vgac.Starter
         public static Layout From(string projectRoot, MachineFile machine)
         {
             string chosen = machine.GetString("starter", "dataFolder");
+            if (!string.IsNullOrEmpty(chosen) && chosen.Contains("%")) chosen = Environment.ExpandEnvironmentVariables(chosen);   // %NAME% only, as the backend does
             string data = string.IsNullOrEmpty(chosen) ? DefaultDataFolder(projectRoot)
                 : (Path.IsPathRooted(chosen) ? chosen : Path.Combine(projectRoot, chosen));
             return new Layout(projectRoot, data);

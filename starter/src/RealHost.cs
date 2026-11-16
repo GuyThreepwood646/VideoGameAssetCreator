@@ -11,7 +11,7 @@ using System.Threading;
 
 namespace Vgac.Starter
 {
-    public class RealHost : IHost
+    public class RealHost : IHost, IAbortable
     {
         volatile Process current;     // the setup program running now (uv, npm), so quitting can stop it
 
@@ -111,7 +111,19 @@ namespace Vgac.Starter
             psi.CreateNoWindow = true;
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
-            if (env != null) foreach (var kv in env) psi.EnvironmentVariables[kv.Key] = kv.Value;
+            // A clean environment on request: nothing inherited that could steer Python, uv or pip, or point the program at settings
+            // other than the project's own (VGAC_*, UV_*, PIP_*, PYTHON*, VIRTUAL_ENV, CONDA_*).
+            if (env != null && env.ContainsKey("VGAC_CLEAN_ENVIRONMENT"))
+            {
+                var drop = new List<string>();
+                foreach (System.Collections.DictionaryEntry de in psi.EnvironmentVariables)
+                {
+                    string k = ((string)de.Key).ToUpperInvariant();
+                    foreach (string pre in new[] { "VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_" }) if (k.StartsWith(pre)) { drop.Add((string)de.Key); break; }
+                }
+                foreach (string k in drop) psi.EnvironmentVariables.Remove(k);
+            }
+            if (env != null) foreach (var kv in env) if (kv.Key != "VGAC_CLEAN_ENVIRONMENT") psi.EnvironmentVariables[kv.Key] = kv.Value;
             if (!LooksLikeProgram(exe)) throw new StarterError(Path.GetFileName(exe) + " is damaged or is not a program.", "Try again; VGAC fetches it again if it can.");
             using (var w = new StreamWriter(logFile, true, new UTF8Encoding(false)))
             using (var p = new Process())

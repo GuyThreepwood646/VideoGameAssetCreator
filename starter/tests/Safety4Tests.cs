@@ -2,10 +2,12 @@
 // marker, custom_nodes kept, Continue only when the settings fit, safe defaults, no ledger entries inside the data folder.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Vgac.Starter;
 
 public static partial class T
@@ -17,6 +19,7 @@ public static partial class T
         AMoveIntoTheProjectIsStoredRelative();
         TheLibraryNeedsItsOwnMarker();
         VgacsOwnComfyUIWentThroughTheBackendEverywhere();
+        TheFifthReviewsFixes();
         ContinueNeedsTheSettingsToFitTheJournal();
         DialogsAnswerNoByDefault();
         SetupWritesNoLedgerEntriesInsideTheDataFolder();
@@ -297,5 +300,230 @@ public static partial class T
             Check(real != null && real.TrimEnd('\\') == rootDir.TrimEnd('\\').ToLowerInvariant(), "a drive root resolves to itself, not to the current folder on that drive (" + real + ")");
         }
         finally { Directory.SetCurrentDirectory(here); }
+    }
+
+    // ---- the fifth review ----------------------------------------------------------------------------------------------------
+
+    // A host whose Run does what the test says, in the starter's own way: writes into the log file it was given.
+    class ScriptedHost : IHost, IAbortable
+    {
+        public Func<string, string> Answer;          // args -> text for the log (null: nothing)
+        public int HangMs;
+        public int ExitCode;
+        public bool Aborted;
+        public string LastArgs; public Dictionary<string, string> LastEnv;
+        public void Download(string u, string d, string s, Action<long, long> p) { }
+        public void Unzip(string z, string d) { }
+        public int Run(string exe, string args, string cwd, Dictionary<string, string> env, string log)
+        {
+            LastArgs = args; LastEnv = env;
+            if (HangMs > 0) { int waited = 0; while (waited < HangMs && !Aborted) { Thread.Sleep(50); waited += 50; } }
+            string text = Answer == null ? null : Answer(args);
+            if (text != null) File.WriteAllText(log, text);
+            return ExitCode;
+        }
+        public string Capture(string e, string a) { return null; }
+        public long FreeBytes(string f) { return 1L << 40; }
+        public void AbortCurrent() { Aborted = true; }
+    }
+
+    static Layout ProjectWithPython(out string root)
+    {
+        root = NewProject();
+        var l = Layout.From(root, MachineFile.Load(root));
+        Directory.CreateDirectory(Path.GetDirectoryName(l.VenvPython)); File.WriteAllText(l.VenvPython, "py");
+        return l;
+    }
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", SetLastError = true)]
+    static extern IntPtr CommandLineToArgvW([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string cmd, out int argc);
+
+    static List<string> WindowsArgs(string commandLine)
+    {
+        int n; IntPtr p = CommandLineToArgvW(commandLine, out n);
+        var res = new List<string>();
+        for (int i = 0; i < n; i++) res.Add(System.Runtime.InteropServices.Marshal.PtrToStringUni(System.Runtime.InteropServices.Marshal.ReadIntPtr(p, i * IntPtr.Size)));
+        return res;
+    }
+
+    // What the starter does after the person picked another folder but the ledger still names the old one: scripted answers of the real
+    // commands, in the order the real backend gives them.
+    class RenamedInstall
+    {
+        public bool Adopted; public List<string> Asked = new List<string>(); public string RefuseAdopt;
+        public string Run(string args, int ms, Func<bool> c)
+        {
+            string cmd = args.Split(' ')[0]; Asked.Add(cmd);
+            if (cmd == "check") return Adopted ? "{\"ok\": true, \"keeps\": []}" : "{\"ok\": false, \"code\": \"adoptable\", \"reason\": \"This ComfyUI is VGAC's (its id matches), but the ledger still names its old place.\", \"adoptable\": true}";
+            if (cmd == "adopt") { if (RefuseAdopt != null) return "{\"ok\": false, \"code\": \"not_ours\", \"reason\": \"" + RefuseAdopt + "\", \"adoptable\": false}"; Adopted = true; return "{\"ok\": true, \"adopted\": true}"; }
+            return "{\"ok\": true}";
+        }
+    }
+
+    static void TheFifthReviewsFixes()
+    {
+        // another user's shared folders are refused like this user's
+        string usersRoot = Path.GetDirectoryName(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        string anyRoot = NewProject();
+        Check(Proof.DataFolderProblem(Path.Combine(usersRoot, "Somebody Else", "Documents"), anyRoot) != null, "another user's Documents is refused");
+        Check(Proof.DataFolderProblem(Path.Combine(usersRoot, "Public", "Documents"), anyRoot) != null, "Public\\Documents is refused");
+        Check(Proof.DataFolderProblem(Path.Combine(usersRoot, "Somebody Else", "Downloads"), anyRoot) != null, "another user's Downloads is refused");
+
+        // N1: a renamed data folder is adopted through the backend's command, then everything goes on
+        var ren = new RenamedInstall();
+        var s = Movable();
+        var real = new BackendComfyInstall(ren.Run);
+        var mv = new MoveRunner(s.L, MachineFile.Load(s.Root), Ledger.Load(s.Root), real, new NoProcs(), new SetupLog(s.Root));
+        string to = Path.Combine(Tmp("target"), "after-rename");
+        string said = mv.Start(to, new Progress());
+        Check(said == null, "the move with a renamed ComfyUI install goes through: " + said);
+        Eq(string.Join(",", ren.Asked.ToArray()).Substring(0, 20), "check,adopt,check,re", "check, adopt, check again, then the move itself");
+        // and when the backend will not adopt (a copied marker, a data folder that is not VGAC's), the move is refused with its reason
+        var ren2 = new RenamedInstall(); ren2.RefuseAdopt = "VGAC cannot show that it made the ComfyUI there.";
+        var s2 = Movable();
+        var mv2 = new MoveRunner(s2.L, MachineFile.Load(s2.Root), Ledger.Load(s2.Root), new BackendComfyInstall(ren2.Run), new NoProcs(), new SetupLog(s2.Root));
+        said = mv2.Start(Path.Combine(Tmp("target"), "refused"), new Progress());
+        Check(said != null && said.Contains("VGAC cannot show that it made the ComfyUI there") && MoveRunner.Load(s2.Root) == null, "refused, nothing started: " + said);
+        var plan = RemovalPlanner.Build(s2.L, MachineFile.Load(s2.Root), s2.Led, new BackendComfyInstall(ren2.Run));
+        Check(plan.Get("comfy").Items.Count == 0 && plan.Notes.Any(n => n.Contains("cannot show that it made")), "Remove lists nothing for it and says why");
+
+        // N2: Cancel after the switch points the engine settings back; a refusal leaves everything on the new place, working
+        var c1 = Movable(); string t1 = Path.Combine(Tmp("target"), "undo");
+        Check(Mover(c1, null).Start(t1, new Progress()) == null, "(a finished move)");
+        Check(Mover(c1, null).Cancel() == null || true, "(cancel)");
+        Eq(string.Join(" | ", c1.Comfy.RetargetArgs.ToArray()), c1.Data + " -> " + t1 + " | " + t1 + " -> " + c1.Data, "retarget went to the new place and back again");
+        Eq(Layout.From(c1.Root, MachineFile.Load(c1.Root)).DataFolder.TrimEnd('\\'), c1.Data.TrimEnd('\\'), "the settings name the old place");
+        Check(MoveRunner.Load(c1.Root) == null, "and the move is closed");
+        var c2 = Movable(); string t2 = Path.Combine(Tmp("target"), "undo-refused");
+        Mover(c2, null).Start(t2, new Progress());
+        c2.Comfy.RetargetBackError = "The settings could not be updated.";
+        string back = Mover(c2, null).Cancel();
+        Check(back != null && back.Contains("not undone") && back.Contains("The settings could not be updated"), "a refused undo says so: " + back);
+        Eq(Layout.From(c2.Root, MachineFile.Load(c2.Root)).DataFolder.TrimEnd('\\'), t2.TrimEnd('\\'), "everything stays on the new place");
+        Check(MoveRunner.Load(c2.Root, t2) != null && File.Exists(Path.Combine(t2, "comfyui", ComfyGuard.MarkerName)), "the move is still open and the new copy is whole");
+        c2.Comfy.RetargetBackError = null;
+        Check(Mover(c2, null).Cancel().Contains("points at the old place again"), "and the next Cancel works");
+        // offline: the rebuild fails in 'switched'; the screen tells the truth and Cancel gets the person back to a working state
+        var c3 = Movable(); string t3 = Path.Combine(Tmp("target"), "offline");
+        c3.Comfy.RebuildError = "VGAC could not reach the internet.";
+        string off = Mover(c3, null).Start(t3, new Progress());
+        Check(off != null && off.Contains("VGAC itself works") && off.Contains("needs the internet") && off.Contains("Cancel"), "the message says what works and what does not: " + off);
+        Eq(MoveRunner.Load(c3.Root, t3).State, "switched", "(the move waits at 'switched')");
+        Check(Mover(c3, null).Cancel().Contains("points at the old place again") && Eq2(c3.Comfy.RetargetArgs.Count.ToString(), "2"), "Cancel goes back, including the engine settings");
+
+        // N3: a failed ComfyUI removal keeps the Python its installer needs
+        var r1 = Installed();
+        r1.Comfy.RemoveError = "VGAC's ComfyUI is still running on port 8288.";
+        var rp = RemovalPlanner.Build(r1.L, r1.M, r1.Led, r1.Comfy);
+        var rr = RemovalRunner.Run(rp, new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
+        Check(Directory.Exists(r1.L.Venv) && Directory.Exists(r1.L.PythonDir), "the app's Python (venv and its Python) stays when VGAC's own ComfyUI could not be removed");
+        Check(rr.Skipped.Any(x => x.Contains("kept, because VGAC's own ComfyUI could not be removed")), "and the screen says why");
+        Check(!Directory.Exists(r1.L.NodeDir) && !Directory.Exists(Path.Combine(r1.L.FrontendDir, "node_modules")), "the rest of the group was removed");
+        r1.Comfy.RemoveError = null;
+        var rr2 = RemovalRunner.Run(RemovalPlanner.Build(r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy), new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
+        Check(!Directory.Exists(r1.L.Venv) && !Directory.Exists(r1.L.PythonDir) && !File.Exists(Path.Combine(r1.Data, "comfyui", "main.py")), "a second run, once it works, removes everything");
+
+        // N4 and N6: a command that hangs, prints garbage, exits non-zero without a result, or is stopped
+        string root; var lay = ProjectWithPython(out root);
+        var h = new ScriptedHost(); h.HangMs = 20000;
+        var sw = Stopwatch.StartNew();
+        string line = ComfyCli.Run(h, lay, root, "check", 700, null);
+        Check(sw.ElapsedMilliseconds < 8000 && h.Aborted && line != null && line.Contains("\"timeout\""), "a command that hangs is stopped at its time limit (" + sw.ElapsedMilliseconds + " ms): " + line);
+        Check(h.LastEnv != null && h.LastEnv.ContainsKey("VGAC_CLEAN_ENVIRONMENT"), "and every call asks for a clean environment");
+        h = new ScriptedHost(); h.HangMs = 20000;
+        line = ComfyCli.Run(h, lay, root, "rebuild-venv", 60000, delegate { return true; });
+        Check(h.Aborted && line != null && line.Contains("\"stopped\""), "Stop ends a long command: " + line);
+        h = new ScriptedHost(); h.Answer = delegate(string a) { return "Traceback (most recent call last)\r\nValueError: nope\r\n{ not json\r\n"; }; h.ExitCode = 1;
+        Check(ComfyCli.Run(h, lay, root, "check", 5000, null) == null, "garbage and a non-zero exit without a result line is no answer");
+        Check(!new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(h, lay, root, a, ms, c); }).Remove().Contains("older version"), "which is a refusal with a plain reason");
+        h = new ScriptedHost(); h.Answer = delegate(string a) { return "some log line\r\n{\"ok\": true, \"rebuilt\": true}\r\n"; };
+        Check((ComfyCli.Run(h, lay, root, "rebuild-venv", 5000, null) ?? "").Contains("rebuilt"), "the last result line is the answer");
+        // the state is remembered briefly, so the window does not ask on every redraw, and forgotten when anything changes
+        int asked = 0;
+        var memo = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { asked++; return "{\"ok\": true, \"keeps\": []}"; });
+        Directory.CreateDirectory(Path.Combine(s.Data, "x"));
+        string cdata = Tmp("memo"); Put(Path.Combine(cdata, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
+        memo.State(cdata); memo.State(cdata);
+        Eq(asked.ToString(), "1", "two looks in a row ask once");
+        memo.Forget(); memo.State(cdata);
+        Eq(asked.ToString(), "2", "and again after Forget");
+
+        // N5: argument quoting
+        foreach (string arg in new[] { "D:\\VGACdata\\", "E:\\new place\\", "C:\\plain\\path", "with \"quote\"", "trail\\\\", "x y", "" })
+            Eq(string.Join("|", WindowsArgs("prog.exe " + ComfyCli.Quote(arg)).Skip(1).ToArray()), arg, "Windows reads back exactly: " + arg);
+        var m5 = MachineFile.Load(NewProject()); Environment.SetEnvironmentVariable("VGACSTARTERTEST", "C:\\from\\env");
+        m5.Set("starter", "dataFolder", "%VGACSTARTERTEST%\\big");
+        Eq(Layout.From("C:\\proj", m5).DataFolder, "C:\\from\\env\\big", "%NAME% in the data folder setting is expanded (as the backend does)");
+        m5.Set("starter", "dataFolder", "$VGACSTARTERTEST\\big");
+        Check(Layout.From("C:\\proj", m5).DataFolder.Contains("$VGACSTARTERTEST"), "and nothing else is");
+        Environment.SetEnvironmentVariable("VGACSTARTERTEST", null);
+
+        // N6: the real host passes none of the starter's own variables to a command that asks for a clean environment
+        Environment.SetEnvironmentVariable("VGAC_MACHINE", "C:\\somewhere\\else.json"); Environment.SetEnvironmentVariable("PYTHONHOME", "C:\\nowhere"); Environment.SetEnvironmentVariable("UV_CACHE_DIR", "C:\\nocache");
+        string logA = Path.Combine(Tmp("env"), "a.log"), logB = Path.Combine(Tmp("env"), "b.log");
+        string cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var rh = new RealHost();
+        var clean = new Dictionary<string, string>(); clean["VGAC_CLEAN_ENVIRONMENT"] = "1"; clean["MY_OWN"] = "kept";
+        rh.Run(cmd, "/c set", Tmp("env"), clean, logA);
+        rh.Run(cmd, "/c set", Tmp("env"), null, logB);
+        string a1 = File.ReadAllText(logA), b1 = File.ReadAllText(logB);
+        Check(!a1.Contains("VGAC_MACHINE") && !a1.Contains("PYTHONHOME") && !a1.Contains("UV_CACHE_DIR") && !a1.Contains("VGAC_CLEAN_ENVIRONMENT") && a1.Contains("MY_OWN=kept") && a1.ToUpperInvariant().Contains("PATH="), "a clean call has none of them, keeps PATH and what it was given");
+        Check(b1.Contains("VGAC_MACHINE") && b1.Contains("PYTHONHOME"), "(an ordinary call still inherits them)");
+        Environment.SetEnvironmentVariable("VGAC_MACHINE", null); Environment.SetEnvironmentVariable("PYTHONHOME", null); Environment.SetEnvironmentVariable("UV_CACHE_DIR", null);
+
+        RealCommandsAgainstAFakeInstall();
+    }
+
+    // One end-to-end run of the real `python -m vgac.comfy_install`, through the starter's own host, against a fake install in a temp
+    // project (a copy of the backend's package, the real Python environment read through a link). Skipped when no environment is found.
+    static void RealCommandsAgainstAFakeInstall()
+    {
+        string venv = null;
+        string dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 10 && dir != null && venv == null; i++)
+        {
+            string cand = Path.Combine(dir, "backend", ".venv"); if (File.Exists(Path.Combine(cand, "Scripts", "python.exe"))) venv = cand;
+            dir = Path.GetDirectoryName(dir.TrimEnd('\\'));
+        }
+        if (venv == null) venv = @"F:\Projects\VideoGameAssetCreator\backend\.venv";
+        string pkg = FindSource("backend\\vgac\\comfy_install.py");
+        if (!File.Exists(Path.Combine(venv, "Scripts", "python.exe")) || pkg == null) { Console.WriteLine("SKIPPED: no Python environment or backend package found for the real-command test"); return; }
+        string root = Tmp("e2e");
+        SafeFs.CopyTree(Path.GetDirectoryName(pkg), Path.Combine(root, "backend", "vgac"), new[] { "__pycache__" }, new FsReport());
+        Junction(Path.Combine(root, "backend", ".venv"), venv);
+        Directory.CreateDirectory(Path.Combine(root, "setup")); File.Copy(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(pkg)), "config.yaml"), Path.Combine(root, "backend", "config.yaml"), true);
+        string data = Path.Combine(root, "local", "renamed data");
+        Put(Path.Combine(root, "local", "machine.json"), "{\"schema\":1,\"starter\":{\"dataFolder\":\"" + data.Replace("\\", "\\\\") + "\",\"dataFolderId\":\"data-id-9\"}}");
+        Put(Path.Combine(data, ".vgac-data.json"), "{\"made_by\":\"VGAC\",\"id\":\"data-id-9\"}");
+        string croot = Path.Combine(data, "comfyui");
+        Put(Path.Combine(croot, "vgac-install.json"), "{\"made_by\":\"VGAC\",\"install_id\":\"abc123\",\"steps\":{}}");
+        Put(Path.Combine(croot, "ComfyUI", "main.py"), "print()"); Put(Path.Combine(croot, "ComfyUI", "models", "m.safetensors"), "weights"); Put(Path.Combine(croot, "output", "o.png"), "pic");
+        string oldPlace = Path.Combine(root, "local", "old data", "comfyui");     // where the ledger still says it is: gone now
+        Put(Path.Combine(root, "local", "installed.json"), "{\"items\":[{\"what\":\"VGAC's own ComfyUI\",\"path\":\"" + oldPlace.Replace("\\", "\\\\") + "\",\"kind\":\"added\",\"bytes\":0,\"id\":\"abc123\"}]}");
+        var m = MachineFile.Load(root); var lay = Layout.From(root, m);
+        var host = new RealHost();
+        var comfy = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(host, lay, root, a, ms, c); });
+        ComfyState st = comfy.State(data);
+        Check(st.Present && st.Problem == null, "the real check, after the real adopt of a renamed install, confirms it: " + st.Problem);
+        Check(st.Keeps.Count == 1 && st.Keeps[0].EndsWith("models"), "and reports what it keeps: " + string.Join(",", st.Keeps.ToArray()));
+        Check(File.ReadAllText(Path.Combine(root, "local", "installed.json")).Replace("\\\\", "\\").Contains(croot), "the ledger now names the folder the settings name");
+        // a copied marker in somebody else's data folder is refused by the real command
+        string root2 = Tmp("e2e2");
+        SafeFs.CopyTree(Path.GetDirectoryName(pkg), Path.Combine(root2, "backend", "vgac"), new[] { "__pycache__" }, new FsReport());
+        Junction(Path.Combine(root2, "backend", ".venv"), venv);
+        File.Copy(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(pkg)), "config.yaml"), Path.Combine(root2, "backend", "config.yaml"), true);
+        string theirs = Path.Combine(root2, "Their data");
+        Put(Path.Combine(root2, "local", "machine.json"), "{\"schema\":1,\"starter\":{\"dataFolder\":\"" + theirs.Replace("\\", "\\\\") + "\"}}");
+        Put(Path.Combine(theirs, "comfyui", "vgac-install.json"), "{\"made_by\":\"VGAC\",\"install_id\":\"abc123\"}"); Put(Path.Combine(theirs, "comfyui", "theirs.txt"), "not VGAC's");
+        Put(Path.Combine(root2, "local", "installed.json"), "{\"items\":[{\"what\":\"VGAC's own ComfyUI\",\"path\":\"C:\\\\gone\\\\comfyui\",\"kind\":\"added\",\"bytes\":0,\"id\":\"abc123\"}]}");
+        var lay2 = Layout.From(root2, MachineFile.Load(root2));
+        var comfy2 = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(host, lay2, root2, a, ms, c); });
+        ComfyState st2 = comfy2.State(theirs);
+        Check(st2.Problem != null && !st2.Problem.Contains("older version"), "a copied marker in a folder that is not VGAC's is refused by the real command: " + st2.Problem);
+        Check(comfy2.Remove() != null && File.Exists(Path.Combine(theirs, "comfyui", "theirs.txt")), "and the real remove deletes nothing there");
+        // the real retarget and remove, from here on the folder is VGAC's: retarget (nothing to change), then remove keeps the models
+        Check(comfy.Retarget(Path.Combine(root, "local", "old data"), data) == null, "the real retarget answers ok");
+        Check(comfy.Remove() == null, "the real remove succeeds");
+        Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && !File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models, and removed the rest of the folder");
     }
 }

@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,6 +179,11 @@ def shipped_packs() -> list[dict[str, Any]]:
     return [dict(v, id=k) for k, v in (shipped().get("node_packs") or {}).items() if isinstance(v, dict)]
 
 
+def expand_percent(text: str) -> str:
+    """%NAME% is replaced by the environment variable (the starter's VGAC.exe does the same, and only this: no $NAME, no ~)."""
+    return re.sub(r"%([^%]+)%", lambda m: os.environ.get(m.group(1), m.group(0)), text)
+
+
 def data_folder() -> Path:
     """The starter's data folder (machine.json starter.dataFolder; default local/data in the project)."""
     chosen = ""
@@ -190,7 +196,7 @@ def data_folder() -> Path:
     base = downloader.project_dir()
     if not chosen:
         return base / "local" / "data"
-    p = Path(os.path.expandvars(chosen))
+    p = Path(expand_percent(chosen))
     return p if p.is_absolute() else base / p
 
 
@@ -312,8 +318,12 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     refused: VGAC installs only into a folder it made."""
     m = read_marker(root)
     if m is not None and _in_ledger(root):
+        _ensure_id(root, m)
         return m
+    if m is not None and _adopt_if_proved(root):
+        return read_marker(root) or m
     fresh = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
+             "install_id": _ledger_id(root) or uuid.uuid4().hex,
              "steps": {}, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if (root / MARKER).is_file() and _in_ledger(root):
         log.warning("the marker of VGAC's own ComfyUI could not be read; writing a fresh one (every step checks again)")
@@ -330,6 +340,7 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     m = fresh
     (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
     downloader.record("VGAC's own ComfyUI", root, "added", 0)
+    _stamp_ledger_id(root, m["install_id"])
     return m
 
 
@@ -1017,6 +1028,96 @@ def _in_ledger(root: Path) -> bool:
     return any(isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root) for i in items)
 
 
+def _ledger_items() -> list[Any]:
+    try:
+        return list(json.loads(downloader.ledger_path().read_text(encoding="utf-8-sig")).get("items", []))
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _ledger_id(root: Path) -> str:
+    for i in _ledger_items():
+        if isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root):
+            return str(i.get("id") or "")
+    return ""
+
+
+def _write_ledger(items: list[Any]) -> None:
+    p = downloader.ledger_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _stamp_ledger_id(root: Path, install_id: str) -> None:
+    """Put this install's id on its ledger entry (the entry that names `root`), so the entry can be found again if the folder is
+    renamed or its drive letter changes."""
+    with downloader._ledger_lock:
+        items = _ledger_items()
+        for i in items:
+            if isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root):
+                i["id"] = install_id
+        _write_ledger(items)
+
+
+def _ensure_id(root: Path, m: dict[str, Any]) -> None:
+    """An install made before ids existed gets one (marker and ledger entry) the first time it is looked at."""
+    iid = str(m.get("install_id") or "") or _ledger_id(root)
+    if not iid:
+        iid = uuid.uuid4().hex
+    if m.get("install_id") != iid:
+        m["install_id"] = iid
+        (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
+    if _ledger_id(root) != iid:
+        _stamp_ledger_id(root, iid)
+
+
+def _data_folder_is_ours() -> bool:
+    """The data folder carries the starter's marker whose id is the one in the settings (the starter's own proof for it)."""
+    try:
+        mpath = config.machine_path()
+        sid = str(((config.read_machine(mpath).get("starter") or {}) if mpath is not None else {}).get("dataFolderId") or "")
+        d = json.loads((data_folder() / ".vgac-data.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, config.ConfigError):
+        return False
+    return bool(sid) and isinstance(d, dict) and d.get("made_by") == MADE_BY and str(d.get("id")) == sid
+
+
+def _adoptable(root: Path) -> tuple[dict[str, Any] | None, str]:
+    """(the ledger entry that can be moved to `root`, "") or (None, why not). The proof is the same shape as the data folder's: the
+    install's own id is in its marker AND on a ledger entry whose old place is gone, in a data folder that is VGAC's by its id.
+    A marker copied into somebody else's folder has no such entry, and only the folder the settings name (`root`) is ever looked at."""
+    m = read_marker(root)
+    iid = str((m or {}).get("install_id") or "")
+    if not root.is_dir() or m is None or not iid:
+        return None, "its install record has no id VGAC can match with its ledger"
+    if _real(root) != os.path.normcase(os.path.abspath(str(root))):
+        return None, "the install folder is reached through a link"
+    if not _data_folder_is_ours():
+        return None, "the folder for the big files is not shown to be VGAC's (its marker does not match the settings)"
+    hits = [i for i in _ledger_items() if isinstance(i, dict) and i.get("kind") == "added" and str(i.get("id") or "") == iid]
+    if len(hits) != 1:
+        return None, "the ledger has no single entry with this install's id"
+    old = Path(str(hits[0].get("path", "")))
+    if old.exists() and (_real(old) != _real(root)) and (read_marker(old) or {}).get("install_id") == iid:
+        return None, f"another copy of this install still exists at {old}, so VGAC cannot tell which one is the real one"
+    return hits[0], ""
+
+
+def _adopt_if_proved(root: Path) -> bool:
+    with downloader._ledger_lock:
+        hit, _ = _adoptable(root)
+        if hit is None:
+            return False
+        items = _ledger_items()
+        for i in items:
+            if isinstance(i, dict) and i.get("id") == hit.get("id") and i.get("kind") == "added":
+                i["path"] = str(root)
+        _write_ledger(items)
+    return True
+
+
 def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = None) -> dict[str, Any]:
     """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it, and only once none of its
     engines runs (the app stops the ones it started; any other is the person's to close). The files go first, then the
@@ -1081,7 +1182,10 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
 #
 # `python -m vgac.comfy_install <command>` prints ONE json line on stdout and exits 0, or prints {"ok": false, "code", "reason"}
 # and exits non-zero (2 for a refusal). The commands change nothing the guard does not allow; the only deleting is remove().
-#   check                    is there a ComfyUI VGAC made here (marker and ledger)? what would remove() keep?
+#   check                    is there a ComfyUI VGAC made here (marker and ledger)? what would remove() keep? (code "adoptable":
+#                            it is VGAC's by its id but its folder was renamed or changed drive letter: run adopt)
+#   adopt                    point the ledger entry that carries this install's id at the folder the settings name (needs the data
+#                            folder's id to match too; a copied marker in somebody else's folder has no such entry)
 #   remove [--models]        remove(): the same proof, models kept unless --models
 #   retarget <old> <new>     the data folder was moved from <old> to <new> (the settings already name <new>): the settings that
 #                            pointed into <old>/comfyui now point into the same places in <new>/comfyui
@@ -1090,6 +1194,8 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
 
 def _require_own(root: Path) -> None:
     if not root.exists() or read_marker(root) is None or not _in_ledger(root):
+        if root.exists() and _adoptable(root)[0] is not None:
+            raise DownloadError("adoptable", "This ComfyUI is VGAC's (its id matches), but the ledger still names its old place.", "")
         raise DownloadError("not_ours", "VGAC did not install a ComfyUI in " + str(root) + ", so nothing is done there.", "")
 
 
@@ -1097,9 +1203,20 @@ def _models_dir(root: Path) -> Path:
     return root / "ComfyUI" / "models"
 
 
+def adopt() -> dict[str, Any]:
+    """The install folder was renamed or its drive letter changed: the ledger entry with this install's id is pointed at it."""
+    root = install_root()
+    if _in_ledger(root) and read_marker(root) is not None:
+        return {"adopted": False, "already": True}
+    if not _adopt_if_proved(root):
+        raise DownloadError("not_ours", f"VGAC cannot show that it made the ComfyUI in {root} ({_adoptable(root)[1]}), so nothing is changed.", "")
+    return {"adopted": True}
+
+
 def check() -> dict[str, Any]:
     root = install_root()
     _require_own(root)
+    _ensure_id(root, read_marker(root) or {})
     models = _models_dir(root)
     return {"root": str(root), "keeps": [str(models)] if models.is_dir() else []}
 
@@ -1194,15 +1311,17 @@ def main(argv: list[str], ops: Ops | None = None) -> int:
             r = check()
         elif cmd == "remove" and set(argv[1:]) <= {"--models"}:
             r = remove(also_models="--models" in argv[1:], ops=ops)
+        elif cmd == "adopt" and len(argv) == 1:
+            r = adopt()
         elif cmd == "retarget" and len(argv) == 3:
             r = retarget(argv[1], argv[2], ops)
         elif cmd == "rebuild-venv" and len(argv) == 1:
             r = rebuild_venv(ops)
         else:
-            print(json.dumps({"ok": False, "code": "usage", "reason": "Commands: check, remove [--models], retarget <old> <new>, rebuild-venv."}))
+            print(json.dumps({"ok": False, "code": "usage", "reason": "Commands: check, adopt, remove [--models], retarget <old> <new>, rebuild-venv."}))
             return 2
     except DownloadError as e:
-        print(json.dumps({"ok": False, "code": e.code, "reason": f"{e.message} {e.fix}".strip()}))
+        print(json.dumps({"ok": False, "code": e.code, "reason": f"{e.message} {e.fix}".strip(), "adoptable": e.code == "adoptable"}))
         return 2
     except config.ConfigError as e:
         print(json.dumps({"ok": False, "code": "settings", "reason": f"The app's settings could not be read ({e})."}))

@@ -396,6 +396,16 @@ namespace Vgac.Starter
             string usersRoot = profile == null ? null : Path.GetDirectoryName(profile);
             if (usersRoot != null && (r == usersRoot.ToLowerInvariant() || Path.GetDirectoryName(r) == usersRoot.ToLowerInvariant()))
                 return "That is a user profile folder (or the folder of all of them). Choose or make a folder just for VGAC.";
+            // the usual shared folders of ANY profile on this computer (another user's Documents, Public\Documents), not only this one's
+            if (usersRoot != null)
+            {
+                string parent = Path.GetDirectoryName(r);
+                string grand = parent == null ? null : Path.GetDirectoryName(parent);
+                string leaf = Path.GetFileName(r);
+                string[] shared = { "documents", "desktop", "downloads", "pictures", "music", "videos", "appdata", "onedrive", "saved games", "contacts", "favorites", "links", "searches", "3d objects" };
+                if (grand != null && grand == usersRoot.ToLowerInvariant() && Array.IndexOf(shared, leaf) >= 0)
+                    return "That folder is one of the shared folders of a user profile (" + leaf + "). Choose or make a folder just for VGAC.";
+            }
             foreach (string s in SharedPlaces())
             {
                 string sr = SafeFs.Real(s);

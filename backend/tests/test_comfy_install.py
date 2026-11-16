@@ -1359,3 +1359,157 @@ def test_cli_runs_as_a_module_with_the_backend_not_running(box):
     lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
     assert p.returncode == 2 and len(lines) == 1, (p.stdout, p.stderr)
     assert json.loads(lines[0])["code"] == "not_ours"
+
+
+# --- adoption after a rename or a drive letter change, undoing a retarget, offline rebuilds -----------------------------------------
+
+
+def _vgac_data_marker(box, data: Path, sid: str = "data-id-1") -> None:
+    """What the starter does for a data folder it claimed: a marker with an id, and the same id in the settings."""
+    data.mkdir(parents=True, exist_ok=True)
+    (data / ".vgac-data.json").write_text(json.dumps({"made_by": "VGAC", "id": sid}), encoding="utf-8")
+    m = machine(box)
+    m.setdefault("starter", {})["dataFolderId"] = sid
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+
+
+def _rename_data_folder(box, name: str = "Renamed data") -> Path:
+    """The folder is renamed (or its drive letter changes) by the person: files and settings follow, the LEDGER does not."""
+    old, new = box["data"], box["tmp"] / name
+    shutil.move(str(old), str(new))
+    m = machine(box)
+    m["starter"]["dataFolder"] = str(new)
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    config.reset_settings()
+    return new
+
+
+def test_a_renamed_data_folder_is_adopted_by_the_installs_own_id(box, capsys):
+    install(box)
+    _vgac_data_marker(box, box["data"])
+    new = _rename_data_folder(box)
+    code, out = _cli(["check"], capsys, box)
+    assert code == 2 and out["code"] == "adoptable" and out["adoptable"] is True, out
+    code, out = _cli(["remove"], capsys, box)  # nothing but adopt may change anything yet
+    assert code == 2 and out["ok"] is False and (new / "comfyui" / "ComfyUI" / "main.py").is_file()
+    code, out = _cli(["adopt"], capsys, box)
+    assert code == 0 and out["adopted"] is True
+    code, out = _cli(["check"], capsys, box)
+    assert code == 0 and out["ok"] is True
+    ledger = json.loads(downloader.ledger_path().read_text(encoding="utf-8"))["items"]
+    assert [i["path"] for i in ledger if i.get("what") == "VGAC's own ComfyUI"] == [str(new / "comfyui")]
+    code, out = _cli(["adopt"], capsys, box)  # again: nothing to do
+    assert code == 0 and out["already"] is True
+
+
+def test_an_install_without_an_id_gets_one_when_it_is_looked_at(box, capsys):
+    install(box)
+    m = ci.read_marker(box["root"])
+    m.pop("install_id", None)
+    (box["root"] / ci.MARKER).write_text(json.dumps(m), encoding="utf-8")
+    items = json.loads(downloader.ledger_path().read_text(encoding="utf-8"))["items"]
+    for i in items:
+        i.pop("id", None)
+    downloader.ledger_path().write_text(json.dumps({"items": items}), encoding="utf-8")
+    code, out = _cli(["check"], capsys, box)
+    assert code == 0 and ci.read_marker(box["root"])["install_id"] and ci._ledger_id(box["root"]) == ci.read_marker(box["root"])["install_id"]
+
+
+def test_adoption_is_refused_when_the_data_folder_is_not_vgacs_or_the_ids_differ(box, capsys):
+    install(box)
+    new = _rename_data_folder(box)
+    code, out = _cli(["adopt"], capsys, box)  # no data-folder marker at all
+    assert code == 2 and out["code"] == "not_ours" and "big files" in out["reason"]
+    _vgac_data_marker(box, new)
+    m = machine(box)
+    m["starter"]["dataFolderId"] = "another-id"
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    code, out = _cli(["adopt"], capsys, box)
+    assert code == 2 and out["code"] == "not_ours"
+    _vgac_data_marker(box, new)
+    marker = new / "comfyui" / ci.MARKER
+    d = json.loads(marker.read_text(encoding="utf-8"))
+    d["install_id"] = "somebody-elses"
+    marker.write_text(json.dumps(d), encoding="utf-8")
+    code, out = _cli(["adopt"], capsys, box)  # a marker whose id the ledger does not know
+    assert code == 2 and out["code"] == "not_ours" and not ci._in_ledger(new / "comfyui")
+
+
+def test_a_copied_marker_in_somebody_elses_folder_is_refused(box, capsys):
+    install(box)
+    _vgac_data_marker(box, box["data"])
+    elsewhere = box["tmp"] / "Their data"
+    (elsewhere / "comfyui").mkdir(parents=True)
+    shutil.copy(box["root"] / ci.MARKER, elsewhere / "comfyui" / ci.MARKER)  # the id and everything, copied
+    (elsewhere / "comfyui" / "theirs.txt").write_text("not VGAC's", encoding="utf-8")
+    _vgac_data_marker(box, elsewhere)
+    m = machine(box)
+    m["starter"]["dataFolder"] = str(elsewhere)
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    config.reset_settings()
+    for argv in (["adopt"], ["check"], ["remove"], ["rebuild-venv"]):
+        code, out = _cli(argv, capsys, box)
+        assert code == 2 and out["ok"] is False and out.get("adoptable") is not True, argv  # the real one still exists: which is which?
+    assert (elsewhere / "comfyui" / "theirs.txt").is_file() and (box["root"] / "ComfyUI" / "main.py").is_file()
+    # guard itself is unchanged: a path outside the install folder is still refused, marker or not
+    with pytest.raises(ci.NotOurs):
+        ci.guard(box["tmp"] / "Somewhere else" / "x")
+    assert ci.install_root() == elsewhere / "comfyui"
+
+
+def test_retarget_can_go_back_to_the_old_place(box, capsys):
+    install(box)
+    old = box["data"]
+    new = _move_data_folder(box)
+    _cli(["retarget", str(old), str(new)], capsys, box)
+    back = new.parent / "Zoë data with spaces"
+    shutil.move(str(new), str(back))  # the starter's Cancel: files stay where they are, the settings and the ledger go back
+    m = machine(box)
+    m["starter"]["dataFolder"] = str(old)
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    lp = downloader.ledger_path()
+    lp.write_text(lp.read_text(encoding="utf-8").replace(json.dumps(str(new))[1:-1], json.dumps(str(old))[1:-1]), encoding="utf-8")
+    shutil.move(str(back), str(old))
+    config.reset_settings()
+    code, out = _cli(["retarget", str(new), str(old)], capsys, box)
+    assert code == 0 and out["changed"] > 0, out
+    s = config.load_settings(create_library=False)
+    assert Path(s.instances["a"].engine.comfy_dir) == old / "comfyui" and s.comfy_input_dir == old / "comfyui" / "input"
+
+
+def test_rebuild_venv_offline_says_so_and_changes_nothing_it_should_not(box, capsys):
+    install(box)
+    box["net"].down = True
+    code, out = _cli(["rebuild-venv"], capsys, box)
+    assert code == 2 and out["ok"] is False and out["reason"]
+    root = box["root"]
+    assert (root / "ComfyUI" / "main.py").is_file() and ci.read_marker(root) is not None  # its files and record stay
+    assert "packages" not in ci.read_marker(root)["steps"]  # and nothing says the environment is done
+    box["net"].down = False
+    code, out = _cli(["rebuild-venv"], capsys, box)  # back online: it works
+    assert code == 0 and (root / ".venv" / "Scripts" / "python.exe").is_file()
+
+
+def test_percent_variables_in_the_data_folder_setting_expand_like_the_starter_does(box, monkeypatch):
+    monkeypatch.setenv("VGACTESTBASE", str(box["tmp"] / "from env"))
+    monkeypatch.setenv("NOTUSED", "x")
+    m = machine(box)
+    m["starter"]["dataFolder"] = "%VGACTESTBASE%\\big"
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    config.reset_settings()
+    assert ci.data_folder() == box["tmp"] / "from env" / "big"
+    m["starter"]["dataFolder"] = "$NOTUSED\\big"  # only %NAME% is expanded, so both programs read this one literally
+    box["machine"].write_text(json.dumps(m), encoding="utf-8")
+    assert "$NOTUSED" in str(ci.data_folder())
+    assert ci.expand_percent("%NOPE_NOT_SET%\\x") == "%NOPE_NOT_SET%\\x"
+
+
+def test_arguments_with_a_trailing_backslash_arrive_whole(box):
+    import subprocess
+
+    # the starter quotes a path that ends in a backslash by doubling it; Python's own parser (the CLI) reads it back as one argument
+    cmdline = 'retarget "D:\\VGAC data\\\\" "E:\\new place\\\\"'
+    p = subprocess.run([sys.executable, "-c", "import sys;print(sys.argv[1:])", *[]], capture_output=True, text=True)
+    out = subprocess.run(f'"{sys.executable}" -c "import sys;print(sys.argv[1:])" {cmdline}', capture_output=True, text=True, shell=False)
+    assert out.stdout.strip() == "['retarget', 'D:\\\\VGAC data\\\\', 'E:\\\\new place\\\\']", out.stdout
+    assert p.returncode == 0

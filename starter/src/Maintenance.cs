@@ -75,6 +75,8 @@ namespace Vgac.Starter
         {
             if (busy) return;
             busy = true; UseWaitCursor = true; stopRequested = false; stopBtn.Visible = true;
+            host.Comfy.Cancelled = delegate { return stopRequested; };     // the Stop button also stops VGAC's own ComfyUI installer
+            host.Comfy.Say = delegate(string s) { Say(s); };
             var t = new Thread(delegate()
             {
                 try { work(); }
@@ -364,9 +366,30 @@ namespace Vgac.Starter
             return tab;
         }
 
+        // Entering the tab: the plan is built on another thread (it asks VGAC's own ComfyUI installer, which can take a moment), so the window
+        // never freezes.
         void BuildPlan(TextBox summaryBox)
         {
+            summaryBox.Text = "Looking at what VGAC added...";
+            var th = new Thread(delegate()
+            {
+                RemovalPlan plan = null;
+                try { plan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy); }
+                catch (Exception e) { Say("Could not look at what VGAC added: " + e.Message); return; }
+                try { BeginInvoke((Action)delegate { removePlan = plan; ShowPlan(summaryBox); }); } catch (Exception) { }
+            });
+            th.IsBackground = true; th.Start();
+        }
+
+        // The same, in the caller's own thread (used where the answer is needed at once; ComfyUI's answer is remembered for a short while).
+        void BuildPlanNow(TextBox summaryBox)
+        {
             removePlan = RemovalPlanner.Build(host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy);
+            ShowPlan(summaryBox);
+        }
+
+        void ShowPlan(TextBox summaryBox)
+        {
             removeList.Items.Clear();
             foreach (RemovalGroup g in removePlan.Groups)
             {
@@ -443,7 +466,7 @@ namespace Vgac.Starter
         {
             var keep = Ticked();
             var tb = new TextBox();
-            BuildPlan(tb);
+            BuildPlanNow(tb);
             for (int i = 0; i < removeList.Items.Count; i++) removeList.SetItemChecked(i, keep.Contains(((string)removeList.Items[i]).Split(':')[0]));
         }
     }

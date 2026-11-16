@@ -53,7 +53,16 @@ public class StandInComfy : IComfyInstall
         bool any = false; foreach (string e in Directory.GetFileSystemEntries(dir)) any = true;
         if (!any) Directory.Delete(dir);
     }
-    public string Retarget(string a, string b) { Calls.Add("retarget"); return RetargetError; }
+    public string RetargetBackError;           // the answer to the second retarget (the one that undoes the first)
+    public List<string> RetargetArgs = new List<string>();
+    public Func<bool> Cancelled { get; set; }
+    public Action<string> Say { get; set; }
+    public void Forget() { }
+    public string Retarget(string a, string b)
+    {
+        Calls.Add("retarget"); RetargetArgs.Add(a + " -> " + b);
+        return RetargetArgs.Count >= 2 ? RetargetBackError : RetargetError;
+    }
     public string RebuildVenv(string b) { Calls.Add("rebuild"); return RebuildError; }
 }
 
@@ -202,30 +211,34 @@ public static partial class T
     static void TheBackendsAnswersAreRead()
     {
         string data = Tmp("backendanswers");
-        var real = new BackendComfyInstall(delegate(string a) { return null; });
+        var real = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return null; });
         Check(!real.State(data).Present && real.State(data).Problem != null, "no marker: nothing there, and a reason");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
         string say = null;
-        var ask = new BackendComfyInstall(delegate(string a) { return say; });
+        var ask = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return say; });
         say = null;
         string noPython = ask.State(data).Problem;
         Check(noPython != null && !noPython.Contains("older version"), "no answer at all (no Python): a plain reason that does not blame an older version: " + noPython);
         say = "{\"ok\": true, \"root\": \"r\", \"keeps\": [\"" + Path.Combine(data, "comfyui", "ComfyUI", "models").Replace("\\", "\\\\") + "\"]}";
+        ask.Forget();
         var st = ask.State(data);
         Check(st.Present && st.Problem == null && st.Keeps.Count == 1 && st.Keeps[0].EndsWith("models"), "an ok answer: confirmed, and what it keeps comes from the answer");
         say = "{\"ok\": false, \"code\": \"not_ours\", \"reason\": \"VGAC did not install a ComfyUI there.\"}";
+        ask.Forget();
         Eq(ask.State(data).Problem, "VGAC did not install a ComfyUI there.", "a refusal's reason is passed on as it is");
         Eq(ask.Remove(), "VGAC did not install a ComfyUI there.", "also for remove");
         Eq(ask.Retarget("a", "b"), "VGAC did not install a ComfyUI there.", "and retarget");
         say = "not json";
+        ask.Forget();
         Check(ask.State(data).Problem != null && ask.Remove() != null && ask.RebuildVenv("b") != null, "an answer that cannot be read is a refusal, never a yes");
         say = "{\"ok\": true, \"rebuilt\": true}";
         Check(ask.RebuildVenv("b") == null && ask.Remove() == null, "an ok answer is a yes");
         string seen = null;
-        var spy = new BackendComfyInstall(delegate(string a) { seen = a; return "{\"ok\": true}"; });
+        var spy = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { seen = a; return "{\"ok\": true}"; });
         spy.Retarget("C:\\old data", "D:\\new data");
         Eq(seen, "retarget \"C:\\old data\" \"D:\\new data\"", "retarget passes both places, quoted");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\"}");
+        ask.Forget();
         Check(!ask.State(data).Present, "a marker that is not VGAC's is not a marker");
     }
 

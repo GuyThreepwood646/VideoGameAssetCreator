@@ -493,6 +493,7 @@ namespace Vgac.Starter
                 case "comfy-remove":
                     if (SafeFs.Norm(it.Path) != SafeFs.Norm(comfy.Root(l.DataFolder)) || !SafeFs.Inside(it.Path, l.DataFolder)) return "it is not VGAC's own ComfyUI folder in the folder for the big files";
                     if (SafeFs.IsLink(it.Path) || !SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
+                    comfy.Forget();   // asked again now, not remembered
                     return comfy.State(l.DataFolder).Problem;
                 case "ledger-file":
                     if (!File.Exists(it.Path)) return "it is not a file now";
@@ -662,20 +663,26 @@ namespace Vgac.Starter
             WriteJournal(l.ProjectRoot, ticked);
             bool settingsTicked = false;
             var parentsTouched = new HashSet<string>();
+            bool comfyFailed = false;     // VGAC's own ComfyUI is removed by a command that needs the app's Python: keep that Python until it worked
             foreach (RemovalGroup g in plan.Groups)
             {
                 if (!ticked.Contains(g.Id) || g.Items.Count == 0) continue;
                 if (g.Id == "settings") { settingsTicked = true; continue; }   // after everything else
                 foreach (RemovalItem it in g.Items)
                 {
+                    if (comfyFailed && ((it.Kind == "app-folder" && it.Tag == "venv") || (it.Kind == "data-folder" && it.Tag == "python")))
+                    {
+                        string keep = it.Path + ": kept, because VGAC's own ComfyUI could not be removed and its installer needs this Python. Fix that and remove again.";
+                        res.Skipped.Add(keep); log.Line("remove: " + keep); continue;
+                    }
                     if (say != null) say("Removing " + it.What + "...");
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
-                    if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); continue; }
+                    if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); if (it.Kind == "comfy-remove") comfyFailed = true; continue; }
                     Mark(l.ProjectRoot, it.Path, true);
                     if (it.Kind == "comfy-remove")
                     {
                         string cwhy = comfy.Remove();
-                        if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); continue; }
+                        if (cwhy != null) { res.Skipped.Add(it.Path + ": " + cwhy); log.Line("remove: VGAC's own ComfyUI was not removed: " + cwhy); Mark(l.ProjectRoot, it.Path, false); comfyFailed = true; continue; }
                         res.Removed.Add(it.Path); res.Bytes += it.Bytes; log.Line("remove: VGAC's own ComfyUI was removed by its installer (what it keeps stays: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag) + ")");
                         Mark(l.ProjectRoot, it.Path, false);   // the ledger entry stays: the backend's own record of what it installed (it may be installed again)
                         continue;
