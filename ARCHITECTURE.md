@@ -101,6 +101,7 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 | Hair matches the sides (step 2 back view) | `hair_matches_sides` in `stages/turnaround.py`; fails the back into the redraw path; a second measure in `hair_sides.py` judges long loose hair of any colour for being swept to one side in the back view; a swept back is redrawn with a sentence asking the hair to hang straight (never on the first draw: there it turned braids and ponytails into loose hair and gave short-haired men long hair). It runs when the last of the front, left and right views is in, so it works on one card, where the back is drawn before the right view; a run that never has all three says "Not measured" with the reason |
 | Card memory | read from the driver (`nvidia-smi`) for lending and the status panel; the engine's own figure is the labelled fallback |
 | Setup check | `preflight.py` (`GET /api/setup`) |
+| Minimum versions of what the user installs (Python, Node, Blender, Unity, ComfyUI) | `data/minimum_versions.json`, read by `minimums.py` (the app's check) and `setup/Check-Setup.ps1`; newer always passes |
 
 Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and metrics pick; a version is kept when it has no failed check at the `stop_on` level (`block` default, `warn`, `never`), otherwise it pauses and offers the check's fix.
 
