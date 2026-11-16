@@ -16,9 +16,14 @@
 #                triangle_scale times the platform budget, never under triangle_floor, never over the budget nor over
 #                triangle_cap (optional, a fixed ceiling); texture_cap is the largest texture size shipped, under the
 #                platform's own; bake_texture (optional) is the size the 3D step bakes and the clean-up paints at, the
-#                colour then shrunk to texture_cap at the end of the clean-up
+#                colour then shrunk to texture_cap at the end of the clean-up; padding (optional) the gap between texture
+#                pieces in texels (1 to 16); build_from: shaded (optional) the 3D step redraws its picture as a smooth
+#                shaded render first and builds from that
 #     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap,
-#                 face_layout, colour_per_face, face_keeps_texture}
+#                 face_layout, colour_per_face, face_keeps_texture, palette_source, clean_strays, picture_projection}
+#                palette_source: concept limits the texture to the concept picture's own colours; clean_strays: passes of
+#                the stray texel clean after the palette; picture_projection: the pictures are painted on although the
+#                look is crisp, before its palette;
 #                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended;
 #                face_layout: the face gets more of the texture before the pictures are painted (no face paint pass);
 #                colour_per_face: every triangle one colour after the painting; face_keeps_texture: except the front
@@ -146,8 +151,13 @@ styles:
         head: [{text: "wispy hair, flyaway strands", drop: [wild]}]
         fur: ["wispy fur"]
     recipe:
-      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false}
-      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true}
+      # build_from shaded: the 3D builder makes a flat card from a pixel picture, so its picture is redrawn as a smooth
+      # shaded render first; padding 2: half again more of the texture used (no mipmaps to bleed across a small gap);
+      # the pixel pictures are painted back on, then the concept picture's colours and the stray clean
+      # (docs/research/looks/pixel.md, three characters).
+      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false, padding: 2, build_from: shaded}
+      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true, palette_source: concept, clean_strays: 2,
+                picture_projection: true}
       engine: {filter_mode: point, mipmaps: false, compress: false}
   - id: retro64
     delight_default: keep

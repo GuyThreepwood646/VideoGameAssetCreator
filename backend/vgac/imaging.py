@@ -869,6 +869,48 @@ def quantise_colours(base: np.ndarray, mask: np.ndarray | None = None, colours: 
     return (pal[best].reshape(h, w, 3) / 255.0).astype(np.float32)
 
 
+def picture_palette(path: Path | str, most: int = 32, alpha_min: int = 200) -> list[tuple[int, int, int]]:
+    """The colours a cut-out picture is drawn in (its pixels over alpha_min), the `most` most used first: the palette of a
+    look whose texture takes the concept picture's own colours (recipe surface.palette_source: concept). Measured on three
+    pixel characters against 32 colours picked from the texture: blended texels 3.2 to 0 percent, single stray texels 10
+    to 1.7 percent, and colours the 3D step had lost came back (docs/research/looks/pixel.md)."""
+    with Image.open(path) as im:
+        c = np.asarray(im.convert("RGBA"))
+    px = c[c[..., 3] > alpha_min][:, :3]
+    if not len(px):
+        return []
+    cols, n = np.unique(px.reshape(-1, 3), axis=0, return_counts=True)
+    return [tuple(int(v) for v in k) for k in cols[np.argsort(-n, kind="stable")][:most]]
+
+
+def clean_strays(base: np.ndarray, labels: np.ndarray, passes: int = 2) -> np.ndarray:
+    """A limited-colour base colour (h, w, 3, floats 0..1) with its single stray texels joined to their surroundings: each
+    texel takes the most common colour of its 3 x 3 neighbours in the same texture piece (labels) when that colour holds
+    at least 5 of the 9, `passes` times. An edge between two areas stays where it is; nothing outside the pieces changes.
+    On three pixel characters: strays 1.7 to 6 percent down to 0.1 to 0.7, at or under the concept pictures' own."""
+    a8 = np.clip(np.round(base * 255), 0, 255).astype(np.uint8)
+    h, w, _ = a8.shape
+    lab = np.asarray(labels)
+    key = a8[..., 0].astype(np.int64) << 16 | a8[..., 1].astype(np.int64) << 8 | a8[..., 2]
+    lp = np.pad(lab, 1, constant_values=0)
+    same = [lp[1 + dy:1 + dy + h, 1 + dx:1 + dx + w] == lab for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
+    for _ in range(max(0, int(passes))):
+        kp = np.pad(key, 1, constant_values=-1)
+        stack = np.stack([np.where(s, kp[1 + dy:1 + dy + h, 1 + dx:1 + dx + w], -1)
+                          for s, (dy, dx) in zip(same, [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1)])], -1)
+        best = key.copy()
+        bestn = np.zeros((h, w), np.int32)
+        for i in range(9):
+            c = stack[..., i]
+            n = (stack == c[..., None]).sum(-1)
+            better = (n > bestn) & (c >= 0)
+            best[better] = c[better]
+            bestn[better] = n[better]
+        key = np.where((bestn >= 5) & (lab > 0), best, key)
+    out = np.stack([(key >> 16) & 255, (key >> 8) & 255, key & 255], -1).astype(np.float32)
+    return out / 255.0
+
+
 def colour_count(path: Path | str, mask: np.ndarray | None = None) -> int:
     """How many different colours a map uses (inside mask when given)."""
     with Image.open(path) as im:

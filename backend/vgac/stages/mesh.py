@@ -230,9 +230,12 @@ def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     return out
 
 
-def resolve_padding(params: dict[str, Any], tex: int) -> int:
-    """UnwrapMesh padding in texels: the version's padding, else max(4, texture / 256), within the node's 1 to 16."""
+def resolve_padding(params: dict[str, Any], tex: int, rec: dict[str, Any] | None = None) -> int:
+    """UnwrapMesh padding in texels: the version's padding, else the look's (recipe mesh.padding), else
+    max(4, texture / 256), within the node's 1 to 16."""
     p = params.get("padding")
+    if p in (None, ""):
+        p = ((rec or {}).get("mesh") or {}).get("padding")
     # The unwrap node leaves about half its padding as real space between pieces (measured live: 8 asked, 4 found),
     # so ask for double the target; the node's own limit is 16.
     value = int(p) if p not in (None, "") else 2 * unwrap_padding(tex)
@@ -284,10 +287,19 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     # base colour take the seeds that follow from it (texcolour.try_seed); the kept build's seed replaces it at the end.
     first_seed = int(params.get("seed") or random_seed())
     remesh = bool(sc.category.get("remesh_default", True)) if params.get("remesh") is None else bool(params["remesh"])
-    padding = resolve_padding(params, tex)
+    padding = resolve_padding(params, tex, rec)
     # The side views step already opened the hands when its version holds a pose-ready picture.
     posed = bool(params.get("hand_edit")) and sc.lineage_file("pose_ready_cutout", ("turnaround",)) is not None
-    if params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
+    hands = bool(params.get("hand_edit")) and not posed and sc.asset.category == "humanoid"
+    if shaded_on(rec, sc.asset.category, params) and sc.file(EDITED_KEY) is None:
+        # The look's picture is redrawn once as a smooth shaded render (recipe mesh.build_from: shaded), the hands opened in
+        # the same edit when asked; the drawn picture is kept (drawn_input) for the clean-up to paint. A Resume keeps the edit.
+        drawn = _input_image(sc, input_view)
+        await _edit_picture(sc, SHADED_EDIT + (" " + HAND_EDIT if hands else ""), drawn, None)
+        sc.register(DRAWN_KEY, sc.copy_in(drawn, "drawn_input.png"))
+        sc.set_params(build_shaded=True, **({"hand_edit": True} if hands else {}))
+        sc.set_metrics(build_shaded_note=SHADED_NOTE)
+    elif hands and sc.file(EDITED_KEY) is None:
         # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
         await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
         sc.set_params(hand_edit=True)
@@ -852,6 +864,8 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
         if sc.file(EDITED_KEY) is None:  # a Resume keeps the edit it already made
             from_parent = _parent_edit(sc, input_view)
             await _edit_picture(sc, instruction, from_parent or _input_image(sc, input_view), parent.id if from_parent and parent else None)
+            if from_parent:
+                _keep_drawn(sc)
         else:
             sc.set_params(picture_edit=True)
     await _rerun_from_mesh_parent(sc, merged)
@@ -870,6 +884,7 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
         pic = library.version_file(parent, "edited_picture", sc.settings) if parent else None
         if pic is not None and Path(pic).is_file():
             sc.register("edited_picture", sc.copy_in(pic, "edited_picture.png"))
+        _keep_drawn(sc)
     if kept is not None or (sc.file(EDITED_KEY) is not None and (sc.version.params or {}).get("picture_edit")):
         sc.set_params(picture_edit=True, edit_seed=(parent.params or {}).get("edit_seed") if parent else None,
                       edit_from=parent.id if parent else None)
@@ -888,8 +903,25 @@ EDITED_KEY = "edited_cutout"
 # are separate in the picture, and the three-quarter view shows a hand edge-on unless its back faces the camera.
 HAND_EDIT = ("Redraw only the hands: each hand open with the back of the hand toward the camera, all five fingers straight, long and "
              "slightly spread apart with clear gaps between them, thumb separate.")
+# The look's shaded redraw (recipe mesh.build_from: shaded, Pixel art): the 3D builder makes a flat card from a pixel
+# picture (1 to 5 cm deep on a 1 m figure, three of three characters) and a body from this redraw (19 to 60 cm). The
+# words are the ones measured (docs/research/looks/pixel.md).
+SHADED_EDIT = ("Redraw this character as a smooth, softly shaded 3D render with clear rounded volume and soft form shading on "
+               "the face, body, arms and legs. Keep the same pose, the same angle, the same proportions, the same clothes and "
+               "the same colours. Not pixel art, no visible pixels, smooth edges, plain light grey background.")
+SHADED_NOTE = ("The look's pixel picture was redrawn as a smooth shaded render first, so the 3D model gets real depth; the clean-up "
+               "step paints the pixel pictures back on.")
+DRAWN_KEY = "drawn_input"  # the picture as drawn, before the shaded redraw: what the clean-up paints
 # Params that belong to one version's own picture edit: never inherited as they are.
 EDIT_PARAMS = ("picture_edit", "edit_seed", "edit_from")
+
+
+def shaded_on(rec: dict[str, Any], category: str | None, params: dict[str, Any]) -> bool:
+    """Whether the 3D step redraws its picture shaded first: the look asks for it (recipe mesh.build_from: shaded), the
+    model is a character (the only kind measured), and the version has not turned it off (build_shaded: false)."""
+    if params.get("build_shaded") is False:
+        return False
+    return (rec.get("mesh") or {}).get("build_from") == "shaded" and category == "humanoid"
 # After the person's words, so the edit changes only what they asked for and the cutout stays usable for 3D.
 EDIT_SUFFIX = ("Change only what is asked. Keep everything else exactly the same: the same character, design, colours, "
                "materials, outfit, every tool, weapon and attachment, pose, camera angle, size and framing, the whole body in "
@@ -926,6 +958,17 @@ def _parent_edit(sc: StageContext, input_view: str) -> Path | None:
         return None
     p = library.version_file(parent, EDITED_KEY, sc.settings)
     return Path(p) if p is not None and Path(p).is_file() else None
+
+
+def _keep_drawn(sc: StageContext) -> None:
+    """A version that keeps (or edits again) its parent's shaded redraw keeps the picture as drawn with it, and says so."""
+    parent = sc.parent
+    if parent is None or not (parent.params or {}).get("build_shaded") or sc.file(DRAWN_KEY) is not None:
+        return
+    p = library.version_file(parent, DRAWN_KEY, sc.settings)
+    if p is not None and Path(p).is_file():
+        sc.register(DRAWN_KEY, sc.copy_in(p, "drawn_input.png"))
+        sc.set_params(build_shaded=True)
 
 
 def _picture_cards(sc: StageContext) -> list[str]:
