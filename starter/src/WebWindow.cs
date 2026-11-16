@@ -25,11 +25,18 @@ namespace Vgac.Starter
             "function call(op,a){return new Promise(function(r){var id=++n;pend[id]=r;window.chrome.webview.postMessage({id:id,op:op,args:a||{}});});}" +
             "window.vgacHost={version:1,hello:function(){return call('hello');}," +
             "pickFolder:function(t){return call('pickFolder',{title:t});}," +
-            "pickFile:function(t,f){return call('pickFile',{title:t,filter:f});}};})();";
+            "pickFile:function(t,f){return call('pickFile',{title:t,filter:f});}};" +
+            // The same three calls the Electron launcher gave the page (window.vgacDesktop), so the screens work with either.
+            "window.vgacDesktop={setWork:function(c,i){return call('setWork',{count:c,icon:typeof i==='string'?i:''});}," +
+            "notify:function(t,b){return call('notify',{title:String(t||''),body:String(b||'')});}," +
+            "startEngine:function(){return call('startEngine');}};})();";
 
         // Pure: runs one request (parsed JSON) and returns the result value, or null for "cancelled" and for anything
-        // not in the list. `ui` does the dialogs, so this is testable without a window.
-        public static object Handle(Dictionary<string, object> msg, IPickers ui)
+        // not in the list. `ui` does the dialogs, `actions` the badge, the notification and the engine restart, so this is
+        // testable without a window.
+        public static object Handle(Dictionary<string, object> msg, IPickers ui) { return Handle(msg, ui, null); }
+
+        public static object Handle(Dictionary<string, object> msg, IPickers ui, IHostActions actions)
         {
             object opObj;
             if (!msg.TryGetValue("op", out opObj)) return null;
@@ -40,6 +47,16 @@ namespace Vgac.Starter
                 case "hello": return "VGAC starter 0.1";
                 case "pickFolder": return ui.PickFolder(title ?? "Choose a folder");
                 case "pickFile": return ui.PickFile(title ?? "Choose a file", Arg(args, "filter"));
+                case "setWork":
+                    if (actions == null) return false;
+                    int n = BridgeRules.CleanCount(args != null && args.ContainsKey("count") ? args["count"] : null);
+                    actions.SetWork(n, n > 0 ? BridgeRules.CleanIcon(Arg(args, "icon")) : null);
+                    return true;
+                case "notify":
+                    if (actions == null) return false;
+                    return actions.Notify(BridgeRules.CleanText(title, 80), BridgeRules.CleanText(Arg(args, "body"), 240));
+                case "startEngine":
+                    return actions != null && actions.StartEngine();
             }
             return null;
         }
@@ -56,6 +73,14 @@ namespace Vgac.Starter
             if (string.IsNullOrEmpty(source)) return false;
             return source.Equals(origin, StringComparison.OrdinalIgnoreCase) || source.StartsWith(origin + "/", StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    // What the page may ask the launcher to do besides choosing a path (the Electron launcher's three calls).
+    public interface IHostActions
+    {
+        void SetWork(int count, byte[] png);          // taskbar badge; 0 clears it
+        bool Notify(string title, string body);       // false when not shown (window in front, or not possible)
+        bool StartEngine();                           // restart the backend
     }
 
     public interface IPickers
@@ -102,7 +127,11 @@ namespace Vgac.Starter
         readonly WebView2 view = new WebView2();
         readonly IPickers pickers;
         readonly SetupLog log;
+        readonly IHostActions actions;
         public string Problem;   // why the window could not open, if it could not
+        // When set, the X on the window asks this instead of closing (it means "quit").
+        public Action CloseRequested;
+        public bool Quitting;
 
         // True when Microsoft's WebView2 runtime is installed. False (never an exception) when it is not.
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -112,21 +141,47 @@ namespace Vgac.Starter
             catch (Exception) { return false; }
         }
 
-        public AppWindow(string appUrl, string userDataFolder, SetupLog log)
+        public AppWindow(string appUrl, string userDataFolder, SetupLog log) : this(appUrl, userDataFolder, log, null) { }
+
+        public AppWindow(string appUrl, string userDataFolder, SetupLog log, IHostActions actions)
         {
+            this.actions = actions;
             url = appUrl;
             origin = new Uri(appUrl).GetLeftPart(UriPartial.Authority);
             userData = userDataFolder;
             this.log = log;
             pickers = new DialogPickers(this);
-            Text = "VGAC";
+            Text = "Video Game Asset Creator";
+            Icon = AppIcon.Get(32);
             ClientSize = new System.Drawing.Size(1440, 900);
-            MinimumSize = new System.Drawing.Size(1000, 700);
+            MinimumSize = new System.Drawing.Size(1200, 800);
             StartPosition = FormStartPosition.CenterScreen;
             view.Dock = DockStyle.Fill;
             Controls.Add(view);
             Shown += async delegate { await Init(); };
+            FormClosing += delegate(object s, FormClosingEventArgs e)
+            {
+                if (Quitting || CloseRequested == null) return;
+                e.Cancel = true;
+                CloseRequested();
+            };
         }
+
+        public void Reload()
+        {
+            try { if (view.CoreWebView2 != null) view.CoreWebView2.Reload(); } catch (Exception) { }
+        }
+
+        // Shows the window and brings it to the front, also when it is minimised.
+        public void Bring()
+        {
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Show();
+            Activate();
+            Foreground.Front(Handle);
+        }
+
+        public bool InFront { get { return Form.ActiveForm == this; } }
 
         async System.Threading.Tasks.Task Init()
         {
@@ -142,7 +197,8 @@ namespace Vgac.Starter
                 core.WebMessageReceived += OnMessage;
                 core.NavigationStarting += OnNavigating;
                 core.NewWindowRequested += delegate(object s, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; OpenOutside(e.Uri); };
-                core.DocumentTitleChanged += delegate { if (!string.IsNullOrEmpty(core.DocumentTitle)) Text = core.DocumentTitle; };
+                // Every permission the page could ask for (camera, location, ...) is refused; the title stays fixed.
+                core.PermissionRequested += delegate(object s, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
                 core.Navigate(url);
                 log.Line("app window open at " + url);
             }
@@ -180,7 +236,7 @@ namespace Vgac.Starter
                 var ser = new JavaScriptSerializer();
                 var msg = ser.DeserializeObject(e.WebMessageAsJson) as Dictionary<string, object>;
                 if (msg == null || !msg.ContainsKey("id")) return;
-                object result = BridgeOps.Handle(msg, pickers);
+                object result = BridgeOps.Handle(msg, pickers, actions);
                 var reply = new Dictionary<string, object>();
                 reply["id"] = msg["id"];
                 reply["result"] = result;

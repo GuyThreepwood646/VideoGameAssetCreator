@@ -140,6 +140,19 @@ namespace Vgac.Starter
             return null;
         }
 
+        // A value two levels down: section, then a sub-table, then the key (desktop.comfyA.desktopExe).
+        public string GetString2(string section, string sub, string key)
+        {
+            object o;
+            if (!Data.TryGetValue(section, out o)) return null;
+            var d = o as Dictionary<string, object>;
+            if (d == null || !d.TryGetValue(sub, out o)) return null;
+            d = o as Dictionary<string, object>;
+            object v;
+            if (d != null && d.TryGetValue(key, out v) && v != null) return v.ToString();
+            return null;
+        }
+
         public void Set(string section, string key, string value)
         {
             Section(section)[key] = value;
@@ -170,8 +183,11 @@ namespace Vgac.Starter
             Path = System.IO.Path.Combine(projectRoot, "runtime", "logs", "setup.log");
         }
 
+        static readonly object gate = new object();
+
         public void Line(string text)
         {
+            lock (gate)
             try
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));

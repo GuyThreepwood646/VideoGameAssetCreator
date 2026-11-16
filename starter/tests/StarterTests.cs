@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Threading;
 using Vgac.Starter;
 
 public class FakeHost : IHost
@@ -68,7 +69,7 @@ public class FakePickers : IPickers
     public string PickFile(string title, string filter) { LastTitle = title; LastFilter = filter; return File; }
 }
 
-public static class T
+public static partial class T
 {
     static int failed, passed;
     static readonly List<string> temps = new List<string>();
@@ -108,8 +109,11 @@ public static class T
         new SetupRunner(l, h, m, led, new SetupLog(root)).Run(steps, new Progress());
     }
 
-    public static int Main()
+    public static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--spawn-and-wait") return SpawnAndWait(args[1]);
+        if (args.Length >= 2 && args[0] == "-m" && args[1] == "uvicorn") { Thread.Sleep(40000); return 0; }   // stands in for the backend's Python in tests
+        if (args.Length == 3 && args[0] == "--make-fake-project") return MakeFakeProject(args[1], args[2]);
         try
         {
             FreshMachineNeedsEverything();
@@ -133,6 +137,7 @@ public static class T
             ZipSlipRefused();
             DownloadChecksumAndResume();
             BridgeAnswersOnlyItsList();
+            LauncherAll(args);
         }
         finally
         {
@@ -363,8 +368,8 @@ public static class T
         string root = NewProject();
         var b = new BackendRunner(Layout.From(root, MachineFile.Load(root)), port);
         b.StartAndWait(5, new SetupLog(root));
-        Check(b.Started == null, "an answering backend is reused, not started again");
-        b.StopIfOurs();
+        Check(!b.Started, "an answering backend is reused, not started again");
+        b.StopIfOurs(null);
         listener.Stop();
 
         // A port held by something that is not the backend: a plain refusal, no process started.
@@ -375,7 +380,7 @@ public static class T
         StarterError got = null;
         try { b2.StartAndWait(2, new SetupLog(root)); } catch (StarterError e) { got = e; }
         Check(got != null && got.Message.Contains("in use by something that is not VGAC"), "busy port refused plainly");
-        Check(b2.Started == null, "nothing started on a busy port");
+        Check(!b2.Started, "nothing started on a busy port");
         tcp.Stop();
 
         // No Python yet: say so.

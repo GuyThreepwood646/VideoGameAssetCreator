@@ -1,5 +1,6 @@
-// The desktop launcher's bridge (window.vgacDesktop, desktop/preload-app.js). It exists only inside the Electron app
-// window; in a normal browser every function here does nothing and desktopBridge() is null.
+// The desktop launcher's bridge (window.vgacDesktop). Both launchers provide the same three calls: the Electron one
+// (desktop/preload-app.js) and the starter's own window (starter/src/WebWindow.cs). In a normal browser every function
+// here does nothing and desktopBridge() is null.
 export type DesktopBridge = {
   setWork: (count: number, icon: string) => Promise<boolean>
   notify: (title: string, body: string) => Promise<boolean>
@@ -39,7 +40,7 @@ export function workCount(queue: Record<string, { current_job_id: string | null;
   return Object.values(queue).reduce((n, q) => n + (q.current_job_id ? 1 : 0) + (q.queued || 0), 0)
 }
 
-// The starter window's bridge (window.vgacHost, starter/src/WebWindow.cs). It exists only inside the VGAC window; in a
+// The starter window's folder and file choosers (window.vgacHost, starter/src/WebWindow.cs). They exist only inside the VGAC window; in a
 // normal browser hostPick is null and the panels fall back to a typed path.
 type HostBridge = { pickFolder: (title: string) => Promise<string | null>; pickFile: (title: string, filter?: string) => Promise<string | null> }
 

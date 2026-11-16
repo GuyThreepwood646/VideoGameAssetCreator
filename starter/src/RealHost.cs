@@ -13,6 +13,17 @@ namespace Vgac.Starter
 {
     public class RealHost : IHost
     {
+        volatile Process current;     // the setup program running now (uv, npm), so quitting can stop it
+
+        // Stops the setup program that is running, with everything it started. A download in progress is just dropped;
+        // its .part file resumes next time.
+        public void AbortCurrent()
+        {
+            Process p = current;
+            if (p == null) return;
+            try { if (!p.HasExited) ProcessTree.Stop(new WmiProcesses(), new ProcessKiller(), p.Id, p.StartTime.ToUniversalTime().Ticks); } catch (Exception) { }
+        }
+
         public void Download(string url, string dest, string sha256, Action<long, long> progress)
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -119,7 +130,9 @@ namespace Vgac.Starter
                 }
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
+                current = p;
                 p.WaitForExit();
+                current = null;
                 return p.ExitCode;
             }
         }
@@ -149,16 +162,40 @@ namespace Vgac.Starter
         }
     }
 
-    // Starting the backend, or finding the one already running. Never stops a backend it did not start.
+    // Starting the backend, or finding the one already running. Never stops a backend it did not start (a backend left
+    // by an earlier run of this program is taken over only when it is provably the same process: see Adoption.Matches).
+    // "Owned" means this object holds an open handle to that exact process, taken when it was started or taken over, so
+    // its id cannot be given to another program while it is owned. Starting, taking over and stopping share one lock, and
+    // Shutdown() makes any start that comes later refuse, so quitting cannot be followed by a new backend.
     public class BackendRunner
     {
         public readonly Layout L;
         public readonly int Port;
-        public Process Started;   // set only when this starter started it
+        public int Pid;
+        public long CreatedTicks;
+        public bool Adopted;
+        public DateTime StartedUtc;
+        public IProcessSource Procs = new WmiProcesses();
+        public IKiller Killer = new ProcessKiller();
+        readonly object gate = new object();
+        IntPtr handle = IntPtr.Zero;
+        volatile bool closing;
 
         public BackendRunner(Layout layout, int port) { L = layout; Port = port; }
 
         public string Url { get { return "http://127.0.0.1:" + Port; } }
+
+        // True while the process this launcher owns is still running.
+        public bool Owned { get { return ProcessIdentity.IsRunning(handle); } }
+
+        // True when a process was started or taken over in this run (it may have exited since).
+        public bool Started { get { return handle != IntPtr.Zero; } }
+
+        public bool Closing { get { return closing; } }
+
+        public int ExitCode { get { return handle != IntPtr.Zero ? ProcessIdentity.ExitCode(handle) : -1; } }
+
+        public string LogFile { get { return Path.Combine(L.ProjectRoot, "runtime", "logs", "backend.log"); } }
 
         public static bool HealthOk(int port, int timeoutMs)
         {
@@ -185,62 +222,190 @@ namespace Vgac.Starter
             catch (Exception) { return false; }
         }
 
+        // Backend processes on this port that this launcher does not own (with their start times, for the later check).
+        public List<ProcInfo> Foreign()
+        {
+            var all = Procs.List();
+            var mine = new HashSet<int>();
+            if (Owned) foreach (int pid in ProcessTree.Targets(all, Pid)) mine.Add(pid);
+            var res = new List<ProcInfo>();
+            foreach (ProcInfo p in all) if (!mine.Contains(p.Pid) && Adoption.LooksLikeBackend(p, Port)) res.Add(p);
+            return res;
+        }
+
+        // Holds the process for as long as it is owned. Called with the lock held.
+        void Attach(IntPtr h, int pid, long created, bool adopted)
+        {
+            ProcessIdentity.Close(handle);
+            handle = h; Pid = pid; CreatedTicks = created; Adopted = adopted; StartedUtc = DateTime.UtcNow;
+        }
+
+        // For tests and for taking over: own the process with this id, only if it started at `created`.
+        public bool Own(int pid, long created, bool adopted)
+        {
+            lock (gate)
+            {
+                if (closing) return false;
+                IntPtr h = ProcessIdentity.Open(pid, created);
+                if (h == IntPtr.Zero) return false;
+                Attach(h, pid, created, adopted);
+                return true;
+            }
+        }
+
+        // After a crash or a forced close of the starter the backend is still running. Take it over only when the process
+        // recorded last time is still there, the starter that wrote the record is gone, and every detail matches (id,
+        // creation time, the app's own Python, command line). Anything else stays foreign. A record that does not match
+        // is deleted; one whose writer is still running is left for it.
+        public bool TryAdopt(SetupLog log)
+        {
+            var rec = Adoption.Load(L.ProjectRoot);
+            if (rec == null) return false;
+            var me = Process.GetCurrentProcess();
+            long myStart = 0;
+            try { myStart = me.StartTime.ToUniversalTime().Ticks; } catch (Exception) { }
+            if (Adoption.WriterAlive(rec, me.Id, myStart, ProcessIdentity.StartTicksOf(rec.StarterPid)))
+            {
+                log.Line("the backend (pid " + rec.Pid + ") belongs to another VGAC that is still running; leaving it alone");
+                return false;
+            }
+            ProcInfo live = null;
+            foreach (ProcInfo p in Procs.List()) if (p.Pid == rec.Pid) live = p;
+            if (Adoption.Matches(rec, live, L.VenvPython, Port) && Own(rec.Pid, rec.CreatedTicks, true))
+            {
+                log.Line("backend (pid " + Pid + ") started by an earlier run of VGAC and still the same process; taking it over");
+                SaveRecord(rec.Exe, rec.CommandLine);
+                return true;
+            }
+            // The record is dropped only when its process is really gone or is a different process (another start time).
+            // A process list that came back empty (a timeout) proves nothing, so the record stays for the next start.
+            long actual = ProcessIdentity.StartTicksOf(rec.Pid);
+            bool stale = actual <= 0 || Math.Abs(actual - rec.CreatedTicks) > Adoption.TickTolerance;
+            log.Line("an earlier record of a backend (pid " + rec.Pid + ") " + (stale ? "no longer matches a running process; leaving any backend alone" : "could not be confirmed now; leaving any backend alone and keeping the record"));
+            if (stale) Adoption.Delete(L.ProjectRoot);
+            return false;
+        }
+
+        void SaveRecord(string exe, string cmd)
+        {
+            var me = Process.GetCurrentProcess();
+            var rec = new OwnedRecord();
+            rec.Pid = Pid; rec.CreatedTicks = CreatedTicks; rec.Exe = exe; rec.CommandLine = cmd;
+            rec.StarterPid = me.Id;
+            try { rec.StarterCreatedTicks = me.StartTime.ToUniversalTime().Ticks; } catch (Exception) { }
+            try { Adoption.Save(L.ProjectRoot, rec); } catch (Exception) { }
+        }
+
         // Returns when /api/health answers. Throws a plain error with the last lines of the backend log otherwise.
         public void StartAndWait(int timeoutSeconds, SetupLog log)
         {
-            if (HealthOk(Port, 1500)) { log.Line("backend already answering on port " + Port + "; using it"); return; }
+            if (HealthOk(Port, 1500))
+            {
+                log.Line("backend already answering on port " + Port + "; using it");
+                TryAdopt(log);
+                return;
+            }
+            // Something that looks like the backend is starting but does not answer yet: wait for it, never start a second.
+            List<ProcInfo> other = Foreign();
+            if (other.Count > 0)
+            {
+                log.Line("a backend process not started by this launcher (pid " + other[0].Pid + ") is starting; waiting for it");
+                DateTime until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+                while (DateTime.UtcNow < until) { if (HealthOk(Port, 1500)) return; Thread.Sleep(500); }
+                throw new StarterError("A copy of the app's engine that VGAC did not start is on port " + Port + " and does not answer.", "Close it (or restart the computer), then start VGAC again.");
+            }
             if (PortOpen(Port))
                 throw new StarterError("Port " + Port + " is in use by something that is not VGAC's backend.",
                     "Close the program using that port (or a second copy of VGAC that is stuck), then start again.");
             if (!File.Exists(L.VenvPython))
                 throw new StarterError("The app's Python is not there yet.", "Start VGAC again to set it up.");
-            string logFile = Path.Combine(L.ProjectRoot, "runtime", "logs", "backend.log");
-            Directory.CreateDirectory(Path.GetDirectoryName(logFile));
-            var psi = new ProcessStartInfo(L.VenvPython, "-m uvicorn vgac.main:app --host 127.0.0.1 --port " + Port);
-            psi.WorkingDirectory = Path.Combine(L.ProjectRoot, "backend");
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            var w = new StreamWriter(logFile, true, new UTF8Encoding(false));
-            var gate = new object();
-            var p = new Process();
-            p.StartInfo = psi;
-            DataReceivedEventHandler h = delegate(object s, DataReceivedEventArgs a)
-            {
-                if (a.Data != null) lock (gate) { try { w.WriteLine(a.Data); w.Flush(); } catch (ObjectDisposedException) { } }
-            };
-            p.OutputDataReceived += h;
-            p.ErrorDataReceived += h;
-            p.Start();
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-            Started = p;
-            log.Line("backend started, pid " + p.Id + ", log " + logFile);
+            LaunchProcess(log);
             DateTime end = DateTime.UtcNow.AddSeconds(timeoutSeconds);
             while (DateTime.UtcNow < end)
             {
-                if (p.HasExited)
-                    throw new StarterError("The app's engine stopped while starting (exit code " + p.ExitCode + ").\r\n" + Tail(logFile, 8), "Open the log. Starting VGAC again re-checks the setup.");
+                if (closing) throw new StarterError("VGAC is closing.");
+                if (!Owned)
+                    throw new StarterError("The app's engine stopped while starting (exit code " + ExitCode + ").\r\n" + Tail(LogFile, 8), "Open the log. Starting VGAC again re-checks the setup.");
                 if (HealthOk(Port, 1500)) return;
                 Thread.Sleep(500);
             }
-            throw new StarterError("The app's engine did not answer within " + timeoutSeconds + " seconds.\r\n" + Tail(logFile, 8), "Open the log, or start VGAC again.");
+            throw new StarterError("The app's engine did not answer within " + timeoutSeconds + " seconds.\r\n" + Tail(LogFile, 8), "Open the log, or start VGAC again.");
         }
 
-        public void StopIfOurs()
+        // Starts the backend with its output going straight to backend.log, keeps its handle and records what was started.
+        // Refuses once Shutdown() has been called.
+        public void LaunchProcess(SetupLog log)
         {
-            if (Started != null && !Started.HasExited)
+            lock (gate)
             {
-                try { Started.Kill(); } catch (Exception) { }
+                if (closing) throw new StarterError("VGAC is closing.");
+                if (Owned) throw new StarterError("The app's engine is already running.");
+                string args = "-m uvicorn vgac.main:app --host 127.0.0.1 --port " + Port;
+                var env = new Dictionary<string, string>();
+                env["PYTHONUNBUFFERED"] = "1";
+                NativeProcess.Started s;
+                try { s = NativeProcess.Start(L.VenvPython, args, Path.Combine(L.ProjectRoot, "backend"), LogFile, env); }
+                catch (Exception e)
+                {
+                    throw new StarterError("Could not start the app's engine (" + e.Message + ").", "Try again; if it keeps failing, an antivirus program may have removed the app's Python. Open the log.");
+                }
+                if (s.CreatedTicks <= 0)
+                {
+                    // Not able to tell this process from another later: do not keep a process this program could not stop safely.
+                    ProcessIdentity.Kill(s.Handle); ProcessIdentity.Close(s.Handle);
+                    throw new StarterError("Windows would not say when the app's engine started, so it was stopped again.", "Try again.");
+                }
+                Attach(s.Handle, s.Pid, s.CreatedTicks, false);
+                SaveRecord(L.VenvPython, "\"" + L.VenvPython + "\" " + args);
+                log.Line("backend started, pid " + Pid + ", log " + LogFile);
             }
+        }
+
+        // Restart: stops the backend this launcher owns and everything it started (its process tree), nothing else.
+        // Returns the ids stopped. The record is kept when the process was owned and could not be stopped, so a later
+        // start can still deal with it.
+        public List<int> StopIfOurs(SetupLog log)
+        {
+            lock (gate) { return StopLocked(log); }
+        }
+
+        // Quit: the same, and no backend can be started afterwards.
+        public List<int> Shutdown(SetupLog log)
+        {
+            lock (gate) { closing = true; return StopLocked(log); }
+        }
+
+        List<int> StopLocked(SetupLog log)
+        {
+            var done = new List<int>();
+            if (handle == IntPtr.Zero) return done;           // nothing owned: another starter's record is not ours to delete
+            if (!ProcessIdentity.IsRunning(handle))
+            {
+                // The backend ended by itself. What it started may still run; our open handle keeps its id from being
+                // reused, so anything still pointing at it as its parent is its own child.
+                done = ProcessTree.Stop(Procs, Killer, Pid, CreatedTicks);
+                ProcessIdentity.Close(handle); handle = IntPtr.Zero;
+                Adoption.Delete(L.ProjectRoot);
+                return done;
+            }
+            done = ProcessTree.Stop(Procs, Killer, Pid, CreatedTicks);
+            if (done.Contains(Pid))
+            {
+                ProcessIdentity.Close(handle); handle = IntPtr.Zero;
+                Adoption.Delete(L.ProjectRoot);
+            }
+            else if (log != null) log.Line("could not stop the backend (pid " + Pid + "); it is still running and is still recorded as owned");
+            return done;
         }
 
         public static string Tail(string file, int lines)
         {
             try
             {
-                string[] all = File.ReadAllLines(file);
+                string[] all;
+                using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs, Encoding.UTF8))
+                    all = sr.ReadToEnd().Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
                 int from = Math.Max(0, all.Length - lines);
                 return string.Join("\r\n", all, from, all.Length - from);
             }
