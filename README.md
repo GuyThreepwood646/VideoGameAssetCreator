@@ -288,6 +288,8 @@ Builds lower-detail copies, a collision shape and the final FBX and GLB, imports
 - [Running from source, mock mode and tests](docs/ADVANCED.md#running-from-source)
 - [The API](docs/ADVANCED.md#the-api)
 
+Want to help with the code? Read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Other documents: [ARCHITECTURE.md](ARCHITECTURE.md) (how the application is built), [docs/API.md](docs/API.md) (the full API contract), [docs/BACKEND.md](docs/BACKEND.md) (backend code map), [docs/BUILD-THE-EXE.md](docs/BUILD-THE-EXE.md) (building the launcher).
 
 ---
