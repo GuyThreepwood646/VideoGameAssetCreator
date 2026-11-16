@@ -33,9 +33,10 @@ def decisions() -> dict:
                 targets = mesh.resolve_targets(rec, {}, budget, cat)
                 mp = {**targets, "target_faces_source": targets["target_faces_source"]}
                 look = prep.texture_look(rec, None)
-                row = {"recipe_id": rec["id"], "mesh": rec["mesh"], "surface": rec["surface"], "targets": targets, "head_applies": headtris.applies(rec, cat),
-                       "triangle_limit": prep.prep_triangle_limit(rec, mp, budget), "texture_look": look,
-                       "srcproject_on": srcproject.on({}, cat, look), "face_skip": face_detail.skip_reason(cat, rec, {}, True),
+                row = {"recipe_id": rec["id"], "mesh": rec["mesh"], "surface": rec["surface"], "targets": targets,
+                       "head_applies": headtris.applies(rec, cat), "triangle_limit": prep.prep_triangle_limit(rec, mp, budget),
+                       "texture_look": look, "srcproject_on": srcproject.on({}, cat, look),
+                       "face_skip": face_detail.skip_reason(cat, rec, {}, True),
                        "plans": [headtris.plan(rec, cat, p, prep.resolve_shading(rec, p)["shading"], mp) for p in PREP_PARAMS]}
                 out[f"{style}|{cat}|{plat}"] = row
     return out
@@ -43,5 +44,8 @@ def decisions() -> dict:
 
 if __name__ == "__main__":
     dest = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "data" / "looks_golden.json"
-    dest.write_text(json.dumps(decisions(), indent=1, sort_keys=True, default=str), encoding="utf-8")
+    d = decisions()  # one line per look, category and platform, so a change shows as one line in a review
+    lines = [f"{json.dumps(k)}: {json.dumps(d[k], sort_keys=True, default=str)}" for k in sorted(d)]
+    with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("{\n" + ",\n".join(lines) + "\n}\n")
     print("wrote", dest)
