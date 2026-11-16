@@ -874,13 +874,20 @@ def picture_palette(path: Path | str, most: int = 32, alpha_min: int = 200) -> l
     look whose texture takes the concept picture's own colours (recipe surface.palette_source: concept). Measured on three
     pixel characters against 32 colours picked from the texture: blended texels 3.2 to 0 percent, single stray texels 10
     to 1.7 percent, and colours the 3D step had lost came back (docs/research/looks/pixel.md)."""
+    return picture_palette_cover(path, most, alpha_min)[0]
+
+
+def picture_palette_cover(path: Path | str, most: int = 32, alpha_min: int = 200) -> tuple[list[tuple[int, int, int]], float]:
+    """picture_palette and the share of the picture's opaque pixels its colours cover (0 when it has none): 1.0 for a
+    picture drawn in a limited palette, far less for a soft one (the top 32 of thousands of shades)."""
     with Image.open(path) as im:
         c = np.asarray(im.convert("RGBA"))
     px = c[c[..., 3] > alpha_min][:, :3]
     if not len(px):
-        return []
+        return [], 0.0
     cols, n = np.unique(px.reshape(-1, 3), axis=0, return_counts=True)
-    return [tuple(int(v) for v in k) for k in cols[np.argsort(-n, kind="stable")][:most]]
+    order = np.argsort(-n, kind="stable")[:most]
+    return [tuple(int(v) for v in k) for k in cols[order]], float(n[order].sum() / n.sum())
 
 
 def clean_strays(base: np.ndarray, labels: np.ndarray, passes: int = 2) -> np.ndarray:

@@ -132,8 +132,56 @@ def test_concept_palette_is_the_pictures_own_colours_most_used_first(tmp_path):
     look = prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"))
     got = prep.concept_palette(look, p)
     assert got["palette"] == [(200, 40, 40), (20, 20, 20)] and got["palette_from"] == "concept picture"
-    assert prep.concept_palette(look, None) is look
-    assert prep.concept_palette(prep.texture_look(reference.recipe("painted", "humanoid", "pc_mid")), p)["palette"] is None
+    assert got["concept_palette_cover"] == 1.0 and "concept_palette_skipped" not in got
+    none = prep.concept_palette(look, None)
+    assert none["palette"] is None and none["concept_palette_skipped"] == "no concept picture"
+    painted = prep.texture_look(reference.recipe("painted", "humanoid", "pc_mid"))
+    assert prep.concept_palette(painted, p) is painted  # a look that does not ask: untouched
+
+
+def test_a_soft_concept_picture_keeps_todays_palette(tmp_path):
+    """A picture with soft edges (thousands of shades): its top 32 colours would be near-identical, so the texture keeps
+    its own 32 colours, and the reason is recorded."""
+    pal = imaging.picture_palette(_picture(tmp_path / "c.png"))
+    soft = np.zeros((64, 64, 4), np.uint8)
+    soft[..., 0] = np.linspace(40, 220, 64)[None, :]  # shading across, as a painter draws a sleeve
+    soft[..., 1] = np.linspace(30, 90, 64)[:, None]
+    soft[..., 2], soft[..., 3] = 60, 255
+    Image.fromarray(soft, "RGBA").save(tmp_path / "soft.png")
+    rng = np.random.default_rng(0)
+    noisy = (rng.random((40, 40, 3)) * 255).astype(np.uint8)
+    Image.fromarray(noisy).save(tmp_path / "noisy.png")
+    look = prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"))
+    for p in (tmp_path / "soft.png", tmp_path / "noisy.png"):
+        _, cover = imaging.picture_palette_cover(p)
+        assert cover < prep.CONCEPT_PALETTE_COVER_MIN
+        got = prep.concept_palette(look, p)
+        assert got["palette"] is None and got["palette_colors"] == 32
+        assert "not drawn in a few colours" in got["concept_palette_skipped"]
+    assert len(pal) == 2
+
+
+def test_the_projects_own_palette_keeps_priority(tmp_path):
+    p = _picture(tmp_path / "c.png")
+    lock = ["#%02x%02x%02x" % (i * 15, 255 - i * 15, 100) for i in range(16)]  # 16 colours: a texture palette
+    look = prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"), lock)
+    assert len(look["palette"]) == 16
+    got = prep.concept_palette(look, p)
+    assert got["palette"] == look["palette"] and got["concept_palette_skipped"] == "the project's own palette is used"
+    small = prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"), lock[:8])  # 8: a prompt hint only
+    assert prep.concept_palette(small, p)["palette_from"] == "concept picture"
+
+
+def test_apply_look_records_why_the_concept_palette_was_skipped(tmp_path):
+    base = np.full((64, 64, 3), 120, np.uint8)
+    glb = _uv_glb(tmp_path / "m.glb", base)
+    src = imaging.write_map(base.astype(np.float32) / 255.0, tmp_path / "base.png")
+    look = {**prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid")), "cap": 64,
+            "concept_palette_skipped": "no concept picture"}
+    files: dict = {}
+    m, _ = prep.apply_look(look, imaging.load_uv_mesh(glb), {"base_color": src}, files, base.astype(np.float32) / 255.0, 64,
+                           tmp_path)
+    assert m["palette_source"] == "recipe" and m["concept_palette_skipped"] == "no concept picture"
 
 
 def test_stray_clean_joins_single_texels_and_keeps_edges_and_pieces():

@@ -715,7 +715,7 @@ def texture_look(rec: dict[str, Any], palette: Any = None) -> dict[str, Any]:
            "palette": pal or None, "palette_colors": srf.get("palette_colors") if crisp else None,
            "normal_map": bool(m.get("normal_map", True)), "style": rec.get("style")}
     # Pixel art (only when the look sets them, so every other look's treatment reads as before): the concept picture's
-    # colours as the palette (concept_palette fills it in; the style lock's palette gives way), the stray clean after
+    # colours as the palette (concept_palette fills it in, unless the style lock's palette is the texture palette), the stray clean after
     # it, and the pictures painted on first (srcproject.on reads `projection`; the treatment then runs after the painting).
     if crisp and srf.get("palette_source"):
         out["palette_source"] = srf["palette_source"]
@@ -726,16 +726,32 @@ def texture_look(rec: dict[str, Any], palette: Any = None) -> dict[str, Any]:
     return out
 
 
+# The concept picture's colours are its palette only when they cover nearly all of it. Measured: the three pixel concepts
+# are covered 100% by their own 13 to 27 colours; the same pictures smoothed (5x bilinear, 7,290 to 15,201 colours) only
+# 72 to 81% by their top 32; 40 other concept pictures in the library, median 2.5%.
+CONCEPT_PALETTE_COVER_MIN = 0.95
+
+
 def concept_palette(look: dict[str, Any], concept_cutout: Path | None) -> dict[str, Any]:
     """The look with the concept picture's own colours as its palette (look.palette_source: concept): up to
-    palette_colors of them, any number at all (MIN_TEXTURE_PALETTE is for the style lock's few hint colours). Without a
-    concept picture, or one with under two colours, the look stays as it was (palette_colors picked from the texture)."""
-    if look.get("palette_source") != "concept" or concept_cutout is None or not Path(concept_cutout).is_file():
+    palette_colors of them, any number at all (MIN_TEXTURE_PALETTE is for the style lock's few hint colours). The look
+    stays as it was (palette_colors picked from the texture), with the reason in concept_palette_skipped, when: the
+    project's style lock palette is already the texture palette (the project's choice keeps priority), there is no
+    concept picture, it has under two colours, or its top colours cover under CONCEPT_PALETTE_COVER_MIN of it (a soft
+    picture: the top 32 of thousands of shades would be near-identical)."""
+    if look.get("palette_source") != "concept":
         return look
-    pal = imaging.picture_palette(concept_cutout, int(look.get("palette_colors") or 32))
+    if look.get("palette"):
+        return {**look, "concept_palette_skipped": "the project's own palette is used"}
+    if concept_cutout is None or not Path(concept_cutout).is_file():
+        return {**look, "concept_palette_skipped": "no concept picture"}
+    pal, cover = imaging.picture_palette_cover(concept_cutout, int(look.get("palette_colors") or 32))
     if len(pal) < 2:
-        return look
-    return {**look, "palette": pal, "palette_from": "concept picture"}
+        return {**look, "concept_palette_skipped": "the concept picture has under two colours"}
+    if cover < CONCEPT_PALETTE_COVER_MIN:
+        return {**look, "concept_palette_skipped": f"the concept picture is not drawn in a few colours (its top {len(pal)} "
+                                                   f"cover {cover:.0%} of it, under {CONCEPT_PALETTE_COVER_MIN:.0%})"}
+    return {**look, "palette": pal, "palette_from": "concept picture", "concept_palette_cover": round(cover, 4)}
 
 
 def look_after_painting(look: dict[str, Any], params: dict[str, Any], category: str | None) -> bool:
@@ -894,6 +910,8 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
         files["base_color"] = imaging.write_map(arr, out_dir / "base_color.png")
         m["texture_colours"] = imaging.colour_count(files["base_color"], mask_t)
         m["palette_source"] = (look.get("palette_from") or "style lock") if palette else ("recipe" if limit_colours else None)
+        if look.get("concept_palette_skipped"):
+            m["concept_palette_skipped"] = look["concept_palette_skipped"]
         m["palette_limit"] = len(palette) if palette else (int(colours) if limit_colours else None)
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
