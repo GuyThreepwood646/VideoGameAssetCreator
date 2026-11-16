@@ -80,5 +80,28 @@ program has open.
 - Starting VGAC.exe a second time waits up to three seconds for the first copy to confirm; if it does not (stuck, or run
   by another user) it says so.
 
+## Maintenance (tray menu, "Maintenance..." on the status window)
+
+- Check and repair: a read-only check of what VGAC installed (the app's Python and packages, the screens, uv and Node, the
+  records), a plain line for each, and a Fix button that only ever changes what VGAC made. A rebuild puts the old part aside
+  first and puts it back if the new one does not work. Linked tools are reported, never changed.
+- Update: "Update VGAC now" runs `git pull --ff-only` (nothing is merged or overwritten). VGAC.exe is running, so it renames
+  itself to VGAC.old.exe just before the pull (Windows allows that) and git writes the new one; restart VGAC afterwards. The old
+  file is deleted at the next start only if it is the file VGAC recorded and it was the published one (a build you made
+  yourself is kept). If the rename fails, nothing is changed. The screens are built beside the live ones and swapped in with two
+  renames, so the running app never sees a half-built folder. Updating asks first when jobs are running, like Quit.
+  **If you update by hand in a terminal, close VGAC first, then pull.** A pull that stopped halfway is noticed at the next start
+  ("A pull did not finish. Close VGAC, then pull again.").
+- Move the big files: copies the folders VGAC made in the data folder (tools, python, uv-cache, downloads, webview2,
+  comfyui without its Python) to another folder or drive, checks the copy, and only then switches (one file write). Until
+  then the old place is whole and in use. Interrupted at any point: the next start offers to continue or cancel
+  (`local/move.json`). The old copy is deleted only after you confirm, and only after it is compared with the new one again.
+- Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Ticked
+  by default: the app's Python, tools and screens, and VGAC's own ComfyUI (its own files only; models, outputs and your own custom
+  nodes inside it stay). Not ticked: models and packs VGAC downloaded, node packs it put into a ComfyUI you linked, its settings,
+  and your own projects and exported characters (those also need the word REMOVE typed). Links are unlinked, never followed.
+  Small amounts go to the Recycle Bin; more than 2 GB is deleted for good and says so. The project folder, VGAC.exe and anything
+  VGAC did not make are never touched.
+
 Test switches: `VGAC.exe --exit-after <ms> --state-out <file>` quits by itself without asking (but not while an owned backend has jobs running) and writes what the status
 window showed; `--keep-status` keeps the status window open next to the app.

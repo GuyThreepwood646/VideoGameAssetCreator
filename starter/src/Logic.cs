@@ -264,6 +264,7 @@ namespace Vgac.Starter
         public string OkLabel = "Quit";
         public string CancelLabel = "Cancel";
         public bool DefaultCancel;
+        public bool Block;          // not a question: the thing cannot be done now
     }
 
     public static class QuitPolicy

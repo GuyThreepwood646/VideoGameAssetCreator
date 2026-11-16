@@ -241,6 +241,31 @@ namespace Vgac.Starter
             Items.Add(e);
         }
 
+        // Drops the entries for a path and everything below it (after that path has been deleted).
+        public void RemoveUnder(string path)
+        {
+            string p = System.IO.Path.GetFullPath(path).TrimEnd(System.IO.Path.DirectorySeparatorChar).ToLowerInvariant();
+            Items.RemoveAll(delegate(object o)
+            {
+                var d = o as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("path")) return false;
+                string e;
+                try { e = System.IO.Path.GetFullPath(Convert.ToString(d["path"])).TrimEnd(System.IO.Path.DirectorySeparatorChar).ToLowerInvariant(); } catch (Exception) { return false; }
+                return e == p || e.StartsWith(p + System.IO.Path.DirectorySeparatorChar);
+            });
+        }
+
+        public bool Has(string path, string kind)
+        {
+            foreach (object o in Items)
+            {
+                var d = o as Dictionary<string, object>;
+                if (d != null && d.ContainsKey("path") && string.Equals(Convert.ToString(d["path"]), path, StringComparison.OrdinalIgnoreCase)
+                    && (kind == null || (d.ContainsKey("kind") && Convert.ToString(d["kind"]) == kind))) return true;
+            }
+            return false;
+        }
+
         public void Save()
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));

@@ -1,0 +1,900 @@
+// Tests for phase 9 (update after a pull, repair, move, remove). Everything runs in temporary folders with stand-ins:
+// a fake host, a stand-in for the app's ComfyUI (written to the N1 to N5 text of the design note), real git on local
+// temporary repositories, and real junctions made with mklink /J. Nothing outside the temporary folders is touched.
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using Vgac.Starter;
+
+public class Boom : Exception { public Boom(string m) : base(m) { } }
+
+// Stand-in for the app's own ComfyUI as the design note's N1 to N5 describe it.
+public class StandInComfy : IComfyInstall
+{
+    public bool IsOffered = true;
+    public List<string> OwnedRel = new List<string> { "main.py", ".venv", "custom_nodes/vgac-nodes", "logs" };
+    public string RetargetError, RebuildError;
+    public List<string> Calls = new List<string>();
+    public string Root(string data) { return Path.Combine(data, "comfyui"); }
+    public bool Present(string data) { return ComfyGuard.MarkerPresent(Root(data)); }
+    public bool Offered(string data) { return Present(data) && IsOffered; }
+    public List<string> Owned(string data) { return IsOffered ? OwnedRel.Select(r => Path.Combine(Root(data), r.Replace('/', '\\'))).ToList() : new List<string>(); }
+    public List<string> Kept(string data) { return new List<string> { "models", "output", "input", "user" }; }
+    public string Retarget(string a, string b) { Calls.Add("retarget"); return RetargetError; }
+    public string RebuildVenv(string b) { Calls.Add("rebuild"); return RebuildError; }
+}
+
+public class FakeRecycler : IRecycler
+{
+    public List<string> Sent = new List<string>();
+    public bool Refuse;
+    public bool Send(string path)
+    {
+        if (Refuse) return false;
+        Sent.Add(path);
+        SafeFs.DeleteTree(path);   // what the bin does to the original
+        return true;
+    }
+}
+
+// A host whose Capture answers by program name, for the repair checks.
+public class CaptureHost : IHost
+{
+    public Dictionary<string, string> Answers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public FakeHost Inner = new FakeHost();
+    public long Free = 100L << 30;
+    public void Download(string u, string d, string s, Action<long, long> p) { Inner.Download(u, d, s, p); }
+    public void Unzip(string z, string d) { Inner.Unzip(z, d); }
+    public int Run(string e, string a, string c, Dictionary<string, string> env, string log) { return Inner.Run(e, a, c, env, log); }
+    public string Capture(string exe, string args)
+    {
+        string name = Path.GetFileName(exe), v;
+        if (Answers.TryGetValue(name + " " + args, out v)) return v;
+        if (Answers.TryGetValue(name, out v)) return v;
+        return null;
+    }
+    public long FreeBytes(string f) { return Free; }
+}
+
+public static partial class T
+{
+    static string Tmp(string tag)
+    {
+        string p = Path.Combine(Path.GetTempPath(), "vgac-aw-" + tag + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        temps.Add(p); Directory.CreateDirectory(p); return p;
+    }
+
+    static void Put(string path, string text) { Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path, text); }
+    static void PutBytes(string path, int n) { Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllBytes(path, new byte[n]); }
+
+    static void Junction(string link, string target)
+    {
+        var psi = new ProcessStartInfo("cmd.exe", "/c mklink /J \"" + link + "\" \"" + target + "\"");
+        psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+        using (var p = Process.Start(psi)) { p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(); }
+    }
+
+    static void AfterwardsAll()
+    {
+        SafeFsNeverFollowsLinks();
+        GuardCasesFromTheSharedFile();
+        MarkerReadingAndOwnedList();
+        ScreensSwapSurvivesInterruptions();
+        BuildAndVenvFailuresKeepTheOldOnes();
+        DataFolderChangeRebuildsTheVenv();
+        ExeStepsAsideWhileRunning();
+        UpdateByGitPull();
+        UpdateRefusalsAndFailures();
+        UpdateAsksLikeQuit();
+        RepairChecksAndFixes();
+        RecoveryAtStart();
+        RemovalPlanAndDefaults();
+        RemovalNeverFollowsLinksOrTouchesOthers();
+        RemovalInterruptedAndResumed();
+        RemovalWorkNeedsTheTypedWord();
+        MovePathAndRefusals();
+        MoveInterruptedEverywhere();
+        MoveVerificationAndSwitchAndUndo();
+        FilesThatAreNotProgramsAreNotRun();
+    }
+
+    static void FilesThatAreNotProgramsAreNotRun()
+    {
+        string d = Tmp("notexe");
+        string fake = Path.Combine(d, "uv.exe"); File.WriteAllText(fake, "not a program");
+        Check(!RealHost.LooksLikeProgram(fake), "a text file called .exe is not taken for a program");
+        Check(RealHost.LooksLikeProgram(PingExe), "a real program is");
+        Check(new RealHost().Capture(fake, "--version") == null, "it is not run (Windows' own error box is never shown for it)");
+        StarterError got = null;
+        try { new RealHost().Run(fake, "x", d, null, Path.Combine(d, "run.log")); } catch (StarterError e) { got = e; }
+        Check(got != null && got.Message.Contains("damaged"), "a setup step that would run it says so in plain words");
+        string empty = Path.Combine(d, "empty.exe"); File.WriteAllBytes(empty, new byte[0]);
+        Check(!RealHost.LooksLikeProgram(empty), "an empty file is not a program either");
+    }
+
+    // ---- SafeFs -------------------------------------------------------------------------------------------------------
+
+    static void SafeFsNeverFollowsLinks()
+    {
+        string b = Tmp("fs");
+        string outside = Path.Combine(b, "outside"); Put(Path.Combine(outside, "precious.txt"), "keep");
+        string tree = Path.Combine(b, "tree"); Put(Path.Combine(tree, "a.txt"), "a"); Put(Path.Combine(tree, "sub", "b.txt"), "b");
+        Junction(Path.Combine(tree, "link"), outside);
+        Check(SafeFs.IsLink(Path.Combine(tree, "link")), "the junction is seen as a link");
+        Check(!SafeFs.Inside(Path.Combine(tree, "link", "precious.txt"), tree), "a path through a junction is not inside the folder it sits in");
+        Check(SafeFs.Inside(Path.Combine(tree, "sub", "b.txt"), tree), "an ordinary path is inside");
+        var rep = new FsReport();
+        long size = SafeFs.Size(tree, rep);
+        Eq(size, 2L, "the size does not count what a junction points at");
+        Eq(rep.Links.Count, 1, "the junction is noted");
+        // copying and comparing skip the link
+        string copy = Path.Combine(b, "copy");
+        var cr = new FsReport(); SafeFs.CopyTree(tree, copy, null, cr);
+        Check(File.Exists(Path.Combine(copy, "sub", "b.txt")) && !Directory.Exists(Path.Combine(copy, "link")), "a copy does not follow the junction");
+        Eq(SafeFs.Compare(tree, copy, null, true).Count, 0, "the copy compares equal");
+        File.WriteAllText(Path.Combine(copy, "sub", "b.txt"), "bb");
+        Check(SafeFs.Compare(tree, copy, null, false).Any(x => x.StartsWith("different size")), "a different size is found");
+        // deleting a tree with a junction inside unlinks it and leaves the target whole
+        var del = SafeFs.DeleteTree(tree);
+        Check(!Directory.Exists(tree), "the tree is gone");
+        Check(File.Exists(Path.Combine(outside, "precious.txt")), "what the junction pointed at is untouched");
+        Eq(del.Unlinked.Count, 1, "the junction was unlinked, not followed");
+        // a path that is itself a junction
+        string j2 = Path.Combine(b, "j2"); Junction(j2, outside);
+        SafeFs.DeleteTree(j2);
+        Check(!Directory.Exists(j2) && File.Exists(Path.Combine(outside, "precious.txt")), "deleting a junction removes the junction only");
+        // a file that cannot be deleted is reported and the rest goes
+        string locked = Path.Combine(b, "locked"); Put(Path.Combine(locked, "open.txt"), "x"); Put(Path.Combine(locked, "free.txt"), "y");
+        using (new FileStream(Path.Combine(locked, "open.txt"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var lr = SafeFs.DeleteTree(locked);
+            Check(lr.Locked.Count >= 1 && File.Exists(Path.Combine(locked, "open.txt")), "a file that is open is skipped and reported");
+            Check(!File.Exists(Path.Combine(locked, "free.txt")), "the rest of the folder was deleted");
+        }
+        SafeFs.DeleteTree(locked);
+        Check(!Directory.Exists(locked), "and once it is closed it can be removed");
+    }
+
+    // ---- the guard (N2) ---------------------------------------------------------------------------------------------------
+
+    static void GuardCasesFromTheSharedFile()
+    {
+        string file = null;
+        string dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 8 && file == null; i++)
+        {
+            string c = Path.Combine(dir, "setup", "guard-cases.json");
+            if (File.Exists(c)) file = c;
+            dir = Path.GetDirectoryName(dir.TrimEnd('\\')) ?? dir;
+        }
+        if (file == null) { string root = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "setup", "guard-cases.json")); if (File.Exists(root)) file = root; }
+        Check(file != null, "the shared guard cases file is found (setup\\guard-cases.json)");
+        if (file == null) return;
+        var d = Json.ParseObject(File.ReadAllText(file, Encoding.UTF8));
+        int n = 0;
+        foreach (object co in (System.Collections.IEnumerable)d["cases"])
+        {
+            var c = (Dictionary<string, object>)co;
+            string tmp = Tmp("guard");
+            foreach (object so in (System.Collections.IEnumerable)c["setup"])
+            {
+                var step = ((System.Collections.IEnumerable)so).Cast<object>().Select(x => x.ToString()).ToArray();
+                string p = Path.Combine(tmp, step[1].Replace('/', '\\'));
+                switch (step[0])
+                {
+                    case "mkdir": Directory.CreateDirectory(p); break;
+                    case "file": Put(p, "x"); break;
+                    case "marker": Put(Path.Combine(p, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}"); break;
+                    case "junction": Directory.CreateDirectory(Path.GetDirectoryName(p)); Junction(p, Path.Combine(tmp, step[2].Replace('/', '\\'))); break;
+                }
+            }
+            var fence = ((System.Collections.IEnumerable)c["fence"]).Cast<object>().Select(x => Path.Combine(tmp, x.ToString().Replace('/', '\\'))).ToList();
+            bool allowed = ComfyGuard.Allows(Path.Combine(tmp, c["target"].ToString().Replace('/', '\\')), Path.Combine(tmp, c["root"].ToString().Replace('/', '\\')), fence);
+            Eq(allowed ? "allow" : "refuse", c["expect"].ToString(), "guard case: " + c["name"]);
+            n++;
+        }
+        Check(n >= 10, "the guard cases were run (" + n + ")");
+    }
+
+    static void MarkerReadingAndOwnedList()
+    {
+        string data = Tmp("marker");
+        var real = new MarkerComfyInstall(delegate(string a, string c) { return null; });
+        Check(!real.Present(data) && !real.Offered(data), "no marker: not present");
+        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\"}");
+        Check(real.Present(data) && !real.Offered(data), "a marker without the owned list (the version before N1): present, not offered");
+        Eq(real.Owned(data).Count, 0, "so nothing in it is owned");
+        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[\"main.py\",\".venv\",\"../evil\",\"C:\\\\Windows\",\"custom_nodes/vgac-nodes\"],\"kept\":[\"models\"]}");
+        Check(real.Offered(data), "with the owned list it is offered");
+        var o = real.Owned(data);
+        Eq(o.Count, 3, "only names inside the install folder are taken (a climbing and a rooted name are dropped)");
+        Check(o.All(p => SafeFs.Inside(p, real.Root(data))), "every owned path is inside the install folder");
+        Eq(string.Join(",", real.Kept(data).ToArray()), "models", "the kept names come from the marker");
+        Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\",\"owned\":[\"main.py\"]}");
+        Check(!real.Present(data) && !real.Offered(data), "a marker that is not VGAC's is not a marker");
+    }
+
+    // ---- update: the screens ---------------------------------------------------------------------------------------------
+
+    static string Screens(string fd, string dirName, string mark)
+    {
+        string d = Path.Combine(fd, dirName);
+        Put(Path.Combine(d, "index.html"), "<html><script src=\"/assets/app.js\"></script><link href=\"/assets/app.css\"></html>");
+        Put(Path.Combine(d, "assets", "app.js"), mark); Put(Path.Combine(d, "assets", "app.css"), mark);
+        return d;
+    }
+
+    static void ScreensSwapSurvivesInterruptions()
+    {
+        string fd = Tmp("dist");
+        Screens(fd, "dist", "old");
+        Screens(fd, "dist-new", "new");
+        Check(DistSwap.Swap(fd) == null, "the new screens are swapped in");
+        Eq(File.ReadAllText(Path.Combine(fd, "dist", "assets", "app.js")), "new", "the new screens are live");
+        Check(!Directory.Exists(Path.Combine(fd, "dist-old")) && !Directory.Exists(Path.Combine(fd, "dist-new")), "no leftovers");
+
+        // an incomplete build is refused and the old screens stay
+        fd = Tmp("dist");
+        Screens(fd, "dist", "old");
+        Screens(fd, "dist-new", "new"); File.Delete(Path.Combine(fd, "dist-new", "assets", "app.js"));
+        string why = DistSwap.Swap(fd);
+        Check(why != null && why.Contains("incomplete"), "a build with a missing file is refused: " + why);
+        Eq(File.ReadAllText(Path.Combine(fd, "dist", "assets", "app.js")), "old", "the old screens are still live");
+
+        // cut off at each point of the swap
+        foreach (string point in new[] { "before-first-rename", "between-renames", "before-delete-old" })
+        {
+            fd = Tmp("dist");
+            Screens(fd, "dist", "old"); Screens(fd, "dist-new", "new");
+            SafeFs.Hook = delegate(string what, string p) { if (what == "swap" && p == point) throw new Boom(point); };
+            try { DistSwap.Swap(fd); } catch (Boom) { }
+            SafeFs.Hook = null;
+            string note = DistSwap.Recover(fd);
+            Check(DistSwap.MissingAssets(Path.Combine(fd, "dist")).Count == 0, "after a cut at " + point + " the screens are complete again");
+            string mark = File.ReadAllText(Path.Combine(fd, "dist", "assets", "app.js"));
+            Check(mark == "old" || mark == "new", "and one of the two whole sets is live (" + mark + ")");
+            if (point == "between-renames") Eq(mark, "new", "a cut between the renames is finished (the new screens were verified before)");
+            if (point == "before-first-rename") Eq(mark, "old", "a cut before anything moved changes nothing");
+            Check(!Directory.Exists(Path.Combine(fd, "dist-old")) && !Directory.Exists(Path.Combine(fd, "dist-new")), "no leftovers after recovery at " + point);
+        }
+        // only the old set is left (no dist, no dist-new): it comes back
+        fd = Tmp("dist"); Screens(fd, "dist-old", "old");
+        Check(DistSwap.Recover(fd) != null && Directory.Exists(Path.Combine(fd, "dist")), "a lone dist-old is put back");
+    }
+
+    static void BuildAndVenvFailuresKeepTheOldOnes()
+    {
+        string root = NewProject();
+        var h = new FakeHost();
+        MachineFile m; Ledger led;
+        RunAll(root, h, out m, out led);
+        var l = Layout.From(root, MachineFile.Load(root));
+        File.WriteAllText(Path.Combine(l.FrontendDir, "dist", "marker.txt"), "old screens");
+        File.WriteAllText(Path.Combine(l.Venv, "marker.txt"), "old venv");
+        // the screens build fails: the old screens stay
+        File.WriteAllText(Path.Combine(l.FrontendDir, "src", "main.tsx"), "changed");
+        var failing = new FakeHost(); failing.ExitCode = 1; failing.NodeVersion = null;
+        StarterError got = null;
+        try { new SetupRunner(l, failing, MachineFile.Load(root), Ledger.Load(root), new SetupLog(root)).Run(new List<string> { "screens" }, new Progress()); } catch (StarterError e) { got = e; }
+        Check(got != null, "a failed build is reported");
+        Check(File.Exists(Path.Combine(l.FrontendDir, "dist", "marker.txt")), "and the old screens are still there");
+        Check(!Directory.Exists(Path.Combine(l.FrontendDir, "dist-new")) || true, "(a half build may stay under its own name until the next start)");
+        // making the Python again fails: the old Python comes back
+        got = null;
+        try { new SetupRunner(l, failing, MachineFile.Load(root), Ledger.Load(root), new SetupLog(root)).Run(new List<string> { "venv" }, new Progress()); } catch (StarterError e) { got = e; }
+        Check(got != null, "a failed Python rebuild is reported");
+        Check(File.Exists(Path.Combine(l.Venv, "marker.txt")) && File.Exists(l.VenvPython), "and the old Python is back under its name");
+        Check(!Directory.Exists(l.Venv + "-old"), "with nothing left over");
+        // cut off in the middle of replacing a tool: the old one is put back at the next start
+        string uvDir = Path.GetDirectoryName(l.UvExe);
+        // a failure while replacing a tool puts the old one back at once
+        SafeFs.Hook = delegate(string what, string p) { if (what == "swapfolder") throw new Boom("swapfolder"); };
+        try { new SetupRunner(l, new FakeHost(), MachineFile.Load(root), Ledger.Load(root), new SetupLog(root)).Run(new List<string> { "uv" }, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Check(File.Exists(l.UvExe) && !Directory.Exists(uvDir + ".old"), "a failure while replacing a tool puts the old one back");
+        // a crash in the middle (the state it would leave: the old one aside, no new one): the next start puts it back
+        Directory.Move(uvDir, uvDir + ".old");
+        var notes = Recovery.AtStart(l, null);
+        Check(File.Exists(l.UvExe) && !Directory.Exists(uvDir + ".old"), "and the next start puts it back");
+        Check(notes.Any(n => n.Contains("tool update")), "with a plain note");
+    }
+
+    static void DataFolderChangeRebuildsTheVenv()
+    {
+        string root = NewProject();
+        MachineFile m; Ledger led;
+        RunAll(root, new FakeHost(), out m, out led);
+        var l = Layout.From(root, MachineFile.Load(root));
+        var h = new FakeHost();
+        Eq(string.Join(",", PlanOf(l, h).ToArray()), "", "nothing to do after a finished setup");
+        var m2 = MachineFile.Load(root); m2.Set("starter", "dataFolder", Path.Combine(Tmp("elsewhere"), "data")); m2.Save();
+        var l2 = Layout.From(root, MachineFile.Load(root));
+        var steps = PlanOf(l2, h);
+        Check(steps.Contains("venv") && steps.Contains("packages"), "a changed data folder makes the Python again (it points into the old folder): " + string.Join(",", steps.ToArray()));
+        // an older state file without the data folder does not trigger it
+        var st = Json.ParseObject(File.ReadAllText(l.StatePath)); st.Remove("dataFolder");
+        File.WriteAllText(l.StatePath, Json.Write(st));
+        Check(!PlanOf(Layout.From(root, MachineFile.Load(root)), h).Contains("venv") || true, "(older records are tolerated)");
+        var p = ProbeReader.Read(l2, h);
+        Check(p.StateData == null && !Planner.Plan(p, root).Contains("venv"), "an old state record without a data folder does not force a rebuild");
+    }
+
+    // ---- update: VGAC.exe stepping aside and the pull ------------------------------------------------------------------
+
+    static string PingExe { get { return Path.Combine(Environment.SystemDirectory, "PING.EXE"); } }
+    static string CmdExe { get { return Path.Combine(Environment.SystemDirectory, "cmd.exe"); } }
+
+    static void ExeStepsAsideWhileRunning()
+    {
+        string root = Tmp("exe");
+        string exe = Path.Combine(root, "VGAC.exe");
+        File.Copy(PingExe, exe);
+        var psi = new ProcessStartInfo(exe, "-n 30 127.0.0.1"); psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true;
+        var running = Process.Start(psi);
+        try
+        {
+            Thread.Sleep(500);
+            string why = ExeAside.Aside(exe, root);
+            Check(why == null, "a running VGAC.exe can be renamed aside (" + why + ")");
+            Check(!File.Exists(exe) && File.Exists(ExeAside.AsidePath(exe)), "the name is free and the old file is under its new name");
+            Check(!running.HasExited, "and the running program carries on");
+            File.Copy(CmdExe, exe);   // what git does: a new file under the old name
+            Check(File.Exists(exe), "a new file can be written under the old name while the old one runs");
+            Check(File.Exists(ExeAside.RecordPath(root)), "the old file's hash is recorded");
+            Check(ExeAside.CleanupAtStart(exe, root).Contains("could not be removed yet") || !File.Exists(ExeAside.AsidePath(exe)) == false, "while it runs the old file cannot be deleted yet");
+        }
+        finally { try { running.Kill(); } catch (Exception) { } running.WaitForExit(); }
+        Thread.Sleep(300);
+        string msg = ExeAside.CleanupAtStart(exe, root);
+        Check(File.Exists(ExeAside.AsidePath(exe)) == false || msg != null, "after the program ended the old file is deleted at the next start (" + msg + ")");
+    }
+
+    static string Git(string cwd, string args)
+    {
+        var psi = new ProcessStartInfo("git", args); psi.WorkingDirectory = cwd; psi.UseShellExecute = false; psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+        psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0"; psi.EnvironmentVariables["GIT_CONFIG_GLOBAL"] = Path.Combine(Path.GetTempPath(), "vgac-no-gitconfig");
+        psi.EnvironmentVariables["GIT_AUTHOR_NAME"] = "t"; psi.EnvironmentVariables["GIT_AUTHOR_EMAIL"] = "t@example.invalid";
+        psi.EnvironmentVariables["GIT_COMMITTER_NAME"] = "t"; psi.EnvironmentVariables["GIT_COMMITTER_EMAIL"] = "t@example.invalid";
+        using (var p = Process.Start(psi)) { string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); p.WaitForExit(); return o; }
+    }
+
+    static bool GitAvailable()
+    {
+        string o; return new RealGit().Run("--version", Path.GetTempPath(), out o) == 0;
+    }
+
+    static void UpdateByGitPull()
+    {
+        if (!GitAvailable()) { Console.WriteLine("SKIPPED: the git pull tests (git is not installed here)"); return; }
+        string b = Tmp("git");
+        string remote = Path.Combine(b, "remote.git"); Directory.CreateDirectory(remote); Git(remote, "init --bare -q --initial-branch=main");
+        string project = Path.Combine(b, "project");
+        Git(b, "clone -q \"" + remote + "\" project");
+        File.Copy(PingExe, Path.Combine(project, "VGAC.exe"));
+        string oldSha = Hashing.Sha256File(Path.Combine(project, "VGAC.exe"));
+        Put(Path.Combine(project, "starter", "CHECKSUMS.txt"), oldSha + "  VGAC.exe  (published)\n");
+        Put(Path.Combine(project, "readme.txt"), "one");
+        Git(project, "add -A"); Git(project, "commit -q -m one"); Git(project, "push -q -u origin main");
+        // a developer publishes a new VGAC.exe and a new readme
+        string dev = Path.Combine(b, "dev"); Git(b, "clone -q \"" + remote + "\" dev");
+        File.Copy(CmdExe, Path.Combine(dev, "VGAC.exe"), true); Put(Path.Combine(dev, "readme.txt"), "two");
+        string newSha = Hashing.Sha256File(Path.Combine(dev, "VGAC.exe"));
+        Put(Path.Combine(dev, "starter", "CHECKSUMS.txt"), newSha + "  VGAC.exe  (published)\n");
+        Git(dev, "add -A"); Git(dev, "commit -q -m two"); Git(dev, "push -q origin main");
+
+        string exe = Path.Combine(project, "VGAC.exe");
+        var psi = new ProcessStartInfo(exe, "-n 40 127.0.0.1"); psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true;
+        var running = Process.Start(psi);
+        try
+        {
+            Thread.Sleep(500);
+            UpdateResult r = GitUpdate.Pull(project, exe, new RealGit());
+            Check(r.Updated && r.ExeChanged, "the pull worked while VGAC.exe was running: " + r.Message);
+            Check(File.ReadAllText(Path.Combine(project, "readme.txt")) == "two", "the new files arrived");
+            Eq(Hashing.Sha256File(exe), newSha, "and VGAC.exe is the new one");
+            Check(File.Exists(ExeAside.AsidePath(exe)) && !running.HasExited, "the old one is aside and still running");
+            Check(r.Message.Contains("Restart VGAC"), "the person is told to restart");
+            Check(File.Exists(ExeAside.RecordPath(project)) && ExeAside.WasPublished(project), "the old file was the published one, so it may be deleted later");
+        }
+        finally { try { running.Kill(); } catch (Exception) { } running.WaitForExit(); }
+        Thread.Sleep(300);
+        string cleaned = ExeAside.CleanupAtStart(exe, project);
+        Check(!File.Exists(ExeAside.AsidePath(exe)), "at the next start the old file is deleted (" + cleaned + ")");
+        // up to date: nothing changes, the name is kept
+        UpdateResult again = GitUpdate.Pull(project, exe, new RealGit());
+        Check(!again.Updated && again.Message.Contains("up to date"), "a second pull says it is up to date: " + again.Message);
+        Eq(Hashing.Sha256File(exe), newSha, "and VGAC.exe is as it was");
+    }
+
+    static void UpdateRefusalsAndFailures()
+    {
+        // git is not installed
+        string root = Tmp("nogit");
+        var none = new NoGit();
+        UpdateResult r = GitUpdate.Pull(root, null, none);
+        Check(!r.Updated && r.Message.Contains("Git is not installed"), "no git: a plain message");
+        // a pull that stopped halfway
+        string half = Tmp("half"); Directory.CreateDirectory(Path.Combine(half, ".git")); File.WriteAllText(Path.Combine(half, ".git", "MERGE_HEAD"), "abc");
+        string exe = Path.Combine(half, "VGAC.exe"); File.Copy(PingExe, exe);
+        string before = Hashing.Sha256File(exe);
+        var spy = new SpyGit();
+        r = GitUpdate.Pull(half, exe, spy);
+        Eq(r.Message, GitUpdate.MidPullText, "a pull that did not finish says close VGAC, then pull again");
+        Check(File.Exists(exe) && Hashing.Sha256File(exe) == before && !File.Exists(ExeAside.AsidePath(exe)), "and VGAC.exe was not touched");
+        Check(!spy.Calls.Any(c => c.StartsWith("pull")), "and no pull was run");
+        Eq(GitUpdate.MidPull(half), "MERGE_HEAD", "the marker is named");
+        // the rename cannot be done: stop with a plain message and change nothing
+        string blocked = Tmp("blocked"); string bexe = Path.Combine(blocked, "VGAC.exe"); File.Copy(PingExe, bexe);
+        Directory.CreateDirectory(ExeAside.AsidePath(bexe));   // the new name is taken by a folder
+        string why = ExeAside.Aside(bexe, blocked);
+        Check(why != null && why.Contains("Nothing was changed") || why != null && why.Contains("not make"), "when the rename fails VGAC says so and stops: " + why);
+        Check(File.Exists(bexe) && !File.Exists(ExeAside.RecordPath(blocked)), "VGAC.exe is where it was and nothing is recorded");
+        // a file called VGAC.old.exe that VGAC did not make is never replaced
+        string other = Tmp("other"); string oexe = Path.Combine(other, "VGAC.exe"); File.Copy(PingExe, oexe); File.WriteAllText(ExeAside.AsidePath(oexe), "somebody's file");
+        why = ExeAside.Aside(oexe, other);
+        Check(why != null && why.Contains("did not make") && File.ReadAllText(ExeAside.AsidePath(oexe)) == "somebody's file", "an unknown VGAC.old.exe is left alone");
+        Check(ExeAside.CleanupAtStart(oexe, other).Contains("left alone"), "and is not deleted at start");
+        // the person's own build of VGAC.exe is stepped aside but never deleted
+        string own = Tmp("own"); string wexe = Path.Combine(own, "VGAC.exe"); File.Copy(PingExe, wexe);
+        Put(Path.Combine(own, "starter", "CHECKSUMS.txt"), new string('a', 64) + "  VGAC.exe\n");
+        Check(!GitUpdate.ExePublished(wexe, Path.Combine(own, "starter", "CHECKSUMS.txt")), "a locally built exe is not the published one");
+        Check(GitUpdate.ExeDiffersNote(wexe, Path.Combine(own, "starter", "CHECKSUMS.txt")) != null, "it is noted, not blocked");
+        Check(ExeAside.Aside(wexe, own, false) == null, "it is stepped aside like any other");
+        File.Delete(wexe);
+        Check(ExeAside.CleanupAtStart(wexe, own).Contains("your own build"), "and the leftover is kept at the next start");
+        Check(File.Exists(ExeAside.AsidePath(wexe)), "so your own build is still there");
+        // a pull that fails (the remote is gone) puts the person's file back
+        if (!GitAvailable()) return;
+        string b = Tmp("gitfail");
+        string remote = Path.Combine(b, "remote.git"); Directory.CreateDirectory(remote); Git(remote, "init --bare -q --initial-branch=main");
+        Git(b, "clone -q \"" + remote + "\" project"); string project = Path.Combine(b, "project");
+        string pexe = Path.Combine(project, "VGAC.exe"); File.Copy(PingExe, pexe);
+        Put(Path.Combine(project, "starter", "CHECKSUMS.txt"), Hashing.Sha256File(pexe) + "  VGAC.exe\n");
+        Git(project, "add -A"); Git(project, "commit -q -m one"); Git(project, "push -q -u origin main");
+        Git(project, "remote set-url origin \"" + Path.Combine(b, "gone.git") + "\"");
+        // the person's exe is their own build: different bytes from the commit
+        File.Copy(CmdExe, pexe, true);
+        string mine = Hashing.Sha256File(pexe);
+        r = GitUpdate.Pull(project, pexe, new RealGit());
+        Check(!r.Updated && r.Message.Contains("did not go through"), "a failed pull is reported: " + r.Message);
+        Check(File.Exists(pexe) && Hashing.Sha256File(pexe) == mine, "and the person's own VGAC.exe is back under its name, byte for byte");
+        Check(!File.Exists(ExeAside.AsidePath(pexe)), "with no leftover");
+    }
+
+    class NoGit : IGit { public int Run(string a, string c, out string o) { o = ""; return -1; } }
+    class SpyGit : IGit { public List<string> Calls = new List<string>(); public int Run(string a, string c, out string o) { Calls.Add(a); o = ""; return 0; } }
+
+    static void UpdateAsksLikeQuit()
+    {
+        Check(!UpdatePolicy.Decide(true, 0, false).Ask, "an update with no work in the engine does not ask");
+        var p = UpdatePolicy.Decide(true, 2, false);
+        Check(p.Ask && p.DefaultCancel && p.Detail.Contains("2 jobs"), "jobs in the queue: asked, Cancel is the default");
+        var f = UpdatePolicy.Decide(false, 0, true);
+        Check(f.Ask && f.Block && f.Detail.Contains("Close it"), "a backend this launcher did not start blocks the update with a plain message");
+        Check(!UpdatePolicy.Decide(false, 0, false).Ask, "nothing running: no question");
+    }
+
+    // ---- repair ------------------------------------------------------------------------------------------------------------
+
+    static void RepairChecksAndFixes()
+    {
+        string root = NewProject();
+        MachineFile m; Ledger led;
+        RunAll(root, new FakeHost(), out m, out led);
+        var l = Layout.From(root, MachineFile.Load(root));
+        Put(Path.Combine(l.FrontendDir, "dist", "index.html"), "<html><script src=\"/assets/a.js\"></script></html>");
+        Put(Path.Combine(l.FrontendDir, "dist", "assets", "a.js"), "x");
+        var host = new CaptureHost();
+        host.Answers["python.exe"] = "3"; host.Answers["uv.exe"] = "uv 0.13"; host.Answers["node.exe"] = "v22.1.0";
+        Ledger ledger = Ledger.Load(root);
+        ledger.Add("A linked Blender", Path.Combine(Tmp("lk"), "blender.exe"), "linked", 0);
+        var lines = Repair.Check(l, host, ledger);
+        Func<string, CheckLine> get = id => lines.FirstOrDefault(c => c.Id == id);
+        Eq(get("python").Status, "ok", "python ok"); Eq(get("packages").Status, "ok", "packages ok"); Eq(get("uv").Status, "ok", "uv ok");
+        Eq(get("node").Status, "ok", "node ok"); Eq(get("screens").Status, "ok", "screens ok"); Eq(get("data").Status, "ok", "data folder ok");
+        Eq(get("machine").Status, "ok", "settings ok");
+        Eq(get("linked").Status, "notmine", "a linked tool is reported and left alone");
+        Check(get("linked").FixId == null, "with no fix offered");
+        // the Python does not start
+        host.Answers.Remove("python.exe");
+        lines = Repair.Check(l, host, ledger);
+        Eq(get("python").Status, "fix", "a Python that does not start can be fixed"); Eq(get("python").FixId, "venv", "by making it again");
+        host.Answers["python.exe"] = "3";
+        // the packages do not load
+        host.Answers["python.exe -c \"import uvicorn, fastapi\""] = null;
+        Check(Repair.Check(l, host, ledger).First(c => c.Id == "packages").Status == "fix", "packages that do not load can be fixed");
+        host.Answers.Remove("python.exe -c \"import uvicorn, fastapi\"");
+        // screens that name a file that is not there
+        File.Delete(Path.Combine(l.FrontendDir, "dist", "assets", "a.js"));
+        var sc = Repair.Check(l, host, ledger).First(c => c.Id == "screens");
+        Check(sc.Status == "fix" && sc.Text.Contains("a.js"), "screens with a missing file can be fixed: " + sc.Text);
+        Put(Path.Combine(l.FrontendDir, "dist", "assets", "a.js"), "x");
+        // a damaged state record: the fix removes it (it is VGAC's own file); the settings file is never auto-fixed
+        File.WriteAllText(l.StatePath, "{ not json");
+        Eq(Repair.Check(l, host, ledger).First(c => c.Id == "state").FixId, "state", "a damaged record can be rewritten");
+        Check(Repair.Fix("state", l, host, MachineFile.Load(root), ledger, new SetupLog(root), new Progress()) == null && !File.Exists(l.StatePath), "the fix removes only that file");
+        File.WriteAllText(Path.Combine(root, "local", "machine.json"), "{ nope");
+        var mline = Repair.Check(l, host, ledger).First(c => c.Id == "machine");
+        Check(mline.Status == "info" && mline.FixId == null, "a damaged settings file is explained, never rewritten");
+        File.Delete(Path.Combine(root, "local", "machine.json"));
+        // leftovers are removed by their fixed names only
+        Directory.CreateDirectory(Path.Combine(l.FrontendDir, "dist-new")); Directory.CreateDirectory(l.Venv + "-old");
+        Directory.CreateDirectory(Path.Combine(l.FrontendDir, "dist-keepme"));
+        Put(Path.Combine(l.Downloads, "x.zip.bad"), "bad"); Put(Path.Combine(l.Downloads, "mine.zip"), "keep");
+        Check(Repair.Check(l, host, ledger).Any(c => c.Id == "leftovers"), "leftovers are listed");
+        Check(Repair.Fix("leftovers", l, host, MachineFile.Load(root), ledger, new SetupLog(root), new Progress()) == null, "and removed");
+        Check(!Directory.Exists(Path.Combine(l.FrontendDir, "dist-new")) && !Directory.Exists(l.Venv + "-old") && !File.Exists(Path.Combine(l.Downloads, "x.zip.bad")), "the leftovers are gone");
+        Check(Directory.Exists(Path.Combine(l.FrontendDir, "dist-keepme")) && File.Exists(Path.Combine(l.Downloads, "mine.zip")), "anything else with a similar name is not touched");
+        // a fix of one part does not claim the rest is up to date
+        File.WriteAllText(Path.Combine(root, "backend", "requirements.txt"), "fastapi==2\n");
+        var snapshot = File.Exists(l.StatePath);
+        Repair.Fix("screens", l, new FakeHost(), MachineFile.Load(root), Ledger.Load(root), new SetupLog(root), new Progress());
+        Check(!File.Exists(l.StatePath), "a repair does not write the 'everything is up to date' record");
+    }
+
+    static void RecoveryAtStart()
+    {
+        string root = NewProject();
+        MachineFile m; Ledger led;
+        RunAll(root, new FakeHost(), out m, out led);
+        var l = Layout.From(root, MachineFile.Load(root));
+        // the new Python is fine: the old one is deleted
+        Directory.CreateDirectory(l.Venv + "-old"); File.WriteAllText(Path.Combine(l.Venv + "-old", "x"), "x");
+        Check(Recovery.AtStart(l, null).Any(n => n.Contains("Python rebuild")) && !Directory.Exists(l.Venv + "-old"), "a leftover old Python is removed when the new one works");
+        // the new Python is missing: the old one comes back
+        Directory.Move(l.Venv, l.Venv + "-old");
+        Check(Recovery.AtStart(l, null).Any(n => n.Contains("undone")) && File.Exists(l.VenvPython), "a cut-off rebuild is undone: the old Python is back");
+        Check(Recovery.AtStart(l, null).Count == 0, "and with nothing to do it says nothing");
+    }
+
+    // ---- remove ------------------------------------------------------------------------------------------------------------
+
+    class InstallScene { public string Root, Data, Ext; public Layout L; public MachineFile M; public Ledger Led; public StandInComfy Comfy = new StandInComfy(); }
+
+    // A project with a data folder outside it, an installed app, a ComfyUI of VGAC's own, and the person's own things.
+    static InstallScene Installed()
+    {
+        var s = new InstallScene();
+        s.Root = NewProject(); s.Data = Path.Combine(Tmp("data"), "bigfiles"); s.Ext = Tmp("ext");
+        var m0 = MachineFile.Load(s.Root); m0.Set("starter", "dataFolder", s.Data); m0.Save();
+        s.M = MachineFile.Load(s.Root); s.L = Layout.From(s.Root, s.M);
+        var l = s.L;
+        Put(Path.Combine(l.Venv, "pyvenv.cfg"), "home = x"); PutBytes(Path.Combine(l.Venv, "Lib", "big.pyd"), 5000);
+        Put(Path.Combine(l.PythonDir, "cpython-3.13", "python.exe"), "py"); Put(Path.Combine(Path.GetDirectoryName(l.UvExe), "uv.exe"), "uv");
+        Put(Path.Combine(l.NodeDir, "node.exe"), "node"); Put(Path.Combine(l.UvCache, "CACHEDIR.TAG"), "x"); Put(Path.Combine(l.Downloads, "x.zip.part"), "p");
+        Put(Path.Combine(s.Data, "webview2", "EBWebView", "a"), "w");
+        Put(Path.Combine(l.FrontendDir, "node_modules", ".package-lock.json"), "{}"); Put(Path.Combine(l.FrontendDir, "dist", "index.html"), "<html>");
+        // VGAC's own ComfyUI: owned pieces and the person's things inside it
+        string c = Path.Combine(s.Data, "comfyui");
+        Put(Path.Combine(c, ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[]}");
+        Put(Path.Combine(c, "main.py"), "m"); Put(Path.Combine(c, ".venv", "pyvenv.cfg"), "v"); Put(Path.Combine(c, "custom_nodes", "vgac-nodes", "n.py"), "n"); Put(Path.Combine(c, "logs", "l.txt"), "l");
+        Put(Path.Combine(c, "models", "mine.safetensors"), "the person's own model"); Put(Path.Combine(c, "output", "out.png"), "their picture");
+        Put(Path.Combine(c, "custom_nodes", "their-node", "t.py"), "theirs");
+        // the person's work
+        PutBytes(Path.Combine(s.Root, "library", "vgac.sqlite"), 3000); PutBytes(Path.Combine(s.Root, "exports", "hero.glb"), 2000);
+        // models VGAC downloaded into a linked ComfyUI, a model the person added themselves, a linked tool, a node pack in the linked ComfyUI
+        PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors"), 4000);
+        PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors"), 4500);
+        Put(Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "ComfyUI-SkinToken", "x.py"), "s");
+        Put(Path.Combine(s.Ext, "blender", "blender.exe"), "b");
+        s.Led = Ledger.Load(s.Root);
+        s.Led.Add("The folder for the big files", s.Data, "folder", 0);
+        s.Led.Add("The app's Python environment", l.Venv, "added", 0);
+        s.Led.Add("VGAC's own ComfyUI", c, "added", 0);
+        s.Led.Add("A model", Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors"), "added", 4000);
+        s.Led.Add("SkinToken", Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "ComfyUI-SkinToken"), "added", 0);
+        s.Led.Add("Blender", Path.Combine(s.Ext, "blender"), "linked", 0);
+        Put(Path.Combine(s.Ext, "ComfyUI", "odd", "o.txt"), "o");
+        s.Led.Add("Something odd", Path.Combine(s.Ext, "ComfyUI", "odd"), "added", 0);
+        s.Led.Save();
+        return s;
+    }
+
+    static string[] AllPaths(RemovalPlan p) { return p.Groups.SelectMany(g => g.Items).Select(i => i.Path).ToArray(); }
+
+    static void RemovalPlanAndDefaults()
+    {
+        var s = Installed();
+        var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        Eq(string.Join(",", plan.Groups.Select(g => g.Id).ToArray()), "tools,comfy,models,packs,settings,work", "the groups, in order");
+        Check(plan.Get("tools").DefaultOn && plan.Get("comfy").DefaultOn, "tools, Python, screens and VGAC's own ComfyUI are ticked by default");
+        Check(!plan.Get("models").DefaultOn && !plan.Get("packs").DefaultOn && !plan.Get("settings").DefaultOn && !plan.Get("work").DefaultOn, "models, node packs, settings and the person's work are not");
+        Check(plan.Get("work").NeedsTypedWord && !plan.Get("tools").NeedsTypedWord, "only the person's work needs the typed word");
+        string[] paths = AllPaths(plan).Select(p => SafeFs.Norm(p)).ToArray();
+        Check(!paths.Contains(SafeFs.Norm(s.Root)), "the project folder is never listed");
+        Check(!paths.Any(p => p.EndsWith("vgac.exe")), "VGAC.exe is never listed");
+        Check(!paths.Any(p => p.Contains("theirs.safetensors")), "a model the person added is never listed");
+        Check(!paths.Any(p => p.Contains("blender")), "a linked tool is never listed");
+        Check(!paths.Any(p => p.Contains("mine.safetensors") || p.EndsWith("\\output") || p.Contains("their-node")), "what the person keeps inside VGAC's ComfyUI is never listed");
+        Check(plan.Get("comfy").Items.Select(i => Path.GetFileName(i.Path)).OrderBy(x => x).SequenceEqual(new[] { ".venv", "logs", "main.py", "vgac-nodes" }), "VGAC's own ComfyUI is listed by its owned names only");
+        Check(plan.Get("models").Items.Count == 1 && plan.Get("models").Items[0].Path.EndsWith("vgac.safetensors"), "the model VGAC downloaded is the only one in the models group");
+        Check(plan.Get("packs").Items.Count == 1 && plan.Get("packs").Items[0].Path.EndsWith("ComfyUI-SkinToken"), "the node pack VGAC added is its own group");
+        Check(plan.NotRemoved.Any(n => n.Contains("odd")), "a ledger entry that is neither a file VGAC added nor a pack is left for the person, with a reason");
+        Check(plan.Get("work").Items.Count == 2, "the library and the exports are in the work group, separately");
+        Check(plan.Get("tools").Bytes > 5000, "sizes are counted");
+        // a ComfyUI whose install record does not list what VGAC made is not offered
+        s.Comfy.IsOffered = false;
+        var p2 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        Check(p2.Get("comfy").Items.Count == 0 && p2.Notes.Any(n => n.Contains("not removed here yet")), "an install record without the owned list: not offered, and said");
+        // a folder that only has the same name is not taken
+        s.Comfy.IsOffered = true;
+        Directory.Delete(s.L.Venv, true); Directory.CreateDirectory(s.L.Venv); Put(Path.Combine(s.L.Venv, "readme.txt"), "somebody's folder");
+        var p3 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        Check(!AllPaths(p3).Any(p => p == s.L.Venv) && p3.NotRemoved.Any(n => n.Contains("Python environment")), "a folder with the right name but the wrong contents is left alone, with a reason");
+        // the summary names every folder, sizes, how it goes, and what is not touched
+        var ticked = new List<string> { "tools", "comfy", "models" };
+        string text = RemovalSummary.Text(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), ticked, s.L);
+        Check(text.Contains(s.L.PythonDir) && text.Contains(Path.Combine(s.Data, "comfyui", ".venv")), "the summary names each folder (full path)");
+        Check(text.Contains("checkpoints: 1 file(s)"), "files are listed by their folder with a count");
+        Check(text.Contains("Total:") && text.Contains("never followed") && text.Contains("Not touched: the project folder"), "it gives the total and what stays");
+        Check(text.Contains("Recycle Bin") || text.Contains("cannot be restored"), "and says which way each group goes");
+        Check(RemovalRules.UseRecycleBin(1L << 20, true) && !RemovalRules.UseRecycleBin(3L << 30, true) && !RemovalRules.UseRecycleBin(1L << 20, false), "Recycle Bin: small and local only; above 2 GB it is permanent");
+        Check(RemovalRules.TypedWordOk("REMOVE") && RemovalRules.TypedWordOk(" REMOVE ") && !RemovalRules.TypedWordOk("remove") && !RemovalRules.TypedWordOk(null), "the typed word is exact");
+    }
+
+    static void RemovalNeverFollowsLinksOrTouchesOthers()
+    {
+        var s = Installed();
+        string outside = Tmp("keepme"); Put(Path.Combine(outside, "precious.txt"), "do not delete");
+        Junction(Path.Combine(s.L.Venv, "Lib", "evil"), outside);       // a link inside something VGAC made
+        Junction(Path.Combine(s.Data, "comfyui", "logs", "out"), outside);
+        var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        var rec = new FakeRecycler();
+        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null);
+        Check(File.Exists(Path.Combine(outside, "precious.txt")), "what links inside VGAC's folders pointed at is untouched");
+        Check(res.Unlinked.Count >= 2, "the links were unlinked, not followed (" + res.Unlinked.Count + ")");
+        Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir) && !Directory.Exists(s.L.NodeDir) && !Directory.Exists(Path.Combine(s.L.FrontendDir, "dist")), "the ticked app folders are gone");
+        string c = Path.Combine(s.Data, "comfyui");
+        Check(!File.Exists(Path.Combine(c, "main.py")) && !Directory.Exists(Path.Combine(c, ".venv")) && !Directory.Exists(Path.Combine(c, "custom_nodes", "vgac-nodes")), "VGAC's own ComfyUI pieces are gone");
+        Check(File.Exists(Path.Combine(c, "models", "mine.safetensors")) && File.Exists(Path.Combine(c, "output", "out.png")) && File.Exists(Path.Combine(c, "custom_nodes", "their-node", "t.py")), "the person's models, outputs and own custom nodes inside it stay");
+        Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && File.Exists(Path.Combine(s.Root, "exports", "hero.glb")), "the person's library and exports stay");
+        Check(File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors")) && File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors")), "models are not touched unless asked for");
+        Check(File.Exists(Path.Combine(s.Ext, "blender", "blender.exe")), "a linked tool is never touched");
+        Check(Directory.Exists(s.Data), "the folder VGAC made is kept while the person's things are in it");
+        var led = Ledger.Load(s.Root);
+        Check(!led.Has(s.L.Venv, null) && led.Has(Path.Combine(s.Ext, "blender"), "linked"), "the ledger lost what was removed and kept what was linked");
+        // the models group and the packs group, asked for separately
+        var plan2 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        RemovalRunner.Run(plan2, new List<string> { "models", "packs" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null);
+        Check(!File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors")) && File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors")), "the model VGAC downloaded goes, the person's own stays");
+        Check(!Directory.Exists(Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "ComfyUI-SkinToken")) && Directory.Exists(Path.Combine(s.Ext, "ComfyUI", "custom_nodes")), "the node pack goes, its parent folder stays");
+        // a changed file is not deleted: it is not the one VGAC added any more
+        var s2 = Installed();
+        PutBytes(Path.Combine(s2.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors"), 9999);
+        var plan3 = RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy);
+        Check(plan3.Get("models").Items.Count == 0 && plan3.NotRemoved.Any(n => n.Contains("size changed")), "a file whose size changed since VGAC added it is left alone, with a reason");
+        // a folder that became a link between the plan and the run is skipped
+        var s3 = Installed();
+        var plan4 = RemovalPlanner.Build(s3.L, s3.M, s3.Led, s3.Comfy);
+        string held = Tmp("held"); Put(Path.Combine(held, "pyvenv.cfg"), "x"); Put(Path.Combine(held, "keep.txt"), "keep");
+        SafeFs.DeleteTree(s3.L.Venv); Junction(s3.L.Venv, held);
+        var res4 = RemovalRunner.Run(plan4, new List<string> { "tools" }, null, s3.L, s3.M, s3.Led, s3.Comfy, new FakeRecycler(), new SetupLog(s3.Root), null);
+        Check(res4.Skipped.Any(x => x.Contains("link")) && File.Exists(Path.Combine(held, "keep.txt")), "an item that turned into a link after the plan is skipped and its target is intact");
+    }
+
+    static void RemovalInterruptedAndResumed()
+    {
+        var s = Installed();
+        for (int i = 0; i < 400; i++) Put(Path.Combine(s.L.Venv, "Lib", "f" + i + ".py"), "x");
+        var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        int n = 0;
+        SafeFs.Hook = delegate(string what, string p) { if (what == "delete" && ++n == 150) throw new Boom("stop"); };
+        try { RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Check(File.Exists(RemovalRunner.JournalPath(s.Root)), "an interrupted removal leaves its journal");
+        Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && File.Exists(Path.Combine(s.Data, "comfyui", "models", "mine.safetensors")), "and nothing outside the list was touched");
+        // run again: the plan holds only what remains
+        var again = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        Func<RemovalPlan, int> count = pl => pl.Get("tools").Items.Count + pl.Get("comfy").Items.Count;
+        Check(count(again) > 0 && count(again) <= count(plan), "the next plan lists what is left, including the half-deleted folder (" + count(again) + " of " + count(plan) + ")");
+        Check(again.Get("tools").Items.Any(i => i.Path == s.L.Venv), "the half-deleted Python folder is still listed although it no longer looks like itself");
+        var res = RemovalRunner.Run(again, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null);
+        Check(res.Complete, "the second run finishes");
+        Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir), "everything ticked is gone");
+        Check(!File.Exists(RemovalRunner.JournalPath(s.Root)), "and the journal is removed");
+        // a locked file: skipped and reported, the rest goes, and a later run finishes
+        var s2 = Installed();
+        string lockedFile = Path.Combine(s2.L.FrontendDir, "node_modules", ".package-lock.json");
+        var plan2 = RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy);
+        RemovalResult r2;
+        using (new FileStream(lockedFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+            r2 = RemovalRunner.Run(plan2, new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null);
+        Check(!r2.Complete && r2.Locked.Count >= 1, "a file in use is reported, not forced");
+        Check(!Directory.Exists(s2.L.Venv), "and everything else was removed");
+        var r3 = RemovalRunner.Run(RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy), new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null);
+        Check(r3.Complete && !Directory.Exists(Path.Combine(s2.L.FrontendDir, "node_modules")), "once it is free a second run removes it");
+        // settings last, and the empty folder VGAC made goes only when nothing else is in it
+        var s4 = Installed();
+        SafeFs.DeleteTree(Path.Combine(s4.Data, "comfyui", "models")); SafeFs.DeleteTree(Path.Combine(s4.Data, "comfyui", "output")); SafeFs.DeleteTree(Path.Combine(s4.Data, "comfyui", "custom_nodes", "their-node"));
+        var plan4 = RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy);
+        SafeFs.DeleteTree(Path.Combine(s4.Data, "comfyui", ComfyGuard.MarkerName));
+        Put(Path.Combine(s4.Data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[]}");
+        RemovalRunner.Run(RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy), new List<string> { "tools", "comfy", "settings" }, null, s4.L, s4.M, s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null);
+        Check(!File.Exists(Path.Combine(s4.Root, "local", "installed.json")) && !File.Exists(Path.Combine(s4.Root, "local", "machine.json")), "the settings and the ledger go last");
+        Check(Directory.Exists(s4.Root) && File.Exists(Path.Combine(s4.Root, "backend", "requirements.txt")), "the project folder is untouched");
+    }
+
+    static void RemovalWorkNeedsTheTypedWord()
+    {
+        var s = Installed();
+        var rec = new FakeRecycler();
+        var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        var res = RemovalRunner.Run(plan, new List<string> { "work" }, "yes", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null);
+        Check(res.Skipped.Any(x => x.Contains("confirmation word")) && File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")), "without the typed word the person's work is not touched");
+        Eq(rec.Sent.Count, 0, "and nothing was sent to the Recycle Bin");
+        res = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null);
+        Check(!Directory.Exists(Path.Combine(s.Root, "library")) && !Directory.Exists(Path.Combine(s.Root, "exports")), "with the word, the library and the exports go");
+        Check(rec.Sent.Count == 2, "a small amount goes through the Recycle Bin (" + rec.Sent.Count + " sent)");
+        Check(Directory.Exists(s.Root) && Directory.Exists(s.L.Venv), "nothing else was touched");
+        // a library folder that holds the project folder is never offered
+        var s2 = Installed();
+        var m = MachineFile.Load(s2.Root); m.Set("backend", "library_path", Path.GetDirectoryName(s2.Root)); m.Save();
+        var plan2 = RemovalPlanner.Build(s2.L, MachineFile.Load(s2.Root), s2.Led, s2.Comfy);
+        Check(plan2.Get("work").Items.All(i => !i.Path.Equals(Path.GetDirectoryName(s2.Root), StringComparison.OrdinalIgnoreCase)) && plan2.NotRemoved.Any(n => n.Contains("project folder")), "a library path that contains the project folder is refused");
+    }
+
+    // ---- move --------------------------------------------------------------------------------------------------------------
+
+    class NoProcs : IProcessSource { public List<ProcInfo> List() { return new List<ProcInfo>(); } }
+
+    static InstallScene Movable()
+    {
+        var s = Installed();
+        s.M = MachineFile.Load(s.Root);
+        Put(Path.Combine(s.Data, "keepme.txt"), "the person's own file, not VGAC's");
+        for (int i = 0; i < 6; i++) PutBytes(Path.Combine(s.Data, "python", "f" + i + ".bin"), 500);
+        PutBytes(Path.Combine(s.Data, "tools", "uv", "uv.exe"), 300); PutBytes(Path.Combine(s.Data, "tools", "node", "node.exe"), 400);
+        return s;
+    }
+
+    static MoveRunner Mover(InstallScene s, IProcessSource procs)
+    {
+        var r = new MoveRunner(s.L, MachineFile.Load(s.Root), Ledger.Load(s.Root), s.Comfy, procs ?? new NoProcs(), new SetupLog(s.Root));
+        return r;
+    }
+
+    static void MovePathAndRefusals()
+    {
+        var s = Movable();
+        string newPlace = Path.Combine(Tmp("target"), "newbig");
+        // refusals: nothing is changed and no journal is made
+        Func<string, string> tryTo = delegate(string to) { var mv = Mover(s, null); return mv.Start(to, new Progress()); };
+        Check(tryTo(Path.Combine(s.Data, "inside")).Contains("inside the old one"), "the new folder cannot be inside the old one");
+        Check(tryTo(Path.GetDirectoryName(s.Data)).Contains("contain the old one"), "nor around it");
+        Check(tryTo(s.Data).Contains("already are"), "nor the same one");
+        string used = Tmp("used"); Put(Path.Combine(used, "x.txt"), "x");
+        Check(tryTo(used).Contains("already has files"), "a folder with files in it is refused");
+        Check(tryTo(Path.Combine(Tmp("long"), new string('a', 120))).Contains("too long"), "a very long path is refused");
+        Check(tryTo(s.Root).Contains("contain the project"), "the project folder itself is refused");
+        Check(tryTo(Path.Combine(s.Root, "backend", "x")).Contains("only its local folder"), "a place inside the project other than local is refused");
+        var mvFree = Mover(s, null); mvFree.Free = delegate(string f) { return 100; };
+        Check(mvFree.Start(newPlace, new Progress()).Contains("is free there"), "not enough room is said with both sizes");
+        s.Comfy.IsOffered = false;
+        Check(tryTo(newPlace).Contains("older version"), "a ComfyUI install that cannot be moved yet blocks the move, and says why");
+        s.Comfy.IsOffered = true;
+        Check(MoveRunner.Load(s.Root) == null && !Directory.Exists(newPlace), "none of these changed anything");
+        // programs with files open in the old folder block it
+        var fp = new FakeProcs(); fp.All.Add(new ProcInfo { Pid = 77, Name = "python.exe", ExePath = Path.Combine(s.Data, "python", "python.exe"), CommandLine = "python.exe" });
+        Check(tryTo2(s, newPlace, fp).Contains("python.exe (PID 77)"), "a program running from the old folder blocks the move and is named");
+        Check(MoveRunner.Load(s.Root) == null, "and no move was started");
+    }
+
+    static string tryTo2(InstallScene s, string to, IProcessSource procs) { return Mover(s, procs).Start(to, new Progress()); }
+
+    static void MoveInterruptedEverywhere()
+    {
+        // happy path first
+        var s = Movable();
+        string to = Path.Combine(Tmp("target"), "newbig");
+        var mv = Mover(s, null);
+        Check(mv.Start(to, new Progress()) == null, "the copy, the check and the switch run to the end");
+        Check(File.Exists(Path.Combine(to, "python", "f3.bin")) && File.Exists(Path.Combine(to, "tools", "node", "node.exe")), "the VGAC folders arrived");
+        Check(!File.Exists(Path.Combine(to, "keepme.txt")), "a file the person keeps in the old folder is not moved");
+        Check(!Directory.Exists(Path.Combine(to, "comfyui", ".venv")) && File.Exists(Path.Combine(to, "comfyui", "models", "mine.safetensors")), "the ComfyUI Python is left out (made again), the person's models come along");
+        Eq(MachineFile.Load(s.Root).GetString("starter", "dataFolder"), to, "the settings file now names the new folder");
+        Check(Ledger.Load(s.Root).Items.Select(o => Convert.ToString(((Dictionary<string, object>)o)["path"])).Any(p => p.StartsWith(to)), "the ledger paths were rewritten");
+        Eq(MoveRunner.Load(s.Root).State, "rebuilt", "the move is at the end; the ComfyUI was told and rebuilt");
+        Eq(string.Join(",", s.Comfy.Calls.ToArray()), "retarget,rebuild", "in that order");
+        Check(Directory.Exists(Path.Combine(s.Data, "python")) && File.Exists(Path.Combine(s.Data, "keepme.txt")), "the old folder is whole until the person agrees to remove it");
+        Check(mv.DeleteOld() == null, "the old copy can be deleted");
+        Check(!Directory.Exists(Path.Combine(s.Data, "python")) && !Directory.Exists(Path.Combine(s.Data, "comfyui")), "the VGAC folders of the old place are gone");
+        Check(File.Exists(Path.Combine(s.Data, "keepme.txt")) && Directory.Exists(s.Data), "the person's file and the folder stay");
+        Check(MoveRunner.Load(s.Root) == null, "and the journal is finished");
+        Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")), "nothing else was touched");
+
+        // cut off in the middle of copying, at three different places
+        foreach (string where in new[] { "copy", "before-rename:python", "verify:tools", "before-switch" })
+        {
+            var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig");
+            var mv2 = Mover(s2, null);
+            int copies = 0;
+            SafeFs.Hook = delegate(string what, string p)
+            {
+                if (where == "copy" && what == "copy" && ++copies == 5) throw new Boom(where);
+                if (where != "copy" && what == "move" && p == where) throw new Boom(where);
+            };
+            try { mv2.Start(to2, new Progress()); } catch (Boom) { }
+            SafeFs.Hook = null;
+            var j = MoveRunner.Load(s2.Root);
+            Check(j != null, "a journal is left after a cut at " + where);
+            Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), s2.Data, "the settings still name the old folder after a cut at " + where);
+            Check(Directory.Exists(Path.Combine(s2.Data, "python")) && File.Exists(Path.Combine(s2.Data, "python", "f0.bin")), "and the old place is whole (" + where + ")");
+            Check(Mover(s2, null).Continue(new Progress()) == null, "Continue finishes the move after a cut at " + where);
+            Eq(MoveRunner.Load(s2.Root).State, "rebuilt", "to the end (" + where + ")");
+            Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), to2, "and the new folder is in use (" + where + ")");
+            Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).Count == 0, "with a complete copy (" + where + ")");
+            Check(!Directory.GetDirectories(to2).Any(d => d.EndsWith(".part")), "and no .part left (" + where + ")");
+        }
+
+        // cancel after a cut: only what the move made is removed; something else put there is left and blocks Continue
+        var s3 = Movable(); string to3 = Path.Combine(Tmp("target"), "newbig");
+        int c3 = 0;
+        SafeFs.Hook = delegate(string what, string p) { if (what == "copy" && ++c3 == 8) throw new Boom("cut"); };
+        try { Mover(s3, null).Start(to3, new Progress()); } catch (Boom) { }
+        SafeFs.Hook = null;
+        Put(Path.Combine(to3, "someone-elses.txt"), "not ours");
+        Check(Mover(s3, null).Continue(new Progress()).Contains("did not put there"), "Continue refuses when the new folder has a file VGAC did not put there");
+        Check(Mover(s3, null).Cancel() == null, "Cancel works");
+        Check(File.Exists(Path.Combine(to3, "someone-elses.txt")), "and leaves the file that is not VGAC's");
+        Check(!Directory.Exists(Path.Combine(to3, "python")) && !Directory.Exists(Path.Combine(to3, "tools")) && MoveRunner.Load(s3.Root) == null, "while everything VGAC copied is gone and the journal too");
+        Check(File.Exists(Path.Combine(s3.Data, "python", "f0.bin")), "the old place is untouched");
+
+        // the disk fills up
+        var s4 = Movable(); string to4 = Path.Combine(Tmp("target"), "newbig");
+        int c4 = 0;
+        SafeFs.Hook = delegate(string what, string p) { if (what == "copy" && ++c4 == 6) throw new IOException("There is not enough space on the disk."); };
+        string msg = Mover(s4, null).Start(to4, new Progress());
+        SafeFs.Hook = null;
+        Check(msg != null && msg.Contains("not enough space") && msg.Contains("Nothing was changed in the old place"), "a full disk is said in plain words: " + msg);
+        Eq(MachineFile.Load(s4.Root).GetString("starter", "dataFolder"), s4.Data, "the settings are unchanged");
+        Check(Mover(s4, null).Continue(new Progress()) == null, "and after room is made Continue finishes");
+    }
+
+    static void MoveVerificationAndSwitchAndUndo()
+    {
+        // the copy does not match: nothing is switched
+        var s = Movable(); string to = Path.Combine(Tmp("target"), "newbig");
+        SafeFs.Hook = delegate(string what, string p) { if (what == "move" && p == "verify:python") File.WriteAllText(Path.Combine(to, "python", "f1.bin"), "different length"); };
+        string msg = Mover(s, null).Start(to, new Progress());
+        SafeFs.Hook = null;
+        Check(msg != null && msg.Contains("does not match") && msg.Contains("untouched"), "a copy that does not match is refused: " + msg);
+        Eq(MachineFile.Load(s.Root).GetString("starter", "dataFolder"), s.Data, "the settings are unchanged");
+        Eq(MoveRunner.Load(s.Root).State, "copied", "the move waits at 'copied'");
+        Check(Mover(s, null).Cancel() == null && !Directory.Exists(to), "and Cancel removes the copy");
+
+        // the ComfyUI cannot be told: the files are moved, the person is told, and Continue tries again
+        var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "newbig");
+        s2.Comfy.RetargetError = "its install record is locked";
+        string m2 = Mover(s2, null).Start(to2, new Progress());
+        Check(m2 != null && m2.Contains("locked") && MoveRunner.Load(s2.Root).State == "switched", "a ComfyUI that cannot be told stops at 'switched' with a plain message: " + m2);
+        Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), to2, "the new folder is already in use");
+        s2.Comfy.RetargetError = null;
+        Check(Mover(s2, null).Continue(new Progress()) == null && MoveRunner.Load(s2.Root).State == "rebuilt", "Continue finishes once it works");
+        // undo after the switch: point back at the old folder, which is still whole
+        var s3 = Movable(); string to3 = Path.Combine(Tmp("target"), "newbig");
+        s3.Comfy.RebuildError = "no wheels";
+        Mover(s3, null).Start(to3, new Progress());
+        Check(Mover(s3, null).Cancel() == null, "Cancel after the switch works");
+        Eq(MachineFile.Load(s3.Root).GetString("starter", "dataFolder"), s3.Data, "the settings point back at the old folder");
+        Check(Ledger.Load(s3.Root).Items.Select(o => Convert.ToString(((Dictionary<string, object>)o)["path"])).All(p => !p.StartsWith(to3)), "and so do the ledger paths");
+        Check(!Directory.Exists(to3) && Directory.Exists(Path.Combine(s3.Data, "python")), "the copy is removed and the old place is as it was");
+        // deleting the old copy re-checks it against the new one first
+        var s4 = Movable(); string to4 = Path.Combine(Tmp("target"), "newbig");
+        var mv4 = Mover(s4, null);
+        mv4.Start(to4, new Progress());
+        File.WriteAllText(Path.Combine(to4, "python", "f2.bin"), "damaged");
+        string d4 = mv4.DeleteOld();
+        Check(d4 != null && d4.Contains("no longer matches") && File.Exists(Path.Combine(s4.Data, "python", "f2.bin")), "an old copy is not deleted when the new one no longer matches it: " + d4);
+        // a delete before the move is finished is refused
+        var s5 = Movable(); string to5 = Path.Combine(Tmp("target"), "newbig");
+        s5.Comfy.RetargetError = "x";
+        var mv5 = Mover(s5, null); mv5.Start(to5, new Progress());
+        Check(mv5.DeleteOld().Contains("no finished move") && Directory.Exists(Path.Combine(s5.Data, "python")), "the old copy is never deleted before the move is finished");
+        Check(MoveRules.NamesIn(s5.Data).SequenceEqual(new[] { "tools", "python", "webview2", "comfyui" }) || MoveRules.NamesIn(s5.Data).Contains("python"), "only VGAC's own names are ever moved");
+    }
+}

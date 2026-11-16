@@ -51,8 +51,9 @@ public class FakeHost : IHost
         }
         if (ExitCode == 0 && args.Contains("run build"))
         {
-            Directory.CreateDirectory(Path.Combine(cwd, "dist"));
-            File.WriteAllText(Path.Combine(cwd, "dist", "index.html"), "<html>");
+            string outDir = args.Contains("--outDir dist-new") ? "dist-new" : "dist";
+            Directory.CreateDirectory(Path.Combine(cwd, outDir));
+            File.WriteAllText(Path.Combine(cwd, outDir, "index.html"), "<html>");
         }
         File.WriteAllText(logFile, "log");
         return ExitCode;
@@ -139,10 +140,11 @@ public static partial class T
             DownloadChecksumAndResume();
             BridgeAnswersOnlyItsList();
             LauncherAll(args);
+            AfterwardsAll();
         }
         finally
         {
-            foreach (string t in temps) { try { if (Directory.Exists(t)) Directory.Delete(t, true); } catch (Exception) { } }
+            foreach (string t in temps) { try { if (Directory.Exists(t)) SafeFs.DeleteTree(t); } catch (Exception) { } }
         }
         Console.WriteLine(passed + " checks passed, " + failed + " failed");
         return failed == 0 ? 0 : 1;

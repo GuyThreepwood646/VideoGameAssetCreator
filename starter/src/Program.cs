@@ -22,6 +22,7 @@ namespace Vgac.Starter
     public static class Program
     {
         public const int DefaultPort = 8765;
+        public static int OpenTab = -1;      // --open-maintenance <0..3>: for checking the window
 
         public static string FindProjectRoot(string start) { return ProjectFinder.Find(start); }
 
@@ -42,12 +43,15 @@ namespace Vgac.Starter
                 else if (args[i] == "--exit-after" && i + 1 < args.Length) int.TryParse(args[++i], out exitAfter);
                 else if (args[i] == "--state-out" && i + 1 < args.Length) stateOut = args[++i];
                 else if (args[i] == "--keep-status") keepStatus = true;
+                else if (args[i] == "--open-maintenance" && i + 1 < args.Length) int.TryParse(args[++i], out OpenTab);
+                else if (args[i] == "--after" && i + 1 < args.Length) { int pid; if (int.TryParse(args[++i], out pid)) WaitForExit(pid); }
             }
             for (int i = 0; i + 1 < args.Length; i++)
                 if (args[i] == "--window") return WindowOnly(args[i + 1]);
             string root = FindProjectRoot(project ?? AppDomain.CurrentDomain.BaseDirectory);
             if (planOut != null) return PlanOnly(root, planOut);
 
+            ErrorBoxes.Off();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             if (root == null)
@@ -72,6 +76,13 @@ namespace Vgac.Starter
                 Application.Run(form);
             }
             return 0;
+        }
+
+        // After "Restart VGAC": the old copy is still closing; wait for it (up to a minute) before taking its place.
+        static void WaitForExit(int pid)
+        {
+            try { using (var p = Process.GetProcessById(pid)) p.WaitForExit(60000); }
+            catch (Exception) { /* already gone */ }
         }
 
         // --window <url>: opens only the in-app window on a page (for checking the window and the bridge without the
@@ -141,7 +152,7 @@ namespace Vgac.Starter
         }
     }
 
-    public class MainForm : Form, IHostActions
+    public class MainForm : Form, IHostActions, IMaintenanceHost
     {
         readonly string root;
         readonly int port;
@@ -181,6 +192,7 @@ namespace Vgac.Starter
 
         public MainForm(string projectRoot, int port, InstanceGate gate, int exitAfter, string stateOut, bool keepStatus)
         {
+            comfyInstall = new MarkerComfyInstall(delegate(string a, string c) { return RunComfyCli(a, c); });
             root = projectRoot; this.port = port; this.gate = gate; this.exitAfter = exitAfter; this.stateOut = stateOut; this.keepStatus = keepStatus;
             log = new SetupLog(root);
             Text = "VGAC status";
@@ -229,12 +241,14 @@ namespace Vgac.Starter
             var exports = new Button(); exports.Text = "Open exports folder"; exports.SetBounds(286, 380, 140, 32);
             var setup = new Button(); setup.Text = "Open log"; setup.SetBounds(436, 380, 80, 32);
             var quit = new Button(); quit.Text = "Quit"; quit.SetBounds(526, 380, 76, 32);
+            var maint = new Button(); maint.Text = "Maintenance..."; maint.SetBounds(16, 420, 140, 32);
+            maint.Click += delegate { OpenMaintenance(0); };
             open.Click += delegate { OpenApp2(); };
             logs.Click += delegate { OpenFolder(Path.Combine(root, "runtime", "logs")); };
             exports.Click += delegate { OpenFolder(Path.Combine(root, "exports")); };
             setup.Click += delegate { OpenPath(log.Path); };
             quit.Click += delegate { RequestQuit(); };
-            statusPanel.Controls.AddRange(new Control[] { summary, rowsHost, hint, open, logs, exports, setup, quit });
+            statusPanel.Controls.AddRange(new Control[] { summary, rowsHost, hint, open, logs, exports, setup, quit, maint });
         }
 
         void ShowStatusView()
@@ -247,7 +261,7 @@ namespace Vgac.Starter
                 FormBorderStyle = FormBorderStyle.Sizable;
                 MaximizeBox = true;
                 MinimumSize = new Size(500, 420);
-                ClientSize = new Size(620, 430);
+                ClientSize = new Size(620, 470);
             }
             if (sup != null) RenderRows(sup.Latest);
         }
@@ -321,10 +335,39 @@ namespace Vgac.Starter
                 steps = Planner.Plan(probe, root);
             }
             catch (StarterError e) { ShowError(e); return; }
+            AtStartChecks();
             if (exitAfter > 0) ScheduleExit();
             if (steps.Count == 0) { StartBackend(); return; }
             ShowWelcome();
         }
+
+        // What an earlier, interrupted job may have left, and what to tell the person about it.
+        void AtStartChecks()
+        {
+            try
+            {
+                foreach (string n in Recovery.AtStart(lay, Application.ExecutablePath)) log.Line("start: " + n);
+                // the screens or the Python may have been put right by the recovery: look again
+                steps = Planner.Plan(ProbeReader.Read(lay, host), root);
+                string note = GitUpdate.ExeDiffersNote(Application.ExecutablePath, Path.Combine(root, "starter", "CHECKSUMS.txt"));
+                if (note != null) log.Line("start: " + note);
+                if (GitUpdate.MidPull(root) != null)
+                    MessageBox.Show(GitUpdate.MidPullText + "\r\n\r\n(Git left a pull open in the project folder. VGAC carries on, but the files may be a mix of two versions.)", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (MoveRunner.Load(root) != null)
+                {
+                    var j = MoveRunner.Load(root);
+                    if (j.State != "rebuilt" && MessageBox.Show("A move of the big files was interrupted (at '" + j.State + "'). Open Maintenance to continue it or cancel it?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) pendingTab = 2;
+                    else if (j.State == "rebuilt") log.Line("start: a finished move still has an old copy that can be deleted");
+                }
+                else if (File.Exists(RemovalRunner.JournalPath(root)) && RemovalRunner.InProgress(root).Count > 0)
+                {
+                    if (MessageBox.Show("A removal was interrupted. Open Maintenance to finish it?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) pendingTab = 3;
+                }
+            }
+            catch (Exception e) { log.Line("start checks failed: " + e.Message); }
+        }
+
+        int pendingTab = Program.OpenTab;
 
         void ScheduleExit()
         {
@@ -472,6 +515,7 @@ namespace Vgac.Starter
             sup.BackendCameUp += delegate { BeginInvokeSafe(delegate { if (appWindow != null) appWindow.Reload(); }); };
             sup.Start();
             ShowStatusView();
+            if (pendingTab >= 0) { int t = pendingTab; pendingTab = -1; BeginInvokeSafe(delegate { OpenMaintenance(t); }); }
             if (!OpenInWindow()) { OpenApp(); }
             else if (!keepStatus) Hide();
         }
@@ -597,6 +641,11 @@ namespace Vgac.Starter
             svc.DropDownItems.Add("Open exports folder", null, delegate { OpenFolder(Path.Combine(root, "exports")); });
             var comfy = svc.DropDownItems.Add("Open ComfyUI Desktop", null, delegate { OpenComfyDesktop(); });
             svc.DropDownItems.Add("Open settings file", null, delegate { OpenSettingsFile(); });
+            svc.DropDownItems.Add("-");
+            svc.DropDownItems.Add("Check and repair...", null, delegate { OpenMaintenance(0); });
+            svc.DropDownItems.Add("Update VGAC...", null, delegate { OpenMaintenance(1); });
+            svc.DropDownItems.Add("Move the big files...", null, delegate { OpenMaintenance(2); });
+            svc.DropDownItems.Add("Remove VGAC's downloads...", null, delegate { OpenMaintenance(3); });
             svc.DropDownOpening += delegate { comfy.Enabled = !string.IsNullOrEmpty(desk.ComfyDesktopExe) && File.Exists(desk.ComfyDesktopExe); };
             menu.Items.Add(svc);
             menu.Items.Add("-");
@@ -739,6 +788,75 @@ namespace Vgac.Starter
             if (engineBusy || backend == null) return false;
             log.Line("action: startEngine (from the app window)");
             return RestartBackend();
+        }
+
+        // ---- maintenance (IMaintenanceHost) ------------------------------------------------------------------------------
+
+        MaintenanceForm maintenance;
+        readonly IComfyInstall comfyInstall;
+
+        public Layout Lay { get { return lay; } }
+        public MachineFile Machine { get { return machine; } }
+        public IHost Host { get { return host; } }
+        public SetupLog Log { get { return log; } }
+        public string ExePath { get { return Application.ExecutablePath; } }
+        public IComfyInstall Comfy { get { return comfyInstall; } }
+        public IProcessSource Procs { get { return backend != null ? backend.Procs : new WmiProcesses(); } }
+
+        void OpenMaintenance(int tab)
+        {
+            if (lay == null || quitting) return;
+            if (maintenance == null || maintenance.IsDisposed)
+            {
+                maintenance = new MaintenanceForm(this);
+                maintenance.FormClosed += delegate { maintenance = null; };
+            }
+            maintenance.ShowTab(tab);
+            maintenance.Show();
+            if (maintenance.WindowState == FormWindowState.Minimized) maintenance.WindowState = FormWindowState.Normal;
+            maintenance.Activate();
+        }
+
+        // Before maintenance that needs the engine stopped: asked like Quit (with the job count), refused when the engine
+        // is not ours, and the engine this launcher started is stopped. No restart while maintenance runs.
+        public bool Quiesce(IWin32Window owner, string what)
+        {
+            if (backend == null) return true;
+            bool owns = backend.Owned;
+            bool foreign = !owns && BackendRunner.HealthOk(port, 800);
+            QuitPlan plan = UpdatePolicy.Decide(owns, owns && sup != null ? sup.Jobs : 0, foreign);
+            if (plan.Block) { MessageBox.Show(owner, plan.Message + "\r\n\r\n" + plan.Detail, "VGAC"); return false; }
+            if (plan.Ask && !Ask.Show(owner, "Stop the app's engine for this " + what + "?", plan.Detail, "Stop it and go on", "Cancel", plan.DefaultCancel)) return false;
+            engineBusy = true;
+            if (owns)
+            {
+                backend.StopIfOurs(log);
+                if (backend.Owned) { engineBusy = false; MessageBox.Show(owner, "The app's engine could not be stopped. Close it from Task Manager, then try again.", "VGAC"); return false; }
+            }
+            return true;
+        }
+
+        public void Resume()
+        {
+            engineBusy = false;
+            if (quitting || backend == null) return;
+            BeginInvokeSafe(delegate { RestartBackend(); });
+        }
+
+        public void RestartVgac()
+        {
+            try { Process.Start(Application.ExecutablePath, "--project \"" + root + "\" --port " + port + " --after " + Process.GetCurrentProcess().Id); }
+            catch (Exception e) { log.Line("could not restart VGAC: " + e.Message); MessageBox.Show("VGAC could not start itself again (" + e.Message + "). Open VGAC.exe yourself.", "VGAC"); }
+            DoQuit();
+        }
+
+        // The app's own ComfyUI is moved and rebuilt by the backend's own code (python -m vgac.comfy_install), run with the app's Python.
+        string RunComfyCli(string args, string cwd)
+        {
+            if (lay == null || !File.Exists(lay.VenvPython)) return "The app's Python is not there.";
+            string logFile = Path.Combine(root, "runtime", "logs", "comfy-install-cli.log");
+            int code = host.Run(lay.VenvPython, "-m vgac.comfy_install " + args, Path.Combine(root, "backend"), null, logFile);
+            return code == 0 ? null : "It stopped with an error (code " + code + "). The log is " + logFile + ".";
         }
 
         // ---- quit ------------------------------------------------------------------------------------------------------
