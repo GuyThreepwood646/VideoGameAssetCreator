@@ -1,6 +1,7 @@
 // Credits: who made what the app builds on, with licences (GET /api/credits). The same data writes CREDITS.md.
 import { api, type CreditEntry } from '../api'
 import { ErrorText, useAsync } from '../components/ui'
+import { SupportLink } from '../SupportLink'
 
 function Row({ e }: { e: CreditEntry }) {
   const unsure = e.confirmed === 'not confirmed'
@@ -22,6 +23,9 @@ export default function CreditsPage() {
     <div className="page-narrow credits">
       <h1 className="page-title">Credits</h1>
       <p className="muted">The projects this app is built on, and what you may do with what it makes. {data?.summary.not_legal_advice}</p>
+      <p className="muted small">
+        VGAC is free. If it is useful to you, you can <SupportLink className="link" text="support the project on Ko-fi" />.
+      </p>
       {loading && <div className="muted">Loading...</div>}
       {error != null && <ErrorText error={error} />}
       {data && (
