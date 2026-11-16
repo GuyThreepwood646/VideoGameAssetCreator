@@ -6,7 +6,8 @@ hy3d: Hunyuan3D-2mv from the four turnaround views over white (shape only, Tence
 builder (trellis engine only): "trellis2" (the default) builds from one picture; "pixal3d" builds from the front, left,
 back and right cut-outs of step 2 with graphs/pixal3d.py (same output, same post chain, colour rebuilds and audit). A
 Pixal3D build records input_view "front" (the picture the model is posed to and painted from first) and the camera angle
-MoGe-2 estimated (metrics.camera_fov_deg). It is refused, in plain words, when its files are missing (vgac/pixal3d.py)
+it used (metrics.camera_fov_deg, with camera_fov_source "picture" for MoGe-2's estimate of the front picture, the default,
+or "chosen" for the version's camera_angle). It is refused, in plain words, when its files are missing (vgac/pixal3d.py)
 and on the bald route (no bald back picture is drawn); it never edits the picture (no hand edit, no described edit) and
 never builds the head on its own. The builder is in params.builder, metrics.builder and metrics.recipe.mesh.builder.
 The default triangle target sits 2 percent under the budget so prep need not decimate again (G05 a). UnwrapMesh
@@ -354,8 +355,9 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
         sc.use_model("trellis2")
         name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
         names = None
-    else:
-        for mid in ("pixal3d_mv", "pixal3d_dino", "moge2"):
+    angle = camera_angle_of(params) if views is not None else None
+    if views is not None:
+        for mid in ("pixal3d_mv", "pixal3d_dino") + (("moge2",) if angle is None else ()):
             sc.use_model(mid)
         names = {v: await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_mesh_in_{v}.png") for v, p in views.items()}
         name = names["front"]
@@ -371,7 +373,7 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
 
     async def build_once(seed: int, n: int) -> dict[str, Any]:
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
-                                    tex_steps=tex_steps, match_to=src, views=names)
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
@@ -522,12 +524,14 @@ def _bring_back(src: Path, dest_dir: Path) -> None:
 async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_faces: int, tex: int, upsample: int, remesh: bool,
                          padding: int, keep_normal: bool, picture: dict[str, Any] | None,
                          dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
-                         match_to: Path | None = None, views: dict[str, str] | None = None) -> dict[str, Any]:
+                         match_to: Path | None = None, views: dict[str, str] | None = None,
+                         fov: float | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
     (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
     (colourmatch.py; None for the head build and anything without a picture). `views`: the uploaded front, left, back
-    and right names for the Pixal3D four-view build (graphs/pixal3d.py) in place of the one picture `name`.
+    and right names for the Pixal3D four-view build (graphs/pixal3d.py) in place of the one picture `name`; `fov` its
+    camera angle (None: the front picture's own estimate).
     Returns {seed, elapsed, maps, other, metrics, match}."""
     out = Path(dest) if dest is not None else sc.dir
     if tag:
@@ -540,7 +544,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         message = what if n == 0 else f"{what}, build {n + 1}"
         base, span = 0.05, 0.7
     if views:
-        graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
+        graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps, fov=fov)
     else:
         graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
     entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
@@ -562,9 +566,10 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
                 other.append(key)
     metrics: dict[str, Any] = {}
     if views:
-        fov = camera_fov(entry)
-        if fov is not None:
-            metrics["camera_fov_deg"] = fov
+        used = camera_fov(entry) if fov is None else round(float(fov), 2)
+        if used is not None:
+            metrics["camera_fov_deg"] = used
+        metrics["camera_fov_source"] = "picture" if fov is None else "chosen"
     if keep_normal:
         # The builder writes the normal map's green channel upside down (vgac/normalfix.py): flipped once, here, in
         # normal.png and in the GLB's own copy, and the version marked so the clean-up step never flips it again.
@@ -587,6 +592,12 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
             metrics["texture_match_error"] = str(e)[:300]
     return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
+
+
+def camera_angle_of(params: dict[str, Any] | None) -> float | None:
+    """The version's Pixal3D camera angle in degrees, or None for the front picture's own estimate."""
+    v = (params or {}).get("camera_angle")
+    return None if v in (None, "") else float(v)
 
 
 def camera_fov(entry: dict[str, Any]) -> float | None:

@@ -58,6 +58,13 @@ def test_graph_keeps_the_trellis_output_contract_and_settings():
         assert g[node]["class_type"] == "SaveImage"
 
 
+def test_a_chosen_camera_angle_is_given_as_a_number_without_moge():
+    g = pixal3d_graph(NAMES, "p/x", fov=20)
+    assert g["cond"]["inputs"]["fov"] == 20.0
+    assert not {"moge", "mogei", "fov", FOV_NODE} & set(g)
+    assert pixal3d_graph(NAMES, "p/x", fov=None)["cond"]["inputs"]["fov"] == ["fov", 0]
+
+
 def test_graph_needs_all_four_views():
     with pytest.raises(ValueError, match="back"):
         pixal3d_graph({"front": "f.png", "left": "l.png", "right": "r.png"}, "p/x")
@@ -174,8 +181,8 @@ def build_env(tmp_path, monkeypatch):
                                                        "quarter_cutout", "quarter2_cutout")}
     calls: list = []
 
-    async def fake_build(sc, name, n, seed, *a, views=None, match_to=None, **k):
-        calls.append({"name": name, "views": views, "match_to": match_to})
+    async def fake_build(sc, name, n, seed, *a, views=None, match_to=None, fov=None, **k):
+        calls.append({"name": name, "views": views, "match_to": match_to, "fov": fov})
         return {"seed": seed, "elapsed": 1.0, "maps": {}, "other": [], "metrics": {}, "match": None}
 
     monkeypatch.setattr(mesh_stage, "_trellis_build", fake_build)
@@ -211,6 +218,45 @@ def test_pixal3d_builds_from_the_four_views_and_records_the_choice(build_env):
     assert sc.models == ["pixal3d_mv", "pixal3d_dino", "moge2"]
     assert sc.registered["input"].name == "input_image.png"
     assert "picture_edit" not in p  # never edits the picture (the hand edit is a one-picture tool)
+
+
+def test_the_camera_angle_is_the_pictures_own_unless_one_is_chosen(build_env):
+    sc = _SC(build_env.dir, {"seed": 3, "builder": "pixal3d"}, build_env.files)
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert build_env.calls[-1]["fov"] is None and "moge2" in sc.models
+    sc = _SC(build_env.dir, {"seed": 3, "builder": "pixal3d", "camera_angle": 20}, build_env.files)
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert build_env.calls[-1]["fov"] == 20.0 and "moge2" not in sc.models
+    assert mesh_stage.camera_angle_of({"camera_angle": ""}) is None
+    p = next(x for x in reference.STAGE_SCHEMAS["mesh"] if x["name"] == "camera_angle")
+    assert p["default"] is None and p["min"] == 1.0 and p["max"] == 170.0
+    with pytest.raises(ValueError):
+        reference.validate_params("mesh", {"camera_angle": 0}, "humanoid")
+
+
+def test_the_angle_used_is_recorded_with_its_source(tmp_path, monkeypatch):
+    """_trellis_build records the angle: MoGe-2's number from the preview node, or the chosen one."""
+    entry = {"outputs": {FOV_NODE: {"text": ["32.7"]}}, "elapsed_seconds": 1.0}
+
+    class SC:
+        dir = tmp_path
+        def prefix(self, tag=""):
+            return "p/" + tag
+        async def comfy(self, graph, **k):
+            self.graph = graph
+            return entry
+        async def download_mesh(self, e, dest):
+            Path(dest).write_bytes(b"")
+            return Path(dest)
+        def client(self):
+            return SimpleNamespace()
+        def progress(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(mesh_stage, "finish_maps", lambda *a: {})
+    for fov, want in ((None, (32.7, "picture")), (20, (20.0, "chosen"))):
+        r = asyncio.run(mesh_stage._trellis_build(SC(), "front.png", 0, 1, 1000, 1024, 1024, True, 4, False, None, views=NAMES, fov=fov))
+        assert (r["metrics"]["camera_fov_deg"], r["metrics"]["camera_fov_source"]) == want
 
 
 def test_trellis2_after_pixal3d_decides_its_own_view_again(build_env):

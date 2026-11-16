@@ -100,6 +100,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # Which model builds with the TRELLIS engine (vgac/pixal3d.py): TRELLIS.2 from one picture, or Pixal3D from the
         # front, left, back and right views. Pixal3D is listed only when its files are present (_schema).
         _param("builder", "select", "trellis2", label="3D builder", options=list(MESH_BUILDERS)),
+        # Pixal3D only: the camera angle the four views are taken as seen with; empty is the front picture's own estimate.
+        _param("camera_angle", "number", None, min=1.0, max=170.0, step=0.5, label="Camera angle for Pixal3D (degrees)",
+               description="Empty uses the front picture's own angle, estimated from the picture; 20 is the builder's own default"),
         _param("input_view", "select", "concept", options=["concept", "front", "quarter", "quarter2"]),
         _param("target_faces", "integer", None, min=200, max=500000, description="The recipe's share of the category and platform budget when empty"),
         _param("texture_size", "select", None, options=[256, 512, 1024, 2048, 4096], description="The recipe's texture size (never over the platform's) when empty"),
