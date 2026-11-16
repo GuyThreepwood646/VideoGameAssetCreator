@@ -73,17 +73,22 @@ def publish(db: Session, v: Version, doc: dict[str, Any]) -> None:
 
 
 def load(db: Session, v: Version) -> dict[str, Any]:
-    """The version's marks, found and saved now when it has none (a version from before marks, or a failed find)."""
+    """The version's marks, found and saved now when it has none (a version from before marks, or a failed find), and
+    completed when it was made before a picture of it had marks (the three-quarter and back pictures)."""
     doc = bodymarks.read(library.version_file(v, "marks", get_settings()))
-    if doc is None:
-        files = _cutouts(v)
-        if "front" not in files:
-            raise HTTPException(409, "this version has no front view to mark")
-        try:
+    files = _cutouts(v)
+    try:
+        if doc is None:
+            if "front" not in files:
+                raise HTTPException(409, "this version has no front view to mark")
             doc = bodymarks.compute(files)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(500, f"The marks could not be found: {e}")
-        publish(db, v, doc)
+            publish(db, v, doc)
+        elif bodymarks.complete(doc, files):
+            publish(db, v, doc)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"The marks could not be found: {e}")
     return doc
 
 
@@ -95,9 +100,11 @@ def out(v: Version, doc: dict[str, Any]) -> dict[str, Any]:
         "version_id": v.id,
         "state": bodymarks.state(doc),
         "pictures": {view: {"path": v.files.get(f"{view}_cutout"), "size": d["size"], "found": d.get("found", False)}
-                     for view, d in (doc.get("views") or {}).items()},
+                     for view, d in sorted((doc.get("views") or {}).items(), key=lambda kv: bodymarks.MARK_VIEWS.index(kv[0])
+                                           if kv[0] in bodymarks.MARK_VIEWS else 99)},
+        "placeholders": bodymarks.placeholders(doc),
         "marks": eff,
-        "automatic": {view: {j: {"x": m["x"], "y": m["y"]} for j, m in d.get("marks", {}).items() if j not in bodymarks.EXTRA}
+        "automatic": {view: {j: {"x": m.get("x"), "y": m.get("y")} for j, m in d.get("marks", {}).items() if j not in bodymarks.EXTRA}
                       for view, d in (doc.get("views") or {}).items()},
         "to_check": bodymarks.to_check(doc),
         "stale": bodymarks.stale(doc),

@@ -69,12 +69,43 @@ def _side(view, faces=None, knee_dy=0.0):
             "hands": {"left": {"found": view == "left"}, "right": {"found": view == "right"}}}
 
 
+def _quarter(view, swap=False):
+    """A three-quarter picture: turned under 90 degrees, so the person's left is still on the picture's right; the far
+    side's elbow barely seen (it goes behind the body)."""
+    q = _front(swap=swap)
+    q["file"] = f"{view}_cutout"
+    far = "R" if view == "quarter" else "L"
+    q["marks"][f"elbow_{far}"]["score"] = 0.3
+    return q
+
+
+def _back(swap=False):
+    """The back picture: the front mirrored, so the person's left is on the picture's left; no face."""
+    b = _front()
+    b["file"] = "back_cutout"
+    for j, m in b["marks"].items():
+        m["x"] = 1024 - m["x"]
+    b["marks"]["chin"]["how"] = "mouth"
+    if swap:
+        for j in [j for j in b["marks"] if j.endswith("_L")]:
+            o = j[:-2] + "_R"
+            b["marks"][j]["x"], b["marks"][o]["x"] = b["marks"][o]["x"], b["marks"][j]["x"]
+    return b
+
+
 def _doc(views):
     return {"format": BM.FORMAT, "views": views, "rule": BM.judge(views), "edited": {}, "accepted": None, "redrawn": {}}
 
 
 def _views(**kw):
     return {"front": _front(**kw), "left": _side("left"), "right": _side("right")}
+
+
+def _all_views(**kw):
+    """Every picture with marks, as find_view gives them (the not-seen rule applied off the front)."""
+    v = {"front": _front(**kw), "quarter": _quarter("quarter"), "quarter2": _quarter("quarter2"),
+         "left": _side("left"), "right": _side("right"), "back": _back()}
+    return {name: BM.hide_unseen(name, d) for name, d in v.items()}
 
 
 # --- the rule ----------------------------------------------------------------------------------------------------------
@@ -141,9 +172,71 @@ def test_a_picture_with_no_person_gets_placeholder_marks_that_are_all_asked_abou
     assert {c["joint"] for c in BM.to_check(doc) if c["joint"]} == set(BM.REQUIRED)
 
 
-def test_a_side_pictures_far_side_is_never_asked_about():
+def test_marks_the_app_cannot_see_off_the_front_have_no_place_and_are_never_asked_about():
+    """The far side of a side picture (behind the body), a far elbow seen under 0.5 on a three-quarter picture, the chin
+    on the back and on a side picture with no face: "not seen", x and y null, for the person to place."""
+    doc = _doc(_all_views())
+    eff = BM.effective(doc)
+    assert eff["left"]["elbow_R"]["x"] is None and not eff["left"]["elbow_R"]["seen"]
+    assert eff["left"]["elbow_L"]["seen"] and eff["left"]["chin"]["x"] is None
+    assert eff["quarter"]["elbow_R"]["x"] is None and eff["quarter"]["elbow_L"]["seen"]
+    assert eff["quarter2"]["elbow_L"]["x"] is None and eff["quarter2"]["elbow_R"]["seen"]
+    assert eff["back"]["chin"]["x"] is None and eff["back"]["shoulder_L"]["seen"]
+    assert eff["front"]["chin"]["seen"], "the front keeps every mark"
+    assert doc["rule"]["views"]["back"]["chin"] == {"sure": False, "guessed": False, "why": ["not_seen_here"], "seen": False}
+    assert BM.state(doc) == "sure" and BM.to_check(doc) == [], "nothing off the front is asked about"
+    ph = BM.placeholders(doc)
+    assert set(ph["back"]) == {"chin"} and ph["left"]["elbow_R"]["y"] > ph["left"]["shoulder_R"]["y"]
+
+
+def test_the_back_picture_names_the_persons_own_left_which_is_on_the_pictures_left():
+    views = _all_views()
+    assert views["back"]["marks"]["shoulder_L"]["x"] < 512 < views["back"]["marks"]["shoulder_R"]["x"]
+    doc = _doc(views)
+    assert doc["rule"]["tests"]["back_left_right"] is True
+    views["back"] = BM.hide_unseen("back", _back(swap=True))
+    doc = _doc(views)
+    assert doc["rule"]["tests"]["back_left_right"] is False and BM.state(doc) == "check"
+    assert any("back picture" in c["words"] for c in BM.to_check(doc))
+    t = BM.template("back", SIZE, [TOP, BOTTOM])
+    assert t["wrist_L"]["x"] < 512 < t["wrist_R"]["x"], "a mark placed by hand on the back starts on the person's own side"
+
+
+def test_the_three_quarter_pictures_keep_the_persons_left_on_the_pictures_right():
+    views = _all_views()
+    assert _doc(views)["rule"]["tests"]["quarter_left_right"] and _doc(views)["rule"]["tests"]["quarter2_left_right"]
+    views["quarter2"] = BM.hide_unseen("quarter2", _quarter("quarter2", swap=True))
+    doc = _doc(views)
+    assert doc["rule"]["tests"]["quarter2_left_right"] is False and BM.state(doc) == "check"
+
+
+def test_a_three_quarter_or_back_picture_with_no_person_has_every_mark_to_place(tmp_path):
+    def finder(path, key):
+        return {"size": SIZE, "file": key, "found": False, "figure": [TOP, BOTTOM], "legs_split": None, "marks": {}, "hands": {}}
+    v = BM.find_view("back", tmp_path / "b.png", finder)
+    assert all(m["x"] is None and m["how"] == "not_seen" for m in v["marks"].values()) and "knee_L" in v["marks"]
+
+
+def test_moves_on_the_new_pictures_work_like_the_others():
+    doc = _doc(_all_views())
+    BM.apply_moves(doc, [{"view": "back", "joint": "chin", "x": 512, "y": 200}, {"view": "quarter", "joint": "elbow_R", "x": 400, "y": 380}])
+    eff = BM.effective(doc)
+    assert eff["back"]["chin"] == {"x": 512.0, "y": 200.0, "source": "you", "sure": True, "guessed": False, "stale": False, "seen": True}
+    assert "chin" not in BM.placeholders(doc).get("back", {})
+    BM.reset(doc, "back")
+    assert BM.effective(doc)["back"]["chin"]["x"] is None and BM.effective(doc)["quarter"]["elbow_R"]["source"] == "you"
+
+
+def test_an_older_document_gets_the_new_pictures_once_and_keeps_the_moves(tmp_path):
     doc = _doc(_views())
-    assert "elbow_R" not in doc["rule"]["views"]["left"] and "elbow_L" in doc["rule"]["views"]["left"]
+    BM.apply_moves(doc, [{"view": "front", "joint": "knee_L", "x": 600, "y": 700}])
+    calls: list[str] = []
+    files = {v: tmp_path / f"{v}.png" for v in BM.MARK_VIEWS}
+    assert BM.complete(doc, files, _counting_finder(calls)) is True
+    assert sorted(calls) == ["back_cutout", "quarter2_cutout", "quarter_cutout"]
+    assert set(doc["views"]) == set(BM.MARK_VIEWS) and doc["edited"]["front"]["knee_L"]["x"] == 600.0
+    assert "back_left_right" in doc["rule"]["tests"]
+    assert BM.complete(doc, files, _counting_finder(calls)) is False and len(calls) == 3
 
 
 def test_template_puts_the_persons_left_on_the_pictures_right_and_side_toes_forward():
@@ -202,7 +295,11 @@ def _counting_finder(calls):
     def finder(path, key):
         calls.append(key)
         view = key.split("_")[0]
-        return _front() if view == "front" else _side(view)
+        if view == "front":
+            return _front()
+        if view in ("quarter", "quarter2"):
+            return _quarter(view)
+        return _back() if view == "back" else _side(view)
     return finder
 
 
@@ -215,11 +312,12 @@ def test_a_redraw_finds_only_the_redrawn_views_marks_and_keeps_moves_on_it_as_st
     BM.accept(parent)
     calls: list[str] = []
     doc = BM.carry(parent, files, ["left", "back"], "v2", _counting_finder(calls))
-    assert calls == ["left_cutout"], "only the redrawn view with marks is found again"
+    assert calls == ["quarter_cutout", "quarter2_cutout", "left_cutout", "back_cutout"], \
+        "the redrawn views with marks, and the pictures the parent had no marks for yet"
     assert doc["views"]["front"]["marks"]["knee_L"]["x"] == 555.0
     assert doc["edited"]["left"]["knee_L"]["stale"] is True, "kept, flagged, never dropped"
     assert doc["edited"]["front"]["elbow_R"]["stale"] is False
-    assert doc["accepted"] is None and doc["redrawn"] == {"left": "v2"}
+    assert doc["accepted"] is None and doc["redrawn"] == {"left": "v2", "back": "v2"}
     assert BM.state(doc) == "check" and BM.stale(doc) == [{"view": "left", "joint": "knee_L", "name": "left knee"}]
     assert "drawn again" in BM.check(doc, stop=False)["help"]
     BM.apply_moves(doc, [{"view": "left", "joint": "knee_L", "x": 505, "y": 700}])
@@ -231,7 +329,11 @@ def test_a_redraw_of_a_view_without_marks_keeps_everything(tmp_path):
     parent = BM.accept(_doc(_views()))
     calls: list[str] = []
     doc = BM.carry(parent, files, ["back"], "v2", _counting_finder(calls))
-    assert calls == [] and doc["accepted"] == parent["accepted"] and doc["views"] == parent["views"]
+    assert calls == ["quarter_cutout", "quarter2_cutout", "back_cutout"], "only the pictures the parent had no marks for"
+    assert doc["accepted"] is None, "the back was drawn again"
+    calls.clear()
+    doc2 = BM.carry(BM.accept(doc), files, ["top"], "v3", _counting_finder(calls))
+    assert calls == [] and doc2["accepted"] == doc["accepted"] and doc2["views"] == doc["views"]
 
 
 def test_moves_on_a_view_the_version_no_longer_has_are_kept_as_stale(tmp_path):
@@ -245,7 +347,7 @@ def test_moves_on_a_view_the_version_no_longer_has_are_kept_as_stale(tmp_path):
 def test_no_parent_marks_means_a_fresh_find(tmp_path):
     calls: list[str] = []
     doc = BM.carry(None, {v: tmp_path / f"{v}.png" for v in BM.MARK_VIEWS}, [], "v", _counting_finder(calls))
-    assert sorted(calls) == ["front_cutout", "left_cutout", "right_cutout"] and doc["format"] == BM.FORMAT
+    assert sorted(calls) == sorted(f"{v}_cutout" for v in BM.MARK_VIEWS) and doc["format"] == BM.FORMAT
 
 
 def test_the_file_round_trips_and_an_unknown_format_is_ignored(tmp_path):
@@ -325,7 +427,7 @@ def test_step_2_writes_the_marks_the_summary_and_the_check(tmp_path, fake_finder
     v = SimpleNamespace(id="n" * 32, parent_version_id=concept.id, stage="turnaround", params={}, metrics={})
     sc = _sc(tmp_path, v, concept)
     turnaround.body_marks(sc, list(BM.MARK_VIEWS) + ["back"])
-    assert sorted(fake_finder) == ["front_cutout", "left_cutout", "right_cutout"]
+    assert sorted(fake_finder) == sorted(f"{v}_cutout" for v in BM.MARK_VIEWS)
     doc = BM.read(sc.files["marks"])
     assert doc and v.metrics["body_marks"]["state"] == "sure"
     assert [c["name"] for c in v.metrics["checks"]] == ["body_marks"] and v.metrics["gate_ok"]
@@ -341,7 +443,7 @@ def test_step_2_carries_a_parents_marks_through_a_redraw(tmp_path, fake_finder, 
     v = SimpleNamespace(id="n" * 32, parent_version_id=parent.id, stage="turnaround", params={}, metrics={})
     sc = _sc(tmp_path, v, concept, parent)
     turnaround.body_marks(sc, ["right"])
-    assert fake_finder == ["right_cutout"]
+    assert fake_finder == ["quarter_cutout", "quarter2_cutout", "right_cutout", "back_cutout"]
     assert v.metrics["body_marks"]["stale"] == [{"view": "right", "joint": "ankle_R", "name": "right ankle"}]
     assert v.metrics["body_marks"]["state"] == "check" and not v.metrics["gate_ok"]
 
@@ -404,7 +506,7 @@ def test_get_finds_marks_for_an_older_version_once_and_saves_them(api):
     assert body["marks"]["front"]["knee_L"]["source"] == "app" and body["names"]["knee_L"] == "left knee"
     assert body["pictures"]["front"]["path"].endswith("front.png")
     client.get(f"/api/versions/{vid}/marks")
-    assert len(calls) == 3, "found once, then read from marks.json"
+    assert len(calls) == len(BM.MARK_VIEWS), "found once, then read from marks.json"
     v = client.get(f"/api/versions/{vid}").json()
     assert v["files"]["marks"].endswith("marks.json") and v["metrics"]["body_marks"]["state"] == "sure"
     assert any(c["name"] == "body_marks" and c["passed"] for c in v["metrics"]["checks"])
@@ -416,7 +518,7 @@ def test_put_moves_accept_and_reset(api):
     r = client.put(f"/api/versions/{vid}/marks", json={"moves": [{"view": "front", "joint": "knee_L", "x": 600, "y": 700}]})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["state"] == "edited" and body["marks"]["front"]["knee_L"] == {"x": 600.0, "y": 700.0, "source": "you", "sure": True, "guessed": False, "stale": False}
+    assert body["state"] == "edited" and body["marks"]["front"]["knee_L"] == {"x": 600.0, "y": 700.0, "source": "you", "sure": True, "guessed": False, "stale": False, "seen": True}
     assert body["automatic"]["front"]["knee_L"]["x"] != 600.0
     r = client.put(f"/api/versions/{vid}/marks", json={"accept": True})
     assert r.json()["accepted"] is True
@@ -441,7 +543,7 @@ def test_marks_only_on_finished_step_2_versions_of_characters(api):
     client, ids, _ = api
     assert client.get(f"/api/versions/{ids[('humanoid', 'running')]}/marks").status_code == 409
     assert client.get(f"/api/versions/{ids[('quadruped', 'done')]}/marks").status_code == 400
-    assert client.post(f"/api/versions/{ids[('humanoid', 'done')]}/marks/reset", json={"view": "back"}).status_code == 400
+    assert client.post(f"/api/versions/{ids[('humanoid', 'done')]}/marks/reset", json={"view": "top"}).status_code == 400
     assert client.get("/api/versions/nope/marks").status_code == 404
 
 
@@ -490,3 +592,40 @@ def test_a_mark_is_found_in_the_padded_square_picture_the_clean_up_fits():
     # a tall picture is centred on a square of its height: 600 x 1000 gets 200 px of border on each side
     x, y = BM.picture_to_prepared(0, 0, [600, 1000], 1000)
     assert (x, y) == (200.0, 0.0)
+
+
+def test_get_completes_marks_made_before_the_three_quarter_and_back_pictures_had_them(api, settings):
+    client, ids, calls = api
+    vid = ids[("humanoid", "done")]
+    from vgac.db import Asset, Version, session_factory
+
+    old = _doc(_views())
+    BM.apply_moves(old, [{"view": "front", "joint": "elbow_L", "x": 640, "y": 360}])
+    with session_factory()() as db:
+        v = db.get(Version, vid)
+        a = db.get(Asset, v.asset_id)
+        library.register_file(v, "marks", BM.write(old, library.version_dir(a, v, settings) / "marks.json"), settings)
+        db.commit()
+    body = client.get(f"/api/versions/{vid}/marks").json()
+    assert sorted(calls) == ["back_cutout", "quarter2_cutout", "quarter_cutout"]
+    assert list(body["pictures"]) == list(BM.MARK_VIEWS), "in the order the panel shows them"
+    assert body["marks"]["front"]["elbow_L"]["source"] == "you" and body["marks"]["back"]["chin"]["x"] is None
+    assert body["placeholders"]["back"]["chin"]["y"] > 0
+    client.get(f"/api/versions/{vid}/marks")
+    assert len(calls) == 3
+
+
+def test_a_knee_is_guessed_when_its_own_row_shows_one_shape_and_the_three_quarter_pictures_follow_the_front():
+    """The legs are tested at each knee's own height (a foot set forward cut the old scan short on a three-quarter
+    picture). Only the front and the back are tested: on a three-quarter picture one knee is often behind the other, so
+    it takes the front's answer, the clothing being the same."""
+    views = _all_views()
+    views["front"]["knees_apart"] = {"knee_L": False, "knee_R": True}
+    views["front"]["legs_split"] = 0.0     # ignored when knees_apart is there
+    views["quarter"]["knees_apart"] = {"knee_L": False, "knee_R": False}   # overlapping legs: not read on a three-quarter
+    doc = _doc(views)
+    front, quarter = doc["rule"]["views"]["front"], doc["rule"]["views"]["quarter"]
+    assert front["knee_L"]["guessed"] and front["knee_R"]["sure"]
+    assert quarter["knee_L"]["guessed"] and quarter["knee_R"]["sure"]
+    views["back"]["knees_apart"] = {"knee_L": True, "knee_R": False}
+    assert _doc(views)["rule"]["views"]["back"]["knee_R"]["guessed"]

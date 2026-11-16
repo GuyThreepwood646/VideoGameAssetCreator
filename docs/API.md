@@ -282,16 +282,20 @@ Backend `vgac/model_import.py`, Blender `blender/modelimport.py`; design in docs
 Characters (humanoid) only; a finished step 2 version. The marks are a note on that version's pictures: these calls
 change `files.marks` (`marks.json`), `metrics.body_marks` and the `body_marks` check of the version itself, and make no
 new version. Positions are pixels of the view's cut-out (`files.<view>_cutout`), x right, y down. Views: `front`,
-`left`, `right`. Marks: `head_top chin shoulder_L shoulder_R elbow_L elbow_R wrist_L wrist_R hip_L hip_R groin knee_L
+`quarter`, `quarter2`, `left`, `right`, `back`. Mark names are the person's own left and right on every picture: on
+`back` the person's left is on the picture's left. Off the front, a mark the app could not see (hidden by the body, a
+face turned away, no gap between the legs, or seen under 0.5) has `x` and `y` null and `seen` false; the person can
+place it. Marks: `head_top chin shoulder_L shoulder_R elbow_L elbow_R wrist_L wrist_R hip_L hip_R groin knee_L
 knee_R ankle_L ankle_R heel_L heel_R toe_L toe_R` and `tip_<thumb|index|middle|ring|little>_<L|R>` where a hand was
 found (`_L` is the character's own left).
 
 - `GET /api/versions/{vid}/marks`: `{version_id, state ("sure" | "check" | "edited"), pictures {view: {path, size, found}},
-  marks {view: {mark: {x, y, source ("app" | "you"), sure, guessed, stale}}} (yours over the app's), automatic {view:
-  {mark: {x, y}}}, to_check [{view, joint, name, why, guessed, words}] (joint null for a test between pictures),
+  marks {view: {mark: {x, y, source ("app" | "you"), sure, guessed, stale, seen}}} (yours over the app's), automatic {view:
+  {mark: {x, y}}}, placeholders {view: {mark: {x, y}}} (where a not-seen mark goes when placed by hand), to_check [{view, joint, name, why, guessed, words}] (joint null for a test between pictures),
   stale [{view, joint, name}], tests {name: bool}, hands {view: {left|right: {found, score}}}, names {mark: plain name},
   required, accepted, stop}`. A version made before marks has them found on the first call. 400 not a character or not
-  step 2; 409 not finished or no front view.
+  step 2; 409 not finished or no front view. A version whose marks were made before a picture had them gets that
+  picture's marks found on the first call, the person's moves kept.
 - `PUT /api/versions/{vid}/marks` `{moves?: [{view, joint, x, y}], accept?: bool}`: your moves go in their own layer
   (the app's marks are kept); `accept` says the marks look right as they stand. Same answer as GET. 400 for an unknown
   view or mark, a position off the picture, or nothing to change.

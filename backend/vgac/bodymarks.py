@@ -15,7 +15,10 @@ One document per step 2 version, `marks.json` in the version's folder (file key 
   edited       {view: {joint: {x, y, at, stale}}}: the person's moves, kept apart; never written over by the automatic layer
   accepted     {at} when the person said the marks look right, else None
   computed_at  when the automatic layer was found; redrawn {view: version id} for views found again after a redraw
-Pixel positions are in the cut-out picture's own pixels (x right, y down). A redraw recomputes only the redrawn views'
+Pixel positions are in the cut-out picture's own pixels (x right, y down). Joint names are always the person's own
+left and right: on the back picture the person's left is on the picture's left (mirrored from the front). Off the front
+picture, a mark the app cannot see (hidden by the body, a face turned away, no gap between the legs) has x and y null
+and how "not_seen" (`hide_unseen`); the person can place it. A redraw recomputes only the redrawn views'
 automatic marks; edits on a redrawn view are kept and marked stale (`carry`).
 
 Nothing reads the marks yet. STOP_WHEN_UNSURE (off) makes autopilot stop and ask on an unsure set (autopilot.STOP_AND_ASK);
@@ -34,8 +37,13 @@ import numpy as np
 from PIL import Image
 
 FORMAT = 1
-MARK_VIEWS = ("front", "left", "right")
-SIDE_VIEWS = ("left", "right")
+MARK_VIEWS = ("front", "quarter", "quarter2", "left", "right", "back")
+SIDE_VIEWS = ("left", "right")          # in profile: the far side is behind the body
+QUARTER_VIEWS = ("quarter", "quarter2")
+# The side each picture shows more of: the left side picture and the three-quarter picture turned toward the person's
+# left (stages/turnaround TURN_SIDE) show the person's left; the others their right. The front and back show both.
+NEAR = {"left": "L", "quarter": "L", "right": "R", "quarter2": "R"}
+HIDE_BELOW = 0.5     # off the front picture, a pose mark seen less than this is "not seen": no position, the person places it
 STOP_WHEN_UNSURE = False   # off until the rig or the painter reads the marks; a version's body_marks_stop overrides it
 CATEGORIES = ("humanoid",)
 
@@ -175,6 +183,13 @@ def find(path: Path | str, key: str = "") -> dict[str, Any]:
         put("head_top", (cx, top), 0.9 if F is not None else 0.5, "outline")
     g, gap = _groin(L["mask"], P)
     put("groin", g, min(P[23, 2], P[24, 2]) if gap else CHIN_FALLBACK, "outline" if gap else "hips")
+    # At each knee's own height: two separate legs in the outline (a robe or a long skirt makes one shape there). Read on
+    # the knee's row, not by scanning up from the soles, which a foot set in front of the other cuts short.
+    out["knees_apart"] = {}
+    for k in ("knee_L", "knee_R"):
+        y = int(round(M[k]["y"]))
+        if 0 <= y < L["full"].shape[0]:
+            out["knees_apart"][k] = len(buildpose._runs(L["full"][y], 3)) >= 2
     for side, hd in buildpose.hands_at(L["rgb"], P, L["height"]).items():
         S = "L" if side == "left" else "R"
         if "points" not in hd:
@@ -200,12 +215,13 @@ def template(view: str, size: list[int], figure: list[int], width_px: float | No
     h = max(1.0, float(bottom - top))
     cx = size[0] / 2 if width_px is None else width_px
     face = {"left": -1, "right": 1}.get(view)    # a side picture: which way the face points (left: the picture's left)
+    mirror = -1 if view == "back" else 1         # the back: the person's left on the picture's left
     out: dict[str, dict[str, Any]] = {}
     for base, (dx, dy) in TEMPLATE_FRONT.items():
         sides = ("",) if base in ("head_top", "chin", "groin") else ("_L", "_R")
         for s in sides:
             if face is None:
-                x = cx + (dx if s == "_L" else -dx if s == "_R" else 0) * h
+                x = cx + mirror * (dx if s == "_L" else -dx if s == "_R" else 0) * h
             else:
                 x = cx + (0.04 * face * h if base in ("toe", "chin") else -0.02 * face * h if base == "heel" else 0)
             out[base + s] = {"x": round(x, 1), "y": round(top + dy * h, 1), "score": 0.0, "how": "placeholder"}
@@ -220,6 +236,7 @@ WHY = {
     "not_seen": "The app could not see this one clearly.",
     "outside": "This mark is off the body.",
     "height": "This mark is at a different height in the side picture.",
+    "not_seen_here": "The app could not see this one in this picture. Place it if you can see it.",
 }
 GUESSED = ("not_found", "hidden")
 
@@ -229,8 +246,13 @@ def _norm_y(v: dict[str, Any], y: float) -> float:
     return (y - top) / max(1.0, float(bottom - top))
 
 
+def _xy(m: dict[str, Any]) -> tuple[float, float]:
+    """A mark's place for the tests between pictures: its own, or where the finder had it before it was hidden."""
+    return (m["x"], m["y"]) if m.get("x") is not None else tuple(m.get("at") or (math.nan, math.nan))
+
+
 def _inside(mask: np.ndarray | None, m: dict[str, Any]) -> bool:
-    if mask is None:
+    if mask is None or m.get("x") is None:
         return True
     x, y = int(m["x"]), int(m["y"])
     return bool(mask[max(0, y - INSIDE_PX):y + INSIDE_PX + 1, max(0, x - INSIDE_PX):x + INSIDE_PX + 1].any())
@@ -266,14 +288,15 @@ def judge(views: dict[str, dict[str, Any]], masks: dict[str, np.ndarray] | None 
     fits = {s: height_fit(front, views[s], "L" if s == "left" else "R") for s in SIDE_VIEWS if views.get(s) and views[s].get("found")}
     for name, v in views.items():
         per: dict[str, Any] = {}
-        near = {"left": "L", "right": "R"}.get(name)
         for joint, m in v.get("marks", {}).items():
             if joint in EXTRA:
                 continue
             why: list[str] = []
             if m["how"] == "placeholder":
                 why.append("not_found")
-            elif name == "front" or joint.endswith("_" + (near or "")) or joint in ("chin", "head_top"):
+            elif m["how"] == "not_seen":
+                why.append("not_seen_here")
+            else:
                 if joint == "groin":
                     if m["how"] != "outline":
                         why.append("hidden")
@@ -284,11 +307,18 @@ def judge(views: dict[str, dict[str, Any]], masks: dict[str, np.ndarray] | None 
                     why.append("not_seen")
                 if not _inside(masks.get(name), m):
                     why.append("outside")
-                if name == "front" and joint.startswith("hip") and v.get("marks", {}).get("groin", {}).get("how") not in ("outline", None):
+                # The outline tests for clothing over the legs: on the front and the back only (in profile the legs are one
+                # shape anyway, and on a three-quarter picture one knee is often behind the other); the three-quarter
+                # pictures take the front's answer below, the clothing being the same.
+                legs = name in ("front", "back")
+                if legs and joint.startswith("hip") and v.get("marks", {}).get("groin", {}).get("how") not in ("outline", None):
                     why.append("hidden")   # no gap between the legs: the hips are under the same clothing
-                if name == "front" and joint.startswith("knee") and v.get("legs_split") is not None:
-                    if v["legs_split"] < 1 - _norm_y(v, m["y"]) - 0.02:
+                if legs and joint.startswith("knee"):
+                    apart = (v.get("knees_apart") or {}).get(joint)
+                    if apart is False:
                         why.append("hidden")
+                    elif apart is None and v.get("legs_split") is not None and v["legs_split"] < 1 - _norm_y(v, m["y"]) - 0.02:
+                        why.append("hidden")   # a document from before knees_apart
                 if name == "front" and joint not in ("groin", "head_top") and not joint.startswith("tip_") and "not_found" not in why:
                     for s, fit in fits.items():
                         sm = views[s]["marks"].get(joint)
@@ -298,10 +328,15 @@ def judge(views: dict[str, dict[str, Any]], masks: dict[str, np.ndarray] | None 
                             if abs(dh) > HEIGHT_TOL:
                                 why.append("height")
                                 break
-            else:
-                continue   # the far side of a side picture: not asked about
-            per[joint] = {"sure": not why, "guessed": any(w in GUESSED for w in why), "why": why}
+            per[joint] = {"sure": not why, "guessed": any(w in GUESSED for w in why), "why": why,
+                          "seen": m["how"] != "not_seen"}
         out["views"][name] = per
+    fr = out["views"].get("front", {})
+    for name in QUARTER_VIEWS:
+        for joint, r in (out["views"].get(name) or {}).items():
+            if r["seen"] and "hidden" in (fr.get(joint) or {}).get("why", []) and "hidden" not in r["why"]:
+                r["why"].append("hidden")
+                r.update(sure=False, guessed=True)
     T = out["tests"]
     T["front_found"] = bool(front.get("found"))
     fm = front.get("marks", {})
@@ -317,9 +352,20 @@ def judge(views: dict[str, dict[str, Any]], masks: dict[str, np.ndarray] | None 
         diffs = [sm[f"{p}_{near}"]["score"] - sm[f"{p}_{far}"]["score"] for p in ("elbow", "wrist", "knee", "ankle")]
         T[f"{s}_near"] = sum(d > NEAR_MARGIN for d in diffs) >= 3
         want = -1 if s == "left" else 1
-        nose = np.sign(sm["nose"]["x"] - sm[f"ear_{near}"]["x"])
-        toes = np.sign(sm[f"toe_{near}"]["x"] - sm[f"heel_{near}"]["x"])
+        nose = np.sign(_xy(sm["nose"])[0] - _xy(sm[f"ear_{near}"])[0])
+        toes = np.sign(_xy(sm[f"toe_{near}"])[0] - _xy(sm[f"heel_{near}"])[0])
         T[f"{s}_facing"] = bool(nose == want and toes == want)
+    # Left and right on the three-quarter pictures (turned under 90 degrees: the person's left still on the picture's
+    # right) and on the back (the person's left on the picture's left), from the shoulders and hips wherever the finder
+    # put them (also when it saw one side poorly).
+    for s, sign in (("quarter", 1), ("quarter2", 1), ("back", -1)):
+        v = views.get(s)
+        if not v or not v.get("found"):
+            continue
+        sm = v["marks"]
+        pairs = [(_xy(sm[f"{p}_L"])[0], _xy(sm[f"{p}_R"])[0]) for p in ("shoulder", "hip") if f"{p}_L" in sm and f"{p}_R" in sm]
+        if pairs:
+            T[f"{s}_left_right"] = all(sign * (a - b) > 0 for a, b in pairs)
     req = out["views"].get("front", {})
     ok = all(req.get(j, {}).get("sure") for j in REQUIRED) and all(T.values())
     out["state"] = "sure" if ok else "check"
@@ -334,8 +380,12 @@ TEST_WORDS = {
     "right_near": "The right side picture may show the other side.",
     "left_facing": "In the left side picture the face and the feet do not point the same way.",
     "right_facing": "In the right side picture the face and the feet do not point the same way.",
+    "quarter_left_right": "Left and right look swapped in the three-quarter picture.",
+    "quarter2_left_right": "Left and right look swapped in the other three-quarter picture.",
+    "back_left_right": "Left and right look swapped in the back picture (there the person's left is on the picture's left).",
 }
-VIEW_WORDS = {"front": "front picture", "left": "left side picture", "right": "right side picture"}
+VIEW_WORDS = {"front": "front picture", "left": "left side picture", "right": "right side picture",
+              "quarter": "three-quarter picture", "quarter2": "other three-quarter picture", "back": "back picture"}
 
 
 def to_check(doc: dict[str, Any]) -> list[dict[str, Any]]:
@@ -419,12 +469,37 @@ def _masks(files: dict[str, Path]) -> dict[str, np.ndarray]:
     return out
 
 
+def hide_unseen(view: str, v: dict[str, Any]) -> dict[str, Any]:
+    """Off the front picture, the marks the app cannot see lose their position (how "not_seen"; the finder's spot is kept
+    under "at" for the tests between pictures): a pose mark seen under HIDE_BELOW, the far side of a side picture (behind
+    the body, whatever the finder scored), a chin with no face found (always on the back), a groin with no gap between
+    the legs. Rather no mark than a guess: the person places what they can see."""
+    if view == "front":
+        return v
+    far = {"left": "_R", "right": "_L"}.get(view)
+    for joint, m in v.get("marks", {}).items():
+        if joint in EXTRA or m.get("x") is None:
+            continue
+        hidden = ((far is not None and joint.endswith(far))
+                  or (m["how"] == "pose" and m["score"] < HIDE_BELOW)
+                  or (joint == "chin" and (m["how"] != "face" or view == "back"))
+                  or (joint == "groin" and m["how"] != "outline")
+                  or m["how"] == "placeholder")
+        if hidden:
+            m.update(at=[m["x"], m["y"]], x=None, y=None, how="not_seen")
+    return v
+
+
 def find_view(view: str, path: Path, finder: Callable[[Path, str], dict[str, Any]] | None = None) -> dict[str, Any]:
     v = (finder or find)(path, f"{view}_cutout")
     if not v.get("found"):
-        filled = template(view, v["size"], v["figure"])
-        v["marks"] = {**filled, **{k: m for k, m in v.get("marks", {}).items()}}
-    return v
+        if view == "front":   # the front needs every mark: placeholders where a standing figure's joints usually are
+            filled = template(view, v["size"], v["figure"])
+            v["marks"] = {**filled, **{k: m for k, m in v.get("marks", {}).items()}}
+        else:                 # any other picture: nothing placed, every mark for the person to place
+            v["marks"] = {j: {"x": None, "y": None, "score": 0.0, "how": "not_seen"} for j in JOINTS if j not in TIPS}
+            return v
+    return hide_unseen(view, v)
 
 
 def compute(files: dict[str, Path], finder: Callable[[Path, str], dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -513,11 +588,37 @@ def effective(doc: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
                 continue
             r = (rule.get(view) or {}).get(joint)
             per[joint] = {"x": m["x"], "y": m["y"], "source": "app", "sure": None if r is None else r["sure"],
-                          "guessed": bool(r and r["guessed"]), "stale": False}
+                          "guessed": bool(r and r["guessed"]), "stale": False, "seen": m.get("x") is not None}
         for joint, e in ((doc.get("edited") or {}).get(view) or {}).items():
-            per[joint] = {"x": e["x"], "y": e["y"], "source": "you", "sure": True, "guessed": False, "stale": bool(e.get("stale"))}
+            per[joint] = {"x": e["x"], "y": e["y"], "source": "you", "sure": True, "guessed": False, "stale": bool(e.get("stale")),
+                          "seen": True}
         out[view] = per
     return out
+
+
+def placeholders(doc: dict[str, Any]) -> dict[str, dict[str, dict[str, float]]]:
+    """Where to put a mark the app did not see when the person asks to place it: where that joint usually is on a standing
+    figure in this picture (`template`, mirrored on the back), for them to drag the rest of the way."""
+    eff = effective(doc)
+    out: dict[str, dict[str, dict[str, float]]] = {}
+    for view, v in (doc.get("views") or {}).items():
+        t = template(view, v["size"], v["figure"])
+        missing = {j: {"x": t[j]["x"], "y": t[j]["y"]} for j, m in (eff.get(view) or {}).items() if not m["seen"] and j in t}
+        if missing:
+            out[view] = missing
+    return out
+
+
+def complete(doc: dict[str, Any], files: dict[str, Path], finder: Callable[[Path, str], dict[str, Any]] | None = None) -> bool:
+    """A document made before a picture had marks (the three-quarter and back pictures came later): finds the missing
+    pictures' marks and judges the set again; the person's moves are kept. True when something was added."""
+    missing = [v for v in MARK_VIEWS if v in files and v not in (doc.get("views") or {})]
+    if not missing:
+        return False
+    for v in missing:
+        doc["views"][v] = find_view(v, files[v], finder)
+    doc["rule"] = judge(doc["views"], _masks({v: files[v] for v in doc["views"] if v in files}))
+    return True
 
 
 def read(path: Path | None) -> dict[str, Any] | None:

@@ -3,9 +3,10 @@ import { api, libraryUrl, type BodyMarks as Marks, type Mark, type MarkView } fr
 import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 
-// Mark the body (step 2): the app's marks on the front picture and one side picture, each draggable. The marks are a note
-// on this version's pictures (marks.json): moving one, pressing These look right or putting the app's marks back changes
-// this version only, and the app's own marks are always kept.
+// Mark the body (step 2): the app's marks on the front picture and one other picture (a three-quarter, side or back
+// view), each draggable; all six open enlarged. The marks are a note on this version's pictures (marks.json): moving one,
+// placing one the app could not see, pressing These look right or putting the app's marks back changes this version only,
+// and the app's own marks are always kept. Joint names are the person's own left and right on every picture.
 
 const BONES: [string, string][] = [
   ['head_top', 'chin'],
@@ -15,15 +16,53 @@ const BONES: [string, string][] = [
   ['hip_L', 'knee_L'], ['knee_L', 'ankle_L'], ['hip_R', 'knee_R'], ['knee_R', 'ankle_R'],
   ['ankle_L', 'heel_L'], ['heel_L', 'toe_L'], ['ankle_R', 'heel_R'], ['heel_R', 'toe_R'],
 ]
-const SIDE_NAMES: Record<MarkView, string> = { front: 'Front', left: 'Left side', right: 'Right side' }
+const SIDE_NAMES: Record<MarkView, string> = {
+  front: 'Front',
+  quarter: 'Three-quarter',
+  quarter2: 'Three-quarter (other side)',
+  left: 'Left side',
+  right: 'Right side',
+  back: 'Back',
+}
+const VIEW_ORDER: MarkView[] = ['front', 'quarter', 'quarter2', 'left', 'right', 'back']
 const FINGERTIP = /^tip_/
 
-// Which marks a picture shows: everything on the front; a side picture only its own side (the far side is hidden behind
-// the body, so the app's marks there mean little).
-function shown(view: MarkView, joint: string): boolean {
-  if (view === 'front') return true
+// Which marks a picture draws: every mark with a place, except the far side of a side picture whose marks were found
+// before the app learned to leave them unplaced (the far side is behind the body, so a position there means little).
+function shown(view: MarkView, joint: string, m: Mark): boolean {
+  if (m.x === null || m.y === null) return false
+  if ((view !== 'left' && view !== 'right') || m.source === 'you') return true
   const own = view === 'left' ? '_L' : '_R'
   return !(joint.endsWith('_L') || joint.endsWith('_R')) || joint.endsWith(own)
+}
+
+// The marks the app could not see on this picture and that can be placed by hand, in the panel's order.
+function unseen(data: Marks, view: MarkView): string[] {
+  const ph = data.placeholders?.[view] ?? {}
+  const marks = data.marks[view] ?? {}
+  return Object.keys(ph).filter((j) => marks[j] && (marks[j].x === null || marks[j].y === null))
+}
+
+function NotSeen({ data, view, busy, onMove }: { data: Marks; view: MarkView; busy: boolean; onMove: (view: MarkView, joint: string, x: number, y: number) => void }) {
+  const list = unseen(data, view)
+  if (!list.length) return null
+  return (
+    <div className="body-marks-unseen small">
+      <span className="muted">Not seen in this picture{busy ? '' : ' (place one if you can see it, then drag it into place)'}:</span>{' '}
+      {list.map((j) => (
+        <button
+          key={j}
+          type="button"
+          className="chip"
+          disabled={busy}
+          onClick={() => onMove(view, j, data.placeholders![view]![j].x, data.placeholders![view]![j].y)}
+          title={`Puts the ${data.names[j] ?? j} where it usually is, for you to drag into place`}
+        >
+          Place the {data.names[j] ?? j}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function markClass(joint: string, m: Mark): string {
@@ -62,7 +101,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
   if (!pic?.path) return null
   const [w, h] = pic.size
   const r = Math.max(4, Math.round(w / 110))
-  const at = (joint: string) => (drag && drag.joint === joint ? drag : marks[joint])
+  const at = (joint: string) => (drag && drag.joint === joint ? drag : (marks[joint] as { x: number; y: number }))
   const toPicture = (ev: PointerEvent) => {
     const el = svg.current
     const ctm = el?.getScreenCTM()
@@ -91,17 +130,17 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
     const d = drag
     setDrag(null)
     const m = marks[d.joint]
-    if (!m || Math.hypot(m.x - d.x, m.y - d.y) >= 0.5) onMove(view, d.joint, d.x, d.y)
+    if (!m || m.x === null || m.y === null || Math.hypot(m.x - d.x, m.y - d.y) >= 0.5) onMove(view, d.joint, d.x, d.y)
   }
   const key = (joint: string) => (ev: KeyboardEvent<SVGCircleElement>) => {
     const step = ev.shiftKey ? 10 : 2
     const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[ev.key]
     const m = marks[joint]
-    if (!d || !m || busy) return
+    if (!d || !m || m.x === null || m.y === null || busy) return
     ev.preventDefault()
     onMove(view, joint, Math.min(w, Math.max(0, m.x + d[0])), Math.min(h, Math.max(0, m.y + d[1])))
   }
-  const joints = Object.keys(marks).filter((j) => shown(view, j))
+  const joints = Object.keys(marks).filter((j) => shown(view, j, marks[j]))
   const stageClass = 'body-marks-stage checker' + (large ? ' large' : '') + (large && actual ? ' actual' : '')
   const stageStyle = large ? (actual ? { width: w, height: h } : undefined) : { aspectRatio: `${w} / ${h}` }
   const marked = (
@@ -156,6 +195,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
       ) : (
         marked
       )}
+      <NotSeen data={data} view={view} busy={busy} onMove={onMove} />
     </figure>
   )
 }
@@ -169,12 +209,12 @@ function Legend() {
   )
 }
 
-function handNotes(data: Marks): string[] {
+function handNotes(data: Marks, views: MarkView[]): string[] {
   const out: string[] = []
-  for (const view of ['front', 'left', 'right'] as MarkView[]) {
+  for (const view of views) {
     const hands = data.hands[view]
     if (!hands || !data.pictures[view]) continue
-    const sides = (view === 'front' ? ['left', 'right'] : [view]) as ('left' | 'right')[]
+    const sides = (view === 'left' || view === 'right' ? [view] : ['left', 'right']) as ('left' | 'right')[]
     for (const s of sides) {
       if (hands[s] && !hands[s].found) out.push(`No ${s} hand was found in the ${SIDE_NAMES[view].toLowerCase()} picture, so it has no fingertip marks.`)
     }
@@ -198,7 +238,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
       .then((d) => {
         if (!live) return
         setData(d)
-        if (!d.pictures.left && d.pictures.right) setSide('right')
+        if (!d.pictures.left) setSide(VIEW_ORDER.find((v) => v !== 'front' && d.pictures[v]) ?? 'left')
       })
       .catch((e: unknown) => {
         if (!live) return
@@ -227,13 +267,15 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
   if (hidden) return null
   const asks = data?.to_check ?? []
   const stale = data?.stale ?? []
-  const notes = data ? handNotes(data) : []
-  const yours = !!data && Object.values(data.marks).some((v) => Object.values(v ?? {}).some((m) => m.source === 'you'))
-  // The front and the chosen side, small on the card; either opens enlarged in the app's picture viewer with the marks
-  // still drawn and draggable (left and right arrows there step between the two, unless a mark has the focus).
   const pair = data ? (['front', side] as MarkView[]).filter((v) => data.pictures[v]?.path) : []
+  const notes = data ? handNotes(data, pair) : []
+  const yours = !!data && Object.values(data.marks).some((v) => Object.values(v ?? {}).some((m) => m.source === 'you'))
+  // The front and the chosen picture, small on the card; either opens enlarged in the app's picture viewer, which steps
+  // through all of this version's pictures (left and right arrows, unless a mark has the focus) with the marks still
+  // drawn and draggable and the marks it did not see ready to place.
+  const all = data ? VIEW_ORDER.filter((v) => data.pictures[v]?.path) : []
   const enlarged: PictureItem[] = data
-    ? pair.map((v) => ({
+    ? all.map((v) => ({
         src: libraryUrl(data.pictures[v]!.path)!,
         label: `${SIDE_NAMES[v]} picture, body marks`,
         size: data.pictures[v]!.size,
@@ -242,6 +284,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
           <div className="row-between small">
             <span className="muted">{locked ? 'The marks of this version cannot be changed.' : 'Drag a mark to move it, or select it and use the arrow keys (Shift for bigger steps).'}</span>
             <Legend />
+            <NotSeen data={data} view={v} busy={busy || !!locked} onMove={onMove} />
           </div>
         ),
       }))
@@ -249,7 +292,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
   return (
     <section className={'body-marks' + (data ? ` body-marks-${data.state}` : '')} aria-busy={busy || !data}>
       <div className="view-intro view-intro-flush muted small">
-        <strong>Mark the body</strong> <Info term="term.body_marks" /> Where the joints are on the front and side pictures.
+        <strong>Mark the body</strong> <Info term="term.body_marks" /> Where the joints are on each picture. Left and right are always the person's own, so on the back their left is on your left.
         {locked ? '' : ' Drag a mark to move it.'}
       </div>
       {!data && !error && <div className="muted small">Finding the marks...</div>}
@@ -279,8 +322,8 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
             )}
           </div>
           <div className="viewer-toolbar">
-            <span className="muted small">Side picture:</span>
-            {(['left', 'right'] as MarkView[]).filter((v) => data.pictures[v]).map((v) => (
+            <span className="muted small">Second picture:</span>
+            {VIEW_ORDER.filter((v) => v !== 'front' && data.pictures[v]).map((v) => (
               <button key={v} type="button" aria-pressed={side === v} onClick={() => setSide(v)}>
                 {SIDE_NAMES[v]}
               </button>
@@ -288,8 +331,8 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
             <Legend />
           </div>
           <div className="body-marks-pictures">
-            {pair.map((v, i) => (
-              <MarkedPicture key={v} data={data} view={v} busy={busy || !!locked} onMove={onMove} onOpen={() => setOpen(i)} />
+            {pair.map((v) => (
+              <MarkedPicture key={v} data={data} view={v} busy={busy || !!locked} onMove={onMove} onOpen={() => setOpen(all.indexOf(v))} />
             ))}
           </div>
           {open !== null && <PictureViewer items={enlarged} start={open} checker onClose={() => setOpen(null)} />}

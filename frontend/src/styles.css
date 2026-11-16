@@ -4455,3 +4455,8 @@ button.preset-card:hover:not(:disabled) {
 .your-library li { overflow-wrap: anywhere; }
 .your-library .row-between { flex-wrap: wrap; gap: var(--s2); }
 .your-library-actions { display: inline-flex; gap: var(--s2); margin-left: var(--s2); }
+/* Mark the body: the marks the app could not see on a picture, each with a button to place it */
+.body-marks-unseen { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.body-marks-unseen .chip { cursor: pointer; }
+.picture-viewer-foot .body-marks-unseen { flex-basis: 100%; }
+.picture-viewer-foot .row-between { flex-wrap: wrap; gap: 6px; }
