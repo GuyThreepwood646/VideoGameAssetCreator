@@ -355,3 +355,29 @@ def test_a_thin_strip_no_picture_painted_takes_the_paint_round_it_and_a_large_ar
     assert k[strip & mid].min() > 0.95 and np.abs(col[strip & mid] - [0.8, 0.6, 0.5]).max() < 0.01
     assert k[large & mid & (x > 0.1)].max() < 0.05  # the inside of the large area is left as it was
     assert k[(alpha > 0.5)].max() == 0.0  # painted texels are never touched
+
+
+def test_front_half_keeps_the_yaws_near_the_front() -> None:
+    assert srcproject.front_half([0, 10, 90, 100, 110, 180, 250, 260, 350], 0.0) == [-100.0, -10.0, 0.0, 10.0, 90.0, 100.0]
+    assert srcproject.front_half(list(range(0, 360, 10)), 20.0)[0] == pytest.approx(-80.0)
+    assert all(abs(y - 20.0) <= srcproject.FRONT_HALF for y in srcproject.front_half(list(range(0, 360, 10)), 20.0))
+
+
+def test_with_the_facing_decided_the_front_pictures_are_fitted_on_the_front_half_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Low-poly dwarf L2: its original picture, a front view, fitted at 185 degrees by the head's own match on a model
+    whose facing was right, and the true back view was then refused as contradicting it."""
+    asked: dict[str, list[float]] = {}
+    real = srcproject.fit_view
+
+    def spy(mesh, tex, pic, alpha, name, yaws, *a, **k):  # noqa: ANN001
+        asked[name] = [float(y) for y in yaws]
+        return real(mesh, tex, pic, alpha, name, yaws, *a, **k)
+
+    monkeypatch.setattr(srcproject, "fit_view", spy)
+    mesh = model()
+    srcproject.paint(mesh, soft_base(), picture(), source=picture(), size=256, mode="off")
+    assert 180.0 in asked["source"] and 180.0 in asked["picture"]       # not decided: the whole circle, as before
+    srcproject.paint(mesh, soft_base(), picture(), source=picture(), size=256, mode="off", front_known=True, head_yaw=10.0)
+    for n in ("source", "picture"):
+        assert asked[n] and all(abs(srcproject._signed(y - 10.0)) <= srcproject.FRONT_HALF for y in asked[n])
+        assert 10.0 in asked[n] and 190.0 not in asked[n]

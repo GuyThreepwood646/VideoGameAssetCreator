@@ -300,6 +300,15 @@ def _size_fix(c: dict[str, Any]) -> dict[str, Any]:
     return {"stage": "prep", "params": params}
 
 
+FACING_UNSURE = ("The model may face the wrong way: from the outline alone its front and its back look almost the same, and "
+                 "nothing else could tell them apart (the toes: {toes_reason}; the colours of the front and back pictures did not "
+                 "settle it either). It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
+                 "from the front; if the face is on the back of the head, turn it round.")
+FACING_UNSURE_FLAT = ("The model may face the wrong way: the 3D step built it flat, like a card, so its front cannot be told from "
+                      "its back. It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
+                      "from the front; if the face is on the back, turn it round. A flat model may also be worth building again.")
+
+
 def _facing_fix(c: dict[str, Any]) -> dict[str, Any] | None:
     yaw = (c.get("vars") or {}).get("fix_yaw")
     if yaw is None:
@@ -482,13 +491,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "facing_tests": {
         "severity": "warn",
         "ok": "The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.",
-        "fail": ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but its "
+        "fail": lambda c: (FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE) if _var(c, "unsure") else (
+                 "The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but its "
                  "toes say {toes_turn} degrees, {value} degrees apart. Look at the model from the front; if the face is on the back "
                  "of the head, turn it."),
+        "fix_label": lambda c: "Turn it round" if _var(c, "unsure") else "Turn it to face forward",
         "vars": lambda c: {"outline_turn": _var(c, "outline_turn") if _var(c, "outline_turn") is not None else "?",
                            "toes_turn": _var(c, "toes_turn") if _var(c, "toes_turn") is not None else "?"},
         "fix": _facing_fix,
-        "fix_label": "Turn it to face forward",
     },
     "uv_set": {
         "severity": "warn",

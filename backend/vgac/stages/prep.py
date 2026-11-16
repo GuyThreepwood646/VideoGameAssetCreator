@@ -10,7 +10,9 @@ size. height_m, the old knob, is still read from older versions and means the he
 
 Facing (G14): face_yaw "auto" turns the model by the nearest quarter turn to the mesh audit's best fit when the fit
 is trusted (silhouette match at or above the category floor) and within 20 degrees of a quarter turn; a number turns
-it by that many degrees. The facing_tests check reports the outline test and the toes test and whether they agreed.
+it by that many degrees. The facing_tests check reports the outline test and the toes test and whether they agreed,
+and warns when a near-tie could not be settled (facing.decide); the pictures are then painted on the decided front half
+only (srcproject.FRONT_HALF).
 
 Textures on the final model (G05, G03): symmetrize is off unless the version turns it on. When prep changes the
 surface anyway (symmetrize, or a decimation back to the budget) or the version asks (rebake), blender/rebake.py bakes
@@ -141,20 +143,23 @@ def _num(x: float) -> int | float:
 
 
 def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[str, Any] | None,
-                   toes: dict[str, Any] | None = None) -> dict[str, Any]:
+                   toes: dict[str, Any] | None = None, colour: Any = None) -> dict[str, Any]:
     """{face_yaw_applied, face_best_turn, facing_source, face_remainder_deg, and the two tests' numbers (facing.metrics_of)}.
     face_best_turn is None when the mesh audit has no fit or its silhouette match is below the category floor (then
     nothing is checked). The outline test (the mesh audit) decides, with the toes test (`toes`, facing.toes_of_file on
-    the 3D model) as tie-break and second opinion; without toes (not a person, no feet found) it is as it always was.
+    the 3D model) as tie-break and second opinion; without toes (not a person, no feet found) a clear outline stands and a
+    near-tie keeps the side the 3D step built as the front unless the colour of the drawn views says otherwise, and says
+    whether it is sure (facing.decide).
     face_remainder_deg is how far the model still faces from straight ahead after the applied turn (the quarter-turn
-    snap leaves up to 45 degrees), for the face pass."""
+    snap leaves up to 45 degrees), for the face pass. colour: facing.colour_of_files over the drawn front and back views
+    and the mesh audit's renders, for a near-tie the toes cannot settle."""
     m = mesh_metrics or {}
     outline = None
     offset, iou = m.get("silhouette_offset"), m.get("silhouette_iou")
     floor = float(category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
     if offset is not None and iou is not None and float(iou) >= floor:
         outline = quality.best_turn(offset, int(m.get("silhouette_sign") or 1))
-    d = facing.decide(outline, m.get("silhouette_turn_scores"), toes)
+    d = facing.decide(outline, m.get("silhouette_turn_scores"), toes, colour)
     best = d["turn"]
     if face_yaw in (None, "", "auto"):
         applied = quality.auto_turn(best)
@@ -169,6 +174,21 @@ def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[s
     return {"face_yaw_applied": applied, "facing_source": source, "face_remainder_deg": remainder, **facing.metrics_of(d)}
 
 
+def facing_colour(sc: StageContext) -> Any:
+    """facing.colour_of_files for this asset: the drawn front and back views (the bald ones when the hair is the
+    library's, which is what the model was built as) against the mesh audit's renders. None when either is missing."""
+    try:
+        info = sc.lineage_file("views_dir", ("mesh",))
+        bald = hairlib.is_library(sc)
+        pics = {v: (sc.lineage_file(f"bald_{v}_cutout", ("turnaround",)) if bald else None) or sc.lineage_file(f"{v}_cutout", ("turnaround",))
+                for v in ("front", "back")}
+        if bald:
+            pics["back"] = None  # no bald back is drawn, and the drawn back's hair is not on the model
+        return facing.colour_of_files(pics, Path(info).parent if info is not None else None)
+    except Exception:  # noqa: BLE001  (no colour evidence: the facing stands on the outline and the toes)
+        return None
+
+
 async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, reason="material category has no mesh")
@@ -179,7 +199,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     size = resolve_size(sc.asset.category, params, sc.asset.prompt)
     mesh_v = sc.stage_version("mesh")
     toes = await asyncio.to_thread(facing.toes_of_file, src, sc.asset.category)
-    facing_ = resolve_facing(sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None, toes)
+    facing_ = await asyncio.to_thread(resolve_facing, sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None,
+                                      toes, facing_colour(sc))
     # G05 (b): mirroring halves the texture space the model uses and changes the surface the maps were painted for,
     # so it runs only when the version asks (the Fine-tune switch, or a Fix).
     symmetric = bool(params.get("symmetric") or False)
@@ -297,7 +318,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             if fl["relayout"]:
                 sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "face layout"))
         if srcproject.on(params, sc.asset.category, look):
-            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw)
+            # the facing was decided (or chosen by hand): the front pictures are fitted on the front half only
+            front_known = facing_.get("face_best_turn") is not None or facing_.get("facing_source") == "chosen"
+            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
+                                                 front_known=front_known)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
             return await srcproject.run_again(sc, glb_, maps_, body_views)
@@ -1042,6 +1066,10 @@ def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dic
     if m.get("face_outline_turn") is None and not m.get("face_toes_found"):
         return None
     applied = m.get("face_yaw_applied") or 0
+    if m.get("face_decision_sure") is False:
+        # a near-tie nothing settled (facing.decide): it kept the side the 3D step built as the front, and says so
+        return quality.facing_unsure_check(m.get("face_best_turn"), applied, bool(m.get("face_model_flat")),
+                                           str(m.get("face_toes_reason") or ""))
     if m.get("face_toes_found") and m.get("face_tests_differ_deg") is not None:
         return quality.facing_tests_check(m["face_outline_turn"], m["face_toes_turn"], m["face_tests_differ_deg"],
                                           m.get("face_best_turn"), applied)
