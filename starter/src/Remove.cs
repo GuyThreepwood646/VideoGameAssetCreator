@@ -197,23 +197,15 @@ namespace Vgac.Starter
 
         // ---- the fixed folders VGAC makes ------------------------------------------------------------------------------------
 
-        // A folder VGAC made: proven (ledger or marker) and shaped like what it should be. Returns why not, or null.
-        public static string AppFolderProblem(string kind, string path, Ledger ledger)
+        // The folders VGAC makes inside the PROJECT (the app's Python environment, the screens' packages and build): shaped like what
+        // they should be. Items in the data folder are VGAC's by the data folder's marker instead (see DataFolders).
+        public static string AppFolderProblem(string kind, string path)
         {
             if (!Directory.Exists(path)) return null;
             if (SafeFs.IsLink(path)) return "it is a link, not a folder VGAC made";
-            bool needsProof = kind != "node_modules" && kind != "dist" && kind != "leftover";
-            bool contentProof = kind == "webview2" && Directory.Exists(System.IO.Path.Combine(path, "EBWebView"));   // what WebView2 itself writes
-            if (needsProof && !contentProof && !Proof.Ours(ledger, path, kind)) return "VGAC cannot show that it made this folder (no record and no VGAC marker in it)";
             switch (kind)
             {
                 case "venv": return File.Exists(System.IO.Path.Combine(path, "pyvenv.cfg")) ? null : "it does not look like a Python environment";
-                case "python": return FindFile(path, "python.exe", 3) ? null : "it does not hold a Python";
-                case "uv": return File.Exists(System.IO.Path.Combine(path, "uv.exe")) ? null : "it does not hold uv.exe";
-                case "node": return File.Exists(System.IO.Path.Combine(path, "node.exe")) ? null : "it does not hold node.exe";
-                case "uv-cache": return null;
-                case "downloads": return Directory.GetDirectories(path).Length == 0 ? null : "it holds folders, which VGAC's downloads folder never does";
-                case "webview2": return null;
                 case "node_modules": return File.Exists(System.IO.Path.Combine(path, ".package-lock.json")) || Directory.Exists(System.IO.Path.Combine(path, ".bin")) ? null : "it does not look like the screens' packages";
                 case "dist": return File.Exists(System.IO.Path.Combine(path, "index.html")) ? null : "it does not hold the built screens";
                 case "leftover": return null;
@@ -236,7 +228,7 @@ namespace Vgac.Starter
         [ThreadStatic] static HashSet<string> resuming;
         [ThreadStatic] static HashSet<string> replaced;
 
-        static void AddApp(RemovalPlan plan, RemovalGroup g, Ledger ledger, string id, string kind, string path, string what)
+        static void AddApp(RemovalPlan plan, RemovalGroup g, string id, string kind, string path, string what)
         {
             if (!Directory.Exists(path) && !File.Exists(path)) return;
             // A folder whose removal was cut off is half empty and no longer looks like what it was, and its marker may be gone;
@@ -247,11 +239,23 @@ namespace Vgac.Starter
                 return;
             }
             bool wasBeingRemoved = resuming != null && resuming.Contains(SafeFs.Norm(path));
-            string problem = wasBeingRemoved ? (SafeFs.IsLink(path) ? "it is a link, not a folder VGAC made" : null) : AppFolderProblem(kind, path, ledger);
+            string problem = wasBeingRemoved ? (SafeFs.IsLink(path) ? "it is a link, not a folder VGAC made" : null) : AppFolderProblem(kind, path);
             if (problem != null) { plan.NotRemoved.Add(path + ": " + problem); return; }
             var it = new RemovalItem(); it.Id = id; it.GroupId = g.Id; it.Kind = "app-folder"; it.Path = path; it.What = what;
             it.Bytes = SafeFs.Size(path, null);
             it.Tag = kind;
+            g.Items.Add(it);
+        }
+
+        // A fixed-name folder inside the claimed data folder: whole, by its real place inside it, never through a link.
+        static void AddData(RemovalPlan plan, RemovalGroup g, Layout l, string id, string rel, string what)
+        {
+            string path = System.IO.Path.Combine(l.DataFolder, rel);
+            if (!Directory.Exists(path) && !File.Exists(path)) return;
+            if (SafeFs.IsLink(path) || !SafeFs.PathHasNoLink(path)) { plan.NotRemoved.Add(path + ": it is, or is reached through, a link"); return; }
+            if (!SafeFs.Inside(path, l.DataFolder)) { plan.NotRemoved.Add(path + ": it is not inside the folder for the big files"); return; }
+            var it = new RemovalItem(); it.Id = id; it.GroupId = g.Id; it.Kind = "data-folder"; it.Path = path; it.What = what; it.Tag = rel;
+            it.Bytes = SafeFs.Size(path, null);
             g.Items.Add(it);
         }
 
@@ -267,17 +271,40 @@ namespace Vgac.Starter
             // 1. the app's Python, tools and screens
             var g1 = new RemovalGroup(); g1.Id = "tools"; g1.Title = "The app's Python, tools and screens"; g1.DefaultOn = true;
             g1.Sentence = "What VGAC set up so the app can run. VGAC.exe makes all of it again next time.";
-            AddApp(plan, g1, ledger, "venv", "venv", l.Venv, "The app's Python environment");
-            AddApp(plan, g1, ledger, "python", "python", l.PythonDir, "The private Python");
-            AddApp(plan, g1, ledger, "uv", "uv", System.IO.Path.GetDirectoryName(l.UvExe), "The package tool (uv)");
-            AddApp(plan, g1, ledger, "node", "node", l.NodeDir, "Node.js (used to build the screens)");
-            AddApp(plan, g1, ledger, "uvcache", "uv-cache", l.UvCache, "uv's download cache");
-            AddApp(plan, g1, ledger, "downloads", "downloads", l.Downloads, "Files being downloaded");
-            AddApp(plan, g1, ledger, "webview2", "webview2", System.IO.Path.Combine(data, "webview2"), "The app window's data");
-            AddApp(plan, g1, ledger, "node_modules", "node_modules", System.IO.Path.Combine(l.FrontendDir, "node_modules"), "The screens' packages");
-            AddApp(plan, g1, ledger, "dist", "dist", System.IO.Path.Combine(l.FrontendDir, "dist"), "The built screens");
-            foreach (string left in Repair.Leftovers(l, ledger))
-                if (Directory.Exists(left) || File.Exists(left)) AddApp(plan, g1, ledger, "left:" + System.IO.Path.GetFileName(left), "leftover", left, "A leftover of an interrupted job");
+            AddApp(plan, g1, "venv", "venv", l.Venv, "The app's Python environment");
+            AddApp(plan, g1, "node_modules", "node_modules", System.IO.Path.Combine(l.FrontendDir, "node_modules"), "The screens' packages");
+            AddApp(plan, g1, "dist", "dist", System.IO.Path.Combine(l.FrontendDir, "dist"), "The built screens");
+            // the folder for the big files: VGAC's only when its marker matches this install's settings (necessary, not sufficient: each
+            // item is also a real place inside it, never a link)
+            DataStatus ds = DataFolders.Check(data, machine, l.ProjectRoot);
+            bool dataOurs = ds.State == DataState.Ours;
+            if (dataOurs)
+            {
+                AddData(plan, g1, l, "uv", "tools\\uv", "The package tool (uv)");
+                AddData(plan, g1, l, "node", "tools\\node", "Node.js (used to build the screens)");
+                AddData(plan, g1, l, "python", "python", "The private Python");
+                AddData(plan, g1, l, "uvcache", "uv-cache", "uv's download cache");
+                AddData(plan, g1, l, "downloads", "downloads", "Files being downloaded");
+                AddData(plan, g1, l, "webview2", "webview2", "The app window's data");
+                if (Directory.Exists(data))
+                {
+                    var left = new List<string>();
+                    foreach (string e in Directory.GetFileSystemEntries(data))
+                    {
+                        string name = System.IO.Path.GetFileName(e);
+                        if (!DataFolders.IsFixedName(name) && !string.Equals(name, DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase)) left.Add(name);
+                    }
+                    if (left.Count > 0) plan.Notes.Add("Left for you in the folder for the big files (" + data + "), because they are not VGAC's: " + string.Join(", ", left.ToArray()) + ".");
+                }
+            }
+            else if (Directory.Exists(data) && DataFolders.FixedNamesPresent(data))
+                plan.NotRemoved.Add(data + ": " + ds.Why + " Nothing in it is removed. Use 'Use this folder for VGAC only' in Check and repair if it holds only VGAC's own folders.");
+            foreach (string left in Repair.Leftovers(l, dataOurs))
+            {
+                if (!Directory.Exists(left) && !File.Exists(left)) continue;
+                if (SafeFs.Inside(left, data) && dataOurs) AddData(plan, g1, l, "left:" + System.IO.Path.GetFileName(left), left.Substring(data.TrimEnd('\\').Length + 1), "A leftover of an interrupted job");
+                else if (!SafeFs.Inside(left, data)) AddApp(plan, g1, "left:" + System.IO.Path.GetFileName(left), "leftover", left, "A leftover of an interrupted job");
+            }
             plan.Groups.Add(g1);
 
             // 2. the app's own ComfyUI: by the install record's owned list only, never what it keeps
@@ -370,18 +397,21 @@ namespace Vgac.Starter
                 if (why != null) plan.NotRemoved.Add(lib + ": " + why);
                 else
                 {
-                    // only what the app made in it, entry by entry; the folder and anything else in it stay
+                    // A library is touched only when it is dedicated: every entry at its top is something the app makes. If anything else is
+                    // there (a person's own folders, even one called "projects"), nothing in it is removed.
                     var others = new List<string>();
-                    foreach (string e in Directory.GetFileSystemEntries(lib))
-                    {
-                        string name = System.IO.Path.GetFileName(e);
-                        if (!IsLibraryName(name)) { others.Add(name); continue; }
-                        if (SafeFs.IsLink(e)) { plan.NotRemoved.Add(e + ": it is a link"); continue; }
-                        var it = new RemovalItem(); it.Id = "work:library:" + name; it.GroupId = "work"; it.Kind = "work-library"; it.Path = e; it.What = "Your library: " + name;
-                        it.IsFile = File.Exists(e); it.Bytes = SafeFs.Size(e, null);
-                        g6.Items.Add(it);
-                    }
-                    if (others.Count > 0) plan.Notes.Add("Left in your library folder (" + lib + ") because VGAC did not make them: " + string.Join(", ", others.ToArray()) + ". The folder itself stays.");
+                    foreach (string e in Directory.GetFileSystemEntries(lib)) if (!IsLibraryName(System.IO.Path.GetFileName(e))) others.Add(System.IO.Path.GetFileName(e));
+                    if (others.Count > 0)
+                        plan.NotRemoved.Add(lib + ": it also holds things VGAC did not make (" + string.Join(", ", others.ToArray()) + "), so nothing in it is removed. Delete what you want gone yourself.");
+                    else
+                        foreach (string e in Directory.GetFileSystemEntries(lib))
+                        {
+                            string name = System.IO.Path.GetFileName(e);
+                            if (SafeFs.IsLink(e)) { plan.NotRemoved.Add(e + ": it is a link"); continue; }
+                            var it = new RemovalItem(); it.Id = "work:library:" + name; it.GroupId = "work"; it.Kind = "work-library"; it.Path = e; it.What = "Your library: " + name;
+                            it.IsFile = File.Exists(e); it.Bytes = SafeFs.Size(e, null);
+                            g6.Items.Add(it);
+                        }
                 }
             }
             string exp = ExportFolder(l, machine);
@@ -448,7 +478,12 @@ namespace Vgac.Starter
                 case "app-folder":
                     if (RemovalRunner.InProgress(l.ProjectRoot).Exists(delegate(string p) { return SafeFs.Norm(p) == SafeFs.Norm(it.Path); }))
                         return SafeFs.IsLink(it.Path) ? "it is a link, not a folder VGAC made" : null;
-                    return AppFolderProblem(it.Tag, it.Path, ledger);
+                    return AppFolderProblem(it.Tag, it.Path);
+                case "data-folder":
+                    // the marker must still match, and the item must still be a real place inside the data folder
+                    if (DataFolders.Check(l.DataFolder, machine, l.ProjectRoot).State != DataState.Ours) return "the folder for the big files is not shown to be VGAC's";
+                    if (SafeFs.IsLink(it.Path) || !SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
+                    return SafeFs.Inside(it.Path, l.DataFolder) ? null : "it is not inside the folder for the big files";
                 case "comfy-owned":
                     string kw = KeptProblem(it.Path, comfy.Root(l.DataFolder), comfy.Kept(l.DataFolder));
                     if (kw != null) return kw;
@@ -511,6 +546,7 @@ namespace Vgac.Starter
             }
             sb.AppendLine();
             sb.AppendLine("Total: " + Size(total) + " will be freed.");
+            sb.AppendLine("Each folder named above is removed whole, with everything in it. Anything else in the folder for the big files is left for you.");
             sb.AppendLine("If the Recycle Bin cannot be used for an item, it is not deleted: you are asked whether to delete it for good.");
             sb.AppendLine("Links are unlinked, never followed: nothing outside the folders listed is touched.");
             sb.AppendLine("Not touched: the project folder, VGAC.exe, your own ComfyUI, Blender, Unity, models you added yourself, anything VGAC did not make.");
@@ -691,7 +727,17 @@ namespace Vgac.Starter
         {
             string tools = System.IO.Path.Combine(l.DataFolder, "tools");
             if (touched.Contains(SafeFs.Norm(tools))) TryRemoveEmpty(tools);
-            if (ledger.Has(l.DataFolder, "folder") && !Proof.IsDangerousFolder(l.DataFolder) && TryRemoveEmpty(l.DataFolder)) { ledger.RemoveUnder(l.DataFolder); ledger.Save(); log.Line("remove: the empty folder VGAC made for the big files was removed"); }
+            // the folder VGAC made itself goes too, when nothing but its own marker is left in it
+            if (ledger.Has(l.DataFolder, "folder") && !Proof.IsDangerousFolder(l.DataFolder) && Directory.Exists(l.DataFolder) && !SafeFs.IsLink(l.DataFolder))
+            {
+                bool onlyMarker = true;
+                foreach (string e in Directory.GetFileSystemEntries(l.DataFolder)) if (!string.Equals(System.IO.Path.GetFileName(e), DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase)) onlyMarker = false;
+                if (onlyMarker)
+                {
+                    try { File.Delete(System.IO.Path.Combine(l.DataFolder, DataFolders.MarkerName)); } catch (Exception) { }
+                    if (TryRemoveEmpty(l.DataFolder)) { ledger.RemoveUnder(l.DataFolder); ledger.Save(); log.Line("remove: the empty folder VGAC made for the big files was removed"); }
+                }
+            }
         }
 
         static bool TryRemoveEmpty(string dir)

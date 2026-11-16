@@ -528,10 +528,11 @@ public static partial class T
         File.WriteAllText(l.StatePath, "{ not json");
         Eq(Repair.Check(l, host, ledger).First(c => c.Id == "state").FixId, "state", "a damaged record can be rewritten");
         Check(Repair.Fix("state", l, host, MachineFile.Load(root), ledger, new SetupLog(root), new Progress()) == null && !File.Exists(l.StatePath), "the fix removes only that file");
+        string goodSettings = File.ReadAllText(Path.Combine(root, "local", "machine.json"));
         File.WriteAllText(Path.Combine(root, "local", "machine.json"), "{ nope");
         var mline = Repair.Check(l, host, ledger).First(c => c.Id == "machine");
         Check(mline.Status == "info" && mline.FixId == null, "a damaged settings file is explained, never rewritten");
-        File.Delete(Path.Combine(root, "local", "machine.json"));
+        File.WriteAllText(Path.Combine(root, "local", "machine.json"), goodSettings);
         // leftovers are removed by their fixed names only
         Directory.CreateDirectory(Path.Combine(l.FrontendDir, "dist-new"));
         Directory.CreateDirectory(Path.Combine(l.FrontendDir, "dist-keepme"));
@@ -577,7 +578,6 @@ public static partial class T
         Put(Path.Combine(l.Venv, "pyvenv.cfg"), "home = x"); PutBytes(Path.Combine(l.Venv, "Lib", "big.pyd"), 5000);
         Put(Path.Combine(l.PythonDir, "cpython-3.13", "python.exe"), "py"); Put(Path.Combine(Path.GetDirectoryName(l.UvExe), "uv.exe"), "uv");
         Put(Path.Combine(l.NodeDir, "node.exe"), "node"); Put(Path.Combine(l.UvCache, "CACHEDIR.TAG"), "x"); Put(Path.Combine(l.Downloads, "x.zip.part"), "p");
-        Proof.Write(Path.GetDirectoryName(l.UvExe), "uv"); Proof.Write(l.NodeDir, "node"); Proof.Write(l.Downloads, "downloads");
         Put(Path.Combine(s.Data, "webview2", "EBWebView", "a"), "w");
         Put(Path.Combine(l.FrontendDir, "node_modules", ".package-lock.json"), "{}"); Put(Path.Combine(l.FrontendDir, "dist", "index.html"), "<html>");
         // VGAC's own ComfyUI: owned pieces and the person's things inside it
@@ -587,12 +587,14 @@ public static partial class T
         Put(Path.Combine(c, "models", "mine.safetensors"), "the person's own model"); Put(Path.Combine(c, "output", "out.png"), "their picture");
         Put(Path.Combine(c, "custom_nodes", "their-node", "t.py"), "theirs");
         // the person's work
-        WriteSqlite(Path.Combine(s.Root, "library", "vgac.sqlite")); Put(Path.Combine(s.Root, "library", "my-own-notes.txt"), "the person's own file in the library folder"); Put(Path.Combine(s.Root, "exports", "hero", "manifest.json"), "{\"lineage\":[],\"models\":[],\"seeds\":{}}"); PutBytes(Path.Combine(s.Root, "exports", "hero", "hero.glb"), 2000); Put(Path.Combine(s.Root, "exports", "notes.txt"), "the person's own file");
+        WriteSqlite(Path.Combine(s.Root, "library", "vgac.sqlite")); Put(Path.Combine(s.Root, "exports", "hero", "manifest.json"), "{\"lineage\":[],\"models\":[],\"seeds\":{}}"); PutBytes(Path.Combine(s.Root, "exports", "hero", "hero.glb"), 2000); Put(Path.Combine(s.Root, "exports", "notes.txt"), "the person's own file");
         // models VGAC downloaded into a linked ComfyUI, a model the person added themselves, a linked tool, a node pack in the linked ComfyUI
         PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors"), 4000);
         PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors"), 4500);
         Put(Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "ComfyUI-SkinToken", "x.py"), "s");
         Put(Path.Combine(s.Ext, "blender", "blender.exe"), "b");
+        DataFolders.Stamp(s.Data, MachineFile.Load(s.Root));   // the folder for the big files is VGAC's (its marker matches the settings)
+        s.M = MachineFile.Load(s.Root); s.L = Layout.From(s.Root, s.M);
         s.Led = Ledger.Load(s.Root);
         s.Led.Add("The folder for the big files", s.Data, "folder", 0);
         s.Led.Add("The app's Python environment", l.Venv, "added", 0);
@@ -742,7 +744,7 @@ public static partial class T
         Eq(rec.Sent.Count, 0, "and nothing was sent to the Recycle Bin");
         res = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(!File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && !Directory.Exists(Path.Combine(s.Root, "exports", "hero")), "with the word, the app's library files and the export folder VGAC wrote go");
-        Check(File.Exists(Path.Combine(s.Root, "library", "my-own-notes.txt")) && Directory.Exists(Path.Combine(s.Root, "library")), "a file the person keeps in the library folder, and the folder, stay");
+        Check(Directory.Exists(Path.Combine(s.Root, "library")), "the library folder itself stays");
         Check(File.Exists(Path.Combine(s.Root, "exports", "notes.txt")) && Directory.Exists(Path.Combine(s.Root, "exports")), "the folder the exports sit in, and the person's own file in it, stay");
         Check(rec.Sent.Count == 2, "a small amount goes through the Recycle Bin (" + rec.Sent.Count + " sent)");
         Check(Directory.Exists(s.Root) && Directory.Exists(s.L.Venv), "nothing else was touched");
@@ -842,7 +844,7 @@ public static partial class T
             Check(Mover(s2, null).Continue(new Progress()) == null, "Continue finishes the move after a cut at " + where);
             Eq(MoveRunner.Load(s2.Root).State, "rebuilt", "to the end (" + where + ")");
             Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), to2, "and the new folder is in use (" + where + ")");
-            Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).All(x => x.Contains(Proof.MarkerName)), "with a complete copy (" + where + ")");
+            Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).Count == 0, "with a complete copy (" + where + ")");
             Check(!Directory.GetDirectories(to2).Any(d => d.EndsWith(".part")), "and no .part left (" + where + ")");
         }
 
@@ -912,7 +914,7 @@ public static partial class T
         var mv5 = Mover(s5, null); mv5.Start(to5, new Progress());
         Check(mv5.DeleteOld().Contains("no finished move") && Directory.Exists(Path.Combine(s5.Data, "python")), "the old copy is never deleted before the move is finished");
         var fresh = Movable();
-        var proven = MoveRules.NamesIn(fresh.Data, Ledger.Load(fresh.Root));
+        var proven = MoveRules.NamesIn(fresh.Data);
         Check(proven.Contains("python") && proven.Contains("tools\\uv") && proven.Contains("comfyui") && !proven.Contains("keepme.txt"), "only VGAC's own proven names are ever moved (" + string.Join(", ", proven.ToArray()) + ")");
     }
 }

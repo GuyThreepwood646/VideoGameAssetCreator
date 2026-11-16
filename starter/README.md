@@ -96,30 +96,36 @@ program has open.
   files just pulled) and say yes. A second update does not replace a VGAC.old.exe that is your own build.
   **If you update by hand in a terminal, close VGAC first, then pull.** A pull that stopped halfway is noticed at the next start
   ("A pull did not finish. Close VGAC, then pull again.").
-- Move the big files: copies the folders VGAC made in the data folder (tools\uv, tools\node, python, uv-cache, downloads, webview2,
-  comfyui without its Python) to another folder or drive, checks every file by size and SHA-256, and only then switches (one file
-  write). Only folders VGAC can prove it made are moved (the install record, or a marker file VGAC wrote in them); a folder that only
-  has the same name is left alone, and a move with nothing proven does nothing. A folder that holds a link (junction) is not moved.
-  Until the switch the old place is whole and in use. VGAC only sets up in, stamps or records a folder it made itself (it was new or empty); a folder that already holds your files
-  with the same name (downloads, python, tools\node, ...) stops setup with a plain message and is never touched. Each marker file also
-  records the folder it belongs to, so a copied marker proves nothing. The folder for the big files is checked at every start. Interrupted at any point, the next start offers to continue or cancel
-  (`local/move.json`; a journal that does not fit this install is set aside, never acted on). Cancel before the switch removes only what
-  the move copied. Cancel after the switch only points the settings back: the new copy is left alone, because the app may have written
-  to it. The old copy is deleted only after you confirm and after every file is compared with the new copy again; "Keep both copies"
-  closes the move without deleting anything. A folder for the big files must be one just for VGAC: a whole drive, your profile,
-  Documents, Downloads or a system folder is refused.
-- Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Only what
-  VGAC can prove it made is listed (the install record, or its marker in the folder); anything else is listed as "cannot show that
-  VGAC made it" and left alone. Ticked by default: the app's Python, tools and screens, and VGAC's own ComfyUI (its own files only;
-  models, outputs and your own custom nodes inside it stay). Not ticked: models and packs VGAC downloaded, node packs it put into a
-  ComfyUI you linked, its settings, and your own work (the word REMOVE must be typed). Your own work is only what VGAC's app made in
-  its library folder (the database vgac.sqlite, which must really be an SQLite file, and the projects, hair, moves and settings files it
-  keeps there; anything else in that folder stays, and so does the folder) and each export folder that holds VGAC's manifest.json, one by
-  one: the folder an export sits in (for example a Unity project's Assets) is never removed. Links are unlinked, never followed. Small amounts go to the Recycle Bin;
-  more than 2 GB, or a drive that is not a fixed local one, is deleted for good and the list says so per item. If the Recycle Bin cannot
-  take an item it is NOT deleted: you are asked (the answer is No unless you click Yes) whether to delete exactly those items for good.
-  A folder with a link inside is never sent to the bin, and the list says so for that item. The project folder, VGAC.exe and anything VGAC did not
-  make are never touched.
+- The folder for the big files is VGAC's only when it carries one marker file (`.vgac-data.json`) whose random id is also in
+  `local/machine.json` (`starter.dataFolderId`). VGAC claims a folder that is new or empty, before any setup step puts anything in it.
+  Inside a claimed folder the fixed names (tools\uv, tools\node, python, uv-cache, downloads, webview2, comfyui, and their .old and
+  .new leftovers) are VGAC's, and removed or moved whole; anything else in the folder is left for you and named in the summary. A
+  missing or damaged marker, or another id, means "not ours": nothing is deleted or moved. There are no paths in the marker or the id, so
+  moving the project folder, renaming the data folder (edit the setting) or changing a drive letter keeps it ours. An install made by
+  an earlier version has no marker: Check and repair (or the screen setup shows when it needs the folder) offers "Use this folder for
+  VGAC only" with the exact list, but only when every entry is a fixed name with the shape only VGAC's setup makes (uv's Python folder
+  that VGAC's own Python environment uses, uv's cache with its tag, uv.exe and node.exe, only the setup's own downloads, only the
+  window's EBWebView folder, ComfyUI with the backend's marker). Otherwise it offers another folder. A whole drive, your profile,
+  Documents, Downloads, Public, Program Files, the project or a part of it are never accepted (checked by real path, at every start).
+- Move the big files: copies the fixed-name folders of a claimed data folder (comfyui without its Python) to another folder or
+  drive, checks every file by size and SHA-256, and only then switches (one file write). The new place is claimed (same id) when the move
+  begins. A folder that holds a link leading outside it is not moved; links between places inside one folder (uv's Python keeps some)
+  are copied as links. Until the switch the old place is whole and in use. Interrupted at any point, the next start offers to continue
+  or cancel (`local/move.json`; a journal whose two places do not both fit this install is set aside, never acted on). Cancel before
+  the switch removes only what the move copied into the new place it claimed. Cancel after the switch only points the settings back:
+  the new copy is left alone, because the app may have written to it. The old copy is deleted only after you confirm and after every file
+  is compared with the new copy again; "Keep both copies" closes the move without deleting anything.
+- Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Items in the
+  data folder are listed only when it is VGAC's (its marker matches); otherwise the list says why and nothing in it is removed. Ticked by
+  default: the app's Python, tools and screens, and VGAC's own ComfyUI (its own files only; models, outputs and your own custom nodes
+  inside it stay). Not ticked: models and packs VGAC downloaded, node packs it put into a ComfyUI you linked, its settings, and your own
+  work (the word REMOVE must be typed). Your own work is a library folder that holds ONLY things the app makes (its database vgac.sqlite,
+  which must really be an SQLite file, and the app's own projects, hair, moves and settings entries): if anything else is in that folder,
+  nothing in it is removed. Exports are removed one export folder at a time, only those holding VGAC's manifest.json; the folder an export
+  sits in (for example a Unity project's Assets) is never removed. Links are unlinked, never followed. Small amounts go to the Recycle Bin;
+  more than 2 GB, a drive that is not a fixed local one, or a folder with a link inside is deleted for good, and the list says so per item.
+  If the Recycle Bin cannot take an item it is NOT deleted: you are asked (the answer is No unless you click Yes) whether to delete exactly
+  those items for good. The project folder, VGAC.exe and anything VGAC did not make are never touched.
 
 Test switches: `VGAC.exe --exit-after <ms> --state-out <file>` quits by itself without asking (but not while an owned backend has jobs running) and writes what the status
 window showed; `--keep-status` keeps the status window open next to the app.

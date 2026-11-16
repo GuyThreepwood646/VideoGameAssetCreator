@@ -135,6 +135,14 @@ namespace Vgac.Starter
         void DoFix(List<CheckLine> todo)
         {
             if (todo.Count == 0) { status.Text = "Nothing to fix there."; return; }
+            // Adopting a folder is never done silently, not even by "Fix everything": the person sees exactly what will be treated as VGAC's.
+            if (todo.Any(c => c.FixId == "adopt"))
+            {
+                DataStatus ds = DataFolders.Check(host.Lay.DataFolder, MachineFile.Load(host.Lay.ProjectRoot), host.Lay.ProjectRoot);
+                string list = ds.Adoptable ? string.Join("\r\n   - ", ds.AdoptList.ToArray()) : "(nothing: it can no longer be adopted)";
+                bool yes = ds.Adoptable && MessageBox.Show(this, "Use " + host.Lay.DataFolder + " for VGAC only?\r\n\r\nVGAC will treat ONLY these as its own, and Remove and Move will act on them (they are removed or moved whole):\r\n   - " + list + "\r\n\r\nNothing else in the folder is touched.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+                if (!yes) { todo = todo.Where(c => c.FixId != "adopt").ToList(); if (todo.Count == 0) { status.Text = "The folder was not adopted."; return; } }
+            }
             bool needsStop = todo.Any(c => c.FixId == "venv" || c.FixId == "packages" || c.FixId == "uv" || c.FixId == "screens");
             if (needsStop && !host.Quiesce(this, "fix")) return;
             Run(delegate

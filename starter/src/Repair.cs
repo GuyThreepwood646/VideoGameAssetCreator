@@ -19,10 +19,16 @@ namespace Vgac.Starter
 
     public static class Recovery
     {
-        // The tools folder is VGAC's when uv or Node next to the leftover is proven (ledger or marker).
-        public static bool ToolsProven(Layout l, Ledger led)
+        // The settings file, or an empty one when it cannot be read (then nothing is shown to be VGAC's).
+        public static MachineFile SettingsOrEmpty(string root)
         {
-            return Proof.Ours(led, Path.GetDirectoryName(l.UvExe), "uv") || Proof.Ours(led, l.NodeDir, "node");
+            try { return MachineFile.Load(root); } catch (StarterError) { return new MachineFile(); }
+        }
+
+        // The folder for the big files is VGAC's (its marker matches the settings): fixed-name leftovers inside it are VGAC's too.
+        public static bool DataOurs(Layout l)
+        {
+            return DataFolders.Check(l.DataFolder, SettingsOrEmpty(l.ProjectRoot), l.ProjectRoot).State == DataState.Ours;
         }
 
         // Run at every start before anything reads these folders: finishes or undoes what an interrupted job left.
@@ -38,22 +44,22 @@ namespace Vgac.Starter
                 if (File.Exists(l.VenvPython)) { SafeFs.DeleteTree(venvOld); notes.Add("A leftover of an earlier Python rebuild was removed."); }
                 else if (!Directory.Exists(l.Venv)) { SafeFs.MoveDir(venvOld, l.Venv); notes.Add("A Python rebuild that was cut off was undone; the earlier Python is back."); }
             }
+            bool dataOurs = DataOurs(l);
             foreach (string target in new[] { Path.GetDirectoryName(l.UvExe), l.NodeDir })
             {
                 string aside = target + ".old";
-                if (!Directory.Exists(aside) || SafeFs.IsLink(aside)) continue;
-                // the old folder is the tool that was put aside: it carries the marker or is listed in the ledger as that path
-                if (!(Proof.Read(aside) != null || Ledger.Load(l.ProjectRoot).Has(target, "added"))) continue;
+                if (!dataOurs || !Directory.Exists(aside) || SafeFs.IsLink(aside)) continue;   // fixed names inside VGAC's own folder only
                 bool ok = File.Exists(Path.Combine(target, target == l.NodeDir ? "node.exe" : "uv.exe"));
                 if (ok) { SafeFs.DeleteTree(aside); notes.Add("A leftover of an earlier tool update was removed."); }
                 else if (!Directory.Exists(target)) { SafeFs.MoveDir(aside, target); notes.Add("A tool update that was cut off was undone."); }
             }
-            // half-unpacked tool folders: the two fixed names only, and only when the tools next to them are proven VGAC's
-            var led = Ledger.Load(l.ProjectRoot);
+            // half-unpacked tool folders: the two fixed names only, and only inside the folder that is VGAC's
             foreach (string half in new[] { Path.GetDirectoryName(l.UvExe) + ".new", l.NodeDir + ".new" })
-                if (Directory.Exists(half) && !SafeFs.IsLink(half) && ToolsProven(l, led)) { SafeFs.DeleteTree(half); notes.Add("A half-unpacked tool folder was removed."); }
+                if (dataOurs && Directory.Exists(half) && !SafeFs.IsLink(half)) { SafeFs.DeleteTree(half); notes.Add("A half-unpacked tool folder was removed."); }
             if (exePath != null)
             {
+                string exeDir = Path.GetDirectoryName(exePath);
+                if (File.Exists(Path.Combine(exeDir, "VGAC.exe"))) ExeAside.ClearRestoreNote(l.ProjectRoot);   // nothing is missing: the note would mislead
                 string rec = ExeAside.RecoverMissing(exePath, l.ProjectRoot);
                 if (rec != null) notes.Add(rec);
                 string e = ExeAside.CleanupAtStart(exePath, l.ProjectRoot);
@@ -98,7 +104,7 @@ namespace Vgac.Starter
                 catch (Exception) { res.Add(new CheckLine("state", "fix", "The record of what the install was made from is damaged. It can be written again (the steps run again once).", "state")); }
             }
             // leftovers of interrupted jobs, by their fixed names only
-            var left = Leftovers(l, ledger);
+            var left = Leftovers(l, Recovery.DataOurs(l));
             if (left.Count > 0) res.Add(new CheckLine("leftovers", "fix", left.Count + " leftover item(s) from an interrupted job can be removed: " + string.Join(", ", left.ConvertAll<string>(delegate(string p) { return Path.GetFileName(p); }).ToArray()) + ".", "leftovers"));
             // what is not VGAC's to repair
             int linked = 0;
@@ -109,8 +115,13 @@ namespace Vgac.Starter
 
         static CheckLine DataFolderLine(Layout l, IHost host)
         {
-            string unfit = Proof.DataFolderProblem(l.DataFolder, l.ProjectRoot);
-            if (unfit != null) return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") is not one VGAC will set up, move or remove in. " + unfit + " Change starter.dataFolder in local\\machine.json.", null);
+            DataStatus ds = DataFolders.Check(l.DataFolder, Recovery.SettingsOrEmpty(l.ProjectRoot), l.ProjectRoot);
+            if (ds.State == DataState.NotOurs)
+            {
+                if (ds.Problem) return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") is not one VGAC will set up, move or remove in. " + ds.Why + " Choose another folder (Move the big files, or starter.dataFolder in local\\machine.json).", null);
+                if (ds.Adoptable) return new CheckLine("data", "fix", "The folder for the big files (" + l.DataFolder + ") is not marked as VGAC's yet, but it holds nothing except what looks like VGAC's own folders. It can be adopted: Remove and Move will then act on " + string.Join(", ", ds.AdoptList.ToArray()) + ".", "adopt");
+                return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") is not shown to be VGAC's. " + ds.Why + " VGAC will not remove or move anything in it. Choose another folder.", null);
+            }
             if (!Directory.Exists(l.DataFolder)) return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") does not exist yet. It is made when needed.", null);
             try
             {
@@ -123,19 +134,18 @@ namespace Vgac.Starter
             return new CheckLine("data", "ok", "The folder for the big files is writable and has room.", null);
         }
 
-        // Items left behind by an interrupted job. Fixed names only (no wildcards), and the ones beside tools or inside the
-        // downloads folder only when those are proven VGAC's, so a shared folder's contents are never swept up.
-        public static List<string> Leftovers(Layout l, Ledger ledger)
+        // Items left behind by an interrupted job. Fixed names only (no wildcards); the ones in the folder for the big files only when
+        // that folder is VGAC's (`dataOurs`), so a shared folder's contents are never swept up.
+        public static List<string> Leftovers(Layout l, bool dataOurs)
         {
             var res = new List<string>();
             foreach (string p in new[] { Path.Combine(l.FrontendDir, DistSwap.NewName), Path.Combine(l.FrontendDir, DistSwap.OldName) })
                 if (Directory.Exists(p) && !SafeFs.IsLink(p)) res.Add(p);
             string venvOld = l.Venv + "-old";
             if (Directory.Exists(venvOld) && !SafeFs.IsLink(venvOld) && File.Exists(Path.Combine(venvOld, "pyvenv.cfg"))) res.Add(venvOld);
-            bool tools = Recovery.ToolsProven(l, ledger);
             foreach (string p in new[] { Path.GetDirectoryName(l.UvExe) + ".old", l.NodeDir + ".old", Path.GetDirectoryName(l.UvExe) + ".new", l.NodeDir + ".new" })
-                if (tools && Directory.Exists(p) && !SafeFs.IsLink(p)) res.Add(p);
-            if (Directory.Exists(l.Downloads) && Proof.Ours(ledger, l.Downloads, "downloads"))
+                if (dataOurs && Directory.Exists(p) && !SafeFs.IsLink(p)) res.Add(p);
+            if (dataOurs && Directory.Exists(l.Downloads))
                 foreach (string f in Directory.GetFiles(l.Downloads))
                     if (f.EndsWith(".bad", StringComparison.OrdinalIgnoreCase)) res.Add(f);
             return res;
@@ -163,7 +173,14 @@ namespace Vgac.Starter
             {
                 if (fixId == "leftovers")
                 {
-                    foreach (string p in Leftovers(l, ledger)) { log.Line("repair: removing leftover " + p); SafeFs.DeleteTree(p); }
+                    foreach (string p in Leftovers(l, Recovery.DataOurs(l))) { log.Line("repair: removing leftover " + p); SafeFs.DeleteTree(p); }
+                    return null;
+                }
+                if (fixId == "adopt")
+                {
+                    // the window has shown the person exactly what will be treated as VGAC's and had a yes; checked again here
+                    DataFolders.Adopt(l.DataFolder, machine, l.ProjectRoot);
+                    log.Line("repair: the folder for the big files was adopted as VGAC's: " + l.DataFolder);
                     return null;
                 }
                 if (fixId == "state")

@@ -333,6 +333,7 @@ namespace Vgac.Starter
             string after; git.Run("rev-parse HEAD", root, out after);
             bool exeBack = exeInside && File.Exists(exePath);
             bool headMoved = (before ?? "").Trim() != (after ?? "").Trim();
+            if (exeInside && File.Exists(exePath)) ExeAside.ClearRestoreNote(root);   // VGAC.exe is there: the note would only mislead
             if (code == -1)
             {
                 // git was stopped (it took too long) or could not run: it may have stopped in the middle of writing files. Nothing is

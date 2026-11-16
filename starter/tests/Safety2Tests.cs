@@ -28,9 +28,7 @@ public static partial class T
 {
     static void Safety2All()
     {
-        SetupNeverClaimsAFolderThatAlreadyHeldFiles();
         SetupChecksTheDataFolderAgain();
-        MarkersBelongToTheirFolder();
         SummarySaysWhatReallyHappensPerItem();
         PermanentDeletionOnlyForTheItemsNamed();
         LibraryIsOnlyWhatTheAppMade();
@@ -60,56 +58,6 @@ public static partial class T
         catch (StarterError e) { return e.Message; }
     }
 
-    static void SetupNeverClaimsAFolderThatAlreadyHeldFiles()
-    {
-        string shared;
-        // the person's own downloads folder in the data folder
-        var s = FreshInShared(out shared);
-        Put(Path.Combine(shared, "downloads", "invoice.pdf"), "the person's");
-        string why = RunSetup(s, "uv", "venv", "packages");
-        Check(why != null && why.Contains("did not put there"), "setup refuses a data folder whose 'downloads' already holds the person's files: " + why);
-        Check(!File.Exists(Path.Combine(shared, "downloads", Proof.MarkerName)) && File.Exists(Path.Combine(shared, "downloads", "invoice.pdf")), "no marker was written into it and nothing was touched");
-        Check(!s.Led.Has(Path.Combine(shared, "downloads"), null) && !Directory.Exists(Path.Combine(shared, "tools")), "it is not in the ledger, and no step had run");
-        Check(!MoveRules.NamesIn(shared, Ledger.Load(s.Root)).Contains("downloads"), "so Move never takes it");
-        Check(!RemovalPlanner.Build(s.L, s.M, Ledger.Load(s.Root), new StandInComfy()).Groups.SelectMany(g => g.Items).Any(i => i.Path.EndsWith("downloads")), "and Remove never lists it");
-
-        // the person's own python folder
-        var s2 = FreshInShared(out shared);
-        Put(Path.Combine(shared, "python", "python.exe"), "their python");
-        why = RunSetup(s2, "venv", "packages");
-        Check(why != null && why.Contains("did not put there") && File.ReadAllText(Path.Combine(shared, "python", "python.exe")) == "their python", "a python folder that is the person's is not used: " + why);
-        Check(!s2.Led.Has(Path.Combine(shared, "python"), null), "and is not recorded");
-
-        // the person's own tools\node
-        var s3 = FreshInShared(out shared);
-        Put(Path.Combine(shared, "tools", "node", "node.exe"), "their node");
-        why = RunSetup(s3, "node");
-        Check(why != null && File.ReadAllText(Path.Combine(shared, "tools", "node", "node.exe")) == "their node", "an existing tools\\node is neither replaced nor deleted: " + why);
-
-        // the person's own tools folder: uv may be made inside it, but 'tools' itself is not stamped
-        var s4 = FreshInShared(out shared);
-        Put(Path.Combine(shared, "tools", "my-script.cmd"), "the person's");
-        why = RunSetup(s4, "uv");
-        Check(why == null && File.Exists(s4.L.UvExe), "a new tools\\uv can be made inside the person's tools folder (" + why + ")");
-        Check(!File.Exists(Path.Combine(shared, "tools", Proof.MarkerName)) && Proof.Read(Path.GetDirectoryName(s4.L.UvExe)) == "uv", "uv is stamped, the person's tools folder is not");
-        var plan = RemovalPlanner.Build(s4.L, s4.M, Ledger.Load(s4.Root), new StandInComfy());
-        Check(plan.Get("tools").Items.Any(i => i.Path == Path.GetDirectoryName(s4.L.UvExe)), "Remove lists the uv folder VGAC made");
-        RemovalRunner.Run(plan, new List<string> { "tools" }, null, s4.L, s4.M, Ledger.Load(s4.Root), new StandInComfy(), new FakeRecycler(), new SetupLog(s4.Root), null, null);
-        Check(File.Exists(Path.Combine(shared, "tools", "my-script.cmd")) && Directory.Exists(Path.Combine(shared, "tools")), "and removing it leaves the person's tools folder and file");
-
-        // a half-unpacked folder that is the person's
-        var s5 = FreshInShared(out shared);
-        Put(Path.Combine(shared, "tools", "uv.new", "theirs.txt"), "theirs");
-        why = RunSetup(s5, "uv");
-        Check(why != null && File.Exists(Path.Combine(shared, "tools", "uv.new", "theirs.txt")), "a tools\\uv.new that holds the person's files is not cleared: " + why);
-
-        // folders that are empty (or new) are VGAC's to make
-        var s6 = FreshInShared(out shared);
-        Directory.CreateDirectory(Path.Combine(shared, "downloads"));
-        why = RunSetup(s6, "uv");
-        Check(why == null && Proof.Read(Path.Combine(shared, "downloads")) == "downloads", "an empty folder of that name is claimed (VGAC found it empty)");
-    }
-
     static void SetupChecksTheDataFolderAgain()
     {
         var s = new InstallScene();
@@ -117,31 +65,10 @@ public static partial class T
         var m = MachineFile.Load(s.Root); m.Set("starter", "dataFolder", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)); m.Save();
         s.M = MachineFile.Load(s.Root); s.L = Layout.From(s.Root, s.M); s.Led = Ledger.Load(s.Root);
         string why = RunSetup(s, "uv");
-        Check(why != null && why.Contains("not one VGAC will set up in") && !Directory.Exists(Path.Combine(s.L.DataFolder, "tools", "uv")), "a data folder setting that names the profile folder stops setup before anything is made: " + why);
+        Check(why != null && why.Contains("not one VGAC will set up in") && !Directory.Exists(Path.Combine(s.L.DataFolder, "tools", "uv")) && !File.Exists(Path.Combine(s.L.DataFolder, DataFolders.MarkerName)), "a data folder setting that names the profile folder stops setup before anything is made, and nothing is claimed: " + why);
         var lines = Repair.Check(s.L, new CaptureHost(), s.Led);
         Check(lines.First(c => c.Id == "data").Text.Contains("not one VGAC will set up"), "and the check says so at every start");
     }
-
-    static void MarkersBelongToTheirFolder()
-    {
-        string d = Tmp("markers");
-        string a = Path.Combine(d, "a"), b = Path.Combine(d, "b");
-        Proof.Write(a, "python");
-        Check(Proof.Read(a) == "python", "a marker proves its own folder");
-        Directory.CreateDirectory(b); File.Copy(Path.Combine(a, Proof.MarkerName), Path.Combine(b, Proof.MarkerName));
-        Check(Proof.Read(b) == null, "the same marker copied into another folder proves nothing there");
-        // a whole folder copied somewhere else (without VGAC's move) is not claimed either
-        string c = Path.Combine(d, "c"); SafeFs.CopyTree(a, c, null, new FsReport());
-        Check(Proof.Read(c) == null, "a copy of a VGAC folder made by hand is not VGAC's");
-        Check(!Proof.Ours(null, b, "python"), "and Ours says no");
-        // a marker for another kind of thing
-        Check(Proof.Read(a) != "uv", "a marker names exactly one kind");
-        // the same through a junction: the real place counts
-        string j = Path.Combine(d, "via-junction"); Junction(j, a);
-        Check(Proof.Read(j) == "python", "reached through a junction it is still that one folder");
-    }
-
-    // ---- S1, S2, S3 --------------------------------------------------------------------------------------------------------
 
     static void SummarySaysWhatReallyHappensPerItem()
     {
@@ -193,11 +120,9 @@ public static partial class T
         m = MachineFile.Load(s.Root); m.Set("backend", "library_path", broad); m.Save();
         s.M = MachineFile.Load(s.Root);
         plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        Check(plan.Get("work").Items.Where(i => i.Kind == "work-library").Select(i => Path.GetFileName(i.Path)).OrderBy(x => x).SequenceEqual(new[] { "prefs.json", "projects", "vgac.sqlite" }), "only the entries the app makes are listed");
-        Check(plan.Notes.Any(n => n.Contains("Saves") && n.Contains("photos") && n.Contains("notes.txt")), "and the others are named as left alone");
+Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemoved.Any(n => n.Contains("My Games") && n.Contains("Saves") && n.Contains("nothing in it is removed")), "a library folder that also holds the person's own things is not touched at all, and the summary says so");
         RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
-        Check(!File.Exists(Path.Combine(broad, "vgac.sqlite")) && !Directory.Exists(Path.Combine(broad, "projects")), "the app's files and folders go");
-        Check(File.Exists(Path.Combine(broad, "Saves", "slot1.sav")) && File.Exists(Path.Combine(broad, "photos", "me.jpg")) && File.Exists(Path.Combine(broad, "notes.txt")) && Directory.Exists(broad), "the person's saves, photos and notes and the folder stay");
+        Check(File.Exists(Path.Combine(broad, "vgac.sqlite")) && Directory.Exists(Path.Combine(broad, "projects")) && File.Exists(Path.Combine(broad, "Saves", "slot1.sav")) && File.Exists(Path.Combine(broad, "notes.txt")), "so with the typed word nothing in it goes (not even the app's own files)");
         // a name the app does not make is refused at the moment of deleting too
         var item = new RemovalItem(); item.Kind = "work-library"; item.Path = Path.Combine(broad, "notes.txt"); item.GroupId = "work";
         Check(RemovalPlanner.Revalidate(item, s.L, s.Comfy, s.Led, s.M) != null, "an entry the app does not make is refused again just before deleting");
@@ -205,21 +130,22 @@ public static partial class T
 
     static void HalfRemovedFolderIsNotWaivedForAReplacement()
     {
+        // the app's Python environment in the project (the one kind of folder that is judged by its shape, not by the data folder's marker)
         var s = Installed();
-        for (int i = 0; i < 80; i++) Put(Path.Combine(s.L.PythonDir, "cpython-3.13", "lib", "f" + i + ".py"), "x");
+        for (int i = 0; i < 80; i++) Put(Path.Combine(s.L.Venv, "Lib", "f" + i + ".py"), "x");
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         int n = 0;
-        SafeFs.Hook = delegate(string what, string p) { if (what == "delete" && p.Contains("python") && ++n == 30) throw new Boom("cut"); };
+        SafeFs.Hook = delegate(string what, string p) { if (what == "delete" && p.Contains(".venv") && ++n == 30) throw new Boom("cut"); };
         try { RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); } catch (Boom) { }
         SafeFs.Hook = null;
-        Check(RemovalRunner.InProgress(s.Root).Any(p => p.EndsWith("python")), "the cut-off folder is remembered together with when it was made");
+        Check(RemovalRunner.InProgress(s.Root).Any(p => p.EndsWith(".venv")), "the cut-off folder is remembered together with which folder it was");
         var resumed = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        Check(resumed.Get("tools").Items.Any(i => i.Path == s.L.PythonDir), "the half-deleted folder is still the same folder and is listed to finish");
-        // the person deletes what is left and makes their own python folder with the same name
-        SafeFs.DeleteTree(s.L.PythonDir); Thread.Sleep(30);
-        Put(Path.Combine(s.L.PythonDir, "python.exe"), "their own python");
+        Check(resumed.Get("tools").Items.Any(i => i.Path == s.L.Venv), "the half-deleted folder is still the same folder and is listed to finish");
+        // the person deletes what is left and makes their own environment with the same name
+        SafeFs.DeleteTree(s.L.Venv); Thread.Sleep(30);
+        Put(Path.Combine(s.L.Venv, "pyvenv.cfg"), "home = their own python");
         var after = RemovalPlanner.Build(s.L, s.M, Ledger.Load(s.Root), s.Comfy);
-        Check(!after.Get("tools").Items.Any(i => i.Path == s.L.PythonDir), "a new folder of that name is not waived by the old journal");
+        Check(!after.Get("tools").Items.Any(i => i.Path == s.L.Venv), "a new folder of that name is not waived by the old journal");
     }
 
     // ---- S4 -------------------------------------------------------------------------------------------------------------------
@@ -296,9 +222,9 @@ public static partial class T
         SafeFs.Hook = delegate(string what, string p) { if (what == "move" && p == "verify:python") throw new Boom("cut"); };
         try { Mover(s2, null).Start(to2, new Progress()); } catch (Boom) { }
         SafeFs.Hook = null;
-        Check(Proof.Read(Path.Combine(to2, "python")) == "python", "the copy VGAC made is stamped for its own place");
+        Check(DataFolders.ReadMarkerId(to2) == DataFolders.SettingsId(MachineFile.Load(s2.Root)), "the new place was claimed under this install's id when the move began");
         Mover(s2, null).Cancel();
-        Check(!Directory.Exists(Path.Combine(to2, "python")), "and Cancel removes it (proven)");
+        Check(!Directory.Exists(Path.Combine(to2, "python")), "and Cancel removes it (the new place is VGAC's by its marker)");
     }
 
     static void DataFolderIsJudgedByRealPath()

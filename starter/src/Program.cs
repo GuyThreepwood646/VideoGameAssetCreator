@@ -350,11 +350,12 @@ namespace Vgac.Starter
                 // the screens or the Python may have been put right by the recovery: look again
                 steps = Planner.Plan(ProbeReader.Read(lay, host), root);
                 // the folder for the big files is looked at again at every start, not only when it was chosen
-                string unfit = Proof.DataFolderProblem(lay.DataFolder, root);
-                if (unfit != null)
+                DataStatus dstat = DataFolders.Check(lay.DataFolder, machine, root);
+                if (dstat.State == DataState.NotOurs)
                 {
-                    log.Line("start: the folder for the big files is not one VGAC will set up, move or remove in: " + unfit);
-                    MessageBox.Show("The folder for the big files (" + lay.DataFolder + ") is not one VGAC will set up in, move or remove from.\r\n\r\n" + unfit + "\r\n\r\nChange starter.dataFolder in local\\machine.json (or delete that line) when you have a moment. VGAC carries on with what is already there.", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    log.Line("start: the folder for the big files is not shown to be VGAC's: " + dstat.Why + (dstat.Adoptable ? " It can be adopted in Check and repair." : ""));
+                    if (dstat.Problem)
+                        MessageBox.Show("The folder for the big files (" + lay.DataFolder + ") is not one VGAC will set up in, move or remove from.\r\n\r\n" + dstat.Why + "\r\n\r\nChoose another folder when you have a moment. VGAC carries on with what is already there.", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
                 string note = GitUpdate.ExeDiffersNote(Application.ExecutablePath, Path.Combine(root, "starter", "CHECKSUMS.txt"));
                 if (note != null) log.Line("start: " + note);
@@ -419,6 +420,7 @@ namespace Vgac.Starter
 
         void ShowWelcome()
         {
+            DefaultButtons();
             title.Text = "Welcome to VGAC";
             var sb = new StringBuilder();
             sb.AppendLine("Before the app can open, VGAC will:");
@@ -446,9 +448,11 @@ namespace Vgac.Starter
                 try
                 {
                     machine.Set("starter", "dataFolder", d.SelectedPath);
+                    machine.Set("starter", "dataFolderId", "");          // a new folder gets its own claim
                     machine.Save();
                     lay = Vgac.Starter.Layout.From(root, machine);
                     backend = null;
+                    if (afterChooseBegins) { afterChooseBegins = false; Begin(); return; }
                     body.Text = "The big files will go to: " + lay.DataFolder + "\r\n\r\nPress Start.";
                 }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "VGAC"); }
@@ -555,8 +559,9 @@ namespace Vgac.Starter
                 hint.Text = "The app opened in your browser because Microsoft's WebView2 runtime is not installed (microsoft.com, search 'WebView2 Runtime').";
                 return false;
             }
-            string profile = Path.Combine(lay.DataFolder, "webview2");
-            try { if (!Directory.Exists(profile) || Proof.Read(profile) == null) { if (!Directory.Exists(profile) || Directory.GetFileSystemEntries(profile).Length == 0) Proof.Write(profile, "webview2"); } } catch (Exception) { }
+            // the window's data goes in the folder for the big files only when that folder is VGAC's; otherwise in the project's own local folder
+            bool dataOurs = DataFolders.Check(lay.DataFolder, machine, root).State == DataState.Ours;
+            string profile = dataOurs ? Path.Combine(lay.DataFolder, "webview2") : Path.Combine(root, "local", "webview2-profile");
             var w = new AppWindow(backend.Url, profile, log, this);
             w.CloseRequested = delegate { BeginInvokeSafe(RequestQuit); };
             w.QuitRequested = delegate { BeginInvokeSafe(RequestQuit); };
@@ -942,8 +947,49 @@ namespace Vgac.Starter
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
+        bool afterChooseBegins;
+
+        void DefaultButtons()
+        {
+            primary.SetBounds(16, 250, 130, 32); secondary.SetBounds(156, 250, 110, 32); choose.SetBounds(276, 250, 220, 32); openLog.SetBounds(506, 250, 98, 32);
+        }
+
+        // The folder for the big files is not shown to be VGAC's: offer what the person can do from here. Nothing is claimed silently.
+        void ShowNotClaimed(NotClaimedError e)
+        {
+            log.Line("error: " + e.Message + (e.Fix != null ? " | " + e.Fix : ""));
+            DefaultButtons();
+            title.Text = "This folder is not VGAC's yet";
+            var sb = new StringBuilder();
+            sb.AppendLine(e.Message);
+            bool adopt = e.Status.Adoptable && !e.Status.Problem;
+            if (adopt)
+            {
+                sb.AppendLine();
+                sb.AppendLine("If you let VGAC use this folder, VGAC will treat ONLY these as its own, and Remove and Move will act on them:");
+                foreach (string x in e.Status.AdoptList) sb.AppendLine("   - " + x);
+            }
+            body.Text = sb.ToString();
+            bar.Visible = false;
+            primary.Text = "Use this folder for VGAC only"; primary.SetBounds(16, 250, 210, 32); primary.Visible = adopt;
+            onPrimary = delegate
+            {
+                try { DataFolders.Adopt(lay.DataFolder, machine, root); log.Line("the folder for the big files was adopted as VGAC's: " + lay.DataFolder); machine = MachineFile.Load(root); Begin(); }
+                catch (StarterError ex) { ShowError(ex); }
+            };
+            choose.Text = "Choose another folder..."; choose.SetBounds(adopt ? 236 : 16, 250, 190, 32); choose.Visible = true;
+            onChoose = delegate { afterChooseBegins = true; OnChoose(); };
+            string folder = e.Folder;
+            secondary.Text = "Open the folder"; secondary.SetBounds(adopt ? 436 : 216, 250, 130, 32); secondary.Visible = Directory.Exists(folder);
+            onSecondary = delegate { try { Process.Start("explorer.exe", "\"" + folder + "\""); } catch (Exception) { } };
+            openLog.Visible = false;
+        }
+
         void ShowError(StarterError e)
         {
+            var nc = e as NotClaimedError;
+            if (nc != null) { ShowNotClaimed(nc); return; }
+            DefaultButtons();
             log.Line("error: " + e.Message + (e.Fix != null ? " | " + e.Fix : ""));
             title.Text = "VGAC could not start";
             body.Text = e.Message + (e.Fix != null ? "\r\n\r\nWhat to do: " + e.Fix : "");

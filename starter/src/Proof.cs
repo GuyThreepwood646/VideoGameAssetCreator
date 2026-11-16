@@ -1,8 +1,8 @@
-// What VGAC may call its own. A folder is VGAC's only when it is proven: the install ledger lists that exact path as added, or
-// VGAC wrote a marker file inside it that names what it is AND records the folder's own real path (so a marker copied into
-// another folder proves nothing there). A name alone (a folder called "python" or "downloads") proves nothing. VGAC stamps or
-// records a folder only when it made the folder itself (it did not exist, or was empty, at that moment); a folder that already
-// held somebody's files is never claimed. C# 5 (see Core.cs).
+// What VGAC may call its own: ONE dedicated folder, the data folder. It carries one marker file holding a random id, and the same id
+// is stored in local/machine.json. The folder is VGAC's only when both ids match; a missing marker, a damaged one or another id means
+// "not ours": nothing in it is deleted or moved. VGAC claims a folder only when it is new or empty (or after the person confirmed an
+// adoption of one that holds nothing but VGAC's own, recognisably shaped, folders). Inside a claimed folder the fixed names below are
+// VGAC's; anything else in it is left alone. There are no per-folder markers and no name-by-name proof. C# 5 (see Core.cs).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,67 +11,245 @@ using System.Text;
 
 namespace Vgac.Starter
 {
-    public static class Proof
-    {
-        public const string MarkerName = ".vgac-made.json";
+    public enum DataState { Ours, Unclaimed, NotOurs }
 
-        // Writes the marker for `dir` (which must exist): what it is, and where it is, by real path.
-        public static void Write(string dir, string what)
+    public class DataStatus
+    {
+        public DataState State;
+        public string Why = "";                                // plain words when the state is NotOurs
+        public bool Adoptable;                                 // NotOurs, but holds nothing except VGAC's own folders (shown to the person)
+        public List<string> AdoptList = new List<string>();    // what would be treated as VGAC's, "name  size"
+        public List<string> Extras = new List<string>();       // entries that are not VGAC's fixed names
+        public bool Problem;                                   // the place itself is shared (drive root, profile, ...): never claimable
+    }
+
+    public static class DataFolders
+    {
+        public const string MarkerName = ".vgac-data.json";
+
+        // The only names VGAC makes at the top of the data folder.
+        public static readonly string[] FixedNames = { "tools", "python", "uv-cache", "downloads", "webview2", "comfyui" };
+
+        public static bool IsFixedName(string name)
         {
-            Directory.CreateDirectory(dir);
-            var d = new Dictionary<string, object>();
-            d["made_by"] = "VGAC"; d["what"] = what; d["path"] = SafeFs.Real(dir) ?? "";
-            File.WriteAllText(Path.Combine(dir, MarkerName), Json.Write(d), new UTF8Encoding(false));
+            foreach (string n in FixedNames) if (string.Equals(n, name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
-        // What the marker inside `dir` says it is, or null: no marker, not VGAC's, a link, or written for another place.
-        public static string Read(string dir)
+        public static string SettingsId(MachineFile m)
+        {
+            return m.GetString("starter", "dataFolderId");
+        }
+
+        public static string ReadMarkerId(string folder)
         {
             try
             {
-                string p = Path.Combine(dir, MarkerName);
+                string p = Path.Combine(folder, MarkerName);
                 if (!File.Exists(p) || SafeFs.IsLink(p)) return null;
                 var d = Json.ParseObject(File.ReadAllText(p, Encoding.UTF8));
-                object m, w, where;
-                if (!d.TryGetValue("made_by", out m) || Convert.ToString(m) != "VGAC") return null;
-                string real = SafeFs.Real(dir);
-                if (real == null || !d.TryGetValue("path", out where) || !string.Equals(Convert.ToString(where), real, StringComparison.OrdinalIgnoreCase)) return null;
-                return d.TryGetValue("what", out w) ? Convert.ToString(w) : null;
+                object who, id;
+                if (!d.TryGetValue("made_by", out who) || Convert.ToString(who) != "VGAC") return null;
+                return d.TryGetValue("id", out id) ? Convert.ToString(id) : null;
             }
             catch (Exception) { return null; }
         }
 
-        // Proven: the ledger lists this exact path as added, or the folder carries VGAC's marker for `what` that belongs to it.
-        public static bool Ours(Ledger ledger, string dir, string what)
+        // Any of the fixed names is at the top of this folder (used to decide whether a refusal needs explaining).
+        public static bool FixedNamesPresent(string folder)
         {
-            if (!Directory.Exists(dir) || SafeFs.IsLink(dir)) return false;
-            if (ledger != null && ledger.Has(dir, "added")) return true;
-            return Read(dir) == what;
+            try { foreach (string e in Directory.GetFileSystemEntries(folder)) if (IsFixedName(Path.GetFileName(e))) return true; } catch (Exception) { }
+            return false;
         }
 
-        // VGAC may stamp or record `dir` only when it makes it now: it does not exist, it is empty (a marker of its own does not
-        // count as content), or it already is VGAC's. Anything else is somebody's folder.
-        public static bool CanClaim(string dir, Ledger ledger, string what)
+        // What is in the folder besides the marker.
+        static List<string> Entries(string folder)
         {
-            if (!Directory.Exists(dir)) return true;
-            if (SafeFs.IsLink(dir)) return false;
-            if (Ours(ledger, dir, what)) return true;
+            var res = new List<string>();
+            foreach (string e in Directory.GetFileSystemEntries(folder))
+                if (!string.Equals(Path.GetFileName(e), MarkerName, StringComparison.OrdinalIgnoreCase)) res.Add(e);
+            return res;
+        }
+
+        // Decides, without changing anything. `projectRoot` is for the place checks and for recognising VGAC's own Python.
+        public static DataStatus Check(string folder, MachineFile machine, string projectRoot)
+        {
+            var st = new DataStatus();
+            string unfit = Proof.DataFolderProblem(folder, projectRoot);
+            if (unfit != null) { st.State = DataState.NotOurs; st.Problem = true; st.Why = unfit; return st; }
+            if (!Directory.Exists(folder)) { st.State = DataState.Unclaimed; return st; }
+            if (SafeFs.IsLink(folder)) { st.State = DataState.NotOurs; st.Problem = true; st.Why = "That folder is a link."; return st; }
+            string sid = SettingsId(machine), mid = ReadMarkerId(folder);
+            if (!string.IsNullOrEmpty(sid) && sid == mid) { st.State = DataState.Ours; return st; }
+            List<string> entries = Entries(folder);
+            if (entries.Count == 0) { st.State = DataState.Unclaimed; return st; }
+            st.State = DataState.NotOurs;
+            st.Why = mid == null
+                ? "VGAC cannot show that it made this folder: it has no VGAC marker."
+                : "VGAC cannot show that it made this folder: its marker does not match this install's settings.";
+            AssessInto(folder, projectRoot, st);
+            return st;
+        }
+
+        // Writes the id into the settings FIRST, then the marker, so a crash between the two leaves an empty folder that the next
+        // start simply finishes claiming (the settings' id is reused). Does not look at the folder's contents: callers have decided.
+        public static void Stamp(string folder, MachineFile machine)
+        {
+            string id = SettingsId(machine);
+            if (string.IsNullOrEmpty(id))
+            {
+                id = Guid.NewGuid().ToString("N");
+                machine.Set("starter", "dataFolderId", id);
+                machine.Save();
+            }
+            Directory.CreateDirectory(folder);
+            var d = new Dictionary<string, object>();
+            d["made_by"] = "VGAC"; d["id"] = id;
+            File.WriteAllText(Path.Combine(folder, MarkerName), Json.Write(d), new UTF8Encoding(false));
+        }
+
+        // New or empty: VGAC claims it now (before any step puts anything in it).
+        public static void Claim(string folder, MachineFile machine, string projectRoot)
+        {
+            DataStatus st = Check(folder, machine, projectRoot);
+            if (st.State == DataState.Ours) return;
+            if (st.State != DataState.Unclaimed) throw new NotClaimedError(folder, st);
+            Stamp(folder, machine);
+        }
+
+        // The person confirmed: the folder holds only VGAC's own folders (checked again here), so it is claimed.
+        public static void Adopt(string folder, MachineFile machine, string projectRoot)
+        {
+            DataStatus st = Check(folder, machine, projectRoot);
+            if (st.State == DataState.Ours) return;
+            if (st.State == DataState.Unclaimed) { Stamp(folder, machine); return; }
+            if (!st.Adoptable) throw new NotClaimedError(folder, st);
+            Stamp(folder, machine);
+        }
+
+        // ---- adoption: names AND shapes ----------------------------------------------------------------------------------------
+
+        static void AssessInto(string folder, string projectRoot, DataStatus st)
+        {
+            var problems = new List<string>();
+            foreach (string e in Entries(folder))
+            {
+                string name = Path.GetFileName(e);
+                if (!IsFixedName(name))
+                {
+                    st.Extras.Add(name);
+                    continue;
+                }
+                string bad = ShapeProblem(name.ToLowerInvariant(), e, projectRoot);
+                if (bad != null) problems.Add(name + ": " + bad);
+                else st.AdoptList.Add(name + "   " + RemovalSummary.Size(SafeFs.Size(e, null)));
+            }
+            if (st.Extras.Count > 0)
+            {
+                bool hidden = true; foreach (string x in st.Extras) if (!x.StartsWith(".")) hidden = false;
+                st.Why += hidden ? " It holds only hidden files that are not VGAC's (" + string.Join(", ", st.Extras.ToArray()) + ")." : " It also holds things that are not VGAC's (" + string.Join(", ", st.Extras.ToArray()) + ").";
+            }
+            if (problems.Count > 0) st.Why += " These do not look like what VGAC's setup makes: " + string.Join("; ", problems.ToArray()) + ".";
+            st.Adoptable = st.Extras.Count == 0 && problems.Count == 0 && st.AdoptList.Count > 0;
+        }
+
+        // The shape only VGAC's setup produces for each fixed name. null: fine.
+        static string ShapeProblem(string name, string path, string projectRoot)
+        {
+            if (SafeFs.IsLink(path) || !Directory.Exists(path)) return "it is a link or not a folder";
+            switch (name)
+            {
+                case "tools":
+                    foreach (string e in Directory.GetFileSystemEntries(path))
+                    {
+                        string n = Path.GetFileName(e).ToLowerInvariant();
+                        bool ok = n == "uv" || n == "node" || n == "uv.new" || n == "uv.old" || n == "node.new" || n == "node.old";
+                        if (!ok) return "it holds " + Path.GetFileName(e);
+                    }
+                    if (Directory.Exists(Path.Combine(path, "uv")) && !RealHost.LooksLikeProgram(Path.Combine(path, "uv", "uv.exe"))) return "uv is not the package tool";
+                    if (Directory.Exists(Path.Combine(path, "node")) && !RealHost.LooksLikeProgram(Path.Combine(path, "node", "node.exe"))) return "node is not Node.js";
+                    if (Directory.Exists(Path.Combine(path, "uv")) && !File.Exists(Path.Combine(path, "uv", "uv.exe"))) return "uv has no uv.exe";
+                    if (Directory.Exists(Path.Combine(path, "node")) && !File.Exists(Path.Combine(path, "node", "node.exe"))) return "node has no node.exe";
+                    return null;
+                case "python":
+                    return PythonProblem(path, projectRoot);
+                case "uv-cache":
+                    try
+                    {
+                        string tag = Path.Combine(path, "CACHEDIR.TAG");
+                        return File.Exists(tag) && File.ReadAllText(tag).Contains("8a477f597d28d172789f06886806bc55") ? null : "it has no uv cache tag";
+                    }
+                    catch (IOException) { return "its tag cannot be read"; }
+                case "downloads":
+                    var allowed = new List<string>();
+                    foreach (string url in new[] { Pins.UvUrl, Pins.NodeUrl })
+                    {
+                        string f = Path.GetFileName(new Uri(url).LocalPath).ToLowerInvariant();
+                        allowed.Add(f); allowed.Add(f + ".part"); allowed.Add(f + ".bad");
+                    }
+                    foreach (string e in Directory.GetFileSystemEntries(path))
+                        if (Directory.Exists(e) || !allowed.Contains(Path.GetFileName(e).ToLowerInvariant())) return "it holds " + Path.GetFileName(e);
+                    return null;
+                case "webview2":
+                    foreach (string e in Directory.GetFileSystemEntries(path)) if (!string.Equals(Path.GetFileName(e), "EBWebView", StringComparison.OrdinalIgnoreCase)) return "it holds " + Path.GetFileName(e);
+                    return Directory.Exists(Path.Combine(path, "EBWebView")) ? null : "it has no EBWebView folder";
+                case "comfyui":
+                    return ComfyGuard.MarkerPresent(path) ? null : "it has no VGAC install marker";
+            }
+            return "unknown";
+        }
+
+        // uv's own Python folder: cpython-* folders (and uv's housekeeping) with a python.exe, and VGAC's own app Python (the venv in
+        // the project) points into it. A folder of somebody's pythons that happens to look similar is not claimed.
+        static string PythonProblem(string path, string projectRoot)
+        {
+            bool found = false;
+            foreach (string e in Directory.GetFileSystemEntries(path))
+            {
+                string n = Path.GetFileName(e).ToLowerInvariant();
+                if (n.StartsWith("cpython-") && Directory.Exists(e) && File.Exists(Path.Combine(e, "python.exe"))) { found = true; continue; }
+                if (n == ".lock" || n == ".cache" || n == ".temp" || n == ".tmp") continue;
+                return "it holds " + Path.GetFileName(e);
+            }
+            if (!found) return "it holds no Python";
+            if (projectRoot == null) return "the project is not known";
+            string cfg = Path.Combine(projectRoot, "backend", ".venv", "pyvenv.cfg");
             try
             {
-                foreach (string e in Directory.GetFileSystemEntries(dir))
-                    if (!string.Equals(Path.GetFileName(e), MarkerName, StringComparison.OrdinalIgnoreCase)) return false;
+                if (!File.Exists(cfg)) return "the app's own Python environment (backend\\.venv) is not there to show that it uses this Python";
+                string real = SafeFs.Real(path);
+                foreach (string line in File.ReadAllLines(cfg))
+                {
+                    if (!line.TrimStart().StartsWith("home", StringComparison.OrdinalIgnoreCase)) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq < 0) continue;
+                    string home = SafeFs.Real(line.Substring(eq + 1).Trim());
+                    if (real != null && home != null && home.StartsWith(real + "\\")) return null;
+                }
+                return "the app's own Python environment does not use it";
             }
-            catch (Exception) { return false; }
-            return true;
+            catch (IOException) { return "the app's Python environment cannot be read"; }
         }
 
-        public static string ClaimRefusal(string dir, string kindOfThing)
+        public static string ExplainNotClaimed(string folder, DataStatus st)
         {
-            return "The folder " + dir + " already exists and has files in it that VGAC did not put there, so VGAC will not use it for " + kindOfThing + ".";
+            return "The folder for the big files (" + folder + ") is not one VGAC will set up in, move or remove from. " + st.Why;
         }
+    }
 
-        // ---- places that can never be a folder for VGAC's big files ---------------------------------------------------------
+    // Setup, Move and Remove stop with this when the data folder is not VGAC's; the screen then offers adoption or another folder.
+    public class NotClaimedError : StarterError
+    {
+        public readonly string Folder;
+        public readonly DataStatus Status;
+        public NotClaimedError(string folder, DataStatus st)
+            : base(DataFolders.ExplainNotClaimed(folder, st),
+                   st.Problem ? "Choose another folder for the big files." : (st.Adoptable ? "If this folder holds nothing but VGAC's own files, you can let VGAC use it. Otherwise choose another folder." : "Choose another folder for the big files, or move the other things out of this one."))
+        { Folder = folder; Status = st; }
+    }
 
+    public static class Proof
+    {
         [DllImport("shell32.dll")] static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, [MarshalAs(UnmanagedType.LPWStr)] out string path);
         static readonly Guid DownloadsId = new Guid("374DE290-123F-4565-9164-39C4925E467B");
 
@@ -111,7 +289,7 @@ namespace Vgac.Starter
 
         static bool SameOrInside(string child, string parent) { return child == parent || child.StartsWith(parent + "\\"); }
 
-        // null when the folder is acceptable. Everything is compared as real paths: a junction, a short (8.3) name or a redirected
+        // null when the place is acceptable. Everything is compared as real paths: a junction, a short (8.3) name or a redirected
         // folder that leads to a drive root, a profile or a system place is refused like the place itself. A path that cannot be
         // resolved is refused (never guessed).
         public static string DataFolderProblem(string folder, string projectRoot)

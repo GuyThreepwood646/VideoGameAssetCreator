@@ -254,18 +254,13 @@ namespace Vgac.Starter
             if (!File.Exists(l.Requirements) || !Directory.Exists(l.FrontendDir))
                 throw new StarterError("This folder does not look like the VGAC project (backend\\requirements.txt or frontend is missing).",
                     "Clone the project again, or put VGAC.exe back in the project folder.");
-            // The folder for the big files is checked again at every setup, not only when it was chosen: a setting from an earlier
-            // version, or one edited by hand, can name a drive root or a shared place.
-            string unfit = Proof.DataFolderProblem(l.DataFolder, l.ProjectRoot);
-            if (unfit != null)
-                throw new StarterError("The folder for the big files (" + l.DataFolder + ") is not one VGAC will set up in. " + unfit,
-                    "Change starter.dataFolder in local\\machine.json (or delete that line to use local\\data), then start VGAC again. Nothing was changed.");
-            RequireClaimable(steps);
-            if (!Directory.Exists(l.DataFolder))
-            {
-                Directory.CreateDirectory(l.DataFolder);
-                ledger.Add("The folder for the big files", l.DataFolder, "folder", 0);   // removed later only if empty
-            }
+            // The folder for the big files is VGAC's only when it carries VGAC's marker for this install. It is checked at every setup,
+            // not only when it was chosen: a setting from an earlier version, or one edited by hand, can name a drive root or a shared
+            // place, or a folder full of somebody's files. A new or empty folder is claimed here, BEFORE any step puts anything in it,
+            // so an interrupted setup can always be continued. Anything else stops here (NotClaimedError) and nothing is changed.
+            bool existed = Directory.Exists(l.DataFolder);
+            DataFolders.Claim(l.DataFolder, machine, l.ProjectRoot);
+            if (!existed) ledger.Add("The folder for the big files", l.DataFolder, "folder", 0);   // removed later only if nothing but the marker is left
             long free = host.FreeBytes(l.DataFolder);
             if (free >= 0 && free < Pins.NeedBytes)
                 throw new StarterError("Setup needs about " + (Pins.NeedBytes >> 30) + " GB; the drive of " + l.DataFolder + " has " + (free >> 20) + " MB free.",
@@ -284,35 +279,12 @@ namespace Vgac.Starter
             if (stamp) WriteStamps(); else ledger.Save();
         }
 
-        // VGAC changes only folders it makes itself. Before anything is changed, every folder a step would fill must be new, empty,
-        // or already VGAC's; a folder that holds somebody's files is never stamped, recorded, filled or replaced.
-        bool pythonNew, cacheNew, toolsNew;
-
-        void RequireClaimable(List<string> steps)
-        {
-            var need = new List<string[]>();
-            if (steps.Contains("uv")) need.Add(new[] { Path.GetDirectoryName(l.UvExe), "uv", "the package tool" });
-            if (steps.Contains("node")) need.Add(new[] { l.NodeDir, "node", "Node.js" });
-            if (steps.Contains("uv") || steps.Contains("node")) need.Add(new[] { l.Downloads, "downloads", "its downloads" });
-            if (steps.Contains("venv") || steps.Contains("packages")) { need.Add(new[] { l.PythonDir, "python", "its private Python" }); need.Add(new[] { l.UvCache, "uv-cache", "its download cache" }); }
-            foreach (string[] n in need)
-                if (!Proof.CanClaim(n[0], ledger, n[1]))
-                    throw new StarterError(Proof.ClaimRefusal(n[0], n[2]), "Choose a folder just for VGAC's big files (Move the big files), or move that folder away, then try again. Nothing was changed.");
-            string tools = Path.GetDirectoryName(l.UvExe);
-            string toolsParent = Path.GetDirectoryName(tools);
-            toolsNew = Proof.CanClaim(toolsParent, ledger, "tools") && !Proof.Ours(ledger, toolsParent, "tools");
-            pythonNew = !Proof.Ours(ledger, l.PythonDir, "python");
-            cacheNew = !Proof.Ours(ledger, l.UvCache, "uv-cache");
-        }
-
-        // A half-unpacked or put-aside folder of this program's, by its fixed name. Deleted only when it is empty or the tools next
-        // to it are VGAC's; otherwise it is somebody's and setup stops.
+        // A half-unpacked or put-aside folder of this program's, by its fixed name, inside the claimed folder for the big files.
         void ClearStaging(string folder)
         {
             if (!Directory.Exists(folder)) return;
             if (SafeFs.IsLink(folder)) throw new StarterError("The folder " + folder + " is a link, so VGAC will not use or clear it.", "Remove it yourself, then try again.");
-            if (Directory.GetFileSystemEntries(folder).Length == 0 || Recovery.ToolsProven(l, ledger) || toolsNew) { SafeFs.DeleteTree(folder); return; }
-            throw new StarterError(Proof.ClaimRefusal(folder, "unpacking a tool"), "Move that folder away, then try again. Nothing was changed.");
+            SafeFs.DeleteTree(folder);
         }
 
         void RunStep(string step, Progress prog)
@@ -340,9 +312,8 @@ namespace Vgac.Starter
                         throw;
                     }
                     if (hadVenv) SafeFs.DeleteTree(venvOld);
-                    if (cacheNew && Directory.Exists(l.UvCache)) ledger.Add("uv's download cache", l.UvCache, "added", 0);
                     ledger.Add("The app's Python environment", l.Venv, "added", 0);
-                    if (pythonNew && Directory.Exists(l.PythonDir)) ledger.Add("The app's private Python " + Pins.PythonVersion, l.PythonDir, "added", 0);
+                    if (Directory.Exists(l.PythonDir)) ledger.Add("The app's private Python " + Pins.PythonVersion, l.PythonDir, "added", 0);
                     break;
                 case "packages":
                     Exec(l.UvExe, "pip install --python \"" + l.VenvPython + "\" -r \"" + l.Requirements + "\"", l.ProjectRoot, UvEnv(), "packages",
@@ -381,7 +352,7 @@ namespace Vgac.Starter
         // Download, check against the pin, unpack into a temporary folder, then swap into place.
         void FetchZip(string what, string url, string sha, string targetDir, string mustExist, Progress prog)
         {
-            Directory.CreateDirectory(l.Downloads); Proof.Write(l.Downloads, "downloads");
+            Directory.CreateDirectory(l.Downloads);
             string zip = Path.Combine(l.Downloads, Path.GetFileName(new Uri(url).LocalPath));
             log.Line("download " + url + " -> " + zip);
             host.Download(url, zip, sha, delegate(long got, long total) { prog.Say(Planner.Plain(what == "uv" ? "uv" : "node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
@@ -390,8 +361,6 @@ namespace Vgac.Starter
             host.Unzip(zip, tmp);
             // uv's zip holds the files at its top level.
             SwapFolder(tmp, targetDir, mustExist, "The downloaded " + what + " did not hold the file it should (" + Path.GetFileName(mustExist) + ").");
-            Proof.Write(targetDir, what == "uv" ? "uv" : "node");
-            if (toolsNew) Proof.Write(Path.GetDirectoryName(targetDir), "tools");   // only a tools folder VGAC made itself
             ledger.Add(what, targetDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }
@@ -425,7 +394,7 @@ namespace Vgac.Starter
 
         void FetchNode(Progress prog)
         {
-            Directory.CreateDirectory(l.Downloads); Proof.Write(l.Downloads, "downloads");
+            Directory.CreateDirectory(l.Downloads);
             string zip = Path.Combine(l.Downloads, Path.GetFileName(new Uri(Pins.NodeUrl).LocalPath));
             log.Line("download " + Pins.NodeUrl + " -> " + zip);
             host.Download(Pins.NodeUrl, zip, Pins.NodeSha256, delegate(long got, long total) { prog.Say(Planner.Plain("node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
@@ -438,8 +407,6 @@ namespace Vgac.Starter
             if (subs.Length == 1 && !File.Exists(Path.Combine(tmp, "node.exe"))) inner = subs[0];
             SwapFolder(inner, l.NodeDir, Path.Combine(l.NodeDir, "node.exe"), "The downloaded Node.js did not hold node.exe.");
             if (inner != tmp && Directory.Exists(tmp)) Directory.Delete(tmp, true);
-            Proof.Write(l.NodeDir, "node");
-            if (toolsNew) Proof.Write(Path.GetDirectoryName(l.NodeDir), "tools");
             ledger.Add("Node.js (used to build the screens)", l.NodeDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }

@@ -17,7 +17,6 @@ public static partial class T
         RealRecyclerTakesFilesAndFolders();
         RecycleBinIsNeverReplacedSilently();
         NonFixedDriveIsPermanentAndSaysSo();
-        SharedDataFolderIsNeverClaimed();
         DataFolderChoiceIsRefusedWhereShared();
         WorkFoldersMustBeProvenByContent();
         KeptIsEnforcedEverywhere();
@@ -85,38 +84,6 @@ public static partial class T
     }
 
     // ---- what is proven VGAC's ------------------------------------------------------------------------------------------------
-
-    static void SharedDataFolderIsNeverClaimed()
-    {
-        string root = NewProject();
-        string shared = Path.Combine(Tmp("shared"), "stuff");
-        var m = MachineFile.Load(root); m.Set("starter", "dataFolder", shared); m.Save();
-        var l = Layout.From(root, MachineFile.Load(root));
-        // somebody's own folders with the same names, no markers, no ledger
-        Put(Path.Combine(shared, "downloads", "invoice.pdf"), "the person's"); Put(Path.Combine(shared, "python", "python.exe"), "their python");
-        Put(Path.Combine(shared, "tools", "uv", "uv.exe"), "their uv"); Put(Path.Combine(shared, "tools", "node", "node.exe"), "their node");
-        Put(Path.Combine(shared, "tools", "uv.new", "x.txt"), "theirs"); Put(Path.Combine(shared, "tools", "other.new", "y.txt"), "theirs");
-        Put(Path.Combine(shared, "comfyui", "main.py"), "their comfy"); Put(Path.Combine(shared, "uv-cache", "a"), "theirs"); Put(Path.Combine(shared, "webview2", "a"), "theirs");
-        var led = Ledger.Load(root);
-        var plan = RemovalPlanner.Build(l, MachineFile.Load(root), led, new StandInComfy());
-        Check(plan.Get("tools").Items.All(i => !SafeFs.Inside(i.Path, shared)), "Remove lists nothing in a folder VGAC cannot prove it made");
-        Check(plan.NotRemoved.Count(n => n.Contains("cannot show that it made")) >= 5, "and says so for each name (" + plan.NotRemoved.Count + " reasons)");
-        Check(MoveRules.NamesIn(shared, led).Count == 0 && MoveRules.Unproven(shared, led).Count >= 6, "Move takes none of them");
-        var notes = Recovery.AtStart(l, null);
-        Check(Directory.Exists(Path.Combine(shared, "tools", "uv.new")) && Directory.Exists(Path.Combine(shared, "tools", "other.new")), "the start-up clean-up leaves 'uv.new' and any other '*.new' in a shared tools folder alone");
-        Check(Repair.Leftovers(l, led).Count == 0, "and Repair does not list them");
-        string to = Path.Combine(Tmp("target"), "newbig");
-        var mv = new MoveRunner(l, MachineFile.Load(root), led, new StandInComfy(), new NoProcs(), new SetupLog(root));
-        string why = mv.Start(to, new Progress());
-        Check(why != null && why.Contains("nothing") && !Directory.Exists(to) && MachineFile.Load(root).GetString("starter", "dataFolder") == shared, "a move with nothing proven does nothing and does not switch: " + why);
-        // the same folders, once VGAC made them (marker or ledger), are claimed
-        Proof.Write(Path.Combine(shared, "downloads"), "downloads");
-        var led2 = Ledger.Load(root); led2.Add("The private Python", Path.Combine(shared, "python"), "added", 0);
-        Check(MoveRules.NamesIn(shared, led2).SequenceEqual(new[] { "python", "downloads" }), "folders that carry VGAC's marker or are in the ledger are claimed, and only those");
-        // a marker for something else proves nothing
-        Proof.Write(Path.Combine(shared, "uv-cache"), "downloads");
-        Check(!MoveRules.NamesIn(shared, led2).Contains("uv-cache"), "a marker that names another kind of folder does not count");
-    }
 
     static void DataFolderChoiceIsRefusedWhereShared()
     {
