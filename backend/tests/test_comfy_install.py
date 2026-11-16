@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import sys
 import threading
 import urllib.error
@@ -823,11 +824,12 @@ def test_f3_b_then_c_drops_everything_of_their_comfyui(box):
     assert install(box, "C").state == "done"
     for n in ("a", "b"):
         e = _engine_block(box, n)
-        assert set(e) == {"comfy_dir", "python", "main", "port", "listen", "cuda_device", "user_dir", "extra_args"}, e
+        assert set(e) == {"comfy_dir", "python", "main", "port", "listen", "cuda_device", "user_dir", "output_dir", "extra_args"}, e
         assert e["extra_args"] == [] and Path(e["comfy_dir"]) == box["root"]
     s = config.load_settings(create_library=False)
     assert all(str(box["theirs"]) not in str(v) for v in (s.loras_dir, s.comfy_input_dir))
-    assert all(i.engine.extra_model_paths is None and i.engine.input_dir is None and i.engine.output_dir is None for i in s.instances.values())
+    assert all(i.engine.extra_model_paths is None and i.engine.input_dir is None for i in s.instances.values())
+    assert all(Path(i.engine.output_dir).is_relative_to(box["root"]) for i in s.instances.values())
 
 
 def test_f3_b_then_a_uses_vgacs_own_models_file_not_theirs(box):
@@ -935,11 +937,15 @@ def test_f7_remove_stops_its_own_engine_then_deletes_then_clears_settings(box):
     assert set(r["engines_cleared"]) == {"a", "b"}
 
 
-def test_f7_remove_under_choice_a_leaves_their_models(box):
+def test_f7_remove_under_choice_a_leaves_their_models_and_no_setting_points_at_it(box):
     models = box["theirs"] / "ComfyUI" / "models"
     assert install(box, "A", str(models)).state == "done"
     ci.remove(True, box["ops"])
     assert not box["root"].exists() and (models / "checkpoints" / "mine.safetensors").is_file()
+    s = config.load_settings(create_library=False)
+    assert s.comfy_input_dir is None and s.loras_dir is None
+    assert all(i.engine is None for i in s.instances.values())
+    assert "shared-models.yaml" not in box["machine"].read_text(encoding="utf-8")
 
 
 def test_f10_too_few_free_ports_is_an_error_not_a_lost_engine(box):
@@ -950,11 +956,20 @@ def test_f10_too_few_free_ports_is_an_error_not_a_lost_engine(box):
 
 def test_f10_vgacs_own_install_cannot_be_the_shared_models(box):
     assert install(box).state == "done"
-    with pytest.raises(DownloadError):
+    (box["root"] / "ComfyUI" / "models").mkdir(parents=True, exist_ok=True)
+    with pytest.raises(DownloadError) as e:
         ci.start("A", str(box["root"] / "ComfyUI" / "models"), box["ops"], wait=True)
+    assert "VGAC's own ComfyUI" in e.value.message
 
 
 def test_f10_the_pack_download_can_be_stopped(box):
+    big = make_zip({"__init__.py": b"NODE_CLASS_MAPPINGS = {}\n", "weights.bin": os.urandom(20_000)}, top="ComfyUI-SkinToken-beef",
+                   method=zipfile.ZIP_STORED)
+    box["net"].files[PACK_URL] = big
+    lst = box["tmp"] / "setup" / "downloads.json"
+    cat = json.loads(lst.read_text(encoding="utf-8"))
+    cat["node_packs"]["skintoken"]["sha256"] = sha(big)
+    lst.write_text(json.dumps(cat), encoding="utf-8")
     ref = {}
     orig = ci.Install
 
@@ -974,6 +989,9 @@ def test_f10_the_pack_download_can_be_stopped(box):
     finally:
         ci.Install = orig
     assert job.state == "stopped"
+    part = box["root"] / "downloads" / "pack-skintoken.zip.part"
+    assert part.is_file() and part.stat().st_size < len(big), "stopped part way, in VGAC's own folder"
+    assert not (box["root"] / "ComfyUI" / "custom_nodes" / "ComfyUI-SkinToken").exists()
     box["net"].hook = None
     assert install(box).state == "done"
 
@@ -1013,3 +1031,152 @@ def test_the_http_endpoints(box, monkeypatch):
     assert c.post("/api/comfy/install/engines", json={}).json()["engines"] == []  # no running app here
     r = c.post("/api/comfy/install/remove", json={"confirm": True, "also_models": True})
     assert r.status_code == 200 and r.json()["removed"]
+
+
+# --- fix check round 2 ---------------------------------------------------------------------------------------------------
+
+
+def test_status_after_remove_is_not_the_finished_job(box):
+    assert install(box).state == "done"
+    assert ci.status()["state"] == "done"
+    ci.remove(True, box["ops"])
+    assert ci.status()["state"] == "idle"
+    assert install(box).state == "done"  # and it can be installed again at once
+
+
+def test_another_comfyuis_output_folder_and_ports_do_not_survive(box):
+    data = machine(box)
+    data.setdefault("backend", {})["instances"] = {
+        n: {"output_dir": str(box["theirs"] / "output"), "discover": {"gpu_match": "30", "ports": [8188, 8189]}} for n in ("a", "b")}
+    box["machine"].write_text(json.dumps(data), encoding="utf-8")
+    config.reset_settings()
+    assert install(box, "C").state == "done"
+    s = config.load_settings(create_library=False)
+    for n, i in s.instances.items():
+        assert Path(i.output_dir).is_relative_to(box["root"]) and Path(i.engine.output_dir) == Path(i.output_dir)
+        assert i.discover is None or i.discover.ports == []
+        argv, _, _ = instances.engine_command(s, n)
+        assert str(box["theirs"]) not in " ".join(argv)
+
+
+def test_a_marker_without_the_ledger_entry_is_not_trusted(box):
+    root = box["root"]
+    root.mkdir(parents=True)
+    (root / ci.MARKER).write_text(json.dumps({"made_by": "VGAC", "steps": {}}), encoding="utf-8")
+    (root / "something.txt").write_text("not VGAC's", encoding="utf-8")
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "folder_used"
+    assert (root / "something.txt").read_text(encoding="utf-8") == "not VGAC's"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows'")
+def test_a_data_folder_junction_into_their_comfyui_is_refused(box):
+    import _winapi
+
+    box["data"].mkdir(parents=True, exist_ok=True)
+    target = box["theirs"] / "ComfyUI"
+    _winapi.CreateJunction(str(target), str(box["root"]))
+    try:
+        box["ops"].found_comfies = lambda: [str(target)]
+        job = install(box)
+        assert job.state == "failed" and job.error["code"] == "not_ours"
+        assert not (target / ci.MARKER).exists()
+    finally:
+        os.rmdir(box["root"])
+
+
+def test_an_unpack_error_of_any_kind_discards_the_zip(box, monkeypatch):
+    import zlib
+
+    def broken(*a, **k):
+        raise zlib.error("Error -3 while decompressing data: invalid block type")
+
+    monkeypatch.setattr(ci, "g_unzip", broken)
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "bad_checksum"
+    assert not list((box["root"] / "downloads").glob("*"))
+
+
+def test_a_source_download_larger_than_any_published_zip_is_stopped_and_deleted(box):
+    box["net"].files[ZIP_URL] = ZIP + b"\0" * (ci.source_cap(ci.entry()) + 10)
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "too_big"
+    assert not list((box["root"] / "downloads").glob("*"))
+
+
+def test_a_full_disk_during_the_source_download_deletes_the_part(box):
+    def disk_fills(pos):
+        if pos >= 100:
+            raise OSError(28, "No space left on device")
+
+    def full(url, start):
+        r = box["net"](url, start)
+        if url == ZIP_URL:
+            r.hook = disk_fills  # the disk fills part way through the zip
+        return r
+
+    box["ops"].opener = full
+    job = install(box)
+    assert job.state == "failed" and job.error["code"] == "no_space"
+    assert not list((box["root"] / "downloads").glob("*"))
+
+
+def test_remove_holds_the_install_lock(box):
+    assert install(box).state == "done"
+    held = []
+
+    def found():
+        got = ci._lock.acquire(blocking=False)
+        if got:
+            ci._lock.release()
+        held.append(not got)
+        return [str(box["theirs"])]
+
+    box["ops"].found_comfies = found
+    ci.remove(True, box["ops"])
+    assert held == [True]
+
+
+def test_the_port_check_sees_an_ipv6_only_listener():
+    if not socket.has_ipv6:
+        pytest.skip("no IPv6 on this computer")
+    srv = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        srv.bind(("::1", 0))
+    except OSError:
+        pytest.skip("::1 is not available")
+    srv.listen(1)
+    try:
+        assert ci._port_in_use(srv.getsockname()[1])
+    finally:
+        srv.close()
+
+
+def test_files_of_an_older_pinned_version_are_removed_and_nothing_else(box):
+    assert install(box).state == "done"
+    app = box["root"] / "ComfyUI"
+    (app / "comfy" / "old_module.py").write_text("from an older ComfyUI", encoding="utf-8")
+    (app / "comfy" / "mine.py").write_text("the person's own file", encoding="utf-8")
+    m = ci.read_marker(box["root"])
+    m["source_files"] = list(m["source_files"]) + ["comfy/old_module.py"]
+    (box["root"] / ci.MARKER).write_text(json.dumps(m), encoding="utf-8")
+    (app / "main.py").unlink()  # a changed pinned file makes the source step run
+    assert install(box).state == "done"
+    assert not (app / "comfy" / "old_module.py").exists() and (app / "comfy" / "mine.py").is_file()
+
+
+def test_a_locked_file_half_way_through_remove_leaves_no_step_marked_done(box, monkeypatch):
+    assert install(box).state == "done"
+    real = ci.g_rmtree
+
+    def locked(p, ops, fence=None):
+        if p.name == ".venv":
+            raise DownloadError("locked", "Windows or your antivirus is holding it.", "")
+        return real(p, ops, fence)
+
+    monkeypatch.setattr(ci, "g_rmtree", locked)
+    with pytest.raises(DownloadError):
+        ci.remove(True, box["ops"])
+    assert ci.read_marker(box["root"])["steps"] == {}
+    assert ci.status()["state"] == "unfinished"
+    assert config.load_settings(create_library=False).instances["a"].engine is not None  # settings cleared only after

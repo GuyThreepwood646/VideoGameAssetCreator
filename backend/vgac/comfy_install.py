@@ -118,6 +118,26 @@ def _run(argv: list[str], cwd: Path, env: dict[str, str], log_path: Path, cancel
         return proc.returncode
 
 
+def is_own_install(folder: str | Path) -> bool:
+    """True only for VGAC's own install folder itself (or a folder inside it): reached without a junction, with its
+    marker and its ledger entry."""
+    root = install_root()
+    plain = os.path.normcase(os.path.abspath(str(root)))
+    if _real(root) != plain or not _within(_real(Path(folder)), plain):
+        return False
+    return read_marker(root) is not None and _in_ledger(root)
+
+
+def fence_for(ops: "Ops", shared: str = "") -> "Fence":
+    fence = Fence()
+    for f in ops.found_comfies():
+        if not is_own_install(f):
+            fence.add(f)
+    if shared:
+        fence.add(shared)
+    return fence
+
+
 def _found_comfies() -> list[str]:
     from .comfy_find import find_comfy
 
@@ -291,7 +311,7 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     """Write the marker into a new or empty folder (or keep the one VGAC wrote). A folder with anything else in it is
     refused: VGAC installs only into a folder it made."""
     m = read_marker(root)
-    if m is not None:
+    if m is not None and _in_ledger(root):
         return m
     fresh = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
              "steps": {}, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -402,7 +422,7 @@ def zip_problems(zip_path: Path, listing: dict[str, Any]) -> list[str]:
             if len({i.filename.split("/", 1)[0] for i in z.infolist()}) != 1:
                 return ["the zip is not one folder"]
             have = {i.filename.split("/", 1)[1] if "/" in i.filename else i.filename: i.file_size for i in infos}
-    except (zipfile.BadZipFile, OSError, ValueError, EOFError):
+    except Exception:  # noqa: BLE001
         return ["the zip cannot be read (it may be incomplete or damaged)"]
     problems = [f"missing {k}" for k in sorted(set(want) - set(have))]
     problems += [f"not in the published files: {k}" for k in sorted(set(have) - set(want))]
@@ -484,6 +504,7 @@ class Install:
     error: dict[str, str] | None = None
     warnings: list[str] = field(default_factory=list)
     engines: list[dict[str, Any]] = field(default_factory=list)
+    source_files: list[str] = field(default_factory=list)  # set by the source step when it placed files
     cancel: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
 
@@ -573,6 +594,11 @@ def step_check(job: Install, ops: Ops, fence: Fence) -> hardware_setup.Plan:
     return p
 
 
+def source_cap(e: dict[str, Any]) -> int:
+    """The most bytes the ComfyUI download may have: a zip is never much larger than the files in it."""
+    return max(int(e.get("size") or 0) * 2, int(int(e.get("unpacked_bytes") or 0) * 1.1)) + downloader.MB
+
+
 def _bad_source(detail: str) -> DownloadError:
     return DownloadError("bad_checksum", f"The ComfyUI download is not the published one ({detail}). It has been deleted and not used.",
                          "Press Try again. If it happens again, GitHub may be serving something else; do not install it.")
@@ -604,12 +630,22 @@ def step_source(job: Install, ops: Ops, fence: Fence) -> None:
     if not zip_path.is_file():
         job.text = "Downloading ComfyUI from github.com"
 
+        cap = source_cap(e)
+
         def on_bytes(done: int) -> None:
             job.bytes_done = done
+            if done > cap:
+                raise DownloadError("too_big", f"The ComfyUI download is larger than the published one ({downloader.fmt_size(done)} "
+                                    f"and still coming); it was stopped and deleted.", "Press Try again. If it happens again, do not install it.")
 
-        downloader.try_each([str(e["zip"])], lambda url: downloader.stream_to_part(url, part, "ComfyUI", job.cancel, on_bytes,
-                                                                                  ops.opener or downloader.default_open),
-                            "ComfyUI", str(e.get("page", "")), where=zip_path.parent)
+        try:
+            downloader.try_each([str(e["zip"])], lambda url: downloader.stream_to_part(url, part, "ComfyUI", job.cancel, on_bytes,
+                                                                                      ops.opener or downloader.default_open),
+                                "ComfyUI", str(e.get("page", "")), where=zip_path.parent)
+        except DownloadError as err:
+            if err.code in ("too_big", "no_space", "write"):
+                discard()  # nothing worth resuming
+            raise
         if downloader.sha256_of(part, job.cancel) != str(e["sha256"]).lower():
             # GitHub keeps the files of a commit's zip but not its bytes. The same size with other bytes is damage; any
             # other difference must still hold exactly the pinned files (names and sizes here, contents after unpacking).
@@ -640,15 +676,22 @@ def step_source(job: Install, ops: Ops, fence: Fence) -> None:
         if err.code in ("locked", "not_ours", "bad_zip", "bad_checksum"):
             raise
         raise _bad_source(err.message) from None
-    except (zipfile.BadZipFile, OSError, ValueError, EOFError) as err:
+    except Exception as err:  # noqa: BLE001  (zlib.error and the like on a damaged body: never keep that zip)
         discard()
-        raise _bad_source(f"it could not be unpacked: {err}") from None
-    # Put the pinned files in place one by one; nothing else in the folder is touched.
-    for f in listing["files"]:
-        rel = str(f["path"])
+        raise _bad_source(f"it could not be unpacked: {type(err).__name__}") from None
+    # Put the pinned files in place one by one; nothing else in the folder is touched, except files that an earlier
+    # pinned version of ComfyUI put there and this one no longer has (recorded in the marker, so never a model).
+    new = [str(f["path"]) for f in listing["files"]]
+    for rel in new:
         dst = app / rel
         g_mkdir(dst.parent, fence)
         g_move(staging / rel, dst, ops, fence)
+    m = read_marker(root) or {}
+    for rel in sorted(set(m.get("source_files") or []) - set(new)):
+        old = app / str(rel)
+        if ".." not in Path(str(rel)).parts and old.is_file():
+            _retry(old, lambda old=old: guard(old, fence).unlink(), ops)
+    job.source_files = new
     discard()
 
 
@@ -773,7 +816,7 @@ def engine_settings(p: hardware_setup.Plan, ports: list[int], extra_yaml: Path |
     for eng, port in zip(p.engines, ports):
         e: dict[str, Any] = {"comfy_dir": str(root), "python": str(venv_python(root)), "main": "ComfyUI/main.py", "port": port,
                              "listen": "127.0.0.1", "cuda_device": eng["card"], "user_dir": str(root / "user" / eng["name"]),
-                             "extra_args": []}
+                             "output_dir": str(root / "output" / eng["name"]), "extra_args": []}
         if extra_yaml is not None:
             e["extra_model_paths"] = str(extra_yaml)
         out[eng["name"]] = e
@@ -795,6 +838,7 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
         extra = None  # type: ignore[assignment]
     for eng in p.engines:
         g_mkdir(root / "user" / eng["name"], fence)
+        g_mkdir(root / "output" / eng["name"], fence)
     g_mkdir(root / "input", fence)
     try:
         saved = config.load_settings(create_library=False)
@@ -825,9 +869,10 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
             insts = data.setdefault("backend", {}).setdefault("instances", {})
             for name, e in engines.items():
                 inst = insts.get(name) if isinstance(insts.get(name), dict) else {}
-                for k in ("process_match", "external_owner", "start_script"):
-                    inst.pop(k, None)
+                for k in ("process_match", "external_owner", "start_script", "discover"):
+                    inst.pop(k, None)  # discover comes back from the hardware plan, without another ComfyUI's ports
                 inst["url"] = f"http://127.0.0.1:{e['port']}"
+                inst["output_dir"] = e["output_dir"]  # where SkinToken's files are looked for: VGAC's own
                 inst["engine"] = e  # replaced whole, never merged
                 insts[name] = inst
             config.write_machine(data, mpath)
@@ -852,11 +897,7 @@ def run(job: Install, ops: Ops) -> None:
     global _fence
     fence = Fence()
     try:
-        for f in ops.found_comfies():
-            if not _within(_real(Path(f)), _real(install_root())):
-                fence.add(f)
-        if job.shared_models:
-            fence.add(job.shared_models)
+        fence = fence_for(ops, job.shared_models)
         _fence = fence
         job.step, job.text = "check", "Checking this computer"
         p = step_check(job, ops, fence)
@@ -882,6 +923,8 @@ def run(job: Install, ops: Ops) -> None:
             save_marker(m, fence)
             fn()
             m["steps"][sid] = "done"
+            if sid == "source" and job.source_files:
+                m["source_files"] = job.source_files
             if sid in ("source", "venv"):
                 # A new environment has none of the packages, and new files need testing again.
                 for later in (("wheels", "packages", "test") if sid == "venv" else ("test",)):
@@ -973,6 +1016,7 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
     """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it, and only once none of its
     engines runs (the app stops the ones it started; any other is the person's to close). The files go first, then the
     settings that point at them; the models are kept unless asked."""
+    global _current
     ops = ops or Ops()
     with _lock:  # no install can start while this runs
         if _current is not None and _current.state == "working":
@@ -980,10 +1024,7 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
         root = install_root()
         if read_marker(root) is None or not _in_ledger(root):
             raise DownloadError("not_ours", "VGAC did not install a ComfyUI there, so it removes nothing.", "")
-        fence = Fence()
-        for f in ops.found_comfies():
-            if not _within(_real(Path(f)), _real(root)):
-                fence.add(f)
+        fence = fence_for(ops)
         saved = config.load_settings(create_library=False)
         r = _real(root)
         mine = [n for n, i in saved.instances.items() if i.engine is not None and _within(_real(Path(i.engine.comfy_dir)), r)]
@@ -999,6 +1040,10 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
         else:
             raise DownloadError("engine_running", f"VGAC's ComfyUI is still running on port {busy[0]}, and the app did not start it, so it "
                                 "cannot stop it. Nothing was removed.", "Close that ComfyUI window or program, then press Remove again.")
+        _current = None  # the finished job no longer describes what is there
+        m = read_marker(root) or {}
+        m.update({"made_by": MADE_BY, "steps": {}})  # if a locked file stops the removal half way, nothing says done
+        save_marker(m, fence)
         kept = ""
         for child in list(root.iterdir()):
             if child.name == MARKER:
@@ -1010,11 +1055,7 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
                 kept = str(child / "models")
                 continue
             g_rmtree(child, ops, fence) if child.is_dir() else _retry(child, lambda c=child: guard(c, fence).unlink(), ops)
-        if kept:
-            m = read_marker(root) or {}
-            m.update({"made_by": MADE_BY, "steps": {}})  # only the models are left: every step is to do again
-            save_marker(m, fence)
-        else:
+        if not kept:
             _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
         # Only now that the files are gone: the settings that pointed at them.
         changes: dict[str, Any] = {"instances": {n: {"engine": None} for n in mine}} if mine else {}
