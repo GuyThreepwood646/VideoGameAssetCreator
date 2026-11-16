@@ -58,8 +58,11 @@ class NodeClient:
 
 def all_model_files() -> list[str]:
     models = preflight.load_models()
-    # Stored in subfolders, as on a real install.
-    return ["Some Folder\\" + str(models[mid]["file"]) for mid in preflight.MODEL_LOADERS]
+    # Stored in subfolders, as on a real install; with the add-ons a look's recipe loads (Retro 64's late-90s add-on).
+    from vgac import reference
+
+    return (["Some Folder\\" + str(models[mid]["file"]) for mid in preflight.MODEL_LOADERS]
+            + ["VGAC\\" + str(a["file"]).rsplit("/", 1)[-1] for a in reference.look_addons()])
 
 
 def by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

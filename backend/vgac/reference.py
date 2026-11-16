@@ -519,6 +519,25 @@ def addon(aid: str) -> dict[str, Any] | None:
     return _data()["addons"].get(aid) or _user_addons().get(aid)
 
 
+def look_addons(stage: str = "concept") -> list[dict[str, Any]]:
+    """The add-ons of the registry that a look's recipe loads by default for a stage (Retro 64: the late-90s add-on), each
+    once: [{id, label, file, looks: [the looks' names]}]. The setup check asks the engine for these files."""
+    out: dict[str, dict[str, Any]] = {}
+    for s in styles():
+        recs = [s.get("recipe") or {}] + [(o or {}).get("recipe") or {} for o in (s.get("by_category") or {}).values()]
+        for rec in recs:
+            for entry in rec.get("addons") or []:
+                aid = entry.get("id") if isinstance(entry, dict) else str(entry).split(":", 1)[0]
+                a = _data()["addons"].get(aid)
+                if not a or a.get("stage", "concept") != stage or not a.get("file"):
+                    continue
+                row = out.setdefault(aid, {"id": aid, "label": a.get("label") or aid, "file": a["file"], "looks": []})
+                name = s.get("look") or s.get("label") or s["id"]
+                if name not in row["looks"]:
+                    row["looks"].append(name)
+    return list(out.values())
+
+
 def addon_required(a: dict[str, Any]) -> bool:
     """True when the step cannot run without it (`required`)."""
     return bool(a.get("required"))

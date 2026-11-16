@@ -25,6 +25,8 @@ What is checked:
 - models: every model file of data/models.yaml (`models:` and `companions:`) the instance should have, found by asking the loader node's
   /object_info for its file choices and testing whether the one expected file name is among them. The list of
   choices is never returned, logged or kept: only found or missing is reported.
+- models: the add-ons a look's recipe loads (reference.look_addons; Retro 64's late-90s add-on), asked of the picture engine
+  the same way through LoraLoaderModelOnly; a missing one is a warning, since only that look's pictures need it.
 - tools: rigging needs Blender visible to the SkinToken node through SKINTOKEN_BLENDER_BIN: an instance the backend
   starts from its `engine` settings gets blender_exe (which must exist); an older start script must set it itself.
 
@@ -721,6 +723,32 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
             out.append(item(f"model.{name}.{mid}", "models", label, state, detail,
                             f"Download {expected} and put it in that ComfyUI's models folder (the {cls} loader's "
                             "folder), then restart it.", [stage], mtech))
+    # The add-ons a look's recipe loads (reference.look_addons; Retro 64's late-90s add-on): a warning, because only that
+    # look's pictures need them. Step 1 on that look stops with the same plain sentence (stages/concept.py).
+    if "concept" in stages_here:
+        from .reference import look_addons
+
+        for a in look_addons("concept"):
+            looks = " and ".join(a["looks"])
+            atech = f"instance {name}: {a['file']} (LoraLoaderModelOnly.lora_name; addons.yaml {a['id']})"
+            info = await _node_info(client, "LoraLoaderModelOnly", cache)
+            choices = None if isinstance(info, Exception) or info is None else combo_choices(info, "lora_name")
+            if choices is None:
+                out.append(item(f"addon.{name}.{a['id']}", "models", f"Add-on: {a['label']}", "unknown",
+                                "Not checked: this engine does not list its add-on files.", "", ["concept"], atech))
+            elif has_file(choices, str(a["file"])):
+                out.append(item(f"addon.{name}.{a['id']}", "models", f"Add-on: {a['label']}", "ok", "Installed.", "",
+                                ["concept"], atech))
+            else:
+                leaf = str(a["file"]).replace("\\", "/").rsplit("/", 1)[-1]
+                out.append(item(f"addon.{name}.{a['id']}", "models", f"Add-on: {a['label']}", "warn",
+                                f"The add-on file is not installed on the {gpu}, so pictures in the {looks} look cannot be "
+                                "made. Every other look works.",
+                                f"It is part of the Starter set: choose 'Get or check the models' below and get the Starter "
+                                "set again (files you have are skipped), or run setup\\Setup-Extras.ps1 -Models -Install "
+                                f"({leaf} goes in ComfyUI's models\\loras\\VGAC folder). Then restart ComfyUI.",
+                                ["concept"], atech))
+            del choices
     # Each model row says which entry of the download list it is and which file is in use (the same as the models panel shows),
     # so the System page can offer "Set model location" on it.
     from . import models_setup
