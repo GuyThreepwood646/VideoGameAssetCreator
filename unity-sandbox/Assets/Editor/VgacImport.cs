@@ -5,7 +5,7 @@
 // Batch-mode validation importer for Video Game Asset Creator.
 // Run: Unity.exe -batchmode -nographics -quit -projectPath <sandbox> -executeMethod VgacImport.Run -vgacInput <dir> -vgacName <name>
 //      [-vgacHumanoid] [-vgacClips <library.fbx>] [-vgacSpeedScale <f>] [-vgacKeepPose]
-//      [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
+//      [-vgacFingerLimits <finger_limits.json>] [-vgacHitboxes <hitboxes.json>] [-vgacMovementShape auto|upright|along|box|none] [-vgacScale <f>] [-vgacClipInfo <anim_clips.json>]
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacFilter bilinear|point] [-vgacMipmaps on|off] [-vgacCompress on|off] [-vgacNormalMap on|off]
 //      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
@@ -59,6 +59,12 @@
 // them. The shape-based Humanoid mapping never treats a spring bone as a body bone. The report gives springChains,
 // springBones and springWarning. Snapshot also renders walk and run from the side with the script stepping frame by
 // frame, and the same frames with it off (springs_*.png), and lists how far each chain tip trails (in loopProbes).
+// Version 19: finger limits (backend/vgac/fingerlimits.py). Unity plays the shared library clips on a valid Humanoid through muscle values, and the
+// library closes every finger joint about 77 degrees, a tight fist on a short finger; the rig step's own finger cap only reaches the moves baked into the
+// character's own FBX. With -vgacFingerLimits <finger_limits.json> the explicit Humanoid description writes each listed finger joint's min and max
+// (degrees, Vector3) as its HumanLimit, so a full curl closes the joint by the cap. The thumb and every other bone keep Unity's defaults. The report
+// gives fingerCap and fingerLimitedBones. The axes and signs are assumed (Z stretch, Y spread, a symmetric range): check in Unity.
+//
 // Version 16: moves face forward. The shared library (clips.fbx) imports with Bake Axis Conversion on, as its author's
 // setup sheet asks: without it the library's rig carries a half turn, and every looping move whose root rotation is
 // baked into the pose "based upon original" played facing backwards (measured 125 to 180 degrees; one-off moves, whose
@@ -101,7 +107,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "18";
+    public const string Version = "19";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -159,6 +165,8 @@ public static class VgacImport
         public string avatar_mapping_by = "";  // names | shape (explicit only)
         public int humanBonesMapped;
         public bool tPoseApplied;
+        public float fingerCap;           // Version 19: the finger cap (degrees) the limits were written for, 0 when none
+        public int fingerLimitedBones;    // Version 19: human bones given a custom limit
         public int colliderVertices;
         public string shader = "";
         public List<string> texturesAssigned = new List<string>();
@@ -303,7 +311,7 @@ public static class VgacImport
     // one of these and call Import, so the two paths cannot drift apart.
     public class ImportArgs
     {
-        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments, springs;
+        public string input, name, category = "", hitboxes, movementShape, clipInfo, clips, colliders, sockets, attachments, springs, fingerLimits;
         public bool humanoid, keepPose;
         public string filter = "bilinear";     // recipes: bilinear | point
         public bool mipmaps = true, compress = true, normalMap = true;
@@ -337,6 +345,7 @@ public static class VgacImport
                 keepPose = argv.Contains("-vgacKeepPose"),
                 category = A("-vgacCategory") ?? "",
                 hitboxes = F("-vgacHitboxes"),
+                fingerLimits = F("-vgacFingerLimits"),
                 movementShape = A("-vgacMovementShape"),
                 clipInfo = F("-vgacClipInfo"),
                 clips = F("-vgacClips"),
@@ -447,7 +456,7 @@ public static class VgacImport
 
             if (humanoid)
             {
-                report.avatar_mapping = MakeHumanoid(importer, fbxPath, report, a.keepPose);
+                report.avatar_mapping = MakeHumanoid(importer, fbxPath, report, a.keepPose, a.fingerLimits);
                 humanoid = report.avatar_mapping != "generic";
             }
             else report.avatar_mapping = "none";
@@ -1698,8 +1707,42 @@ public static class VgacImport
         return a != null && a.isHuman && a.isValid;
     }
 
-    static string MakeHumanoid(ModelImporter importer, string fbxPath, Report report, bool keepPose)
+    // Version 19: the finger limits file (vgac/fingerlimits.py): {version, finger_cap, limits: [{bone, min[3], max[3]}]} -> HumanLimit by human bone name.
+    [Serializable]
+    class FingerLimitEntry { public string bone; public float[] min; public float[] max; }
+
+    [Serializable]
+    class FingerLimitDoc { public int version; public float finger_cap; public List<FingerLimitEntry> limits; }
+
+    static Dictionary<string, HumanLimit> LoadFingerLimits(string path, Report report)
     {
+        var map = new Dictionary<string, HumanLimit>();
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return map;
+        try
+        {
+            var doc = JsonUtility.FromJson<FingerLimitDoc>(File.ReadAllText(path));
+            if (doc?.limits == null) return map;
+            foreach (var l in doc.limits)
+            {
+                if (l == null || string.IsNullOrEmpty(l.bone) || l.min == null || l.max == null || l.min.Length < 3 || l.max.Length < 3) continue;
+                map[l.bone] = new HumanLimit
+                {
+                    useDefaultValues = false,
+                    min = new Vector3(l.min[0], l.min[1], l.min[2]),
+                    max = new Vector3(l.max[0], l.max[1], l.max[2]),
+                    center = Vector3.zero,
+                    axisLength = 0f,
+                };
+            }
+            report.fingerCap = doc.finger_cap;
+        }
+        catch (Exception e) { report.warnings.Add("finger limits skipped: " + e.Message); }
+        return map;
+    }
+
+    static string MakeHumanoid(ModelImporter importer, string fbxPath, Report report, bool keepPose, string fingerLimitsPath = null)
+    {
+        var fingerLimits = LoadFingerLimits(fingerLimitsPath, report);
         var model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
         GameObject clone = null;
         try
@@ -1740,8 +1783,9 @@ public static class VgacImport
                         {
                             humanName = HumanTrait.BoneName[(int)kv.Key],
                             boneName = kv.Value.name,
-                            limit = new HumanLimit { useDefaultValues = true },
+                            limit = fingerLimits.TryGetValue(HumanTrait.BoneName[(int)kv.Key], out var fl) ? fl : new HumanLimit { useDefaultValues = true },
                         }).ToArray();
+                        report.fingerLimitedBones = desc.human.Count(h => !h.limit.useDefaultValues);
                         desc.skeleton = clone.GetComponentsInChildren<Transform>(true).Select(t => new SkeletonBone
                         {
                             name = t.name,
