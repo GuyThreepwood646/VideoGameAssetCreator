@@ -151,13 +151,12 @@ styles:
         head: [{text: "wispy hair, flyaway strands", drop: [wild]}]
         fur: ["wispy fur"]
     recipe:
-      # build_from shaded: the 3D builder makes a flat card from a pixel picture, so its picture is redrawn as a smooth
-      # shaded render first; padding 2: half again more of the texture used (no mipmaps to bleed across a small gap);
-      # the pixel pictures are painted back on, then the concept picture's colours and the stray clean
-      # (docs/research/looks/pixel.md, three characters).
-      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false, padding: 2, build_from: shaded}
-      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true, palette_source: concept, clean_strays: 2,
-                picture_projection: true}
+      # padding 2: about half again more of the texture used (no mipmaps to bleed across a small gap); the concept
+      # picture's own colours, then the stray clean (docs/research/looks/pixel.md, three characters). Left off until the
+      # clean-up's facing and outline checks hold on these builds: build_from: shaded (the 3D builder makes a flat card
+      # from a pixel picture; a shaded redraw gives it depth) and picture_projection (the pixel pictures painted on).
+      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false, padding: 2}
+      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true, palette_source: concept, clean_strays: 2}
       engine: {filter_mode: point, mipmaps: false, compress: false}
   - id: retro64
     delight_default: keep

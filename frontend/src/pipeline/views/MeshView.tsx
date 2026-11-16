@@ -19,7 +19,8 @@ const TEXTURE_NAMES: Record<string, string> = {
   emissive: 'glow',
 }
 
-// The Pixel art look's shaded redraw of the build picture (params.build_shaded; backend stages/mesh.py SHADED_NOTE).
+// A look's shaded redraw of the build picture (recipe mesh.build_from, off for every look today; params.build_shaded;
+// backend stages/mesh.py SHADED_NOTE). Shown only on a version that was built that way.
 const SHADED_NOTE = "The look's pixel picture was redrawn as a smooth shaded render first, so the 3D model gets real depth; the clean-up step paints the pixel pictures back on."
 
 // Hair from the library at Clean up (metrics.hair_library on the prep version).

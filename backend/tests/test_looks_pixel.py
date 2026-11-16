@@ -1,7 +1,8 @@
-"""Pixel art settings from the look research (docs/research/looks/pixel.md, local): the 3D step builds from a shaded
-redraw of its picture with a 2-texel gap, the clean-up paints the pixel pictures on before the look's palette, the palette
-is the concept picture's own colours with the stray clean after it, and every GLB of a crisp look samples nearest.
-Every other look keeps its recipe (tests/test_looks_lowtex.py compares them with looks_golden.json)."""
+"""Pixel art settings from the look research (docs/research/looks/pixel.md, local). On for the look: a 2-texel gap, the
+concept picture's own colours as the palette with the stray clean after it, and every GLB of a crisp look sampled
+nearest. Available but off (they wait for the clean-up's facing and outline checks): the 3D step building from a shaded
+redraw of its picture (mesh.build_from) and the pixel pictures painted on before the palette (surface.picture_projection);
+their tests turn them on in a copy of the recipe. Every other look keeps its recipe (tests/test_looks_lowtex.py)."""
 
 from __future__ import annotations
 
@@ -20,12 +21,36 @@ NEW_MESH = ("padding", "build_from")
 NEW_SURFACE = ("palette_source", "clean_strays", "picture_projection")
 
 
-def test_pixel_recipe_carries_the_new_settings():
+def test_pixel_recipe_carries_the_settings_that_are_on():
     r = reference.recipe("pixel", "humanoid", "pc_mid")
-    assert r["mesh"]["padding"] == 2 and r["mesh"]["build_from"] == "shaded"
+    assert r["mesh"]["padding"] == 2 and "build_from" not in r["mesh"]
     assert r["surface"]["palette_source"] == "concept" and r["surface"]["clean_strays"] == 2
-    assert r["surface"]["picture_projection"] is True
+    assert "picture_projection" not in r["surface"]
     assert r["mesh"]["texture"] == 256 and r["surface"]["texture_filter"] == "crisp"  # as before
+    look = prep.texture_look(r)
+    assert "projection" not in look and not srcproject.on({}, "humanoid", look)  # no painting, as before
+    assert not prep.look_after_painting(look, {}, "humanoid")  # the palette in the texture pass, as before
+    assert not mesh_stage.shaded_on(r, "humanoid", {})
+
+
+def _pixel_with_switches(monkeypatch):
+    """The pixel recipe with the two switches that are off turned on (as a look would set them)."""
+    real = reference.style
+
+    def fake(style_id):
+        s = dict(real(style_id))
+        if style_id == "pixel":
+            s["recipe"] = {**s["recipe"], "mesh": {**s["recipe"]["mesh"], "build_from": "shaded"},
+                           "surface": {**s["recipe"]["surface"], "picture_projection": True}}
+        return s
+
+    monkeypatch.setattr(reference, "style", fake)
+
+
+def test_switches_reach_the_recipe_when_a_look_sets_them(monkeypatch):
+    _pixel_with_switches(monkeypatch)
+    r = reference.recipe("pixel", "humanoid", "pc_mid")
+    assert r["mesh"]["build_from"] == "shaded" and r["surface"]["picture_projection"] is True
 
 
 @pytest.mark.parametrize("style", OTHER_LOOKS)
@@ -60,7 +85,8 @@ def test_padding_from_the_version_then_the_look_then_the_size():
     assert mesh_stage.resolve_padding({}, 256) == 8
 
 
-def test_shaded_redraw_only_for_pixel_characters_and_can_be_turned_off():
+def test_shaded_redraw_only_for_pixel_characters_and_can_be_turned_off(monkeypatch):
+    _pixel_with_switches(monkeypatch)
     pixel = reference.recipe("pixel", "humanoid", "pc_mid")
     assert mesh_stage.shaded_on(pixel, "humanoid", {})
     assert not mesh_stage.shaded_on(pixel, "humanoid", {"build_shaded": False})
@@ -70,7 +96,8 @@ def test_shaded_redraw_only_for_pixel_characters_and_can_be_turned_off():
     assert "smooth, softly shaded 3D render" in words and "same colours" in words and "Not pixel art" in words
 
 
-def test_projection_runs_for_the_pixel_look_only_when_it_asks():
+def test_projection_runs_for_the_pixel_look_only_when_it_asks(monkeypatch):
+    _pixel_with_switches(monkeypatch)
     pixel = prep.texture_look(reference.recipe("pixel", "humanoid", "pc_mid"))
     assert pixel["projection"] and pixel["palette_source"] == "concept" and pixel["clean_strays"] == 2
     assert srcproject.on({}, "humanoid", pixel)
