@@ -8,8 +8,8 @@ from sqlalchemy import text
 
 from vgac import db, reference
 
-OLD_LOOK_IDS = {"painted_fantasy": "painted", "clean_cartoon": "cel", "pixel_retro": "pixel", "realistic": "realistic_pbr", "clay_toy": "clay"}
-OLD_STYLE_IDS = {"painted", "cel", "pixel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
+OLD_LOOK_IDS = {"painted_fantasy": "painted", "clean_cartoon": "cel", "realistic": "realistic_pbr", "clay_toy": "clay"}
+OLD_STYLE_IDS = {"painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
 
 
 def test_every_style_is_one_look_with_both_parts():
@@ -61,3 +61,26 @@ def test_migration_maps_ids_falls_back_and_backs_up(settings):
     assert asset_style == "painted"  # the project's look, because the asset's own value is unknown
     assert settings.db_path.with_name(settings.db_path.name + ".before-looks-merge").is_file()
     assert db.migrate_looks(engine) == 0  # idempotent
+
+
+def test_a_removed_look_opens_as_a_custom_look_and_an_earlier_backup_is_kept(settings):
+    """Pixel art was removed (2026-11-16): a stored pixel project keeps its own lock fields as a custom look based on
+    Painted, its assets take that look, and the copy made before an earlier migration is never written over."""
+    from vgac.db import Asset, Project, session_factory
+
+    engine = db.get_engine()
+    earlier = settings.db_path.with_name(settings.db_path.name + ".before-looks-merge")
+    earlier.write_bytes(b"an earlier copy")
+    with session_factory()() as s:
+        s.add(Project(id="p-pixel", name="p", style_lock={"preset": "pixel", "model": "pixel", "prompt_block": "Pixel art style."}))
+        s.flush()
+        s.add(Asset(id="a-pixel", project_id="p-pixel", name="x", category="humanoid", style_preset="pixel", prompt=""))
+        s.commit()
+    assert db.migrate_looks(engine) == 2
+    with engine.begin() as conn:
+        lock = json.loads(conn.execute(text("SELECT style_lock_json FROM project WHERE id = 'p-pixel'")).scalar())
+        style = conn.execute(text("SELECT style_preset FROM asset WHERE id = 'a-pixel'")).scalar()
+    assert lock["preset"] is None and lock["based_on"] == "painted" and lock["model"] == "pixel"
+    assert lock["prompt_block"] == "Pixel art style." and style == "painted"
+    assert earlier.read_bytes() == b"an earlier copy"
+    assert len(list(settings.db_path.parent.glob(settings.db_path.name + ".before-looks-merge-*"))) == 1

@@ -27,7 +27,7 @@ _dir: list[Path | None] = [None]
 FAMILIES = ("bob", "short", "long", "ponytail", "bun", "braid", "afro")
 PHONE_PLATFORMS = ("mobile_low",)
 PHONE_TRIANGLES = 750
-LOOKS_OFF = ("pixel", "retro64", "lowpoly_flat")
+LOOKS_OFF = ("retro64", "lowpoly_flat")
 
 # Hair words per family, checked in this order (a tied style wins over a length word: "long hair in a ponytail").
 FAMILY_WORDS: list[tuple[str, list[str]]] = [
@@ -145,7 +145,7 @@ def style(style_id: str) -> dict[str, Any]:
 
 
 def styles_for(family: str | None, platform: str | None = None, look: str | None = None) -> list[dict[str, Any]]:
-    """Styles that can be offered: the family (None: all), never for looks without hair styles (Pixel, Retro 64,
+    """Styles that can be offered: the family (None: all), never for looks without hair styles (Retro 64,
     Low-poly flat); on Phone only shells whose lite variant is at most 750 triangles (cards are never offered there).
     Shells first, then by name."""
     if (look or "").lower() in LOOKS_OFF:

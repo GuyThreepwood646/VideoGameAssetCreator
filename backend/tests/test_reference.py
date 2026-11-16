@@ -23,7 +23,7 @@ def test_humanoid_pose_block_matches_bakeoff_text():
 
 def test_styles_and_platforms():
     styles = reference.styles()
-    assert {s["id"] for s in styles} == {"painted", "cel", "pixel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
+    assert {s["id"] for s in styles} == {"painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
     for s in styles:
         assert s["model"] in reference.concept_models()
         assert s["prompt_block"]

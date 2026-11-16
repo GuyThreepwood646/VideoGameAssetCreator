@@ -103,9 +103,9 @@ Data files in `backend/vgac/data/` drive these; editing them needs a backend res
 
 | File | What it holds |
 |---|---|
-| `styles.yaml` | The looks offered in **New project** (Painted, Cel shaded, Pixel art, Retro 64, Low-poly flat, Photoreal, Clay): picture model, prompt block, and the recipe that carries the look through the later steps |
+| `styles.yaml` | The looks offered in **New project** (Painted, Cel shaded, Retro 64, Low-poly flat, Photoreal, Clay): picture model, prompt block, and the recipe that carries the look through the later steps |
 | `models.yaml` | Every model file the app knows, with its exact file name, engine, licence line and whether it is required |
-| `addons.yaml` | LoRA add-ons (the looks' pixel art, clay, low-poly and stylised 3D finishes, and the ones the side views need) |
+| `addons.yaml` | LoRA add-ons (the pixel-art painter's own add-on, the clay, low-poly and stylised 3D finishes, and the ones the side views need) |
 | `platforms.yaml` | Triangle and texture budgets per platform (Phone, PC and console, and so on) |
 | `categories/` | Per-category rules: height, whether it gets a skeleton, which steps it skips |
 | `items.yaml` | Item kinds for **Add an item** and where they attach |

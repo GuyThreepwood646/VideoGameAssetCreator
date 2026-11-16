@@ -179,7 +179,7 @@ def test_own_styles_join_the_catalogue_the_picker_and_the_fit_read(client):
     assert sid in cat and cat[sid]["own"] and len(cat) > 20           # built-in styles are still there
     assert hairstyles.style(sid)["name"] == "Wavy"
     assert sid in {s["id"] for s in hairstyles.styles_for("short", "pc_mid", "painted")}
-    assert hairstyles.styles_for("short", "pc_mid", "pixel") == []    # looks with no library offer none, own included
+    assert hairstyles.styles_for("short", "pc_mid", "retro64") == []    # looks with no library offer none, own included
     assert sid in {s["id"] for s in hairstyles.styles_for(None, "mobile_low", None)}   # lite variant of 700 triangles
     p = hairstyles.paths(sid)
     assert p["npz"].is_file() and p["lite"].is_file() and p["grey"].is_file() and p["thumb_front"].is_file() and p["normal"] is None

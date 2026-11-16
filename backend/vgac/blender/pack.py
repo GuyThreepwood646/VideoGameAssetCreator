@@ -30,7 +30,7 @@ bounding boxes, each face takes the source face with the nearest centre, and eac
 corner. Without this every texture samples one texel on a rigged character.
 
 Recipes (reference.recipe): --shading flat (low-poly) makes every face flat after the weld, so every LOD and both
-formats keep the facets whatever the input's normals were; --texture-filter crisp (pixel art) samples the GLB's
+formats keep the facets whatever the input's normals were; --texture-filter crisp (a crisp look) samples the GLB's
 textures nearest-neighbour (Image Texture interpolation Closest, which the glTF exporter writes as a NEAREST sampler).
 A look without surface bumps simply gets no --normal, so its GLB has no normal texture.
 

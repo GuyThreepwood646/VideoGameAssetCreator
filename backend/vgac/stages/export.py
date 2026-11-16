@@ -540,21 +540,6 @@ def socket_category(sc: Any) -> str | None:
     return category
 
 
-def nearest_samplers(out_dir: Path, name: str, report: dict[str, Any]) -> list[str]:
-    """A crisp look's GLBs (the clean one, Godot's, each LOD) with every texture sampler set to plain nearest, no mipmaps
-    (glTF 9728 for min and mag). Blender's exporter writes Closest as NEAREST_MIPMAP_NEAREST (9984), so an engine that
-    reads the GLB made mipmaps and blended colours at a distance; Unity is set by the importer and was already right.
-    -> the file names changed."""
-    from .. import imaging
-
-    paths = [Path(out_dir) / f"{name}.glb", Path(out_dir) / f"{name}_godot.glb"] + [Path(p) for p in (report.get("glb_lods") or {}).values()]
-    done = []
-    for p in paths:
-        if p.is_file() and imaging.glb_replace_images(p, nearest=True):
-            done.append(p.name)
-    return done
-
-
 def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: str, formats: list[str], look: dict[str, str],
               collider_obj: Any = None, base_color: Any = None, normal: Any = None, orm: Any = None, uv_source: Any = None,
               socket_cat: str | None = None, hair: dict[str, Any] | None = None) -> list[Any]:
@@ -777,8 +762,6 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         sc.set_metrics(hair_material=block)
     else:
         sc.set_metrics(hair_material=None)
-    if look["texture_filter"] == "crisp":
-        sc.set_metrics(glb_nearest=await asyncio.to_thread(nearest_samplers, sc.dir, name, report))
     sc.register("pack_report", sc.dir / "report.json")
     if (sc.dir / f"{name}.fbx").is_file():
         sc.register("fbx", sc.dir / f"{name}.fbx")
@@ -1005,8 +988,6 @@ async def _sprites(sc: StageContext, params: dict[str, Any]) -> None:
     size = int(params.get("sprite_size") or 128)
     out = sc.dir / "sprites"
     args: list[Any] = [src, out, directions, frames, size]
-    if sc.asset.style_preset == "pixel":
-        args.append("--pixel")
     sc.progress(0.8, "sprite sheets")
     await sc.blender("sprites.py", args, log_name="sprites.log", timeout=3600)
     atlas = pack_sprites(out)

@@ -16,14 +16,9 @@
 #                triangle_scale times the platform budget, never under triangle_floor, never over the budget nor over
 #                triangle_cap (optional, a fixed ceiling); texture_cap is the largest texture size shipped, under the
 #                platform's own; bake_texture (optional) is the size the 3D step bakes and the clean-up paints at, the
-#                colour then shrunk to texture_cap at the end of the clean-up; padding (optional) the gap between texture
-#                pieces in texels (1 to 16); build_from: shaded (optional) the 3D step redraws its picture as a smooth
-#                shaded render first and builds from that
+#                colour then shrunk to texture_cap at the end of the clean-up
 #     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap,
-#                 face_layout, colour_per_face, face_keeps_texture, palette_source, clean_strays, picture_projection}
-#                palette_source: concept limits the texture to the concept picture's own colours; clean_strays: passes of
-#                the stray texel clean after the palette; picture_projection: the pictures are painted on although the
-#                look is crisp, before its palette;
+#                 face_layout, colour_per_face, face_keeps_texture}
 #                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended;
 #                face_layout: the face gets more of the texture before the pictures are painted (no face paint pass);
 #                colour_per_face: every triangle one colour after the painting; face_keeps_texture: except the front
@@ -123,41 +118,6 @@ styles:
       negative:
         head: []
         fur: *fur_negative
-  - id: pixel
-    delight_default: keep
-    pbr_fix_default: false
-    label: Pixel art
-    model: pixel
-    look: Pixel-art
-    # One list of looks: this style is also the look the person picks. The fields below are the look's painting part
-    # (what a project's look carries); everything above is its pipeline part. Old look ids: see db.LOOK_ID_MIGRATION.
-    look_label: "Pixel retro"
-    look_description: "16-bit pixel art with a limited palette and crisp pixels. Good for retro and indie games."
-    example_prompt: "A small knight sprite with a blue tunic and a round shield."
-    lock:
-      model: pixel
-      prompt_block: "Pixel art style. 16-bit era sprite art with a limited palette, crisp clean pixels, no anti-aliasing, strong readable silhouette, plain background."
-      loras: []
-      palette: ["#1a1c2c", "#5d275d", "#b13e53", "#ef7d57", "#ffcd75", "#a7f070", "#38b764", "#3b5dc9"]
-      negative: "blurry, smooth gradients, photographic, 3D render, text"
-    plain: small crisp textures with a limited palette, chunky shapes, no smoothing.
-    prompt_block: >-
-      16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.
-    # Plain looks want a plain shape (docs/HAIR-RESEARCH.md 5.2).
-    hair: &hair_simple
-      head: [hair as one simple solid shape]
-      fur: [fur as one simple solid shape]
-      negative:
-        head: [{text: "wispy hair, flyaway strands", drop: [wild]}]
-        fur: ["wispy fur"]
-    recipe:
-      # padding 2: about half again more of the texture used (no mipmaps to bleed across a small gap); the concept
-      # picture's own colours, then the stray clean (docs/research/looks/pixel.md, three characters). Left off until the
-      # clean-up's facing and outline checks hold on these builds: build_from: shaded (the 3D builder makes a flat card
-      # from a pixel picture; a shaded redraw gives it depth) and picture_projection (the pixel pictures painted on).
-      mesh: {triangle_scale: 0.5, triangle_floor: 300, texture_cap: 256, normal_map: false, padding: 2}
-      surface: {texture_filter: crisp, palette_colors: 32, pixel_snap: true, palette_source: concept, clean_strays: 2}
-      engine: {filter_mode: point, mipmaps: false, compress: false}
   - id: retro64
     delight_default: keep
     pbr_fix_default: false
@@ -186,7 +146,13 @@ styles:
       blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light
       with one warm key light from the upper left, a soft round blob shadow underneath, the whole image
       slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels.
-    hair: *hair_simple
+    # Plain looks want a plain shape (docs/HAIR-RESEARCH.md 5.2).
+    hair: &hair_simple
+      head: [hair as one simple solid shape]
+      fur: [fur as one simple solid shape]
+      negative:
+        head: [{text: "wispy hair, flyaway strands", drop: [wild]}]
+        fur: ["wispy fur"]
     recipe:
       # triangle_cap: a fixed ceiling whatever the platform (0.4 of a High budget was 24,000). bake_texture: the 3D step
       # bakes and the clean-up paints at 1024, then the colour is shrunk to texture_cap (eyes about 2 texels at 256).

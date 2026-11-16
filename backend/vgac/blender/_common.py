@@ -40,6 +40,6 @@ def opt(flag, default):
 
 
 def flag(name):
-    """True when the bare switch `name` (for example --pixel) is in the script arguments."""
+    """True when the bare switch `name` (for example --symmetric) is in the script arguments."""
     return name in after_double_dash()
 

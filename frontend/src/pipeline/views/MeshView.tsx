@@ -19,10 +19,6 @@ const TEXTURE_NAMES: Record<string, string> = {
   emissive: 'glow',
 }
 
-// A look's shaded redraw of the build picture (recipe mesh.build_from, off for every look today; params.build_shaded;
-// backend stages/mesh.py SHADED_NOTE). Shown only on a version that was built that way.
-const SHADED_NOTE = "The look's pixel picture was redrawn as a smooth shaded render first, so the 3D model gets real depth; the clean-up step paints the pixel pictures back on."
-
 // Hair from the library at Clean up (metrics.hair_library on the prep version).
 
 export function MeshView({ version, category, asset, hairFocus, onFix, onChanged }: { version: Version; category?: string; asset?: Asset; hairFocus?: number | null; onFix?: (fix: FixAction) => void; onChanged?: () => void }) {
@@ -104,7 +100,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
               <img src={editedPicture} alt="The picture edited as described, which this model was built from" />
             </a>
             <div className="small muted">
-              {typeof version.params?.instruction === 'string' && version.params.instruction ? `"${version.params.instruction}" was drawn into the picture first, then the model was built from it.` : version.params?.build_shaded ? SHADED_NOTE : 'The picture was edited first, then the model was built from it.'}
+              {typeof version.params?.instruction === 'string' && version.params.instruction ? `"${version.params.instruction}" was drawn into the picture first, then the model was built from it.` : 'The picture was edited first, then the model was built from it.'}
             </div>
           </div>
         )}
