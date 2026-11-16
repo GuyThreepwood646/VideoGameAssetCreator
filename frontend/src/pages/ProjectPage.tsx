@@ -410,7 +410,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         </span>
         <div className="choice-row" role="radiogroup" aria-label="Start from">
           <label className="check-item">
-            <input type="radio" name="start-from" checked={!fromPicture} onChange={() => setStartFrom('words')} />
+            <input type="radio" name="start-from" checked={startFrom === 'words'} onChange={() => setStartFrom('words')} />
             <span>A description</span>
           </label>
           <label className="check-item">
