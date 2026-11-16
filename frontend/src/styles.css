@@ -78,7 +78,6 @@ body,
 
 body {
   background: var(--bg);
-  min-width: 1280px;
 }
 
 a {
@@ -4460,3 +4459,117 @@ button.preset-card:hover:not(:disabled) {
 .body-marks-unseen .chip { cursor: pointer; }
 .picture-viewer-foot .body-marks-unseen { flex-basis: 100%; }
 .picture-viewer-foot .row-between { flex-wrap: wrap; gap: 6px; }
+
+/* Narrow windows: the app has no minimum width. Wide layouts above are unchanged; these rules only apply when the window is small. */
+@media (max-width: 900px) {
+  /* While a step is running, its activity log goes under the step instead of squeezing it between two columns. */
+  .pipeline-layout.with-log {
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .pipeline-layout.with-log .stage-rail {
+    grid-row: 1 / span 2;
+  }
+  .pipeline-layout.with-log .job-col {
+    grid-column: 2;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 30vh;
+  }
+}
+@media (max-width: 700px) {
+  /* The step rail stacks above the step instead of taking a fixed 240px column. */
+  .pipeline-layout,
+  .pipeline-layout.with-log {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .pipeline-layout.with-log {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .stage-rail {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 30vh;
+  }
+  .rail-stages {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .pipeline-layout.with-log .stage-rail {
+    grid-row: auto;
+  }
+  .pipeline-layout.with-log .job-col {
+    grid-column: auto;
+    max-height: 24vh;
+  }
+  .job-col {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 24vh;
+  }
+  .stage-main {
+    padding: var(--s3);
+  }
+}
+@media (max-width: 560px) {
+  /* The top bar wraps onto a second line instead of forcing the window wider. */
+  .topbar {
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    row-gap: var(--s1);
+  }
+  .topnav {
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s3);
+  }
+  /* The two top-bar pop-ups open across the bar's width, so neither runs off the left edge. */
+  .topbar {
+    position: relative;
+  }
+  .status-chip,
+  .help-menu {
+    position: static;
+  }
+  .status-pop {
+    left: var(--s2);
+    right: var(--s2);
+    min-width: 0;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+  }
+}
+/* A table too wide for a small window scrolls inside its own box, not the page. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+@media (max-width: 800px) {
+  /* The project page puts the new-asset form under the list instead of beside it. */
+  .project-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--s3);
+  }
+  .welcome {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .rail-stages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stage-rail {
+    max-height: 28vh;
+  }
+}
+@media (max-width: 700px) {
+  /* The picture viewer's title bar wraps so the Close button always stays on screen. */
+  .picture-viewer-bar {
+    flex-wrap: wrap;
+  }
+  .picture-viewer {
+    width: calc(100vw - 2 * var(--s3));
+    height: calc(100vh - 2 * var(--s3));
+  }
+}
