@@ -41,11 +41,8 @@ namespace Vgac.Starter
                     try { File.Replace(tmp, path, backup); break; }
                     catch (IOException)
                     {
-                        if (i < 20) { System.Threading.Thread.Sleep(50); continue; }
-                        if (backup != null) { try { File.Copy(path, backup, true); } catch (IOException) { } }
-                        File.Copy(tmp, path, true);
-                        try { File.Delete(tmp); } catch (IOException) { }
-                        break;
+                        if (i < 40) { System.Threading.Thread.Sleep(50); continue; }
+                        throw;           // never overwritten in place: the old file stays whole, and the caller is told
                     }
                 }
             }
@@ -298,6 +295,8 @@ namespace Vgac.Starter
 
         static void CopyItemInto(string src, string dst, ICollection<string> skipTop, FsReport rep, string rootReal, string rootSrc, List<string[]> links)
         {
+            // never write through a link that is already in the destination (or above it)
+            if (IsLink(dst) || !PathHasNoLink(dst)) { rep.Links.Add(dst); return; }
             Directory.CreateDirectory(dst);
             foreach (string k in Directory.GetFileSystemEntries(src))
             {
@@ -316,6 +315,7 @@ namespace Vgac.Starter
                 {
                     Point("copy", k);
                     // already there with the same size and time (an earlier, interrupted copy): not copied again
+                    if (IsLink(to)) { rep.Links.Add(to); continue; }
                     if (File.Exists(to) && new FileInfo(to).Length == new FileInfo(k).Length && File.GetLastWriteTimeUtc(to) == File.GetLastWriteTimeUtc(k)) { rep.Files++; continue; }
                     string tmp = to + ".copying";
                     File.Copy(k, tmp, true);

@@ -337,6 +337,8 @@ namespace Vgac.Starter
             catch (StarterError e) { ShowError(e); return; }
             AtStartChecks();
             if (exitAfter > 0) ScheduleExit();
+            string moveGate = MoveGate.Blocking(root);
+            if (moveGate != null) { ShowMoveBlocked(moveGate); return; }
             if (steps.Count == 0) { StartBackend(); return; }
             ShowWelcome();
         }
@@ -499,9 +501,24 @@ namespace Vgac.Starter
             }
         }
 
+        // A move is unfinished: nothing runs. The window says so and opens Maintenance on the move; only Continue and Abandon are there.
+        void ShowMoveBlocked(string why)
+        {
+            DefaultButtons();
+            title.Text = "A move of the big files is not finished";
+            body.Text = why;
+            bar.Visible = false;
+            primary.Text = "Open the move"; secondary.Text = "Quit";
+            primary.Visible = secondary.Visible = true; choose.Visible = false; openLog.Visible = false;
+            onPrimary = delegate { OpenMaintenance(2); }; onSecondary = OnNotNow;
+            BeginInvokeSafe(delegate { OpenMaintenance(2); });
+        }
+
         void StartBackend()
         {
-            if (quitting) return;     // setup that finishes while the person quits must not start a backend
+            if (quitting) return;
+            string moveGate = MoveGate.Blocking(root);
+            if (moveGate != null) { ShowMoveBlocked(moveGate); return; }     // setup that finishes while the person quits must not start a backend
             title.Text = "Starting VGAC";
             body.Text = "Starting the app's engine...";
             bar.Visible = false;
@@ -714,6 +731,7 @@ namespace Vgac.Starter
         // progress. Cancel is the default in both. Not while the screens are being built.
         bool RestartBackend()
         {
+            if (MoveGate.Blocking(root) != null) return false;
             RestartStart gate0 = LauncherRules.Restart(engineBusy, backend != null, quitting, setupRunning);
             if (gate0 == RestartStart.BuildRunning)
             {
@@ -760,7 +778,7 @@ namespace Vgac.Starter
         // "Build again": run the screens' build, then restart the backend so it serves the new build.
         void Rebuild()
         {
-            if (setupRunning || sup == null || engineBusy || quitting) return;
+            if (setupRunning || sup == null || engineBusy || quitting || MoveGate.Blocking(root) != null) return;
             setupRunning = true;
             sup.Building = true; sup.BuildError = null;
             Background(delegate
@@ -859,7 +877,7 @@ namespace Vgac.Starter
         public void Resume()
         {
             engineBusy = false;
-            if (quitting || backend == null) return;
+            if (quitting || backend == null || MoveGate.Blocking(root) != null) return;
             BeginInvokeSafe(delegate { RestartBackend(); });
         }
 

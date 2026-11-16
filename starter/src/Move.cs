@@ -107,6 +107,8 @@ namespace Vgac.Starter
                         foreach (MoveItem it in Items) if (string.Equals(it.Name.Split('\\')[0], n, StringComparison.OrdinalIgnoreCase)) known = true;
                         if (!known) { bad.Add("That folder has files in it that VGAC did not put there (" + n + ")."); break; }
                     }
+                    string link = SafeFs.FirstLink(t, null);
+                    if (link != null) bad.Add("The new folder holds a link (" + link + "), so VGAC will not copy into it. Remove the link, or abandon the move.");
                     string mid = DataFolders.ReadMarkerMove(t);
                     if (mid != null && mid != resuming.Id) bad.Add("That folder holds the unfinished copy of another move, not this one.");
                 }
@@ -144,6 +146,24 @@ namespace Vgac.Starter
         }
     }
 
+    // THE rule: while a move is unfinished, or has switched and VGAC has not been restarted, nothing runs on either place. The app and its
+    // engines do not start, and Remove, Repair, Update and setup refuse with this sentence. (Only Continue, Abandon and Restart work.) Read
+    // from the files each time; null when nothing blocks.
+    public static class MoveGate
+    {
+        public static string Blocking(string root)
+        {
+            try
+            {
+                if (MoveRules.RestartPending(root)) return "VGAC has been moved to a new folder for the big files and has to be restarted first. Close it and start it again.";
+                MoveJournal j = MoveRunner.Load(root, Layout.From(root, MachineFile.Load(root)).DataFolder);
+                if (j == null) return null;
+                return "A move of the big files is not finished (" + (j.State == "switching" ? "it is switching to the new folder" : "it was copying") + "). Until it is, nothing else runs: open Maintenance, Move the big files, and continue it" + (j.State == "copying" ? ", or abandon it" : "") + ".";
+            }
+            catch (Exception) { return null; }
+        }
+    }
+
     // What the window shows about a move, read fresh from the files each time (never from a layout loaded earlier).
     public static class MoveView
     {
@@ -172,7 +192,7 @@ namespace Vgac.Starter
 
         // The journal, or null. A journal that is not a plain list of this program's own fixed names, or whose places do not fit the
         // current settings, is ignored (StaleFound says so); nothing is renamed or written by reading it.
-        public static bool StaleFound;
+        [ThreadStatic] public static bool StaleFound;
 
         public static MoveJournal Load(string root) { return Load(root, null); }
 
@@ -276,23 +296,32 @@ namespace Vgac.Starter
         }
 
         // Carries on from the journal (also after an interruption). null when the move is complete and VGAC has to be restarted.
-        public string Continue(Progress prog)
+        public string Continue(Progress prog) { return ContinueCore(prog, false); }
+
+        // The way out of a switch that cannot finish because ComfyUI's installer keeps refusing: the move ends WITHOUT moving VGAC's own
+        // ComfyUI, which then keeps running from the old folder (the ledger says so again).
+        public string ContinueAnyway(Progress prog) { return ContinueCore(prog, true); }
+
+        string ContinueCore(Progress prog, bool force)
         {
             var j = Current();
             if (j == null) return MoveRunner.StaleFound ? "The record of an earlier move does not fit this install, so it is ignored. Nothing was changed." : "There is no move to continue.";
-            if (j.State == "copying")
-            {
-                List<string> foreignFiles = MoveRules.Problems(j.From, j.To, Root, -1, 0, j, comfy);
-                if (foreignFiles.Count > 0) return string.Join(" ", foreignFiles.ToArray());
-                List<string> blockers = MoveRules.Blockers(j.From, procs, OwnPid());
-                if (blockers.Count > 0) return "Close these first, they have files open in the old folder: " + string.Join(", ", blockers.ToArray()) + ".";
-                string r = EnsureStamped(j);
-                if (r == null) r = CopyAll(j, prog);
-                if (r == null) r = VerifyAll(j, prog);
-                if (r != null) return r;
-                j.State = "switching"; Save(j);
-            }
-            return Finish(j);
+            if (force && j.State != "switching") return "'Finish anyway' only applies to a move that is already switching.";
+            // Whatever the state, nothing earlier is trusted: the old place may have changed since it was copied (nothing runs there
+            // while a move is unfinished, but a crash or a hand edit can still leave it different), and the new place may have been
+            // damaged. Files already identical are not copied again; extra files in the new place are ours (its marker says so) and are
+            // not a mismatch.
+            List<string> foreignFiles = MoveRules.Problems(j.From, j.To, Root, -1, 0, j, j.State == "switching" ? null : comfy);
+            if (foreignFiles.Count > 0) return string.Join(" ", foreignFiles.ToArray());
+            List<string> blockers = MoveRules.Blockers(j.From, procs, OwnPid());
+            if (blockers.Count > 0) return "Close these first, they have files open in the old folder: " + string.Join(", ", blockers.ToArray()) + ".";
+            string r = EnsureStamped(j);
+            j.Done.Clear();
+            if (r == null) r = CopyAll(j, prog);
+            if (r == null) r = VerifyAll(j, prog);
+            if (r != null) return r;
+            if (j.State == "copying") { j.State = "switching"; Save(j); }
+            return Finish(j, force);
         }
 
         // The new place carries this install's marker with this move's id (written first thing, and again by Continue when a crash came
@@ -301,7 +330,13 @@ namespace Vgac.Starter
         {
             var m = MachineFile.Load(Root);
             string sid = DataFolders.SettingsId(m), mid = DataFolders.ReadMarkerId(j.To);
-            if (mid == null) DataFolders.Stamp(j.To, m, j.Id);
+            if (mid == null)
+            {
+                // a folder is never taken for the move's own because its folders have the right names: with no marker it must be empty
+                foreach (string e in Directory.Exists(j.To) ? Directory.GetFileSystemEntries(j.To) : new string[0])
+                    if (!string.Equals(Path.GetFileName(e), DataFolders.MarkerName + ".tmp", StringComparison.OrdinalIgnoreCase)) return "The new folder has files in it but no VGAC marker, so VGAC will not copy into it: " + j.To + ". Choose another folder.";
+                DataFolders.Stamp(j.To, m, j.Id);
+            }
             else if (mid != sid || DataFolders.ReadMarkerMove(j.To) != j.Id) return "The new folder already carries a VGAC marker that is not this move's, so VGAC will not copy into it. Choose another folder.";
             SafeFs.Point("move", "stamped");
             return null;
@@ -324,7 +359,7 @@ namespace Vgac.Starter
                     var rep = new FsReport();
                     string skip = MoveRules.SkipFor(name);
                     List<string[]> links = SafeFs.CopyItem(src, final, skip == null ? null : new[] { skip }, rep);
-                    if (rep.Links.Count > 0) return "A link inside " + name + " could not be copied (" + rep.Links[0] + "). Nothing was changed in the old place.";
+                    if (rep.Links.Count > 0) return "A link got in the way of copying " + name + " (" + rep.Links[0] + "), so VGAC stopped. Nothing was changed in the old place, and nothing was written through the link.";
                     SafeFs.Point("move", "copied:" + name);
                     SafeFs.MakeLinks(final, links, rep);
                     if (rep.Links.Count > 0) return "A link inside " + name + " could not be made again in the copy (" + rep.Links[0] + "). Continue to try again, or abandon the move; the old place is untouched.";
@@ -348,7 +383,7 @@ namespace Vgac.Starter
                 SafeFs.Point("move", "verify:" + name);
                 string skip = MoveRules.SkipFor(name);
                 List<string> bad;
-                try { bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, false, prog == null ? null : prog.Cancelled, prog == null ? null : prog.Say); }
+                try { bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, true, prog == null ? null : prog.Cancelled, prog == null ? null : prog.Say); }
                 catch (OperationCanceledException) { return "The check was stopped. Nothing was switched. Continue it later, or abandon the move."; }
                 if (bad.Count > 0)
                 {
@@ -362,26 +397,42 @@ namespace Vgac.Starter
         // The one decision. The journal says "switching" first; every step after it is safe to repeat, so Continue finishes it from wherever
         // it stopped. There is no way back: to go back, move again.
         //   journal "switching", settings, ledger, restart marker, ComfyUI's engine settings (installer), ComfyUI's Python (installer), journal gone
-        string Finish(MoveJournal j)
+        string Finish(MoveJournal j, bool force)
         {
             SafeFs.Point("move", "before-switch");
             SetDataFolder(j.To);
             RewriteLedger(j.From, j.To);
-            WriteRestartMarker(j);
+            string note = null;
             if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.To)))
             {
                 // the installer's commands run with the app's own Python, whose environment points into the old place, which is still there
                 SafeFs.Point("move", "before-retarget");
                 string r = comfy.Retarget(j.From, j.To);
-                if (r != null) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Continue to try again.";
-                SafeFs.Point("move", "after-retarget");
-                r = comfy.RebuildVenv(j.To);
-                if (r != null) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " VGAC itself works; its own ComfyUI will not start until this is done (it needs the internet). Continue to try again.";
+                if (r != null)
+                {
+                    if (!force) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Nothing runs until the move is finished: press Continue to try again, or 'Finish anyway', which ends the move WITHOUT moving VGAC's own ComfyUI (it then keeps running from the old folder, which you must keep).";
+                    RewriteLedgerPath(Path.Combine(j.To, "comfyui"), Path.Combine(j.From, "comfyui"));
+                    note = "VGAC's own ComfyUI was not moved: it keeps running from " + Path.Combine(j.From, "comfyui") + ", so keep that folder.";
+                }
+                else
+                {
+                    SafeFs.Point("move", "after-retarget");
+                    r = comfy.RebuildVenv(j.To);
+                    if (r != null)
+                    {
+                        if (!force) return "The files are moved, but VGAC's own ComfyUI Python could not be made again: " + r + " VGAC itself works, but nothing runs until the move is finished. Press Continue to try again, or 'Finish anyway': then ComfyUI will not start until Check and repair has made its Python again (it needs the internet).";
+                        note = "VGAC's own ComfyUI's Python was not made again: Check and repair offers to make it (it needs the internet).";
+                    }
+                }
             }
+            if (note != null) log.Line("move: " + note);
+            WriteRestartMarker(j);         // only now: everything that could still fail is behind us
             DeleteJournal();
             log.Line("move: switched to " + j.To + "; the old folder " + j.From + " is no longer used");
             return null;
         }
+
+        void RewriteLedgerPath(string oldPath, string newPath) { RewriteLedger(oldPath, newPath); }
 
         void WriteRestartMarker(MoveJournal j)
         {

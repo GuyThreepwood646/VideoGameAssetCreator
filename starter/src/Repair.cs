@@ -183,6 +183,8 @@ namespace Vgac.Starter
         // Runs one fix. null when it worked; else a plain sentence. Never touches anything VGAC did not make.
         public static string Fix(string fixId, Layout l, IHost host, MachineFile machine, Ledger ledger, SetupLog log, Progress prog)
         {
+            string gateWhy = MoveGate.Blocking(l.ProjectRoot);
+            if (gateWhy != null) return gateWhy;
             try
             {
                 if (fixId == "leftovers")

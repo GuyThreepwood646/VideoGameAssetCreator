@@ -291,7 +291,7 @@ namespace Vgac.Starter
             // item is also a real place inside it, never a link)
             DataStatus ds = DataFolders.Check(data, machine, l.ProjectRoot);
             // While a move of the big files is unfinished, which place is whole depends on its step: nothing in the folder for the big files
-            // (nor VGAC's own ComfyUI) is offered until the move is finished or cancelled.
+            // (nor VGAC's own ComfyUI) is offered until the move is finished or abandoned.
             bool moving = MoveRunner.Load(l.ProjectRoot, l.DataFolder) != null;
             if (moving) plan.Notes.Add("A move of the big files is not finished. Nothing in the folder for the big files, and not VGAC's own ComfyUI, is offered for removal until the move is finished or cancelled (Move the big files).");
             bool dataOurs = ds.State == DataState.Ours && !moving;
@@ -661,6 +661,8 @@ namespace Vgac.Starter
             IComfyInstall comfy, IRecycler recycler, SetupLog log, Action<string> say, ICollection<string> permanentFor)
         {
             var res = new RemovalResult();
+            string gateWhy = MoveGate.Blocking(l.ProjectRoot);
+            if (gateWhy != null) { res.Skipped.Add(gateWhy); log.Line("remove: refused: " + gateWhy); return res; }
             RemovalGroup work = plan.Get("work");
             if (ticked.Contains("work") && work != null && work.Items.Count > 0 && !RemovalRules.TypedWordOk(typed))
             {

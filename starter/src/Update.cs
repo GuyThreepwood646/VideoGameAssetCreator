@@ -236,7 +236,9 @@ namespace Vgac.Starter
                     if (File.Exists(f + Suffix)) File.Delete(f + Suffix);
                     File.Move(f, f + Suffix);
                     done.Add(f);
+                    SafeFs.Point("aside", "bin-renamed:" + Path.GetFileName(f));
                     string rel = f.Substring(Path.GetFullPath(root).TrimEnd('\\').Length + 1).Replace('\\', '/'), co;
+                    SafeFs.Point("aside", "bin-before-checkout:" + Path.GetFileName(f));
                     if (git.Run("checkout -- \"" + rel + "\"", root, out co) != 0) { Restore(done); return "VGAC could not prepare the update (" + GitUpdate.LastLines(co, 2) + "). Nothing was changed."; }
                 }
                 catch (Exception e) { Restore(done); return "VGAC could not step its libraries aside to let the update in (" + e.Message + "). Nothing was changed."; }
@@ -258,7 +260,16 @@ namespace Vgac.Starter
         {
             string bin = Path.Combine(root, "starter", "bin");
             if (!Directory.Exists(bin)) return;
-            foreach (string f in Directory.GetFiles(bin, "*.dll" + Suffix)) { try { File.Delete(f); } catch (Exception) { } }
+            foreach (string old in Directory.GetFiles(bin, "*.dll" + Suffix))
+            {
+                try
+                {
+                    string plain = old.Substring(0, old.Length - Suffix.Length);
+                    if (!File.Exists(plain)) File.Move(old, plain);       // cut off between the rename and the checkout: the file comes back
+                    else File.Delete(old);
+                }
+                catch (Exception) { }
+            }
         }
     }
 
@@ -358,6 +369,8 @@ namespace Vgac.Starter
         {
             var r = new UpdateResult();
             string output;
+            string gateWhy = MoveGate.Blocking(root);
+            if (gateWhy != null) { r.Message = gateWhy; return r; }
             if (git.Run("--version", root, out output) != 0) { r.Message = "Git is not installed, so VGAC cannot update itself. Install Git for Windows, or update from a terminal."; return r; }
             string mid = MidPull(root);
             if (mid != null) { r.Message = MidPullText; return r; }
