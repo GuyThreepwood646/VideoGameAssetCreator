@@ -651,12 +651,45 @@ def removed_list(params: dict[str, Any]) -> list[str]:
     return [str(x) for x in _as_list(params.get("removed_moves")) if isinstance(x, str)]
 
 
+IDLE_BUILTIN, IDLE_LIBRARY = "builtin", "library"
+
+
+def idle_source(params: dict[str, Any]) -> str:
+    """Where this character's Stand still comes from: "builtin" (the app's own idle), "library" (the shared library's
+    idle) or a library clip id such as "ual1:Idle_Talking_Loop". A rig version made before the choice existed has
+    none stored and keeps the library's idle."""
+    v = str(params.get("idle_source") or "").strip()
+    if not v:
+        return IDLE_LIBRARY
+    return v if v in (IDLE_BUILTIN, IDLE_LIBRARY) or ":" in v else IDLE_LIBRARY
+
+
+def resolve_idle_source(params: dict[str, Any], parent_stage: str | None) -> str:
+    """idle_source for a rig being made: the stored choice, else the library's idle for a version made from an earlier
+    rig (so a character is not changed silently), else the app's own idle (a first rig)."""
+    if str(params.get("idle_source") or "").strip():
+        return idle_source(params)
+    return IDLE_LIBRARY if parent_stage == "rig" else IDLE_BUILTIN
+
+
 def move_rows(category: dict[str, Any], params: dict[str, Any], chosen_moves: Any = None,
               settings: Settings | None = None) -> list[dict[str, Any]]:
     """Every library move to make for this character: the defaults (narrowed by the moves knob when it was set,
-    minus the removed ones), then the added ones with their library, label, loop and origin."""
+    minus the removed ones), then the added ones with their library, label, loop and origin. Stand still is the
+    app's own idle (no library row) unless idle_source names the library's idle or another clip."""
     removed = set(removed_list(params))
     rows = [r for r in default_rows(category) if r["name"] not in removed]
+    idle = idle_source(params)
+    if idle == IDLE_BUILTIN:
+        rows = [r for r in rows if r["name"] != "idle"]
+    elif idle != IDLE_LIBRARY:
+        pack, _, action = idle.partition(":")
+        info = find_clip(idle, settings)
+        for r in rows:
+            if r["name"] == "idle" and info is not None:
+                r.update({"from": [{"library": pack, "action": action}], "label": info.get("label") or r["label"], "clip": idle,
+                          "loop": True, "in_place": not info.get("moves_character") if pack.startswith(MINE_PREFIX) else action not in TRAVELS,
+                          "licence": LICENCE_MINE if pack.startswith(MINE_PREFIX) else LICENCE_PACK})
     if chosen_moves is not None:
         chosen = {str(m).strip().lower() for m in (chosen_moves if isinstance(chosen_moves, (list, tuple)) else str(chosen_moves).split(","))}
         rows = [r for r in rows if r["move"].lower() in chosen]
@@ -831,11 +864,12 @@ def asset_moves(db: Session, asset: Any, settings: Settings | None = None) -> di
     busy = any(v.status in ("queued", "running") for v in versions)
     out: dict[str, Any] = {"can_add": can, "reason": reason, "instead": [] if can else creature_moves(asset.category),
                            "rig_version": kept.id if kept is not None and kept.status == "done" else None, "busy": busy,
-                           "moves": [], "added": [], "removed": [], "others": []}
+                           "moves": [], "added": [], "removed": [], "others": [], "idle_source": IDLE_LIBRARY}
     if kept is None:
         return out
     params, metrics = kept.params or {}, kept.metrics or {}
     out["added"], out["removed"] = added_list(params), removed_list(params)
+    out["idle_source"] = idle_source(params)
     if isinstance(metrics.get("moves"), list):
         out["moves"] = metrics["moves"]
     else:
@@ -864,6 +898,7 @@ class MovesIn(BaseModel):
     add: list[str] = Field(default_factory=list, max_length=100)
     remove: list[str] = Field(default_factory=list, max_length=100)
     copy_from: str | None = Field(default=None, max_length=64)
+    idle: str | None = Field(default=None, max_length=120)  # Stand still: "builtin", "library" or a library clip id
 
 
 def change_moves(db: Session, asset: Any, body: MovesIn, settings: Settings | None = None) -> dict[str, Any]:
@@ -923,12 +958,19 @@ def change_moves(db: Session, asset: Any, body: MovesIn, settings: Settings | No
                 removed.append(n)
         else:
             raise MovesError("That move is not on this character.")
-    if not body.add and not body.remove and not body.copy_from:
+    idle = (body.idle or "").strip()
+    if idle and idle not in (IDLE_BUILTIN, IDLE_LIBRARY) and find_clip(idle, s) is None:
+        raise MovesError("That idle is not in the library any more. Open the list again.")
+    if idle and idle == idle_source(params):
+        idle = ""
+    if not body.add and not body.remove and not body.copy_from and not idle:
         raise MovesError("Choose a move to add or take off first.")
     left = [m for m in current if m not in removed] + [a["name"] for a in added]
     if not left:
         raise MovesError("A character needs at least one move.")
     new_params = {"added_moves": added, "removed_moves": removed}
+    if idle:
+        new_params["idle_source"] = idle
     v = pipeline.new_version(db, asset, "rig", kept, {**params, **new_params})
     job = pipeline.submit(db, asset, v, "adjust", {"params": {**new_params, "_keep_when_done": True}})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}

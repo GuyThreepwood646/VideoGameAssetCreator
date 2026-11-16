@@ -352,9 +352,9 @@ def test_animate_retargets_library_clips_for_a_humanoid(tmp_path):
     args = sc.calls[1][1]
     assert args[0] == args[1] == str(sc.dir / "anim.glb")
     assert args[args.index("--library") + 1].endswith("lib.glb")
-    assert args[args.index("--loops") + 1] == "idle,walk"
+    assert args[args.index("--loops") + 1] == "walk"  # a first rig keeps the app's own idle (builtin)
     m = sc.version.metrics
-    assert m["clips_source"] == "library" and m["library_clips"] == ["idle", "walk", "death"]
+    assert m["clips_source"] == "library" and m["library_clips"] == ["walk", "death"]
     assert m["procedural_clips"] == ["turn_left"] and m["missing_clips"] == ["roll"]
     assert m["retarget_seconds"] >= 0 and m["retarget"]["faithful_max_deg"] == 5.5 and m["retarget_error"] is None
     assert sc.version.params["clips_source"] == "auto" and sc.files["anim_retarget"].name == "anim_retarget.json"

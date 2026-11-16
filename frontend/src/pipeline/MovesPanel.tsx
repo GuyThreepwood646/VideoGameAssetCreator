@@ -48,7 +48,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
     return () => window.clearInterval(t)
   }, [data?.busy, load])
 
-  const change = async (body: { add?: string[]; remove?: string[]; copy_from?: string }) => {
+  const change = async (body: { add?: string[]; remove?: string[]; copy_from?: string; idle?: string }) => {
     setSending(true)
     setError(null)
     try {
@@ -130,6 +130,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
           </li>
         ))}
       </ul>
+      {data.can_add && kept && data.moves.some((m) => m.name === 'idle') && <StandStill current={data.idle_source} busy={busy} onChoose={(idle) => change({ idle })} />}
       {data.can_add && kept && (
         <div className="row-gap">
           {data.others.length > 0 && (
@@ -166,6 +167,41 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
         }} />
       )}
     </section>
+  )
+}
+
+// --- Stand still ---------------------------------------------------------------------------------------------------
+
+// The app's own idle is the default for new human-shaped characters; the library's idle, or another standing move of the
+// library, can be chosen instead. Choosing makes only the moves again (the same job as adding a move).
+function StandStill({ current, busy, onChoose }: { current: string; busy: boolean; onChoose: (idle: string) => void }) {
+  const [lib, setLib] = useState<MoveLibrary | null>(null)
+  useEffect(() => {
+    let live = true
+    movesApi.library().then((l) => live && setLib(l)).catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+  const standing = (lib?.clips ?? []).filter((c) => c.group === 'standing' && c.loop && /idle/i.test(c.action) && !/crouch/i.test(c.action) && c.action !== 'Idle_Loop')
+  const known = current === 'builtin' || current === 'library' || standing.some((c) => c.id === current)
+  return (
+    <div className="row-gap moves-idle">
+      <label className="small">
+        Stand still{' '}
+        <select value={current} disabled={busy} aria-label="Where Stand still comes from" onChange={(e) => e.target.value !== current && onChoose(e.target.value)}>
+          <option value="builtin">Made by the app (upright, arms close)</option>
+          <option value="library">The hand-made library (leans forward a little)</option>
+          {!known && <option value={current}>Another move from the library</option>}
+          {standing.map((c) => (
+            <option key={c.id} value={c.id}>
+              Library: {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Info term="term.stand_still" />
+    </div>
   )
 }
 

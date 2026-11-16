@@ -331,7 +331,8 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
-MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs")
+MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs",
+                "idle_source")
 # anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
 # keys are never present, so listing them changes nothing there.
 ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
@@ -537,7 +538,10 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
     procedural clips of the same name. The procedural clips stay as the fallback and for every non-humanoid. Then a
     rendered strip of the final clips. File names: anim.glb, anim_clips.json, anim_anim.json (and
     anim_retarget.json when the library ran)."""
-    params = params or {}
+    params = dict(params or {})
+    from .. import moves as moves_mod
+
+    params["idle_source"] = moves_mod.resolve_idle_source(params, getattr(getattr(sc, "parent", None), "stage", None))
     anim_glb = sc.dir / "anim.glb"
     motion = params.get("motion") or sc.category.get("motion")
     chosen_moves = chosen_moves_of(sc.category, params)
@@ -551,7 +555,8 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         args += ["--size", str(params["move_size"])]
     if params.get("move_speed"):
         args += ["--speed", str(params["move_speed"])]
-    sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params))
+    sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params),
+                  idle_source=params["idle_source"])
     try:
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
@@ -678,6 +683,10 @@ def hair_bound_check(m: dict[str, Any]) -> dict[str, Any] | None:
 # Settings a donor rig must share with this one: the same body (body_glb_hash), template and weights per vertex.
 def _same_moves(category: dict[str, Any], a: dict[str, Any], b: dict[str, Any]) -> bool:
     keys = ("added_moves", "removed_moves", "move_size", "move_speed", "clips_library")
+    from .. import moves as moves_mod
+
+    if moves_mod.idle_source(a) != moves_mod.idle_source(b):
+        return False
     if any((a.get(k) or None) != (b.get(k) or None) for k in keys):
         return False
     if clips_source(a) != clips_source(b):  # the stage writes the default ("auto") back into its params

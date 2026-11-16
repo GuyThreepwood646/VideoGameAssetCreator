@@ -245,20 +245,26 @@ export function characterMoves(category: string, rigVersion: { id: string; param
       added: [],
       removed: [],
       others: [],
+      idle_source: 'builtin',
     }
   }
   const params = rigVersion?.params ?? {}
   const removed = new Set(removedOf(params))
   const byId = new Map(libraryClips().map((c) => [c.id, c]))
+  const idle = String(params.idle_source ?? 'library')
   const moves: CharacterMove[] = [
-    ...DEFAULTS.filter((d) => !removed.has(d.name)).map((d) => ({ name: d.name, label: d.label, clip: d.clip, source: 'library' as const, loop: d.loop, added: false, default: true, made: true })),
+    ...DEFAULTS.filter((d) => !removed.has(d.name)).map((d) => {
+      const own = d.name === 'idle' && idle === 'builtin'
+      const c = d.name === 'idle' && idle.includes(':') ? byId.get(idle) : undefined
+      return { name: d.name, label: c?.label ?? d.label, clip: own ? null : (c?.id ?? d.clip), source: (own ? 'built-in' : 'library') as CharacterMove['source'], loop: d.loop, added: false, default: true, made: true }
+    }),
     ...TURNS.filter((t) => !removed.has(t.name)).map((t) => ({ name: t.name, label: t.label, clip: null, source: 'built-in' as const, loop: false, added: false, default: true, made: true })),
     ...addedOf(params).map((a) => {
       const c = byId.get(a.clip)
       return { name: a.name, label: c?.label ?? a.name, clip: a.clip, source: (a.clip.startsWith('mine_') ? 'mine' : 'library') as CharacterMove['source'], loop: a.loop, added: true, default: false, made: !!c }
     }),
   ]
-  return { can_add: true, reason: '', instead: [], rig_version: rigVersion?.id ?? null, busy, moves, added: addedOf(params), removed: [...removed], others }
+  return { can_add: true, reason: '', instead: [], rig_version: rigVersion?.id ?? null, busy, moves, added: addedOf(params), removed: [...removed], others, idle_source: idle }
 }
 
 // A mock upload: a file named with "creature" or "robot" is refused; others give two clips and one bone not found.

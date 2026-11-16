@@ -107,7 +107,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "19";
+    public const string Version = "20";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -604,6 +604,7 @@ public static class VgacImport
             // Clips: the shared library for a valid Humanoid, else the clips baked into the model FBX itself.
             List<AnimationClip> clipSet = null;
             HashSet<string> addedClips = null;  // moves the person added ("Add a move"), by clip name
+            string ownIdle = null;              // Version 20: the app's own idle, when it is this character's Stand still
             var clipsSrc = a.clips;
             if (clipsSrc != null && File.Exists(clipsSrc) && avatar != null && avatar.isHuman && avatar.isValid)
             {
@@ -626,10 +627,18 @@ public static class VgacImport
                 // Moves the person added are only in the model's own FBX: add those to the shared set.
                 var side = ReadClipInfo(a.clipInfo, report);
                 addedClips = AddedClips(side);
-                if (addedClips.Count > 0) SetClipLoops(importer, report, side, addedClips);
+                ownIdle = OwnIdleName(side);
+                var fromOwn = new HashSet<string>(addedClips, StringComparer.OrdinalIgnoreCase);
+                if (ownIdle != null) fromOwn.Add(ownIdle);
+                if (fromOwn.Count > 0) SetClipLoops(importer, report, side, fromOwn);
                 FaceForward(fbxPath, new[] { ci, importer }, report);
                 clipSet = LoadClips(clipsPath);
-                if (addedClips.Count > 0) clipSet.AddRange(LoadClips(fbxPath).Where(c => addedClips.Contains(ShortName(c.name))));
+                if (fromOwn.Count > 0) clipSet.AddRange(LoadClips(fbxPath).Where(c => fromOwn.Contains(ShortName(c.name))));
+                if (ownIdle != null && !clipSet.Any(c => AssetDatabase.GetAssetPath(c) == fbxPath && string.Equals(ShortName(c.name), ownIdle, StringComparison.OrdinalIgnoreCase)))
+                {
+                    report.warnings.Add("the character's own idle was not found in its model; the library's idle is used");
+                    ownIdle = null;
+                }
             }
             else
             {
@@ -654,7 +663,7 @@ public static class VgacImport
             }
             if (clipSet.Count > 0)
             {
-                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips);
+                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle);
                 animator.runtimeAnimatorController = ctrl;
                 report.clipCount = clipSet.Count;
             }
@@ -1877,11 +1886,20 @@ public static class VgacImport
     }
 
     // anim_clips.json from the rig stage (procanim.py): the loop flag per clip, which the GLB and FBX do not carry.
-    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; }
+    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; public string source = ""; }
 
     static HashSet<string> AddedClips(Dictionary<string, SidecarClip> side) =>
         side == null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                      : new HashSet<string>(side.Values.Where(c => c.added).Select(c => c.name), StringComparer.OrdinalIgnoreCase);
+    // Version 20: the character's own Stand still. When the sidecar's idle was made by the app (source "procedural") and the
+    // shared library is in use, that idle is taken from the model's own FBX and plays as the Locomotion state's idle; the
+    // library's idle is left unused. A sidecar from before (no source, or "library") keeps the library's idle.
+    static string OwnIdleName(Dictionary<string, SidecarClip> side)
+    {
+        if (side == null || !side.TryGetValue("idle", out var c)) return null;
+        return string.Equals(c.source, "procedural", StringComparison.OrdinalIgnoreCase) ? c.name : null;
+    }
+
     [Serializable] class Sidecar { public int version; public string motion = ""; public List<SidecarClip> clips = new List<SidecarClip>(); }
 
     static Dictionary<string, SidecarClip> ReadClipInfo(string path, Report report)
@@ -2179,7 +2197,7 @@ public static class VgacImport
     }
 
     static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info,
-                                              HashSet<string> added = null)
+                                              HashSet<string> added = null, string ownIdle = null)
     {
         AssetDatabase.DeleteAsset(path);
         var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
@@ -2190,7 +2208,9 @@ public static class VgacImport
         foreach (var c in extra) used.Add(c);
         AnimationClip Take(AnimationClip c) { if (c != null) used.Add(c); return c; }
 
-        var idle = Take(Pick(clips, used, "idle"));
+        // Version 20: the character's own idle (from its model) is Stand still when the sidecar says the app made it.
+        var own = ownIdle == null ? null : clips.FirstOrDefault(c => string.Equals(ShortName(c.name), ownIdle, StringComparison.OrdinalIgnoreCase) && !used.Contains(c));
+        var idle = Take(own != null ? own : Pick(clips, used, "idle"));
         var walk = Take(Pick(clips, used, "walk") ?? Pick(clips, used, "slither"));
         var run = Take(Pick(clips, used, "run") ?? Pick(clips, used, "jog") ?? Pick(clips, used, "sprint"));
         var attack = Take(Pick(clips, used, "attack") ?? Pick(clips, used, "punch", "slash", "bite", "strike"));
