@@ -12,11 +12,17 @@
 #     concept    {steps, negative}         steps empty: the model's own default
 #     addons     [{id, strength}]          add-ons from data/addons.yaml, strength subtle | normal | strong
 #     turnaround {lora_strength, prompt_suffix}
-#     mesh       {triangle_scale, triangle_floor, texture_cap, normal_map}
-#                triangle_scale times the platform budget, never under triangle_floor and never over the budget;
-#                texture_cap is the largest texture size, under the platform's own
-#     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap}
-#                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended
+#     mesh       {triangle_scale, triangle_floor, texture_cap, normal_map, triangle_cap, bake_texture}
+#                triangle_scale times the platform budget, never under triangle_floor, never over the budget nor over
+#                triangle_cap (optional, a fixed ceiling); texture_cap is the largest texture size shipped, under the
+#                platform's own; bake_texture (optional) is the size the 3D step bakes and the clean-up paints at, the
+#                colour then shrunk to texture_cap at the end of the clean-up
+#     surface    {shading: smooth | flat, texture_filter: smooth | crisp, palette_colors: int or empty, pixel_snap,
+#                 face_layout, colour_per_face, face_keeps_texture}
+#                pixel_snap: textures are shrunk by taking whole pixels (nearest neighbour), never blended;
+#                face_layout: the face gets more of the texture before the pictures are painted (no face paint pass);
+#                colour_per_face: every triangle one colour after the painting; face_keeps_texture: except the front
+#                of a character's head
 #     engine     {filter_mode: bilinear | point, mipmaps, compress}   what the Unity importer sets on the textures
 #   by_category  {category id: {plain, recipe}} overrides for one kind of asset, merged over the style's own
 styles:
@@ -156,7 +162,9 @@ styles:
     example_prompt: "A stout adventurer in a green tunic with a short sword and a wooden shield."
     lock:
       model: zturbo
-      prompt_block: "An in-game real-time 3D model from a late-1990s 64-bit console game: chunky low-polygon shapes, smooth vertex shading, soft blurry low-resolution textures, bold saturated colours, plain background. Not pixel art, no voxels."
+      # The same words as the look's own prompt_block below: the older short block here gave voxel block figures on four of
+      # four pictures for two characters (look research, 2026-11-16); a project takes its words from this lock.
+      prompt_block: "An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading with soft glossy specular highlights, slightly angular silhouettes, chunky simplified hands and details, blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light with one warm key light from the upper left, a soft round blob shadow underneath, the whole image slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels."
       loras: []
       palette: ["#2b3a67", "#e84855", "#f9dc5c", "#3bb273", "#f4f1de"]
       negative: "photographic, realistic skin, pixel art, voxels, cubes, text, logos"
@@ -171,7 +179,11 @@ styles:
       slightly soft like a low-resolution frame upscaled. Not built from cubes, no pixel art, no voxels.
     hair: *hair_simple
     recipe:
-      mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false}
+      # triangle_cap: a fixed ceiling whatever the platform (0.4 of a High budget was 24,000). bake_texture: the 3D step
+      # bakes and the clean-up paints at 1024, then the colour is shrunk to texture_cap (eyes about 2 texels at 256).
+      mesh: {triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false, triangle_cap: 3000, bake_texture: 1024}
+      # face_layout: the face gets more of the texture (blender/faceuv.py) before the pictures are painted on.
+      surface: {face_layout: true}
   - id: lowpoly_flat
     delight_default: keep
     pbr_fix_default: false
@@ -189,7 +201,7 @@ styles:
       loras: []
       palette: ["#8ecae6", "#ffb703", "#fb8500", "#bde0a8", "#f1faee"]
       negative: "photographic, smooth gradients, fine texture, pixel art, text, logos"
-    plain: faceted shapes with one flat colour per face, a quarter of the usual triangles, simple textures.
+    plain: faceted shapes with one flat colour per face, at most 1,500 triangles, simple textures.
     # Bake-off 6: the old block stayed smooth; this one names the facets.
     prompt_block: >-
       A low-poly 3D model rendered in real time with flat shading, built from a few hundred large flat
@@ -199,8 +211,10 @@ styles:
       No pixel art, no voxels, no fine surface detail.
     hair: *hair_simple
     recipe:
-      mesh: {triangle_scale: 0.25, triangle_floor: 300, texture_cap: 512, normal_map: false}
-      surface: {shading: flat}
+      mesh: {triangle_scale: 0.25, triangle_floor: 300, texture_cap: 512, normal_map: false, triangle_cap: 1500}
+      # colour_per_face: after the pictures are painted on, every triangle takes one colour (the median of its texels);
+      # face_keeps_texture: the front of a character's head keeps its painted texture, so the eyes stay.
+      surface: {shading: flat, colour_per_face: true, face_keeps_texture: true}
     by_category:
       material:
         plain: a simple flat-coloured tile with little texture detail.

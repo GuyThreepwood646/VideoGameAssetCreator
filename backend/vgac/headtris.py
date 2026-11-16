@@ -44,13 +44,13 @@ HAND_PARAM = "hand_triangles"
 
 def applies(rec: dict[str, Any] | None, category_id: str | None) -> bool:
     """Whether the look and the category get more triangles on the head: humanoids whose recipe keeps the full
-    triangle budget with smooth shading and smooth (not crisp) textures."""
+    triangle budget, or sets a fixed triangle cap, with smooth shading and smooth (not crisp) textures."""
     if category_id != "humanoid":
         return False
     r = rec or {}
     mesh, srf = r.get("mesh") or {}, r.get("surface") or {}
-    if float(mesh.get("triangle_scale") or 1.0) < 1.0:
-        return False  # Pixel-art, Retro 64 and Low-poly ask for a fraction of the budget
+    if float(mesh.get("triangle_scale") or 1.0) < 1.0 and not mesh.get("triangle_cap"):
+        return False  # Pixel-art asks for a fraction of the budget; a look with a fixed cap (Retro 64) keeps its head
     if (srf.get("shading") or "smooth") != "smooth":
         return False  # flat shading: even triangle size is the look
     if srf.get("texture_filter") == "crisp":
