@@ -1,7 +1,7 @@
 @echo off
 rem Builds ..\VGAC.exe with the C# compiler that ships with Windows (nothing to install).
 rem   build.cmd          builds VGAC.exe at the project root and prints its SHA-256
-rem   build.cmd test     builds and runs the starter's tests (tests\StarterTests.cs tests\LauncherTests.cs tests\AfterwardsTests.cs tests\SafetyTests.cs) in temporary folders
+rem   build.cmd test     builds and runs the starter's tests (tests\StarterTests.cs tests\LauncherTests.cs tests\AfterwardsTests.cs tests\SafetyTests.cs tests\Safety2Tests.cs) in temporary folders
 setlocal
 set CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe
@@ -14,7 +14,7 @@ powershell -NoProfile -Command "(Get-FileHash ..\VGAC.exe -Algorithm SHA256).Has
 exit /b 0
 :test
 if not exist obj mkdir obj
-"%CSC%" /nologo /target:exe /out:obj\StarterTests.exe %REFS% src\Core.cs src\SafeFs.cs src\Proof.cs src\Update.cs src\Repair.cs src\Comfy.cs src\Remove.cs src\Move.cs src\Setup.cs src\Logic.cs src\Native.cs src\Supervisor.cs src\RealHost.cs src\WebWindow.cs tests\StarterTests.cs tests\LauncherTests.cs tests\AfterwardsTests.cs tests\SafetyTests.cs
+"%CSC%" /nologo /target:exe /out:obj\StarterTests.exe %REFS% src\Core.cs src\SafeFs.cs src\Proof.cs src\Update.cs src\Repair.cs src\Comfy.cs src\Remove.cs src\Move.cs src\Setup.cs src\Logic.cs src\Native.cs src\Supervisor.cs src\RealHost.cs src\WebWindow.cs tests\StarterTests.cs tests\LauncherTests.cs tests\AfterwardsTests.cs tests\SafetyTests.cs tests\Safety2Tests.cs
 if errorlevel 1 exit /b 1
 obj\StarterTests.exe
 exit /b %errorlevel%

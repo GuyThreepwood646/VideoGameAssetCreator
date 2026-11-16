@@ -59,8 +59,13 @@ namespace Vgac.Starter
 
         public static bool IsFixedDrive(string path) { return FixedDriveCheck(path); }
 
-        // Whether this item goes to the Recycle Bin: judged on the item's own drive and the group's size.
-        public static bool ItemUsesBin(RemovalGroup g, RemovalItem it) { return UseRecycleBin(g.Bytes, IsFixedDrive(it.Path)); }
+        // Whether this item goes to the Recycle Bin: judged on the item's own drive and the group's size, and never for a folder that has a
+        // link inside (that is deleted link by link). The summary and the deleting both use this, so what is said is what happens.
+        public static bool ItemUsesBin(RemovalGroup g, RemovalItem it)
+        {
+            if (!UseRecycleBin(g.Bytes, IsFixedDrive(it.Path))) return false;
+            return !(Directory.Exists(it.Path) && SafeFs.ContainsLink(it.Path));
+        }
     }
 
     public interface IRecycler
@@ -146,13 +151,34 @@ namespace Vgac.Starter
             return null;
         }
 
-        // The library: a folder that holds vgac.sqlite, the app's own database.
+        // What the app itself makes at the top of its library folder. Only these are ever removed from it; anything else in the folder is
+        // the person's and stays, and the folder itself is never removed.
+        public static readonly string[] LibraryNames = {
+            "vgac.sqlite", "vgac.sqlite-wal", "vgac.sqlite-shm", "vgac.sqlite-journal", "projects", "hairlib", "my_hair", "my_moves", "my_moves.json",
+            "moves_previews", "my_addons.json", "prefs.json", "engines.json", "hair-packs.json"
+        };
+
+        public static bool IsLibraryName(string name)
+        {
+            foreach (string n in LibraryNames) if (string.Equals(n, name, StringComparison.OrdinalIgnoreCase)) return true;
+            return name.StartsWith("vgac_moves_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("vgac_hair_", StringComparison.OrdinalIgnoreCase);   // the app's temporary folders
+        }
+
+        // The library: a folder whose vgac.sqlite really is an SQLite database (its first bytes say so), in a place that is not shared.
         public static string LibraryProblem(Layout l, string folder)
         {
             if (!Directory.Exists(folder)) return null;
             string p = WorkPlaceProblem(l, folder);
             if (p != null) return p;
-            if (!File.Exists(System.IO.Path.Combine(folder, "vgac.sqlite"))) return "it has no vgac.sqlite, so it is not shown to be a VGAC library";
+            string db = System.IO.Path.Combine(folder, "vgac.sqlite");
+            if (!File.Exists(db) || SafeFs.IsLink(db)) return "it has no vgac.sqlite, so it is not shown to be a VGAC library";
+            try
+            {
+                var head = new byte[16];
+                using (var f = new FileStream(db, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) if (f.Read(head, 0, 16) < 16) return "its vgac.sqlite is not a database";
+                if (Encoding.ASCII.GetString(head, 0, 15) != "SQLite format 3") return "its vgac.sqlite is not an SQLite database, so it is not shown to be a VGAC library";
+            }
+            catch (IOException) { return "its vgac.sqlite cannot be read"; }
             return null;
         }
 
@@ -208,12 +234,18 @@ namespace Vgac.Starter
         }
 
         [ThreadStatic] static HashSet<string> resuming;
+        [ThreadStatic] static HashSet<string> replaced;
 
         static void AddApp(RemovalPlan plan, RemovalGroup g, Ledger ledger, string id, string kind, string path, string what)
         {
             if (!Directory.Exists(path) && !File.Exists(path)) return;
             // A folder whose removal was cut off is half empty and no longer looks like what it was, and its marker may be gone;
             // the journal remembers that this fixed path was proven when the removal began. Links are still refused.
+            if (replaced != null && replaced.Contains(SafeFs.Norm(path)))
+            {
+                plan.NotRemoved.Add(path + ": a removal of it was cut off, and it is a different folder now, so VGAC does not treat it as its own any more");
+                return;
+            }
             bool wasBeingRemoved = resuming != null && resuming.Contains(SafeFs.Norm(path));
             string problem = wasBeingRemoved ? (SafeFs.IsLink(path) ? "it is a link, not a folder VGAC made" : null) : AppFolderProblem(kind, path, ledger);
             if (problem != null) { plan.NotRemoved.Add(path + ": " + problem); return; }
@@ -229,6 +261,8 @@ namespace Vgac.Starter
             string data = l.DataFolder;
             resuming = new HashSet<string>();
             foreach (string p in RemovalRunner.InProgress(l.ProjectRoot)) resuming.Add(SafeFs.Norm(p));
+            replaced = new HashSet<string>();
+            foreach (string p in RemovalRunner.Replaced(l.ProjectRoot)) replaced.Add(SafeFs.Norm(p));
 
             // 1. the app's Python, tools and screens
             var g1 = new RemovalGroup(); g1.Id = "tools"; g1.Title = "The app's Python, tools and screens"; g1.DefaultOn = true;
@@ -336,8 +370,18 @@ namespace Vgac.Starter
                 if (why != null) plan.NotRemoved.Add(lib + ": " + why);
                 else
                 {
-                    var it = new RemovalItem(); it.Id = "work:library"; it.GroupId = "work"; it.Kind = "work-library"; it.Path = lib; it.What = "Your library (projects)"; it.Bytes = SafeFs.Size(lib, null);
-                    g6.Items.Add(it);
+                    // only what the app made in it, entry by entry; the folder and anything else in it stay
+                    var others = new List<string>();
+                    foreach (string e in Directory.GetFileSystemEntries(lib))
+                    {
+                        string name = System.IO.Path.GetFileName(e);
+                        if (!IsLibraryName(name)) { others.Add(name); continue; }
+                        if (SafeFs.IsLink(e)) { plan.NotRemoved.Add(e + ": it is a link"); continue; }
+                        var it = new RemovalItem(); it.Id = "work:library:" + name; it.GroupId = "work"; it.Kind = "work-library"; it.Path = e; it.What = "Your library: " + name;
+                        it.IsFile = File.Exists(e); it.Bytes = SafeFs.Size(e, null);
+                        g6.Items.Add(it);
+                    }
+                    if (others.Count > 0) plan.Notes.Add("Left in your library folder (" + lib + ") because VGAC did not make them: " + string.Join(", ", others.ToArray()) + ". The folder itself stays.");
                 }
             }
             string exp = ExportFolder(l, machine);
@@ -418,7 +462,9 @@ namespace Vgac.Starter
                 case "ledger-pack": return SafeFs.PathHasNoLink(it.Path) && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(it.Path)) == "custom_nodes" ? null : "it is not a node pack folder, or goes through a link";
                 case "settings":
                     return SafeFs.Inside(it.Path, l.ProjectRoot) && !SafeFs.IsLink(it.Path) ? null : "it is not inside the project folder";
-                case "work-library": return LibraryProblem(l, it.Path);
+                case "work-library":
+                    if (!IsLibraryName(System.IO.Path.GetFileName(it.Path))) return "it is not something the app makes in its library";
+                    return LibraryProblem(l, System.IO.Path.GetDirectoryName(it.Path)) ?? (SafeFs.IsLink(it.Path) ? "it is a link" : null);
                 case "work-export":
                     if (!IsVgacExport(it.Path)) return "it no longer holds VGAC's manifest";
                     return WorkPlaceProblem(l, System.IO.Path.GetDirectoryName(it.Path)) ?? (SafeFs.IsLink(it.Path) ? "it is a link" : null);
@@ -498,7 +544,36 @@ namespace Vgac.Starter
                 var d = Json.ParseObject(File.ReadAllText(JournalPath(root), Encoding.UTF8));
                 object o;
                 if (d.TryGetValue("inprogress", out o) && o is System.Collections.IEnumerable && !(o is string))
-                    foreach (object x in (System.Collections.IEnumerable)o) res.Add(Convert.ToString(x));
+                    foreach (object x in (System.Collections.IEnumerable)o)
+                    {
+                        // "path|file id": the waiver for a half-deleted folder holds only for the very folder that was being removed;
+                        // a folder made new since (somebody else's with the same name) has another file id and is not waived
+                        string[] parts = Convert.ToString(x).Split('|');
+                        if (parts.Length != 2) continue;
+                        string now = SafeFs.FileId(parts[0]);
+                        if (now.Length == 0 || now == parts[1]) res.Add(parts[0]);   // gone (nothing to waive) or still the very same folder
+                    }
+            }
+            catch (Exception) { }
+            return res;
+        }
+
+        // Paths whose removal was cut off and which are a different folder now (a new one was made with the same name): not VGAC's.
+        public static List<string> Replaced(string root)
+        {
+            var res = new List<string>();
+            try
+            {
+                var d = Json.ParseObject(File.ReadAllText(JournalPath(root), Encoding.UTF8));
+                object o;
+                if (d.TryGetValue("inprogress", out o) && o is System.Collections.IEnumerable && !(o is string))
+                    foreach (object x in (System.Collections.IEnumerable)o)
+                    {
+                        string[] parts = Convert.ToString(x).Split('|');
+                        if (parts.Length != 2) continue;
+                        string now = SafeFs.FileId(parts[0]);
+                        if (now.Length != 0 && now != parts[1]) res.Add(parts[0]);
+                    }
             }
             catch (Exception) { }
             return res;
@@ -512,10 +587,15 @@ namespace Vgac.Starter
                 string n = SafeFs.Norm(path);
                 list.RemoveAll(delegate(string p) { return SafeFs.Norm(p) == n; });
                 if (on) list.Add(path);
+                var stored = new List<string>();
+                foreach (string p in list)
+                {
+                    stored.Add(p + "|" + SafeFs.FileId(p));
+                }
                 string jp = JournalPath(root);
                 Dictionary<string, object> d;
                 try { d = Json.ParseObject(File.ReadAllText(jp, Encoding.UTF8)); } catch (Exception) { d = new Dictionary<string, object>(); }
-                d["inprogress"] = list;
+                d["inprogress"] = stored;
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(jp));
                 File.WriteAllText(jp, Json.Write(d), new UTF8Encoding(false));
             }
@@ -526,7 +606,7 @@ namespace Vgac.Starter
         // (built from what is still on disk) holds only what remains. `work` needs `typed` to equal the word. An item meant
         // for the Recycle Bin that the bin does not take is NOT deleted unless `allowPermanent` is true.
         public static RemovalResult Run(RemovalPlan plan, ICollection<string> ticked, string typed, Layout l, MachineFile machine, Ledger ledger,
-            IComfyInstall comfy, IRecycler recycler, SetupLog log, Action<string> say, bool allowPermanent)
+            IComfyInstall comfy, IRecycler recycler, SetupLog log, Action<string> say, ICollection<string> permanentFor)
         {
             var res = new RemovalResult();
             RemovalGroup work = plan.Get("work");
@@ -548,7 +628,7 @@ namespace Vgac.Starter
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
                     if (why != null) { res.Skipped.Add(it.Path + ": " + why); log.Line("remove: skipped " + it.Path + ": " + why); continue; }
                     Mark(l.ProjectRoot, it.Path, true);
-                    RemoveOne(g, it, recycler, allowPermanent, res, log);
+                    RemoveOne(g, it, recycler, permanentFor, res, log);
                     if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) { Mark(l.ProjectRoot, it.Path, false); ledger.RemoveUnder(it.Path); ledger.Save(); parentsTouched.Add(SafeFs.Norm(System.IO.Path.GetDirectoryName(it.Path))); }
                 }
                 if (g.Id == "tools") TidyEmptyParents(l, ledger, log, parentsTouched);
@@ -562,7 +642,7 @@ namespace Vgac.Starter
                     if (string.Equals(it.Path, ledgerFile, StringComparison.OrdinalIgnoreCase) || it.What == "remove.json") continue;   // very last
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
                     if (why != null) { res.Skipped.Add(it.Path + ": " + why); continue; }
-                    RemoveOne(g, it, recycler, allowPermanent, res, log);
+                    RemoveOne(g, it, recycler, permanentFor, res, log);
                 }
                 if (res.RecycleFailed.Count == 0)
                 {
@@ -577,12 +657,10 @@ namespace Vgac.Starter
             return res;
         }
 
-        static void RemoveOne(RemovalGroup g, RemovalItem it, IRecycler recycler, bool allowPermanent, RemovalResult res, SetupLog log)
+        static void RemoveOne(RemovalGroup g, RemovalItem it, IRecycler recycler, ICollection<string> permanentFor, RemovalResult res, SetupLog log)
         {
             if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) return;
-            bool wantBin = RemovalRules.ItemUsesBin(g, it);
-            // The Recycle Bin is not trusted with a folder that has a link inside: that is deleted here, link by link.
-            if (wantBin && Directory.Exists(it.Path) && SafeFs.ContainsLink(it.Path)) wantBin = false;
+            bool wantBin = RemovalRules.ItemUsesBin(g, it);   // the same answer the summary gave
             if (wantBin)
             {
                 if (recycler != null && recycler.Send(it.Path) && !File.Exists(it.Path) && !Directory.Exists(it.Path))
@@ -591,7 +669,9 @@ namespace Vgac.Starter
                     return;
                 }
                 // The bin did not take it. Never fall back to permanent deletion silently: stop for this item and let the person choose.
-                if (!allowPermanent)
+                bool permitted = false;
+                if (permanentFor != null) foreach (string pf in permanentFor) if (string.Equals(pf, it.Path, StringComparison.OrdinalIgnoreCase)) permitted = true;
+                if (!permitted)
                 {
                     res.RecycleFailed.Add(it.Path);
                     log.Line("remove: the Recycle Bin did not take " + it.Path + "; not deleted");
@@ -633,7 +713,12 @@ namespace Vgac.Starter
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(p));
                 var d = new Dictionary<string, object>();
                 d["state"] = "removing"; d["groups"] = new List<string>(ticked); d["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-                d["inprogress"] = InProgress(root);
+                var keep = new List<string>();
+                foreach (string ip in InProgress(root))
+                {
+                    keep.Add(ip + "|" + SafeFs.FileId(ip));
+                }
+                d["inprogress"] = keep;
                 File.WriteAllText(p, Json.Write(d), new UTF8Encoding(false));
             }
             catch (Exception) { }

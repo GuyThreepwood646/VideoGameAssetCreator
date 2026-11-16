@@ -109,6 +109,8 @@ namespace Vgac.Starter
 
         static CheckLine DataFolderLine(Layout l, IHost host)
         {
+            string unfit = Proof.DataFolderProblem(l.DataFolder, l.ProjectRoot);
+            if (unfit != null) return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") is not one VGAC will set up, move or remove in. " + unfit + " Change starter.dataFolder in local\\machine.json.", null);
             if (!Directory.Exists(l.DataFolder)) return new CheckLine("data", "info", "The folder for the big files (" + l.DataFolder + ") does not exist yet. It is made when needed.", null);
             try
             {

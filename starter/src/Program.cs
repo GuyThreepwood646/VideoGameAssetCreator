@@ -349,6 +349,13 @@ namespace Vgac.Starter
                 foreach (string n in Recovery.AtStart(lay, Application.ExecutablePath)) log.Line("start: " + n);
                 // the screens or the Python may have been put right by the recovery: look again
                 steps = Planner.Plan(ProbeReader.Read(lay, host), root);
+                // the folder for the big files is looked at again at every start, not only when it was chosen
+                string unfit = Proof.DataFolderProblem(lay.DataFolder, root);
+                if (unfit != null)
+                {
+                    log.Line("start: the folder for the big files is not one VGAC will set up, move or remove in: " + unfit);
+                    MessageBox.Show("The folder for the big files (" + lay.DataFolder + ") is not one VGAC will set up in, move or remove from.\r\n\r\n" + unfit + "\r\n\r\nChange starter.dataFolder in local\\machine.json (or delete that line) when you have a moment. VGAC carries on with what is already there.", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
                 string note = GitUpdate.ExeDiffersNote(Application.ExecutablePath, Path.Combine(root, "starter", "CHECKSUMS.txt"));
                 if (note != null) log.Line("start: " + note);
                 if (GitUpdate.MidPull(root) != null)

@@ -142,6 +142,7 @@ public static partial class T
             LauncherAll(args);
             AfterwardsAll();
             SafetyAll();
+            Safety2All();
         }
         finally
         {

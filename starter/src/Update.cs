@@ -91,6 +91,10 @@ namespace Vgac.Starter
 
         public static string RecordPath(string root) { return Path.Combine(root, "local", "exe-aside.json"); }
 
+        public static string RestoreNotePath(string root) { return Path.Combine(root, "VGAC-RESTORE.txt"); }
+
+        public static void ClearRestoreNote(string root) { try { File.Delete(RestoreNotePath(root)); } catch (Exception) { } }
+
         public static string AsidePath(string exePath) { return Path.Combine(Path.GetDirectoryName(exePath), AsideName); }
 
         // null when VGAC.exe now has another name (and what it was is recorded); else a plain sentence and nothing changed.
@@ -116,11 +120,15 @@ namespace Vgac.Starter
                 d["sha256"] = sha; d["path"] = aside; d["published"] = published; d["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
                 Directory.CreateDirectory(Path.GetDirectoryName(record));
                 File.WriteAllText(record, Json.Write(d), new UTF8Encoding(false));
+                // If the computer dies between the rename and the checkout there is no VGAC.exe for a shortcut to start; this note says
+                // what to do, in plain words, beside the project's files. It is removed as soon as the update is through.
+                try { File.WriteAllText(RestoreNotePath(root), "VGAC.exe is missing because an update stopped halfway.\r\nRename " + AsideName + " to VGAC.exe (or run: git checkout VGAC.exe), then start VGAC again.\r\n"); } catch (Exception) { }
                 SafeFs.Point("aside", "before-rename");
                 try { File.Move(exePath, aside); }
                 catch (Exception)
                 {
                     try { File.Delete(record); } catch (Exception) { }
+                    try { File.Delete(RestoreNotePath(root)); } catch (Exception) { }
                     throw;
                 }
                 return null;
@@ -139,6 +147,7 @@ namespace Vgac.Starter
                 if (File.Exists(exePath)) File.Delete(exePath);
                 File.Move(aside, exePath);
                 File.Delete(RecordPath(root));
+                ClearRestoreNote(root);
             }
             catch (Exception) { }
         }
@@ -150,7 +159,7 @@ namespace Vgac.Starter
             try
             {
                 if (File.Exists(aside) && !File.Exists(exePath) && IsOurLeftover(aside, root)) File.Move(aside, exePath);
-                if (File.Exists(exePath)) { try { File.Delete(RecordPath(root)); } catch (Exception) { } }
+                if (File.Exists(exePath)) { try { File.Delete(RecordPath(root)); } catch (Exception) { } ClearRestoreNote(root); }
             }
             catch (Exception) { }
         }
@@ -181,6 +190,7 @@ namespace Vgac.Starter
                 string exe = Path.Combine(Path.GetDirectoryName(runningPath), "VGAC.exe");
                 if (File.Exists(exe) || !IsOurLeftover(runningPath, root)) return null;
                 File.Move(runningPath, exe);
+                ClearRestoreNote(root);
                 try { File.Delete(RecordPath(root)); } catch (Exception) { }
                 return "VGAC.exe was missing after an update that stopped halfway; this copy took its name back.";
             }
@@ -322,14 +332,24 @@ namespace Vgac.Starter
             int code = git.Run("pull --ff-only", root, out output);
             string after; git.Run("rev-parse HEAD", root, out after);
             bool exeBack = exeInside && File.Exists(exePath);
-            if (code != 0)
+            bool headMoved = (before ?? "").Trim() != (after ?? "").Trim();
+            if (code == -1)
             {
-                if (exeInside && (before ?? "").Trim() == (after ?? "").Trim()) ExeAside.RestoreOver(exePath, root);
-                bool moved = (before ?? "").Trim() != (after ?? "").Trim();
-                r.Message = "The update did not go through. Git said: " + LastLines(output, 3) + (moved ? " Git stopped partway: look at the project folder with git status before you carry on." : " Nothing of yours was changed.");
+                // git was stopped (it took too long) or could not run: it may have stopped in the middle of writing files. Nothing is
+                // tidied up here and nothing is claimed.
+                r.Message = "Git was stopped because it took too long, and it may have stopped partway. Look at the project folder with git status before you carry on. If VGAC.exe is missing, rename " + ExeAside.AsideName + " to VGAC.exe (see VGAC-RESTORE.txt).";
                 return r;
             }
-            r.Updated = (before ?? "").Trim() != (after ?? "").Trim();
+            if (code != 0)
+            {
+                if (exeInside && !headMoved) ExeAside.RestoreOver(exePath, root);
+                r.Message = "The update did not go through. Git said: " + LastLines(output, 3) + (headMoved ? " Git stopped partway: look at the project folder with git status before you carry on." : " Nothing of yours was changed.");
+                return r;
+            }
+            // Up to date: nothing came, so VGAC.exe goes back to exactly what the person had (an own build included).
+            if (exeInside && !headMoved) { ExeAside.RestoreOver(exePath, root); exeBack = false; }
+            else ExeAside.ClearRestoreNote(root);
+            r.Updated = headMoved;
             r.ExeChanged = exeBack && !string.Equals(oldSha, Hashing.Sha256File(exePath), StringComparison.OrdinalIgnoreCase);
             r.Message = !r.Updated ? "VGAC is already up to date." : (r.ExeChanged ? "VGAC was updated, including VGAC.exe. Restart VGAC to use the new version." : "VGAC was updated. Restart VGAC to use it.");
             return r;

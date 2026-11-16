@@ -111,9 +111,15 @@ namespace Vgac.Starter
 
         public List<string> Kept(string data)
         {
+            // What is kept is at least models, output, input and user; a marker can add to that, never take from it.
+            var kept = new List<string>(new[] { "models", "output", "input", "user" });
             var m = Marker(data); object o;
-            if (m != null && m.TryGetValue("kept", out o)) { var k = Strings(o); if (k != null) return k; }
-            return new List<string>(new[] { "models", "output", "input", "user" });
+            if (m != null && m.TryGetValue("kept", out o))
+            {
+                var k = Strings(o);
+                if (k != null) foreach (string x in k) if (!kept.Contains(x) && x.Length > 0 && !Path.IsPathRooted(x) && !x.Contains("..")) kept.Add(x);
+            }
+            return kept;
         }
 
         public string Retarget(string oldData, string newData)

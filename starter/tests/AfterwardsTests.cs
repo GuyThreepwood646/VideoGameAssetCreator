@@ -69,6 +69,15 @@ public static partial class T
         temps.Add(p); Directory.CreateDirectory(p); return p;
     }
 
+    // A file that starts like an SQLite database (the 16-byte header every one has), as the app's own vgac.sqlite does.
+    static void WriteSqlite(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        var b = new byte[3000]; byte[] h = Encoding.ASCII.GetBytes("SQLite format 3");
+        Array.Copy(h, b, h.Length);
+        File.WriteAllBytes(path, b);
+    }
+
     static void Put(string path, string text) { Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path, text); }
     static void PutBytes(string path, int n) { Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllBytes(path, new byte[n]); }
 
@@ -214,7 +223,7 @@ public static partial class T
         var o = real.Owned(data);
         Eq(o.Count, 3, "only names inside the install folder are taken (a climbing and a rooted name are dropped)");
         Check(o.All(p => SafeFs.Inside(p, real.Root(data))), "every owned path is inside the install folder");
-        Eq(string.Join(",", real.Kept(data).ToArray()), "models", "the kept names come from the marker");
+        Eq(string.Join(",", real.Kept(data).ToArray()), "models,output,input,user", "the kept names are at least the four defaults (a marker can add, never take away)");
         Put(Path.Combine(data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"someone else\",\"owned\":[\"main.py\"]}");
         Check(!real.Present(data) && !real.Offered(data), "a marker that is not VGAC's is not a marker");
     }
@@ -578,7 +587,7 @@ public static partial class T
         Put(Path.Combine(c, "models", "mine.safetensors"), "the person's own model"); Put(Path.Combine(c, "output", "out.png"), "their picture");
         Put(Path.Combine(c, "custom_nodes", "their-node", "t.py"), "theirs");
         // the person's work
-        PutBytes(Path.Combine(s.Root, "library", "vgac.sqlite"), 3000); Put(Path.Combine(s.Root, "exports", "hero", "manifest.json"), "{\"lineage\":[],\"models\":[],\"seeds\":{}}"); PutBytes(Path.Combine(s.Root, "exports", "hero", "hero.glb"), 2000); Put(Path.Combine(s.Root, "exports", "notes.txt"), "the person's own file");
+        WriteSqlite(Path.Combine(s.Root, "library", "vgac.sqlite")); Put(Path.Combine(s.Root, "library", "my-own-notes.txt"), "the person's own file in the library folder"); Put(Path.Combine(s.Root, "exports", "hero", "manifest.json"), "{\"lineage\":[],\"models\":[],\"seeds\":{}}"); PutBytes(Path.Combine(s.Root, "exports", "hero", "hero.glb"), 2000); Put(Path.Combine(s.Root, "exports", "notes.txt"), "the person's own file");
         // models VGAC downloaded into a linked ComfyUI, a model the person added themselves, a linked tool, a node pack in the linked ComfyUI
         PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors"), 4000);
         PutBytes(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors"), 4500);
@@ -649,7 +658,7 @@ public static partial class T
         Junction(Path.Combine(s.Data, "comfyui", "logs", "out"), outside);
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         var rec = new FakeRecycler();
-        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, false);
+        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(File.Exists(Path.Combine(outside, "precious.txt")), "what links inside VGAC's folders pointed at is untouched");
         Check(res.Unlinked.Count >= 2, "the links were unlinked, not followed (" + res.Unlinked.Count + ")");
         Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir) && !Directory.Exists(s.L.NodeDir) && !Directory.Exists(Path.Combine(s.L.FrontendDir, "dist")), "the ticked app folders are gone");
@@ -664,7 +673,7 @@ public static partial class T
         Check(!led.Has(s.L.Venv, null) && led.Has(Path.Combine(s.Ext, "blender"), "linked"), "the ledger lost what was removed and kept what was linked");
         // the models group and the packs group, asked for separately
         var plan2 = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        RemovalRunner.Run(plan2, new List<string> { "models", "packs" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, false);
+        RemovalRunner.Run(plan2, new List<string> { "models", "packs" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(!File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "vgac.safetensors")) && File.Exists(Path.Combine(s.Ext, "ComfyUI", "models", "checkpoints", "theirs.safetensors")), "the model VGAC downloaded goes, the person's own stays");
         Check(!Directory.Exists(Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "ComfyUI-SkinToken")) && Directory.Exists(Path.Combine(s.Ext, "ComfyUI", "custom_nodes")), "the node pack goes, its parent folder stays");
         // a changed file is not deleted: it is not the one VGAC added any more
@@ -677,7 +686,7 @@ public static partial class T
         var plan4 = RemovalPlanner.Build(s3.L, s3.M, s3.Led, s3.Comfy);
         string held = Tmp("held"); Put(Path.Combine(held, "pyvenv.cfg"), "x"); Put(Path.Combine(held, "keep.txt"), "keep");
         SafeFs.DeleteTree(s3.L.Venv); Junction(s3.L.Venv, held);
-        var res4 = RemovalRunner.Run(plan4, new List<string> { "tools" }, null, s3.L, s3.M, s3.Led, s3.Comfy, new FakeRecycler(), new SetupLog(s3.Root), null, false);
+        var res4 = RemovalRunner.Run(plan4, new List<string> { "tools" }, null, s3.L, s3.M, s3.Led, s3.Comfy, new FakeRecycler(), new SetupLog(s3.Root), null, null);
         Check(res4.Skipped.Any(x => x.Contains("link")) && File.Exists(Path.Combine(held, "keep.txt")), "an item that turned into a link after the plan is skipped and its target is intact");
     }
 
@@ -688,7 +697,7 @@ public static partial class T
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         int n = 0;
         SafeFs.Hook = delegate(string what, string p) { if (what == "delete" && ++n == 150) throw new Boom("stop"); };
-        try { RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, false); } catch (Boom) { }
+        try { RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); } catch (Boom) { }
         SafeFs.Hook = null;
         Check(File.Exists(RemovalRunner.JournalPath(s.Root)), "an interrupted removal leaves its journal");
         Check(File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && File.Exists(Path.Combine(s.Data, "comfyui", "models", "mine.safetensors")), "and nothing outside the list was touched");
@@ -697,7 +706,7 @@ public static partial class T
         Func<RemovalPlan, int> count = pl => pl.Get("tools").Items.Count + pl.Get("comfy").Items.Count;
         Check(count(again) > 0 && count(again) <= count(plan), "the next plan lists what is left, including the half-deleted folder (" + count(again) + " of " + count(plan) + ")");
         Check(again.Get("tools").Items.Any(i => i.Path == s.L.Venv), "the half-deleted Python folder is still listed although it no longer looks like itself");
-        var res = RemovalRunner.Run(again, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, false);
+        var res = RemovalRunner.Run(again, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(res.Complete, "the second run finishes");
         Check(!Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir), "everything ticked is gone");
         Check(!File.Exists(RemovalRunner.JournalPath(s.Root)), "and the journal is removed");
@@ -707,10 +716,10 @@ public static partial class T
         var plan2 = RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy);
         RemovalResult r2;
         using (new FileStream(lockedFile, FileMode.Open, FileAccess.Read, FileShare.Read))
-            r2 = RemovalRunner.Run(plan2, new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, true);
+            r2 = RemovalRunner.Run(plan2, new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, new List<string> { Path.Combine(s2.L.FrontendDir, "node_modules") });
         Check(!r2.Complete && r2.Locked.Count >= 1, "a file in use is reported, not forced");
         Check(!Directory.Exists(s2.L.Venv), "and everything else was removed");
-        var r3 = RemovalRunner.Run(RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy), new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, false);
+        var r3 = RemovalRunner.Run(RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy), new List<string> { "tools" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, null);
         Check(r3.Complete && !Directory.Exists(Path.Combine(s2.L.FrontendDir, "node_modules")), "once it is free a second run removes it");
         // settings last, and the empty folder VGAC made goes only when nothing else is in it
         var s4 = Installed();
@@ -718,7 +727,7 @@ public static partial class T
         var plan4 = RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy);
         SafeFs.DeleteTree(Path.Combine(s4.Data, "comfyui", ComfyGuard.MarkerName));
         Put(Path.Combine(s4.Data, "comfyui", ComfyGuard.MarkerName), "{\"made_by\":\"VGAC\",\"owned\":[]}");
-        RemovalRunner.Run(RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy), new List<string> { "tools", "comfy", "settings" }, null, s4.L, s4.M, s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null, false);
+        RemovalRunner.Run(RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy), new List<string> { "tools", "comfy", "settings" }, null, s4.L, s4.M, s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null, null);
         Check(!File.Exists(Path.Combine(s4.Root, "local", "installed.json")) && !File.Exists(Path.Combine(s4.Root, "local", "machine.json")), "the settings and the ledger go last");
         Check(Directory.Exists(s4.Root) && File.Exists(Path.Combine(s4.Root, "backend", "requirements.txt")), "the project folder is untouched");
     }
@@ -728,11 +737,12 @@ public static partial class T
         var s = Installed();
         var rec = new FakeRecycler();
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        var res = RemovalRunner.Run(plan, new List<string> { "work" }, "yes", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, false);
+        var res = RemovalRunner.Run(plan, new List<string> { "work" }, "yes", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(res.Skipped.Any(x => x.Contains("confirmation word")) && File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")), "without the typed word the person's work is not touched");
         Eq(rec.Sent.Count, 0, "and nothing was sent to the Recycle Bin");
-        res = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, false);
-        Check(!Directory.Exists(Path.Combine(s.Root, "library")) && !Directory.Exists(Path.Combine(s.Root, "exports", "hero")), "with the word, the library and the export folder VGAC wrote go");
+        res = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+        Check(!File.Exists(Path.Combine(s.Root, "library", "vgac.sqlite")) && !Directory.Exists(Path.Combine(s.Root, "exports", "hero")), "with the word, the app's library files and the export folder VGAC wrote go");
+        Check(File.Exists(Path.Combine(s.Root, "library", "my-own-notes.txt")) && Directory.Exists(Path.Combine(s.Root, "library")), "a file the person keeps in the library folder, and the folder, stay");
         Check(File.Exists(Path.Combine(s.Root, "exports", "notes.txt")) && Directory.Exists(Path.Combine(s.Root, "exports")), "the folder the exports sit in, and the person's own file in it, stay");
         Check(rec.Sent.Count == 2, "a small amount goes through the Recycle Bin (" + rec.Sent.Count + " sent)");
         Check(Directory.Exists(s.Root) && Directory.Exists(s.L.Venv), "nothing else was touched");
@@ -832,7 +842,7 @@ public static partial class T
             Check(Mover(s2, null).Continue(new Progress()) == null, "Continue finishes the move after a cut at " + where);
             Eq(MoveRunner.Load(s2.Root).State, "rebuilt", "to the end (" + where + ")");
             Eq(MachineFile.Load(s2.Root).GetString("starter", "dataFolder"), to2, "and the new folder is in use (" + where + ")");
-            Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).Count == 0, "with a complete copy (" + where + ")");
+            Check(SafeFs.Compare(Path.Combine(s2.Data, "python"), Path.Combine(to2, "python"), null, true).All(x => x.Contains(Proof.MarkerName)), "with a complete copy (" + where + ")");
             Check(!Directory.GetDirectories(to2).Any(d => d.EndsWith(".part")), "and no .part left (" + where + ")");
         }
 

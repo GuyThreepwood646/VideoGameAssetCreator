@@ -33,7 +33,9 @@ namespace Vgac.Starter
         readonly IMaintenanceHost host;
         readonly TabControl tabs = new TabControl();
         readonly Label status = new Label();
+        readonly Button stopBtn = new Button();
         volatile bool busy;
+        volatile bool stopRequested;
 
         public MaintenanceForm(IMaintenanceHost host)
         {
@@ -43,8 +45,10 @@ namespace Vgac.Starter
             ClientSize = new Size(760, 560);
             StartPosition = FormStartPosition.CenterScreen;
             tabs.SetBounds(8, 8, 744, 500); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            status.SetBounds(12, 516, 736, 36); status.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            Controls.Add(tabs); Controls.Add(status);
+            status.SetBounds(12, 516, 640, 36); status.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            stopBtn.Text = "Stop"; stopBtn.SetBounds(662, 514, 90, 30); stopBtn.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; stopBtn.Visible = false;
+            stopBtn.Click += delegate { stopRequested = true; Say("Stopping..."); };
+            Controls.Add(tabs); Controls.Add(status); Controls.Add(stopBtn);
             tabs.TabPages.Add(RepairTab());
             tabs.TabPages.Add(UpdateTab());
             tabs.TabPages.Add(MoveTab());
@@ -60,7 +64,7 @@ namespace Vgac.Starter
         void Run(Action work, Action done)
         {
             if (busy) return;
-            busy = true; UseWaitCursor = true;
+            busy = true; UseWaitCursor = true; stopRequested = false; stopBtn.Visible = true;
             var t = new Thread(delegate()
             {
                 try { work(); }
@@ -69,7 +73,7 @@ namespace Vgac.Starter
                 finally
                 {
                     busy = false;
-                    try { BeginInvoke((Action)delegate { UseWaitCursor = false; if (done != null) done(); }); } catch (Exception) { }
+                    try { BeginInvoke((Action)delegate { UseWaitCursor = false; stopBtn.Visible = false; if (done != null) done(); }); } catch (Exception) { }
                 }
             });
             t.IsBackground = true; t.Start();
@@ -82,6 +86,7 @@ namespace Vgac.Starter
         {
             var p = new Progress();
             p.Say = delegate(string t) { Say(t); };
+            p.Cancelled = delegate { return stopRequested; };
             return p;
         }
 
@@ -311,7 +316,7 @@ namespace Vgac.Starter
             string list = string.Join("\r\n   ", MoveRunner.OldCopy(j).ToArray());
             if (MessageBox.Show(this, "Delete the old copy?\r\n\r\n   " + list + "\r\n\r\n" + RemovalSummary.Size(bytes) + " will be freed. It is deleted for good and cannot be restored. Anything else you keep in the old folder stays.", "VGAC", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             string result = null;
-            Run(delegate { result = Mover().DeleteOld(); Say(result ?? "The old copy was deleted."); }, delegate { details.Text = result ?? "The old copy was deleted."; RefreshMove(details); });
+            Run(delegate { result = Mover().DeleteOld(delegate { return stopRequested; }, delegate(string f) { Say("Checking " + System.IO.Path.GetFileName(f) + "..."); }); Say(result ?? "The old copy was deleted."); }, delegate { details.Text = result ?? "The old copy was deleted."; RefreshMove(details); });
         }
 
         // ---- remove -----------------------------------------------------------------------------------------------------------
@@ -375,24 +380,26 @@ namespace Vgac.Starter
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
             }
             if (!host.Quiesce(this, "removal")) return;
-            DoRemoval(summaryBox, ticked, typed.Text, false);
+            DoRemoval(summaryBox, ticked, typed.Text, null);
         }
 
-        void DoRemoval(TextBox summaryBox, List<string> ticked, string typedWord, bool allowPermanent)
+        // `permanentFor`: the items the person has agreed may be deleted for good after the Recycle Bin did not take them. Only those.
+        void DoRemoval(TextBox summaryBox, List<string> ticked, string typedWord, ICollection<string> permanentFor)
         {
             RemovalResult res = null;
             Run(delegate
             {
-                res = RemovalRunner.Run(removePlan, ticked, typedWord, host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, new WindowsRecycler(), host.Log, delegate(string s) { Say(s); }, allowPermanent);
+                res = RemovalRunner.Run(removePlan, ticked, typedWord, host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, new WindowsRecycler(), host.Log, delegate(string s) { Say(s); }, permanentFor);
             }, delegate
             {
                 if (res.RecycleFailed.Count > 0)
                 {
                     string list = string.Join("\r\n   ", res.RecycleFailed.ToArray());
-                    if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete them for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                    // No is the default: the box names exactly the items it is about, and only those may be deleted for good
+                    if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete exactly these for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
                     {
                         BuildPlanKeepingChecks();
-                        DoRemoval(summaryBox, ticked, typedWord, true);
+                        DoRemoval(summaryBox, ticked, typedWord, new List<string>(res.RecycleFailed));
                         return;
                     }
                 }

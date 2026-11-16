@@ -70,6 +70,20 @@ namespace Vgac.Starter
 
         public static string SkipFor(string name) { return name == "comfyui" ? ".venv" : null; }
 
+        public static MoveItem ItemFor(string name)
+        {
+            string n = name.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ? name.Substring(0, name.Length - 5) : name;
+            foreach (MoveItem i in Items) if (string.Equals(i.Name, n, StringComparison.OrdinalIgnoreCase)) return i;
+            return null;
+        }
+
+        // Proven in the NEW place (after the copy VGAC stamps each folder it made there).
+        public static bool CopyProven(string folder, string name, Ledger ledger)
+        {
+            MoveItem it = ItemFor(name);
+            return it != null && ProvenAt(folder, it, ledger);
+        }
+
         // Plain problems with a chosen folder (empty list: fine).
         public static List<string> Problems(string from, string to, string projectRoot, long freeBytes, long needBytes, MoveJournal resuming, IComfyInstall comfy, Ledger ledger)
         {
@@ -105,8 +119,9 @@ namespace Vgac.Starter
             // links are never copied; a folder that holds one is not moved at all rather than losing what it points to
             foreach (string name in NamesIn(from, ledger))
             {
-                string link = SafeFs.FirstLink(Path.Combine(from, name), SkipFor(name));
-                if (link != null) { bad.Add("There is a link inside " + name + " (" + link + "). VGAC does not copy links, so it will not move this folder. Replace the link with the real files first."); break; }
+                // links between places inside the same folder (uv's Python keeps some) are copied as links; any other is refused
+                string link = SafeFs.FirstExternalLink(Path.Combine(from, name), SkipFor(name));
+                if (link != null) { bad.Add("There is a link inside " + name + " (" + link + ") that leads outside it. VGAC does not copy such links, so it will not move this folder. Replace the link with the real files first."); break; }
             }
             return bad;
         }
@@ -180,8 +195,13 @@ namespace Vgac.Starter
             foreach (string n in j.Created) if (!MoveRules.IsKnownName(n)) return "unknown name";
             if (currentData != null)
             {
-                bool fits = SafeFs.Norm(currentData) == SafeFs.Norm(j.From) || SafeFs.Norm(currentData) == SafeFs.Norm(j.To);
-                if (!fits) return "places do not fit the settings";
+                // The settings name one of the two places, and the OTHER one must be an acceptable folder as well (not a drive, a
+                // profile or a system place, and not inside or around the one in use), so a journal cannot point at anything.
+                string cur = SafeFs.Norm(currentData);
+                string other = cur == SafeFs.Norm(j.From) ? j.To : (cur == SafeFs.Norm(j.To) ? j.From : null);
+                if (other == null) return "places do not fit the settings";
+                if (Proof.DataFolderProblem(other, null) != null) return "the other place is not an acceptable folder";
+                if (SafeFs.Inside(other, currentData) || SafeFs.Inside(currentData, other)) return "the two places overlap";
             }
             return null;
         }
@@ -263,9 +283,15 @@ namespace Vgac.Starter
                     if (Directory.Exists(final) && j.Created.Contains(name)) SafeFs.DeleteTree(final);
                     var rep = new FsReport();
                     string skip = MoveRules.SkipFor(name);
-                    SafeFs.CopyTree(src, part, skip == null ? null : new[] { skip }, rep);
+                    List<string[]> links = SafeFs.CopyItem(src, part, skip == null ? null : new[] { skip }, rep);
+                    if (rep.Links.Count > 0) return "A link inside " + name + " could not be copied (" + rep.Links[0] + "). Nothing was changed in the old place.";
                     SafeFs.Point("move", "before-rename:" + name);
                     SafeFs.MoveDir(part, final);
+                    SafeFs.MakeLinks(final, links, rep);
+                    if (rep.Links.Count > 0) return "A link inside " + name + " could not be made again in the copy (" + rep.Links[0] + "). Cancel the move and try again; the old place is untouched.";
+                    // the copy is VGAC's (it made it): stamp it for its own place so Cancel and Remove can prove it; the backend's own marker
+                    // inside ComfyUI is left as it is
+                    if (MoveRules.ItemFor(name).Kind != "comfyui") Proof.Write(final, MoveRules.ItemFor(name).Kind);
                     j.Created.Remove(name + ".part");
                     j.Created.Add(name); j.Done.Add(name);
                     Save(j);
@@ -287,7 +313,14 @@ namespace Vgac.Starter
                 if (prog != null) prog.Say("Checking " + name + "...");
                 SafeFs.Point("move", "verify:" + name);
                 string skip = MoveRules.SkipFor(name);
-                List<string> bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, false);
+                List<string> bad;
+                try
+                {
+                    bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, false, prog == null ? null : prog.Cancelled, prog == null ? null : prog.Say);
+                }
+                catch (OperationCanceledException) { return "The check was stopped. Nothing was switched. Continue it later, or cancel the move."; }
+                // the stamp VGAC added to each copy is expected to differ from the original's
+                bad.RemoveAll(delegate(string b) { return b.EndsWith(Proof.MarkerName) || b.Contains(Proof.MarkerName); });
                 if (bad.Count > 0) return "The copy of " + name + " does not match the original (" + bad[0] + "). Nothing was switched; the old place is untouched. Cancel and try again.";
             }
             j.State = "verified"; Save(j);
@@ -363,7 +396,10 @@ namespace Vgac.Starter
             {
                 if (!MoveRules.IsKnownName(n)) continue;
                 string p = Path.Combine(j.To, n);
-                if (Directory.Exists(p) && !SafeFs.IsLink(p) && SafeFs.Inside(p, j.To)) SafeFs.DeleteTree(p);
+                if (!Directory.Exists(p) || SafeFs.IsLink(p) || !SafeFs.Inside(p, j.To)) continue;
+                // a half copy (.part) is named in the journal and VGAC made it; a finished copy must also be proven VGAC's by its stamp
+                if (!n.EndsWith(".part", StringComparison.OrdinalIgnoreCase) && !MoveRules.CopyProven(j.To, n, ledger)) { log.Line("move: left " + p + " alone: VGAC cannot show that it made it"); continue; }
+                SafeFs.DeleteTree(p);
             }
             try { string t = Path.Combine(j.To, "tools"); if (Directory.Exists(t) && Directory.GetFileSystemEntries(t).Length == 0) Directory.Delete(t); } catch (Exception) { }
             try { if (Directory.Exists(j.To) && Directory.GetFileSystemEntries(j.To).Length == 0) Directory.Delete(j.To); } catch (Exception) { }
@@ -391,7 +427,9 @@ namespace Vgac.Starter
 
         // After "rebuilt": delete the old copy, but only names that were copied, only after comparing every file with the new
         // copy again (extra files in the new place, added since, do not matter; a file that differs does).
-        public string DeleteOld()
+        public string DeleteOld() { return DeleteOld(null, null); }
+
+        public string DeleteOld(Func<bool> cancelled, Action<string> say)
         {
             var j = Current();
             if (j == null || j.State != "rebuilt") return "There is no finished move whose old copy can be deleted.";
@@ -400,7 +438,10 @@ namespace Vgac.Starter
                 string src = Path.Combine(j.From, n), dst = Path.Combine(j.To, n);
                 if (!Directory.Exists(src)) continue;
                 string skip = MoveRules.SkipFor(n);
-                List<string> bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, true);
+                List<string> bad;
+                try { bad = SafeFs.Compare(src, dst, skip == null ? null : new[] { skip }, true, true, cancelled, say); }
+                catch (OperationCanceledException) { return "The check was stopped. Nothing was deleted."; }
+                bad.RemoveAll(delegate(string b) { return b.Contains(Proof.MarkerName); });
                 if (bad.Count > 0) return "The old copy of " + n + " was not deleted: it no longer matches the new one (" + bad[0] + ").";
             }
             var blockers = MoveRules.Blockers(j.From, procs, OwnPid());

@@ -30,6 +30,29 @@ namespace Vgac.Starter
         static extern uint GetFinalPathNameByHandleW(IntPtr h, StringBuilder buf, uint len, uint flags);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct ByHandleInfo
+        {
+            public uint Attributes; public uint c0, c1, a0, a1, w0, w1; public uint VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr h, out ByHandleInfo info);
+
+        // What this very file or folder is, as the file system numbers it (volume and index). A folder that was deleted and made
+        // again with the same name has another number, unlike its creation time, which Windows may carry over to the new one.
+        // "" when it cannot be told.
+        public static string FileId(string path)
+        {
+            IntPtr h = CreateFileW(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+            if (h == (IntPtr)(-1)) return "";
+            try
+            {
+                ByHandleInfo i;
+                return GetFileInformationByHandle(h, out i) ? i.VolumeSerial + ":" + i.IndexHigh + ":" + i.IndexLow : "";
+            }
+            finally { CloseHandle(h); }
+        }
+
         public static string Norm(string p)
         {
             return Path.GetFullPath(p).TrimEnd('\\', '/').ToLowerInvariant();
@@ -191,6 +214,96 @@ namespace Vgac.Starter
             }
         }
 
+        // The first link inside a folder that leads OUTSIDE it (or is not a folder link), or null. A folder link whose target is
+        // inside the same folder (uv's Python folder keeps such links between its versions) is copied as a link, see CopyItem.
+        public static string FirstExternalLink(string root, string skipTop)
+        {
+            string rr = Real(root);
+            return rr == null ? root : ExternalWalk(root, rr, skipTop);
+        }
+
+        static string ExternalWalk(string path, string rootReal, string skipTop)
+        {
+            string[] kids;
+            try { kids = Directory.GetFileSystemEntries(path); } catch (Exception) { return path; }
+            foreach (string k in kids)
+            {
+                if (skipTop != null && string.Equals(Path.GetFileName(k), skipTop, StringComparison.OrdinalIgnoreCase) && Path.GetDirectoryName(k) == path.TrimEnd('\\') && path.Length > 0 && Real(path) == rootReal) continue;
+                if (IsLink(k))
+                {
+                    string t = Real(k);
+                    if (!Directory.Exists(k) || t == null || !(t == rootReal || t.StartsWith(rootReal + "\\"))) return k;
+                    continue;
+                }
+                if (Directory.Exists(k)) { string f = ExternalWalk(k, rootReal, null); if (f != null) return f; }
+            }
+            return null;
+        }
+
+        // Copies one item's folder tree. Links inside it that point to another place inside the same item are not followed or lost:
+        // they are made again in the copy (a directory junction to the same relative place). Any other link is listed in `rep.Links`
+        // and not copied (the caller refuses such a folder before copying).
+        public static List<string[]> CopyItem(string src, string dst, ICollection<string> skipTop, FsReport rep)
+        {
+            string rr = Real(src);
+            var links = new List<string[]>();
+            CopyItemInto(src, dst, skipTop, rep, rr, src, links);
+            return links;
+        }
+
+        // Makes the links again inside the finished copy (after its folder has its final name, so they point at the final place).
+        public static void MakeLinks(string finalDir, List<string[]> links, FsReport rep)
+        {
+            foreach (string[] lk in links)
+            {
+                string linkPath = Path.Combine(finalDir, lk[0]), target = Path.Combine(finalDir, lk[1]);
+                if (!Directory.Exists(target)) { rep.Links.Add(lk[0]); continue; }
+                Directory.CreateDirectory(Path.GetDirectoryName(linkPath));
+                if (!MakeJunction(linkPath, target)) { rep.Links.Add(lk[0]); continue; }
+                string a = Real(linkPath), b = Real(target);
+                if (a == null || a != b) rep.Links.Add(lk[0]);
+            }
+        }
+
+        static void CopyItemInto(string src, string dst, ICollection<string> skipTop, FsReport rep, string rootReal, string rootSrc, List<string[]> links)
+        {
+            Directory.CreateDirectory(dst);
+            foreach (string k in Directory.GetFileSystemEntries(src))
+            {
+                string name = Path.GetFileName(k);
+                if (skipTop != null && skipTop.Contains(name)) continue;
+                string to = Path.Combine(dst, name);
+                if (IsLink(k))
+                {
+                    string t = Real(k);
+                    if (Directory.Exists(k) && t != null && t.StartsWith(rootReal + "\\")) links.Add(new[] { k.Substring(rootSrc.TrimEnd('\\').Length + 1), t.Substring(rootReal.Length + 1) });
+                    else rep.Links.Add(k);
+                    continue;
+                }
+                if (Directory.Exists(k)) CopyItemInto(k, to, null, rep, rootReal, rootSrc, links);
+                else
+                {
+                    Point("copy", k);
+                    string tmp = to + ".copying";
+                    File.Copy(k, tmp, true);
+                    if (File.Exists(to)) File.Delete(to);
+                    File.Move(tmp, to);
+                    rep.Files++; rep.Bytes += new FileInfo(to).Length;
+                }
+            }
+        }
+
+        static bool MakeJunction(string link, string target)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", "/c mklink /J \"" + link + "\" \"" + target + "\"");
+                psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+                using (var p = System.Diagnostics.Process.Start(psi)) { p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(); return p.ExitCode == 0; }
+            }
+            catch (Exception) { return false; }
+        }
+
         // Differences between two trees (missing, extra, different size), `skipTop` names left out of the source side.
         // When `hashToo` is true the files are compared by SHA-256 as well.
         public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo) { return Compare(src, dst, skipTop, hashToo, false); }
@@ -198,10 +311,21 @@ namespace Vgac.Starter
         // `ignoreExtra`: files that are only in `dst` are fine (the new copy may have grown since).
         public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo, bool ignoreExtra)
         {
+            return Compare(src, dst, skipTop, hashToo, ignoreExtra, null, null);
+        }
+
+        // `cancelled` is asked before each file (true: stop; OperationCanceledException), `say` is told which file is being checked.
+        public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo, bool ignoreExtra, Func<bool> cancelled, Action<string> say)
+        {
             var bad = new List<string>();
-            CompareInto(src, dst, skipTop, hashToo, ignoreExtra, bad, true);
+            cmpCancel = cancelled; cmpSay = say;
+            try { CompareInto(src, dst, skipTop, hashToo, ignoreExtra, bad, true); }
+            finally { cmpCancel = null; cmpSay = null; }
             return bad;
         }
+
+        [ThreadStatic] static Func<bool> cmpCancel;
+        [ThreadStatic] static Action<string> cmpSay;
 
         // The first link inside a folder (not counting `skipTop` at its top level), or null.
         public static string FirstLink(string path, string skipTop)
@@ -225,7 +349,12 @@ namespace Vgac.Starter
             {
                 string name = Path.GetFileName(k);
                 if (top && skipTop != null && skipTop.Contains(name)) continue;
-                if (IsLink(k)) continue;
+                if (IsLink(k))
+                {
+                    // a link inside the folder is made again in the copy as a link (see CopyItem), not compared as content
+                    names.Add(name);
+                    continue;
+                }
                 names.Add(name);
                 string to = Path.Combine(dst, name);
                 if (Directory.Exists(k))
@@ -235,6 +364,8 @@ namespace Vgac.Starter
                 }
                 else
                 {
+                    if (cmpCancel != null && cmpCancel()) throw new OperationCanceledException();
+                    if (cmpSay != null) cmpSay(k);
                     if (!File.Exists(to)) { bad.Add("missing file " + to); continue; }
                     if (new FileInfo(k).Length != new FileInfo(to).Length) { bad.Add("different size " + to); continue; }
                     if (hashToo && Hashing.Sha256File(k) != Hashing.Sha256File(to)) bad.Add("different content " + to);
