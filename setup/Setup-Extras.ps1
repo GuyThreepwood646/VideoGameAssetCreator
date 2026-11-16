@@ -216,6 +216,8 @@ $OptIn = @{
                    'This helper never accepts terms for you. Read them, and accept only if you agree.') }
 }
 $requiredModels = @('zturbo', 'zimage_te', 'flux_ae', 'qwen_edit', 'birefnet', 'trellis2', 'skintoken', 'trellis2_dino')
+# Add-ons in a required set of downloads.json (the starter set) are required too: the Retro 64 look loads retro_lowpoly.
+$requiredAddons = @(); if ($dl -and $dl.sets) { foreach ($st in $dl.sets) { if ($st.required) { $requiredAddons += @($st.items | Where-Object { $_ -like 'addon:*' } | ForEach-Object { $_.Substring(6) }) } } }
 $loraAsAddon = @{ qwen_angles_lora = 'qwen_angles'; qwen_lightning_lora = 'qwen_lightning' }
 $altFolder = @{ diffusion_models = 'unet'; text_encoders = 'clip' }
 
@@ -261,7 +263,7 @@ function Build-Items {
         if (-not $f) { continue }
         $label = [regex]::Match($blk, '(?m)^    label:\s*(.+?)\s*$').Groups[1].Value
         $lic = [regex]::Match($blk, '(?m)^    licence:\s*(.+?)\s*$').Groups[1].Value
-        $req = $blk -match '(?m)^\s+required:\s*true'
+        $req = ($blk -match '(?m)^\s+required:\s*true') -or ($requiredAddons -contains $id)
         $d = if ($dl) { Get-Prop $dl.addons $id } else { $null }
         $list += New-Item2 'addon' $id "Add-on: $label" ('loras\' + ($f -replace '/', '\')) $lic $req $d
     }

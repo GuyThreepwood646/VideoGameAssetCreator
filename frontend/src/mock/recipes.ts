@@ -96,6 +96,7 @@ const STYLE_RECIPES: Record<string, StyleRecipe> = {
     model: 'zturbo',
     plain: 'chunky shapes with fewer triangles, small soft textures, no surface bumps.',
     mesh: { triangle_scale: 0.4, triangle_floor: 300, texture_cap: 256, normal_map: false },
+    addons: [{ id: 'retro_lowpoly', strength: 'normal' }],
   },
   lowpoly_flat: {
     look: 'Low-poly',
