@@ -1,11 +1,10 @@
 """Blender headless: sprite frames from an animated (or static) GLB (bakeoff/sprites.py).
 
-Run: blender -b --python sprites.py -- <model.glb> <out_dir> [directions=8] [frames=8] [size=128] [--pixel]
+Run: blender -b --python sprites.py -- <model.glb> <out_dir> [directions=8] [frames=8] [size=128]
 For every NLA clip (or a single "static" row when there is none) and every direction (yaw steps around the model),
 renders `frames` evenly spaced frames with an orthographic camera at a 30 degree elevation on a transparent
 background into <out_dir>/_frames and writes atlas_frames.json with the frame rectangles. vgac.sprites.pack_sprites
-packs them into <clip>.png (rows = directions, columns = frames) plus atlas.json. --pixel renders with no
-anti-aliasing for pixel-art styles.
+packs them into <clip>.png (rows = directions, columns = frames) plus atlas.json.
 """
 import json
 import math
@@ -24,7 +23,6 @@ nums = [a for a in argv[2:] if not a.startswith("--")]
 directions = int(nums[0]) if len(nums) > 0 else 8
 frames = int(nums[1]) if len(nums) > 1 else 8
 size = int(nums[2]) if len(nums) > 2 else 128
-pixel = _common.flag("--pixel")
 os.makedirs(out_dir, exist_ok=True)
 
 _common.open_glb(src)
@@ -43,9 +41,6 @@ scene.display.shading.light = "STUDIO"
 scene.display.shading.color_type = "TEXTURE"
 scene.view_settings.view_transform = "Standard"
 scene.render.image_settings.color_mode = "RGBA"
-if pixel:
-    scene.render.filter_size = 0.0
-    scene.display.render_aa = "OFF"
 cam_data = bpy.data.cameras.new("cam")
 cam_data.type = "ORTHO"
 cam_data.ortho_scale = extent * 1.25

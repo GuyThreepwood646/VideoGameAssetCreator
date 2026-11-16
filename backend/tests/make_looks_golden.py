@@ -13,7 +13,7 @@ from pathlib import Path
 CODE = os.environ.get("VGAC_CODE") or str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, CODE)
 
-UNCHANGED = ("realistic_pbr", "painted", "cel", "clay", "pixel")
+UNCHANGED = ("realistic_pbr", "painted", "cel", "clay")
 PREP_PARAMS = ({}, {"face_detail": False}, {"source_project": True}, {"shading": "flat"}, {"head_triangles": False})
 
 

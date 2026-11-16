@@ -30,7 +30,7 @@ SOURCES = ("model", "library")
 LIBRARY = "library"
 MODEL = "model"
 # Looks the library is not offered for (their hair is one simple solid shape made with the model).
-LOOKS_OFF = ("pixel", "retro64", "lowpoly_flat")
+LOOKS_OFF = ("retro64", "lowpoly_flat")
 CATEGORIES = ("humanoid",)
 HAIR_SHARE_MAX = 0.25  # the hair (with its cap) may take at most this share of the platform's triangles
 # Triangle counts: a catalogue entry's `triangles` is the hair alone; rank's candidates and attach's metrics count the
@@ -111,7 +111,7 @@ def available(asset: Asset, look: str | None = None, platform: str | None = None
         return "Hair from the library is for people and other humanoid characters only."
     look = look or _look_of(asset)
     if look in LOOKS_OFF:
-        return "Hair from the library is not offered for the Pixel-art, Retro 64 and Low-poly looks."
+        return "Hair from the library is not offered for the Retro 64 and Low-poly looks."
     t = hairpic.norm(getattr(asset, "prompt", "") or "")
     if hairpic.any_of(t, hairpic.BALD_WORDS):
         return "The description says the character is bald."

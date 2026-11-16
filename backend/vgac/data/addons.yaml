@@ -144,7 +144,7 @@ addons:
     label: Chunky pixel sprites
     help:
       meaning: Bigger, blockier pixels with a smaller palette than the standard pixel-art look.
-      why: Looks most like an old sprite on creatures and props. On people it can change the outfit, so the standard pixel look stays the default for characters.
+      why: Looks most like an old sprite on creatures and props. On people it can change the outfit.
       technical: Z-Image Turbo PixelArt Redmond LoRA, trigger "Pixel Art, PixArFK". Offered for the plain Z-Image Turbo model only; the Z-Image Pixel Art model keeps its built-in LoRA (the two are never stacked). Bake-off 4.4.
     file: VGAC/zit_pixelart_redmond.safetensors
     base_models: [zturbo]

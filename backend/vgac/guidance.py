@@ -86,7 +86,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view", "quarter2": "Three-quarter view (other side)"}},
     "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
     "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
-                     "options": {"256": "256 px (smallest, retro and pixel looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
+                     "options": {"256": "256 px (smallest, retro looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
     "upsample": {"simple": False, "help": {"meaning": "Finer colour and shape: builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.", "why": "It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.", "technical": "TRELLIS.2 upsample resolution"},
                  "options": {"1024": "Normal", "1536": "Finer (about 2 to 3 times slower)"}},
     "tex_steps": {"simple": False, "help": {"meaning": "How carefully the colours are painted: more steps give a richer, more detailed texture.", "why": "24 (the default) gives clearly more detail than 12 for a few seconds more; the overall tone is then shifted back towards your picture. Use 12 if a model comes out too busy.", "technical": "TRELLIS.2 texture sampler steps"},
@@ -224,7 +224,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                                 "technical": "Second material slot on the hair triangles (triangles across the hairline stay with the body), own UV layout and 1024 px maps (2048 on Showcase), flow map, KHR_materials_anisotropy in the GLB, VGAC/Hair Kajiya-Kay shader on the Unity built-in pipeline"},
                       "options": {"auto": "Automatic (PC and Showcase on, Phone off)", "on": "On", "off": "Off"}},
     "head_triangles": {"simple": False, "help": {"meaning": "When the model is shrunk to your platform's triangle budget, the head keeps about twice the triangles an even shrink would leave it, so the face and hair stay round; the body gives them up and the total stays inside the budget.",
-                                                 "why": "Players look at the head first. Characters in the Low-poly, Pixel-art and Retro 64 looks never get it.",
+                                                 "why": "Players look at the head first. Characters in the Low-poly and Retro 64 looks never get it.",
                                                  "technical": "Weighted decimation: the 3D step builds 2.5 times the target; Blender's Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake"}},
     "hand_triangles": {"simple": False, "help": {"meaning": "The head's weighted decimation, for the hands: they keep about three times the triangles an even shrink would leave them, so separate fingers survive the shrink.",
                                                  "why": "Fingers are thin, and an even shrink melts them back into mittens. Works only while Weighted decimation (more triangles on the head) is on; the total stays inside the budget.",
@@ -1407,8 +1407,6 @@ def suggest(category: str, style: str, platform: str, categories: list[dict[str,
         reasons.append("the fastest painted look at this size")
     elif style == "cel":
         reasons.append("anime and cel shading come out cleanest from Anima")
-    elif style == "pixel":
-        reasons.append("pixel art needs the pixel-grid model")
     elif style == "realistic_pbr":
         reasons.append("photoreal surfaces need the base model's detail")
     elif style == "clay":

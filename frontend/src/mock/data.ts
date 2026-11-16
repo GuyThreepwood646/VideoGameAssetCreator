@@ -133,7 +133,6 @@ export const categories: Category[] = [
 export const styles: StylePreset[] = [
   { id: 'painted', label: 'Painted fantasy', model: 'zturbo', prompt_block: 'A full-body painted concept art reference for a video game, a real digital painting with smooth painterly shading, clean readable shapes, sl' },
   { id: 'cel', label: 'Clean cartoon', model: 'anima', prompt_block: 'Anime cel-shaded style with flat colour regions, clean thin outlines, two-tone shading and simple readable shapes, suitable for a stylized v' },
-  { id: 'pixel', label: 'Pixel retro', model: 'pixel', prompt_block: '16-bit pixel art sprite style with a limited palette, crisp pixels and no anti-aliasing.' },
   { id: 'retro64', label: 'Retro 64', model: 'zturbo', prompt_block: 'An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in real time, not a drawing or illustr' },
   { id: 'lowpoly_flat', label: 'Low-poly flat', model: 'zturbo', prompt_block: 'A low-poly 3D model rendered in real time with flat shading, built from a few hundred large flat triangular facets, every facet one solid co' },
   { id: 'realistic_pbr', label: 'Realistic', model: 'zbase', prompt_block: 'A sharp studio product photograph taken for a 3D scanning reference, the real physical subject with true materials, fine surface detail, nat' },
@@ -170,20 +169,6 @@ export const lookPresets: LookPreset[] = [
       negative: 'realistic, photographic, gritty, noisy texture, text, logos',
     },
     example_prompt: 'A round cheerful robot helper with a single big eye and stubby arms.',
-  },
-  {
-    id: 'pixel',
-    label: 'Pixel retro',
-    description: '16-bit pixel art with a limited palette and crisp pixels. Good for retro and indie games.',
-    style_preset: 'pixel',
-    style_lock: {
-      prompt_block: 'Pixel art style. 16-bit era sprite art with a limited palette, crisp clean pixels, no anti-aliasing, strong readable silhouette, plain background.',
-      model: 'pixel',
-      loras: [],
-      palette: ['#1a1c2c', '#5d275d', '#b13e53', '#ef7d57', '#ffcd75', '#a7f070', '#38b764', '#3b5dc9'],
-      negative: 'blurry, smooth gradients, photographic, 3D render, text',
-    },
-    example_prompt: 'A small knight sprite with a blue tunic and a round shield.',
   },
   {
     id: 'retro64',
@@ -1356,24 +1341,24 @@ export function seedStore() {
   const se = seedVersion(wall, 'export', sr, { lods: '1.0, 0.5, 0.25', collider: 'auto', formats: ['fbx', 'glb'], unity: true }, 42, 'host')
   setSelected(wall, se)
 
-  // A pixel-art hero for phones, through to export: the recipe shrinks it (look line in the mesh and prep views and on
+  // A Retro 64 hero for phones, through to export: the recipe shrinks it (look line in the mesh and prep views and on
   // the finish card), and the hand-off to the open Unity project waits as "sent" until "Check again".
   const hero: Asset = {
     id: uid('a'),
     project_id: p1.id,
-    name: 'Pixel hero',
+    name: 'Retro hero',
     category: 'humanoid',
-    style_preset: 'pixel',
+    style_preset: 'retro64',
     platform_target: 'mobile_low',
-    prompt: 'a small pixel-art adventurer with a green hood, a wooden sword and brown boots',
+    prompt: 'a small adventurer with a green hood, a wooden sword and brown boots',
     parts: [],
     created_at: nowIso(-20 * 60_000),
-    concept_model: 'pixel',
+    concept_model: 'zturbo',
     selected: {},
     stages: {},
   }
   store.assets.push(hero)
-  const hc = seedVersion(hero, 'concept', null, { model: 'pixel', seed: 14, width: 1024, height: 1024, steps: 8, readiness_block: true }, 19, 'b')
+  const hc = seedVersion(hero, 'concept', null, { model: 'zturbo', seed: 14, width: 1024, height: 1024, steps: 8, readiness_block: true }, 19, 'b')
   setSelected(hero, hc)
   const ht = seedVersion(hero, 'turnaround', hc, { views: VIEWS, lora_strength: 0.9, seed: 7, auto_reroll: true }, 18, 'b')
   setSelected(hero, ht)
@@ -1389,10 +1374,10 @@ export function seedStore() {
     state: 'sent',
     project: 'D:/Games/HollowKeep',
     request_id: '4f1c0a9e2b7d4c55a1e0f3b6c9d8e712',
-    folder: 'D:/Games/HollowKeep/Assets/VGAC/Pixel_hero/_incoming',
+    folder: 'D:/Games/HollowKeep/Assets/VGAC/Retro_hero/_incoming',
     prefab: '',
     error: '',
-    note: 'Your Unity project was open, so the asset waits in Assets/VGAC/Pixel_hero/_incoming and imports itself the next time you switch to Unity (or use Tools > VGAC > Import pending assets).',
+    note: 'Your Unity project was open, so the asset waits in Assets/VGAC/Retro_hero/_incoming and imports itself the next time you switch to Unity (or use Tools > VGAC > Import pending assets).',
   }
   setSelected(hero, he)
 

@@ -19,7 +19,7 @@ export const HAIR_OPTION_HINT: Record<HairSource, string> = {
 export const HAIR_PHONE_NOTE = 'On Phone only hairstyles made as one solid shape are offered, in a lighter version where the style has one.'
 
 // Looks whose hair is one simple solid shape on purpose (the backend's hairlib.available says the same).
-const PLAIN_LOOKS: Record<string, string> = { pixel: 'Pixel art', retro64: 'Retro 64', lowpoly_flat: 'Low-poly flat' }
+const PLAIN_LOOKS: Record<string, string> = { retro64: 'Retro 64', lowpoly_flat: 'Low-poly flat' }
 
 const norm = (text: string) => ' ' + (text || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim() + ' '
 const has = (t: string, p: string) => t.includes(' ' + p + ' ')

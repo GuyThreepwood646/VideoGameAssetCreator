@@ -3,7 +3,7 @@
 Paint standard D1: nothing may change for any other look. tests/data/looks_golden.json was written by
 tests/make_looks_golden.py on master's code (commit 2493e44): the recipe digest and every step 3 and step 4 decision this
 branch touches, for realistic_pbr, painted, cel, clay and pixel, every category and platform. The branch must give the
-same. The pixel rows were written again by the Pixel art settings (tests/test_looks_pixel.py); no other row changed."""
+same. The Pixel art look was removed later; its rows went with it and no other row changed."""
 
 from __future__ import annotations
 
@@ -93,7 +93,6 @@ def test_head_weighting_retro64_only():
     assert headtris.applies(reference.recipe("retro64", "humanoid", "pc_mid"), "humanoid")
     assert not headtris.applies(reference.recipe("retro64", "quadruped", "pc_mid"), "quadruped")
     assert not headtris.applies(reference.recipe("lowpoly_flat", "humanoid", "pc_mid"), "humanoid")  # flat shading
-    assert not headtris.applies(reference.recipe("pixel", "humanoid", "pc_mid"), "humanoid")
 
 
 # --- step 4 decisions ---------------------------------------------------------------------------------------------
@@ -104,7 +103,7 @@ def test_late_shrink_only_for_a_bake_size():
     look = prep.texture_look(retro)
     assert prep.late_cap_of(retro, look, 1024) == 256
     assert prep.late_cap_of(retro, look, 256) is None  # a model baked at the shipped size (made before this)
-    for style in ("lowpoly_flat", "pixel", "realistic_pbr", "painted"):
+    for style in ("lowpoly_flat", "realistic_pbr", "painted"):
         rec = reference.recipe(style, "humanoid", "pc_mid")
         assert prep.late_cap_of(rec, prep.texture_look(rec), 4096) is None
 
@@ -113,7 +112,7 @@ def test_face_layout_for_retro64_characters_only():
     retro = reference.recipe("retro64", "humanoid", "pc_mid")
     assert face_detail.layout_only_on(retro, "humanoid")
     assert not face_detail.layout_only_on(retro, "quadruped")
-    for style in ("lowpoly_flat", "pixel", "realistic_pbr", "painted", "cel", "clay"):
+    for style in ("lowpoly_flat", "realistic_pbr", "painted", "cel", "clay"):
         assert not face_detail.layout_only_on(reference.recipe(style, "humanoid", "pc_mid"), "humanoid")
     # the face paint pass itself still stands back for the look's 256 px texture
     assert face_detail.skip_reason("humanoid", retro, {}, True) == "style"

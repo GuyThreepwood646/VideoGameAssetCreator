@@ -732,7 +732,7 @@ def test_availability_reasons(settings, lane1):
 
     assert hairlib.available(asset()) is None
     assert "humanoid" in hairlib.available(asset(category="quadruped"))
-    assert "Pixel-art" in hairlib.available(asset(style_preset="pixel"))
+    assert "Retro 64" in hairlib.available(asset(style_preset="retro64"))
     assert "bald" in hairlib.available(asset(prompt="a bald monk"))
     assert "helmet" in hairlib.available(asset(prompt="a knight in a full helmet"))
     assert hairlib.available(asset(platform_target="mobile_low")) is None  # q_buzzed is a phone shell

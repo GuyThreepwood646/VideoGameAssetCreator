@@ -284,8 +284,7 @@ _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_ass
 
 # One list of looks (UI-01): the old look ids a project's style lock carried now name the style they were paired with, so a
 # look and a style are one id. Old style ids stay as they are.
-LOOK_ID_MIGRATION = {"painted_fantasy": "painted", "clean_cartoon": "cel", "pixel_retro": "pixel", "realistic": "realistic_pbr",
-                     "clay_toy": "clay"}
+LOOK_ID_MIGRATION = {"painted_fantasy": "painted", "clean_cartoon": "cel", "realistic": "realistic_pbr", "clay_toy": "clay"}
 
 
 def migrate_looks(engine) -> int:
@@ -319,7 +318,11 @@ def migrate_looks(engine) -> int:
         if plan_projects or plan_assets:
             path = get_settings().db_path
             if path.is_file():
-                shutil.copy2(path, path.with_name(path.name + ".before-looks-merge"))
+                # never over an earlier copy: a later look removal (Pixel art) adds its own, dated
+                copy = path.with_name(path.name + ".before-looks-merge")
+                if copy.exists():
+                    copy = path.with_name(f"{path.name}.before-looks-merge-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+                shutil.copy2(path, copy)
             for pid, raw in plan_projects:
                 conn.execute(text("UPDATE project SET style_lock_json = :j WHERE id = :i"), {"j": raw, "i": pid})
             for aid, sp in plan_assets:
