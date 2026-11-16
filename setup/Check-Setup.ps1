@@ -127,7 +127,7 @@ $unityExe = if ($foundUnity) { $foundUnity.Path } else { $cfgUnity }
 # block: the row says so and still passes.
 $minFile = Join-Path $Root 'backend\vgac\data\minimum_versions.json'
 $minimums = $null
-try { $minimums = Get-Content -Raw -LiteralPath $minFile | ConvertFrom-Json } catch { $minimums = $null }
+try { $minimums = Get-Content -Raw -ErrorAction Stop -LiteralPath $minFile | ConvertFrom-Json } catch { $minimums = $null }
 function Min-Entry([string]$Key) { if ($minimums -and ($minimums.PSObject.Properties.Name -contains $Key)) { return $minimums.$Key } return $null }
 function Min-Phrase([string]$Key) {
     $e = Min-Entry $Key
@@ -341,9 +341,66 @@ function Get-Choices($Eng, [string]$Class, [string]$InputName) {
     return $null
 }
 $modelIds = @($loaders.Keys | Where-Object { $modelInfo[$_] -and $modelInfo[$_].File })
-if ($engines.Count -eq 0) {
+
+# The app already knows how to read this: it also accepts an earlier copy, a renamed file or a file the person chose
+# (backend\vgac\model_choices.py). So ask the app first and show its verdict and its words; only when it does not answer,
+# look here, using the same data it reads (the "older" lists of setup\downloads.json and local\model_choices.json).
+$backendUrl = if ($env:VGAC_BACKEND_URL) { $env:VGAC_BACKEND_URL } else { 'http://127.0.0.1:8765' }
+$appSetup = Get-Json "$backendUrl/api/setup" 90
+$appModels = @()
+if ($appSetup -and $appSetup.items) { $appModels = @($appSetup.items | Where-Object { $_.group -eq 'models' -and "$($_.id)" -like 'model.*' }) }
+if ($appModels.Count -gt 0) {
+    foreach ($it in $appModels) {
+        $mid = ("$($it.id)" -split '\.')[2]
+        $isOptional = if ($loaders.Contains($mid)) { -not $loaders[$mid][3] } else { $it.state -eq 'warn' }
+        $optTag = if ($isOptional) { ' (optional)' } else { '' }
+        $using = [regex]::Match("$($it.technical)", '; using (.+)$').Groups[1].Value
+        $detail = "$($it.detail)"
+        if ($using) { $detail += " Using $using." }
+        $status = switch ("$($it.state)") { 'ok' { 'Ready' } 'fail' { 'Missing' } 'warn' { 'Missing' } default { 'Needs you' } }
+        Add-Row "Model: $($it.label)$optTag" $status $detail "$($it.fix)"
+    }
+    $modelIds = @()
+}
+elseif ($engines.Count -eq 0) {
     Add-Row "Model files ($($modelIds.Count))" 'Needs you' 'Not checked: no ComfyUI is answering, so the model files cannot be looked for.' 'Start ComfyUI and run this check again. Required files are listed in docs\FIRST-TIME-SETUP.md.'
     $modelIds = @()
+}
+# Fallback only: what stands in for a file that is not there, read from the same data the app reads.
+$catModels = @{}
+foreach ($fn in 'downloads.json', 'downloads.local.json') {
+    try {
+        $d = Get-Content -Raw -ErrorAction Stop -LiteralPath (Join-Path $Root "setup\$fn") | ConvertFrom-Json
+        if ($d.models) { foreach ($pr in $d.models.PSObject.Properties) { $catModels[$pr.Name] = $pr.Value } }
+    } catch { }
+}
+$ownChoices = $null
+try { $ownChoices = Get-Content -Raw -ErrorAction Stop -LiteralPath (Join-Path $Root 'local\model_choices.json') | ConvertFrom-Json } catch { }
+$folderLoaders = @{ diffusion_models = 'UNETLoader'; unet = 'UNETLoader'; checkpoints = 'CheckpointLoaderSimple'; text_encoders = 'CLIPLoader'; clip = 'CLIPLoader'; vae = 'VAELoader' }   # model_choices.FOLDER_LOADERS
+$loaderInputs = @{ UNETLoader = 'unet_name'; CheckpointLoaderSimple = 'ckpt_name'; CLIPLoader = 'clip_name'; VAELoader = 'vae_name' }
+function Find-StandIn($Eng, [string]$Id, [string]$File, [string]$Class, [string]$InputName) {
+    # The name of a file the engine lists that stands in for $File, or $null. Same order as the app: the person's own
+    # file, then the earlier copies of the same loader, then (Z-Image Turbo) the earlier all-in-one checkpoint.
+    foreach ($kv in $catModels.GetEnumerator()) {
+        $v = $kv.Value
+        $name = if ($v.save_as) { "$($v.save_as)" } elseif ($v.dest) { Split-Path -Leaf (("$($v.dest)") -replace '/', '\') } else { '' }
+        if ($name -ine $File) { continue }
+        $own = if ($ownChoices -and ($ownChoices.PSObject.Properties.Name -contains "model:$($kv.Key)")) { $ownChoices."model:$($kv.Key)" } else { $null }
+        if ($own -and $own.path -and (Test-Path -LiteralPath $own.path) -and ((Split-Path -Leaf $own.path) -ine $File)) {
+            $leaf = Split-Path -Leaf $own.path
+            foreach ($c in @(Get-Choices $Eng $Class $InputName)) { if (("$c" -replace '\\', '/').Split('/')[-1] -ieq $leaf) { return "your own file $leaf" } }
+        }
+        foreach ($rel in @($v.older)) {
+            $parts = ("$rel" -replace '\\', '/').Split('/')
+            $ld = $folderLoaders[$parts[0]]
+            if (-not $ld -or $parts.Count -lt 2) { continue }
+            if ($ld -eq $Class) { $ch = @(Get-Choices $Eng $Class $InputName) }
+            elseif ($Id -eq 'zturbo' -and $ld -eq 'CheckpointLoaderSimple') { $ch = @(Get-Choices $Eng $ld $loaderInputs[$ld]) }
+            else { continue }
+            foreach ($c in $ch) { if (("$c" -replace '\\', '/').Split('/')[-1] -ieq $parts[-1]) { return "the earlier copy $($parts[-1])" } }
+        }
+    }
+    return $null
 }
 foreach ($id in $modelIds) {
     $cls, $inp, $which, $req = $loaders[$id]
@@ -358,7 +415,9 @@ foreach ($id in $modelIds) {
     $found = $false
     foreach ($c in $choices) { if (("$c" -replace '\\', '/').Split('/')[-1] -ieq $want) { $found = $true; break } }
     $choices = $null  # only found or missing is kept
+    $standIn = if (-not $found) { Find-StandIn $eng $id $mi.File $cls $inp } else { $null }
     if ($found) { Add-Row "$label$optTag" 'Ready' "$($mi.File) is installed on ComfyUI $which" }
+    elseif ($standIn) { Add-Row "$label$optTag" 'Ready' "The app's own file is not installed; it uses $standIn instead (ComfyUI $which)." }
     else { Add-Row "$label$optTag" 'Missing' "$($mi.File) is not installed on ComfyUI $which" "Download $($mi.File) from its official page (see docs\FIRST-TIME-SETUP.md) into ComfyUI's models folder for the $cls loader, restart ComfyUI." }
 }
 
@@ -375,6 +434,7 @@ if (-not $lorasDir -or -not (Test-Path -LiteralPath $lorasDir)) {
         $path = Join-Path $lorasDir ($f -replace '/', '\')
         $tag = if ($req) { '' } else { ' (optional)' }
         if (Test-Path -LiteralPath $path) { Add-Row "Add-on: $id$tag" 'Ready' $f }
+        elseif ($ownChoices -and ($ownChoices.PSObject.Properties.Name -contains "addon:$id") -and $ownChoices."addon:$id".path -and (Test-Path -LiteralPath $ownChoices."addon:$id".path)) { Add-Row "Add-on: $id$tag" 'Ready' "Using the file you chose: $(Split-Path -Leaf $ownChoices."addon:$id".path)" }
         else { Add-Row "Add-on: $id$tag" 'Missing' "$f not found under loras_dir" "Download it from its official page (docs\FIRST-TIME-SETUP.md) into the loras folder at that path." }
     }
 }
