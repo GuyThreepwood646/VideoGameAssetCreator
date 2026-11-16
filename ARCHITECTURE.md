@@ -46,13 +46,13 @@ The **material** category (tileable surface) uses `stages/material.py` for steps
 1. facing decision, outline test then a toes test as tie-break (`facing.py`)
 2. normal-map repair for old 3D versions (`normalfix.py`)
 3. Blender `prep.py`: turn, size, pivot, weld, weighted decimation to the budget, shading, optional symmetrize, grid snap for scenery, rebake
-4. texture pass: measure, physically based fix, look applied; light removed here only when no picture will be painted
+4. texture pass: measure, physically based fix, look applied; light removed here only when no picture will be painted; a look with a bake size (recipe `mesh.bake_texture`, Retro 64) is not shrunk here. For a look with `surface.face_layout` (Retro 64) the face then gets more of the texture (`face_detail.layout_only`, `blender/faceuv.py`), with no face paint pass
 5. picture projection into the base colour (`srcproject.py`). The head is painted first by a chain of head views: the front picture fitted on the head by eyes and mouth (`facemarks.use_local`, MediaPipe on the processor), then each three-quarter view fitted the same way and lined up to what the front painted (refused when over 0.12 of the face width away); each three-quarter head picture takes the front's skin tone by one offset measured where the two overlap. Whole-body fits do not paint where a head view paints; they hand over gradually down about 6 cm of neck, their tone matched to the head views' in that band. A head view never paints its frame margin or surface seen beyond about 70 degrees; the chin underside takes the painted colour around it. A whole-body view does not paint within `OVERLAP_PX` (24) pixels of a depth step over `OVERLAP_JUMP_M` (3 cm), where one body part sits in front of another; those texels come from a view that sees them clear, or keep the 3D step's colour. Small unpainted holes enclosed by paint (up to about 2 cm across) take the mean colour of the painted surface round them; larger unpainted areas keep the 3D step's colour. Left, right and back views never paint the face; a view whose turn contradicts the front is refused; between turns whose outlines fit alike, the head's own match decides (weight 20). Unpainted skin inside the eyes-nose-mouth box takes the painted skin tone.
 6. skin never metal (`skinmetal.py`): head, neck and the rest of the bare skin; armour in the description limits it to head and neck
 7. hair found (`stages/hair_detail.py`); a grey metal crown is a helmet only when light enough to be steel and the face skin was not marked metal
 8. face detail: close-up, fit, paint; held back when the fit scores under 0.65 (`stages/face_detail.py`, `face.py`, `facecloseup.py`, `facemarks.py`); skin never metal runs again when it laid the texture out anew
 9. hair detail painted, optional own hair material (`hair.py`, `hairmat.py`)
-10. light removed after painting (`lightfix.py`): Realistic look with pictures painted, only where same-coloured texels show a light gradient, at most one stop; `base_color_lit.png` keeps the original
+10. light removed after painting (`lightfix.py`): Realistic look with pictures painted, only where same-coloured texels show a light gradient, at most one stop; `base_color_lit.png` keeps the original. Then, by look: one colour per triangle (`surface.colour_per_face`, Low-poly, `looktex.py`; the front of a character's head kept as painted), and a look with a bake size shrunk to its shipped size, each texel from its own texture piece (`prep.ship_late`, `imaging.shrink_by_island`)
 11. physically based figures measured again on the finished maps
 12. library hairstyle fitted to the body (`hairfit.attach`)
 13. checks computed, incl. `picture_projection`, `skin_not_metal`, `facing_tests`, `face_finder`, `baked_light`; a texture check that cannot be measured says so (`quality.not_measured`)
@@ -82,7 +82,7 @@ Face and hair passes skip (reason recorded) for non-humanoids, crisp or flat loo
 | Looks (styles, "presets" in the UI) | `backend/vgac/data/styles.yaml` |
 | Platforms (size tiers: triangle and texture budgets) | `data/platforms.yaml` |
 | Categories (rig engine, size axis, pose block, clips, LODs, budgets) | `data/categories/*.yaml` |
-| Recipe for look x category x platform | `reference.recipe()`; each step records what it used in `metrics.recipe` |
+| Recipe for look x category x platform | `reference.recipe()`; each step records what it used in `metrics.recipe`; optional per-look fields (`RECIPE_OPTIONAL`: `mesh.triangle_cap`, `mesh.bake_texture`, `surface.face_layout`, `colour_per_face`, `face_keeps_texture`) appear only when a look sets them |
 | Models and licences; add-ons | `data/models.yaml`; `data/addons.yaml` |
 | Item words; hair library; credits | `data/items.yaml`; `data/hairlib/`, `hairstyles.py`; `data/credits.yaml` |
 | Step order and ids | `reference.STAGE_ORDER` |
