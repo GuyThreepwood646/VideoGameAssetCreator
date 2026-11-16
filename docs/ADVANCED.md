@@ -62,7 +62,7 @@ values out of the older tracked files. The previous copy is kept as `machine.jso
 | `instances.<name>.engine` | `comfy_dir` (the ComfyUI install folder), `python` (relative to it; default `ComfyUI/.venv/Scripts/python.exe`), `main`, `cuda_device` (numbered as `nvidia-smi` numbers the cards), `extra_model_paths`, `user_dir`, `output_dir`, `input_dir`, `extra_args`. The backend sets `CUDA_DEVICE_ORDER=PCI_BUS_ID` and `SKINTOKEN_BLENDER_BIN` (from `blender_exe`, how the rigging node finds Blender) on every engine it starts |
 | `instances.b.output_dir` | Engine B's output folder. SkinToken writes its rigged model there |
 | `library_path` | Where projects, assets, every version and the SQLite file `vgac.sqlite` are stored. Default `library` |
-| `blender_exe` | Blender 5.x. Only 5.2.3 is tested |
+| `blender_exe` | Blender 5.0 or newer (tested with 5.2.3) |
 | `unity_exe`, `unity_project` | The Unity Editor and the sandbox project used to build prefabs (default `unity-sandbox`) |
 | `comfy_input_dir` | ComfyUI's shared input folder (both engines read pictures from it) |
 | `loras_dir` | ComfyUI's `loras` folder. Your own add-ons go in its `VGAC/mine/` folder |

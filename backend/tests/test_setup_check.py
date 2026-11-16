@@ -36,6 +36,11 @@ class NodeClient:
             return {"reachable": False, "devices": []}
         return {"reachable": True, "devices": [{"name": self.device}]}
 
+    def last_vram_summary(self) -> dict[str, Any] | None:
+        if self.device is None:
+            return None
+        return {"reachable": True, "devices": [{"name": self.device}], "comfyui_version": "0.45.3"}
+
     def set_base_url(self, url: str) -> None:
         self.base_url = url
 

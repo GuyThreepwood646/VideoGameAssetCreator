@@ -196,7 +196,7 @@ def test_blender_refuses_the_wrong_thing(bare, monkeypatch):
     old = tmp / "old" / "blender.exe"
     old.parent.mkdir()
     old.write_bytes(b"y")
-    with pytest.raises(SettingError, match="needs 5.0 or newer"):
+    with pytest.raises(SettingError, match="needs Blender 5.0 or newer"):
         set_setting("blender_exe", str(old))
     monkeypatch.setattr(setup_settings, "blender_runner", lambda p: "garbage")
     dud = tmp / "dud" / "blender.exe"

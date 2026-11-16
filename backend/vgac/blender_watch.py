@@ -13,11 +13,11 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from . import config
+from . import config, minimums
 
 log = logging.getLogger("vgac.blender_watch")
 
-TESTED = "5.2.3"  # the version VGAC was tested with (tools_setup.BLENDER_TESTED)
+TESTED = minimums.tested("blender")  # the version VGAC was tested with (data/minimum_versions.json)
 
 
 def _file() -> Path | None:
@@ -89,7 +89,7 @@ def _check(exe: Path | str | None, runner: Callable[[Path], str] | None) -> dict
     tested = now == TESTED
     if ver[:2] < preflight.BLENDER_MIN:
         return {"kind": "old", "from": was, "to": now, "tested": False, "usable": False,
-                "message": f"Blender changed from {was} to {now}, which is too old: the app needs 5.0 or newer. Choose a newer Blender in the setup card."}
+                "message": f"Blender changed from {was} to {now}, which is too old: the app needs {minimums.phrase('blender')}. Choose a newer Blender in the setup card."}
     tail = (f"{now} is the version VGAC was tested with." if tested else
             f"VGAC was tested with {TESTED}, so {now} is untested. It will be used; if a Blender step misbehaves, say so in the setup card.")
     return {"kind": "changed", "from": was, "to": now, "tested": tested, "usable": True,

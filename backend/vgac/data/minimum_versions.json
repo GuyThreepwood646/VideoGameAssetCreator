@@ -1,0 +1,8 @@
+{
+ "_comment": "The one place the minimum versions live. Read by backend/vgac/minimums.py (the app's own check) and by setup/Check-Setup.ps1. 'min' is the oldest version the app accepts; anything newer is accepted too. 'tested' is the version it was built and run with. 'kind' says why the minimum is what it is: 'required by' = something the app ships or pins needs it (so it cannot be lowered), 'oldest evidence' = the oldest version we have actually run or can show works (so it can be lowered by testing an older one). Not here on purpose: Git (any version), npm (comes with Node), PyTorch and the NVIDIA driver (ComfyUI's business). The pins in backend/requirements.txt and the SHA-256 pins in setup/downloads.json are exact on purpose and are not minimums.",
+ "python": {"name": "Python", "min": "3.13", "tested": "3.13.7", "kind": "oldest evidence", "why": "numpy==2.5.4 needs 3.12 or newer, but nothing was ever run below 3.13"},
+ "node": {"name": "Node.js", "min": "22.12.0", "tested": "22.18.0", "kind": "required by", "why": "the electron package in desktop/ needs 22.12.0 or newer; Vite 8 needs 20.19 or 22.12 or newer"},
+ "blender": {"name": "Blender", "min": "5.0", "tested": "5.2.3", "kind": "oldest evidence", "why": "the animation steps use action slots; nothing was ever run below 5.2.3, so this rests on the 5.0 release line only"},
+ "unity": {"name": "Unity Editor", "min": "6000.0", "tested": "6000.4.3f1", "kind": "oldest evidence", "why": "the importer APIs exist in the Unity 6 (6000.0) reference; only 6000.4.3f1 was ever run"},
+ "comfyui": {"name": "ComfyUI", "min": "0.34.0", "tested": "0.45.3", "kind": "required by", "why": "the TRELLIS.2 and mesh nodes first appear in ComfyUI v0.34.0; nothing was ever run below 0.45.3"}
+}

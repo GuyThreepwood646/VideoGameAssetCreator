@@ -122,6 +122,38 @@ $foundUnity = Find-Unity
 $blenderExe = if ($foundBlender) { $foundBlender.Path } else { $cfgBlender }
 $unityExe = if ($foundUnity) { $foundUnity.Path } else { $cfgUnity }
 
+# --- minimum versions: one list for this script and the app's own check (backend\vgac\data\minimum_versions.json) ---------
+# Each program has a minimum; anything at or above it is Ready, whatever is newer. A version that cannot be read is not a
+# block: the row says so and still passes.
+$minFile = Join-Path $Root 'backend\vgac\data\minimum_versions.json'
+$minimums = $null
+try { $minimums = Get-Content -Raw -LiteralPath $minFile | ConvertFrom-Json } catch { $minimums = $null }
+function Min-Entry([string]$Key) { if ($minimums -and ($minimums.PSObject.Properties.Name -contains $Key)) { return $minimums.$Key } return $null }
+function Min-Phrase([string]$Key) {
+    $e = Min-Entry $Key
+    if (-not $e) { return $Key }
+    return "$($e.name) $($e.min) or newer (tested with $($e.tested))"
+}
+function Parse-Version([string]$Text) {
+    # "Python 3.13.7", "v22.18.0", "Blender 5.2.3", "6000.4.3f1" -> [version], or $null when there are no digits
+    $m = [regex]::Match("$Text", '\d+(\.\d+)*')
+    if (-not $m.Success) { return $null }
+    $parts = @($m.Value -split '\.' | ForEach-Object { [int]$_ })
+    while ($parts.Count -lt 2) { $parts += 0 }
+    if ($parts.Count -gt 4) { $parts = $parts[0..3] }
+    return [version]($parts -join '.')
+}
+function Test-Floor([string]$Key, [string]$Text) {
+    # 'ok' at or above the minimum, 'old' below it, 'unknown' when the version cannot be read
+    $e = Min-Entry $Key
+    $have = Parse-Version $Text
+    $want = if ($e) { Parse-Version $e.min } else { $null }
+    if (-not $have -or -not $want) { return 'unknown' }
+    if ($have -ge $want) { return 'ok' }
+    return 'old'
+}
+if (-not $minimums) { Add-Row 'Minimum versions list' 'Needs you' 'backend\vgac\data\minimum_versions.json could not be read, so versions are not checked.' 'Get a fresh copy of the project folder, or restore that file.' }
+
 # --- 1. Windows ---------------------------------------------------------------------------------------------------------
 $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 if ($os) {
@@ -159,35 +191,45 @@ try {
 } catch { Add-Row 'Free disk' 'Needs you' 'Could not read the project drive.' }
 
 # --- 4. Python, Node, npm, Git ------------------------------------------------------------------------------------------
-$py313 = $null
+$pyOk = $null; $pyText = $null; $pyOther = $null
 $pyLauncher = Get-Cmd 'py'
-# Accept Python 3.13 or newer (3.14, etc.)
+# Accept the minimum or anything newer: the newest installed Python that meets it (the launcher lists them with py -0p).
 if ($pyLauncher) {
-    $v = Invoke-Quiet $pyLauncher @('-3.13', '--version')
-    if ($v -match 'Python 3\.13') { $py313 = @($pyLauncher, '-3.13') ; $pyText = $v }
+    $tags = @(& $pyLauncher '-0p' 2>$null | ForEach-Object { if ("$_" -match '^\s*-V:(\d+\.\d+)\b') { $Matches[1] } } | Sort-Object { [version]$_ } -Descending)
+    foreach ($t in $tags) {
+        if ((Test-Floor 'python' $t) -eq 'ok') {
+            $v = Invoke-Quiet $pyLauncher @("-$t", '--version')
+            if ($v) { $pyOk = @($pyLauncher, "-$t"); $pyText = $v; break }
+        }
+    }
 }
-if (-not $py313) {
+if (-not $pyOk) {
     $pyExe = Get-Cmd 'python'
     if ($pyExe) {
         $v = Invoke-Quiet $pyExe @('--version')
-        if ($v -match 'Python 3\.(1[3-9]|[2-9]\d)') { $py313 = @($pyExe); $pyText = $v }
+        if ($v -and (Test-Floor 'python' $v) -eq 'ok') { $pyOk = @($pyExe); $pyText = $v }
         elseif ($v) { $pyOther = $v }
     }
 }
-if ($py313) { Add-Row 'Python 3.13+' 'Ready' $pyText }
-elseif ($pyOther) { Add-Row 'Python 3.13+' 'Missing' "Found $pyOther, not 3.13+." 'Install Python 3.13 or newer from python.org (tick "Add to PATH"), then run this check again.' }
-else { Add-Row 'Python 3.13+' 'Missing' 'Not found.' 'Install Python 3.13 or newer from python.org (tick "Add to PATH"), then run this check again.' }
+$pyNeed = Min-Phrase 'python'
+if ($pyOk) { Add-Row 'Python' 'Ready' "$pyText ($pyNeed)" }
+elseif ($pyOther) { Add-Row 'Python' 'Missing' "Found $pyOther, which is too old." "Install $pyNeed from python.org (tick `"Add to PATH`"), then run this check again." }
+else { Add-Row 'Python' 'Missing' 'Not found.' "Install $pyNeed from python.org (tick `"Add to PATH`"), then run this check again." }
 
 $nodeExe = Get-Cmd 'node'
 $npmCmd = Get-Cmd 'npm.cmd'; if (-not $npmCmd) { $npmCmd = Get-Cmd 'npm' }
 $nodeV = $null; if ($nodeExe) { $nodeV = Invoke-Quiet $nodeExe @('--version') }
 $npmV = $null; if ($npmCmd) { $npmV = Invoke-Quiet $npmCmd @('--version') }
-if ($nodeV -and $npmV) { Add-Row 'Node and npm' 'Ready' "Node $nodeV, npm $npmV" }
-else { Add-Row 'Node and npm' 'Missing' 'Not found.' 'Install the Node.js LTS version from nodejs.org, then run this check again.' }
+$nodeNeed = Min-Phrase 'node'
+$nodeState = if ($nodeV) { Test-Floor 'node' $nodeV } else { '' }
+if (-not $nodeV -or -not $npmV) { Add-Row 'Node and npm' 'Missing' 'Not found.' "Install $nodeNeed from nodejs.org (npm comes with it), then run this check again." }
+elseif ($nodeState -eq 'old') { Add-Row 'Node and npm' 'Needs you' "Node $nodeV is too old." "Install $nodeNeed from nodejs.org (npm comes with it), then run this check again." }
+elseif ($nodeState -eq 'unknown') { Add-Row 'Node and npm' 'Ready' "Node and npm are there, but Node did not give a readable version ('$nodeV'). $nodeNeed." }
+else { Add-Row 'Node and npm' 'Ready' "Node $nodeV, npm $npmV ($nodeNeed)" }
 
 $gitExe = Get-Cmd 'git'
 $gitV = $null; if ($gitExe) { $gitV = Invoke-Quiet $gitExe @('--version') }
-if ($gitV) { Add-Row 'Git' 'Ready' $gitV }
+if ($gitV) { Add-Row 'Git' 'Ready' "$gitV (any version works)" }
 else { Add-Row 'Git' 'Missing' 'Not found.' 'Install Git for Windows from git-scm.com (only needed to download or update the project).' }
 
 # --- 5. Blender and Unity (configured paths) ----------------------------------------------------------------------------
@@ -196,16 +238,28 @@ if ($foundBlender) {
     $bv = Invoke-Quiet $blenderExe @('--version')
     $m = [regex]::Match("$bv", 'Blender\s+(\d+)\.(\d+)')
     $note = if ($cfgBlenderOk) { '' } else { " (found in $($foundBlender.From); local\machine.json does not point to it: set blender_exe)" }
-    if ($m.Success -and [int]$m.Groups[1].Value -ge 5) { Add-Row 'Blender' $(if ($cfgBlenderOk) { 'Ready' } else { 'Needs you' }) "$bv at $blenderExe$note" $(if ($cfgBlenderOk) { '' } else { 'Set blender_exe in local\machine.json (under "backend") to this path.' }) }
-    else { Add-Row 'Blender' 'Needs you' "Found at $blenderExe but version reads '$bv'." 'The app needs Blender 5.0 or newer (5.2.3 is what it was built with).' }
+    $bNeed = Min-Phrase 'blender'
+    $bState = Test-Floor 'blender' "$($m.Value)"
+    if ($bState -eq 'old') { Add-Row 'Blender' 'Needs you' "Found at $blenderExe but it is too old ($bv)." "Install $bNeed from blender.org, then set blender_exe in local\machine.json (under `"backend`")." }
+    else {
+        $bText = if ($bState -eq 'unknown') { " (its version could not be read; $bNeed)" } else { " ($bNeed)" }
+        Add-Row 'Blender' $(if ($cfgBlenderOk) { 'Ready' } else { 'Needs you' }) "$bv at $blenderExe$bText$note" $(if ($cfgBlenderOk) { '' } else { 'Set blender_exe in local\machine.json (under "backend") to this path.' })
+    }
 } else {
-    Add-Row 'Blender' 'Missing' 'Not on PATH, not in the configured path, not in the usual places.' 'Unzip Blender 5.2.3 (portable) from blender.org anywhere you like, then set blender_exe in local\machine.json (under "backend").'
+    Add-Row 'Blender' 'Missing' 'Not on PATH, not in the configured path, not in the usual places.' "Unzip $(Min-Phrase 'blender') (portable) from blender.org anywhere you like, then set blender_exe in local\machine.json (under `"backend`")."
 }
 if ($foundUnity) {
     $cfgUnityOk = ($foundUnity.From -eq $machineFile)
-    Add-Row 'Unity Editor' $(if ($cfgUnityOk) { 'Ready' } else { 'Needs you' }) "Found at $unityExe (the licence cannot be checked from here)$(if (-not $cfgUnityOk) { '; local\machine.json does not point to it' })" $(if ($cfgUnityOk) { '' } else { 'Set unity_exe in local\machine.json (under "backend") to this path.' })
+    $uNeed = Min-Phrase 'unity'
+    $uVer = ''; foreach ($part in @($unityExe -split '[\\/]')) { if ($part -match '^\d{4,}\.\d+\.\d+[a-z]\d+$') { $uVer = $part } }
+    $uState = Test-Floor 'unity' $uVer
+    if ($uState -eq 'old') { Add-Row 'Unity Editor' 'Needs you' "Found at $unityExe, version $uVer, which is too old." "Install $uNeed through Unity Hub, then set unity_exe in local\machine.json (under `"backend`")." }
+    else {
+        $uText = if ($uState -eq 'unknown') { "its version could not be read from the folder name; $uNeed" } else { "version $uVer; $uNeed" }
+        Add-Row 'Unity Editor' $(if ($cfgUnityOk) { 'Ready' } else { 'Needs you' }) "Found at $unityExe ($uText; the licence cannot be checked from here)$(if (-not $cfgUnityOk) { '; local\machine.json does not point to it' })" $(if ($cfgUnityOk) { '' } else { 'Set unity_exe in local\machine.json (under "backend") to this path.' })
+    }
 } else {
-    Add-Row 'Unity Editor' 'Needs you' 'No Unity Editor found in the configured path or the Unity Hub folder.' 'Install Unity Hub, sign in, install Editor 6000.4.3f1 and activate a free Personal licence by hand. Then set unity_exe in local\machine.json (under "backend").'
+    Add-Row 'Unity Editor' 'Needs you' 'No Unity Editor found in the configured path or the Unity Hub folder.' "Install Unity Hub, sign in, install $(Min-Phrase 'unity') and activate a free Personal licence by hand. Then set unity_exe in local\machine.json (under `"backend`")."
 }
 
 # --- 6. ComfyUI engines -------------------------------------------------------------------------------------------------
@@ -218,7 +272,7 @@ function Find-Engine([string]$Url, [string]$CardMatch, [int[]]$ExtraPorts) {
         $s = Get-Json ($u.TrimEnd('/') + '/system_stats') 4
         if ($s -and $s.devices) {
             $name = "$($s.devices[0].name)"
-            if ($u -eq $Url -or ($CardMatch -and $name -match $CardMatch)) { return @{ Url = $u.TrimEnd('/'); Card = $name } }
+            if ($u -eq $Url -or ($CardMatch -and $name -match $CardMatch)) { return @{ Url = $u.TrimEnd('/'); Card = $name; Version = "$($s.system.comfyui_version)" } }
         }
     }
     return $null
@@ -236,7 +290,12 @@ if ($engines.Count -eq 0) {
     foreach ($e in $engines) {
         $role = if ($e -eq $engA) { ' (the app''s engine A, 3D models)' } elseif ($e -eq $engB) { ' (the app''s engine B, pictures and rigging)' } else { ' (not at a configured address)' }
         $fix = if ($e -eq $engA -or $e -eq $engB) { '' } else { 'Set this address under instances in local\machine.json (under "backend"), or the app will not use it.' }
-        Add-Row "ComfyUI at $($e.Url)" $(if ($fix) { 'Needs you' } else { 'Ready' }) "Answers$role; card: $($e.Card)" $fix
+        $cv = $e.Version; $cNeed = Min-Phrase 'comfyui'; $cState = Test-Floor 'comfyui' $cv
+        if ($cState -eq 'old') { Add-Row "ComfyUI at $($e.Url)" 'Needs you' "Answers$role; card: $($e.Card); version $cv is too old." "Update ComfyUI to $cNeed (ComfyUI Desktop updates itself), restart it, then run this check again." }
+        else {
+            $cText = if ($cState -eq 'unknown') { "it did not say its version; $cNeed" } else { "version $cv; $cNeed" }
+            Add-Row "ComfyUI at $($e.Url)" $(if ($fix) { 'Needs you' } else { 'Ready' }) "Answers$role; card: $($e.Card); $cText" $fix
+        }
     }
     if ($gpus.Count -eq 1 -and $engines.Count -gt 1) { Add-Row 'Two ComfyUIs on one card' 'Needs you' 'More than one ComfyUI is running but there is one graphics card.' 'Run only one at a time, or expect slow or failed steps from sharing the card.' }
 }
@@ -326,7 +385,7 @@ if (Test-Path -LiteralPath $venvPy) {
     $chk = Invoke-Quiet $venvPy @('-B', '-c', "import fastapi, sqlalchemy, trimesh; print('ok')")
     if ($chk -eq 'ok') { Add-Row 'Backend venv (Python packages)' 'Ready' 'backend\.venv exists and loads its packages' }
     else { Add-Row 'Backend venv (Python packages)' 'Needs you' 'backend\.venv exists but its packages did not load.' 'Not touched by -Install. Check by hand: backend\.venv\Scripts\python -m pip install -r backend\requirements.txt' }
-} else { Add-Row 'Backend venv (Python packages)' 'Missing' 'backend\.venv not found.' 'Run this script with -Install (needs Python 3.13).' }
+} else { Add-Row 'Backend venv (Python packages)' 'Missing' 'backend\.venv not found.' "Run this script with -Install (needs $(Min-Phrase 'python'))." }
 
 function Check-Folder([string]$Label, [string]$Rel, [string]$Marker, [string]$FixText) {
     $p = Join-Path $Root $Rel
@@ -399,10 +458,10 @@ $desktop = Join-Path $Root 'desktop'
 
 # 1. venv + requirements. A venv that already exists is never touched, even if a package is missing.
 $venvDone = if (Test-Path -LiteralPath $venvPy) { 'backend\.venv already exists (left alone).' } else { '' }
-if (-not $venvDone -and -not $py313) { Write-Host '[blocked] backend venv : Python 3.13 is not installed. Install it by hand first.' }
+if (-not $venvDone -and -not $pyOk) { Write-Host "[blocked] backend venv : $(Min-Phrase 'python') is not installed. Install it by hand first." }
 else {
     Run-Step 'create backend\.venv and install backend\requirements.txt' $venvDone {
-        $exe = $py313[0]; $pre = @(); if ($py313.Count -gt 1) { $pre = @($py313[1..($py313.Count - 1)]) }
+        $exe = $pyOk[0]; $pre = @(); if ($pyOk.Count -gt 1) { $pre = @($pyOk[1..($pyOk.Count - 1)]) }
         & $exe @pre -m venv (Join-Path $backend '.venv')
         if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
         & $venvPy -m pip install -r (Join-Path $backend 'requirements.txt')
@@ -411,7 +470,7 @@ else {
 }
 
 # 2. frontend
-if (-not $npmCmd) { Write-Host '[blocked] frontend and desktop : Node and npm are not installed. Install Node LTS by hand first.' }
+if (-not $npmCmd) { Write-Host "[blocked] frontend and desktop : Node and npm are not installed. Install $(Min-Phrase 'node') by hand first." }
 else {
     $feMods = Test-Path -LiteralPath (Join-Path $frontend 'node_modules')
     Run-Step 'npm install in frontend\' $(if ($feMods) { 'frontend\node_modules already exists.' } else { '' }) {

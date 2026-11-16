@@ -12,7 +12,7 @@ problem holds up. summarize(items) gives {ok, fails, warns, unknown, affected}.
 
 What is checked:
 
-- tools: Blender exists and is 5.0 or newer (`blender --version` once, 15 s limit, remembered per file), the Unity
+- tools: Blender exists and is at or above the minimum of data/minimum_versions.json (`blender --version` once, 15 s limit, remembered per file), the Unity
   editor and the sandbox project (optional, so a warning), each shared animation library file (a warning).
 - storage: free disk space on the drives of library_path and export_path (under 5 GB fails, under 20 GB warns), free
   memory against min_free_ram_gb (a warning: steps wait for memory).
@@ -44,6 +44,7 @@ from typing import Any, Awaitable, Callable
 
 import yaml
 
+from . import minimums
 from .config import DATA_DIR, PACKAGE_DIR, PROJECT_DIR, Settings
 from .instances import card_matches, conflict_message, device_names, probe_url, search_ports
 
@@ -52,7 +53,7 @@ log = logging.getLogger("vgac.preflight")
 GB = 1024**3
 DISK_FAIL_GB = 5.0
 DISK_WARN_GB = 20.0
-BLENDER_MIN = (5, 0)
+BLENDER_MIN = minimums.floor("blender")[:2]  # from data/minimum_versions.json, the one place the minimums live
 BLENDER_VERSION_TIMEOUT = 15.0
 GRAPHS_DIR = PACKAGE_DIR / "graphs"
 
@@ -265,15 +266,23 @@ def check_blender(settings: Settings, runner: Callable[[Path], str] = _run_versi
     note = _blender_note(exe, runner)
     if ver is None:
         return item("blender", "tools", "Blender", "warn", (note + " " if note else "") + "Blender is there, but it did not say which version it is.",
-                    "Open Blender once to check it starts. The app needs version 5.0 or newer; you can give a different "
+                    f"Open Blender once to check it starts. The app needs {minimums.phrase('blender')}; you can give a different "
                     "blender.exe in the setup card.", HOST_BLENDER_STAGES, tech, "blender_exe")
     v = ".".join(str(x) for x in ver)
-    if ver[:2] < BLENDER_MIN:
-        return item("blender", "tools", "Blender", "fail", (note + " " if note else "") + f"Blender {v} is too old: the animation steps need 5.0 or newer.",
-                    "Install Blender 5.0 or newer and give the path to its blender.exe in the setup card.",
+    if minimums.check("blender", v) == "old":
+        return item("blender", "tools", "Blender", "fail", (note + " " if note else "") + f"Blender {v} is too old: the app needs {minimums.phrase('blender')}.",
+                    f"Install Blender {minimums.entry('blender')['min']} or newer and give the path to its blender.exe in the setup card.",
                     HOST_BLENDER_STAGES, f"{tech} (version {v}; action slots need 5.0)", "blender_exe")
-    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready." + (" " + note if note else ""), "", HOST_BLENDER_STAGES, f"{tech} (version {v})",
+    return item("blender", "tools", "Blender", "ok", f"Blender {v} is ready ({minimums.phrase('blender')})." + (" " + note if note else ""), "", HOST_BLENDER_STAGES, f"{tech} (version {v})",
                 "blender_exe")
+
+
+def unity_version_of(exe: Any) -> str:
+    """The Unity version from the editor's folder name (<version>/Editor/Unity.exe in the Unity Hub folder), or ""."""
+    for part in reversed(Path(str(exe)).parts):
+        if re.fullmatch(r"\d{4,}\.\d+\.\d+[a-z]\d+", part):
+            return part
+    return ""
 
 
 def check_unity(settings: Settings) -> list[dict[str, Any]]:
@@ -286,8 +295,21 @@ def check_unity(settings: Settings) -> list[dict[str, Any]]:
                         "else works; the hand-off still makes the files.",
                         "Install the Unity editor, then press Check again. If it is installed somewhere unusual, give the path to its Unity.exe in the setup card.", ["export"], tech, "unity_exe"))
     else:
-        out.append(item("unity", "tools", "Unity editor", "ok", "The Unity editor is ready for the test import.", "",
-                        ["export"], tech))
+        uv = unity_version_of(exe)
+        state = minimums.check("unity", uv)
+        if state == "old":
+            out.append(item("unity", "tools", "Unity editor", "warn",
+                            f"This Unity editor ({uv}) is older than the app needs: {minimums.phrase('unity')}, so the test import may fail.",
+                            f"Install Unity {minimums.entry('unity')['min']} or newer (Unity 6) from Unity Hub and give the path to its Unity.exe in the setup card.",
+                            ["export"], f"{tech} (version {uv})", "unity_exe"))
+        elif state == "unknown":
+            out.append(item("unity", "tools", "Unity editor", "warn",
+                            f"The Unity editor is there, but its version could not be read from its folder name. The app needs {minimums.phrase('unity')}.",
+                            "If the test import fails, install a Unity 6 editor from Unity Hub and give the path to its Unity.exe in the setup card.",
+                            ["export"], tech, "unity_exe"))
+        else:
+            out.append(item("unity", "tools", "Unity editor", "ok", f"The Unity editor is ready for the test import ({minimums.phrase('unity')}).", "",
+                            ["export"], f"{tech} (version {uv})"))
     proj = settings.unity_project
     tech = f"unity_project in the settings: {proj}"
     if not proj or not Path(proj).is_dir():
@@ -531,6 +553,30 @@ async def _engine_answer(settings: Settings, name: str, client: Any, supervisor:
     return False, url, "", ""
 
 
+def _comfy_version_item(settings: Settings, name: str, client: Any, supervisor: Any, stages: list[str], gpu: str) -> dict[str, Any]:
+    """The running ComfyUI's version (from its last /system_stats answer) against the minimum. An answer without a version is a
+    warning; no answer yet is "unknown"."""
+    summary = None
+    try:
+        if client is not None and hasattr(client, "last_vram_summary"):
+            summary = client.last_vram_summary()
+    except Exception:  # noqa: BLE001
+        summary = None
+    ver = str((summary or {}).get("comfyui_version") or "")
+    state = minimums.check("comfyui", ver)
+    iid, label, tech = f"engine_version.{name}", f"ComfyUI version on the {gpu}", f"instance {name}: comfyui_version {ver or 'not given'}"
+    if summary is None:  # nothing has asked this engine for its stats yet: not a fault, just not known
+        return item(iid, "engines", label, "unknown", "Not checked yet: the engine has not been asked for its version.", "", stages, tech)
+    need = minimums.phrase("comfyui")
+    if state == "old":
+        return item(iid, "engines", label, "fail", f"This ComfyUI is version {ver}, older than the app needs ({need}).",
+                    f"Update ComfyUI to {minimums.entry('comfyui')['min']} or newer (ComfyUI Desktop updates itself; restart it).", stages, tech)
+    if state == "unknown":
+        return item(iid, "engines", label, "warn", f"ComfyUI did not say which version it is. The app needs {need}.",
+                    "If steps fail with missing parts, update ComfyUI and restart it.", stages, tech)
+    return item(iid, "engines", label, "ok", f"ComfyUI {ver} ({need}).", "", stages, tech)
+
+
 async def _node_info(client: Any, cls: str, cache: dict[str, Any]) -> Any:
     """/object_info/<cls> for one node, kept for this run. Returns the description, None (no such node) or an
     Exception (could not ask)."""
@@ -594,6 +640,7 @@ async def check_instance(settings: Settings, name: str, client: Any, disabled: s
                      tech)] + not_checked("the engine is not running.")
     where = " (found on another port, by its card)" if url != inst.url.rstrip("/") else ""
     out.append(item(eng_id, "engines", eng_label, "ok", f"Running{where}.", "", stages_here, tech))
+    out.append(_comfy_version_item(settings, name, client, supervisor, stages_here, gpu))
 
     cache: dict[str, Any] = {}
     for i, g in enumerate(uses):

@@ -25,7 +25,7 @@ Almost never.
 
 ## Before you start (one time only)
 
-1. Node.js must be installed. It is on this PC (version 22). To check, open PowerShell and run:
+1. Node.js 22.12 or newer must be installed (tested with 22.18.0). It is on this PC. To check, open PowerShell and run:
 
     ```powershell
     node --version

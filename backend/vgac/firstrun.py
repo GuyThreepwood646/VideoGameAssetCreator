@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from . import config
+from . import config, minimums
 from .config import Settings
 
 WHERE = "On the Health page, in the setup card"
@@ -35,7 +35,7 @@ def blender_problem(settings: Settings) -> tuple[str, str] | None:
     """(what is wrong, what to do) when Blender is not set or not where the settings say; None when the file is there.
     Reads no version (preflight.check_blender does)."""
     exe = settings.blender_exe
-    fix = f"{WHERE}, give the path to blender.exe (Blender 5.0 or newer, free from blender.org)."
+    fix = f"{WHERE}, give the path to blender.exe ({minimums.phrase('blender')}, free from blender.org)."
     if not exe:
         return "Blender is not set up, so cleaning up, rigging and handing off cannot run.", fix
     if not Path(exe).is_file():

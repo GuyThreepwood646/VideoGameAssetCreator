@@ -56,8 +56,8 @@ You stay in charge at every step: keep a result, try again, or describe a change
 Install these four, each with its default options:
 
 1. **NVIDIA graphics driver** from [nvidia.com/drivers](https://www.nvidia.com/drivers)
-2. **Python 3.13** from [python.org](https://www.python.org/downloads/) (tick **"Add python.exe to PATH"** on the first screen)
-3. **Node.js LTS** from [nodejs.org](https://nodejs.org/)
+2. **Python 3.13 or newer** (tested with 3.13.7) from [python.org](https://www.python.org/downloads/) (tick **"Add python.exe to PATH"** on the first screen)
+3. **Node.js 22.12 or newer** (tested with 22.18.0; the LTS version from [nodejs.org](https://nodejs.org/) is fine, npm comes with it)
 4. **Git** from [git-scm.com](https://git-scm.com/download/win)
 
 ### Step 2. Download the project
@@ -94,9 +94,9 @@ These are the engines the app drives. Install them yourself:
 
 | Tool | What it does in the app | Where to get it |
 |---|---|---|
-| **ComfyUI Desktop** | Runs the AI models (pictures, 3D, rigging) | [comfy.org](https://www.comfy.org/download) |
-| **Blender 5.x** | Cleans up models, builds LODs, exports files | Step 5 can download it for you, or [blender.org](https://www.blender.org/download/) |
-| **Unity Hub + Editor 6000.4.3f1** | Builds the ready-made Unity prefab | [unity.com/download](https://unity.com/download) (needs a free Unity account) |
+| **ComfyUI Desktop 0.34.0 or newer** (tested with 0.45.3) | Runs the AI models (pictures, 3D, rigging) | [comfy.org](https://www.comfy.org/download) |
+| **Blender 5.0 or newer** (tested with 5.2.3) | Cleans up models, builds LODs, exports files | Step 5 can download it for you, or [blender.org](https://www.blender.org/download/) |
+| **Unity Hub + Editor 6000.0 (Unity 6) or newer** (tested with 6000.4.3f1) | Builds the ready-made Unity prefab | [unity.com/download](https://unity.com/download) (needs a free Unity account) |
 
 ### Step 5. Download the models and add-ons
 

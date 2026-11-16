@@ -28,15 +28,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import blender_watch, downloader, preflight, setup_settings
+from . import minimums as preflight_minimums
 from .config import get_settings
 from .downloader import DownloadError, Job, Spec
 
 log = logging.getLogger("vgac.tools_setup")
 
-BLENDER_TESTED = (5, 2, 3)
+BLENDER_TESTED = preflight_minimums.parse(preflight_minimums.tested("blender"))
 BLENDER_GONE = ("Open blender.org in your own browser, download the Windows zip (portable), and choose it with \"I downloaded the zip\". "
                 "The app does not try to get around a server that refuses it.")
-UNITY_TESTED = "6000.4.3f1"
+UNITY_TESTED = preflight_minimums.tested("unity")
 UNITY_PAGE = "https://unity.com/download"
 UNITY_TERMS = "https://unity.com/products/unity-personal"
 UNITY_LIMIT = ("Unity Personal is free for individuals and organisations with under 200,000 US dollars of revenue or "
@@ -217,11 +218,11 @@ def check_blender_copy(exe: Path, runner: Callable[[Path], str] | None = None) -
     if ver is None:
         item["reason"] = "It did not say which version of Blender it is. Check that it starts."
     elif ver[:2] < preflight.BLENDER_MIN:
-        item["reason"] = f"Blender {_vtext(ver)} is too old: the app needs 5.0 or newer."
+        item["reason"] = f"Blender {_vtext(ver)} is too old: the app needs {preflight_minimums.phrase('blender')}."
     else:
         item["usable"] = True
         item["tested"] = ver == BLENDER_TESTED
-        item["reason"] = ("The version VGAC was tested with." if item["tested"] else "A newer or different 5.x; not tested by VGAC.")
+        item["reason"] = ("The version VGAC was tested with." if item["tested"] else "Newer than the minimum; only the tested version is known to work.")
     return item
 
 

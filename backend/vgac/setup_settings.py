@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, firstrun
+from . import config, firstrun, minimums
 from .config import ConfigError, Settings
 
 log = logging.getLogger("vgac.setup_settings")
@@ -115,7 +115,7 @@ def v_blender(value: Any, saved: Settings) -> str:
     if ver is None:
         raise SettingError(f"{text} did not say which version of Blender it is. Check that it starts.")
     if ver[:2] < BLENDER_MIN:
-        raise SettingError(f"That is Blender {'.'.join(str(x) for x in ver)}; the app needs 5.0 or newer.")
+        raise SettingError(f"That is Blender {'.'.join(str(x) for x in ver)}; the app needs {minimums.phrase('blender')}.")
     return text
 
 
@@ -247,7 +247,7 @@ class Spec:
 
 def _specs() -> dict[str, Spec]:
     top = [
-        Spec("blender_exe", "Blender", "The file blender.exe of Blender 5.0 or newer. Free from blender.org.", "file", "now",
+        Spec("blender_exe", "Blender", f"The file blender.exe of {minimums.phrase('blender')}. Free from blender.org.", "file", "now",
              v_blender),
         Spec("unity_exe", "Unity editor", "The file Unity.exe, only to try the asset in Unity.", "file", "now", v_unity_exe),
         Spec("unity_project", "Unity test project", "A Unity project folder to try the asset in (the app's own is "
