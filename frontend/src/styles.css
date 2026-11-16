@@ -308,6 +308,19 @@ input[type='checkbox'] {
   color: var(--text);
   text-decoration: none;
 }
+.support-link {
+  color: var(--muted);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.support-link:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+.support-link:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}
 .health-badge {
   display: flex;
   gap: var(--s3);
