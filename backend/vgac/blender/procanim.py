@@ -814,6 +814,204 @@ def planted_drop(feet, lmax_frac):
     return drop
 
 
+def leg_chain(li):
+    """The leg's two-bone chain: the IK chain, or for a splayed leg (no IK) the same geometry worked out once."""
+    if li.get("ik"):
+        return li["ik"]
+    if "stance_chain" not in li:
+        li["stance_chain"] = limb_chain(li["bones"], low[li["leaf"]])
+    return li["stance_chain"]
+
+
+def foot_width(ch):
+    """Sideways extent of the vertices mostly weighted to the leg's foot (the end bone and everything below it), at rest."""
+    e = ch["end_bone"] or ch["m"]
+    names, stack = set(), [byname[e]]
+    while stack:
+        b = stack.pop()
+        names.add(b.name)
+        stack.extend(b.children)
+    ls = []
+    for o in meshes:
+        gname = {g.index: g.name for g in o.vertex_groups}
+        for v in o.data.vertices:
+            if v.groups and gname.get(max(v.groups, key=lambda g: g.weight).group) in names:
+                ls.append(lat_of(o.matrix_world @ v.co))
+    return (max(ls) - min(ls)) if ls else 0.0
+
+
+def posed_leg_gaps(P, legs):
+    """Clear space between the two legs' skin, measured on the skinned mesh in a pose: slabs at the knee joints'
+    height and at mid-thigh, {"knee": (gap, width), "thigh": (gap, width)}."""
+    sub = []
+    for li in legs:
+        names, stack = set(), [byname[leg_chain(li)["a"]]]
+        while stack:
+            b = stack.pop()
+            names.add(b.name)
+            stack.extend(b.children)
+        sub.append(names)
+    Mw = fk(P)
+    left = max(range(2), key=lambda i: lat_of(head[leg_chain(legs[i])["a"]]))
+    chA, chB = leg_chain(legs[left]), leg_chain(legs[1 - left])
+    kz = Mw[chA["m"]].translation.z
+    mz = (Mw[chA["a"]].translation.z + kz) / 2
+    apply_pose(P)
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    slab = 0.02 * height
+    out = {}
+    cols = {"knee": ([], []), "thigh": ([], [])}
+    for o in meshes:
+        gname = {g.index: g.name for g in o.vertex_groups}
+        ev = o.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ev.matrix_world
+        for i, v in enumerate(me.vertices):
+            ov = o.data.vertices[i] if i < len(o.data.vertices) else None
+            if ov is None or not ov.groups:
+                continue
+            bn = gname.get(max(ov.groups, key=lambda g: g.weight).group)
+            side = 0 if bn in sub[left] else (1 if bn in sub[1 - left] else None)
+            if side is None:
+                continue
+            w = mw @ v.co
+            for nm, z in (("knee", kz), ("thigh", mz)):
+                if abs(w.z - z) <= slab:
+                    cols[nm][side].append(lat_of(w))
+        ev.to_mesh_clear()
+    for nm, (la, lb) in cols.items():
+        out[nm] = None if not la or not lb else (min(la) - max(lb), min(max(la) - min(la), max(lb) - min(lb)))
+    return out
+
+
+def stance_clear(legs, ank, hip, sep, need):
+    """True when, with the ankles `sep` apart, the legs' skin keeps the needed clear space at the knee and mid-thigh
+    (need: {"knee": space or None, "thigh": ...}) in the idle's pose at the extremes of the weight shift and the breath."""
+    tgt = gait.stance_pair(ank, sep)
+    rolls, rise = stance_rolls(legs, ank, hip, tgt)
+    cand = {"changed": True, "legs": [{"leg": li, "roll": r} for li, r in zip(legs, rolls)], "rise": rise, "ankle_target": list(tgt)}
+    for shift in (-1.0, 1.0):
+        for bob in (0.0, -0.012):
+            P = Pose()
+            narrow_stance(P, cand)
+            P.move(lateral * 0.012 * height * _idle_scale * shift)
+            P.move(up * bob * height * _idle_scale)
+            plant_idle_feet(P, cand)
+            g = posed_leg_gaps(P, legs)
+            for nm, n in need.items():
+                if n is not None and g.get(nm) and g[nm][0] < n:
+                    return False
+    return True
+
+
+def stance_rolls(legs, ank, hip, tgt):
+    """([roll per leg], mean rise) for the ankle targets."""
+    rolls, rises = [], []
+    for li, a_l, h_l, t_l in zip(legs, ank, hip, tgt):
+        ch = leg_chain(li)
+        roll, dzc = gait.leg_roll(a_l - h_l, ch["end_rest"].z - head[ch["a"]].z, t_l - h_l)
+        rolls.append(roll)
+        rises.append(-dzc)
+    return rolls, sum(rises) / len(rises)
+
+
+def idle_stance_plan():
+    """How the built-in idle narrows a wide rest stance (gait.stance_targets): per leg the roll about the hip (radians,
+    about `forward`) that brings the ankles to the target spacing, and the rise of the body that keeps the feet on the
+    ground. None when the character is not a two-legged one with an IK leg pair and both shoulders, or already stands
+    about shoulder width. Also the numbers the report carries (stance, measured at rest)."""
+    legs_ik = leg_info if len(leg_info) == 2 and all(leg_chain(li) for li in leg_info) else []
+    if not legs_ik or not arm_info or not biped:
+        return None
+    ank = [lat_of(leg_chain(li)["end_rest"]) for li in legs_ik]
+    hip = [lat_of(head[leg_chain(li)["a"]]) for li in legs_ik]
+    sh = [lat_of(head[a["upper"]]) for a in arm_info]
+    # One arm found (the other hidden by the pose): mirror it about the hips' midline.
+    shoulder = abs(sh[0] - sh[1]) if len(sh) == 2 else 2 * abs(sh[0] - (hip[0] + hip[1]) / 2)
+    plan = {"ankle_sep": abs(ank[0] - ank[1]), "hip_sep": abs(hip[0] - hip[1]), "shoulder": shoulder,
+            "ratio_rest": abs(ank[0] - ank[1]) / max(shoulder, 1e-6), "legs": [], "rise": 0.0, "changed": False}
+    fw = max(foot_width(leg_chain(li)) for li in legs_ik)
+    plan["foot_width"] = fw
+    sep0 = abs(ank[0] - ank[1])
+    want = gait.stance_want(shoulder, plan["hip_sep"], fw)
+    plan["ankle_sep_basic"] = want
+    min_sep = 0.0
+    rest_g = posed_leg_gaps(Pose(), legs_ik)
+    plan["posed_gaps_rest"] = rest_g
+    # Clear space the legs must keep: the clearance, but never more than the rest pose has (less a small tolerance), so a
+    # character built with its legs close together is not asked for more than it came with.
+    need = {"knee": gait.STANCE_KNEE_CLEAR * height, "thigh": gait.STANCE_THIGH_CLEAR * height}
+    for nm in need:
+        need[nm] = (min(need[nm], rest_g[nm][0]) - gait.STANCE_GAP_SLACK * height) if rest_g.get(nm) else None
+    plan["clearance_need"] = need
+    if sep0 > want * gait.STANCE_TOLERANCE:
+        min_sep = gait.narrowest_clear(want, sep0, lambda sep: stance_clear(legs_ik, ank, hip, sep, need))
+    tgt = gait.stance_targets(ank, hip, shoulder, foot_width=fw, min_sep=min_sep)
+    final_sep = sep0 if tgt is None else abs(tgt[0] - tgt[1])
+    # Per-character check: if the planted idle would still push the legs closer than that, it is not used at all.
+    plan["plant_fails"] = not stance_clear(legs_ik, ank, hip, final_sep, need)
+    if tgt is None or plan["plant_fails"]:
+        return plan
+    plan["floor_applied"] = min_sep > want * 1.001
+    rises = []
+    for li, a_l, h_l, t_l in zip(legs_ik, ank, hip, tgt):
+        ch = leg_chain(li)
+        dz = ch["end_rest"].z - head[ch["a"]].z
+        roll, dzc = gait.leg_roll(a_l - h_l, dz, t_l - h_l)
+        plan["legs"].append({"leg": li, "roll": roll})
+        rises.append(-dzc)
+    plan["rise"] = sum(rises) / len(rises)
+    plan["rise_spread"] = max(rises) - min(rises)
+    plan["ankle_sep_target"] = abs(tgt[0] - tgt[1])
+    plan["ankle_target"] = list(tgt)
+    plan["changed"] = True
+    return plan
+
+
+def narrow_stance(P, plan):
+    """Pose part of the narrowing: upper legs turned in about `forward`, each foot turned back to its rest orientation
+    (soles stay flat, toes stay forward), body raised so the feet stay on the ground."""
+    if not plan or not plan["changed"]:
+        return
+    for e in plan["legs"]:
+        ch = leg_chain(e["leg"])
+        P.r(ch["a"], forward, math.degrees(e["roll"]))
+    for e in plan["legs"]:
+        ch = leg_chain(e["leg"])
+        if ch["end_bone"]:
+            set_world_orient(P, ch["end_bone"], REST_ORIENT[ch["end_bone"]], fk(P))
+    P.move(up * plan["rise"])
+
+
+_plant_error = [0.0]
+
+
+def plant_idle_feet(P, plan):
+    """Keep both feet where the stance puts them (the rest place, moved sideways to the narrowed stance, at rest height
+    and rest orientation) while the body breathes and shifts its weight, with the existing two-bone leg solver."""
+    for k, li in enumerate(leg_info):
+        ch = leg_chain(li)
+        target = ch["end_rest"].copy()
+        if plan and plan["changed"]:
+            target += lateral * (plan["ankle_target"][k] - lat_of(ch["end_rest"]))
+        Mw = fk(P)
+        pole = chain_pole(P, Mw, ch, forward)
+        if gait.STANCE_KNEE_OUT:
+            # The knee keeps its own bend direction but points at least slightly outward (away from the other leg), so planted
+            # legs do not swing their knees together as the body lowers.
+            ha, hm, he = chain_points(Mw, ch)
+            out = P.root_q @ (lateral if li["left"] else -lateral)
+            d = pole - hm
+            d = d / max(d.length, 1e-9)
+            lack = gait.STANCE_KNEE_OUT - d.dot(out)
+            if lack > 0:
+                pole = hm + (d + out * lack).normalized() * (ch["l1"] + ch["l2"])
+        want = REST_ORIENT[ch["end_bone"]] if ch["end_bone"] else None
+        err = ik_chain(P, ch, target, pole, end_orient=want, max_bend=160.0, Mw=Mw)
+        _plant_error[0] = max(_plant_error[0], err)
+
+
 # ---- clips ---------------------------------------------------------------------------------------------------
 # Each clip is fn(P, t, u_frames) where t is 0..1 over the clip's motion frames (held at 1 during a death hold).
 n_legs = len(leg_info)
@@ -823,11 +1021,22 @@ biped = kind == "biped" and motion in ("biped", "winged", "unknown")
 amp_walk = {"biped": (24, 0, 38), "quadruped": (20, 0, 34), "multileg": (16, 18, 30)}
 _amp_key = "multileg" if n_legs >= 6 else ("quadruped" if n_legs >= 4 else "biped")
 a_sw, a_li, a_kn = (x * A for x in amp_walk[_amp_key])
+# Both feet of a two-legged character are kept planted in the idle (plant_idle_feet).
+_plant_ok = biped and len(leg_info) == 2 and all(leg_chain(li) for li in leg_info)
+# The breath and the weight shift are sized for a leg about 0.45 of the height; planted short legs would flex too far for them.
+_idle_scale = min(1.0, leg_len / (0.45 * height)) if _plant_ok else 1.0
+_stance = idle_stance_plan()
+if _stance and _stance.get("plant_fails"):
+    _plant_ok, _idle_scale = False, 1.0  # the old idle, untouched (see idle_stance_plan)
+    report["idle_stance_fallback"] = True
+    _stance = None
 
 
 def clip_idle(P, t):
     breath = math.sin(2 * math.pi * t)
-    P.move(up * 0.006 * height * breath * A)
+    # Planted feet cannot follow the body upward (a leg at full reach has nowhere to go), so the breath moves it from the
+    # standing height downward by the same range.
+    P.move(up * 0.006 * height * _idle_scale * ((breath - 1) if _plant_ok else breath) * A)
     if motion == "serpent":
         wave_body(P, t, 0.25 * gait.wave_amplitude_deg(len(serp)) * A, waves=0.8)
         serp_front(P, lateral, -4 * A * (0.5 + 0.5 * math.sin(2 * math.pi * t)))
@@ -837,13 +1046,16 @@ def clip_idle(P, t):
     head_yaw(P, 8.0 * A * math.sin(2 * math.pi * t + 0.7))
     tail_wave(P, t, 7.0 * A)
     if biped:
+        narrow_stance(P, _stance)
         # Slow weight shift from foot to foot, a little torso twist and breathing in the arms.
-        P.move(lateral * 0.012 * height * A * math.sin(2 * math.pi * t))
+        P.move(lateral * 0.012 * height * _idle_scale * A * math.sin(2 * math.pi * t))
         spine_yaw(P, 3 * A * math.sin(2 * math.pi * t + 0.5))
         for n in spine[1:2]:
             P.r(n, forward, -3 * A * math.sin(2 * math.pi * t))
         arms_relax(P, (18 + 3 * breath) * A)
         arms_swing(P, t, 2 * A, elbow=(8 + 4 * breath) * A, phase_from_legs=False)
+        if _plant_ok:
+            plant_idle_feet(P, _stance)
     if wing_info:
         wings_folded(P, 1.0)
         for w in wing_info:
@@ -1324,10 +1536,11 @@ _rest_low = [None]
 _vertex_bone = {}
 
 
-def _limb_ends():
+def _limb_ends(chains=None):
     """{end bone: set of bones whose vertices belong to that limb end (the end bone and everything below it)}."""
     out = {}
-    chains = [a["ik"] for a in arm_info if a.get("ik")] + [li["ik"] for li in leg_info if li.get("ik")]
+    if chains is None:
+        chains = [a["ik"] for a in arm_info if a.get("ik")] + [li["ik"] for li in leg_info if li.get("ik")]
     for ch in chains:
         e = ch["end_bone"] or ch["m"]
         s = set()
@@ -1340,9 +1553,9 @@ def _limb_ends():
     return out
 
 
-def limb_lowest(P):
+def limb_lowest(P, chains=None):
     """{end bone: lowest mesh z of the vertices mostly weighted to that limb end} for a pose."""
-    ends = _limb_ends()
+    ends = _limb_ends(chains)
     if not _vertex_bone:
         for o in meshes:
             names = {g.index: g.name for g in o.vertex_groups}
@@ -1391,6 +1604,55 @@ for frames in poses.values():
     for P in frames:
         keyed.update(P.rot)
 keyed.update(r.name for r in roots)
+
+
+def idle_feet_report():
+    """Numbers for the idle's feet over the loop (world units; ratios against the character's height): the ankle travel
+    (largest distance from the first frame), its height range, how far the soles tilt from the rest, the gap between
+    each foot's lowest vertex and where it stands at rest (positive floats, negative sinks), and the stance."""
+    frames = poses.get("idle")
+    legs_ik = leg_info if len(leg_info) == 2 and all(leg_chain(li) for li in leg_info) else []
+    if not frames or not biped or not legs_ik:
+        return None
+    n = len(frames)
+    ends = [(leg_chain(li)["end_bone"] or leg_chain(li)["m"]) for li in legs_ik]
+    seq = []
+    for P in frames[:-1] if n > 1 else frames:
+        Mw = fk(P)
+        seq.append([(Mw[e].translation.copy(), math.degrees(orient(Mw, e).rotation_difference(REST_ORIENT[e]).angle)) for e in ends])
+    chains_ = [leg_chain(li) for li in legs_ik]
+    rest = limb_lowest(Pose(), chains_)
+    idx = sorted({int(round(i * (len(seq) - 1) / 8)) for i in range(9)})
+    gap = []
+    for i in idx:
+        low_i = limb_lowest(frames[i], chains_)
+        gap.append([low_i.get(e, rest.get(e, 0.0)) - rest.get(e, 0.0) for e in ends])
+    out = {"frames": len(seq), "legs": []}
+    for k, e in enumerate(ends):
+        p0 = seq[0][k][0]
+        out["legs"].append({"end_bone": e, "left": legs_ik[k]["left"],
+                            "travel": max((s[k][0] - p0).length for s in seq),
+                            "travel_lateral": max(abs((s[k][0] - p0).dot(lateral)) for s in seq),
+                            "travel_forward": max(abs((s[k][0] - p0).dot(forward)) for s in seq),
+                            "ankle_z_range": max(s[k][0].z for s in seq) - min(s[k][0].z for s in seq),
+                            "sole_tilt_deg_max": max(s[k][1] for s in seq),
+                            "ground_gap_min": min(g[k] for g in gap), "ground_gap_max": max(g[k] for g in gap)})
+    sep = [abs((s[0][0] - s[1][0]).dot(lateral)) for s in seq]
+    out["ankle_sep_min"], out["ankle_sep_max"] = min(sep), max(sep)
+    out["posed_gaps_rest"] = posed_leg_gaps(Pose(), legs_ik)
+    pg = [posed_leg_gaps(frames[i], legs_ik) for i in idx]
+    out["knee_gap_frames"] = [[i, round(g["knee"][0], 4) if g["knee"] else None] for i, g in zip(idx, pg)]
+    out["posed_gaps_min"] = {nm: (min(g[nm][0] for g in pg if g[nm]), min(g[nm][1] for g in pg if g[nm])) if any(g[nm] for g in pg) else None for nm in ("knee", "thigh")}
+    out["height"] = height
+    return out
+
+
+report["idle_feet"] = idle_feet_report()
+if report["idle_feet"]:
+    report["idle_feet"]["plant_error_max"] = _plant_error[0]
+if _stance:
+    report["stance"] = {k: v for k, v in _stance.items() if k != "legs"}
+    report["stance"]["roll_deg"] = [round(math.degrees(e["roll"]), 3) for e in _stance["legs"]]
 
 
 def make_action(name, frames, loop):

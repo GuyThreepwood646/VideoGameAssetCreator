@@ -301,6 +301,75 @@ def clip_table(clips: list[str], motion: str, fps: int, speed: float = 1.0) -> l
     return rows
 
 
+# ---- the built-in idle's stance (procanim.clip_idle) ----------------------------------------------------------
+# A character is built in whatever rest stance its picture had, so some stand with their feet far apart. The idle
+# turns the upper legs in until the ankles are IDLE_STANCE_RATIO of the shoulder width apart (shoulder joint to
+# shoulder joint). A stance that is already that narrow is left alone, and the ankles never come closer than the hip
+# joints are (STANCE_MIN_HIP: a leg hanging straight down) or than the widest foot allows (STANCE_FOOT_GAP).
+IDLE_STANCE_RATIO = 0.85
+STANCE_TOLERANCE = 1.05   # a stance up to this much wider than the target counts as already right
+STANCE_MIN_HIP = 1.1
+STANCE_KNEE_CLEAR = 0.04     # clear space between the legs' skin at the knee, as a share of the character's height
+STANCE_THIGH_CLEAR = 0.015   # and at mid-thigh; a character whose rest pose is tighter than that keeps its own rest gap
+STANCE_GAP_SLACK = 0.005    # tolerance on those gaps, as a share of height
+STANCE_KNEE_OUT = 0.2        # sideways part of the direction a planted knee bends toward (forward is 1), outward positive
+STANCE_FOOT_GAP = 1.6     # ankles stay at least this many foot widths apart, so big cartoon feet do not touch
+
+
+def stance_want(shoulder: float, hip_sep: float, foot_width: float = 0.0, ratio: float = IDLE_STANCE_RATIO) -> float:
+    """The narrowest ankle spacing the shoulder, hip and foot rules allow."""
+    return max(ratio * shoulder, STANCE_MIN_HIP * hip_sep, STANCE_FOOT_GAP * foot_width)
+
+
+def stance_pair(ankle_l: tuple[float, float], sep: float) -> tuple[float, float]:
+    """Ankle lateral coordinates for a spacing `sep`, about the same midline, each foot on its own side."""
+    mid = (ankle_l[0] + ankle_l[1]) / 2
+    sgn = 1.0 if ankle_l[0] >= ankle_l[1] else -1.0
+    return (mid + sgn * sep / 2, mid - sgn * sep / 2)
+
+
+def narrowest_clear(lo: float, hi: float, ok) -> float:
+    """The smallest spacing in [lo, hi] for which ok(spacing) holds (ok is true for wide spacings and false for narrow
+    ones); hi when even hi fails, lo when lo already does."""
+    if ok(lo):
+        return lo
+    if not ok(hi):
+        return hi
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if ok(mid) else (mid, hi)
+    return hi
+
+
+def stance_targets(ankle_l: tuple[float, float], hip_l: tuple[float, float], shoulder: float,
+                   ratio: float = IDLE_STANCE_RATIO, foot_width: float = 0.0,
+                   min_sep: float = 0.0) -> tuple[float, float] | None:
+    """New lateral coordinates for the two ankles, or None when the stance stays as it is. Lateral coordinates are
+    along the body's side axis; the ankle midline is kept, so a stance that sits off centre is narrowed about it."""
+    sep = abs(ankle_l[0] - ankle_l[1])
+    want = stance_want(shoulder, abs(hip_l[0] - hip_l[1]), foot_width, ratio)
+    want = max(want, min(min_sep, sep))
+    if shoulder <= 1e-6 or sep <= want * STANCE_TOLERANCE:
+        return None
+    return stance_pair(ankle_l, want)
+
+
+def leg_roll(dl: float, dz: float, new_dl: float) -> tuple[float, float]:
+    """Turn a leg about the hip in the side-to-up plane. (dl, dz) is the ankle's lateral and vertical offset from the
+    hip; the result is (angle in radians, ankle height change) for the smallest turn that puts the ankle new_dl to the
+    side. The angle is the rotation about the forward axis (side axis toward up is positive). A negative height
+    change means the ankle goes down, so the body has to rise by that much to keep the foot on the ground."""
+    r = math.hypot(dl, dz)
+    if r < 1e-9:
+        return 0.0, 0.0
+    c = max(-1.0, min(1.0, new_dl / r))
+    psi = math.atan2(-dz, dl)
+    cands = [psi + math.acos(c), psi - math.acos(c)]
+    a = min(cands, key=lambda x: abs(math.atan2(math.sin(x), math.cos(x))))
+    a = math.atan2(math.sin(a), math.cos(a))
+    return a, dl * math.sin(a) + dz * math.cos(a) - dz
+
+
 # ---- vectors and quaternions (w, x, y, z), for the retarget and the IK ---------------------------------------
 
 def v_add(a, b):
