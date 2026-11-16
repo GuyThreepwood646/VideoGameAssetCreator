@@ -22,6 +22,9 @@ namespace Vgac.Starter
     {
         // Tests set this to stop a job at an exact point (by throwing); it is null in the program.
         public static Action<string, string> Hook;
+        // Set by a caller that has found a copy wrong: a file is then copied again even when its size and time look the same.
+        [ThreadStatic] public static bool ForceCopy;
+
         public static void Point(string what, string path) { var h = Hook; if (h != null) h(what, path); }
 
         // Writes a file so that a crash leaves either the old one or the new one, never none: the new text goes to a temporary file
@@ -316,7 +319,7 @@ namespace Vgac.Starter
                     Point("copy", k);
                     // already there with the same size and time (an earlier, interrupted copy): not copied again
                     if (IsLink(to)) { rep.Links.Add(to); continue; }
-                    if (File.Exists(to) && new FileInfo(to).Length == new FileInfo(k).Length && File.GetLastWriteTimeUtc(to) == File.GetLastWriteTimeUtc(k)) { rep.Files++; continue; }
+                    if (!ForceCopy && File.Exists(to) && new FileInfo(to).Length == new FileInfo(k).Length && File.GetLastWriteTimeUtc(to) == File.GetLastWriteTimeUtc(k)) { rep.Files++; continue; }
                     string tmp = to + ".copying";
                     File.Copy(k, tmp, true);
                     if (File.Exists(to)) File.Delete(to);

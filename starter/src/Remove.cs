@@ -293,7 +293,7 @@ namespace Vgac.Starter
             // While a move of the big files is unfinished, which place is whole depends on its step: nothing in the folder for the big files
             // (nor VGAC's own ComfyUI) is offered until the move is finished or abandoned.
             bool moving = MoveRunner.Load(l.ProjectRoot, l.DataFolder) != null;
-            if (moving) plan.Notes.Add("A move of the big files is not finished. Nothing in the folder for the big files, and not VGAC's own ComfyUI, is offered for removal until the move is finished or cancelled (Move the big files).");
+            if (moving) plan.Notes.Add("A move of the big files is not finished. Nothing in the folder for the big files, and not VGAC's own ComfyUI, is offered for removal until the move is finished or abandoned (Move the big files).");
             bool dataOurs = ds.State == DataState.Ours && !moving;
             if (dataOurs)
             {

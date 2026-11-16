@@ -179,6 +179,7 @@ public static partial class T
             Safety4All();
             Safety5All();
             Safety6All();
+            Safety7All();
         }
         finally
         {

@@ -447,7 +447,7 @@ namespace Vgac.Starter
             {
                 d.Description = "Choose a folder just for VGAC's big files (Python, tools; later the models). Pick a drive with room.";
                 if (d.ShowDialog(this) != DialogResult.OK) return;
-                string unfit = Proof.DataFolderProblem(d.SelectedPath, root) ?? (MoveRules.LinkInPath(d.SelectedPath) ? "That folder is, or lies under, a link (a junction or a mapped folder). Choose a real folder." : null);
+                string unfit = Proof.ChoiceProblem(d.SelectedPath, root);
                 if (unfit != null) { MessageBox.Show(this, unfit, "VGAC"); return; }
                 try
                 {
@@ -731,7 +731,8 @@ namespace Vgac.Starter
         // progress. Cancel is the default in both. Not while the screens are being built.
         bool RestartBackend()
         {
-            if (MoveGate.Blocking(root) != null) return false;
+            string gateWhy = MoveGate.Blocking(root);
+            if (gateWhy != null) { MessageBox.Show(gateWhy, "VGAC"); return false; }
             RestartStart gate0 = LauncherRules.Restart(engineBusy, backend != null, quitting, setupRunning);
             if (gate0 == RestartStart.BuildRunning)
             {
@@ -1011,7 +1012,8 @@ namespace Vgac.Starter
             title.Text = "VGAC could not start";
             body.Text = e.Message + (e.Fix != null ? "\r\n\r\nWhat to do: " + e.Fix : "");
             bar.Visible = false;
-            primary.Visible = false; choose.Visible = false;
+            primary.Visible = false; choose.Visible = LauncherRules.ErrorOffersChoose(e);
+            if (choose.Visible) { choose.Text = "Choose another folder"; onChoose = delegate { afterChooseBegins = true; OnChoose(); }; }
             secondary.Text = "Close"; secondary.Visible = true; openLog.Visible = true;
             onSecondary = RequestQuit;
         }

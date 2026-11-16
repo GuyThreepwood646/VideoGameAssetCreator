@@ -360,6 +360,13 @@ namespace Vgac.Starter
 
     public static class Proof
     {
+        // Why a folder the person picked for the big files is not accepted (null: fine): not while a move is unfinished, not a shared or
+        // system place, not under a link.
+        public static string ChoiceProblem(string folder, string root)
+        {
+            return MoveGate.Blocking(root) ?? DataFolderProblem(folder, root) ?? (MoveRules.LinkInPath(folder) ? "That folder is, or lies under, a link (a junction or a mapped folder). Choose a real folder." : null);
+        }
+
         [DllImport("shell32.dll")] static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, [MarshalAs(UnmanagedType.LPWStr)] out string path);
         static readonly Guid DownloadsId = new Guid("374DE290-123F-4565-9164-39C4925E467B");
 

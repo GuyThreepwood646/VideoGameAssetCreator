@@ -316,16 +316,18 @@ namespace Vgac.Starter
             string root = host.Lay.ProjectRoot;
             bool pending = MoveRules.RestartPending(root);
             MoveJournal j = pending ? null : MoveRunner.Load(root, host.Lay.DataFolder);
-            bool locked = pending || j != null;
+            bool unjudged = !pending && j == null && MoveRunner.JudgeProblem(root, host.Lay.DataFolder) != null;
+            bool locked = pending || j != null || unjudged;
             for (int i = 0; i < tabs.TabPages.Count; i++) tabs.TabPages[i].Enabled = !locked || tabs.TabPages[i].Text == "Move the big files";
             if (locked) tabs.SelectedIndex = 2;
             moveGo.Visible = moveTo.Visible = moveChoose.Visible = !locked;
             moveCont.Visible = j != null;
-            moveAbandon.Visible = j != null && j.State == "copying";
+            moveAbandon.Visible = (j != null && j.State == "copying") || unjudged;
+            moveAbandon.Text = unjudged ? "Discard the record" : "Abandon it";
             moveForce.Visible = j != null && j.State == "switching";
             moveRestart.Visible = pending;
             // what the window offers, in words (the tests read this; the buttons above are set from the same facts)
-            MoveButtonsShown = pending ? "restart" : (j == null ? "start" : (j.State == "switching" ? "continue,finish-anyway" : "continue,abandon"));
+            MoveButtonsShown = pending ? "restart" : (unjudged ? "discard" : j == null ? "start" : (j.State == "switching" ? "continue,finish-anyway" : "continue,abandon"));
         }
 
         public string MoveButtonsShown = "";
@@ -343,10 +345,8 @@ namespace Vgac.Starter
             ApplyMoveLock();
             if (MoveRules.RestartPending(root))
             {
-                string to = "the new folder", old = null;
-                try { var d = Json.ParseObject(File.ReadAllText(MoveRules.RestartPath(root), Encoding.UTF8)); to = Convert.ToString(d["moved_to"]); old = Convert.ToString(d["old_folder"]); } catch (Exception) { }
-                moveInfo.Text = "The big files are now in " + to + ". VGAC has to be restarted to use them: close this window and press the button below.";
-                details.Text = old == null ? "" : MoveView.OldFolderSentence(old);
+                moveInfo.Text = MoveView.RestartText(root);
+                details.Text = "";
                 return;
             }
             var j = MoveRunner.Load(root, host.Lay.DataFolder);
@@ -387,7 +387,7 @@ namespace Vgac.Starter
                 // switched: the app is NOT started again (it would run on the old place); only a restart uses the new one
                 if (MessageBox.Show(this, "The big files are now in the new folder. VGAC has to restart to use them.\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RestartAfterMove) == DialogResult.Yes) host.RestartVgac();
             }
-            else details.Text = result;       // nothing is resumed: the app does not run while a move is unfinished
+            else { details.Text = result; host.Resume(); }       // the engine flag is cleared; nothing restarts while a move is unfinished (the rule)
         }
 
         void DoMoveForce(Label details)
@@ -401,9 +401,11 @@ namespace Vgac.Starter
         void DoMoveAbandon(Label details)
         {
             if (busy) { Say("Something is still running. Wait for it, or press Stop."); return; }
-            if (MessageBox.Show(this, "Abandon the move? Nothing is deleted: what was copied stays in the new folder for you to delete by hand, and the old place is not changed.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.AbandonMove) != DialogResult.Yes) return;
+            if (MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder) == null && MessageBox.Show(this, "Discard the record of a move that VGAC cannot read or judge? Nothing is deleted or moved; only the record is forgotten. If a move had already switched, check which folder is in use afterwards.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MaintenanceDefaults.AbandonMove) != DialogResult.Yes) return;
+            if (MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder) != null && MessageBox.Show(this, "Abandon the move? Nothing is deleted: what was copied stays in the new folder for you to delete by hand, and the old place is not changed.", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.AbandonMove) != DialogResult.Yes) return;
             details.Text = Mover().Abandon();
             RefreshMove(details);
+            if (MoveGate.Blocking(host.Lay.ProjectRoot) == null) host.Resume();
             if (MoveGate.Blocking(host.Lay.ProjectRoot) == null && MessageBox.Show(this, "The move was abandoned. VGAC has to be started again to run on the old place.\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MaintenanceDefaults.RestartAfterMove) == DialogResult.Yes) host.RestartVgac();
         }
 

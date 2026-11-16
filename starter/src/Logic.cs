@@ -343,6 +343,13 @@ namespace Vgac.Starter
 
     public static class LauncherRules
     {
+        // A setup error whose advice is to choose another folder gets the Choose button, not only Close.
+        public static bool ErrorOffersChoose(StarterError e)
+        {
+            string fix = e == null ? null : e.Fix;
+            return fix != null && (fix.Contains("Choose another folder") || fix.Contains("Choose a real folder"));
+        }
+
         // The status window's X. Windows ending the session (or Task Manager) is never argued with. Before the app window
         // exists (or in the browser fallback) closing it means quit; afterwards it only hides, the tray stays.
         public static CloseOutcome StatusWindowClosing(bool quitting, bool systemEnding, bool appWindowOpen)
