@@ -115,7 +115,13 @@ program has open.
   deletes nothing, ever. When the copy is checked, the settings, the ledger and VGAC's own ComfyUI (through the backend's installer:
   `check`, `retarget`, `rebuild-venv`) switch to the new place, and VGAC has to be restarted: until then the window offers only Restart.
   The old folder is left as it is and its path is shown: it is no longer used and can be deleted by hand. There is no undo, no cancel
-  after the switch and no deleting of the old copy; to go back, move again. `local/move.json` has two states, copying and switching.
+  after the switch and no deleting of the old copy; to go back, move to another empty folder. `local/move.json` has two states, copying
+  and switching. One rule, enforced in code (MoveGate) and mirrored by the window: while a move is unfinished, or has switched and VGAC has
+  not been restarted, the app and its engines do not start and Remove, Repair, Update and setup refuse; Maintenance opens locked to the
+  move (Continue, Abandon while copying, Finish anyway while switching, or Restart). Continue checks everything again whatever the state
+  (it copies what differs, compares, and only then switches); an extra file in the new place is ours by its marker and is not a mismatch.
+  "Finish anyway" ends a switch that ComfyUI's installer keeps refusing WITHOUT moving VGAC's own ComfyUI (it keeps running from the old
+  folder, which must then be kept); the restart marker is written only after ComfyUI has been dealt with.
 - Remove: a list of what VGAC added, with sizes, and nothing is deleted until you have seen every folder and its size. Items in the
   data folder are listed only when it is VGAC's (its marker matches); otherwise the list says why and nothing in it is removed. Ticked by
   default: the app's Python, tools and screens, and VGAC's own ComfyUI, which is removed by the backend's own installer (`python -m vgac.comfy_install remove`, which proves

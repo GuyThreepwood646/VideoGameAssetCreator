@@ -50,6 +50,12 @@ namespace Vgac.Starter
         public static string RestartPath(string root) { return Path.Combine(root, "local", "restart-needed.json"); }
         public static bool RestartPending(string root) { return File.Exists(RestartPath(root)); }
 
+        // At start: VGAC has been restarted, so what the marker asked for is done.
+        public static bool ClearRestartAtStart(string root)
+        {
+            try { if (!File.Exists(RestartPath(root))) return false; File.Delete(RestartPath(root)); return true; } catch (Exception) { return false; }
+        }
+
         // A fixed-name folder that is there (the app's own ComfyUI also needs the backend's install marker, which the backend writes).
         static bool PresentAt(string folder, MoveItem it)
         {

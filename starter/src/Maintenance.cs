@@ -324,6 +324,17 @@ namespace Vgac.Starter
             moveAbandon.Visible = j != null && j.State == "copying";
             moveForce.Visible = j != null && j.State == "switching";
             moveRestart.Visible = pending;
+            // what the window offers, in words (the tests read this; the buttons above are set from the same facts)
+            MoveButtonsShown = pending ? "restart" : (j == null ? "start" : (j.State == "switching" ? "continue,finish-anyway" : "continue,abandon"));
+        }
+
+        public string MoveButtonsShown = "";
+
+        public string EnabledTabs()
+        {
+            var l = new List<string>();
+            for (int i = 0; i < tabs.TabPages.Count; i++) if (tabs.TabPages[i].Enabled) l.Add(tabs.TabPages[i].Text);
+            return string.Join("|", l.ToArray());
         }
 
         void RefreshMove(Label details)

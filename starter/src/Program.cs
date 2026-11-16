@@ -350,7 +350,7 @@ namespace Vgac.Starter
             {
                 foreach (string n in Recovery.AtStart(lay, Application.ExecutablePath)) log.Line("start: " + n);
                 // a move that switched needed this restart: from here the new place is the one in use
-                try { if (MoveRules.RestartPending(root)) { File.Delete(MoveRules.RestartPath(root)); log.Line("start: restarted after a move of the big files"); } } catch (Exception) { }
+                if (MoveRules.ClearRestartAtStart(root)) log.Line("start: restarted after a move of the big files");
                 // the screens or the Python may have been put right by the recovery: look again
                 steps = Planner.Plan(ProbeReader.Read(lay, host), root);
                 // the folder for the big files is looked at again at every start, not only when it was chosen

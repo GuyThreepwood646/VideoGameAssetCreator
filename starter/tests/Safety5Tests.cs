@@ -14,7 +14,9 @@ public static partial class T
         TheWindowNeverActsOnAStaleLayout();
         MoveDeletesNothingAndHasNoWayBack();
         TheNewMoveSurvivesACrashAfterEveryWrite();
-        StateFilesAreWrittenAtomically();
+        StateFilesSurviveACrashInsideTheirWrite();
+        TheRealWindowLocksItself();
+        AFailingRetargetHasAWayOutAndTheNextStartIsSimulated();
         RemoveSurvivesACrashAfterEveryWrite();
         UpdateSurvivesACrashAfterEveryWrite();
     }
@@ -198,22 +200,140 @@ public static partial class T
         Check(runs > 40, "the crash runs happened (" + runs + ")");
     }
 
-    // ---- the state files are replaced, never half written ---------------------------------------------------------------------------------------
+    // ---- the state files survive a crash inside their own write ---------------------------------------------------------------------------
 
-    static void StateFilesAreWrittenAtomically()
+    static void StateFilesSurviveACrashInsideTheirWrite()
     {
-        string src = FindSource("src\\Remove.cs");
-        string setup = FindSource("src\\Setup.cs"), logic = FindSource("src\\Logic.cs"), proof = FindSource("src\\Proof.cs"), upd = FindSource("src\\Update.cs");
-        if (src == null || setup == null || logic == null || proof == null || upd == null) { Console.WriteLine("SKIPPED: sources not found for the atomic-write check"); return; }
-        foreach (string f in new[] { src, setup, logic, proof, upd })
+        string root = NewProject();
+        // each writer, with an old file there, crashed after the new text is written and before it replaces the old one
+        Action<string, Action> crashing = delegate(string label, Action write)
         {
-            string text = File.ReadAllText(f);
-            // every state file the starter keeps is written through SafeFs.WriteAtomic, not File.WriteAllText straight onto it
-            foreach (string name in new[] { "remove.json", "state.json", "starter-owned.json", "exe-aside.json", "StatePath", "RecordPath(root)" })
-            { }
-            int direct = System.Text.RegularExpressions.Regex.Matches(text, @"File\.WriteAllText\((jp|l\.StatePath|record|p, Json|tmp)").Count;
-            Check(direct == 0, Path.GetFileName(f) + ": no state file is written straight onto its name (" + direct + " left)");
+            int n = 0;
+            SafeFs.Hook = delegate(string what, string p) { if (what == "save" && p.EndsWith("(written)") && ++n == 1) throw new Boom("crash inside " + label); };
+            try { write(); } catch (Boom) { }
+            finally { SafeFs.Hook = null; }
+            Check(n >= 1, label + ": the write has a crash point inside it");
+        };
+        var m = MachineFile.Load(root); m.Set("starter", "a", "old"); m.Save();
+        var m2 = MachineFile.Load(root); m2.Set("starter", "a", "new");
+        crashing("settings", delegate { m2.Save(); });
+        Eq(MachineFile.Load(root).GetString("starter", "a"), "old", "settings: the old file is whole after the crash");
+        var l1 = Ledger.Load(root); l1.Add("x", Path.Combine(root, "x"), "added", 1); l1.Save();
+        var l2 = Ledger.Load(root); l2.Add("y", Path.Combine(root, "y"), "added", 1);
+        crashing("ledger", delegate { l2.Save(); });
+        Check(Ledger.Load(root).Has(Path.Combine(root, "x"), null) && !Ledger.Load(root).Has(Path.Combine(root, "y"), null), "ledger: the old file is whole after the crash");
+        string data = Path.Combine(Tmp("atomicdata"), "d"); var ms = MachineFile.Load(root); DataFolders.Stamp(data, ms);
+        string idBefore = DataFolders.ReadMarkerId(data);
+        crashing("data marker", delegate { DataFolders.Stamp(data, ms, "a-move"); });
+        Eq(DataFolders.ReadMarkerId(data), idBefore, "data marker: the old marker is whole after the crash");
+        string lib = Path.Combine(Tmp("atomiclib"), "library"); var ml = MachineFile.Load(root); LibraryFolders.Stamp(lib, ml);
+        string libId = LibraryFolders.ReadMarkerId(lib);
+        crashing("library marker", delegate { LibraryFolders.Stamp(lib, ml); });
+        Eq(LibraryFolders.ReadMarkerId(lib), libId, "library marker: the old marker is whole after the crash");
+        // Remove's journal and the update's record
+        var s = Installed();
+        RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string>(), null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        string rj = RemovalRunner.JournalPath(s.Root); Put(rj, "{\"state\":\"removing\",\"groups\":[\"old\"],\"inprogress\":[]}");
+        // (the remove journal's writer swallows exceptions, so the file is read at the moment of the "crash" instead)
+        string snap = null;
+        SafeFs.Hook = delegate(string what, string pth) { if (what == "save" && pth.EndsWith("remove.json (written)") && snap == null) snap = File.ReadAllText(rj); };
+        RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        SafeFs.Hook = null;
+        Check(snap != null && snap.Contains("\"old\""), "remove journal: while the new text is written the old file is whole");
+        string proj = Tmp("atomicexe"); string exe = Path.Combine(proj, "VGAC.exe"); File.Copy(PingExe, exe);
+        Put(ExeAside.RecordPath(proj), "{\"old\":true}");
+        crashing("update record", delegate { ExeAside.Aside(exe, proj, true); });
+        Check(File.ReadAllText(ExeAside.RecordPath(proj)).Contains("\"old\"") && File.Exists(exe), "update record: the old file is whole after the crash, and VGAC.exe was not renamed yet");
+    }
+
+    // ---- the real window class ---------------------------------------------------------------------------------------------------------
+
+    class WindowHost : IMaintenanceHost
+    {
+        public string Root; public StandInComfy C = new StandInComfy();
+        public Layout Lay { get { return Layout.From(Root, MachineFile.Load(Root)); } }
+        public MachineFile Machine { get { return MachineFile.Load(Root); } }
+        public IHost Host { get { return new FakeHost(); } }
+        public SetupLog Log { get { return new SetupLog(Root); } }
+        public string ExePath { get { return Path.Combine(Root, "VGAC.exe"); } }
+        public IComfyInstall Comfy { get { return C; } }
+        public IProcessSource Procs { get { return new NoProcs(); } }
+        public bool Quiesce(System.Windows.Forms.IWin32Window o, string w) { return true; }
+        public void Resume() { }
+        public void RestartVgac() { }
+    }
+
+    static void TheRealWindowLocksItself()
+    {
+        var s = Movable();
+        var host = new WindowHost { Root = s.Root };
+        using (var f = new MaintenanceForm(host))
+        {
+            Check(f.EnabledTabs().Split('|').Length == 4 && f.MoveButtonsShown == "start", "an idle install: every tab works, the move offers Start (" + f.EnabledTabs() + ")");
         }
+        // stopped while copying: only the Move tab works, and on it Continue and Abandon
+        string to = Path.Combine(Tmp("target"), "win-copy");
+        StopMoveAt(s, to, "copied:python");
+        using (var f = new MaintenanceForm(host))
+            Check(f.EnabledTabs() == "Move the big files" && f.MoveButtonsShown == "continue,abandon", "while copying, a freshly made window (the tray opens one each time) is locked to the move: " + f.EnabledTabs() + " / " + f.MoveButtonsShown);
+        // stopped while switching: Continue and Finish anyway, no Abandon
+        var s2 = Movable(); var host2 = new WindowHost { Root = s2.Root };
+        StopMoveAt(s2, Path.Combine(Tmp("target"), "win-switch"), "journal:switching");
+        using (var f = new MaintenanceForm(host2))
+            Check(f.EnabledTabs() == "Move the big files" && f.MoveButtonsShown == "continue,finish-anyway", "while switching: " + f.MoveButtonsShown);
+        // switched, not restarted: only Restart; reopening gives the same
+        var s3 = Movable(); var host3 = new WindowHost { Root = s3.Root };
+        Check(Mover(s3, null).Start(Path.Combine(Tmp("target"), "win-done"), new Progress()) == null, "(a finished move)");
+        for (int k = 0; k < 2; k++)
+            using (var f = new MaintenanceForm(host3))
+                Check(f.EnabledTabs() == "Move the big files" && f.MoveButtonsShown == "restart" && f.Locked, "after the switch, opening Maintenance again (" + k + ") offers only Restart");
+        // restarted: the marker is cleared at start and everything works again
+        Check(MoveRules.ClearRestartAtStart(s3.Root), "(the restart clears the marker)");
+        using (var f = new MaintenanceForm(host3)) Check(f.EnabledTabs().Split('|').Length == 4 && f.MoveButtonsShown == "start", "after the restart all tabs work again");
+    }
+
+    // ---- a retarget that fails every time, and the next start simulated after every crash ---------------------------------------------------
+
+    static void AFailingRetargetHasAWayOutAndTheNextStartIsSimulated()
+    {
+        var s = Movable(); string to = Path.Combine(Tmp("target"), "fail");
+        s.Comfy.RetargetError = s.Comfy.RetargetBackError = "The settings could not be updated.";
+        string said = Mover(s, null).Start(to, new Progress());
+        Check(said != null && said.Contains("Finish anyway"), "the message names the way out the window offers: " + said);
+        for (int i = 0; i < 3; i++) Check(Mover(s, null).Continue(new Progress()) != null, "Continue keeps failing the same way (" + i + ") without damage");
+        Check(MoveGate.Blocking(s.Root) != null && !MoveRules.RestartPending(s.Root), "and the app stays blocked, with no restart offered, while it does");
+        Check(Mover(s, null).Abandon().Contains("already name the new place"), "Abandon is not offered after the settings switched");
+        Check(Mover(s, null).ContinueAnyway(new Progress()) == null && MoveRules.RestartPending(s.Root) && MoveRunner.Load(s.Root) == null, "'Finish anyway' ends it");
+        // the next start, simulated, after a crash at every write: the rule, a changed old place, the restart marker
+        int runs = 0;
+        foreach (string kind in new[] { "start", "continue-from-copying", "continue-from-switching" })
+        {
+            var points = RunMoveScenario(kind, -1, null);
+            var pick = new List<int>();
+            for (int k = 0; k < points.Count; k++) if (points[k].StartsWith("move:") || points[k].StartsWith("save:")) pick.Add(k);
+            foreach (int k in pick)
+            {
+                string label = kind + " crashed after " + points[k] + " (#" + k + ") then the next start";
+                InstallScene sc = null; string t2 = null;
+                RunMoveScenario(kind, k, delegate(InstallScene a, string b, Dictionary<string, string> c) { sc = a; t2 = b; });
+                runs++;
+                bool journal = MoveRunner.Load(sc.Root, WindowLay(sc.Root).DataFolder) != null;
+                bool pending = MoveRules.RestartPending(sc.Root);
+                string gate = MoveGate.Blocking(sc.Root);
+                Check((journal || pending) == (gate != null), label + ": the app is blocked exactly when a move is unfinished or a restart is needed (journal " + journal + ", restart " + pending + ", gate " + (gate ?? "none") + ")");
+                if (!journal) continue;
+                // the old place changed before Continue (a crash, a hand edit, or the app on a machine that was not blocked)
+                Put(Path.Combine(sc.Data, "python", "late-" + k + ".bin"), "made after the copy");
+                File.WriteAllText(Path.Combine(sc.Data, "python", "f1.bin"), "changed after the copy");
+                string r = null; for (int i = 0; i < 4; i++) { r = Mover(sc, null).Continue(new Progress()); if (r == null) break; }
+                Check(r == null && MoveRunner.Load(sc.Root) == null && MoveRules.RestartPending(sc.Root), label + ": Continue finishes (said: " + r + ")");
+                Check(File.Exists(Path.Combine(t2, "python", "late-" + k + ".bin")) && File.ReadAllText(Path.Combine(t2, "python", "f1.bin")) == "changed after the copy", label + ": the new place has what changed in the old one, judged by contents");
+                Check(MoveGate.Blocking(sc.Root) != null, label + ": and until the restart nothing runs");
+                MoveRules.ClearRestartAtStart(sc.Root);
+                Check(MoveGate.Blocking(sc.Root) == null, label + ": after the restart the rule lets the app run");
+            }
+        }
+        Check(runs > 30, "the next-start runs happened (" + runs + ")");
     }
 
     // ---- Remove, crashed after every write -------------------------------------------------------------------------------------------------
