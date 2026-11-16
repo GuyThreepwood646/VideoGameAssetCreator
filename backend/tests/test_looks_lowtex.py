@@ -3,7 +3,7 @@
 Paint standard D1: nothing may change for any other look. tests/data/looks_golden.json was written by
 tests/make_looks_golden.py on master's code (commit 2493e44): the recipe digest and every step 3 and step 4 decision this
 branch touches, for realistic_pbr, painted, cel, clay and pixel, every category and platform. The branch must give the
-same."""
+same. The pixel rows were written again by the Pixel art settings (tests/test_looks_pixel.py); no other row changed."""
 
 from __future__ import annotations
 

@@ -2126,10 +2126,13 @@ AUTO_CATEGORIES = ("humanoid",)
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
     """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character
-    on a smooth look (never a crisp or limited-palette one, which it would undo)."""
+    on a smooth look, and on a crisp or limited-palette look only when the look asks for it (recipe
+    surface.picture_projection, Pixel art: the look's palette is then applied after the painting, stages/prep.py)."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
     lk = look or {}
+    if lk.get("projection"):
+        return category in AUTO_CATEGORIES
     return category in AUTO_CATEGORIES and not lk.get("crisp") and not lk.get("palette")
 
 
@@ -2137,7 +2140,7 @@ def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]
     """(the original picture, the front view drawn from it) to paint before the picture the 3D model was built from; each
     None when it is that same picture or must not be used. A model built bald for hair from the library takes only the
     bald front view (the original has the hair on it); a model built from an edited picture takes neither (the original
-    shows what the edit removed)."""
+    shows what the edit removed), except the look's shaded redraw alone (mesh build_shaded), which removes nothing."""
     from . import hairlib
 
     def other(p: Any) -> Path | None:
@@ -2151,11 +2154,38 @@ def original_pictures(sc: Any, picture: Path) -> tuple[Path | None, Path | None]
         return Path(p)
 
     mv = sc.stage_version("mesh")
-    if mv is not None and (mv.params or {}).get("picture_edit"):
+    if mv is not None and (mv.params or {}).get("picture_edit") and not shaded_only(mv.params or {}):
         return None, None
     if hairlib.is_library(sc):
         return None, other(sc.lineage_file("bald_front_cutout", ("turnaround",)))
     return other(sc.lineage_file("cutout", ("concept",))), other(sc.lineage_file("front_cutout", ("turnaround",)))
+
+
+def shaded_only(mesh_params: dict[str, Any]) -> bool:
+    """The 3D step's picture edit was the look's shaded redraw and nothing else (no words of the person's, no hands)."""
+    return bool(mesh_params.get("build_shaded")) and not mesh_params.get("instruction") and not mesh_params.get("hand_edit")
+
+
+def drawn_picture(sc: Any) -> Path | None:
+    """The 3D step's picture as drawn, before the look's shaded redraw (stages/mesh.py DRAWN_KEY), or None. The clean-up
+    paints this one: the redraw is a smooth render that only gave the model its depth."""
+    p = sc.lineage_file("drawn_input", ("mesh",))
+    return Path(p) if p is not None and Path(p).is_file() else None
+
+
+CRISP_PICTURE_N = 1024  # a crisp look's small picture is enlarged by whole pixels to about this (never a learned upscaler)
+
+
+def enlarge_whole_pixels(src: Path, dest: Path, n: int = CRISP_PICTURE_N) -> Path:
+    """A small pixel picture made about n pixels on its longer side by repeating each pixel (nearest), so the painting
+    samples whole pixels; a picture already that big is used as it is."""
+    with Image.open(src) as im:
+        side = max(im.size)
+        f = max(1, int(round(n / float(side))))
+        if f <= 1:
+            return Path(src)
+        im.resize((im.width * f, im.height * f), Image.NEAREST).save(dest)
+    return Path(dest)
 
 
 def mode_of(params: dict[str, Any]) -> str:
@@ -2256,15 +2286,17 @@ def upscale_note(info: dict[str, Any]) -> str | None:
 
 
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
-                    keep: dict[str, Any] | None = None, head_yaw: float = 0.0) -> dict[str, Path]:
+                    keep: dict[str, Any] | None = None, head_yaw: float = 0.0, crisp: bool = False) -> dict[str, Path]:
     """The pass inside the prep stage (stages/prep.py), after the last rebake and before the face pass: paints the picture
     the asset started from, the picture the 3D step was given and the turnaround views into the current base colour; replaces it in the GLB and in
     `current` when it applies, and records the before and after numbers in the stage metrics. head_yaw: the camera yaw
-    the face is seen straight on from (as the face pass is given it). Returns `current`."""
+    the face is seen straight on from (as the face pass is given it). crisp (a crisp look that asks for the painting,
+    Pixel art): small pictures are enlarged by whole pixels instead of the learned upscaler, which would smooth the
+    pixels. A model built from the look's shaded redraw is painted from the picture as drawn. Returns `current`."""
     mode = mode_of(params)
     sc.set_params(**{"source_project_mode": mode})
     base = current.get("base_color")
-    picture = sc.lineage_file("input", ("mesh",)) or sc.lineage_file("cutout", ("concept",))
+    picture = drawn_picture(sc) or sc.lineage_file("input", ("mesh",)) or sc.lineage_file("cutout", ("concept",))
     try:
         mv = sc.stage_version("mesh")
         built_from = ((mv.params or {}) if mv is not None else {}).get("input_view")
@@ -2283,13 +2315,19 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     from .jobs import JobCancelled
 
     srcs: dict[str, Path | None] = {"picture": Path(picture), "source": source, "front": front_view, **turn}
-    try:
-        srcs, up = await upscale_sources(sc, srcs, work)
-    except (JobCancelled, asyncio.CancelledError):
-        raise
-    except Exception as e:  # noqa: BLE001  (the pictures are used as they are)
-        up = {"upscaled": [], "skipped": f"failed: {str(e)[:160]}"}
-        up["note"] = upscale_note(up)
+    if crisp:
+        enlarged = {k: enlarge_whole_pixels(Path(p), work / f"whole_{k}.png") if p is not None and Path(p).is_file() else p
+                    for k, p in srcs.items()}
+        up = {"upscaled": [], "model": None, "enlarged_whole_pixels": sorted(k for k in srcs if enlarged[k] != srcs[k])}
+        srcs = enlarged
+    else:
+        try:
+            srcs, up = await upscale_sources(sc, srcs, work)
+        except (JobCancelled, asyncio.CancelledError):
+            raise
+        except Exception as e:  # noqa: BLE001  (the pictures are used as they are)
+            up = {"upscaled": [], "skipped": f"failed: {str(e)[:160]}"}
+            up["note"] = upscale_note(up)
     sc.set_metrics(srcproject_upscale=up)
     big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
     picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]
