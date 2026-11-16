@@ -280,7 +280,7 @@ def test_unity_howto_names_the_added_moves_once():
             "parameters": ["Speed:Float", "Attack:Trigger", "SwordBlock:Trigger", "SittingIdle:Bool", "Yes:Trigger"],
             "added": ["SwordBlock:Trigger", "SittingIdle:Bool", "Yes:Trigger"]}
     lines = export.unity_howto("Assets/VGAC/Ranger/Ranger.prefab", ctrl)
-    assert 'animator.SetTrigger("Attack");.' in lines[2] and "SwordBlock" not in lines[2]
+    assert 'animator.SetTrigger("Attack");.' in lines[4] and "SwordBlock" not in lines[4]
     assert lines[-1] == ('For the moves you added, animator.SetTrigger("SwordBlock") plays a move you added once and '
                          'animator.SetBool("SittingIdle", true) plays a looping one until you set it to false; the other 1 work the same way, named after the move.')
 

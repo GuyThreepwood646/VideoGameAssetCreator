@@ -1311,14 +1311,18 @@ def texture_import_sizes(u: dict[str, Any]) -> list[tuple[str, int, int]]:
 
 
 def unity_howto(prefab: str, controller: dict[str, Any] | None) -> list[str]:
-    """The three "Using it in Unity" lines (plan 3.3 B) for an asset with an animation controller; [] without one.
+    """The "Using it in Unity" lines (plan 3.3 B) for an asset with an animation controller; [] without one.
     Only the one-off moves the controller has are named."""
     if not controller or "Locomotion" not in (controller.get("states") or []):
         return []
     added = [str(p) for p in controller.get("added") or []]  # moves the person added ("Add a move", moves.py)
     added_names = {p.split(":")[0] for p in added}
     triggers = [str(p).split(":")[0] for p in controller.get("parameters") or [] if str(p).endswith(":Trigger") and str(p).split(":")[0] not in added_names]
-    lines = [f"Drag the prefab from {prefab} into your scene."]
+    lines = [
+        "Open the project in Unity Hub with Add > Add project from disk; New project makes an empty one.",
+        f"Drag the prefab from {prefab} into your scene.",
+        "Drag the .prefab, not the .fbx with the same name: the model file shows its collision shape as a white block.",
+    ]
     params = [str(p).split(":")[0] for p in controller.get("parameters") or []]
     if "Speed" in params:
         lines.append('In your movement script, set the speed every frame: animator.SetFloat("Speed", speed);')

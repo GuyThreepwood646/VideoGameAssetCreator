@@ -653,7 +653,9 @@ export function addBackendFinish(asset: Asset, version: Version) {
     { id: 'files', text: 'Files: FBX (Unity, Unreal, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },
   ]
   version.metrics.unity_howto = [
+    'Open the project in Unity Hub with Add > Add project from disk; New project makes an empty one.',
     `Drag the prefab from \`${prefab}\` into your scene.`,
+    'Drag the .prefab, not the .fbx with the same name: the model file shows its collision shape as a white block.',
     'In your movement script, set the speed every frame: `animator.SetFloat("Speed", speed);`',
     'For one-off moves, call `animator.SetTrigger("Attack");` (or `"Hit"`, `"Die"`).',
     'Hit boxes are trigger colliders named Hit_Head, Hit_Chest and so on under the bones; check the name in OnTriggerEnter to know where a hit landed.',
