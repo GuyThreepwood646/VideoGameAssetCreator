@@ -302,6 +302,7 @@ namespace Vgac.Starter
                         throw;
                     }
                     if (hadVenv) SafeFs.DeleteTree(venvOld);
+                    if (Directory.Exists(l.UvCache)) ledger.Add("uv's download cache", l.UvCache, "added", 0);
                     ledger.Add("The app's Python environment", l.Venv, "added", 0);
                     ledger.Add("The app's private Python " + Pins.PythonVersion, l.PythonDir, "added", 0);
                     break;
@@ -342,7 +343,7 @@ namespace Vgac.Starter
         // Download, check against the pin, unpack into a temporary folder, then swap into place.
         void FetchZip(string what, string url, string sha, string targetDir, string mustExist, Progress prog)
         {
-            Directory.CreateDirectory(l.Downloads);
+            Directory.CreateDirectory(l.Downloads); Proof.Write(l.Downloads, "downloads");
             string zip = Path.Combine(l.Downloads, Path.GetFileName(new Uri(url).LocalPath));
             log.Line("download " + url + " -> " + zip);
             host.Download(url, zip, sha, delegate(long got, long total) { prog.Say(Planner.Plain(what == "uv" ? "uv" : "node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
@@ -351,6 +352,8 @@ namespace Vgac.Starter
             host.Unzip(zip, tmp);
             // uv's zip holds the files at its top level.
             SwapFolder(tmp, targetDir, mustExist, "The downloaded " + what + " did not hold the file it should (" + Path.GetFileName(mustExist) + ").");
+            Proof.Write(targetDir, what == "uv" ? "uv" : "node");
+            Proof.Write(Path.GetDirectoryName(targetDir), "tools");
             ledger.Add(what, targetDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }
@@ -384,7 +387,7 @@ namespace Vgac.Starter
 
         void FetchNode(Progress prog)
         {
-            Directory.CreateDirectory(l.Downloads);
+            Directory.CreateDirectory(l.Downloads); Proof.Write(l.Downloads, "downloads");
             string zip = Path.Combine(l.Downloads, Path.GetFileName(new Uri(Pins.NodeUrl).LocalPath));
             log.Line("download " + Pins.NodeUrl + " -> " + zip);
             host.Download(Pins.NodeUrl, zip, Pins.NodeSha256, delegate(long got, long total) { prog.Say(Planner.Plain("node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
@@ -397,6 +400,8 @@ namespace Vgac.Starter
             if (subs.Length == 1 && !File.Exists(Path.Combine(tmp, "node.exe"))) inner = subs[0];
             SwapFolder(inner, l.NodeDir, Path.Combine(l.NodeDir, "node.exe"), "The downloaded Node.js did not hold node.exe.");
             if (inner != tmp && Directory.Exists(tmp)) Directory.Delete(tmp, true);
+            Proof.Write(l.NodeDir, "node");
+            Proof.Write(Path.GetDirectoryName(l.NodeDir), "tools");
             ledger.Add("Node.js (used to build the screens)", l.NodeDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }

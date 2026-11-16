@@ -141,6 +141,7 @@ public static partial class T
             BridgeAnswersOnlyItsList();
             LauncherAll(args);
             AfterwardsAll();
+            SafetyAll();
         }
         finally
         {
@@ -224,7 +225,7 @@ public static partial class T
         string ledger = File.ReadAllText(Path.Combine(root, "local", "installed.json"));
         Check(ledger.Contains("\"kind\": \"added\"") && ledger.Contains("Node.js") && ledger.Contains(".venv"), "ledger lists what was added");
         Check(File.Exists(new SetupLog(root).Path) && File.ReadAllText(new SetupLog(root).Path).Contains("step screens done"), "setup.log has the steps");
-        Check(!Directory.Exists(l.Downloads) || Directory.GetFiles(l.Downloads).Length == 0, "downloaded zips removed after unpacking");
+        Check(!Directory.Exists(l.Downloads) || Directory.GetFiles(l.Downloads).All(f => Path.GetFileName(f) == Proof.MarkerName), "downloaded zips removed after unpacking (only VGAC's marker stays)");
     }
 
     static void ChecksumFailureStopsAndRecordsNothing()

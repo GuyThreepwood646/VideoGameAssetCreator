@@ -353,9 +353,12 @@ namespace Vgac.Starter
                 if (note != null) log.Line("start: " + note);
                 if (GitUpdate.MidPull(root) != null)
                     MessageBox.Show(GitUpdate.MidPullText + "\r\n\r\n(Git left a pull open in the project folder. VGAC carries on, but the files may be a mix of two versions.)", "VGAC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                if (MoveRunner.Load(root) != null)
+                var jm = MoveRunner.Load(root, lay.DataFolder);
+                if (jm == null && MoveRunner.StaleFound)
+                    MessageBox.Show("A record of an earlier move of the big files does not fit this install, so VGAC set it aside (local\\move.json.stale) and changed nothing.", "VGAC");
+                if (jm != null)
                 {
-                    var j = MoveRunner.Load(root);
+                    var j = jm;
                     if (j.State != "rebuilt" && MessageBox.Show("A move of the big files was interrupted (at '" + j.State + "'). Open Maintenance to continue it or cancel it?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) pendingTab = 2;
                     else if (j.State == "rebuilt") log.Line("start: a finished move still has an old copy that can be deleted");
                 }
@@ -429,8 +432,10 @@ namespace Vgac.Starter
         {
             using (var d = new FolderBrowserDialog())
             {
-                d.Description = "Choose a folder for the big files (Python, tools; later the models). Pick a drive with room.";
+                d.Description = "Choose a folder just for VGAC's big files (Python, tools; later the models). Pick a drive with room.";
                 if (d.ShowDialog(this) != DialogResult.OK) return;
+                string unfit = Proof.DataFolderProblem(d.SelectedPath, root);
+                if (unfit != null) { MessageBox.Show(this, unfit, "VGAC"); return; }
                 try
                 {
                     machine.Set("starter", "dataFolder", d.SelectedPath);
@@ -543,7 +548,9 @@ namespace Vgac.Starter
                 hint.Text = "The app opened in your browser because Microsoft's WebView2 runtime is not installed (microsoft.com, search 'WebView2 Runtime').";
                 return false;
             }
-            var w = new AppWindow(backend.Url, Path.Combine(lay.DataFolder, "webview2"), log, this);
+            string profile = Path.Combine(lay.DataFolder, "webview2");
+            try { if (!Directory.Exists(profile) || Proof.Read(profile) == null) { if (!Directory.Exists(profile) || Directory.GetFileSystemEntries(profile).Length == 0) Proof.Write(profile, "webview2"); } } catch (Exception) { }
+            var w = new AppWindow(backend.Url, profile, log, this);
             w.CloseRequested = delegate { BeginInvokeSafe(RequestQuit); };
             w.QuitRequested = delegate { BeginInvokeSafe(RequestQuit); };
             w.StatusRequested = delegate { BeginInvokeSafe(ShowStatusWindow); };

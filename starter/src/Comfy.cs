@@ -98,10 +98,13 @@ namespace Vgac.Starter
             var m = Marker(data); object o;
             if (m == null || !Offered(data) || !m.TryGetValue("owned", out o)) return res;
             string root = Root(data);
+            List<string> kept = Kept(data);
             foreach (string rel in Strings(o))
             {
                 if (rel.Length == 0 || Path.IsPathRooted(rel) || rel.Contains("..")) continue;   // only names inside the install folder
-                res.Add(Path.Combine(root, rel.Replace('/', '\\')));
+                string full = Path.Combine(root, rel.Replace('/', '\\'));
+                if (RemovalPlanner.KeptProblem(full, root, kept) != null) continue;               // the folder itself, or anything it keeps
+                res.Add(full);
             }
             return res;
         }

@@ -106,8 +106,9 @@ namespace Vgac.Starter
             {
                 if (File.Exists(aside))
                 {
-                    // an earlier leftover: only the app's own recorded file may be replaced
+                    // an earlier leftover: only the app's own recorded, published file may be replaced
                     if (!IsOurLeftover(aside, root)) return "A file named " + AsideName + " is already there and VGAC did not make it. Move it away, then try again.";
+                    if (!WasPublished(root)) return AsideName + " is your own build of VGAC.exe from an earlier update, so it is not replaced. Move or rename it, then try again.";
                     File.Delete(aside);
                 }
                 string sha = Hashing.Sha256File(exePath);
@@ -170,9 +171,26 @@ namespace Vgac.Starter
             catch (Exception) { return false; }
         }
 
+        // A crash between the rename and the checkout leaves no VGAC.exe. If this very program was started from VGAC.old.exe and
+        // VGAC.exe is missing, it takes its own name back. Returns a log sentence or null.
+        public static string RecoverMissing(string runningPath, string root)
+        {
+            try
+            {
+                if (!string.Equals(Path.GetFileName(runningPath), AsideName, StringComparison.OrdinalIgnoreCase)) return null;
+                string exe = Path.Combine(Path.GetDirectoryName(runningPath), "VGAC.exe");
+                if (File.Exists(exe) || !IsOurLeftover(runningPath, root)) return null;
+                File.Move(runningPath, exe);
+                try { File.Delete(RecordPath(root)); } catch (Exception) { }
+                return "VGAC.exe was missing after an update that stopped halfway; this copy took its name back.";
+            }
+            catch (Exception e) { return "VGAC.exe is missing and could not be put back (" + e.Message + "). Rename " + AsideName + " to VGAC.exe."; }
+        }
+
         // At start: the old file is deleted only when it is the one that was recorded. Returns a log sentence or null.
         public static string CleanupAtStart(string exePath, string root)
         {
+            if (string.Equals(Path.GetFileName(exePath), AsideName, StringComparison.OrdinalIgnoreCase)) return null;   // that is this very program
             string aside = AsidePath(exePath);
             if (!File.Exists(aside)) return null;
             if (!IsOurLeftover(aside, root)) return AsideName + " is there but is not the file VGAC recorded, so it was left alone.";
@@ -190,6 +208,8 @@ namespace Vgac.Starter
 
     public class RealGit : IGit
     {
+        public int TimeoutMs = 180000;
+
         public int Run(string args, string cwd, out string output)
         {
             output = "";
@@ -201,9 +221,19 @@ namespace Vgac.Starter
                 psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";   // never wait for a password nobody can type
                 using (var p = Process.Start(psi))
                 {
-                    string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                    if (!p.WaitForExit(180000)) { try { p.Kill(); } catch (Exception) { } output = "git did not finish in time"; return -1; }
-                    output = o;
+                    // read on other threads so a git that never ends cannot hold this window past the limit
+                    var rOut = System.Threading.Tasks.Task.Factory.StartNew<string>(delegate { try { return p.StandardOutput.ReadToEnd(); } catch (Exception) { return ""; } });
+                    var rErr = System.Threading.Tasks.Task.Factory.StartNew<string>(delegate { try { return p.StandardError.ReadToEnd(); } catch (Exception) { return ""; } });
+                    if (!p.WaitForExit(TimeoutMs))
+                    {
+                        long started = 0; try { started = p.StartTime.ToUniversalTime().Ticks; } catch (Exception) { }
+                        try { ProcessTree.Stop(new WmiProcesses(), new ProcessKiller(), p.Id, started); } catch (Exception) { }
+                        try { if (!p.HasExited) p.Kill(); } catch (Exception) { }
+                        output = "git did not finish in time";
+                        return -1;
+                    }
+                    rOut.Wait(3000); rErr.Wait(3000);
+                    output = (rOut.IsCompleted ? rOut.Result : "") + (rErr.IsCompleted ? rErr.Result : "");
                     return p.ExitCode;
                 }
             }
@@ -295,7 +325,8 @@ namespace Vgac.Starter
             if (code != 0)
             {
                 if (exeInside && (before ?? "").Trim() == (after ?? "").Trim()) ExeAside.RestoreOver(exePath, root);
-                r.Message = "The update did not go through. Git said: " + LastLines(output, 3) + " Nothing of yours was changed.";
+                bool moved = (before ?? "").Trim() != (after ?? "").Trim();
+                r.Message = "The update did not go through. Git said: " + LastLines(output, 3) + (moved ? " Git stopped partway: look at the project folder with git status before you carry on." : " Nothing of yours was changed.");
                 return r;
             }
             r.Updated = (before ?? "").Trim() != (after ?? "").Trim();

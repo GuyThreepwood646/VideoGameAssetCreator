@@ -42,7 +42,7 @@ namespace Vgac.Starter
         }
 
         // The real location of a path: every link in it resolved. A path that does not exist yet is its nearest existing
-        // parent's real location plus the missing names.
+        // parent's real location plus the missing names. null when it cannot be told (never a guess): callers treat that as unsafe.
         public static string Real(string path)
         {
             string full = Path.GetFullPath(path).TrimEnd('\\', '/');
@@ -53,14 +53,14 @@ namespace Vgac.Starter
                 tail = "\\" + Path.GetFileName(cur) + tail;
                 cur = Path.GetDirectoryName(cur);
             }
-            if (cur == null) return Norm(full);
+            if (cur == null) return null;
             IntPtr h = CreateFileW(cur, 0, 7, IntPtr.Zero, 3, 0x02000000 /* BACKUP_SEMANTICS: also opens folders */, IntPtr.Zero);
-            if (h == (IntPtr)(-1)) return Norm(full);
+            if (h == (IntPtr)(-1)) return null;
             try
             {
                 var sb = new StringBuilder(1024);
                 uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
-                if (n == 0 || n >= sb.Capacity) return Norm(full);
+                if (n == 0 || n >= sb.Capacity) return null;
                 string r = sb.ToString();
                 if (r.StartsWith("\\\\?\\UNC\\")) r = "\\\\" + r.Substring(8);
                 else if (r.StartsWith("\\\\?\\")) r = r.Substring(4);
@@ -73,13 +73,15 @@ namespace Vgac.Starter
         public static bool Inside(string child, string root)
         {
             string c = Real(child), r = Real(root);
+            if (c == null || r == null) return false;
             return c == r || c.StartsWith(r + "\\");
         }
 
         // No link anywhere in the path (so deleting it cannot touch anything but itself).
         public static bool PathHasNoLink(string path)
         {
-            return Real(path) == Norm(path);
+            string r = Real(path);
+            return r != null && r == Norm(path);
         }
 
         // Renames a folder, trying again for a moment when Windows or an antivirus program is still holding a file in it
@@ -191,14 +193,32 @@ namespace Vgac.Starter
 
         // Differences between two trees (missing, extra, different size), `skipTop` names left out of the source side.
         // When `hashToo` is true the files are compared by SHA-256 as well.
-        public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo)
+        public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo) { return Compare(src, dst, skipTop, hashToo, false); }
+
+        // `ignoreExtra`: files that are only in `dst` are fine (the new copy may have grown since).
+        public static List<string> Compare(string src, string dst, ICollection<string> skipTop, bool hashToo, bool ignoreExtra)
         {
             var bad = new List<string>();
-            CompareInto(src, dst, skipTop, hashToo, bad, true);
+            CompareInto(src, dst, skipTop, hashToo, ignoreExtra, bad, true);
             return bad;
         }
 
-        static void CompareInto(string src, string dst, ICollection<string> skipTop, bool hashToo, List<string> bad, bool top)
+        // The first link inside a folder (not counting `skipTop` at its top level), or null.
+        public static string FirstLink(string path, string skipTop)
+        {
+            if (!Directory.Exists(path)) return null;
+            string[] kids;
+            try { kids = Directory.GetFileSystemEntries(path); } catch (Exception) { return path; }
+            foreach (string k in kids)
+            {
+                if (skipTop != null && string.Equals(Path.GetFileName(k), skipTop, StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsLink(k)) return k;
+                if (Directory.Exists(k)) { string f = FirstLink(k, null); if (f != null) return f; }
+            }
+            return null;
+        }
+
+        static void CompareInto(string src, string dst, ICollection<string> skipTop, bool hashToo, bool ignoreExtra, List<string> bad, bool top)
         {
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string k in Directory.GetFileSystemEntries(src))
@@ -211,7 +231,7 @@ namespace Vgac.Starter
                 if (Directory.Exists(k))
                 {
                     if (!Directory.Exists(to)) { bad.Add("missing folder " + to); continue; }
-                    CompareInto(k, to, null, hashToo, bad, false);
+                    CompareInto(k, to, null, hashToo, ignoreExtra, bad, false);
                 }
                 else
                 {
@@ -220,7 +240,7 @@ namespace Vgac.Starter
                     if (hashToo && Hashing.Sha256File(k) != Hashing.Sha256File(to)) bad.Add("different content " + to);
                 }
             }
-            if (Directory.Exists(dst))
+            if (!ignoreExtra && Directory.Exists(dst))
                 foreach (string k in Directory.GetFileSystemEntries(dst))
                     if (!names.Contains(Path.GetFileName(k)) && !(top && skipTop != null && skipTop.Contains(Path.GetFileName(k)))) bad.Add("extra " + k);
         }

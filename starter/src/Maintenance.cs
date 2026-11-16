@@ -186,28 +186,42 @@ namespace Vgac.Starter
             if (GitUpdate.MidPull(root) != null) { info.Text = GitUpdate.MidPullText; return; }
             if (!host.Quiesce(this, "update")) return;
             UpdateResult result = null;
+            List<string> pending = new List<string>();
             Run(delegate
             {
                 Say("Updating...");
                 result = GitUpdate.Pull(root, host.ExePath, new RealGit());
-                if (result.Updated)
-                {
-                    // the app's own parts that the new files need
-                    var steps = Planner.Plan(ProbeReader.Read(host.Lay, host.Host), root);
-                    if (steps.Count > 0)
-                    {
-                        Say("Applying the changes: " + string.Join(", ", steps.Select(s => Planner.Plain(s)).ToArray()));
-                        var runner = new SetupRunner(host.Lay, host.Host, MachineFile.Load(root), Ledger.Load(root), host.Log);
-                        runner.Run(steps, ProgressToStatus());
-                    }
-                }
+                // New files can mean new Python packages or screens. They are not installed in the same click: the person is
+                // shown what would run (pip and npm scripts come from the files just pulled) and decides.
+                if (result.Updated) pending = Planner.Plan(ProbeReader.Read(host.Lay, host.Host), root);
                 Say(result.Message);
             }, delegate
             {
                 info.Text = result == null ? "" : result.Message;
-                if (result != null && result.ExeChanged && MessageBox.Show(this, result.Message + "\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) { host.RestartVgac(); return; }
-                host.Resume();
+                if (result != null && pending.Count > 0)
+                {
+                    string list = string.Join("\r\n   - ", pending.Select(s => Planner.Plain(s)).ToArray());
+                    if (MessageBox.Show(this, "The update needs these steps, which install packages and build the screens from the files just pulled:\r\n   - " + list + "\r\n\r\nRun them now?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                    {
+                        List<string> steps = pending;
+                        Run(delegate
+                        {
+                            var runner = new SetupRunner(host.Lay, host.Host, MachineFile.Load(root), Ledger.Load(root), host.Log);
+                            runner.Run(steps, ProgressToStatus());
+                            Say("Updated.");
+                        }, delegate { AfterUpdate(result); });
+                        return;
+                    }
+                    info.Text += "\r\n\r\nThe steps above were not run. Use 'Apply changes already on disk' when you are ready.";
+                }
+                AfterUpdate(result);
             });
+        }
+
+        void AfterUpdate(UpdateResult result)
+        {
+            if (result != null && result.ExeChanged && MessageBox.Show(this, result.Message + "\r\n\r\nRestart VGAC now?", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes) { host.RestartVgac(); return; }
+            host.Resume();
         }
 
         // ---- move ------------------------------------------------------------------------------------------------------------
@@ -225,13 +239,15 @@ namespace Vgac.Starter
             var cont = Btn("Continue an interrupted move", 242, 170, 220);
             var cancel = Btn("Cancel it", 472, 170, 100);
             var del = Btn("Delete the old copy", 12, 210, 220);
+            var keep = Btn("Keep both copies", 242, 210, 160);
             var details = Info("", 12, 255, 700, 220);
             choose.Click += delegate { using (var d = new FolderBrowserDialog()) { d.Description = "Choose an empty folder for the big files."; if (d.ShowDialog(this) == DialogResult.OK) moveTo.Text = d.SelectedPath; } };
             go.Click += delegate { DoMoveStart(details); };
             cont.Click += delegate { DoMoveContinue(details); };
             cancel.Click += delegate { DoMoveCancel(details); };
             del.Click += delegate { DoMoveDeleteOld(details); };
-            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, choose, go, cont, cancel, del, details });
+            keep.Click += delegate { string r = Mover().Forget(); details.Text = r ?? "Done. Both copies are kept."; RefreshMove(details); };
+            tab.Controls.AddRange(new Control[] { moveInfo, moveTo, choose, go, cont, cancel, del, keep, details });
             tab.Enter += delegate { RefreshMove(details); };
             return tab;
         }
@@ -243,7 +259,7 @@ namespace Vgac.Starter
 
         void RefreshMove(Label details)
         {
-            var j = MoveRunner.Load(host.Lay.ProjectRoot);
+            var j = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
             long need = Mover().NeedBytes();
             if (j == null)
                 moveInfo.Text = "The big files (Python, tools, VGAC's own ComfyUI) are in:\r\n   " + host.Lay.DataFolder + "   (" + RemovalSummary.Size(need) + ")\r\n\r\nThey are copied to the new folder and checked; only then does VGAC switch to it. Until then the old place is untouched and in use.";
@@ -276,15 +292,20 @@ namespace Vgac.Starter
 
         void DoMoveCancel(Label details)
         {
-            if (MoveRunner.Load(host.Lay.ProjectRoot) == null) { details.Text = "There is no move to cancel."; return; }
-            if (MessageBox.Show(this, "Cancel the move? What it copied into the new folder is removed. The old place is not changed.", "VGAC", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            var jc = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
+            if (jc == null) { details.Text = "There is no move to cancel."; return; }
+            bool inUse = jc.State == "switching" || jc.State == "switched" || jc.State == "rebuilt";
+            string q = inUse ? "Undo the move? VGAC points at the old place again. The copy in the new folder is NOT deleted (the app may have used it); you delete it yourself."
+                : "Cancel the move? What it copied into the new folder is removed. The old place is not changed.";
+            if (MessageBox.Show(this, q, "VGAC", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             if (!host.Quiesce(this, "move")) return;
-            Run(delegate { Mover().Cancel(); Say("The move was cancelled."); }, delegate { RefreshMove(details); host.Resume(); });
+            string said = null;
+            Run(delegate { said = Mover().Cancel(); Say(said ?? "The move was cancelled."); }, delegate { details.Text = said ?? "The move was cancelled."; RefreshMove(details); host.Resume(); });
         }
 
         void DoMoveDeleteOld(Label details)
         {
-            var j = MoveRunner.Load(host.Lay.ProjectRoot);
+            var j = MoveRunner.Load(host.Lay.ProjectRoot, host.Lay.DataFolder);
             if (j == null || j.State != "rebuilt") { details.Text = "There is no finished move whose old copy can be deleted."; return; }
             long bytes = 0; foreach (string p in MoveRunner.OldCopy(j)) bytes += SafeFs.Size(p, null);
             string list = string.Join("\r\n   ", MoveRunner.OldCopy(j).ToArray());
@@ -354,13 +375,27 @@ namespace Vgac.Starter
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
             }
             if (!host.Quiesce(this, "removal")) return;
-            string typedWord = typed.Text;
+            DoRemoval(summaryBox, ticked, typed.Text, false);
+        }
+
+        void DoRemoval(TextBox summaryBox, List<string> ticked, string typedWord, bool allowPermanent)
+        {
             RemovalResult res = null;
             Run(delegate
             {
-                res = RemovalRunner.Run(removePlan, ticked, typedWord, host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, new WindowsRecycler(), host.Log, delegate(string s) { Say(s); });
+                res = RemovalRunner.Run(removePlan, ticked, typedWord, host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, new WindowsRecycler(), host.Log, delegate(string s) { Say(s); }, allowPermanent);
             }, delegate
             {
+                if (res.RecycleFailed.Count > 0)
+                {
+                    string list = string.Join("\r\n   ", res.RecycleFailed.ToArray());
+                    if (MessageBox.Show(this, "The Recycle Bin could not be used for:\r\n   " + list + "\r\n\r\nNothing was deleted for these. Delete them for good instead? That cannot be undone.", "VGAC", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                    {
+                        BuildPlanKeepingChecks();
+                        DoRemoval(summaryBox, ticked, typedWord, true);
+                        return;
+                    }
+                }
                 var sb = new StringBuilder();
                 sb.AppendLine(res.Removed.Count + " item(s) removed, " + RemovalSummary.Size(res.Bytes) + " freed.");
                 if (res.Unlinked.Count > 0) sb.AppendLine(res.Unlinked.Count + " link(s) were unlinked; what they pointed at was not touched.");
