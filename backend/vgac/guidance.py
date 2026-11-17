@@ -240,7 +240,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "source_project": {"simple": False, "help": {"meaning": "Paints your own picture's colours and detail onto the side of the model it shows, and the drawn views onto the other sides, so the model looks like the picture; adds about 2 minutes. Automatic does it for characters on smooth looks; turn it on to try it on other models, or off if it leaves patches.",
                                                  "why": "The 3D builder makes up its colours and they come out soft. Your own picture is used first, then the views drawn from it.",
                                                  "technical": "Picture fitted to a render by outline and optical flow, projected through the UVs with depth, edge and stretch limits (vgac/srcproject.py)"}},
-    "face_closeup_guided": {"simple": False, "help": {"meaning": "With a picture of the real face (your own close-up in this step, or the Face picture in step 0.5), the close-up is drawn with that face's features.",
+    "face_closeup_guided": {"simple": False, "help": {"meaning": "With a picture of the real face (your own close-up in this step, or the face picture given with the new asset), the close-up is drawn with that face's features.",
                                                       "why": "The close-up keeps the painting's pose, expression and light and takes the eyes, nose, mouth, skin and hair from your picture, so the model looks more like the person. Without a face picture this changes nothing.",
                                                       "technical": "Qwen-Image-Edit with the painted crop as Picture 1 and the face picture as Picture 2; two tries, each checked like any close-up"}},
     "quarter_pictures": {"simple": False, "help": {"meaning": "Whether the two three-quarter pictures from step 2 are painted onto the model, the head included.",
@@ -1064,7 +1064,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _redraw_fix,
         "fix_label": "Redraw it in even light",
     },
-    # A picture combined from the person's own pictures (step 0.5, stages/concept.compose_check): the clothes or the hair
+    # A picture combined from the person's own pictures (feature photos, stages/concept.compose_check): the clothes or the hair
     # colour drifted from the pictures. A warning only; the Fix combines the same pictures again.
     "compose_match": {
         "severity": "warn",

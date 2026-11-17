@@ -1,4 +1,4 @@
-"""A picture combined from the person's own pictures keeps their clothes and hair (step 0.5):
+"""A picture combined from the person's own pictures keeps their clothes and hair (feature photos):
 the compose prompt no longer carries the look's palette or hair rule and says to keep clothes and hair, and the
 check `compose_match` (stages/concept.compose_check) warns when the combined picture's clothes or hair colour differ.
 """

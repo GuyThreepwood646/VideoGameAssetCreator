@@ -591,7 +591,7 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     parent = sc.parent
     if parent is not None and parent.params.get("source") == "compose" and not params.get("prompt_override"):
-        # Fine-tune of a picture combined from the person's pictures (step 0.5): combine the same pictures again.
+        # Fine-tune of a picture combined from the person's pictures (feature photos): combine the same pictures again.
         from .. import compose
 
         await compose.adjust(sc, params)
