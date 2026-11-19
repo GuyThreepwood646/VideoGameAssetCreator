@@ -11,6 +11,7 @@ import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } fr
 import { useMyAddons, withMyAddons } from './AddMyAddon'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
+import { defaultFor } from './stepSettings'
 
 const SIZE_OPTIONS = [768, 1024, 1280, 1536, 2048]
 
@@ -500,25 +501,7 @@ function clamp(n: number, p: AdjustParam): number {
   return n
 }
 
-function defaultFor(p: AdjustParam): unknown {
-  switch (p.type) {
-    case 'number':
-    case 'integer':
-      return p.min ?? 0
-    case 'boolean':
-      return false
-    case 'multiselect':
-      return []
-    case 'addons':
-      return {}
-    case 'select':
-      return p.options?.[0] ?? ''
-    default:
-      return ''
-  }
-}
-
-function AdjustField({
+export function AdjustField({
   param: p,
   value,
   onChange,
