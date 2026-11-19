@@ -334,7 +334,7 @@ function OwnViews({ asset, active, busy, act, onCreated }: { asset: Asset; activ
       setOpen(false)
       onCreated(first.version.id)
     })
-  const useOne = (view: string, p: PickedImage) =>
+  const replaceOneView = (view: string, p: PickedImage) =>
     act(async () => {
       if (!onVersion) return
       const r = await api.uploadView(onVersion.id, view, p.dataUrl)
@@ -362,7 +362,7 @@ function OwnViews({ asset, active, busy, act, onCreated }: { asset: Asset; activ
                   <span className="muted small">{FACING_TEXT[view]}</span>
                 </ImageDrop>
                 {onVersion && pictures[view] && (
-                  <button type="button" className="small-btn" disabled={busy} onClick={() => useOne(view, pictures[view]!)} title="Make a new version with this one view replaced by your picture">
+                  <button type="button" className="small-btn" disabled={busy} onClick={() => replaceOneView(view, pictures[view]!)} title="Make a new version with this one view replaced by your picture">
                     Use for the {(VIEW_NAMES[view] ?? view).toLowerCase()} view
                   </button>
                 )}
