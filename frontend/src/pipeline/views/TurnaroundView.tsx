@@ -235,7 +235,7 @@ export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, l
               </div>
               {/* A view drawn another way than the version asked for: a sheet side redrawn, or a side the way cannot draw. */}
               {typeof m?.method === 'string' && m.method !== 'supplied' && m.method !== 'from_model' && m.method !== (version.params?.turn_method ?? 'standard') && (
-                <div className="muted small">Drawn the {m.method === 'standard' ? 'standard' : m.method === 'sheet' ? 'all-sides-in-one-picture' : 'shadow-free'} way.</div>
+                <div className="muted small">{m.method === 'edit' ? 'Changed by editing the earlier picture of this view.' : `Drawn the ${m.method === 'standard' ? 'standard' : m.method === 'sheet' ? 'all-sides-in-one-picture' : 'shadow-free'} way.`}</div>
               )}
               {checks && checks.length > 0 && <PlainChecks checks={checks} compact />}
               {numbers.length > 0 && (

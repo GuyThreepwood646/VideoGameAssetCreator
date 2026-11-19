@@ -846,10 +846,13 @@ def stale_kept_views(keep: dict[str, dict[str, Any]] | None, chosen: list[str]) 
 
 async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
                      keep: dict[str, dict[str, Any]] | None = None, extra: str = "",
-                     supplied: dict[str, Path] | None = None, method: str | None = None) -> None:
+                     supplied: dict[str, Path] | None = None, method: str | None = None,
+                     edit_views: dict[str, Path] | None = None) -> None:
     """Generate and check `views` from the concept image of `source`. Views in `supplied` are the person's own
     pictures: cut out and checked like the rest, never redrawn; one that fails a check warns and is kept. `method`
-    (default: the params' turn_method) says how the views are turned (TURN_METHODS)."""
+    (default: the params' turn_method) says how the views are turned (TURN_METHODS). `edit_views` {view: picture}: a
+    view changed by editing that picture with the typed words (`extra`), without the turn LoRA, instead of being
+    drawn again from the concept (see EDIT_THE_VIEW)."""
     supplied = dict(supplied or {})
     chosen_method = turn_method(_category(sc), params)
     method = method or chosen_method
@@ -943,6 +946,14 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             if view == "front":
                 return dict(cam["front"]), "shadow_free"
             return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n, loras=view_loras), "shadow_free"
+        if edit_views and view in edit_views:
+            on = {"instance": card} if card else {}
+            edit_name = await sc.stage_input(edit_views[view], f"vgac_{sc.version.id[:8]}_{view}_edit_src.png", **on)
+            entry = await sc.comfy(edit_graph(edit_name, instruction, seed, sc.prefix(f"{view}_{seed}")), message=f"view {view} (edited)",
+                                   base=at, span=width / n * 0.7, **on)
+            raw = await sc.download_image(entry, "save", sc.dir / f"{view}_raw.png", **on)
+            res = await sc.cutout(raw, view, base=at + width / n * 0.7, span=width / n * 0.3, **on)
+            return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}, "edit"
         sc.use_model("qwen_angles_lora")
         used.add("standard")
         refs = await side_references(card) if view == "back" and back_refs else []
@@ -1036,7 +1047,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             info["method"] = drew
             # The person's own LoRAs this view was drawn with (none for a supplied picture or the shadow-free front,
             # which is the concept's cut-out), so a kept view reports what it really had.
-            info["loras"] = [] if drew == "supplied" or (drew == "shadow_free" and view == "front") else [a["id"] for a in view_loras]
+            info["loras"] = [] if drew in ("supplied", "edit") or (drew == "shadow_free" and view == "front") else [a["id"] for a in view_loras]
             if card or home:
                 info["card"] = card or home
             if view in supplied:
@@ -1278,9 +1289,31 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
         raise ValueError("turnaround parent has no concept parent")
     # The sheet draws all five sides at once, so a redraw of some of them uses the standard turn.
     method = "standard" if turn_method(_category(sc), merged) == "sheet" else None
-    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction, method=method)
+    edit_views = await _edit_picture(sc, parent, targets, instruction)
+    if edit_views:
+        method = "standard"  # no sheet or shadow-free set-up for a view that is edited
+    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction, method=method, edit_views=edit_views)
     # _run_views records the views it drew; the version holds all of them (as upload does).
     sc.set_params(views=all_views)
+
+
+# EDIT_THE_VIEW (WP-42 card trial, 2026-11-19, Nutra Pak, "remove the people", five views): a typed change to ONE view is
+# made by editing that view's own picture with the picture editor, without the turn LoRA. Redrawing it from the concept
+# with the words added changed the design (a window lost on the back, the right side rebuilt) and a removal stayed weak;
+# the edit kept the view as it was and took the people out of every view (docs/research, sheet in the WP-42 notes).
+# Several views, a plain redraw (no words) and a person's own picture still go through the concept: a redraw must be
+# able to change the view, and several views must stay alike. UNTESTED ON A CARD as code here: only the trial's
+# equivalent (the first-picture edit of each stored view) ran on a card.
+PLAIN_REDRAW_WORDS = "Redraw this view"
+
+
+async def _edit_picture(sc: StageContext, parent: Version, targets: list[str], instruction: str) -> dict[str, Path] | None:
+    """{view: the parent's picture of it} when this refine changes one view with typed words, else None."""
+    words = (instruction or "").strip()
+    if len(targets) != 1 or not words or words == PLAIN_REDRAW_WORDS or targets[0] in (parent.params.get("supplied_views") or []):
+        return None
+    p = library.version_file(parent, targets[0], sc.settings)
+    return {targets[0]: Path(p)} if p is not None and Path(p).is_file() else None
 
 
 def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:

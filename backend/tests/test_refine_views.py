@@ -123,7 +123,8 @@ def test_untouched_views_keep_their_files_and_seeds(tmp_path, monkeypatch, targe
     concept, ta, new, seeds = _parent_with_files(tmp_path, monkeypatch)
     drawn = _drawn(monkeypatch)
     sc = CopySC(tmp_path, new, FakeDB(concept, ta, new))
-    asyncio.run(turnaround.refine(sc, "remove the people", None, None, {}, views=targets))
+    words = "remove the people" if len(targets) > 1 else "Redraw this view"  # one view with words is edited (below)
+    asyncio.run(turnaround.refine(sc, words, None, None, {}, views=targets))
     untouched = [v for v in seeds if v not in targets]
     assert sorted(set(drawn)) == sorted(targets)  # only the chosen views were drawn
     copied = getattr(sc, "copied", [])
@@ -133,7 +134,7 @@ def test_untouched_views_keep_their_files_and_seeds(tmp_path, monkeypatch, targe
         assert sc.metrics["views"][v]["seed"] == seeds[v] and sc.metrics["views"][v]["passed"] is True
     for v in targets:
         assert f"parent_{v}.png" not in copied
-    assert new.params["refined_views"] == targets and new.params["instruction"] == "remove the people"
+    assert new.params["refined_views"] == targets and new.params["instruction"] == words
 
 
 def test_the_stage_refuses_to_redraw_with_no_view(tmp_path, monkeypatch):
@@ -148,3 +149,28 @@ def test_the_stage_refuses_to_redraw_with_no_view(tmp_path, monkeypatch):
 
 def test_the_view_names_match_the_reference():
     assert set(["front", "left", "back", "right"]) <= set(reference.TURNAROUND_VIEWS)
+
+
+# --- one view with words is edited, not redrawn from the concept (the card trial) ----------------------------------
+
+
+def test_one_view_with_words_is_edited_from_its_own_picture(tmp_path, monkeypatch):
+    concept, ta, new, seeds = _parent_with_files(tmp_path, monkeypatch)
+    seen: list[dict] = []
+
+    async def fake_run_views(sc, views, params, source, keep=None, extra="", supplied=None, method=None, edit_views=None):
+        seen.append({"views": views, "edit": edit_views, "method": method})
+
+    monkeypatch.setattr(turnaround, "_run_views", fake_run_views)
+
+    def refine(words, **kw):
+        sc = CopySC(tmp_path, new, FakeDB(concept, ta, new))
+        asyncio.run(turnaround.refine(sc, words, None, None, {}, **kw))
+        return seen[-1]
+
+    one = refine("remove the people", views=["left"])
+    assert one["edit"] == {"left": tmp_path / "parent_left.png"} and one["method"] == "standard"
+    assert refine("Redraw this view", views=["left"])["edit"] is None  # no words: a plain redraw from the concept
+    assert refine("remove the people", views=["left", "back"])["edit"] is None  # several views stay alike: from the concept
+    ta.params["supplied_views"] = ["left"]
+    assert refine("remove the people", views=["left"])["edit"] is None  # the person's own picture is replaced, not edited

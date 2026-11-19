@@ -66,6 +66,8 @@ Running stages (all return {job, version})
   version's views for "all views") or `"view": str` (one). With none named it is a 400 ("Choose which views to
   change"); it never falls back to the front view. Every named view receives `instruction`; the views not named
   are carried forward with the same files and seeds. The new version's `params.refined_views` lists what was redrawn.
+  A change with typed words to exactly one view edits that view's own earlier picture (no turn LoRA; the view's
+  `metrics.views.<view>.method` is `edit`); a plain redraw, several views or all views are drawn from the concept.
   `views` on any other step is a 400.
 - POST /api/versions/{vid}/adjust  body { "params": {...} }
   New version in the same stage with parent = vid, produced by re-running the deterministic part with new params.
