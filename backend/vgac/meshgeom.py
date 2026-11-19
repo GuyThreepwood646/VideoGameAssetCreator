@@ -12,8 +12,9 @@ Calibration (docs are local; bakeoff/wp43): the limits below are the owner's Nut
 Buildings have bad examples to calibrate on; the other routes have good examples only, so their limits are provisional,
 set well above the good results and well below the damage seen on buildings.
 
-BLOCK_ROUTES is the switch that lets this check stop an automatic build (autopilot.STOP_AND_ASK). It is empty: warn only,
-until the limits are calibrated on bad examples from each route (decision D23).
+BLOCK_ROUTES is the switch that lets this check stop an automatic build (autopilot.STOP_AND_ASK). It holds "buildings" (WP-44:
+the five building pairs with the rebuild on pass all three limits, and the five with it off fail them all). Other routes
+stay warn only until they have bad examples to calibrate on (decision D23).
 """
 from __future__ import annotations
 
@@ -43,8 +44,8 @@ LIMITS: dict[str, dict[str, float | None]] = {
     "plants":       {"folded": 0.20, "open": None, "bad_joins": None, "slivers": 0.05, "largest_piece": None},
 }
 
-# Routes where a failed check stops an automatic build (Stop for serious problems). Empty until calibrated.
-BLOCK_ROUTES: frozenset[str] = frozenset()
+# Routes where a failed check stops an automatic build (Stop for serious problems). Buildings only: calibrated on WP-44 pairs.
+BLOCK_ROUTES: frozenset[str] = frozenset({"buildings"})
 
 PROBLEM_WORDS = {
     "folded": "surface folded back on itself along {share} of its edges (up to {limit} is normal)",

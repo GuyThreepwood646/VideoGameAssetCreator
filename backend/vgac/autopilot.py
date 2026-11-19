@@ -131,7 +131,7 @@ def _pose_stop_reason(c: dict[str, Any]) -> str:
 # Entry: stage, check name, a test of the failed check, and the sentence (a format string over value and limit, or a
 # function of the check). The step 1 pose check asks once per picture; see ASK_ON_EXISTING.
 STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
-    # step 3 geometry (vgac/meshgeom.py): off for every route until the limits are calibrated on bad examples (BLOCK_ROUTES empty)
+    # step 3 geometry (vgac/meshgeom.py): stops the automatic build for the routes in BLOCK_ROUTES (buildings, WP-44)
     ("mesh", "model_whole", lambda c: (c.get("vars") or {}).get("stop") is True, MODEL_DAMAGE_STOP_REASON),
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
     ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, _facing_stop_reason),

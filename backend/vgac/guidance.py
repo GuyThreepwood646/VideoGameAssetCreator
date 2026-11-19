@@ -511,7 +511,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The surface has {value:n} open edges, so it may show small holes. Harmless for most game uses.",
     },
     # Step 3 geometry (vgac/meshgeom.py): measured in Blender after joining the texture-seam duplicates. Warn only; whether an
-    # automatic build stops on it is meshgeom.BLOCK_ROUTES (empty until calibrated on bad examples from each route).
+    # automatic build stops on it is meshgeom.BLOCK_ROUTES (buildings only; other routes wait for bad examples).
     "model_whole": {
         "severity": "warn",
         "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
