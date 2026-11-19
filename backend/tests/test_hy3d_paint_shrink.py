@@ -61,3 +61,19 @@ def test_placeholder_without_a_normal_map_when_the_look_keeps_none(tmp_path):
     files = prep.placeholder_maps(tmp_path, 256, keep_normal=False)
     assert "normal" not in files
     assert set(files) == {"base_color", "metallic", "roughness", "ao"}
+
+
+def test_remesh_sits_between_the_raw_mesh_and_the_unwrap():
+    g = hy3d.hy3d_graph(VIEWS, "p", seed=733377461, unwrap_resolution=2048, unwrap_padding=8, remesh=256)
+    assert g["remesh"]["class_type"] == "RemeshMesh"
+    assert g["remesh"]["inputs"]["mesh"] == ["mesh", 0]
+    assert g["remesh"]["inputs"]["resolution"] == 256
+    assert g["remesh"]["inputs"]["sign_mode"] == "solid"
+    assert g["unwrap"]["inputs"]["mesh"] == ["remesh", 0]
+    assert g["glb"]["inputs"]["mesh"] == ["unwrap", 0]
+
+
+def test_no_remesh_unless_asked():
+    g = hy3d.hy3d_graph(VIEWS, "p", seed=733377461, unwrap_resolution=2048, unwrap_padding=8)
+    assert "remesh" not in g
+    assert g["unwrap"]["inputs"]["mesh"] == ["mesh", 0]

@@ -17,7 +17,7 @@ HY3D_VIEWS = ("front", "left", "back", "right")
 def hy3d_graph(names: dict[str, str], prefix: str, steps: int = 50, cfg: float = 5.0, seed: int = 42,
                ckpt: str = "3D Rendering" + BS + "Hunyuan3D-2mv.fp16.safetensors",
                octree_resolution: int = 384, unwrap_resolution: int | None = None,
-               unwrap_padding: int = 8) -> dict[str, Any]:
+               unwrap_padding: int = 8, remesh: int | None = None) -> dict[str, Any]:
     g: dict[str, Any] = {
         "ck": {"class_type": "ImageOnlyCheckpointLoader", "inputs": {"ckpt_name": ckpt}},
         "ms": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["ck", 0], "shift": 1.0}},
@@ -30,9 +30,18 @@ def hy3d_graph(names: dict[str, str], prefix: str, steps: int = 50, cfg: float =
         "glb": {"class_type": "SaveGLB", "inputs": {"mesh": ["mesh", 0], "filename_prefix": prefix}},
     }
     if unwrap_resolution:
-        # UV layout at full detail (the paint and the shrink come later, in prep): TRELLIS.2's own UnwrapMesh (pec),
-        # run on the raw mesh. Off by default, so the bakeoff parity graph is unchanged.
-        g["unwrap"] = {"class_type": "UnwrapMesh", "inputs": {"mesh": ["mesh", 0], "segmenter": "pec", "resolution": int(unwrap_resolution),
+        # UV layout at full detail (the paint and the shrink come later, in prep): TRELLIS.2's own UnwrapMesh (pec).
+        # remesh: TRELLIS.2's RemeshMesh first (solid sign mode) at this grid resolution, so the surface is one closed sheet
+        # and prep's decimation can reach the budget (the raw surface-net output stops near 12,000 triangles). Off by default,
+        # so the bakeoff parity graph is unchanged.
+        src = ["mesh", 0]
+        if remesh:
+            g["remesh"] = {"class_type": "RemeshMesh", "inputs": {"mesh": ["mesh", 0], "resolution": int(remesh), "sign_mode": "solid",
+                                                                  "sign_mode.fill": 20, "sign_mode.qef": False, "band": 1.0, "project_back": 0.0,
+                                                                  "fix_poles": False, "smooth_iters": 20, "drop_small_components": 0.01,
+                                                                  "precluster_max_verts": 20000000}}
+            src = ["remesh", 0]
+        g["unwrap"] = {"class_type": "UnwrapMesh", "inputs": {"mesh": src, "segmenter": "pec", "resolution": int(unwrap_resolution),
                                                               "padding": int(unwrap_padding), "weld_distance": 0.0002}}
         g["glb"]["inputs"]["mesh"] = ["unwrap", 0]
     for view, name in names.items():
