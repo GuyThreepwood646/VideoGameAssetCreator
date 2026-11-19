@@ -57,7 +57,7 @@ scene.render.resolution_x = scene.render.resolution_y = size
 scene.render.resolution_percentage = 100
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.render.film_transparent = True
-scene.display.shading.light = "STUDIO"
+scene.display.shading.light = "FLAT"  # flat light: the render shows the texture's own colours, as in the picture
 scene.display.shading.color_type = "TEXTURE"
 scene.view_settings.view_transform = "Standard"
 
