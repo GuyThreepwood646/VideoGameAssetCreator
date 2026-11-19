@@ -142,6 +142,49 @@ def test_register_checks_the_form(mine):
     assert e.value.status == 409
 
 
+def test_register_picture_edit_lora_is_edit_stage_and_kept_out_of_concept(mine):
+    from vgac import reference, user_addons
+
+    put_file(mine, "edit.safetensors", safetensors_bytes({"modelspec.architecture": "qwen-image-edit-2511/lora"}))
+    e = user_addons.register("edit.safetensors", "Edit look", [reference.EDIT_MODEL])
+    assert e["base_models"] == ["qwen_edit"] and e["warning"] == "" and e["stage"] == "edit"
+    a = reference.addon(e["id"])
+    assert a["stage"] == "edit" and a["made_for"] == "qwen_image_edit"
+    concept = next(s for s in reference.stages() if s["id"] == "concept")
+    assert e["id"] not in [c["id"] for c in next(p for p in concept["adjust_schema"] if p["name"] == "addons")["catalog"]]
+    # never applied to a painter's concept step, applied to picture edits at its strength
+    assert reference.resolve_addons("zturbo", "concept", None, None, {e["id"]: "normal"})["applied"] == []
+    applied = reference.resolve_addons(reference.EDIT_MODEL, "edit", None, None, {e["id"]: "normal"})["applied"]
+    assert [x["id"] for x in applied] == [e["id"]] and applied[0]["value"] == 0.8
+    assert {"id": "qwen_edit", "label": "Picture edits (Qwen-Image-Edit)"} in user_addons.listing()["edit_models"]
+
+
+def test_register_plain_qwen_warns_and_made_for_comes_from_header(mine):
+    from vgac import reference, user_addons
+
+    plain = safetensors_bytes({"modelspec.architecture": "qwen-image/lora"})
+    put_file(mine, "plain.safetensors", plain)
+    e = user_addons.register("plain.safetensors", "Plain", [reference.EDIT_MODEL])
+    assert "Try it at Subtle first" in e["warning"]
+    assert user_addons.listing()["addons"][0]["warning"] == e["warning"]
+    assert reference.addon(e["id"])["made_for"] == "qwen_image"
+    # the form says painter, but the header says plain Qwen-Image: made_for still comes from the header, no edit warning
+    put_file(mine, "plain2.safetensors", plain)
+    p = user_addons.register("plain2.safetensors", "Plain two", ["zturbo"])
+    assert reference.addon(p["id"])["made_for"] == "qwen_image" and p["warning"] == ""
+
+
+def test_register_refuses_mixing_and_other_families_for_edits(mine):
+    from vgac.user_addons import AddonFileError, register
+
+    put_file(mine, "x.safetensors", safetensors_bytes({"modelspec.architecture": "qwen-image-edit/lora"}))
+    with pytest.raises(AddonFileError, match="either for picture edits or for the painters"):
+        register("x.safetensors", "X", ["qwen_edit", "zturbo"])
+    put_file(mine, "z.safetensors", safetensors_bytes({"modelspec.architecture": "z-image-base/lora"}))
+    with pytest.raises(AddonFileError, match="cannot use"):
+        register("z.safetensors", "Z", ["qwen_edit"])
+
+
 # --- resolve_addons and the concept graph ----------------------------------------------------------------------------
 
 
@@ -268,19 +311,28 @@ def test_prefill_leaves_painter_empty_when_unsure(mine_settings, meta, keys, not
     assert out["label"] == "My style v2"
 
 
-@pytest.mark.parametrize("arch,family,note_part,absent_part", [
-    ("qwen-image-edit-2511/lora", "Qwen-Image-Edit", "for its own view and edit steps", "Qwen-Image, which"),
-    ("qwen_image_edit/lora", "Qwen-Image-Edit", "cannot be added there yet", "does not use"),
-    ("qwen-image/lora", "Qwen-Image", "Qwen-Image, which this app does not use", "Qwen-Image-Edit"),
+@pytest.mark.parametrize("arch,family,warn", [
+    ("qwen-image-edit-2511/lora", "Qwen-Image-Edit", False),
+    ("qwen_image_edit/lora", "Qwen-Image-Edit", False),
+    ("qwen-image/lora", "Qwen-Image", True),
 ])
-def test_prefill_tells_qwen_edit_from_plain_qwen_image(mine_settings, arch, family, note_part, absent_part):
-    from vgac.user_addons import prefill
+def test_prefill_reads_qwen_edit_and_plain_qwen_image(mine_settings, arch, family, warn):
+    from vgac.user_addons import QWEN_PLAIN_WARNING, prefill
 
     out = prefill({"modelspec.architecture": arch}, {LORA_KEY: {}}, "q.safetensors")
     assert out["family"] == family
-    assert out["base_models"] == []
-    assert note_part in out["painter_note"]
-    assert absent_part not in out["painter_note"]
+    assert out["base_models"] == ["qwen_edit"]
+    assert out["painter_note"] == ""
+    assert out["warning"] == (QWEN_PLAIN_WARNING if warn else "")
+    if warn:
+        assert "Try it at Subtle first" in out["warning"]
+
+
+def test_prefill_reads_qwen_edit_from_file_name(mine_settings):
+    from vgac.user_addons import prefill
+
+    out = prefill({}, {LORA_KEY: {}}, "qwen-image-edit_inkstyle.safetensors")
+    assert out["family"] == "Qwen-Image-Edit" and out["base_models"] == ["qwen_edit"] and out["warning"] == ""
 
 
 def test_clay_name_is_not_read_as_anima(mine_settings):

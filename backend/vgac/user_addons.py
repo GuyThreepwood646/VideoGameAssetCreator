@@ -195,19 +195,19 @@ NAME_FIELDS = ("modelspec.title", "name", "ss_output_name")
 TRIGGER_FIELDS = ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "trigger_word", "ss_trigger",
                   "activation_text", "instance_prompt")
 UNSURE = "We could not tell which model this was made for."
-QWEN_EDIT = "Qwen-Image-Edit"
-QWEN_EDIT_NOTE = ("It looks like it was made for Qwen-Image-Edit. This app already uses Qwen-Image-Edit for its own "
-                  "view and edit steps, with its own fixed LoRAs only, so your own LoRAs cannot be added there yet. "
-                  "It will probably not work with any of these models.")
-# Families this app has no painter for, by the words their metadata uses.
+QWEN_EDIT_FAMILY = "Qwen-Image-Edit"
+QWEN_FAMILY = "Qwen-Image"
+QWEN_EDIT_RE = re.compile(r"qwen[-_ ]?image[-_ ]?edit")
+QWEN_RE = re.compile(r"qwen[-_ ]?image")
+# Shown on a LoRA made for plain Qwen-Image that is used for picture edits (made_for "qwen_image").
+QWEN_PLAIN_WARNING = ("This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. "
+                      "It may only partly work, or change results in ways you do not expect. Try it at Subtle first.")
+# Families this app has no painter for, by the words their metadata uses. The Qwen families are read in prefill().
 OTHER_FAMILIES = (
     (re.compile(r"sdxl|stable-diffusion-xl|sd_xl|\bxl\b|pony|illustrious|noob"), "Stable Diffusion XL"),
     (re.compile(r"sd[-_ ]?1|stable-diffusion-v1|sd[-_ ]?v1|sd[-_ ]?15|sd 1\.5"), "Stable Diffusion 1.5"),
     (re.compile(r"sd[-_ ]?3|stable-diffusion-3"), "Stable Diffusion 3"),
     (re.compile(r"flux[-_. ]?1|flux[-_. ]?dev|flux[-_. ]?schnell"), "FLUX.1"),
-    # Qwen-Image-Edit first: the plain Qwen-Image pattern would catch it too.
-    (re.compile(r"qwen[-_ ]?image[-_ ]?edit"), QWEN_EDIT),
-    (re.compile(r"qwen[-_ ]?image"), "Qwen-Image"),
     (re.compile(r"\bwan\b|wan[-_ ]?2"), "Wan (video)"),
     (re.compile(r"hunyuan"), "Hunyuan"),
     (re.compile(r"\bltx"), "LTX (video)"),
@@ -288,10 +288,11 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     both = arch + " " + names
     title = _clean_line(meta.get("modelspec.title"), MAX_LABEL_CHARS)
     out: dict[str, Any] = {"label": title or _label_from_name(file_name), "base_models": [], "trigger": _trigger(meta),
-                           "family": "", "painter_note": ""}
+                           "family": "", "painter_note": "", "warning": ""}
     picks: list[str] = []
     note = ""
     family = ""
+    warning = ""
     zimage = re.search(r"z[-_. ]?image", both) is not None
     if zimage:
         family = "Z-Image"
@@ -313,12 +314,16 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
         family, picks = "Chroma", ["chroma"]
     elif re.search(r"\banima\b", arch):
         family, picks = "Anima", ["anima"]
+    elif QWEN_EDIT_RE.search(both):
+        family, picks = QWEN_EDIT_FAMILY, [reference.EDIT_MODEL]
+    elif QWEN_RE.search(both):
+        family, picks = QWEN_FAMILY, [reference.EDIT_MODEL]
+        warning = QWEN_PLAIN_WARNING
     else:
         for pattern, fam in OTHER_FAMILIES:
             if pattern.search(arch):
                 family = fam
-                note = (QWEN_EDIT_NOTE if fam == QWEN_EDIT else
-                        f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models.")
+                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models."
                 break
     if not family:
         family = _family_from_keys(tensors)
@@ -326,10 +331,10 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
             note = "It looks like it was made for Stable Diffusion, which this app does not use. It will probably not work with any of these models."
         elif family:
             note = UNSURE + f" It looks like a {family} LoRA."
-    picks = [p for p in picks if p in painters]
+    picks = [p for p in picks if p in painters or p == reference.EDIT_MODEL]
     if not picks and not note:
         note = UNSURE
-    out.update(base_models=picks, family=family, painter_note=note)
+    out.update(base_models=picks, family=family, painter_note=note, warning=warning)
     return out
 
 
@@ -357,14 +362,20 @@ def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
     name = f[len(MINE_PREFIX):]
     if not name or "/" in name or "\\" in name or ".." in name:
         return None
+    from . import reference
+
     strength = a.get("default_strength") if a.get("default_strength") in STRENGTHS else "normal"
     models = [m for m in a.get("base_models") or [] if isinstance(m, str)]
     labels = ", ".join(models)
     label = _clean_line(a.get("label"), MAX_LABEL_CHARS) or _label_from_name(name)
+    edit = models == [reference.EDIT_MODEL]
+    made_for = a.get("made_for") if a.get("made_for") in ("qwen_image", "qwen_image_edit") else ""
     return {
-        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models, "stage": "concept",
+        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models,
+        "stage": "edit" if edit else "concept",
         "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
         "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
+        "made_for": made_for, "warning": QWEN_PLAIN_WARNING if edit and made_for == "qwen_image" else "",
         "mine": True, "added_at": a.get("added_at") or "",
         "help": {"meaning": f"Your own LoRA, from the file {name}.",
                  "why": "You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.",
@@ -420,7 +431,8 @@ def _builtin_ids() -> set[str]:
 def public(a: dict[str, Any]) -> dict[str, Any]:
     from . import reference
 
-    return {**reference.addon_public(a), "mine": True, "file_name": a.get("file_name") or "", "added_at": a.get("added_at") or ""}
+    return {**reference.addon_public(a), "mine": True, "file_name": a.get("file_name") or "", "added_at": a.get("added_at") or "",
+            "warning": a.get("warning") or ""}
 
 
 def register(file_name: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal",
@@ -430,17 +442,25 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
     from . import reference
 
     path = _existing_file(file_name)
-    read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
+    meta, tensors = read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
     label = _clean_line(label, MAX_LABEL_CHARS)
     if not label:
         raise AddonFileError("Give the LoRA a name.")
     painters = list(reference.concept_models())
+    edit = reference.EDIT_MODEL
     models = [m for m in dict.fromkeys(base_models or [])]
     if not models:
         raise AddonFileError("Choose at least one model the LoRA was made for.")
-    bad = [m for m in models if m not in painters]
+    if edit in models and len(models) > 1:
+        raise AddonFileError("A LoRA is either for picture edits or for the painters, not both. Add it twice to use it both ways.")
+    bad = [m for m in models if m not in painters and m != edit]
     if bad:
         raise AddonFileError(f"Unknown model: {', '.join(bad)}.")
+    # What the header (and file name) says it was made for, read the same way the form's prefill reads it.
+    fam = prefill(meta, tensors, path.name)["family"]
+    made_for = "qwen_image_edit" if fam == QWEN_EDIT_FAMILY else "qwen_image" if fam == QWEN_FAMILY else ""
+    if edit in models and fam and not made_for:
+        raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
     if default_strength not in STRENGTHS:
         raise AddonFileError("The starting strength must be Subtle, Normal or Strong.")
     if len(trigger or "") > MAX_TRIGGER_CHARS * 2 or len(source or "") > MAX_SOURCE_CHARS * 2:
@@ -453,7 +473,7 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
         taken = {str(a.get("id")) for a in items} | _builtin_ids()
         entry = {"id": _new_id(label, taken), "label": label, "file": fv, "base_models": models,
                  "trigger": _clean_line(trigger, MAX_TRIGGER_CHARS), "default_strength": default_strength,
-                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True,
+                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True, "made_for": made_for,
                  "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         items.append(entry)
         _write_raw(items)
@@ -482,7 +502,8 @@ def listing() -> dict[str, Any]:
     folder = mine_dir() if get_settings().loras_dir is not None else None
     return {"addons": [public(a) for a in entries() if a["id"] not in builtin], "folder": str(folder or ""),
             "folder_exists": bool(folder and folder.is_dir()), "strengths": dict(STRENGTHS),
-            "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()]}
+            "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()],
+            "edit_models": [{"id": reference.EDIT_MODEL, "label": "Picture edits (Qwen-Image-Edit)"}]}
 
 
 def unregistered() -> list[dict[str, Any]]:
