@@ -24,7 +24,7 @@ import { Info } from '../components/Info'
 import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STAGES as STAGE_LIST } from '../api'
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
-import { preferredConceptModel } from '../guide'
+import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
@@ -91,7 +91,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
   const canRun = !prev || !!prevSelected
-  const [count, setCount] = useState(2)
+  const [count, setCount] = useState(conceptCountDefault)
   const [busy, setBusy] = useState(false)
   const [changeOpen, setChangeOpen] = useState(false)
   // Settings chosen for the first build of this step (shown while it has no versions); the build buttons send them.
@@ -285,6 +285,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onOpenTool={openTool}
         onChanged={onChanged}
         firstParams={versions.length === 0 ? (firstParams?.params ?? null) : null}
+        count={count}
       />
 
       {(() => {
@@ -338,6 +339,26 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             <div className="muted small first-build-intro">
               <strong>Settings for the first build.</strong> These start at the usual settings for your look and platform. Change any of them before you build. The buttons above use them too, both {stageVerb(stage, stageInfo)} and Make it{firstParams ? ` (changed: ${firstParams.names.join(', ')})` : ''}.
             </div>
+            {stage === 'concept' && (
+              <div className="concept-count">
+                <label>
+                  Pictures to draw: 1 or 2{' '}
+                  <select
+                    value={count === 1 ? 1 : 2}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const n = Number(e.target.value)
+                      setCount(n)
+                      rememberConceptCount(n)
+                    }}
+                  >
+                    <option value={2}>2 pictures</option>
+                    <option value={1}>1 picture</option>
+                  </select>
+                </label>
+                <span className="muted small">Two pictures give you a choice. One picture is faster.</span>
+              </div>
+            )}
             <FineTune
               stage={stage}
               schema={schema}
@@ -348,7 +369,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
               disabled={busy || state === 'running'}
               onSubmit={runFirst}
               onPending={(params, names) => setFirstParams(params ? { params, names } : null)}
-              submitLabel={`${stageVerb(stage, stageInfo)} with these settings`}
+              submitLabel={stage === 'concept' ? `${conceptCountLabel(count)} with these settings` : `${stageVerb(stage, stageInfo)} with these settings`}
             />
           </div>
         ))}

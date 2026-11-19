@@ -332,7 +332,7 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
 MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs",
-                "idle_source", "head_sway")
+                "idle_source", "head_sway", "arm_pose")
 # anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
 # keys are never present, so listing them changes nothing there.
 ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
@@ -543,6 +543,13 @@ def chosen_moves_of(category: dict[str, Any], params: dict[str, Any]) -> Any:
     return v
 
 
+def gait_arm_pose(params: dict[str, Any]) -> str:
+    """The arm_pose setting (close, relaxed or open; relaxed when empty). Unknown values raise ValueError."""
+    from ..blender import gait
+
+    return gait.arm_pose_choice(params.get("arm_pose"))
+
+
 async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | None = None) -> None:
     """The moves: procedural clips per category (motion and moves: G30, G31), then for humanoids the hand-made CC0
     library clips retargeted onto the skeleton (retarget.py; clips_source auto or library), which replace the
@@ -566,8 +573,10 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         args += ["--size", str(params["move_size"])]
     if params.get("move_speed"):
         args += ["--speed", str(params["move_speed"])]
+    arm_pose = gait_arm_pose(params)
+    args += ["--arm-pose", arm_pose]
     sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params),
-                  idle_source=params["idle_source"])
+                  idle_source=params["idle_source"], arm_pose=arm_pose)
     try:
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)

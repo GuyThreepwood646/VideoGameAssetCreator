@@ -23,6 +23,7 @@ from . import pipeline
 from .db import SET_ASIDE_ERROR, Asset, Version, _iso, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .jobs import active_queue
+from . import reference
 from .reference import STAGE_ORDER
 
 log = logging.getLogger(__name__)
@@ -372,13 +373,13 @@ async def _run(aid: str) -> None:
                     replaced = base if fix.get("op") == "refine" else (kept if kept is not None and kept.status == "done" else None)
                     fallback = kept.id if kept is not None and kept.status == "done" else None
                     if fix.get("op") == "refine" and base is not None:
-                        inherited = {k: val for k, val in base.params.items() if k != "reference_experimental"}
+                        inherited = {k: val for k, val in reference.inherited_params(fstage, base.params).items() if k != "reference_experimental"}
                         v = pipeline.new_version(db, a, fstage, base, {**inherited, **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "refine", {"instruction": fix["instruction"], "view": None, "mask_png": None,
                                                                     "params": fix.get("params") or {}})
                         pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
                     elif kept is not None and kept.status == "done":
-                        v = pipeline.new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
+                        v = pipeline.new_version(db, a, fstage, kept, {**reference.inherited_params(fstage, kept.params), **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
                         pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
                     else:
