@@ -582,7 +582,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
   const extra = face ? { face_closeup: true } : {}
   if (face) faceCloseups.set(a.id, { image: face.image, updated: Math.floor(Date.now() / 1000) })
   const own = typeof body.image === 'string' ? body.image : null
-  if (features.length && (!own || features.some((f) => f.role !== 'face'))) return { ...a, ...extra, compose: composeConcept(a, features, own) }
+  if (features.length && (!own || features.some((f) => f.role !== 'face'))) return { ...a, ...extra, compose: composeConcept(a, features, own, body.edit_addons as Record<string, string> | undefined) }
   if (own) return { ...a, ...extra, upload: uploadConcept(a, own, null) }
   return { ...a, ...extra }
 })
@@ -690,6 +690,10 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
     params.refined_view = views[0]
   }
   delete params.reference_experimental
+  // This refine's own LoRA choice; the parent's is not inherited (backend refine).
+  if (body.edit_addons) params.edit_addons = body.edit_addons
+  else delete params.edit_addons
+  delete params.edit_addons_applied
   if (params.source === 'upload') params.source = 'upload_edit'
   const reference = typeof body.reference_image === 'string' ? body.reference_image : null
   if (reference) {
@@ -698,6 +702,7 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
     params.reference_experimental = true
   }
   const v = newVersion(asset, version.stage, version.id, params)
+  if (body.edit_addons) v.metrics = { ...v.metrics, edit_addons: mockEditRecord(body.edit_addons as Record<string, string>) }
   if (reference) v.files.reference = putUpload(v, 'reference', reference)
   const job = startJob(asset, v, `${version.stage}.refine`)
   return { job: clone(job), version: clone(v) }
@@ -756,13 +761,36 @@ function checkFeatures(category: string, raw: unknown): Feature[] {
   })
 }
 // One concept version for all the pictures (backend compose.start): one job, so step 1 shows one run.
-function composeConcept(a: Asset, features: Feature[], own: string | null) {
+function composeConcept(a: Asset, features: Feature[], own: string | null, editAddons?: Record<string, string>) {
   const pics = [...(own ? [{ role: 'character', image: own, note: null }] : []), ...features]
-  const v = newVersion(a, 'concept', null, { source: 'compose', compose_roles: pics.map((f) => ({ role: f.role, note: f.note })), words: a.prompt.trim() || null, model: 'qwen_edit', seed: Math.floor(Math.random() * 100000) })
+  const v = newVersion(a, 'concept', null, { source: 'compose', compose_roles: pics.map((f) => ({ role: f.role, note: f.note })), words: a.prompt.trim() || null, model: 'qwen_edit', seed: Math.floor(Math.random() * 100000), ...(editAddons ? { edit_addons: editAddons } : {}) })
+  if (editAddons) v.metrics = { ...v.metrics, edit_addons: mockEditRecord(editAddons) }
   pics.forEach((f, i) => (v.files[`compose_${i + 1}`] = putUpload(v, `compose_${i + 1}`, f.image)))
   const job = startJob(a, v, 'concept.compose')
   return { job: clone(job), version: clone(v) }
 }
+// The record one use keeps for the person's LoRAs (picture_loras.edit_loras): applied, ignored and unknown.
+function mockEditRecord(choices: Record<string, string> | null | undefined): Record<string, unknown> {
+  const chosen = Object.entries(choices ?? {}).filter(([, c]) => c !== 'off')
+  if (chosen.length > EDIT_LORA_MAX) throw new HttpError(400, `edit_addons: at most ${EDIT_LORA_MAX} of your LoRAs can be used at once in one step`)
+  const applied: { id: string; label: string; strength: string; value: number }[] = []
+  const ignored: { id: string; reason: string }[] = []
+  const unknown: string[] = []
+  for (const [id, c] of chosen) {
+    const entry = myAddons.find((a) => a.id === id && (a.stage as string) === 'edit')
+    if (!entry) {
+      unknown.push(id)
+      continue
+    }
+    if (!mockAddonFiles.some((f) => f.file_name === entry.file_name)) {
+      ignored.push({ id, reason: 'its file is no longer in the LoRA folder' })
+      continue
+    }
+    applied.push({ id, label: entry.label, strength: c, value: MOCK_ADDON_STRENGTHS[c as StrengthName] })
+  }
+  return { applied, ignored, unknown }
+}
+
 // Your own close-up of the face (backend own_images.py), kept per asset.
 const faceCloseups = new Map<string, { image: string; updated: number }>()
 const closeupState = (aid: string) => {
