@@ -1238,6 +1238,18 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                           if _var(c, "version") and not _var(c, "kept_anyway") else None),
         "fix_label": "Use the redraw anyway",
     },
+    # The same guard after the two other redraws that could add or take off clothing (WP-09): the hand redraw before the
+    # 3D build (vars.words says which picture is in use) and the whole-figure "Redraw it ready for 3D".
+    "hand_guard": {
+        "severity": "warn",
+        "ok": lambda c: _braces(_var(c, "words") or "The hand redraw kept what your character wears."),
+        "fail": lambda c: _braces(_var(c, "words") or "The hand redraw changed your character, so your own picture was used."),
+    },
+    "redraw_guard": {
+        "severity": "warn",
+        "ok": lambda c: _braces(_var(c, "words") or "The redraw kept what your character wears."),
+        "fail": lambda c: _braces(_var(c, "words") or "The redraw changed what your character wears or its colours."),
+    },
     "head_build": {
         "severity": "warn",
         "ok": lambda c: "The head was built on its own and joined to the body at the neck, so the face is much sharper.",
