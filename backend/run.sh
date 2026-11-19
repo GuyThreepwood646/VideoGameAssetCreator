@@ -6,4 +6,6 @@ if [ -x .venv/Scripts/python.exe ]; then
 else
   PY=.venv/bin/python
 fi
+# The start gate (vgac/move_gate.py): refuse while a move of the big files is unfinished or unreadable.
+"$PY" -m vgac.move_gate || exit 1
 exec "$PY" -m uvicorn vgac.main:app --host 127.0.0.1 --port 8765 --reload

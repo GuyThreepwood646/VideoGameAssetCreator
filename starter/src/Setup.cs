@@ -50,11 +50,38 @@ namespace Vgac.Starter
             return Path.Combine(projectRoot, "local", "data");
         }
 
+        // How a data folder is written to the settings: relative to the project when it lies inside it (so the settings follow a project
+        // that is moved), else absolute.
+        public static string Stored(string projectRoot, string folder)
+        {
+            string full = Path.GetFullPath(folder).TrimEnd('\\');
+            string root = Path.GetFullPath(projectRoot).TrimEnd('\\');
+            if (full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) return full.Substring(root.Length + 1);
+            return full;
+        }
+
+        // The one rule for %NAME% in a folder setting, the same in the backend (comfy_install.expand_percent): a folder that exists under
+        // exactly this name is taken as it is; else %NAME% is the environment variable, except the families the backend's commands run
+        // without (VGAC_, UV_, PIP_, PYTHON, VIRTUAL_ENV, CONDA_), which stay as written. Nothing else is expanded.
+        public static string ExpandSetting(string text)
+        {
+            if (text.IndexOf('%') < 0 || Directory.Exists(text)) return text;
+            return System.Text.RegularExpressions.Regex.Replace(text, "%([^%]+)%", delegate(System.Text.RegularExpressions.Match m)
+            {
+                string name = m.Groups[1].Value;
+                string up = name.ToUpperInvariant();
+                foreach (string pre in new[] { "VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_" }) if (up.StartsWith(pre)) return m.Value;
+                string v = Environment.GetEnvironmentVariable(name);
+                return v ?? m.Value;
+            });
+        }
+
         // The data folder: the person's choice in machine.json, else local/data in the project. Relative values are
         // read against the project folder.
         public static Layout From(string projectRoot, MachineFile machine)
         {
             string chosen = machine.GetString("starter", "dataFolder");
+            if (!string.IsNullOrEmpty(chosen)) chosen = ExpandSetting(chosen);
             string data = string.IsNullOrEmpty(chosen) ? DefaultDataFolder(projectRoot)
                 : (Path.IsPathRooted(chosen) ? chosen : Path.Combine(projectRoot, chosen));
             return new Layout(projectRoot, data);
@@ -75,6 +102,8 @@ namespace Vgac.Starter
         public string StateRequirements;
         public string StateLock;
         public string StateSource;
+        public string StateData;       // the data folder the install was made with (null in older records)
+        public string DataFolder;      // the data folder now
     }
 
     public static class Planner
@@ -83,7 +112,8 @@ namespace Vgac.Starter
         public static List<string> Plan(Probe p, string projectRoot)
         {
             var steps = new List<string>();
-            bool moved = p.StateProject != null && !SamePath(p.StateProject, projectRoot);
+            bool moved = (p.StateProject != null && !SamePath(p.StateProject, projectRoot))
+                || (p.StateData != null && p.DataFolder != null && !SamePath(p.StateData, p.DataFolder));   // the venv points into both
             bool venv = !p.VenvPythonPresent || moved;
             bool packages = venv || p.StateRequirements != p.RequirementsHash;
             bool screens = !p.DistPresent || p.StateLock != p.LockHash || p.StateSource != p.SourceHash;
@@ -119,6 +149,7 @@ namespace Vgac.Starter
         public static Probe Read(Layout l, IHost host)
         {
             var p = new Probe();
+            p.DataFolder = l.DataFolder;
             p.UvPresent = File.Exists(l.UvExe);
             p.VenvPythonPresent = File.Exists(l.VenvPython);
             p.DistPresent = File.Exists(l.DistIndex);
@@ -135,6 +166,7 @@ namespace Vgac.Starter
                     p.StateRequirements = Str(d, "requirements");
                     p.StateLock = Str(d, "lock");
                     p.StateSource = Str(d, "source");
+                    p.StateData = Str(d, "dataFolder");
                 }
                 catch (Exception) { /* unreadable state means "not installed yet": the steps run again */ }
             }
@@ -240,13 +272,27 @@ namespace Vgac.Starter
 
         string StepLog(string name) { return Path.Combine(l.ProjectRoot, "runtime", "logs", "setup-" + name + ".log"); }
 
-        public void Run(List<string> steps, Progress prog)
+        public void Run(List<string> steps, Progress prog) { Run(steps, prog, true); }
+
+        // `stamp` false: the run is a repair of one part, so it must not claim that everything else is up to date.
+        public void Run(List<string> steps, Progress prog, bool stamp)
         {
             if (steps.Count == 0) { return; }
             if (!File.Exists(l.Requirements) || !Directory.Exists(l.FrontendDir))
                 throw new StarterError("This folder does not look like the VGAC project (backend\\requirements.txt or frontend is missing).",
                     "Clone the project again, or put VGAC.exe back in the project folder.");
-            Directory.CreateDirectory(l.DataFolder);
+            // The folder for the big files is VGAC's only when it carries VGAC's marker for this install. It is checked at every setup,
+            // not only when it was chosen: a setting from an earlier version, or one edited by hand, can name a drive root or a shared
+            // place, or a folder full of somebody's files. A new or empty folder is claimed here, BEFORE any step puts anything in it,
+            // so an interrupted setup can always be continued. Anything else stops here (NotClaimedError) and nothing is changed.
+            string gateWhy = MoveGate.Blocking(l.ProjectRoot);
+            if (gateWhy != null) throw new StarterError(gateWhy, "Nothing was changed.");
+            // a folder the person chose (not the default inside the project) must not lie under a link either
+            if (!Planner.SamePath(l.DataFolder, Layout.DefaultDataFolder(l.ProjectRoot)) && MoveRules.LinkInPath(l.DataFolder))
+                throw new StarterError("The folder for the big files (" + l.DataFolder + ") is, or lies under, a link, so VGAC will not set up in it.", "Choose a real folder (Choose another folder).");
+            bool existed = Directory.Exists(l.DataFolder);
+            DataFolders.Claim(l.DataFolder, machine, l.ProjectRoot);
+            if (!existed) ledger.Add("The folder for the big files", l.DataFolder, "folder", 0);   // removed later only if nothing but the marker is left
             long free = host.FreeBytes(l.DataFolder);
             if (free >= 0 && free < Pins.NeedBytes)
                 throw new StarterError("Setup needs about " + (Pins.NeedBytes >> 30) + " GB; the drive of " + l.DataFolder + " has " + (free >> 20) + " MB free.",
@@ -262,7 +308,15 @@ namespace Vgac.Starter
                 log.Line("step " + steps[i] + " done");
             }
             prog.Fraction(1.0);
-            WriteStamps();
+            if (stamp) WriteStamps(); else ledger.Save();
+        }
+
+        // A half-unpacked or put-aside folder of this program's, by its fixed name, inside the claimed folder for the big files.
+        void ClearStaging(string folder)
+        {
+            if (!Directory.Exists(folder)) return;
+            if (SafeFs.IsLink(folder)) throw new StarterError("The folder " + folder + " is a link, so VGAC will not use or clear it.", "Remove it yourself, then try again.");
+            SafeFs.DeleteTree(folder);
         }
 
         void RunStep(string step, Progress prog)
@@ -273,11 +327,24 @@ namespace Vgac.Starter
                 case "node": FetchNode(prog); break;
                 case "venv":
                     // A venv made in another folder holds that folder's path; make it again here.
-                    if (Directory.Exists(l.Venv)) Directory.Delete(l.Venv, true);
-                    Exec(l.UvExe, "venv \"" + l.Venv + "\" --python " + Pins.PythonVersion, l.ProjectRoot, UvEnv(), "venv",
-                        "Could not make the app's Python", "Check that this computer is online (github.com and the Python download host), then try again.");
+                    // The old one is put aside, not deleted, until the new one exists; if making it fails the old one comes back.
+                    string venvOld = l.Venv + "-old";
+                    if (Directory.Exists(venvOld)) SafeFs.DeleteTree(venvOld);
+                    bool hadVenv = Directory.Exists(l.Venv);
+                    if (hadVenv) SafeFs.MoveDir(l.Venv, venvOld);
+                    try
+                    {
+                        Exec(l.UvExe, "venv \"" + l.Venv + "\" --python " + Pins.PythonVersion, l.ProjectRoot, UvEnv(), "venv",
+                            "Could not make the app's Python", "Check that this computer is online (github.com and the Python download host), then try again.");
+                        if (!File.Exists(l.VenvPython)) throw new StarterError("The app's new Python did not come out right.", "Try again.");
+                    }
+                    catch (Exception)
+                    {
+                        if (hadVenv) { if (Directory.Exists(l.Venv)) SafeFs.DeleteTree(l.Venv); SafeFs.MoveDir(venvOld, l.Venv); }
+                        throw;
+                    }
+                    if (hadVenv) SafeFs.DeleteTree(venvOld);
                     ledger.Add("The app's Python environment", l.Venv, "added", 0);
-                    ledger.Add("The app's private Python " + Pins.PythonVersion, l.PythonDir, "added", 0);
                     break;
                 case "packages":
                     Exec(l.UvExe, "pip install --python \"" + l.VenvPython + "\" -r \"" + l.Requirements + "\"", l.ProjectRoot, UvEnv(), "packages",
@@ -290,8 +357,12 @@ namespace Vgac.Starter
                     env["PATH"] = Path.GetDirectoryName(node) + ";" + Environment.GetEnvironmentVariable("PATH");
                     Exec("cmd.exe", "/d /c npm ci --no-audit --no-fund", l.FrontendDir, env, "screens-install",
                         "Could not fetch the screens' packages", "Check that this computer is online (registry.npmjs.org), then try again.");
-                    Exec("cmd.exe", "/d /c npm run build", l.FrontendDir, env, "screens-build",
+                    // Built beside the current screens and swapped in with two renames, so a running app never sees a half-built folder.
+                    if (Directory.Exists(Path.Combine(l.FrontendDir, DistSwap.NewName))) SafeFs.DeleteTree(Path.Combine(l.FrontendDir, DistSwap.NewName));
+                    Exec("cmd.exe", "/d /c npm run build -- --outDir " + DistSwap.NewName + " --emptyOutDir", l.FrontendDir, env, "screens-build",
                         "Could not build the screens", "Open the log to see the error; the app itself still works from its last build, if there is one.");
+                    string swapProblem = DistSwap.Swap(l.FrontendDir);
+                    if (swapProblem != null) throw new StarterError(swapProblem, "Try again; the app still works from its last build, if there is one.");
                     break;
                 default: throw new StarterError("Unknown setup step: " + step);
             }
@@ -317,15 +388,38 @@ namespace Vgac.Starter
             log.Line("download " + url + " -> " + zip);
             host.Download(url, zip, sha, delegate(long got, long total) { prog.Say(Planner.Plain(what == "uv" ? "uv" : "node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
             string tmp = targetDir + ".new";
-            if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+            ClearStaging(tmp);
             host.Unzip(zip, tmp);
             // uv's zip holds the files at its top level.
-            if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
-            Directory.CreateDirectory(Path.GetDirectoryName(targetDir));
-            Directory.Move(tmp, targetDir);
-            if (!File.Exists(mustExist)) throw new StarterError("The downloaded " + what + " did not hold the file it should (" + Path.GetFileName(mustExist) + ").", "Try again.");
-            ledger.Add(what, targetDir, "added", new FileInfo(zip).Length);
+            SwapFolder(tmp, targetDir, mustExist, "The downloaded " + what + " did not hold the file it should (" + Path.GetFileName(mustExist) + ").");
             File.Delete(zip);
+        }
+
+        // The new folder replaces the old one by renames: the old one is put aside, the new one moved in and checked, and
+        // only then is the old one deleted. If the new one is not right the old one gets its name back.
+        void SwapFolder(string fresh, string target, string mustExist, string whenWrong)
+        {
+            string aside = target + ".old";
+            ClearStaging(aside);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            bool had = Directory.Exists(target);
+            if (had) SafeFs.MoveDir(target, aside);
+            try
+            {
+                SafeFs.Point("swapfolder", target);
+                SafeFs.MoveDir(fresh, target);
+                if (!File.Exists(mustExist)) throw new StarterError(whenWrong, "Try again.");
+            }
+            catch (Exception)
+            {
+                if (had)
+                {
+                    if (Directory.Exists(target)) SafeFs.DeleteTree(target);
+                    SafeFs.MoveDir(aside, target);
+                }
+                throw;
+            }
+            if (Directory.Exists(aside)) SafeFs.DeleteTree(aside);
         }
 
         void FetchNode(Progress prog)
@@ -335,18 +429,14 @@ namespace Vgac.Starter
             log.Line("download " + Pins.NodeUrl + " -> " + zip);
             host.Download(Pins.NodeUrl, zip, Pins.NodeSha256, delegate(long got, long total) { prog.Say(Planner.Plain("node") + " (" + (got >> 20) + " of " + (total >> 20) + " MB)..."); });
             string tmp = l.NodeDir + ".new";
-            if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+            ClearStaging(tmp);
             host.Unzip(zip, tmp);
             // Node's zip holds one folder (node-v22...-win-x64): its contents become the node folder.
             string inner = tmp;
             string[] subs = Directory.GetDirectories(tmp);
             if (subs.Length == 1 && !File.Exists(Path.Combine(tmp, "node.exe"))) inner = subs[0];
-            if (Directory.Exists(l.NodeDir)) Directory.Delete(l.NodeDir, true);
-            Directory.CreateDirectory(Path.GetDirectoryName(l.NodeDir));
-            Directory.Move(inner, l.NodeDir);
+            SwapFolder(inner, l.NodeDir, Path.Combine(l.NodeDir, "node.exe"), "The downloaded Node.js did not hold node.exe.");
             if (inner != tmp && Directory.Exists(tmp)) Directory.Delete(tmp, true);
-            if (!File.Exists(Path.Combine(l.NodeDir, "node.exe"))) throw new StarterError("The downloaded Node.js did not hold node.exe.", "Try again.");
-            ledger.Add("Node.js (used to build the screens)", l.NodeDir, "added", new FileInfo(zip).Length);
             File.Delete(zip);
         }
 
@@ -359,11 +449,9 @@ namespace Vgac.Starter
             d["requirements"] = p.RequirementsHash;
             d["lock"] = p.LockHash;
             d["source"] = p.SourceHash;
+            d["dataFolder"] = l.DataFolder;
             Directory.CreateDirectory(Path.GetDirectoryName(l.StatePath));
-            string tmp = l.StatePath + ".tmp";
-            File.WriteAllText(tmp, Json.Write(d), new UTF8Encoding(false));
-            if (File.Exists(l.StatePath)) File.Delete(l.StatePath);
-            File.Move(tmp, l.StatePath);
+            SafeFs.WriteAtomic(l.StatePath, Json.Write(d), null);
             // Only a folder the person chose is recorded; the default stays implicit so the project can be moved.
             if (!Planner.SamePath(l.DataFolder, Layout.DefaultDataFolder(l.ProjectRoot)) && machine.GetString("starter", "dataFolder") == null)
             {
