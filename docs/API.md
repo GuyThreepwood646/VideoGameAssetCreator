@@ -299,7 +299,8 @@ found (`_L` is the character's own left).
 - `PUT /api/versions/{vid}/marks` `{moves?: [{view, joint, x, y}], accept?: bool}`: your moves go in their own layer
   (the app's marks are kept); `accept` says the marks look right as they stand. Same answer as GET. 400 for an unknown
   view or mark, a position off the picture, or nothing to change.
-- `POST /api/versions/{vid}/marks/reset` `{view?}`: your moves dropped (on one picture, or all) and any accept.
+- `POST /api/versions/{vid}/marks/reset` `{view?, joint?}`: your moves dropped (one mark, one picture, or all) and any
+  accept. Dropping a mark the app did not see takes it off the picture again. 400 for a `joint` without a `view`.
 - A new step 2 version drawn from another (a redraw, your own view, an added view, Fine-tune) carries the marks: only the
   views drawn again are found again; your moves on them are kept and marked `stale` until moved again or accepted.
 - `body_marks` is a warning. Autopilot stops on it only when `bodymarks.STOP_WHEN_UNSURE` is on or the version's

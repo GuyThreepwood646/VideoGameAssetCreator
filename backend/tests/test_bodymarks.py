@@ -529,6 +529,23 @@ def test_put_moves_accept_and_reset(api):
     assert v["metrics"]["body_marks"]["edited"] == 0
 
 
+def test_reset_one_mark_takes_a_placed_unseen_mark_off_again(api):
+    client, ids, _ = api
+    vid = ids[("humanoid", "done")]
+    body = client.get(f"/api/versions/{vid}/marks").json()
+    view, joint, at = next((v, j, p) for v, ps in body["placeholders"].items() for j, p in ps.items())
+    r = client.put(f"/api/versions/{vid}/marks", json={"moves": [{"view": view, "joint": joint, **at},
+                                                                   {"view": "front", "joint": "knee_L", "x": 600, "y": 700}]})
+    assert r.json()["marks"][view][joint]["source"] == "you" and joint not in r.json()["placeholders"].get(view, {})
+    r = client.post(f"/api/versions/{vid}/marks/reset", json={"view": view, "joint": joint})
+    assert r.status_code == 200, r.text
+    m = r.json()["marks"][view][joint]
+    assert m["source"] == "app" and m["x"] is None and joint in r.json()["placeholders"][view]
+    assert r.json()["marks"]["front"]["knee_L"]["source"] == "you", "only that one mark is put back"
+    assert client.post(f"/api/versions/{vid}/marks/reset", json={"joint": "knee_L"}).status_code == 400
+    assert client.post(f"/api/versions/{vid}/marks/reset", json={"view": "front", "joint": "liver"}).status_code == 400
+
+
 @pytest.mark.parametrize("payload, status", [
     ({"moves": [{"view": "front", "joint": "knee_L", "x": 5000, "y": 1}]}, 400),
     ({"moves": [{"view": "front", "joint": "liver", "x": 1, "y": 1}]}, 400),

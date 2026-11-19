@@ -6,7 +6,8 @@ import { PictureViewer, Zoomable, type PictureItem } from '../../components/Pict
 // Mark the body (step 2): the app's marks on the front picture and one other picture (a three-quarter, side or back
 // view), each draggable; all six open enlarged. The marks are a note on this version's pictures (marks.json): moving one,
 // placing one the app could not see, pressing These look right or putting the app's marks back changes this version only,
-// and the app's own marks are always kept. Joint names are the person's own left and right on every picture.
+// and the app's own marks are always kept. One mark of yours can be taken back (Remove, or Delete on the mark): a placed
+// one comes off the picture again, a moved one goes back to where the app put it. Joint names are the person's own left and right on every picture.
 
 const BONES: [string, string][] = [
   ['head_top', 'chin'],
@@ -43,24 +44,56 @@ function unseen(data: Marks, view: MarkView): string[] {
   return Object.keys(ph).filter((j) => marks[j] && (marks[j].x === null || marks[j].y === null))
 }
 
-function NotSeen({ data, view, busy, onMove }: { data: Marks; view: MarkView; busy: boolean; onMove: (view: MarkView, joint: string, x: number, y: number) => void }) {
+// The marks the app could not see on this picture that you placed, which can be taken off again.
+function placed(data: Marks, view: MarkView): string[] {
+  const auto = data.automatic[view] ?? {}
+  const marks = data.marks[view] ?? {}
+  return Object.keys(marks).filter((j) => marks[j].source === 'you' && auto[j] && (auto[j].x === null || auto[j].y === null))
+}
+
+type MoveFn = (view: MarkView, joint: string, x: number, y: number) => void
+type DropFn = (view: MarkView, joint: string) => void
+
+function NotSeen({ data, view, busy, onMove, onDrop }: { data: Marks; view: MarkView; busy: boolean; onMove: MoveFn; onDrop: DropFn }) {
   const list = unseen(data, view)
-  if (!list.length) return null
+  const yours = placed(data, view)
+  if (!list.length && !yours.length) return null
   return (
     <div className="body-marks-unseen small">
-      <span className="muted">Not seen in this picture{busy ? '' : ' (place one if you can see it, then drag it into place)'}:</span>{' '}
-      {list.map((j) => (
-        <button
-          key={j}
-          type="button"
-          className="chip"
-          disabled={busy}
-          onClick={() => onMove(view, j, data.placeholders![view]![j].x, data.placeholders![view]![j].y)}
-          title={`Puts the ${data.names[j] ?? j} where it usually is, for you to drag into place`}
-        >
-          Place the {data.names[j] ?? j}
-        </button>
-      ))}
+      {list.length > 0 && (
+        <div>
+          <span className="muted">Not seen in this picture{busy ? '' : ' (place one if you can see it, then drag it into place)'}:</span>{' '}
+          {list.map((j) => (
+            <button
+              key={j}
+              type="button"
+              className="chip"
+              disabled={busy}
+              onClick={() => onMove(view, j, data.placeholders![view]![j].x, data.placeholders![view]![j].y)}
+              title={`Puts the ${data.names[j] ?? j} where it usually is, for you to drag into place`}
+            >
+              Place the {data.names[j] ?? j}
+            </button>
+          ))}
+        </div>
+      )}
+      {yours.length > 0 && (
+        <div>
+          <span className="muted">Placed by you{busy ? '' : ' (remove one you placed by mistake)'}:</span>{' '}
+          {yours.map((j) => (
+            <button
+              key={j}
+              type="button"
+              className="chip"
+              disabled={busy}
+              onClick={() => onDrop(view, j)}
+              title={`Takes the ${data.names[j] ?? j} off this picture again`}
+            >
+              Remove the {data.names[j] ?? j}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -83,7 +116,8 @@ type PictureProps = {
   data: Marks
   view: MarkView
   busy: boolean
-  onMove: (view: MarkView, joint: string, x: number, y: number) => void
+  onMove: MoveFn
+  onDrop: DropFn
   // Opens this picture enlarged (the small one on the card).
   onOpen?: () => void
   // Drawn in the picture viewer: fills its stage (Fit), or at the picture's own pixels (Actual size).
@@ -93,7 +127,7 @@ type PictureProps = {
 
 // The marks are drawn in the picture's own pixels (the svg's viewBox) and a drag is turned back into them through the
 // svg's on-screen transform, so a mark lands on the same picture point at any displayed size, small or enlarged.
-function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual = false }: PictureProps) {
+function MarkedPicture({ data, view, busy, onMove, onDrop, onOpen, large = false, actual = false }: PictureProps) {
   const pic = data.pictures[view]
   const marks = data.marks[view] ?? {}
   const svg = useRef<SVGSVGElement>(null)
@@ -133,6 +167,11 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
     if (!m || m.x === null || m.y === null || Math.hypot(m.x - d.x, m.y - d.y) >= 0.5) onMove(view, d.joint, d.x, d.y)
   }
   const key = (joint: string) => (ev: KeyboardEvent<SVGCircleElement>) => {
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && marks[joint]?.source === 'you' && !busy) {
+      ev.preventDefault()
+      onDrop(view, joint)
+      return
+    }
     const step = ev.shiftKey ? 10 : 2
     const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[ev.key]
     const m = marks[joint]
@@ -167,7 +206,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
                 r={small ? r * 0.55 : big ? r * 1.5 : r}
                 strokeWidth={r / 3}
                 tabIndex={busy ? -1 : 0}
-                aria-label={markTitle(name, m) + '. Drag it, or use the arrow keys.'}
+                aria-label={markTitle(name, m) + '. Drag it, or use the arrow keys.' + (m.source === 'you' ? ' Delete takes it back.' : '')}
                 onPointerDown={down(joint)}
                 onPointerMove={move}
                 onPointerUp={up}
@@ -195,7 +234,7 @@ function MarkedPicture({ data, view, busy, onMove, onOpen, large = false, actual
       ) : (
         marked
       )}
-      <NotSeen data={data} view={view} busy={busy} onMove={onMove} />
+      <NotSeen data={data} view={view} busy={busy} onMove={onMove} onDrop={onDrop} />
     </figure>
   )
 }
@@ -263,6 +302,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
     [],
   )
   const onMove = useCallback((view: MarkView, joint: string, x: number, y: number) => run(api.moveMarks(versionId, [{ view, joint, x, y }])), [run, versionId])
+  const onDrop = useCallback((view: MarkView, joint: string) => run(api.resetMarks(versionId, view, joint)), [run, versionId])
 
   if (hidden) return null
   const asks = data?.to_check ?? []
@@ -279,12 +319,12 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
         src: libraryUrl(data.pictures[v]!.path)!,
         label: `${SIDE_NAMES[v]} picture, body marks`,
         size: data.pictures[v]!.size,
-        render: (actual: boolean) => <MarkedPicture data={data} view={v} busy={busy || !!locked} onMove={onMove} large actual={actual} />,
+        render: (actual: boolean) => <MarkedPicture data={data} view={v} busy={busy || !!locked} onMove={onMove} onDrop={onDrop} large actual={actual} />,
         footer: (
           <div className="row-between small">
-            <span className="muted">{locked ? 'The marks of this version cannot be changed.' : 'Drag a mark to move it, or select it and use the arrow keys (Shift for bigger steps).'}</span>
+            <span className="muted">{locked ? 'The marks of this version cannot be changed.' : 'Drag a mark to move it, or select it and use the arrow keys (Shift for bigger steps). Delete takes back one of yours.'}</span>
             <Legend />
-            <NotSeen data={data} view={v} busy={busy || !!locked} onMove={onMove} />
+            <NotSeen data={data} view={v} busy={busy || !!locked} onMove={onMove} onDrop={onDrop} />
           </div>
         ),
       }))
@@ -332,7 +372,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
           </div>
           <div className="body-marks-pictures">
             {pair.map((v) => (
-              <MarkedPicture key={v} data={data} view={v} busy={busy || !!locked} onMove={onMove} onOpen={() => setOpen(all.indexOf(v))} />
+              <MarkedPicture key={v} data={data} view={v} busy={busy || !!locked} onMove={onMove} onDrop={onDrop} onOpen={() => setOpen(all.indexOf(v))} />
             ))}
           </div>
           {open !== null && <PictureViewer items={enlarged} start={open} checker onClose={() => setOpen(null)} />}
