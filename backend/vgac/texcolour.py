@@ -119,19 +119,6 @@ def try_seed(first: int, n: int) -> int:
     return (int(first) + n * SEED_STEP) % SEED_MAX or 1
 
 
-# --- The texture-only retry (UNTESTED ON A CARD: the trial in WP-11 has not run; default off, per version) -----------
-#
-# A dark base colour is often the texture sampler's doing, not the shape's. With texture_only on, a dark retry keeps the
-# shape seed and changes only the texture seed (graphs/trellis.py texture_seed). ComfyUI reuses the cached shape stages,
-# so a retry should cost only the texture stage and the bake. Build 0 uses the same texture seed as a full build would
-# (first + 1); later builds step the texture seed from the first one. Not adopted until the WP-11 gate passes.
-
-
-def texture_try_seed(first: int, n: int) -> int:
-    """The texture sampler's seed of build n in a texture-only retry (build 0 is first + 1, as in convert_graph)."""
-    return try_seed(first, n) + 1
-
-
 def best_try(tries: list[dict[str, Any]]) -> int:
     """The build to keep: the first that passes, else the one closest to the picture (the highest ratio, all of them
     being under the limit); a build that could not be measured counts as passing."""
@@ -145,17 +132,16 @@ def best_try(tries: list[dict[str, Any]]) -> int:
 async def build_with_rerolls(first_seed: int, measured: bool, build_once: Callable[[int, int], Awaitable[dict[str, Any]]],
                              keep_aside: Callable[[int], Any], bring_back: Callable[[int], Any],
                              on_retry: Callable[[int, dict[str, Any]], Any] | None = None,
-                             max_tries: int = MAX_TRIES, texture_only: bool = False) -> tuple[int, list[dict[str, Any]]]:
+                             max_tries: int = MAX_TRIES) -> tuple[int, list[dict[str, Any]]]:
     """Build, and while the base colour comes out too dark against the picture, build again with the next seed.
     build_once(seed, n) makes build n in place and returns {seed, match, ...}; keep_aside(n) moves build n's files out of
     the way before the next; bring_back(n) puts a kept-aside build back in place. measured False (no picture to compare)
-    builds once. texture_only (UNTESTED ON A CARD, see texture_try_seed): every build gets first_seed, and the caller sets
-    the texture seed from texture_try_seed. Returns (index kept, every build's result)."""
+    builds once. Returns (index kept, every build's result)."""
     tries: list[dict[str, Any]] = []
     for n in range(max(1, max_tries)):
         if n and on_retry is not None:
             on_retry(n, tries[-1])
-        t = await build_once(first_seed if texture_only else try_seed(first_seed, n), n)
+        t = await build_once(try_seed(first_seed, n), n)
         tries.append(t)
         m = t.get("match")
         if not measured or m is None or m.get("ok"):

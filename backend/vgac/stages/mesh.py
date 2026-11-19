@@ -371,27 +371,17 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     tries_dir = sc.dir / TRIES_DIR
     shutil.rmtree(tries_dir, ignore_errors=True)  # a Resume starts the tries again from the first
 
-    # UNTESTED ON A CARD (WP-11 trial not run): a per-version setting, default off. On, a dark retry keeps the shape seed
-    # and changes only the texture seed (texcolour.texture_try_seed). TRELLIS only; the four-view build keeps full rebuilds.
-    texture_only = bool(params.get("texture_only_retry")) and views is None
-
     async def build_once(seed: int, n: int) -> dict[str, Any]:
-        tseed = texcolour.texture_try_seed(first_seed, n) if texture_only else None
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
-                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle, texture_seed=tseed)
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
-        if texture_only:
-            sc.progress(0.05, f"The colours came out too dark against the picture, so only the texture is painted again "
-                              f"(build {n + 1} of {texcolour.MAX_TRIES})")
-            return
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
                           f"(build {n + 1} of {texcolour.MAX_TRIES})")
 
     best, tries = await texcolour.build_with_rerolls(first_seed, picture is not None, build_once,
                                                      lambda n: _keep_aside(sc.dir, tries_dir / f"try{n + 1}"),
-                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry,
-                                                     texture_only=texture_only)
+                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry)
     shutil.rmtree(tries_dir, ignore_errors=True)
     kept = tries[best]
     for key in ("glb", *kept["maps"].keys(), *kept["other"]):
@@ -408,8 +398,6 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
                    elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
-        if texture_only:  # UNTESTED ON A CARD: says which retry route made the kept build
-            sc.set_metrics(texture_retry="texture_only", texture_seed=kept["metrics"].get("texture_seed"))
     if views is None and headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
         await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, tex_steps)
 
@@ -537,7 +525,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
                          padding: int, keep_normal: bool, picture: dict[str, Any] | None,
                          dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
                          match_to: Path | None = None, views: dict[str, str] | None = None,
-                         fov: float | None = None, texture_seed: int | None = None) -> dict[str, Any]:
+                         fov: float | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
     (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
@@ -558,8 +546,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
     if views:
         graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps, fov=fov)
     else:
-        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps,
-                              texture_seed=texture_seed)
+        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
     entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal:
@@ -578,8 +565,6 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             else:
                 other.append(key)
     metrics: dict[str, Any] = {}
-    if texture_seed is not None:
-        metrics["texture_seed"] = int(texture_seed)
     if views:
         used = camera_fov(entry) if fov is None else round(float(fov), 2)
         if used is not None:
