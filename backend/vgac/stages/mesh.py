@@ -614,6 +614,10 @@ def camera_fov(entry: dict[str, Any]) -> float | None:
 HY3D_STEPS = 50
 HY3D_CFG = 5.0
 HY3D_OCTREE = 384
+# The UV layout size of a Hunyuan3D mesh (its UnwrapMesh resolution, texels): the texture size prep paints at.
+HY3D_UNWRAP_RESOLUTION = 2048
+# The grid of the topology clean-up before the unwrap (RemeshMesh): 768 gave 2.8 million triangles; 256 is the Hunyuan octree.
+HY3D_REMESH_RESOLUTION = 256
 
 
 async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
@@ -629,11 +633,15 @@ async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
     octree = int(params.get("octree") or HY3D_OCTREE)
     sc.set_params(engine="hy3d", seed=seed, steps=steps, cfg=cfg, octree=octree)
     sc.use_model("hy3d_mv")
-    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree),
+    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
+                                      unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION),
+                                      remesh=HY3D_REMESH_RESOLUTION),
                            poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     sc.register("glb", glb)
-    sc.set_metrics(engine="hy3d", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), textured=False)
+    # The raw mesh is unwrapped at full detail (UnwrapMesh, pec) so prep can paint it and shrink it after (stages/prep.py).
+    sc.set_metrics(engine="hy3d", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), textured=False,
+                   unwrap_resolution=HY3D_UNWRAP_RESOLUTION)
 
 
 async def audit(sc: StageContext) -> None:
