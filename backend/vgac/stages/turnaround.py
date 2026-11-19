@@ -1248,7 +1248,9 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     parent = sc.parent
     if parent is None or parent.stage != "turnaround":
         raise ValueError("turnaround refine needs a turnaround parent version")
-    targets = list(dict.fromkeys(views or [view or "front"]))
+    targets = list(dict.fromkeys(views or ([view] if view else [])))
+    if not targets:
+        raise ValueError("no views were chosen to redraw")  # the API refuses this first; never a quiet fall back to the front
     all_views = turnaround_views(parent)
     for t in targets:
         if t not in all_views:

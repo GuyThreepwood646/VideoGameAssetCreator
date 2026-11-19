@@ -26,7 +26,7 @@ import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STA
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
-import { FIX_TOOLS, humanError, modelLabel, paramPlain, stagePlaceholder, stagePlain, stageVerb } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { type AutopilotActions } from './AutopilotPanel'
 import { useConfirm } from '../components/Confirm'
@@ -203,11 +203,29 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   }
 
   // Check all sides: the ticked views are redrawn together as one new version, and the page follows it.
-  const redrawViews = (from: Version, views: string[]) =>
-    act(async () => {
-      const out = await api.refine(from.id, { instruction: 'Redraw this view', views })
+  // One "what to change" box (changeText) serves the tick boxes and the Describe the change box: with no words a tick
+  // is a plain redraw, with words every chosen view gets them. A change that redraws several views asks first, with
+  // the step's usual time scaled to those views. Returns whether the change was sent.
+  const [changeText, setChangeText] = useState('')
+  const refineViews = async (from: Version, views: string[], words: string, extra?: { reference?: string; params?: Record<string, unknown>; editAddons?: Record<string, EditChoice> }): Promise<boolean> => {
+    const total = TURNAROUND_VIEWS.filter((v) => v in from.files).length
+    const secs = redrawViewsSeconds(stageEstimate('turnaround', stageInfo, suggestion?.estimates), views.length, total)
+    const warning = redrawViewsWarning(views.length, secs, words.trim().length > 0)
+    if (warning && !(await confirm.ask({ title: `Redraw ${views.length} views?`, body: warning, confirmLabel: 'Redraw' }))) return false
+    await act(async () => {
+      const out = await api.refine(from.id, {
+        instruction: words.trim() || PLAIN_VIEW_REDRAW,
+        views,
+        ...(extra?.params ? { params: extra.params } : {}),
+        ...(extra?.reference ? { reference_image: extra.reference } : {}),
+        ...(extra?.editAddons ? { edit_addons: extra.editAddons } : {}),
+      })
       setActiveId(out.version.id)
+      setChangeText('')
     })
+    return true
+  }
+  const redrawViews = (from: Version, views: string[]) => refineViews(from, views, changeText)
 
   // Remove versions that failed, were stopped or were rejected (their files go too; this cannot be undone).
   const removable = versions.filter((v) => isRemovable(asset, v))
@@ -421,7 +439,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </div>
               </div>
             )}
-            <StageViewer stage={stage} version={active} asset={asset} viewTool={viewTool} onFix={fix} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} busy={busy} onRedrawViews={(views) => redrawViews(active, views)} />
+            <StageViewer stage={stage} version={active} asset={asset} viewTool={viewTool} onFix={fix} category={asset.category} assetName={asset.name} onChanged={onChanged} hideReady={hideReady} busy={busy} onRedrawViews={(views) => redrawViews(active, views)} words={changeText} onWords={setChangeText} />
             {checks && active.status === 'done' && (
               <div className="checks-block">
                 <div className="field-label">
@@ -461,7 +479,14 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 suggestion={suggestion}
                 disabled={busy}
                 focus={toolFocus}
-                onRefine={(instruction, view, reference, params, editAddons) => act(() => api.refine(active.id, { instruction, view, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}), ...(editAddons ? { edit_addons: editAddons } : {}) }))}
+                text={changeText}
+                onText={setChangeText}
+                onRefine={(instruction, views, reference, params, editAddons) => {
+                  // Step 2: the chosen view, or every view for "all views"; the same path as the tick boxes.
+                  if (stage === 'turnaround') return refineViews(active, views ?? [], instruction, { reference, params, editAddons })
+                  setChangeText('')
+                  return act(() => api.refine(active.id, { instruction, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}), ...(editAddons ? { edit_addons: editAddons } : {}) }))
+                }}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
             )}
@@ -554,7 +579,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
   )
 }
 
-function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews }: { stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => void }) {
+function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews, words, onWords }: { words: string; onWords: (t: string) => void; stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => Promise<boolean> | void }) {
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
     return <div className="placeholder-box">You stopped this version before it finished. Resume (above) runs it again with the same settings.</div>
@@ -577,6 +602,8 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
           version={version}
           busy={busy}
           onRedraw={onRedrawViews}
+          words={words}
+          onWords={onWords}
           originalFiles={lineageVersion(asset, version, 'concept')?.files ?? null}
           locked={
             version.status === 'done'
@@ -831,6 +858,8 @@ function ChangePanel({
   suggestion,
   disabled,
   focus,
+  text,
+  onText: setText,
   onRefine,
   onAdjust,
 }: {
@@ -842,11 +871,14 @@ function ChangePanel({
   suggestion: Suggestion | null
   disabled: boolean
   focus: ToolFocus | null
-  // A described change, with any changed Fine-tune settings sent in the same new version.
-  onRefine: (instruction: string, view?: string, reference?: string, params?: Record<string, unknown>, editAddons?: Record<string, EditChoice>) => void
+  // The change in words; shared with the view tick boxes on step 2 (one "what to change" box).
+  text: string
+  onText: (t: string) => void
+  // A described change, with any changed Fine-tune settings sent in the same new version. Step 2 also gets the
+  // views it applies to: the one chosen, or every view for "all views".
+  onRefine: (instruction: string, views?: string[], reference?: string, params?: Record<string, unknown>, editAddons?: Record<string, EditChoice>) => void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
-  const [text, setText] = useState('')
   const [view, setView] = useState('')
   const [reference, setReference] = useState<string | null>(null)
   // Fine-tune settings changed but not sent yet: Make the change takes them along, and Apply and re-run takes the text.
@@ -872,11 +904,12 @@ function ChangePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.nonce])
   const ok = text.trim().length > 0
+  const availableViews = TURNAROUND_VIEWS.filter((v) => v in target.files)
+  const chosenViews = stage === 'turnaround' ? (view ? [view] : availableViews) : undefined
   // Apply and re-run: with text waiting in Describe the change, both go in one new version.
   const adjustOrBoth = (params: Record<string, unknown>) => {
     if (!ok) return onAdjust(params)
-    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, params, editsToSend)
-    setText('')
+    onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, params, editsToSend)
     setReference(null)
     setRefineLoras({})
     setResetNonce((n) => n + 1)
@@ -884,13 +917,11 @@ function ChangePanel({
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, pending?.params, editsToSend)
-    setText('')
+    onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, pending?.params, editsToSend)
     setRefineLoras({})
     if (pending) setResetNonce((n) => n + 1)
     setReference(null)
   }
-  const availableViews = TURNAROUND_VIEWS.filter((v) => v in target.files)
   return (
     <div className="change-panel" ref={panelRef}>
       {missingTool && (
