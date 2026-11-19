@@ -56,8 +56,8 @@ def test_the_fix_for_scenery_with_the_rebuild_off_turns_it_on_otherwise_builds_a
     assert fixnotes.covered("model_whole", guidance.CHECK_GUIDE["model_whole"]) == "extra"
 
 
-def test_blocking_an_automatic_build_is_on_for_buildings_only(monkeypatch):
-    assert meshgeom.BLOCK_ROUTES == frozenset({"buildings"})
+def test_blocking_an_automatic_build_is_off_until_calibrated(monkeypatch):
+    assert meshgeom.BLOCK_ROUTES == frozenset()
 
     class V:
         stage = "mesh"
@@ -65,11 +65,11 @@ def test_blocking_an_automatic_build_is_on_for_buildings_only(monkeypatch):
 
     v = V()
     v.metrics = {"checks": [_check("environment", NUTRA_V2)]}
+    assert autopilot.attention_reason(v, "block") is None
+    monkeypatch.setattr(meshgeom, "BLOCK_ROUTES", frozenset({"buildings"}))
+    v.metrics = {"checks": [_check("environment", NUTRA_V2)]}
     assert "torn paper" in autopilot.attention_reason(v, "block")
     assert autopilot.attention_reason(v, "warn") is None
-    monkeypatch.setattr(meshgeom, "BLOCK_ROUTES", frozenset())
-    v.metrics = {"checks": [_check("environment", NUTRA_V2)]}
-    assert autopilot.attention_reason(v, "block") is None
 
 
 BUILD = """
