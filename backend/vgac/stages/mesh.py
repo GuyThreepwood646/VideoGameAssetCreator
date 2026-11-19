@@ -610,6 +610,10 @@ def camera_fov(entry: dict[str, Any]) -> float | None:
     return None
 
 
+# Tencent's own Hunyuan3D-2mv settings (graphs/hy3d.py explains the source).
+HY3D_STEPS = 50
+HY3D_CFG = 5.0
+HY3D_OCTREE = 384
 # The UV layout size of a Hunyuan3D mesh (its UnwrapMesh resolution, texels): the texture size prep paints at.
 HY3D_UNWRAP_RESOLUTION = 2048
 
@@ -622,9 +626,12 @@ async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
         if p is None:
             raise FileNotFoundError(f"hy3d needs turnaround view {v} over white")
         names[v] = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_hy_{v}.png")
-    sc.set_params(engine="hy3d", seed=seed, steps=int(params.get("steps") or 20), cfg=float(params.get("cfg") or 7.5))
+    steps = int(params.get("steps") or HY3D_STEPS)
+    cfg = float(params.get("cfg") or HY3D_CFG)
+    octree = int(params.get("octree") or HY3D_OCTREE)
+    sc.set_params(engine="hy3d", seed=seed, steps=steps, cfg=cfg, octree=octree)
     sc.use_model("hy3d_mv")
-    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=int(params.get("steps") or 20), cfg=float(params.get("cfg") or 7.5), seed=seed,
+    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
                                       unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION)),
                            poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")

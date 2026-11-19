@@ -408,3 +408,36 @@ def test_judge_flags_a_failed_library_retarget(tmp_path, monkeypatch):
     sc.version.metrics.update(library_clips=[], library_skipped="built-in moves chosen")
     asyncio.run(rig.judge(sc))
     assert "library_clips" not in {c["id"] for c in sc.version.metrics["checks"]}
+
+
+def _judged(tmp_path, category, params, libs, monkeypatch):
+    """Run the library step with a fake context, then the judge; returns the check list by id."""
+    monkeypatch.setattr(rig.quality, "rig_checks", lambda *a, **k: [])
+    sc = FakeSC(tmp_path, category, libs)
+    asyncio.run(rig._animate(sc, tmp_path / "rig.glb", params))
+    sc.version.metrics.update(clips=["idle"], missing_clips=[], anim_glb=True)
+    asyncio.run(rig.judge(sc))
+    return {c["id"]: c for c in sc.version.metrics["checks"]}
+
+
+def test_a_humanoid_with_its_library_missing_gets_a_warning_with_the_reason_and_fix(tmp_path, monkeypatch):
+    checks = _judged(tmp_path, HUMANOID, {}, {}, monkeypatch)  # no library file on disk
+    c = checks["library_missing"]
+    assert c["ok"] is False and c["severity"] == "warn"
+    assert c["help"].startswith("The shared animation library is not on this PC")
+    assert "Setup-Extras" in c["fix_note"] and c["fix_kind"] == "outside"
+    assert "library_clips" not in checks  # the moves never came from the library
+
+
+def test_a_humanoid_with_its_library_present_has_no_missing_library_check(tmp_path, monkeypatch):
+    checks = _judged(tmp_path, HUMANOID, {}, {"ual1": _lib_dir(tmp_path)}, monkeypatch)
+    assert "library_missing" not in checks
+    (tmp_path / "b").mkdir()
+    checks = _judged(tmp_path / "b", HUMANOID, {"clips_source": "procedural"}, {}, monkeypatch)  # built-in moves chosen
+    assert "library_missing" not in checks
+
+
+def test_a_non_humanoid_with_no_library_gets_no_missing_library_check(tmp_path, monkeypatch):
+    quad = {"id": "quadruped", "rig_engine": "skintoken", "motion": "legs", "clips": ["idle", "walk"]}
+    checks = _judged(tmp_path, quad, {}, {}, monkeypatch)
+    assert "library_missing" not in checks

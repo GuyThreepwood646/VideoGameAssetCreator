@@ -404,10 +404,75 @@ def test_under_headwear_a_head_part_must_be_clearly_hair():
 def test_head_options_follow_the_description_and_the_setting():
     from vgac import springs as sm
 
-    assert sm.head_options({}, "a little black mage in a tall pointed hat") == {"head_sway": "auto", "head_cloth": "stiff", "headwear": True, "why": "default"}
+    assert sm.head_options({}, "a little black mage in a tall pointed hat") == {"head_sway": "auto", "head_cloth": "stiff", "headwear": True, "head_still": False, "why": "default"}
     assert sm.head_options({}, "a dancer with long red ribbons in her hair")["head_cloth"] == "sway"
     assert sm.head_options({"head_sway": "all"}, "a knight in a helmet")["head_cloth"] == "sway"
     assert sm.head_options({"head_sway": "hair"}, "a woman in a headscarf")["head_cloth"] == "stiff"
     assert not sm.head_options({}, "a chatty villager")["headwear"]
     args = sm.blender_args(Path("a.glb"), Path("b.glb"), Path("w"), None, None, None, None, head={"head_cloth": "stiff", "headwear": True})
     assert args[-3:] == ["--head-cloth", "stiff", "--headwear"]
+
+
+# --- Nothing on the head sways (head_sway "none", D7: built-in and library hair alike) ----------------------------------
+
+
+def test_none_is_a_choice_and_holds_the_head_still_in_the_options():
+    p = next(x for x in reference.STAGE_SCHEMAS["rig"] if x["name"] == "head_sway")
+    assert "none" in p["options"] and p["default"] == "auto"
+    assert "none" in springs_mod.HEAD_SWAY_CHOICES
+    assert springs_mod.head_options({"head_sway": "none"}, "a girl with a long ponytail") == {
+        "head_sway": "none", "head_cloth": "stiff", "headwear": False, "head_still": True, "why": "chosen"}
+    assert springs_mod.head_options({"head_sway": "none"}, "a dancer with ribbons")["head_still"] is True
+    assert springs_mod.head_options({"head_sway": "all"}, "a knight")["head_still"] is False
+    args = springs_mod.blender_args(Path("a.glb"), Path("b.glb"), Path("w"), None, None, None, None,
+                                    head={"head_cloth": "stiff", "headwear": False, "head_still": True})
+    assert args[-1] == "--head-still"
+    args = springs_mod.blender_args(Path("a.glb"), Path("b.glb"), Path("w"), None, None, None, None,
+                                    head={"head_cloth": "sway", "headwear": False, "head_still": False})
+    assert "--head-still" not in args
+
+
+def test_none_drops_built_in_hair_and_keeps_a_cape_found_on_its_own(ponytail_case):
+    # hair on the head goes; a cape on the back (parent Spine2) is found by its own search and stays
+    found, V = ponytail_case
+    kept, held = sp.hold_head_still(found["parts"])
+    assert [p["kind"] for p in held] == ["Hair"] and held[0]["parent"] in ("mixamorig:Head", "mixamorig:Neck")
+    cape = join(box((-0.18, 0.16, 0.5), (0.18, 0.18, 1.42)), box((-0.18, 0.05, 1.37), (0.18, 0.18, 1.42)))
+    V2, F2, bones, W2 = character(cape)
+    cape_found = sp.find_parts(V2, F2, bones, W2, None, None)
+    kept, held = sp.hold_head_still(cape_found["parts"])
+    assert held == [] and [p["kind"] for p in kept] == ["Cape"]
+
+
+def test_none_with_only_built_in_hair_leaves_no_chain_on_the_head(ponytail_case):
+    found, V = ponytail_case  # the ponytail alone: the head-still filter leaves nothing, so the pass reports held still
+    kept, held = sp.hold_head_still(found["parts"])
+    assert kept == [] and len(held) == 1 and held[0]["kind"] == "Hair"
+
+
+def test_none_drops_library_hair_and_any_part_hanging_from_the_head():
+    lib_hair = {"kind": "Hair", "parent": "mixamorig:Head", "library": True, "names": ["Spring_Hair_01"]}
+    headscarf = {"kind": "Cloth", "parent": "mixamorig:Head", "names": ["Spring_Cloth_01"]}
+    neck_cloth = {"kind": "Cloth", "parent": "mixamorig:Neck", "names": ["Spring_Cloth_02"]}
+    cape = {"kind": "Cape", "parent": "mixamorig:Spine2", "names": ["Spring_Cape_01"]}
+    shoulder_hair = {"kind": "Hair", "parent": "mixamorig:Spine2", "names": ["Spring_Hair_02"]}
+    kept, held = sp.hold_head_still([lib_hair, headscarf, neck_cloth, cape, shoulder_hair])
+    assert kept == [cape]
+    assert held == [lib_hair, headscarf, neck_cloth, shoulder_hair]
+    assert sp.hold_head_still([]) == ([], [])
+
+
+def test_the_other_choices_still_find_the_same_parts(ponytail_case):
+    # the filter is only applied with --head-still: without it, the ponytail is found as before
+    found, V = ponytail_case
+    assert [p["kind"] for p in found["parts"]] == ["Hair"]
+    assert "--head-still" not in springs_mod.blender_args(Path("a.glb"), Path("b.glb"), Path("w"), None, None, None, None,
+                                                         head=springs_mod.head_options({}, "a ponytail"))
+
+
+def test_head_still_is_its_own_plain_reason_and_a_rerun_trigger():
+    assert "held still" in springs_mod.REASONS["head_still"] and "nothing on the head or in the hair sways" in springs_mod.REASONS["head_still"]
+    c = _help(springs_mod.metrics({"chains": [], "reason": "head_still"}, True, None))
+    assert c["passed"] and "held still" in c["help"] and "{" not in c["help"]
+    assert "head_sway" in rig_stage.MOVES_PARAMS  # changing the choice re-runs the moves, so the sway is removed
+    assert guidance.PARAM_HELP["head_sway"]["help"]["meaning"].endswith("so the head and hair stay still.")

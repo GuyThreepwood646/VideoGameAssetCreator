@@ -107,7 +107,18 @@ def test_trellis_matches_convert(bakeoff_dir):
 def test_hy3d_matches_mesh(bakeoff_dir):
     bk = load_bakeoff(bakeoff_dir, "mesh")
     names = {v: f"{v}.png" for v in ("front", "left", "back", "right")}
-    assert hy3d.hy3d_graph(names, "bakeoff/mesh/k_hy3d", 20, 7.5) == bk.hy3d_graph(names, "k_hy3d", 20, 7.5)
+    # The bakeoff script still uses the template's 256 octree; compare with that value passed explicitly.
+    assert hy3d.hy3d_graph(names, "bakeoff/mesh/k_hy3d", 20, 7.5, octree_resolution=256) == bk.hy3d_graph(names, "k_hy3d", 20, 7.5)
+
+
+def test_hy3d_defaults_are_tencents_settings():
+    names = {v: f"{v}.png" for v in ("front", "left", "back", "right")}
+    g = hy3d.hy3d_graph(names, "x")
+    assert g["ks"]["inputs"]["steps"] == 50
+    assert g["ks"]["inputs"]["cfg"] == 5.0
+    assert g["dec"]["inputs"]["octree_resolution"] == 384
+    g = hy3d.hy3d_graph(names, "x", octree_resolution=256)
+    assert g["dec"]["inputs"]["octree_resolution"] == 256
 
 
 def test_skintoken_matches_rig(bakeoff_dir):

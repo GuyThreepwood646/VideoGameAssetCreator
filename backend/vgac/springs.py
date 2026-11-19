@@ -42,6 +42,7 @@ REASONS = {
                   "is joined to them in the 3D model",
     "error": "something went wrong on the way",
     "library_rests": "the hairstyle rests on the head, so it moves with the head",
+    "head_still": "the head is held still by choice, so nothing on the head or in the hair sways",
 }
 
 
@@ -63,8 +64,9 @@ def enabled(category: str | None, params: dict[str, Any], anim_report: dict[str,
 # a hood or a helmet far more often than a headscarf's end: Vivi's hat swayed as "a scarf end" (his rig versions 1 and
 # 2). head_sway: "auto" keeps such parts with the head unless the description names something that should sway (a
 # headscarf, ribbon, veil); "hair" never sways them; "all" sways them as before. Headwear named in the description (a
-# hat, helmet, hood) also asks more of a head part before it sways as hair (blender HAIR_SHARE_HEADWEAR).
-HEAD_SWAY_CHOICES = ("auto", "hair", "all")
+# hat, helmet, hood) also asks more of a head part before it sways as hair (blender HAIR_SHARE_HEADWEAR). "none"
+# holds the head still: no chain on the head or on any hair, built-in or from the library (blender --head-still).
+HEAD_SWAY_CHOICES = ("auto", "hair", "all", "none")
 HEADWEAR_WORDS = ("hat", "hats", "helmet", "helm", "hood", "hooded", "cap", "crown", "turban", "beanie", "bonnet", "tiara",
                   "headdress", "headpiece", "beret", "fedora", "sombrero", "witch hat", "wizard hat", "cowl", "circlet")
 SWAY_WORDS = ("headscarf", "head scarf", "bandana", "ribbon", "ribbons", "veil", "tassel", "tassels", "streamer", "streamers",
@@ -79,11 +81,13 @@ def _has_word(text: str, words: tuple[str, ...]) -> bool:
 
 
 def head_options(params: dict[str, Any], description: str) -> dict[str, Any]:
-    """{head_sway (the choice), head_cloth ("stiff" or "sway"), headwear (bool), why}: what the hanging-part search does
-    with non-hair parts on the head."""
+    """{head_sway (the choice), head_cloth ("stiff" or "sway"), headwear (bool), head_still (bool), why}: what the
+    hanging-part search does with parts on the head."""
     choice = params.get("head_sway") if params.get("head_sway") in HEAD_SWAY_CHOICES else "auto"
     headwear = _has_word(description, HEADWEAR_WORDS)
-    if choice == "all":
+    if choice == "none":
+        cloth, why = "stiff", "chosen"
+    elif choice == "all":
         cloth, why = "sway", "chosen"
     elif choice == "hair":
         cloth, why = "stiff", "chosen"
@@ -91,7 +95,7 @@ def head_options(params: dict[str, Any], description: str) -> dict[str, Any]:
         cloth, why = "sway", "described"
     else:
         cloth, why = "stiff", "default"
-    return {"head_sway": choice, "head_cloth": cloth, "headwear": headwear, "why": why}
+    return {"head_sway": choice, "head_cloth": cloth, "headwear": headwear, "head_still": choice == "none", "why": why}
 
 
 def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, hitboxes: Path | None,
@@ -108,6 +112,8 @@ def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, 
         args += ["--head-cloth", head.get("head_cloth") or "stiff"]
         if head.get("headwear"):
             args += ["--headwear"]
+        if head.get("head_still"):
+            args += ["--head-still"]
     if library_hair is not None:
         obj, mesh, parts = library_hair
         args += ["--hair-object", obj, "--hair-mesh", mesh]
