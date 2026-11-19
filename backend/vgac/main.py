@@ -723,8 +723,9 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
+    # Left out (None): the settings stored by an earlier start stay. Sent (even {}): they are replaced.
     stage_params = None
-    if body.stage_params:
+    if body.stage_params is not None:
         unknown = [k for k in body.stage_params if k not in STAGES]
         if unknown:
             raise HTTPException(400, f"unknown stage {unknown[0]!r} in stage_params")
@@ -851,7 +852,7 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     _check_mask(body.mask_png)
     reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
-    inherited = {k: val for k, val in parent.params.items() if k not in ("reference_experimental", "fix_for")}
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k not in ("reference_experimental", "fix_for")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
     if body.fix_for and parent.stage != "concept":
@@ -871,7 +872,7 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
-    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in parent.params.items() if k != "fix_for"}, **aparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 

@@ -6,8 +6,10 @@ import { Link } from 'react-router'
 import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
+import { conceptCountLabel } from '../guide'
 import { attentionItems } from './finish'
 import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { mergeStepParams } from './stepSettings'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
 
@@ -44,6 +46,8 @@ type Props = {
   onChanged?: () => void
   // Settings chosen for this step's first build: Make it hands them to Autopilot for this step.
   firstParams?: Record<string, unknown> | null
+  // Step 1 only: how many pictures the start button draws (StagePanel's count, shared with its empty card).
+  count?: number
 }
 
 // Whether the finishing card (turntable, downloads, what next) shows for this stage. Only on the last step: there the
@@ -147,7 +151,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStartAgain, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStartAgain, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams, count = 2 }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -173,7 +177,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
     apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
-      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: mergeStepParams(body.stage_params, { [stage]: firstParams }) } : body)} />
     ) : null
   const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage)) ? <span className="or-just">{node}</span> : node)
 
@@ -198,7 +202,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       now = stageHelp(stage, info(stage)).meaning
       action = (
         <button type="button" className={makeIt ? '' : 'primary'} disabled={busy} onClick={onRun}>
-          {stageVerb(stage, info(stage))}
+          {stage === 'concept' ? conceptCountLabel(count) : stageVerb(stage, info(stage))}
           <span className="btn-est">{fmtDuration(est)}</span>
         </button>
       )

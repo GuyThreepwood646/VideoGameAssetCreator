@@ -13,6 +13,8 @@ import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { HairFormRow, hairFormState, hairLibraryOffer, useHairLibraryCheck } from '../pipeline/HairSetting'
+import { StepSettingsChoice } from '../pipeline/StepSettingsChoice'
+import { mergeStepParams, type StepParams } from '../pipeline/stepSettings'
 import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook, usePresets, type LookChoice } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
@@ -275,6 +277,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [lookOpen, setLookOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [poseFirst, setPoseFirst] = useState(false)
+  // Settings changed for each step of the automatic build (only the changed values).
+  const [stepSettings, setStepSettings] = useState<StepParams>({})
   // The project's ready-made look names the asset style new assets default to. It stays unknown until the looks have
   // loaded, so the form never starts on the first look in the list.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -406,7 +410,9 @@ function CreateAssetForm({ project }: { project: Project }) {
       if (autopilot) {
         // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
         try {
-          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', ...(fromPicture && category === 'humanoid' && poseFirst ? { stage_params: { turnaround: { pose_ready: true } } } : {}) })
+          // Pose for 3D first is one of the step settings; a setting the person changed under the step settings wins.
+          const stage_params = mergeStepParams(fromPicture && category === 'humanoid' && poseFirst ? { turnaround: { pose_ready: true } } : undefined, stepSettings)
+          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', stage_params })
         } catch (err) {
           if (!(err instanceof ApiError && err.status === 404)) console.warn('autopilot did not start', err)
         }
@@ -665,6 +671,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <span className="muted small block">Runs every step and only stops if something needs you.</span>
         </span>
       </label>
+      {autopilot && <StepSettingsChoice category={category} stages={ref?.stages ?? null} disabled={busy} onChange={setStepSettings} />}
       <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? (fromModel && modelProgress !== null ? 'Sending your model...' : 'Creating...') : fromModel ? 'Create and read my model' : autopilot ? 'Create and make it' : 'Create asset'}
