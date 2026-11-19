@@ -6,10 +6,11 @@ Each use has its own choice param, so a LoRA picked for one use never reaches an
   pose_addons   the pose redraw for 3D           -> stages/turnaround.py
   face_addons   the face close-up only           -> stages/face_detail.py
 
-edit_loras resolves a choice against the registry (stage "edit" only), checks that ComfyUI lists each applied file on
-every card the step may use BEFORE the first job, records what was applied and ignored (on the version as
-<param>_applied, and in the metrics), and returns the applied entries for the graph builders. With no choice it returns
-[] and makes no engine call, so the step runs exactly as it did before.
+edit_loras resolves a choice against the registry (stage "edit" only), checks ComfyUI's LoRA list BEFORE the first job
+(the job's own card must answer; another card is checked when it answers and skipped when it does not, because it can
+only be lent while its engine is running), records what was applied and ignored (on the version as <param>_applied,
+and in the metrics), and returns the applied entries for the graph builders. With no choice it returns [] and makes no
+engine call, so the step runs exactly as it did before.
 """
 
 from __future__ import annotations
@@ -21,16 +22,10 @@ from ..graphs.concept import lora_name
 from ..preflight import combo_choices
 
 
-def _all_cards(sc: Any) -> list[str | None]:
-    """Every card this job may use (a lent card can be any of them); None (the job's own card) when none are known."""
-    names = list((getattr(getattr(sc, "ctx", None), "clients", None) or {}).keys())
-    return names or [None]
-
-
-async def _check_listed(sc: Any, card: str | None, applied: list[dict[str, Any]]) -> None:
-    """Stop before any job when this card's ComfyUI does not list one of the applied LoRA files. The message names
-    only the LoRAs the person chose, never other files on the machine."""
-    listed = combo_choices(await sc.client(card).object_info("LoraLoaderModelOnly"), "lora_name")
+def _must_list(info: dict[str, Any] | None, applied: list[dict[str, Any]], card: str | None) -> None:
+    """Stop when a card that answered does not list one of the applied LoRA files. The message names only the LoRAs the
+    person chose, never other files on the machine."""
+    listed = combo_choices(info, "lora_name")
     if listed is None:
         raise RuntimeError("ComfyUI did not list its LoRA files, so your LoRAs cannot be checked. Try the step again.")
     missing = [a for a in applied if lora_name(a["file"]) not in listed]
@@ -40,9 +35,34 @@ async def _check_listed(sc: Any, card: str | None, applied: list[dict[str, Any]]
                            "ComfyUI reads, restart ComfyUI, then run this step again.")
 
 
-async def edit_loras(sc: Any, param: str, params: dict[str, Any], cards: list[str | None] | None = None) -> list[dict[str, Any]]:
-    """The applied entries (reference.resolve_addons shape) for one picture-edit use, or [] when nothing is chosen.
-    `cards`: the cards the step may run on (default: every card the job knows)."""
+async def _check_cards(sc: Any, applied: list[dict[str, Any]]) -> None:
+    """The job's own card must answer and list the files. Every other card of the job is checked only if it answers:
+    one that is off cannot take work, so the step never needs its file."""
+    home = getattr(getattr(sc, "ctx", None), "instance", None)
+    try:
+        info = await sc.client(home).object_info("LoraLoaderModelOnly")
+    except Exception as e:  # noqa: BLE001  (any failure to reach this card is the same plain stop)
+        raise RuntimeError("The graphics engine this step runs on did not answer, so your LoRAs cannot be checked. "
+                           "Start ComfyUI on that card and run the step again.") from e
+    _must_list(info, applied, home)
+    for card in list((getattr(getattr(sc, "ctx", None), "clients", None) or {}).keys()):
+        if card == home:
+            continue
+        try:
+            info = await sc.client(card).object_info("LoraLoaderModelOnly")
+        except Exception:  # noqa: BLE001  (an engine that does not answer is not lent, so its file is not needed)
+            continue
+        _must_list(info, applied, card)
+
+
+def chosen_ids(params: dict[str, Any], param: str) -> list[str]:
+    """The ids of the LoRAs a choice applies, without asking any engine (for comparing with a record)."""
+    applied = reference.resolve_addons(reference.EDIT_MODEL, "edit", None, None, params.get(param) or None)["applied"]
+    return [a["id"] for a in applied]
+
+
+async def edit_loras(sc: Any, param: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """The applied entries (reference.resolve_addons shape) for one picture-edit use, or [] when nothing is chosen."""
     choices = params.get(param) or None
     if not choices:
         sc.set_params(**{f"{param}_applied": {}})  # a record from an earlier run must not read as this one's
@@ -56,8 +76,7 @@ async def edit_loras(sc: Any, param: str, params: dict[str, Any], cards: list[st
     sc.set_metrics(**{param: {"applied": applied, "ignored": res["ignored"], "unknown": res["unknown"]}})
     if not applied:
         return []
-    for card in cards or _all_cards(sc):
-        await _check_listed(sc, card, applied)
+    await _check_cards(sc, applied)
     for a in applied:
         sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])
     return applied

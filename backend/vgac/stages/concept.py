@@ -555,6 +555,13 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
     await _generate(sc, params)
 
 
+def refine_own_choices(params: dict[str, Any]) -> dict[str, Any]:
+    """The refine's own LoRA choice: the request's `edit_addons`, or None when it sent none. Written over the parent's
+    value, so a refine of a combined picture never shows a choice that did not draw it. The record of what was applied is
+    written by picture_loras.edit_loras in this run."""
+    return {"edit_addons": params.get("edit_addons"), "edit_addons_applied": None}
+
+
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
     parent = sc.parent
     if parent is None or not parent.files.get("image"):
@@ -569,7 +576,8 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     source = "upload_edit" if parent.params.get("source") in ("upload", "upload_edit") else parent.params.get("source")
     if source == "compose":
         source = "compose_edit"  # its folder has no source pictures, so a fine-tune of it paints afresh
-    sc.set_params(**{**parent.params, **params, "seed": seed, "instruction": instruction, "refine_of": parent.id, "source": source})
+    sc.set_params(**{**parent.params, **params, **refine_own_choices(params), "seed": seed, "instruction": instruction,
+                     "refine_of": parent.id, "source": source})
     sc.use_model("qwen_edit")
     sc.use_model("qwen_lightning_lora")
     name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_refine_src.png")

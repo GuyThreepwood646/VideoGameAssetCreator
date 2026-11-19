@@ -30,19 +30,23 @@ def _feet_far_apart(monkeypatch):
 
 
 class _SC:
-    def __init__(self, d: Path, parent=None, category="humanoid", empty=False):
+    def __init__(self, d: Path, parent=None, category="humanoid", empty=False, clients=None):
         self.dir = d
         self.asset = SimpleNamespace(category=category, id="asset0001")
         self.settings = SimpleNamespace(stage_instances={"concept": "b"})
-        self.ctx = SimpleNamespace(instance="a", clients={"a": object(), "b": object()})
+        self.ctx = SimpleNamespace(instance="a", clients=clients or {"a": object(), "b": object()})
         self.version = SimpleNamespace(params={}, metrics={}, id="ver000001", stage="turnaround")
         self.parent = parent
         self.registered: dict = {}
         self.graphs: list = []
+        self.models_used: dict = {}
         self.empty = empty
 
     def file(self, key):
         return self.registered.get(key)
+
+    def client(self, instance=None):
+        return self.ctx.clients[instance or self.ctx.instance]
 
     def register(self, key, p):
         self.registered[key] = Path(p)
@@ -184,3 +188,71 @@ def test_mesh_uses_the_posed_picture_and_skips_its_own_hand_edit(tmp_path, monke
     monkeypatch.setattr(mesh_stage.hairlib, "is_library", lambda sc: False)
     assert mesh_stage._input_image(Sc(), "concept") == posed
     assert seen["pose_ready_cutout"] == ("turnaround",)
+
+
+class _Lister:
+    """An engine that lists the given LoRA files (object_info), for a pose redraw with the person's own LoRA."""
+
+    def __init__(self, listed):
+        self.listed = list(listed)
+
+    async def object_info(self, node_class):
+        return {"input": {"required": {"lora_name": [list(self.listed), {}]}}}
+
+
+@pytest.fixture
+def pose_mine(settings_path, tmp_path, monkeypatch):
+    """A scratch LoRA library, so the person's pose LoRA can be registered (as in test_picture_loras.py)."""
+    import yaml
+
+    from vgac import config, db, reference
+
+    cfg = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    cfg["loras_dir"] = str(tmp_path / "loras")
+    settings_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setenv("VGAC_CONFIG", str(settings_path))
+    config.reset_settings()
+    db.reset_engine()
+    reference.reload()
+    yield
+    db.reset_engine()
+    config.reset_settings()
+
+
+def test_a_kept_pose_carries_its_record_on_three_versions_in_a_row(env, pose_mine, tmp_path):
+    """Three versions with the same pose choice: one draw, then two keeps; the record is present on all three and the
+    kept pictures are not redrawn."""
+    import json
+    import struct
+
+    from vgac import reference, user_addons
+    from vgac.graphs.concept import lora_name
+
+    key = "lora_unet_block.lora_A.weight"  # no family words in the tensor names; the metadata names Qwen-Image-Edit
+    header = {key: {"dtype": "F16", "shape": [4, 8], "data_offsets": [0, 64]},
+              "__metadata__": {"modelspec.architecture": "qwen-image-edit-2511/lora"}}
+    raw = json.dumps(header).encode()
+    raw += b" " * (-len(raw) % 8)
+    d = user_addons.mine_dir(create=True)
+    (d / "pose.safetensors").write_bytes(struct.pack("<Q", len(raw)) + raw + b"\x01" * 64)
+    pid = user_addons.register("pose.safetensors", "Pose look", [reference.EDIT_MODEL])["id"]
+    listed = [lora_name(reference.addon(pid)["file"])]
+    clients = {"a": _Lister(listed), "b": _Lister(listed)}
+    params = {"pose_ready": True, "pose_addons": {pid: "normal"}}
+
+    def parent_of(sc, vid):
+        return SimpleNamespace(id=vid, stage="turnaround", params=sc.version.params,
+                               files_on_disk={k: sc.registered[k] for k in turnaround.POSE_KEYS})
+
+    scs = []
+    for i in range(3):
+        sub = tmp_path / f"version{i + 1}"
+        sub.mkdir()
+        sc = _SC(sub, parent=parent_of(scs[-1], f"ver{i}") if scs else None, clients=clients)
+        asyncio.run(turnaround._pose_ready_picture(sc, dict(params), env.src))
+        scs.append(sc)
+    first, second, third = scs
+    assert len(first.graphs) == 1 and second.graphs == [] and third.graphs == []  # one draw, two keeps
+    for sc in scs:
+        assert sc.version.params["pose_addons_applied"] == {pid: "normal"}
+        assert sc.file("pose_ready_picture").is_file()

@@ -68,12 +68,15 @@ def own_lora(mine_settings, name: str, label: str, meta: dict[str, str] | None =
 class FakeClient:
     """Answers the LoRA list (object_info) and the staging call the stages make; counts the questions asked."""
 
-    def __init__(self, listed: list[str]):
+    def __init__(self, listed: list[str], down: bool = False):
         self.listed = list(listed)
+        self.down = down  # an engine that is switched off: the question raises a connection error
         self.asked = 0
 
     async def object_info(self, node_class: str) -> dict[str, Any]:
         self.asked += 1
+        if self.down:
+            raise ConnectionError("the engine is not running")
         return {"input": {"required": {"lora_name": [list(self.listed), {}]}}}
 
     async def stage_input(self, path: Any, name: str, *args: Any, **kw: Any) -> str:
@@ -157,6 +160,25 @@ async def test_no_choice_makes_no_engine_call_and_records_nothing_applied(mine_s
     assert await edit_loras(sc, "view_addons", {}) == []
     assert client.asked == 0 and sc.jobs == []
     assert sc.version.params["view_addons_applied"] == {}
+
+
+@arun
+async def test_an_engine_that_is_off_is_skipped_but_the_job_card_must_answer(mine_settings, tmp_path):
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages.picture_loras import edit_loras
+
+    entry = own_lora(mine_settings, "inkstyle.safetensors", "Ink style")
+    file_ = reference.addon(entry["id"])["file"]
+    choice = {"view_addons": {entry["id"]: "normal"}}
+    # card B is switched off: it cannot take work, so the step goes on on the job's card A
+    sc = FakeSC(tmp_path, {"A": FakeClient([lora_name(file_)]), "B": FakeClient([], down=True)})
+    assert [a["id"] for a in await edit_loras(sc, "view_addons", choice)] == [entry["id"]]
+    # the job's own card A does not answer: a plain stop before any job, not a crash inside the step
+    sc = FakeSC(tmp_path, {"A": FakeClient([lora_name(file_)], down=True), "B": FakeClient([lora_name(file_)])})
+    with pytest.raises(RuntimeError, match="did not answer") as e:
+        await edit_loras(sc, "view_addons", choice)
+    assert "ConnectionError" not in str(e.value) and sc.jobs == []
 
 
 @arun
@@ -282,3 +304,63 @@ async def test_face_closeup_gets_the_face_choice_and_the_sharpening_redraw_gets_
     with pytest.raises(RuntimeError, match="stop after"):
         await fd.redraw(sc, "A", crop, 1, tmp_path / "sharp.png")  # the sharpening redraw passes none
     assert seen == [chosen, None]
+
+
+class _Stop(Exception):
+    """Raised by a spy to end a stage right after the call under test."""
+
+
+class _RefineSC(FakeSC):
+    async def stage_input(self, path: Any, name: str, *args: Any, **kw: Any) -> str:
+        raise _Stop()  # refine writes its parameters before its first staging call
+
+
+@arun
+async def test_refine_keeps_only_the_requests_own_choice_not_the_parents(mine_settings, tmp_path, monkeypatch):
+    from vgac import library
+    from vgac.stages import concept
+
+    img = tmp_path / "img.png"
+    img.write_bytes(b"")
+    monkeypatch.setattr(library, "version_file", lambda v, key, settings: img)
+    parent = SimpleNamespace(id="par00001", files={"image": img},
+                             params={"edit_addons": {"mine_x": "normal"}, "edit_addons_applied": {"mine_x": "normal"}, "seed": 4})
+
+    sc = _RefineSC(tmp_path, {"A": FakeClient([])}, category="humanoid")
+    sc.parent = parent
+    sc.settings = SimpleNamespace()
+    with pytest.raises(_Stop):
+        await concept.refine(sc, "make it red", None, None, {})  # the request sent no choice
+    assert sc.version.params["edit_addons"] is None and sc.version.params["edit_addons_applied"] is None
+
+    sc2 = _RefineSC(tmp_path, {"A": FakeClient([])}, category="humanoid")
+    sc2.parent = parent
+    sc2.settings = SimpleNamespace()
+    with pytest.raises(_Stop):
+        await concept.refine(sc2, "make it red", None, None, {"edit_addons": {"mine_x": "strong"}})
+    assert sc2.version.params["edit_addons"] == {"mine_x": "strong"}
+
+
+def test_stale_kept_views_are_the_ones_drawn_with_other_loras(mine_settings):
+    from vgac.stages import turnaround as t
+
+    keep = {"front": {"loras": ["x"]}, "left": {"loras": []}, "back": {"supplied": True, "loras": []}, "right": {}}
+    assert t.stale_kept_views(keep, ["x"]) == ["left", "right"]  # a supplied picture is never redrawn
+    assert t.stale_kept_views(keep, []) == ["front"]
+    assert t.stale_kept_views(None, ["x"]) == []
+
+
+@arun
+async def test_adjust_with_a_changed_view_choice_redraws_every_view(mine_settings, tmp_path, monkeypatch):
+    from vgac.stages import turnaround as t
+
+    drawn: dict[str, Any] = {}
+
+    async def spy(sc_, views, params, source, keep=None, **kw):
+        drawn.update(views=list(views), keep=keep)
+
+    monkeypatch.setattr(t, "_run_views", spy)
+    sc = FakeSC(tmp_path, {"A": FakeClient([])})
+    sc.parent = None  # no kept views: adjust draws the views it lists, all of them
+    await t.adjust(sc, {"views": ["front", "left", "back", "right", "quarter"], "view_addons": {"mine_x": "strong"}})
+    assert drawn["views"] == ["front", "left", "back", "right", "quarter"] and not drawn["keep"]

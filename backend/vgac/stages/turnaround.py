@@ -25,7 +25,7 @@ from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_
 from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
-from .picture_loras import edit_loras
+from .picture_loras import chosen_ids, edit_loras
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
 # The three-quarter view from the other side: drawn whenever the clean-up paints the texture from the views, because
@@ -585,14 +585,18 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     if kept and not _pose_choice_changed(sc, params):
         for k, p in kept.items():
             sc.register(k, sc.copy_in(p, p.name))
-        sc.set_params(pose_ready=True, neutral_mouth=mouth)
+        # The kept picture was drawn with the parent's pose LoRAs: this version carries that record on, so the next
+        # version compares against it (and inherit() drops it only from the parent's own run).
+        sc.set_params(pose_ready=True, neutral_mouth=mouth,
+                      pose_addons_applied=dict((sc.parent.params or {}).get("pose_addons_applied") or {}))
         return Path(sc.file("pose_ready_picture"))
     refused = _refused_files(sc, params.get("pose_keep_refused")) if params.get("pose_keep_refused") else None
     if refused:
         for old, new in zip(REFUSED_KEYS, POSE_KEYS):
             sc.register(new, sc.copy_in(refused[old], f"{new}.png"))
-        sc.set_params(pose_ready=True, neutral_mouth=mouth)
         source_v = sc.db.get(Version, params["pose_keep_refused"])
+        sc.set_params(pose_ready=True, neutral_mouth=mouth,
+                      pose_addons_applied=dict((source_v.params or {}).get("pose_addons_applied") or {}))
         prior = (source_v.metrics or {}).get("pose_guard") or {}
         g = {"ok": False, "reasons": prior.get("reasons") or ["it changed the character"], "not_compared": prior.get("not_compared") or []}
         sc.set_metrics(pose_guard={**prior, "kept_anyway": True, "from_version": params["pose_keep_refused"]})
@@ -608,7 +612,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.use_model("qwen_lightning_lora")
     prompt = pose_ready_prompt(mouth, measure)
     # The person's LoRAs for the pose redraw only (pose_addons), checked on every card the redraw may use before the first try.
-    pose_loras = await edit_loras(sc, "pose_addons", params, mesh_stage()._picture_cards(sc) or None)
+    pose_loras = await edit_loras(sc, "pose_addons", params)
     tries: list[dict[str, Any]] = []
     for n in range(1 + POSE_GUARD_RETRIES):
         seed = random_seed()
@@ -832,6 +836,14 @@ async def _supplied_view(sc: StageContext, view: str, path: Path, base: float, s
     return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
 
 
+def stale_kept_views(keep: dict[str, dict[str, Any]] | None, chosen: list[str]) -> list[str]:
+    """Kept views that were drawn with other personal LoRAs than the step now uses (a changed view choice): they are
+    redrawn, never reported as drawn with the new choice. A supplied picture is the person's own and is never redrawn.
+    A view from before the record existed counts as drawn with none."""
+    want = sorted(chosen)
+    return [v for v, info in (keep or {}).items() if not info.get("supplied") and sorted(info.get("loras") or []) != want]
+
+
 async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
                      keep: dict[str, dict[str, Any]] | None = None, extra: str = "",
                      supplied: dict[str, Path] | None = None, method: str | None = None) -> None:
@@ -845,6 +857,10 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     # The person's LoRAs for the side views (view_addons): checked on every card before the first job of this run. A
     # kept view keeps the record of the LoRAs it was drawn with; every view drawn here records the ones it was drawn with.
     view_loras = await edit_loras(sc, "view_addons", params)
+    stale = stale_kept_views(keep, [a["id"] for a in view_loras])
+    if stale:
+        keep = {v: info for v, info in (keep or {}).items() if v not in stale}
+        views = [*views, *[v for v in stale if v not in views]]  # redrawn with the choice now in force
     posed = await _pose_ready_picture(sc, params, src)
     if posed is not None:
         src = posed  # every drawn view starts from the pose-ready picture; the concept stays as it is
@@ -1292,6 +1308,11 @@ async def _add_views(sc: StageContext, parent: Version | None, source: Version |
     if merged["second_quarter"] is None:
         merged.pop("second_quarter")
     merged.pop("add_views", None)  # the marker belongs to the adjust that asked for it
+    # A kept view drawn with other personal LoRAs than the choice now in force is redrawn, not kept (stale_kept_views).
+    stale = stale_kept_views(keep, chosen_ids(merged, "view_addons"))
+    for v in stale:
+        keep.pop(v, None)
+    targets = [*targets, *[v for v in stale if v not in targets]]
     sc.set_params(**merged)
     sc.set_metrics(**{k: v for k, v in (parent.metrics or {}).items() if k not in ("checks", "checks_passed", "checks_failed", "gate_ok", "models", "cards")})
     _copy_bald(sc, parent)
