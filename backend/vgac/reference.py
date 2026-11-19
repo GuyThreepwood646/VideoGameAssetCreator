@@ -532,11 +532,11 @@ def _user_addons() -> dict[str, dict[str, Any]]:
 
 
 def _mine_file_present(a: dict[str, Any]) -> bool:
-    """Whether a user add-on's file is still in VGAC/mine/ (the only folder this checks)."""
+    """Whether a user add-on's file is still where it was kept (VGAC/mine/, or the one place a file used where it is was registered)."""
     from . import user_addons
 
     try:
-        return (user_addons.mine_dir() / str(a.get("file_name") or "")).is_file() and bool(a.get("file_name"))
+        return user_addons.addon_path(a).is_file() and bool(a.get("file_name"))
     except (OSError, ValueError):
         return False
 

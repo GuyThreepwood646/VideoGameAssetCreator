@@ -247,13 +247,10 @@ def _same_drive(a: Path, b: Path) -> bool:
         return False
 
 
-def place_link(spec: Spec, source: Path, root: Path | None, roots: dict[str, Any]) -> dict[str, Any]:
-    """Hard-link the person's file into the engine's models folder (same drive; no copy, no space, no administrator rights), then take
-    it as their file."""
-    why = refusal(spec, source)
-    if why:
-        raise DownloadError("refused", why, "Choose another file, or use the download button.")
-    target = place_target(spec, source)
+def link_file(source: Path, target: Path) -> bool:
+    """Hard-link `source` at `target` (same drive; no copy, no space, no administrator rights). -> True when a new link was made,
+    False when `target` already is the very same file. DownloadError when another file is in the way or the drive differs. Shared by
+    the model panel and the person's own LoRAs (user_addons / addon_links)."""
     if target.exists():
         try:
             same = os.path.samefile(target, source)
@@ -261,14 +258,25 @@ def place_link(spec: Spec, source: Path, root: Path | None, roots: dict[str, Any
             same = False
         if not same:
             raise DownloadError("exists", f"A different file called {target.name} is already in {target.parent}.", "Rename your file, or remove that one.")
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(source, target)
-        except OSError as e:
-            raise DownloadError("cross_drive", "ComfyUI cannot read your file from where it is, and it cannot be linked from there "
-                                f"({e.strerror or e}).", "Copy it into the models folder with the Copy button, or add its folder to your "
-                                "ComfyUI's extra model paths yourself; the app does not change your ComfyUI settings.") from None
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source, target)
+    except OSError as e:
+        raise DownloadError("cross_drive", "ComfyUI cannot read your file from where it is, and it cannot be linked from there "
+                            f"({e.strerror or e}).", "Copy it into the models folder with the Copy button, or add its folder to your "
+                            "ComfyUI's extra model paths yourself; the app does not change your ComfyUI settings.") from None
+    return True
+
+
+def place_link(spec: Spec, source: Path, root: Path | None, roots: dict[str, Any]) -> dict[str, Any]:
+    """Hard-link the person's file into the engine's models folder (same drive; no copy, no space, no administrator rights), then take
+    it as their file."""
+    why = refusal(spec, source)
+    if why:
+        raise DownloadError("refused", why, "Choose another file, or use the download button.")
+    target = place_target(spec, source)
+    link_file(source, target)
     return choose(spec, str(target), root, roots, placed={"mode": "link", "source": str(source)})
 
 

@@ -394,7 +394,14 @@ export type AddonEntry = {
   mine?: boolean
   file_name?: string
   added_at?: string
+  // Your own add-ons only: how the file is kept (see AddonPlacement).
+  placement?: AddonPlacement
 }
+
+// How one of your LoRA files is kept. mode: 'in_place' (used where it is), 'link' (a second name made by the app, same drive), 'copy' (a copy
+// made by the app) or '' (a file you put in the app's folder yourself). `note` is the plain sentence to show, and says when the file or its
+// original is gone.
+export type AddonPlacement = { mode: 'in_place' | 'link' | 'copy' | ''; note: string; source: string; source_missing: boolean; file_missing: boolean }
 
 // Your own add-ons (backend user_addons.py, docs/API.md "your own LoRAs").
 export type MyAddonsListing = {
@@ -409,7 +416,22 @@ export type MyAddonsListing = {
 export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string }
 export type UploadedAddon = { file_name: string; bytes: number; prefill: AddonPrefill }
 export type UnregisteredAddon = { file_name: string; bytes: number; prefill?: AddonPrefill; error?: string }
-export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string }
+export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string; in_place?: boolean }
+export type MyAddonChange = Omit<MyAddonIn, 'file_name' | 'in_place'>
+// POST /api/my-addons/place (desktop app): what was done with the file at a real path, or (copy_needed) what a copy would do.
+export type AddonPlaced = {
+  route: 'in_place' | 'already_here' | 'link' | 'copy' | 'copy_needed'
+  file_name: string
+  in_place: boolean
+  bytes: number
+  prefill: AddonPrefill
+  source: string
+  message: string
+  folder?: string
+  can_copy?: boolean
+  free?: number
+}
+export type RemovedAddon = { removed: string; file_name: string; file_kept: boolean; file_removed: boolean; mode: string; message: string }
 export type Recipe = {
   id: string
   style: string
@@ -964,7 +986,9 @@ export const api = {
   // Your own add-ons
   myAddons: () => get<MyAddonsListing>('/api/my-addons'),
   addMyAddon: (body: MyAddonIn) => post<AddonEntry>('/api/my-addons', body),
-  removeMyAddon: (id: string) => del<{ removed: string; file_name: string; file_kept: boolean }>(`/api/my-addons/${encodeURIComponent(id)}`),
+  removeMyAddon: (id: string) => del<RemovedAddon>(`/api/my-addons/${encodeURIComponent(id)}`),
+  updateMyAddon: (id: string, body: MyAddonChange) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}`, body),
+  placeAddon: (path: string, makeCopy = false) => post<AddonPlaced>('/api/my-addons/place', { path, make_copy: makeCopy }),
   unregisteredAddons: () => get<UnregisteredAddon[]>('/api/my-addons/unregistered'),
   openAddonFolder: () => post<{ opened: boolean; folder: string; front?: boolean | null }>('/api/my-addons/open-folder'),
   uploadAddon: (file: File, onProgress?: (fraction: number) => void) => uploadAddonFile(file, onProgress),

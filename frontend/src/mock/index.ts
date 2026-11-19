@@ -1401,7 +1401,17 @@ on('DELETE', '/api/my-addons/:id', (m) => {
   const i = myAddons.findIndex((a) => a.id === m.groups!.id)
   if (i < 0) throw new HttpError(404, 'That LoRA is not on your list.')
   const [gone] = myAddons.splice(i, 1)
-  return { removed: gone.id, file_name: gone.file_name, file_kept: true }
+  return { removed: gone.id, file_name: gone.file_name, file_kept: true, file_removed: false, mode: '', message: '' }
+})
+on('PUT', '/api/my-addons/:id', (m, body) => {
+  const entry = myAddons.find((a) => a.id === m.groups!.id)
+  if (!entry) throw new HttpError(404, 'That LoRA is not on your list.')
+  const label = String(body.label ?? '').trim()
+  if (!label) throw new HttpError(400, 'Give the LoRA a name.')
+  const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
+  if (!models.length) throw new HttpError(400, 'Choose at least one model the LoRA was made for.')
+  Object.assign(entry, { label, base_models: models, trigger: String(body.trigger ?? ''), source: String(body.source ?? '') })
+  return entry
 })
 
 // Add a move (mock/moves.ts): the library, a character's moves, and your own animation files.
