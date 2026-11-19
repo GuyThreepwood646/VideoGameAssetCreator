@@ -2,7 +2,7 @@
 // build automatically. Only what the person changes is reported (onChange gets the changed values per step). The form
 // starts from the person's saved defaults for this platform and look, and says so; "Save as my defaults" keeps what
 // is in the form for next time.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, STAGES, type AdjustParam, type StageId, type StageInfo, type StepDefaults } from '../api'
 import { Disclosure } from '../components/ui'
 import { isSimpleParam, paramPlain, stagePlain } from '../help'
@@ -16,11 +16,16 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
   const [saved, setSaved] = useState<StepDefaults | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // The buttons wait until the saved defaults have been read, so a save never starts from a form that has not loaded them.
+  const [loaded, setLoaded] = useState(false)
+  const keyNow = useRef('')
+  keyNow.current = `${category}|${platform}|${look}`
   // The saved defaults for this platform and look fill the form; a different platform or look starts over.
   useEffect(() => {
     setSaved(null)
     setNote(null)
     setEdits({})
+    setLoaded(false)
     if (!category || !platform || !look) return
     let alive = true
     api.getStepDefaults(platform, look, category).then(
@@ -28,8 +33,9 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
         if (!alive) return
         setSaved(d)
         setEdits(d.applied as StepParams)
+        setLoaded(true)
       },
-      () => undefined,
+      () => setNote('Your saved defaults could not be read, so saving is off for now.'),
     )
     return () => {
       alive = false
@@ -52,10 +58,12 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
   const hasSaved = Object.keys(saved?.saved ?? {}).length > 0
   const inUse = savedInUse(steps, category, edits, (saved?.applied ?? {}) as StepParams)
   const run = async (work: () => Promise<StepDefaults>, done: string) => {
+    const key = keyNow.current
     setSaving(true)
     setNote(null)
     try {
       const d = await work()
+      if (key !== keyNow.current) return
       setSaved(d)
       setEdits(d.applied as StepParams)
       setNote(done)
@@ -66,8 +74,22 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
     }
   }
   const saveDefaults = () => {
+    // One setting at a time: what is still at its saved (or usual) value is left alone, what went back to the usual
+    // value is removed (null), the rest is set. Settings this kind of asset does not show are never touched.
     const stagesToSave: Partial<Record<StageId, Record<string, unknown>>> = {}
-    for (const step of steps) stagesToSave[step.id as StageId] = changed[step.id as StageId] ?? {}
+    for (const step of steps) {
+      const id = step.id as StageId
+      const out: Record<string, unknown> = {}
+      for (const p of shownSettings(step.adjust_schema ?? [], category)) {
+        const has = Object.prototype.hasOwnProperty
+        const usual = startingValue(p, category)
+        const was = has.call(saved?.applied?.[id] ?? {}, p.name) ? saved?.applied?.[id]?.[p.name] : usual
+        const now = has.call(edits[id] ?? {}, p.name) ? edits[id]?.[p.name] : usual
+        if (JSON.stringify(now ?? null) === JSON.stringify(was ?? null)) continue
+        out[p.name] = JSON.stringify(now ?? null) === JSON.stringify(usual ?? null) ? null : now
+      }
+      if (Object.keys(out).length > 0) stagesToSave[id] = out
+    }
     return run(() => api.saveStepDefaults(platform, look, category, stagesToSave), 'Saved. New assets with this platform and look start from these settings.')
   }
   const clearDefaults = () => run(() => api.clearStepDefaults(platform, look, category), 'Your saved defaults for this platform and look are cleared.')
@@ -111,11 +133,11 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
           )
         })}
         <div className="row">
-          <button type="button" className="small" disabled={disabled || saving} onClick={saveDefaults} title="Keeps these settings for new assets with this platform and look">
+          <button type="button" className="small" disabled={disabled || saving || !loaded} onClick={saveDefaults} title="Keeps these settings for new assets with this platform and look">
             Save as my defaults
           </button>
           {hasSaved && (
-            <button type="button" className="small" disabled={disabled || saving} onClick={clearDefaults}>
+            <button type="button" className="small" disabled={disabled || saving || !loaded} onClick={clearDefaults}>
               Clear my defaults
             </button>
           )}

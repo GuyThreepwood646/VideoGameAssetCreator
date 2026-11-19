@@ -11,6 +11,8 @@ saved value itself is kept, so it comes back into force on a platform or look wi
 
 from __future__ import annotations
 
+import math
+import threading
 from typing import Any
 
 from . import prefs, reference
@@ -18,6 +20,7 @@ from .config import Settings
 
 # Settings that make no sense as a standing default: a seed would repeat the same result every build.
 NOT_SAVED = {"seed"}
+_lock = threading.RLock()  # one save at a time: a save reads the stored sets, changes one, writes all
 
 
 def key(platform: str, look: str) -> str:
@@ -32,7 +35,7 @@ def _check_ids(platform: str, look: str) -> None:
         raise ValueError(str(e.args[0])) from None
 
 
-def clean_stage(stage: str, params: Any) -> dict[str, Any]:
+def clean_stage(stage: str, params: Any, allow_remove: bool = False) -> dict[str, Any]:
     """The step's settings checked against its schema. Raises ValueError with a plain message for an unknown step or
     setting, a value out of range or of the wrong kind, or a setting that cannot be a default."""
     if stage not in reference.STAGE_ORDER:
@@ -45,8 +48,12 @@ def clean_stage(stage: str, params: Any) -> dict[str, Any]:
         if p is None or p["type"] == "addons" or name in NOT_SAVED:
             raise ValueError(f"{name!r} is not a setting of step {stage!r} that can be saved")
         if value is None:
+            if allow_remove:
+                continue
             raise ValueError(f"{name} needs a value; leave a setting out to use the usual one")
-    return reference.validate_params(stage, params)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{name} must be a number")
+    return reference.validate_params(stage, params)  # a null passes through untouched (a removal)
 
 
 def _limits(platform: str, look: str, category: str | None) -> dict[str, int]:
@@ -59,8 +66,10 @@ def _limits(platform: str, look: str, category: str | None) -> dict[str, int]:
     out: dict[str, int] = {}
     if mesh.get("triangles"):
         out["target_faces"] = int(mesh["triangles"])
-    if mesh.get("budget_texture"):
-        out["texture_size"] = int(mesh["budget_texture"])
+    # The size the 3D step builds at: the look's bake size where it has one, else its (platform-capped) texture.
+    tex = mesh.get("bake_texture") or mesh.get("texture") or mesh.get("budget_texture")
+    if tex:
+        out["texture_size"] = int(tex)
     return out
 
 
@@ -74,7 +83,7 @@ def get(platform: str, look: str, category: str | None = None, settings: Setting
     notes: list[str] = []
     for stage, params in saved.items():
         out = dict(params)
-        for name, cap in limits.items():
+        for name, cap in (limits.items() if stage == "mesh" else ()):
             v = out.get(name)
             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > cap:
                 out[name] = cap
@@ -85,21 +94,25 @@ def get(platform: str, look: str, category: str | None = None, settings: Setting
 
 
 def save(platform: str, look: str, stages: dict[str, Any], settings: Settings | None = None) -> None:
-    """Replace the saved settings of the steps named (an empty set clears that step); other steps are kept. Nothing is
-    written if any value is refused."""
+    """Change the saved settings of the steps named, one setting at a time: a value is set, a null removes that
+    setting, settings not named are kept (so a form that shows only some of a step's settings, or a saved value that
+    was brought down on screen, is never lost by a save). Nothing is written if any value is refused."""
     _check_ids(platform, look)
     if not isinstance(stages, dict):
         raise ValueError("stages must map step ids to their settings")
-    cleaned = {s: clean_stage(s, p) for s, p in stages.items()}
-    allp = prefs.load(settings)["step_defaults"]
-    mine = dict(allp.get(key(platform, look), {}))
-    for s, p in cleaned.items():
-        if p:
-            mine[s] = p
-        else:
-            mine.pop(s, None)
-    allp[key(platform, look)] = mine
-    prefs.update(settings, step_defaults=allp)
+    cleaned = {s: clean_stage(s, p, allow_remove=True) for s, p in stages.items()}
+    with _lock:
+        allp = prefs.load(settings)["step_defaults"]
+        mine = dict(allp.get(key(platform, look), {}))
+        for s, p in cleaned.items():
+            merged = {**mine.get(s, {}), **p}
+            merged = {k: v for k, v in merged.items() if v is not None}
+            if merged:
+                mine[s] = merged
+            else:
+                mine.pop(s, None)
+        allp[key(platform, look)] = mine
+        prefs.update(settings, step_defaults=allp)
 
 
 def clear(platform: str, look: str, stage: str | None = None, settings: Settings | None = None) -> None:
@@ -107,11 +120,12 @@ def clear(platform: str, look: str, stage: str | None = None, settings: Settings
     _check_ids(platform, look)
     if stage is not None and stage not in reference.STAGE_ORDER:
         raise ValueError(f"unknown step {stage!r}; known: {list(reference.STAGE_ORDER)}")
-    allp = prefs.load(settings)["step_defaults"]
-    mine = allp.get(key(platform, look), {})
-    if stage is None:
-        mine = {}
-    else:
-        mine.pop(stage, None)
-    allp[key(platform, look)] = mine
-    prefs.update(settings, step_defaults=allp)
+    with _lock:
+        allp = prefs.load(settings)["step_defaults"]
+        mine = allp.get(key(platform, look), {})
+        if stage is None:
+            mine = {}
+        else:
+            mine.pop(stage, None)
+        allp[key(platform, look)] = mine
+        prefs.update(settings, step_defaults=allp)

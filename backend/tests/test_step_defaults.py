@@ -22,8 +22,8 @@ def test_round_trip_and_clear(client):  # noqa: F811
     # one step cleared, the other kept
     r = client.delete(URL, params={**Q, "stage": "rig"}).json()
     assert r["saved"] == {"mesh": {"upsample": 1536}}
-    # an empty set for a step clears it too
-    assert _put(client, {"mesh": {}}).json()["saved"] == {}
+    # a null removes one setting; the step goes when its last setting does
+    assert _put(client, {"mesh": {"upsample": None}}).json()["saved"] == {}
     _put(client, {"mesh": {"upsample": 1536}})
     assert client.delete(URL, params=Q).json()["saved"] == {}
 
@@ -50,7 +50,6 @@ def test_bad_values_are_refused_and_nothing_is_saved(client):  # noqa: F811
         ({"mesh": {"target_faces": "many"}}, "number"),
         ({"rig": {"arm_pose": "sideways"}}, "one of"),
         ({"mesh": {"seed": 4}}, "seed"),
-        ({"mesh": {"upsample": None}}, "needs a value"),
         # a good step next to a bad one saves neither
         ({"rig": {"arm_pose": "open"}, "mesh": {"target_faces": 5}}, "between"),
     ]:
@@ -86,3 +85,22 @@ def test_defaults_survive_a_prefs_round_trip(client):  # noqa: F811
     # malformed entries are dropped on load, good ones stay
     assert prefs._normalise({"step_defaults": {"x": {"mesh": {"a": 1}}, "pc_mid|cel": {"mesh": {"a": 1}, "rig": {}}, "pc_mid|clay": "bad"}})[
         "step_defaults"] == {"pc_mid|cel": {"mesh": {"a": 1}}}
+
+
+def test_save_changes_one_setting_at_a_time(client):  # noqa: F811
+    _put(client, {"mesh": {"upsample": 1536, "tex_steps": 12}})
+    r = _put(client, {"mesh": {"tex_steps": None, "head_build": None}}).json()
+    assert r["saved"] == {"mesh": {"upsample": 1536}}
+    r = _put(client, {"mesh": {"target_faces": 9000}}).json()
+    assert r["saved"]["mesh"] == {"upsample": 1536, "target_faces": 9000}
+
+
+def test_clamp_is_for_the_3d_step_only(client):  # noqa: F811
+    q = {"platform": "high", "look": "retro64", "category": "humanoid"}
+    r = _put(client, {"mesh": {"target_faces": 2000}, "rig": {"target_faces": 40000}}, **q).json()
+    assert r["applied"]["rig"]["target_faces"] == 40000 and r["notes"] == []
+
+
+def test_not_a_number_is_refused(client):  # noqa: F811
+    r = client.put(URL, params=Q, content='{"stages": {"mesh": {"camera_angle": NaN}}}', headers={"content-type": "application/json"})
+    assert r.status_code == 400 and "number" in r.json()["detail"]
