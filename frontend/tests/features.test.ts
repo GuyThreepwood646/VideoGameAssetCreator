@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { featureEffect, featureRoles, usedFeatures, type FeatureSlot } from '../src/featurePhotos'
+import { cropsFace, featureEffect, featureRoles, usedFeatures, type FeatureSlot } from '../src/featurePhotos'
 
 const pic = { dataUrl: 'data:image/png;base64,AAAA', name: 'p.png', bytes: 3, width: 512, height: 512 }
 const slots: FeatureSlot[] = [
@@ -28,4 +28,11 @@ test('the form says that several photos make one picture', () => {
   assert.match(featureEffect(used, 'picture', 'humanoid'), /your picture and these 2 photos/)
   assert.match(featureEffect([slots[0]], 'picture', 'humanoid'), /used as it is in step 1/)
   assert.match(featureEffect([slots[0]], 'model', 'humanoid'), /not redrawn/)
+})
+
+test('"Crop the face from it" only sits under a body photo of a human; not under outfit or other photos', () => {
+  assert.equal(cropsFace('body', 'humanoid'), true)
+  assert.equal(cropsFace('outfit', 'humanoid'), false)
+  assert.equal(cropsFace('other', 'humanoid'), false)
+  assert.equal(cropsFace('body', 'quadruped'), false)
 })

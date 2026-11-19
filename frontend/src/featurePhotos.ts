@@ -25,6 +25,10 @@ export function usedFeatures(slots: FeatureSlot[], startFrom: StartFrom, categor
   return slots.filter((s) => s.picture && roles.includes(s.role))
 }
 
+// "Crop the face from it" only where a face is expected: a body photo of a human shows the whole person, so its face
+// can be cut out. An outfit or other photo shows clothes or details, not a face, so it does not get the button.
+export const cropsFace = (role: FeatureRole, category: string) => role === 'body' && category === 'humanoid'
+
 /** What the filled slots will do, in one plain sentence. */
 export function featureEffect(used: FeatureSlot[], startFrom: StartFrom, category: string): string {
   if (!used.length) return ''

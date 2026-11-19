@@ -371,7 +371,8 @@ def _compose_bands(path: Any) -> dict[str, Any] | None:
 def compose_measure(inputs: list[tuple[str, Any]], cutout: Any) -> dict[str, Any] | None:
     """How far the combined picture's clothes and hair are from the pictures they came from: {outfit, hair} (Lab colour
     distances, None for a part that could not be compared), or None when nothing could be. `inputs` is
-    [(role, picture)]: body and outfit pictures give the clothes, face pictures the hair."""
+    [(role, picture)]: body and outfit pictures give the clothes, face pictures the hair, and the person's own picture
+    ("character") gives both."""
     import numpy as np
 
     got = _compose_bands(cutout)
@@ -386,11 +387,12 @@ def compose_measure(inputs: list[tuple[str, Any]], cutout: Any) -> dict[str, Any
             continue
         if b is None:
             continue
-        if role in ("body", "outfit"):
+        # "character" is the person's own picture, which the combined one starts from: it gives the clothes and the hair too.
+        if role in ("character", "body", "outfit"):
             parts = [float(np.linalg.norm(b[k] - got[k])) for k in ("upper", "lower") if b[k] is not None and got[k] is not None]
             if parts:
                 outfit.append(max(parts))
-        elif role == "face" and b["hair"] is not None and got["hair"] is not None:
+        if role in ("character", "face") and b["hair"] is not None and got["hair"] is not None:
             hair.append(float(np.linalg.norm(b["hair"] - got["hair"])))
     if not outfit and not hair:
         return None

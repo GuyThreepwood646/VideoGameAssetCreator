@@ -4,7 +4,7 @@
 // nothing is drawn, so only the face is offered (it goes to the step 4 face pass).
 import { useState } from 'react'
 import type { FeatureRole } from '../api'
-import { featureEffect, featureRoles, MAX_FEATURES, slot, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
+import { cropsFace, featureEffect, featureRoles, MAX_FEATURES, slot, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
 import { FaceCrop } from './FaceCrop'
 import { ImageDrop, type PickedImage } from './ImageDrop'
 import { Info } from './Info'
@@ -89,7 +89,7 @@ export function FeaturePhotos({ slots, onChange, startFrom, category, disabled =
                 </button>
               </div>
               <ImageDrop compact value={s.picture} onChange={(p) => set(s.key, { picture: p })} label={ROLE_LABEL[s.role]} hint={ROLE_HINT[s.role]} disabled={disabled} />
-              {s.picture && s.role !== 'face' && roles.includes('face') && (
+              {s.picture && cropsFace(s.role, category) && (
                 <button type="button" className="link small" disabled={disabled} onClick={() => setCropFrom(s.picture)} title="Drag a box around the face; the crop is added as the Face photo">
                   Crop the face from it
                 </button>
@@ -111,7 +111,7 @@ export function FeaturePhotos({ slots, onChange, startFrom, category, disabled =
           ))}
         </div>
       )}
-      {!hasFace && used.length > 0 && roles.includes('face') && (
+      {!hasFace && used.length > 0 && category === 'humanoid' && roles.includes('face') && (
         <div className="tool-note small">
           For a likeness, give the face its own photo. With a photo of the whole person, use "Crop the face from it" under the photo: a close crop of the face carries the person's features much better than the whole photo does.
         </div>
