@@ -212,6 +212,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     const secs = redrawViewsSeconds(stageEstimate('turnaround', stageInfo, suggestion?.estimates), views.length, total)
     const warning = redrawViewsWarning(views.length, secs, words.trim().length > 0)
     if (warning && !(await confirm.ask({ title: `Redraw ${views.length} views?`, body: warning, confirmLabel: 'Redraw' }))) return false
+    let sent = false
     await act(async () => {
       const out = await api.refine(from.id, {
         instruction: words.trim() || PLAIN_VIEW_REDRAW,
@@ -222,8 +223,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
       })
       setActiveId(out.version.id)
       setChangeText('')
+      sent = true
     })
-    return true
+    return sent  // false when backed out at the warning or the request failed: ticks, words and settings stay
   }
   const redrawViews = (from: Version, views: string[]) => refineViews(from, views, changeText)
 
@@ -481,11 +483,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 focus={toolFocus}
                 text={changeText}
                 onText={setChangeText}
-                onRefine={(instruction, views, reference, params, editAddons) => {
+                onRefine={async (instruction, views, reference, params, editAddons): Promise<boolean | void> => {
                   // Step 2: the chosen view, or every view for "all views"; the same path as the tick boxes.
                   if (stage === 'turnaround') return refineViews(active, views ?? [], instruction, { reference, params, editAddons })
                   setChangeText('')
-                  return act(() => api.refine(active.id, { instruction, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}), ...(editAddons ? { edit_addons: editAddons } : {}) }))
+                  await act(() => api.refine(active.id, { instruction, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}), ...(editAddons ? { edit_addons: editAddons } : {}) }))
                 }}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
@@ -876,7 +878,7 @@ function ChangePanel({
   onText: (t: string) => void
   // A described change, with any changed Fine-tune settings sent in the same new version. Step 2 also gets the
   // views it applies to: the one chosen, or every view for "all views".
-  onRefine: (instruction: string, views?: string[], reference?: string, params?: Record<string, unknown>, editAddons?: Record<string, EditChoice>) => void
+  onRefine: (instruction: string, views?: string[], reference?: string, params?: Record<string, unknown>, editAddons?: Record<string, EditChoice>) => Promise<boolean | void> | void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
   const [view, setView] = useState('')
@@ -909,18 +911,22 @@ function ChangePanel({
   // Apply and re-run: with text waiting in Describe the change, both go in one new version.
   const adjustOrBoth = (params: Record<string, unknown>) => {
     if (!ok) return onAdjust(params)
-    onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, params, editsToSend)
-    setReference(null)
-    setRefineLoras({})
-    setResetNonce((n) => n + 1)
+    void Promise.resolve(onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, params, editsToSend)).then((sent) => {
+      if (sent === false) return
+      setReference(null)
+      setRefineLoras({})
+      setResetNonce((n) => n + 1)
+    })
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, pending?.params, editsToSend)
-    setRefineLoras({})
-    if (pending) setResetNonce((n) => n + 1)
-    setReference(null)
+    void Promise.resolve(onRefine(text.trim(), chosenViews, takesReference && reference ? reference : undefined, pending?.params, editsToSend)).then((sent) => {
+      if (sent === false) return
+      setRefineLoras({})
+      if (pending) setResetNonce((n) => n + 1)
+      setReference(null)
+    })
   }
   return (
     <div className="change-panel" ref={panelRef}>

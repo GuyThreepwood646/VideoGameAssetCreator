@@ -1374,6 +1374,8 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     merged = inherit(parent.params if parent else {}, params)
     if not params.get("bald_only"):
         merged.pop("bald_only", None)  # the marker belongs to the adjust that asked for it
+    for key in ("refined_view", "refined_views"):
+        merged.pop(key, None)  # what the parent's change redrew is not what this settings change does
     views = list(merged.get("views") or DEFAULT_VIEWS)
     if parent is not None and parent.stage == "turnaround":
         # The concept source is the turnaround parent's parent; this version's own parent stays the turnaround.
