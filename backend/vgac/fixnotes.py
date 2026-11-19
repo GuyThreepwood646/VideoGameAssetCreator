@@ -40,6 +40,7 @@ RERUN: dict[str, str] = {
     "hitbox_fit": RERUN_NOTE,
     "look_applied": RERUN_NOTE,
     "pose_held_build": RERUN_NOTE,
+    "side_agree": RERUN_NOTE,
     "clips_face_forward": ("Making the files again repeats this, because the facing is set earlier: by the moves in the Make it move step and by the "
                            "model's front in the Clean up for the game step. Check those first; this button only runs the last step again."),
 }
