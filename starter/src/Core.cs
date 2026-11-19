@@ -319,11 +319,19 @@ namespace Vgac.Starter
         // Entries for oldRoot, or below it, now name newRoot (a folder that moved).
         public void RewritePaths(string oldRoot, string newRoot)
         {
-            Action op = delegate { DoRewritePaths(oldRoot, newRoot); };
+            Action op = delegate { DoRewritePaths(oldRoot, newRoot, null); };
             ops.Add(op); op();
         }
 
-        void DoRewritePaths(string oldRoot, string newRoot)
+        // B8: only the entries under the named items of oldRoot (what the move copied) are rewritten; any other entry keeps its path.
+        public void RewritePathsUnder(string oldRoot, string newRoot, IEnumerable<string> names)
+        {
+            var list = new List<string>(names);
+            Action op = delegate { DoRewritePaths(oldRoot, newRoot, list); };
+            ops.Add(op); op();
+        }
+
+        void DoRewritePaths(string oldRoot, string newRoot, List<string> only)
         {
             string o = System.IO.Path.GetFullPath(oldRoot).TrimEnd('\\').ToLowerInvariant();
             for (int i = 0; i < Items.Count; i++)
@@ -332,6 +340,10 @@ namespace Vgac.Starter
                 if (d == null || !d.ContainsKey("path")) continue;
                 string np = System.IO.Path.GetFullPath(Convert.ToString(d["path"])).TrimEnd('\\');
                 if (np.ToLowerInvariant() == o || np.ToLowerInvariant().StartsWith(o + "\\")) d["path"] = newRoot.TrimEnd('\\') + np.Substring(oldRoot.TrimEnd('\\').Length);
+                else continue;
+                // B8: with a list of names, an entry outside those items is left as it was (the rewrite above is undone for it)
+                if (only != null && !only.Exists(n => np.ToLowerInvariant().StartsWith(o + "\\" + n.ToLowerInvariant() + "\\") || np.ToLowerInvariant() == o + "\\" + n.ToLowerInvariant()))
+                    d["path"] = np;
             }
         }
 

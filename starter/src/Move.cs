@@ -372,10 +372,10 @@ namespace Vgac.Starter
             SafeFs.Point("move", "settings:" + place);
         }
 
-        void RewriteLedger(string oldRoot, string newRoot)
+        void RewriteLedger(string oldRoot, string newRoot, IEnumerable<string> onlyNames = null)
         {
             Ledger fresh = Ledger.Load(Root);
-            fresh.RewritePaths(oldRoot, newRoot);
+            if (onlyNames != null) fresh.RewritePathsUnder(oldRoot, newRoot, onlyNames); else fresh.RewritePaths(oldRoot, newRoot);
             fresh.Save();
             SafeFs.Point("move", "ledger:" + newRoot);
         }
@@ -557,7 +557,7 @@ namespace Vgac.Starter
             string flushed = SafeFs.FlushTree(j.To);   // B4: the copy is on the disk before the settings name it
             if (flushed != null) return "The big files are copied, but " + flushed + ". Nothing was switched. Press Continue to try again.";
             SetDataFolder(j.To);
-            RewriteLedger(j.From, j.To);
+            RewriteLedger(j.From, j.To, j.Names);   // B8: only the entries of what was copied
             string note = null; bool comfyLeftBehind = false;
             if (comfy != null && ComfyGuard.MarkerPresent(comfy.Root(j.To)))
             {

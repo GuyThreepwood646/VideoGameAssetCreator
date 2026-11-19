@@ -24,6 +24,7 @@ public static partial class T
         K2OldFolderLeftoversAreNamedNotDeleted();
         K3BinPromiseIsKeptOrSaid();
         K4ReadOnlyTargetIsReplaced();
+        K5LedgerRewriteOnlyUnderMovedNames();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -210,6 +211,19 @@ public static partial class T
             return 0;
         }
         bool pulled;
+    }
+
+    // B8: a move rewrites only the ledger entries of what it copied
+    static void K5LedgerRewriteOnlyUnderMovedNames()
+    {
+        var led = new Ledger();
+        string oldRoot = Path.Combine(Tmp("k5"), "old"), newRoot = Path.Combine(Tmp("k5"), "new");
+        led.Items.Add(new Dictionary<string, object> { { "path", Path.Combine(oldRoot, "comfyui") }, { "kind", "added" } });
+        led.Items.Add(new Dictionary<string, object> { { "path", Path.Combine(oldRoot, "elsewhere", "x") }, { "kind", "added" } });
+        led.RewritePathsUnder(oldRoot, newRoot, new[] { "comfyui" });
+        string first = Convert.ToString(((Dictionary<string, object>)led.Items[0])["path"]), second = Convert.ToString(((Dictionary<string, object>)led.Items[1])["path"]);
+        Check(first.StartsWith(newRoot, StringComparison.OrdinalIgnoreCase), "K5: an entry of a copied item is rewritten to the new place: " + first);
+        Check(second.StartsWith(oldRoot, StringComparison.OrdinalIgnoreCase), "K5: an entry outside the copied items keeps its path: " + second);
     }
 
     // B3: a read-only file in the way is cleared and replaced; nothing is left behind
