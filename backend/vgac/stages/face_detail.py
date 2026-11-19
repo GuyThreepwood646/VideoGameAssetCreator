@@ -141,6 +141,13 @@ RETRY_REASONS = ("likeness", "features", "style")
 CLOSEUP_TRIES_MAX = 3  # one close-up and up to two more with new seeds, each about a minute and a half of card time
 CLOSEUP_DEFAULT = True  # the face_closeup option when it is not set
 LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.980, different faces 0.19 to 0.87
+# Photographic looks (Photoreal, realistic_pbr, delight "remove"): plain close-ups of six real people (WP-62 bakeoff, plain
+# prompt and photo flag) scored 0.875 to 0.982 on the person's own face (15 scored; three W1 close-ups were refused by the
+# feature finder and are not counted). At 0.93 eleven of those 15 pass; at 0.90 thirteen do. The nearest wrong face
+# scored 0.81 (P1's close-up on the T-pose man's painting: two bearded men, by eye ambiguous); no other wrong face scored
+# above 0.67 on this set. 0.90 keeps a 0.09 margin to that pair. Untested on a LoRA-made realistic face (the WP-04
+# subject's pictures are not on disk). Painted and cartoon looks keep LIKENESS_MIN; guided close-ups keep their own bar.
+LIKENESS_MIN_PHOTO = 0.90
 CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
 # Under a photographic look the hair is judged tone by tone (face.tone_distance, facecloseup hair_tone_shift): the middle colour
 # read 12 to 18 on photographic close-ups whose hair was the same two tones (auburn and grey), over the limit of 10 that was set
@@ -591,7 +598,7 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
     fixed = facecloseup.save_registered(out, Path(closeup).with_name(Path(closeup).stem + "_fixed.png"))
     out["registered"] = str(fixed) if fixed else None
     reason = closeup_verdict(out, photo, guided)
-    return {"ok": reason is None, "reason": reason, **out}
+    return {"ok": reason is None, "reason": reason, "likeness_bar": likeness_bar(photo, guided), **out}
 
 
 def hair_too_far(m: dict[str, Any], photo: bool, guided: bool = False) -> bool:
@@ -599,6 +606,14 @@ def hair_too_far(m: dict[str, Any], photo: bool, guided: bool = False) -> bool:
     if photo and m.get("hair_tone_shift") is not None:
         return float(m["hair_tone_shift"]) > CLOSEUP_HAIR_TONE_MAX
     return m.get("hair_shift") is not None and float(m["hair_shift"]) > (CLOSEUP_HAIR_MAX_GUIDED if guided else CLOSEUP_HAIR_MAX)
+
+
+def likeness_bar(photo: bool, guided: bool) -> float:
+    """The likeness a close-up must reach: its guided bar when guided, else the photographic bar for a photographic look,
+    else the painted bar (LIKENESS_MIN). Recorded with each close-up so a run shows which bar applied."""
+    if guided:
+        return LIKENESS_MIN_GUIDED
+    return LIKENESS_MIN_PHOTO if photo else LIKENESS_MIN
 
 
 def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False) -> str | None:
@@ -609,7 +624,7 @@ def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False
     measure (a painted face turned photographic) does not apply."""
     if m.get("feature_move") is None:
         return "no_features"
-    if float(m.get("likeness") or 0.0) < (LIKENESS_MIN_GUIDED if guided else LIKENESS_MIN):
+    if float(m.get("likeness") or 0.0) < likeness_bar(photo, guided):
         return "likeness"
     if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
         return "features"
@@ -874,7 +889,7 @@ def own_verdict(guard: dict[str, Any], photo: bool = False) -> tuple[str | None,
         return "moved", []
     notes: list[str] = []
     # every soft reason that applies, not only the first one closeup_verdict meets
-    if float(m.get("likeness") or 1.0) < LIKENESS_MIN:
+    if float(m.get("likeness") or 1.0) < likeness_bar(photo, False):
         notes.append("likeness")
     if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
         notes.append("features")
@@ -1607,7 +1622,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     def record_tries(tries: list[dict[str, Any]]) -> None:
         if tries:
             keys = ("prompt", "seed", "ok", "reason", "likeness", "feature_scores", "feature_score_min", "feature_move",
-                    "hair_shift", "hair_tone_shift", "skin_texture")
+                    "hair_shift", "hair_tone_shift", "skin_texture", "likeness_bar")
             closeup["tries"] = [{k: t.get(k) for k in keys} for t in tries]
             closeup["draws"] = len(tries)
 
