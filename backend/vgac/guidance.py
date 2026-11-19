@@ -470,6 +470,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "prep", "params": {}},
         "fix_label": "Shrink to the budget",
     },
+    # Hunyuan3D builds no clean-up at step 3: its raw count is a note (always passes); prep judges the reduced mesh.
+    "hy3d_raw_triangles": {
+        "severity": "warn",
+        "ok": "Hunyuan3D made {value:n} triangles. Clean up reduces them to the {limit:n} your look allows, so this is not a problem yet.",
+        "fail": "Hunyuan3D made {value:n} triangles. Clean up reduces them to the {limit:n} your look allows.",
+    },
     "manifold": {
         "severity": "warn",
         "ok": lambda c: "The surface has no overlapping or broken edges." if _is_zero(c)
