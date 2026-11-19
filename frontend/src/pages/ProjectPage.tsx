@@ -12,7 +12,7 @@ import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
-import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
+import { HairFormRow, hairFormState, hairLibraryOffer, useHairLibraryCheck } from '../pipeline/HairSetting'
 import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook, usePresets, type LookChoice } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
@@ -348,7 +348,10 @@ function CreateAssetForm({ project }: { project: Project }) {
 
   const fromPicture = startFrom === 'picture'
   const fromModel = startFrom === 'model'
-  const hairOffered = !fromModel && (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
+  // The Hair row is always shown for a humanoid. Its library choice is offered only where the app can use it, else disabled with the reason.
+  const hairRow = category === 'humanoid'
+  const hairRule = fromModel ? { ok: false, reason: 'Your own 3D model keeps the hair it has.' } : hairLibraryOffer(prompt, style, category)
+  const hairState = hairFormState(hairRule, useHairLibraryCheck(platform, hairRow && hairRule.ok), platform)
   const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
   const features = usedFeatures(featureSlots, startFrom, category)
   const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || (fromModel && modelFile ? nameFromFile(modelFile.name) : '') || 'Untitled'
@@ -382,7 +385,7 @@ function CreateAssetForm({ project }: { project: Project }) {
             }
           : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
-        ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
+        ...(hairRow && hairState.usable && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
@@ -500,11 +503,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.hair_pictures" />
         </div>
       ))}
-      {hairOffered && (
-        <ExtraChip summary={hairChoice === 'library' ? 'Hair: from the library.' : 'Hair: built with the 3D model.'}>
-          <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />
-        </ExtraChip>
-      )}
+      {hairRow && <HairFormRow value={hairChoice} onChange={setHairChoice} state={hairState} platform={platform} />}
       {category === 'humanoid' && (
         <label className="check-item" title="Off for a hidden or very simple face: the clean-up step then skips the face pass">
           <input type="checkbox" checked={faceMatters} onChange={(e) => setFaceMatters(e.target.checked)} />

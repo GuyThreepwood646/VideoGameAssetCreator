@@ -54,19 +54,91 @@ export function hairLibraryOffer(prompt: string, style: string, category: string
   return { ok: true, reason: '' }
 }
 
-// The choice on the asset form, under the hair notes.
-export function HairFormLine({ value, onChange, platform }: { value: HairSource; onChange: (v: HairSource) => void; platform: string }) {
+// The New asset form's labels for the two choices (plain words; the asset page keeps HAIR_OPTION).
+export const FORM_HAIR_OPTION: Record<HairSource, string> = {
+  model: 'Built into the 3D model',
+  library: 'Bald model plus a hairstyle from the library',
+}
+const KEPT_IN_MODEL = ' The hair stays built into the 3D model.'
+
+// The library check for the form (hairApi.libraryOn). Idle until wanted; a result for another platform is ignored.
+export type HairLibraryCheck = { state: 'checking' } | { state: 'failed' } | { state: 'ready'; installed: boolean; styles: number }
+
+export function useHairLibraryCheck(platform: string, wanted: boolean): HairLibraryCheck {
+  const [result, setResult] = useState<{ platform: string; check: HairLibraryCheck } | null>(null)
+  useEffect(() => {
+    if (!wanted) return
+    let alive = true
+    hairApi.libraryOn(platform).then(
+      (r) => alive && setResult({ platform, check: { state: 'ready', installed: r.installed, styles: r.styles } }),
+      () => alive && setResult({ platform, check: { state: 'failed' } }),
+    )
+    return () => {
+      alive = false
+    }
+  }, [platform, wanted])
+  if (!wanted || !result || result.platform !== platform) return { state: 'checking' }
+  return result.check
+}
+
+export type HairFormState = { usable: boolean; reason: string; notInstalled: boolean }
+
+// Whether the library can be chosen on the New asset form, and the plain reason when it cannot. Pure, so it can be tested.
+// The reason always ends with what the character gets instead (the hair stays built into the 3D model).
+export function hairFormState(rule: { ok: boolean; reason: string }, check: HairLibraryCheck, platform: string): HairFormState {
+  if (!rule.ok) return { usable: false, reason: rule.reason + KEPT_IN_MODEL, notInstalled: false }
+  if (check.state === 'checking') return { usable: false, reason: 'Checking the hair library...', notInstalled: false }
+  if (check.state === 'failed') return { usable: false, reason: 'The hair library could not be checked just now.' + KEPT_IN_MODEL, notInstalled: false }
+  // Hairstyles the person added count as the library (the backend counts them the same way), so it is missing only when both are absent.
+  if (check.styles === 0 && !check.installed) return { usable: false, reason: 'The hair library is not installed yet.' + KEPT_IN_MODEL, notInstalled: true }
+  if (check.styles === 0)
+    return {
+      usable: false,
+      reason: (platform === 'mobile_low' ? 'No hairstyle in the library is light enough for Phone.' : 'No hairstyle in the library is small enough for this platform.') + KEPT_IN_MODEL,
+      notInstalled: false,
+    }
+  return { usable: true, reason: '', notInstalled: false }
+}
+
+// The Hair row on the New asset form, for humanoids only. Always visible; the library choice is disabled, with its
+// reason, when it cannot be used here.
+export function HairFormRow({ value, onChange, state, platform }: { value: HairSource; onChange: (v: HairSource) => void; state: HairFormState; platform: string }) {
+  const chosen: HairSource = state.usable ? value : 'model'
   return (
-    <div className="items-line" role="group" aria-label={HAIR_SETTING}>
+    <div className="items-line" role="group" aria-label="Hair">
       <p className="small">
-        {HAIR_SETTING}
+        Hair
         <Info term="term.hair_library" />
       </p>
-      <HairOptions name="hair-form" value={value} onChange={onChange} />
+      <div className="choice-row choice-column" role="radiogroup" aria-label="Hair">
+        {(['model', 'library'] as const).map((s) => {
+          const off = s === 'library' && !state.usable
+          return (
+            <label className={'check-item check-item-wide' + (off ? ' is-disabled' : '')} key={s}>
+              <input type="radio" name="hair-form" checked={chosen === s} disabled={off} onChange={() => onChange(s)} />
+              <span>{FORM_HAIR_OPTION[s]}</span>
+            </label>
+          )
+        })}
+      </div>
       <p className="muted small">
-        {HAIR_OPTION_HINT[value]}
-        {value === 'library' && platform === 'mobile_low' ? ' ' + HAIR_PHONE_NOTE : ''}
+        {HAIR_OPTION_HINT[chosen]}
+        {chosen === 'library' && platform === 'mobile_low' ? ' ' + HAIR_PHONE_NOTE : ''}
       </p>
+      {!state.usable && (
+        <p className="muted small hair-offer">
+          {state.reason}
+          {state.notInstalled && (
+            <>
+              {' '}
+              <Link to="/health#get-hair" target="_blank" rel="noreferrer">
+                Get the hair library
+              </Link>{' '}
+              (free, a few minutes; opens in a new tab).
+            </>
+          )}
+        </p>
+      )}
     </div>
   )
 }
