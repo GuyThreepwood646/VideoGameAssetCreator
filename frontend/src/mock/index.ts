@@ -1279,14 +1279,18 @@ const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal
 const MOCK_ADDON_FOLDER = 'D:\\ComfyUI\\models\\loras\\VGAC\\mine'
 // The backend's warning for a LoRA made for plain Qwen-Image (user_addons.QWEN_PLAIN_WARNING).
 const QWEN_PLAIN_WARNING = 'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
+const UNSURE_TEXT = 'We could not tell which model this was made for.'
 const EDIT_MODEL_ID = 'qwen_edit'
 // The two test LoRAs the mock engine lists: one for picture edits, one made for plain Qwen-Image (warning shown).
-const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill & { warning?: string } }[] = [
+// Three invented picture-edit test files: one the file settles as an edit LoRA, one it settles as plain Qwen-Image, and
+// one with no signal, where the person must say what it was made for.
+const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill & { warning?: string; made_for?: string } }[] = [
   { file_name: 'ink_wash_style.safetensors', bytes: 170_000_000, prefill: { label: 'Ink wash style', base_models: ['zbase'], trigger: 'ink wash painting', family: 'Z-Image', painter_note: '' } },
-  { file_name: 'qwen_edit_test.safetensors', bytes: 90_000_000, prefill: { label: 'Qwen edit test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image-Edit', painter_note: '', warning: '' } },
-  { file_name: 'qwen_plain_test.safetensors', bytes: 90_000_000, prefill: { label: 'Qwen plain test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image', painter_note: '', warning: QWEN_PLAIN_WARNING } },
+  { file_name: 'edit_sure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Edit sure test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image-Edit', painter_note: '', warning: '', made_for: 'qwen_image_edit' } },
+  { file_name: 'plain_sure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Plain sure test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image', painter_note: '', warning: QWEN_PLAIN_WARNING, made_for: 'qwen_image' } },
+  { file_name: 'unsure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Unsure test', base_models: [], trigger: '', family: '', painter_note: UNSURE_TEXT, warning: '', made_for: '' } },
 ]
-const myAddons: (AddonEntry & { warning?: string })[] = []
+const myAddons: (AddonEntry & { warning?: string; made_for?: string })[] = []
 // The four picture-edit uses, and the backend's limit of two LoRAs at once for one use (reference.MAX_EDIT_LORAS).
 const EDIT_KNOB_IDS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
 const EDIT_LORA_MAX = 2
@@ -1347,10 +1351,16 @@ on('POST', '/api/my-addons', (_m, body) => {
   // Picture edits and the painters are never chosen together (backend user_addons.register).
   const edit = models.includes(EDIT_MODEL_ID)
   if (edit && models.length > 1) throw new HttpError(400, 'A LoRA is either for picture edits or for the painters, not both. Add it twice to use it both ways.')
+  // What it was made for (backend register): a sure file decides and the answer is ignored; otherwise the answer is needed.
+  const sure = String(file.prefill.made_for ?? '')
+  const answer = String(body.made_for ?? '')
+  if (edit && !sure && answer !== 'qwen_image_edit' && answer !== 'qwen_image')
+    throw new HttpError(400, 'Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.')
+  const madeFor = edit ? sure || answer : sure
   const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
   let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
   for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
-  const entry: AddonEntry & { warning?: string } = {
+  const entry: AddonEntry & { warning?: string; made_for?: string } = {
     id,
     label,
     help: {
@@ -1370,7 +1380,8 @@ on('POST', '/api/my-addons', (_m, body) => {
     file_name: fileName,
     added_at: nowIso(),
     // The warning is for a LoRA made for plain Qwen-Image that is used for picture edits (backend _normalise).
-    warning: edit ? file.prefill.warning ?? '' : '',
+    made_for: madeFor,
+    warning: edit && madeFor === 'qwen_image' ? QWEN_PLAIN_WARNING : '',
   }
   myAddons.push(entry)
   return entry
