@@ -4,7 +4,7 @@
 // served by the Vite dev server from ../library (see vite.config.ts).
 import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
-import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
+import type { AddonEntry, AddonPrefill, MadeFor, StrengthName, UnregisteredAddon } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
 import { addMyHair, changeMyHair, hairCatalogue, hairPanel, myHairListing, OwnHairError, removeMyHair } from './hair'
 import { mockCredits } from './credits'
@@ -322,7 +322,10 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
         version.status = 'error'
         version.error = job.error
       } else {
+        // The picture-edit records of this run (adjust) survive the fabricated metrics.
+        const editRecords = Object.fromEntries(EDIT_KNOB_IDS.filter((k) => k in version.metrics).map((k) => [k, version.metrics[k]]))
         fabricate(asset, version)
+        Object.assign(version.metrics, editRecords)
         version.status = 'done'
         job.status = 'done'
         job.progress = 1
@@ -579,7 +582,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
   const extra = face ? { face_closeup: true } : {}
   if (face) faceCloseups.set(a.id, { image: face.image, updated: Math.floor(Date.now() / 1000) })
   const own = typeof body.image === 'string' ? body.image : null
-  if (features.length && (!own || features.some((f) => f.role !== 'face'))) return { ...a, ...extra, compose: composeConcept(a, features, own) }
+  if (features.length && (!own || features.some((f) => f.role !== 'face'))) return { ...a, ...extra, compose: composeConcept(a, features, own, body.edit_addons as Record<string, string> | undefined) }
   if (own) return { ...a, ...extra, upload: uploadConcept(a, own, null) }
   return { ...a, ...extra }
 })
@@ -687,6 +690,10 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
     params.refined_view = views[0]
   }
   delete params.reference_experimental
+  // This refine's own LoRA choice; the parent's is not inherited (backend refine).
+  if (body.edit_addons) params.edit_addons = body.edit_addons
+  else delete params.edit_addons
+  delete params.edit_addons_applied
   if (params.source === 'upload') params.source = 'upload_edit'
   const reference = typeof body.reference_image === 'string' ? body.reference_image : null
   if (reference) {
@@ -695,6 +702,7 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
     params.reference_experimental = true
   }
   const v = newVersion(asset, version.stage, version.id, params)
+  if (body.edit_addons) v.metrics = { ...v.metrics, edit_addons: mockEditRecord(body.edit_addons as Record<string, string>) }
   if (reference) v.files.reference = putUpload(v, 'reference', reference)
   const job = startJob(asset, v, `${version.stage}.refine`)
   return { job: clone(job), version: clone(v) }
@@ -753,13 +761,36 @@ function checkFeatures(category: string, raw: unknown): Feature[] {
   })
 }
 // One concept version for all the pictures (backend compose.start): one job, so step 1 shows one run.
-function composeConcept(a: Asset, features: Feature[], own: string | null) {
+function composeConcept(a: Asset, features: Feature[], own: string | null, editAddons?: Record<string, string>) {
   const pics = [...(own ? [{ role: 'character', image: own, note: null }] : []), ...features]
-  const v = newVersion(a, 'concept', null, { source: 'compose', compose_roles: pics.map((f) => ({ role: f.role, note: f.note })), words: a.prompt.trim() || null, model: 'qwen_edit', seed: Math.floor(Math.random() * 100000) })
+  const v = newVersion(a, 'concept', null, { source: 'compose', compose_roles: pics.map((f) => ({ role: f.role, note: f.note })), words: a.prompt.trim() || null, model: 'qwen_edit', seed: Math.floor(Math.random() * 100000), ...(editAddons ? { edit_addons: editAddons } : {}) })
+  if (editAddons) v.metrics = { ...v.metrics, edit_addons: mockEditRecord(editAddons) }
   pics.forEach((f, i) => (v.files[`compose_${i + 1}`] = putUpload(v, `compose_${i + 1}`, f.image)))
   const job = startJob(a, v, 'concept.compose')
   return { job: clone(job), version: clone(v) }
 }
+// The record one use keeps for the person's LoRAs (picture_loras.edit_loras): applied, ignored and unknown.
+function mockEditRecord(choices: Record<string, string> | null | undefined): Record<string, unknown> {
+  const chosen = Object.entries(choices ?? {}).filter(([, c]) => c !== 'off')
+  if (chosen.length > EDIT_LORA_MAX) throw new HttpError(400, `edit_addons: at most ${EDIT_LORA_MAX} of your LoRAs can be used at once in one step`)
+  const applied: { id: string; label: string; strength: string; value: number }[] = []
+  const ignored: { id: string; reason: string }[] = []
+  const unknown: string[] = []
+  for (const [id, c] of chosen) {
+    const entry = myAddons.find((a) => a.id === id && (a.stage as string) === 'edit')
+    if (!entry) {
+      unknown.push(id)
+      continue
+    }
+    if (!mockAddonFiles.some((f) => f.file_name === entry.file_name)) {
+      ignored.push({ id, reason: 'its file is no longer in the LoRA folder' })
+      continue
+    }
+    applied.push({ id, label: entry.label, strength: c, value: MOCK_ADDON_STRENGTHS[c as StrengthName] })
+  }
+  return { applied, ignored, unknown }
+}
+
 // Your own close-up of the face (backend own_images.py), kept per asset.
 const faceCloseups = new Map<string, { image: string; updated: number }>()
 const closeupState = (aid: string) => {
@@ -930,7 +961,34 @@ on('POST', '/api/versions/:vid/adjust', (m, body) => {
     for (const k of ['face_fresh', 'face_detail_seed', 'face_seed', 'face_closeup_seed', 'face_closeup_seed_2']) delete params[k]
     params.face_seed = Math.floor(Math.random() * 1e9)
   }
+  // The picture-edit LoRAs of each use: at most two per use (400 like the backend's validate_params), and a record of
+  // what each use applied and what it ignored (picture_loras.edit_loras).
+  for (const knob of EDIT_KNOB_IDS) {
+    const chosen = Object.entries((params[knob] as Record<string, string> | null | undefined) ?? {}).filter(([, c]) => c !== 'off')
+    if (chosen.length > EDIT_LORA_MAX) throw new HttpError(400, `${knob}: at most ${EDIT_LORA_MAX} of your LoRAs can be used at once in one step`)
+  }
   const v = newVersion(asset, version.stage, version.id, params)
+  for (const knob of EDIT_KNOB_IDS) {
+    const choices = (params[knob] as Record<string, string> | null | undefined) ?? {}
+    if (!Object.keys(choices).length) continue
+    const applied: { id: string; label: string; strength: string; value: number }[] = []
+    const ignored: { id: string; reason: string }[] = []
+    const unknown: string[] = []
+    for (const [id, c] of Object.entries(choices)) {
+      if (c === 'off') continue
+      const entry = myAddons.find((a) => a.id === id && (a.stage as string) === 'edit')
+      if (!entry) {
+        unknown.push(id)
+        continue
+      }
+      if (!mockAddonFiles.some((f) => f.file_name === entry.file_name)) {
+        ignored.push({ id, reason: 'its file is no longer in the LoRA folder' })
+        continue
+      }
+      applied.push({ id, label: entry.label, strength: c, value: MOCK_ADDON_STRENGTHS[c as StrengthName] })
+    }
+    v.metrics = { ...v.metrics, [knob]: { applied, ignored, unknown } }
+  }
   const job = startJob(asset, v, `${version.stage}.adjust`)
   return { job: clone(job), version: clone(v) }
 })
@@ -1351,10 +1409,23 @@ const MOCK_PAINTERS = [
 ]
 const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
 const MOCK_ADDON_FOLDER = 'D:\\ComfyUI\\models\\loras\\VGAC\\mine'
-const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill }[] = [
+// The backend's warning for a LoRA made for plain Qwen-Image (user_addons.QWEN_PLAIN_WARNING).
+const QWEN_PLAIN_WARNING = 'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
+const UNSURE_TEXT = 'We could not tell which model this was made for.'
+const EDIT_MODEL_ID = 'qwen_edit'
+// The two test LoRAs the mock engine lists: one for picture edits, one made for plain Qwen-Image (warning shown).
+// Three invented picture-edit test files: one the file settles as an edit LoRA, one it settles as plain Qwen-Image, and
+// one with no signal, where the person must say what it was made for.
+const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill & { warning?: string; made_for?: string } }[] = [
   { file_name: 'ink_wash_style.safetensors', bytes: 170_000_000, prefill: { label: 'Ink wash style', base_models: ['zbase'], trigger: 'ink wash painting', family: 'Z-Image', painter_note: '' } },
+  { file_name: 'edit_sure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Edit sure test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image-Edit', painter_note: '', warning: '', made_for: 'qwen_image_edit' } },
+  { file_name: 'plain_sure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Plain sure test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image', painter_note: '', warning: QWEN_PLAIN_WARNING, made_for: 'qwen_image' } },
+  { file_name: 'unsure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Unsure test', base_models: [], trigger: '', family: '', painter_note: UNSURE_TEXT, warning: '', made_for: '' } },
 ]
-const myAddons: AddonEntry[] = []
+const myAddons: (AddonEntry & { warning?: string })[] = []
+// The four picture-edit uses, and the backend's limit of two LoRAs at once for one use (reference.MAX_EDIT_LORAS).
+const EDIT_KNOB_IDS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
+const EDIT_LORA_MAX = 2
 
 function mockPrefill(name: string): AddonPrefill {
   const lower = name.toLowerCase()
@@ -1369,7 +1440,22 @@ function mockPrefill(name: string): AddonPrefill {
   }
 }
 
-on('GET', '/api/my-addons', () => ({ addons: myAddons, folder: MOCK_ADDON_FOLDER, folder_exists: true, strengths: MOCK_ADDON_STRENGTHS, painters: MOCK_PAINTERS }))
+on('GET', '/api/my-addons', () => ({
+  addons: myAddons,
+  folder: MOCK_ADDON_FOLDER,
+  folder_exists: true,
+  strengths: MOCK_ADDON_STRENGTHS,
+  painters: MOCK_PAINTERS,
+  edit_models: [{ id: EDIT_MODEL_ID, label: 'Picture edits (Qwen-Image-Edit)' }],
+}))
+// Mock-only stand-in for deleting a file from the LoRA folder (the app never does this itself). A LoRA on your list
+// whose file is gone is not used by the next step, and the version says so.
+on('POST', '/api/mock/lora-folder/remove', (_m, body) => {
+  const i = mockAddonFiles.findIndex((f) => f.file_name === String(body.file_name ?? ''))
+  if (i < 0) throw new HttpError(404, 'That file is not in the LoRA folder.')
+  mockAddonFiles.splice(i, 1)
+  return { removed: String(body.file_name) }
+})
 on('GET', '/api/my-addons/unregistered', (): UnregisteredAddon[] =>
   mockAddonFiles.filter((f) => !myAddons.some((a) => a.file_name === f.file_name)).map((f) => ({ ...f })),
 )
@@ -1394,10 +1480,19 @@ on('POST', '/api/my-addons', (_m, body) => {
   if (!label) throw new HttpError(400, 'Give the LoRA a name.')
   const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
   if (!models.length) throw new HttpError(400, 'Choose at least one model the LoRA was made for.')
+  // Picture edits and the painters are never chosen together (backend user_addons.register).
+  const edit = models.includes(EDIT_MODEL_ID)
+  if (edit && models.length > 1) throw new HttpError(400, 'A LoRA is either for picture edits or for the painters, not both. Add it twice to use it both ways.')
+  // What it was made for (backend register): a sure file decides and the answer is ignored; otherwise the answer is needed.
+  const sure = String(file.prefill.made_for ?? '')
+  const answer = String(body.made_for ?? '')
+  if (edit && !sure && answer !== 'qwen_image_edit' && answer !== 'qwen_image')
+    throw new HttpError(400, 'Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.')
+  const madeFor = edit ? sure || answer : sure
   const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
   let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
   for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
-  const entry: AddonEntry = {
+  const entry: AddonEntry & { warning?: string } = {
     id,
     label,
     help: {
@@ -1405,7 +1500,7 @@ on('POST', '/api/my-addons', (_m, body) => {
       why: 'You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.',
       technical: `LoRA VGAC/mine/${fileName}, model only, for ${models.join(', ')}`,
     },
-    stage: 'concept',
+    stage: (edit ? 'edit' : 'concept') as unknown as AddonEntry['stage'], // 'edit': picture-edit LoRAs (backend _normalise)
     base_models: models,
     strengths: { ...MOCK_ADDON_STRENGTHS },
     default_strength: strength,
@@ -1416,6 +1511,9 @@ on('POST', '/api/my-addons', (_m, body) => {
     mine: true,
     file_name: fileName,
     added_at: nowIso(),
+    // The warning is for a LoRA made for plain Qwen-Image that is used for picture edits (backend _normalise).
+    ...(madeFor ? { made_for: madeFor as MadeFor } : {}),
+    warning: edit && madeFor === 'qwen_image' ? QWEN_PLAIN_WARNING : '',
   }
   myAddons.push(entry)
   return entry

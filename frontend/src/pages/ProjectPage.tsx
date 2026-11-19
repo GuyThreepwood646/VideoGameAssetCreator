@@ -1,7 +1,7 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -12,6 +12,9 @@ import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
+import { editLoras } from '../editLoras'
+import { EditLoras } from '../pipeline/EditLoras'
+import { useMyAddons } from '../pipeline/AddMyAddon'
 import { HairFormRow, hairFormState, hairLibraryOffer, useHairLibraryCheck } from '../pipeline/HairSetting'
 import { StepSettingsChoice } from '../pipeline/StepSettingsChoice'
 import { mergeStepParams, type StepParams } from '../pipeline/stepSettings'
@@ -262,6 +265,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [startFrom, setStartFrom] = useState<StartFrom>('words')
   // Feature photos (a face, a body, an outfit): one combined first picture, or the face close-up for step 4.
   const [featureSlots, setFeatureSlots] = useState<FeatureSlot[]>([])
+  // The person's own LoRAs for combining the feature photos (edit_addons); only shown when photos are chosen.
+  const [combineLoras, setCombineLoras] = useState<Record<string, EditChoice>>({})
   // A 3D model the person has (step 3 "Use my own 3D model"): sent after the asset is made.
   const [modelFile, setModelFile] = useState<File | null>(null)
   const [modelProgress, setModelProgress] = useState<number | null>(null)
@@ -358,6 +363,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const hairState = hairFormState(hairRule, useHairLibraryCheck(platform, hairRow && hairRule.ok), platform)
   const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
   const features = usedFeatures(featureSlots, startFrom, category)
+  const myLoras = useMyAddons(features.length > 0 && startFrom !== 'model')
+  const combineChoices = Object.fromEntries(Object.entries(combineLoras).filter(([id, c]) => c !== 'off' && editLoras(myLoras).some((e) => e.id === id)))
   const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || (fromModel && modelFile ? nameFromFile(modelFile.name) : '') || 'Untitled'
 
   const submit = async (e: FormEvent) => {
@@ -388,6 +395,7 @@ function CreateAssetForm({ project }: { project: Project }) {
               }),
             }
           : {}),
+        ...(Object.keys(combineChoices).length && features.length && !fromModel ? { edit_addons: combineChoices } : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
         ...(hairRow && hairState.usable && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
@@ -495,6 +503,15 @@ function CreateAssetForm({ project }: { project: Project }) {
         </Field>
       )}
       <FeaturePhotos slots={featureSlots} onChange={setFeatureSlots} startFrom={startFrom} category={category} disabled={busy} />
+      {features.length > 0 && !fromModel && (
+        <EditLoras
+          purpose="Your LoRAs for combining the photos"
+          entries={editLoras(myLoras)}
+          choices={combineLoras}
+          disabled={busy}
+          onChange={(id, choice) => setCombineLoras((cur) => ({ ...cur, [id]: choice }))}
+        />
+      )}
       <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
       </Field>

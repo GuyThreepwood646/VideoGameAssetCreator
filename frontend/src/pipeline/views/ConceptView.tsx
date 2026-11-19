@@ -4,6 +4,7 @@ import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable } from '../../components/PictureViewer'
 import { modelLabel } from '../../help'
 import { useRefData } from '../../refdata'
+import { editLoraApplied } from '../../editLoras'
 import { addonsNotUsed } from '../Addons'
 import { PromptSent } from '../Brief'
 
@@ -72,6 +73,11 @@ export function ConceptView({ version }: { version: Version }) {
           <Info term="term.addons" />
         </div>
       )}
+      {editLoraApplied(version).map((line) => (
+        <div key={line} className="muted small edit-lora-line">
+          {line}
+        </div>
+      ))}
     </div>
   )
 }

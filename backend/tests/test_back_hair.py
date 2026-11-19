@@ -157,7 +157,7 @@ def drawn(monkeypatch):
     monkeypatch.setattr(turnaround.library, "version_file", lambda v, key, settings: v.image if key == "image" else None)
     state = {"calls": [], "back_fails": 0}
 
-    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None, references=None):
+    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None, references=None, loras=None):
         state["calls"].append({"view": view, "extra": extra, "references": references, "seed": seed})
         raw = sc.dir / f"{view}_raw.png"
         cut = sc.dir / f"{view}.png"

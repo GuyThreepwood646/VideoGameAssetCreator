@@ -76,6 +76,7 @@ SAMPLES = {
     "tiles_cleanly": ((0.0, 0.5), (45.0, 0.5)),
     "look_applied": (("about 1,250 triangles, flat faces, 512 px textures", "abc123"), ("about 1,250 triangles", "abc123")),
     "face_matches_picture": ((1.33, 1.0), (0.8, 1.0)),  # face detail pass: sharpness of the face after it
+    "face_lora": ((None, None), (None, None)),  # the face close-up's LoRA could not be checked (face_detail.face_lora_checks)
     "hair_matches_picture": ((15.6, 6.6), ("error", None)),  # hair detail pass: hair texels per cm after it, before it
     "hair_material": ((21.5, 6.8), ("error", None)),  # hair as its own material: its texels per cm, the body texture's
     "hair_material_shipped": ((2, 2), (1, 2)),  # hand-off: materials in the GLB with the hair's own

@@ -7,6 +7,7 @@ import { api, hairApi, movesApi, type AddonEntry, type MyHairStyle, type MyMoveF
 import { useConfirm } from './components/Confirm'
 import { addonRemoveWords } from './help'
 import { ErrorText } from './components/ui'
+import { isEditLora, warningOf } from './editLoras'
 import { AddMyAddon, ChangeMyAddon } from './pipeline/AddMyAddon'
 import { AddMyHairstyle } from './pipeline/AddMyHairstyle'
 import { MyMoveForm, MyMoveUpload } from './pipeline/MyMoves'
@@ -62,6 +63,9 @@ export default function YourLibrary() {
     </span>
   )
   const none = lib.addons.length + lib.hair.length + lib.moves.length === 0
+  // Picture-edit LoRAs are not painter add-ons: each list counts only its own entries.
+  const painterAddons = lib.addons.filter((a) => !isEditLora(a))
+  const editAddons = lib.addons.filter((a) => isEditLora(a))
   const from = (source: string, licence?: string) => [source ? `Where it came from: ${source}` : 'Where it came from: not written down', licence && licence !== 'Not stated' ? `licence: ${licence}` : null].filter(Boolean).join(', ')
   const addButton = (kind: Exclude<Adding, null>, text: string) => (
     <button type="button" className="small-btn" disabled={busy} onClick={() => setAdding(kind)}>
@@ -79,13 +83,13 @@ export default function YourLibrary() {
 
       <div className="your-library-group">
         <div className="row-between">
-          <div className="field-label">Painter add-ons ({lib.addons.length})</div>
+          <div className="field-label">Painter add-ons ({painterAddons.length})</div>
           {addButton('addon', 'Add a painter add-on')}
         </div>
         {adding === 'addon' && <AddMyAddon painter="" onAdded={done} onClose={() => setAdding(null)} />}
-        {lib.addons.length > 0 && (
+        {painterAddons.length > 0 && (
           <ul className="small">
-            {lib.addons.map((a) =>
+            {painterAddons.map((a) =>
               editing?.kind === 'addon' && editing.id === a.id ? (
                 <li key={a.id}>
                   <ChangeMyAddon entry={a} onSaved={done} onCancel={() => setEditing(null)} />
@@ -93,6 +97,36 @@ export default function YourLibrary() {
               ) : (
                 <li key={a.id}>
                   <strong>{a.label}</strong> <span className="muted">{from(a.source, a.licence)}</span>
+                  {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
+                  {itemButtons('addon', a.id, a.label, () =>
+                    void remove(
+                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
+                      () => api.removeMyAddon(a.id),
+                    ),
+                  )}
+                </li>
+              ),
+            )}
+          </ul>
+        )}
+      </div>
+
+      <div className="your-library-group">
+        <div className="row-between">
+          <div className="field-label">LoRAs for picture edits ({editAddons.length})</div>
+        </div>
+        {editAddons.length > 0 && (
+          <ul className="small">
+            {editAddons.map((a) =>
+              editing?.kind === 'addon' && editing.id === a.id ? (
+                <li key={a.id}>
+                  <ChangeMyAddon entry={a} onSaved={done} onCancel={() => setEditing(null)} />
+                </li>
+              ) : (
+                <li key={a.id}>
+                  <strong>{a.label}</strong> <span className="muted">{from(a.source, a.licence)}</span>
+                  <div className="muted small">Used for picture edits (Qwen-Image-Edit).</div>
+                  {warningOf(a) && <div className="addon-note small">{warningOf(a)}</div>}
                   {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
                   {itemButtons('addon', a.id, a.label, () =>
                     void remove(

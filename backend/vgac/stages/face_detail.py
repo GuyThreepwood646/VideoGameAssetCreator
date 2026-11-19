@@ -39,6 +39,7 @@ from ..comfy import ComfyClient, ComfyError
 from ..graphs.qwen_edit import compose_graph, edit_graph
 from ..jobs import JobCancelled
 from .base import StageContext, random_seed
+from .picture_loras import LoraCheckBug, LoraCheckFailed, edit_loras
 
 CATEGORIES = ("humanoid",)
 TARGET_FRACTION = 0.125  # texels wanted across the face: an eighth of the texture's side (256 at 2048)
@@ -405,6 +406,22 @@ def side_words(used: list[str]) -> str:
 
 
 def face_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    """The face pass checks: face_matches_picture, and face_lora when a chosen face LoRA could not be checked."""
+    return _picture_checks(metrics) + face_lora_checks(metrics)
+
+
+def face_lora_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    """face_lora (warn): the person chose a face LoRA, the graphics engine did not answer twice, so the close-up was
+    not drawn and the LoRA was not used. Nothing when no face LoRA was chosen or the check was answered."""
+    cu = ((metrics or {}).get("face_detail") or {}).get("closeup") or {}
+    if not cu.get("face_lora_failed"):
+        return []
+    from .. import quality
+
+    return [quality.check("face_lora", False, None, None, vars={"reason": "engine_no_answer"})]
+
+
+def _picture_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     """face_matches_picture (warn), from the "face_detail" metrics block. Nothing when the pass does not apply (off,
     not a humanoid, a flat look, no picture, no face or a covered one): there is nothing to measure. A soft
     failure when it was skipped for a reason the person can act on, or when the face is still blurry or does not
@@ -1324,19 +1341,19 @@ def image_instance(sc: StageContext) -> str | None:
 
 async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: Path, prompt: str = REDRAW_PROMPT,
                  key: str = "face_redraw", message: str = "Sharpening the painted face", reference: Path | None = None,
-                 margin: float = 1.0) -> Path:
+                 margin: float = 1.0, loras: list[dict[str, Any]] | None = None) -> Path:
     """Qwen-Image-Edit redraw of the crop (the sharpening redraw, or the close-up with CLOSEUP_PROMPT). Stop works: a
     cancelled job takes its own prompt off the card (removes it from the queue, or interrupts it when it is the one
-    running), never someone else's."""
+    running), never someone else's. `loras` is the person's face LoRAs (face_addons): given by the close-up only."""
     client: ComfyClient = sc.client(instance)
     if margin < 1.0:
         crop = await asyncio.to_thread(add_margin, crop, margin, Path(dest).with_name(Path(dest).stem + "_input.png"))
     name = await client.stage_input(crop, f"vgac_{sc.version.id[:8]}_{key}_head.png")
     if reference is not None:
         ref = await client.stage_input(reference, f"vgac_{sc.version.id[:8]}_{key}_guide.png")
-        graph = compose_graph([name, ref], prompt, seed, sc.prefix(key), 1024, 1024)
+        graph = compose_graph([name, ref], prompt, seed, sc.prefix(key), 1024, 1024, loras=loras)
     else:
-        graph = edit_graph(name, prompt, seed, sc.prefix(key), 1024, 1024)
+        graph = edit_graph(name, prompt, seed, sc.prefix(key), 1024, 1024, loras=loras)
     prompt_id = await client.queue_prompt(graph)
 
     def on_poll(elapsed: float) -> None:
@@ -1506,6 +1523,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         from ..jobs import is_engine_lost
 
         tries: list[dict[str, Any]] = []
+        # The person's face LoRAs (face_addons), for the close-up only: checked on every card the close-up may use first.
+        face_loras = await edit_loras(sc, "face_addons", params, card=instance)
         home = await claim_card(sc, instance)
         lease, why = await borrow_card(sc, instance)
         if lease is not None and spare is not None:
@@ -1523,7 +1542,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             k = closeup_margin(found["face_width_px"], reference is not None, photo)
             closeup.setdefault("margins", {})["guided" if reference is not None else "plain"] = k
             cu = await redraw(sc, card, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
-                              reference=reference, margin=k)
+                              reference=reference, margin=k, loras=face_loras)
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), None, False))
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
                                             reference is not None)
@@ -1610,10 +1629,11 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                 picture, colour_source, method, source = merged, merged, METHOD_GUIDED, "closeup"
             else:
                 closeup.update({k: v for k, v in tries[-1].items() if k != "ok"}, used=False)
-        except (JobCancelled, asyncio.CancelledError):
+        except (JobCancelled, asyncio.CancelledError, LoraCheckBug):
             raise
         except Exception as e:  # noqa: BLE001  (a failed guided close-up: the paths below)
-            closeup.update(used=False, reason="error", error=str(e)[:300])
+            closeup.update(used=False, reason="error", error=str(e)[:300],
+                           **({"face_lora_failed": True} if isinstance(e, LoraCheckFailed) else {}))
     if source == "painting" and own is not None:
         sc.progress(0.77, "Lining up your close-up of the face")
         closeup["own"] = True
@@ -1654,10 +1674,11 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                 merged = await asyncio.to_thread(closeup_source, crop, use_closeup(guard, out_dir / guard["file"]), found["painted_head_px"],
                                                  out_dir / "painted_head_closeup_merged.png")
                 picture, colour_source, method, source = merged, merged, METHOD_CLOSEUP, "closeup"
-        except (JobCancelled, asyncio.CancelledError):
+        except (JobCancelled, asyncio.CancelledError, LoraCheckBug):
             raise
         except Exception as e:  # noqa: BLE001  (a failed close-up: today's path)
-            closeup.update(used=False, reason="error", error=str(e)[:300])
+            closeup.update(used=False, reason="error", error=str(e)[:300],
+                           **({"face_lora_failed": True} if isinstance(e, LoraCheckFailed) else {}))
     if closeup["wanted"]:
         closeup["seconds"] = round(time.time() - t1, 1)
     if not closeup["wanted"] and closeup_on(params):
@@ -1677,7 +1698,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                 pic, meth = sharp, METHOD
             sc.use_model("qwen_edit")
             sc.use_model("qwen_lightning_lora")
-        except (JobCancelled, asyncio.CancelledError):
+        except (JobCancelled, asyncio.CancelledError, LoraCheckBug):
             raise
         except Exception as e:  # noqa: BLE001  (a failed redraw: the crop still carries the painted face)
             record["redraw_error"] = str(e)[:300]

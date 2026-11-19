@@ -423,7 +423,7 @@ def test_use_the_redraw_anyway(step):
     held = step.tmp / "held"
     held.mkdir()
     files = {"pose_refused_picture": _png(held / "pose_refused_picture.png"), "pose_refused_cutout": _png(held / "pose_refused_cutout.png")}
-    refused = SimpleNamespace(id="refused01", stage="turnaround", asset_id="asset0001", files_on_disk=files,
+    refused = SimpleNamespace(id="refused01", stage="turnaround", asset_id="asset0001", files_on_disk=files, params={},
                               metrics={"pose_guard": {"tries": 2, "reasons": ["the face changed"]}})
     other = SimpleNamespace(id="other001", stage="turnaround", asset_id="someone_else", files_on_disk=files, metrics={})
     db = SimpleNamespace(get=lambda _cls, vid: {"refused01": refused, "other001": other}.get(vid))

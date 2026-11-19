@@ -241,13 +241,62 @@ NAME_FIELDS = ("modelspec.title", "name", "ss_output_name")
 TRIGGER_FIELDS = ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "trigger_word", "ss_trigger",
                   "activation_text", "instance_prompt")
 UNSURE = "We could not tell which model this was made for."
-# Families this app has no painter for, by the words their metadata uses.
+QWEN_EDIT_FAMILY = "Qwen-Image-Edit"
+QWEN_FAMILY = "Qwen-Image"
+# Qwen-Image-Edit names: "qwen-image-edit", "qwen-edit", and the 2511 release as "qie2511" (not after a letter, so
+# "my_qie2511_x" matches; \b would not fire after an underscore).
+QWEN_EDIT_RE = re.compile(r"qwen[-_ ]?(image[-_ ]?)?edit|(?<![a-z])qie[-_ ]?\d{4}")
+QWEN_RE = re.compile(r"qwen[-_ ]?image")
+
+
+def qwen_kind(text: str) -> str:
+    """"Qwen-Image-Edit" or "Qwen-Image" when the text (lower case) names one, else ""."""
+    if QWEN_EDIT_RE.search(text):
+        return QWEN_EDIT_FAMILY
+    if QWEN_RE.search(text):
+        return QWEN_FAMILY
+    return ""
+
+
+# What a LoRA was made for, when the file says so for sure. Training tools write ss_base_model_version "qwen_image" on
+# edit LoRAs too, so that key alone is not proof of plain Qwen-Image.
+MADE_FOR_EDIT = "qwen_image_edit"
+MADE_FOR_PLAIN = "qwen_image"
+PLAIN_FIELDS = ("modelspec.architecture", "modelspec.base_model", "base_model", "baseModel", "ss_base_model", "base_model_name",
+                "ss_sd_model_name")
+
+
+def edit_signal(text: str) -> bool:
+    """An Edit signal anywhere in the name or header: Qwen-Image-Edit, QwenEdit, qwen_edit, a 2509/2511 release
+    named with Edit, in any case. (Lower-case text.)"""
+    if QWEN_EDIT_RE.search(text):
+        return True
+    return ("qwen" in text or QWEN_RE.search(text) is not None) and "edit" in text
+
+
+def qwen_made_for(meta: dict[str, str], file_name: str) -> str:
+    """MADE_FOR_EDIT or MADE_FOR_PLAIN when the name or header says so for sure, else "" (the person must say).
+    An Edit signal wins over everything. Plain needs a plain signal in the name or in the model fields (not the
+    ss_base_model_version key alone), and no other family named in the header."""
+    arch = " ".join(str(meta.get(k, "")) for k in ARCH_FIELDS).lower()
+    names = " ".join([*(str(meta.get(k, "")) for k in NAME_FIELDS), file_name]).lower()
+    if edit_signal(arch + " " + names):
+        return MADE_FOR_EDIT
+    if any(pattern.search(arch) for pattern, _fam in OTHER_FAMILIES):
+        return ""
+    fields = " ".join(str(meta.get(k, "")) for k in PLAIN_FIELDS).lower()
+    if QWEN_RE.search(names) or QWEN_RE.search(fields):
+        return MADE_FOR_PLAIN
+    return ""
+# Shown on a LoRA made for plain Qwen-Image that is used for picture edits (made_for "qwen_image").
+QWEN_PLAIN_WARNING = ("This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. "
+                      "It may only partly work, or change results in ways you do not expect. Try it at Subtle first.")
+# Families this app has no painter for, by the words their metadata uses. The Qwen families are read in prefill().
 OTHER_FAMILIES = (
     (re.compile(r"sdxl|stable-diffusion-xl|sd_xl|\bxl\b|pony|illustrious|noob"), "Stable Diffusion XL"),
     (re.compile(r"sd[-_ ]?1|stable-diffusion-v1|sd[-_ ]?v1|sd[-_ ]?15|sd 1\.5"), "Stable Diffusion 1.5"),
     (re.compile(r"sd[-_ ]?3|stable-diffusion-3"), "Stable Diffusion 3"),
     (re.compile(r"flux[-_. ]?1|flux[-_. ]?dev|flux[-_. ]?schnell"), "FLUX.1"),
-    (re.compile(r"qwen[-_ ]?image"), "Qwen-Image"),
     (re.compile(r"\bwan\b|wan[-_ ]?2"), "Wan (video)"),
     (re.compile(r"hunyuan"), "Hunyuan"),
     (re.compile(r"\bltx"), "LTX (video)"),
@@ -328,10 +377,12 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     both = arch + " " + names
     title = _clean_line(meta.get("modelspec.title"), MAX_LABEL_CHARS)
     out: dict[str, Any] = {"label": title or _label_from_name(file_name), "base_models": [], "trigger": _trigger(meta),
-                           "family": "", "painter_note": ""}
+                           "family": "", "painter_note": "", "warning": ""}
     picks: list[str] = []
     note = ""
     family = ""
+    warning = ""
+    made = ""  # MADE_FOR_EDIT or MADE_FOR_PLAIN when the file says so for sure (the Qwen branch below)
     zimage = re.search(r"z[-_. ]?image", both) is not None
     if zimage:
         family = "Z-Image"
@@ -354,21 +405,28 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     elif re.search(r"\banima\b", arch):
         family, picks = "Anima", ["anima"]
     else:
-        for pattern, fam in OTHER_FAMILIES:
-            if pattern.search(arch):
-                family = fam
-                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models."
-                break
+        # The Qwen question first (qwen_made_for): an Edit signal wins; plain only when the file says so for sure.
+        # Otherwise the other families named in the header, and if none, the person is asked (made_for stays empty).
+        other = next((fam for pattern, fam in OTHER_FAMILIES if pattern.search(arch)), "")
+        made = qwen_made_for(meta, file_name)
+        if made == MADE_FOR_EDIT:
+            family, picks = QWEN_EDIT_FAMILY, [reference.EDIT_MODEL]
+        elif made == MADE_FOR_PLAIN:
+            family, picks = QWEN_FAMILY, [reference.EDIT_MODEL]
+            warning = QWEN_PLAIN_WARNING
+        elif other:
+            family = other
+            note = f"It looks like it was made for {other}, which this app does not use. It will probably not work with any of these models."
     if not family:
         family = _family_from_keys(tensors)
         if family == "Stable Diffusion":
             note = "It looks like it was made for Stable Diffusion, which this app does not use. It will probably not work with any of these models."
         elif family:
             note = UNSURE + f" It looks like a {family} LoRA."
-    picks = [p for p in picks if p in painters]
+    picks = [p for p in picks if p in painters or p == reference.EDIT_MODEL]
     if not picks and not note:
         note = UNSURE
-    out.update(base_models=picks, family=family, painter_note=note)
+    out.update(base_models=picks, family=family, painter_note=note, warning=warning, made_for=made)
     return out
 
 
@@ -393,6 +451,8 @@ def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
     f = a.get("file")
     if not isinstance(aid, str) or not aid.startswith(ID_PREFIX) or not isinstance(f, str):
         return None
+    from . import reference
+
     pl = a.get("placement") if isinstance(a.get("placement"), dict) else None
     if pl and pl.get("mode") == "in_place" and isinstance(pl.get("path"), str) and pl["path"]:
         # Used where it is: `file` is the name ComfyUI lists it under (relative to one of its LoRA folders).
@@ -410,10 +470,14 @@ def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
     models = [m for m in a.get("base_models") or [] if isinstance(m, str)]
     labels = ", ".join(models)
     label = _clean_line(a.get("label"), MAX_LABEL_CHARS) or _label_from_name(name)
+    edit = models == [reference.EDIT_MODEL]
+    made_for = a.get("made_for") if a.get("made_for") in ("qwen_image", "qwen_image_edit") else ""
     return {
-        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models, "stage": "concept",
+        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models,
+        "stage": "edit" if edit else "concept",
         "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
         "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
+        "made_for": made_for, "warning": QWEN_PLAIN_WARNING if edit and made_for == "qwen_image" else "",
         "mine": True, "added_at": a.get("added_at") or "",
         "placement": {k: pl[k] for k in ("mode", "source", "path", "size") if k in pl} if pl else None,
         "help": {"meaning": f"Your own LoRA, from the file {name}.",
@@ -471,7 +535,7 @@ def public(a: dict[str, Any]) -> dict[str, Any]:
     from . import reference
 
     return {**reference.addon_public(a), "mine": True, "file_name": a.get("file_name") or "", "added_at": a.get("added_at") or "",
-            "placement": placement_view(a)}
+            "warning": a.get("warning") or "", "made_for": a.get("made_for") or "", "placement": placement_view(a)}
 
 
 def addon_path(a: dict[str, Any]) -> Path:
@@ -500,17 +564,20 @@ def placement_view(a: dict[str, Any]) -> dict[str, Any]:
 
 
 def _check_form(label: str, base_models: list[str], trigger: str, default_strength: str, source: str) -> tuple[str, list[str]]:
-    """The checks of the short form -> (cleaned label, painter ids). AddonFileError when something is wrong."""
+    """The checks of the short form -> (cleaned label, models). AddonFileError when something is wrong."""
     from . import reference
 
     label = _clean_line(label, MAX_LABEL_CHARS)
     if not label:
         raise AddonFileError("Give the LoRA a name.")
     painters = list(reference.concept_models())
+    edit = reference.EDIT_MODEL
     models = [m for m in dict.fromkeys(base_models or [])]
     if not models:
         raise AddonFileError("Choose at least one model the LoRA was made for.")
-    bad = [m for m in models if m not in painters]
+    if edit in models and len(models) > 1:
+        raise AddonFileError("A LoRA is either for picture edits or for the painters, not both. Add it twice to use it both ways.")
+    bad = [m for m in models if m not in painters and m != edit]
     if bad:
         raise AddonFileError(f"Unknown model: {', '.join(bad)}.")
     if default_strength not in STRENGTHS:
@@ -521,9 +588,11 @@ def _check_form(label: str, base_models: list[str], trigger: str, default_streng
 
 
 def register(file_name: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal",
-             source: str = "", in_place: bool = False) -> dict[str, Any]:
+             source: str = "", in_place: bool = False, made_for_answer: str = "") -> dict[str, Any]:
     """Set up a file already in VGAC/mine/ (or, with `in_place`, one addon_links.place_addon registered where it is) as one of
     the person's add-ons. -> the public entry. AddonFileError (or ValueError for the form) when it cannot be."""
+    from . import reference
+
     if in_place:
         rec = made_record("place:" + file_name)
         if not rec or rec.get("mode") != "in_place" or not rec.get("path"):
@@ -535,8 +604,21 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
         path = _existing_file(file_name)
         fv = file_value(path.name)
         rec = made_record("mine:" + path.name)
-    read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
+    meta, tensors = read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
     label, models = _check_form(label, base_models, trigger, default_strength, source)
+    edit = reference.EDIT_MODEL
+    fam = prefill(meta, tensors, path.name)["family"]
+    if edit in models and fam and fam not in (QWEN_EDIT_FAMILY, QWEN_FAMILY):
+        raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
+    # The file decides when it says so for sure (an Edit signal, or a plain Qwen-Image signal); a person cannot overrule
+    # that. When the file cannot tell, the person's answer is stored, and there must be one.
+    detected = qwen_made_for(meta, path.name)
+    if edit in models and not detected:
+        if made_for_answer not in (MADE_FOR_EDIT, MADE_FOR_PLAIN):
+            raise AddonFileError("Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.")
+        made_for = made_for_answer
+    else:
+        made_for = detected
     with _lock:
         items = _read_raw()
         if any(a.get("file") == fv for a in items):
@@ -544,7 +626,7 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
         taken = {str(a.get("id")) for a in items} | _builtin_ids()
         entry = {"id": _new_id(label, taken), "label": label, "file": fv, "base_models": models,
                  "trigger": _clean_line(trigger, MAX_TRIGGER_CHARS), "default_strength": default_strength,
-                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True,
+                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True, "made_for": made_for,
                  "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         if rec:
             entry["placement"] = {k: rec[k] for k in ("mode", "source", "path", "size") if k in rec}
@@ -553,17 +635,49 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
     return public(_normalise(entry) or entry)
 
 
-def update(aid: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal", source: str = "") -> dict[str, Any]:
-    """Change the name, models, trigger words, strength or source note of one of the person's add-ons. The file is not touched."""
+def _update_made_for(aid: str, answer: str) -> str:
+    """What a LoRA moved onto picture edits was made for: the file's own answer when it is sure, else the person's answer
+    (the same rule as register). AddonFileError when the file is not usable for picture edits or no answer was given."""
+    from . import reference
+
+    found = next((a for a in _read_raw() if a.get("id") == aid), None)
+    norm = _normalise(found) if found else None
+    if norm is None:
+        raise AddonFileError("That LoRA is not on your list.", status=404)
+    try:
+        path = addon_path(norm)
+    except (OSError, ValueError):
+        raise AddonFileError("That file is no longer where it was.", status=404)
+    meta, tensors = read_header(path)
+    fam = prefill(meta, tensors, path.name)["family"]
+    if fam and fam not in (QWEN_EDIT_FAMILY, QWEN_FAMILY):
+        raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
+    detected = qwen_made_for(meta, path.name)
+    if detected:
+        return detected
+    if answer not in (MADE_FOR_EDIT, MADE_FOR_PLAIN):
+        raise AddonFileError("Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.")
+    return answer
+
+
+def update(aid: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal", source: str = "",
+           made_for_answer: str = "") -> dict[str, Any]:
+    """Change the name, models, trigger words, strength or source note of one of the person's add-ons. The file is not touched.
+    A LoRA moved onto picture edits gets its made-for answer (asked the same way as when it was added)."""
+    from . import reference
+
     if aid in _builtin_ids():
         raise AddonFileError("Tested LoRAs come with the app and cannot be changed.")
     label, models = _check_form(label, base_models, trigger, default_strength, source)
+    made_for = _update_made_for(aid, made_for_answer) if reference.EDIT_MODEL in models else None
     with _lock:
         items = _read_raw()
         for a in items:
             if a.get("id") == aid:
                 a.update(label=label, base_models=models, trigger=_clean_line(trigger, MAX_TRIGGER_CHARS),
                          default_strength=default_strength, source=_clean_line(source, MAX_SOURCE_CHARS))
+                if made_for is not None:
+                    a["made_for"] = made_for
                 _write_raw(items)
                 done = _normalise(a)
                 break
@@ -628,7 +742,8 @@ def listing() -> dict[str, Any]:
     folder = mine_dir() if get_settings().loras_dir is not None else None
     return {"addons": [public(a) for a in entries() if a["id"] not in builtin], "folder": str(folder or ""),
             "folder_exists": bool(folder and folder.is_dir()), "strengths": dict(STRENGTHS),
-            "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()]}
+            "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()],
+            "edit_models": [{"id": reference.EDIT_MODEL, "label": "Picture edits (Qwen-Image-Edit)"}]}
 
 
 def unregistered() -> list[dict[str, Any]]:
@@ -781,6 +896,8 @@ class MyAddonIn(BaseModel):
     source: str = Field(default="", max_length=MAX_SOURCE_CHARS * 2)
     # True for a file addon_links.place_addon registered where it is (file_name is then the name ComfyUI lists it under).
     in_place: bool = False
+    # The person's answer when the file cannot tell: MADE_FOR_EDIT or MADE_FOR_PLAIN (ignored when the file is sure).
+    made_for: str = Field(default="", max_length=40)
 
 
 class PlaceIn(BaseModel):
@@ -794,6 +911,7 @@ class MyAddonChange(BaseModel):
     trigger: str = Field(default="", max_length=MAX_TRIGGER_CHARS * 2)
     default_strength: str = "normal"
     source: str = Field(default="", max_length=MAX_SOURCE_CHARS * 2)
+    made_for: str = Field(default="", max_length=40)
 
 
 @router.get("/api/my-addons")
@@ -804,7 +922,8 @@ def get_my_addons() -> dict[str, Any]:
 @router.post("/api/my-addons")
 def post_my_addon(body: MyAddonIn) -> dict[str, Any]:
     try:
-        return register(body.file_name, body.label, body.base_models, body.trigger, body.default_strength, body.source, body.in_place)
+        return register(body.file_name, body.label, body.base_models, body.trigger, body.default_strength, body.source,
+                        body.in_place, made_for_answer=body.made_for)
     except AddonFileError as e:
         raise _http(e)
 
@@ -812,7 +931,8 @@ def post_my_addon(body: MyAddonIn) -> dict[str, Any]:
 @router.put("/api/my-addons/{aid}")
 def put_my_addon(aid: str, body: MyAddonChange) -> dict[str, Any]:
     try:
-        return update(aid, body.label, body.base_models, body.trigger, body.default_strength, body.source)
+        return update(aid, body.label, body.base_models, body.trigger, body.default_strength, body.source,
+                     made_for_answer=body.made_for)
     except AddonFileError as e:
         raise _http(e)
 
