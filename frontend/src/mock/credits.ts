@@ -28,14 +28,14 @@ export const mockCredits: CreditsAnswer = {
       points: [
         "As recorded, nothing that ends up inside an exported asset needs a credit. The animations and hairstyles are CC0 (public domain dedication), and the AI models' licences cover the model files, not what they make.",
         'Crediting is still polite, and this page lists everyone so you can copy it.',
-        'Two exceptions are recorded: Hunyuan3D (optional; not granted in the EU, UK or South Korea; a 1-million-monthly-users clause) and Anima (model non-commercial, what it makes is usable).',
+        'Two exceptions are recorded: Hunyuan3D (optional; a 1-million-monthly-users clause) and Anima (model non-commercial, what it makes is usable).',
       ],
     },
   },
   groups: [
     { id: 'models', title: 'AI models (the trained files that make pictures and 3D shapes)', intro: 'These run on your computer. Their files are not part of your game; what they make is.', entries: [
       e('Z-Image Turbo', 'Paints the first concept picture quickly.', 'Tongyi-MAI (Alibaba)', 'Apache-2.0', 'https://huggingface.co/Tongyi-MAI/Z-Image-Turbo', { confirmed: 'lookup' }),
-      e('Hunyuan3D-2mv', 'Optional second 3D model that builds the shape from several views.', 'Tencent', 'Tencent Hunyuan Community Licence', 'https://huggingface.co/tencent/Hunyuan3D-2mv', { note: 'Opt-in. Revenue clause and regional limits.' }),
+      e('Hunyuan3D-2mv', 'Optional second 3D model that builds the shape from several views.', 'Tencent', 'Tencent Hunyuan Community Licence', 'https://huggingface.co/tencent/Hunyuan3D-2mv', { note: 'Revenue clause.' }),
     ] },
     { id: 'addons', title: 'Add-ons (LoRAs: small files that steer a model toward a look)', intro: 'Each one is loaded on top of a model above.', entries: [
       e('Hand-made clay finish', 'Gives pictures a hand-made clay look.', 'artificialguybr', 'Apache-2.0', 'https://huggingface.co/artificialguybr/ClayAnimation-Redmond-ZIMAGE'),

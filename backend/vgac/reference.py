@@ -162,7 +162,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
-               description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
+               description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
         # paints from the front, the sides and the back only.
         _param("quarter_pictures", "boolean", True, categories=["humanoid"], label="Paint from the three-quarter pictures",
