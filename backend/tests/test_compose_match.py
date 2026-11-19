@@ -1,4 +1,4 @@
-"""A picture combined from the person's own pictures keeps their clothes and hair (step 0.5):
+"""A picture combined from the person's own pictures keeps their clothes and hair (feature photos):
 the compose prompt no longer carries the look's palette or hair rule and says to keep clothes and hair, and the
 check `compose_match` (stages/concept.compose_check) warns when the combined picture's clothes or hair colour differ.
 """
@@ -62,3 +62,11 @@ def test_no_verdict_for_a_busy_photo_or_nothing_to_compare():
     assert concept.compose_check([("body", busy)], person(cutout=True)) is None
     assert concept.compose_check([("other", person())], person(cutout=True)) is None
     assert concept.compose_check([("body", person())], Image.new("RGBA", (50, 50), (0, 0, 0, 0))) is None
+
+
+def test_the_persons_own_picture_is_the_clothes_and_hair_source():
+    # With only the person's own picture to compare against (no body, outfit or face photo), a repainted outfit still warns.
+    c = concept.compose_check([("character", person())], person(cutout=True, top=(60, 62, 60), legs=(40, 40, 42)))
+    assert c is not None and not c["passed"] and "the clothes" in c["help"]
+    c = concept.compose_check([("character", person())], person(cutout=True, hair=(210, 180, 110)))
+    assert c is not None and not c["passed"] and "keep the hair" in c["help"]

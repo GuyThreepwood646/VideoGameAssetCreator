@@ -3778,20 +3778,20 @@ button.small-btn .resume-icon {
   max-width: 80ch;
 }
 
-/* Step 0.5: a character from several of your own pictures (pipeline/ComposePanel.tsx). */
-.compose-slots {
+/* Feature photos in the New asset form (components/FeaturePhotos.tsx). */
+.feature-slots {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
-  margin: 10px 0;
+  margin: 6px 0;
 }
-.compose-slot {
+.feature-slot {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.rail-stage-half .rail-index {
-  font-size: 0.85em;
+.feature-add {
+  flex-wrap: wrap;
 }
 
 /* Step 2: the Pose for 3D first picture above the views */

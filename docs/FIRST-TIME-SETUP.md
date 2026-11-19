@@ -48,7 +48,7 @@ A second script does the rest of the list. Same rules as the first: the default 
 | Part | What it does | Sources and limits |
 |------|--------------|--------------------|
 | Models and add-ons | A select list of every model in `models.yaml` and add-on in `addons.yaml` (exact file names), with size, the licence line from the yaml, and the source. Yes or no per item; files already there are skipped; nothing is replaced. Downloads resume after an interruption and are checked against the published size and SHA-256. It shows "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." and a `[!] Warning` line when `nvidia-smi` shows under 10 GB. `-Only id,id` picks items. Your own additions go in `setup/downloads.local.json` | Links, sizes and checksums are in `setup/downloads.json`, read from the Hugging Face file lists on 6 Nov 2026. Edit a link there; no code change |
-| Licence steps | Hunyuan3D-2mv (type "I have read this and I am not in the EU, UK or South Korea"), Anima ("I have read this"), Gemma 3 12B ("I accept the Gemma terms myself", with Google's terms link). You type the sentence; the helper never accepts for you, and `-Yes` skips these items | Hunyuan3D-2mv is off unless you type it |
+| Licence steps | Anima ("I have read this"), Gemma 3 12B ("I accept the Gemma terms myself", with Google's terms link). You type the sentence; the helper never accepts for you, and `-Yes` skips these items | An item is not downloaded unless you type its sentence |
 | Node packs | `ComfyUI-SkinToken` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | The GitHub repository's default branch is `main` (checked) |
 | Blender | Accepts an existing Blender 5.0 or newer (tested with 5.2.3), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
 | Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
@@ -174,11 +174,10 @@ GPL-3.0-or-later (`LICENSE`). Decisions on terms are the owner's.
 1. Model files are never bundled. Each is downloaded from its original source and used under its own licence. Before
    a download, show the licence line from `models.yaml`.
 2. Models the code really uses: Z-Image Turbo and Base, FLUX.2 Klein, Chroma1-HD, Anima,
-   Qwen-Image-Edit-2511 with its angles and Lightning LoRAs, BiRefNet, TRELLIS.2, SkinToken, Hunyuan3D-2mv (opt-in
+   Qwen-Image-Edit-2511 with its angles and Lightning LoRAs, BiRefNet, TRELLIS.2, SkinToken, Hunyuan3D-2mv (optional
    3D engine) and Gemma 3 12B (the local picture judge; optional, and not yet in the helper's model check).
-3. Hunyuan3D-2mv: off by default, an explicit opt-in. The Tencent licence is not granted in the EU, UK or South Korea
-   (people there must not use it), and a request to Tencent is needed above 1 million monthly users of their products.
-   Require "I have read this and I am not in those regions" before download.
+3. Hunyuan3D-2mv: an ordinary optional download. A request to Tencent is needed above 1 million monthly users of
+   their products; show that line with the licence link.
 4. Anima: the model is non-commercial; what it makes is usable commercially. Show that line and require an explicit
    "I have read this" before download.
 5. Gemma 3: Google's Gemma Terms of Use and Prohibited Use Policy; Google claims no rights in what it makes. The
