@@ -67,7 +67,9 @@ GUARD_PART_DE = 10.0  # a body part's middle colour moved more than this (Lab, l
 # gloved hands moved 10.0, the caped hero's and the mage's gloves 41.1 and 29.6 (caught by the skin rule as well).
 GUARD_HAND_DE = 15.0
 GUARD_SKIN_BEFORE = 10.0  # hand within this of the face's skin: a bare hand
-GUARD_SKIN_AFTER = 15.0  # ... and beyond this after the redraw: gloves added
+# ... and beyond this after the redraw: gloves added. Card test of WP-09 (seed 11, 4 routes): a bare-handed sailor in a yellow
+# sleeve read 16.5 to 19.2 from skin (the cuff falls in the hand's disc), real gloves 29.6 to 41.5, so 15 refused a good redraw.
+GUARD_SKIN_AFTER = 22.0
 GUARD_PALETTE = 0.6  # colour histogram overlap under this: the colours changed
 GUARD_COLOUR_ADDED = 10.0  # a black-and-white picture whose redraw's colourful tenth is over this was coloured in
 GUARD_AREA = 0.92  # figure area over height squared shrank under this share: parts were removed (TheHeir 0.87)
@@ -233,6 +235,8 @@ L_SH, R_SH, L_EL, R_EL, L_WR, R_WR = 11, 12, 13, 14, 15, 16
 L_HIP, R_HIP, L_KN, R_KN, L_AN, R_AN = 23, 24, 25, 26, 27, 28
 NOSE, L_EYE, R_EYE = 0, 2, 5
 HAND_TIPS = {"left": (L_WR, 17, 19), "right": (R_WR, 18, 20)}  # wrist, pinky, index
+FOOT_POINTS = {"left": (29, 31), "right": (30, 32)}  # heel, toe (MediaPipe pose landmarks)
+FOOT_VISIBLE = 0.3  # heel and toe visibility under this: the foot is not read
 
 
 def pose_points(rgb: np.ndarray) -> np.ndarray | None:
@@ -553,7 +557,19 @@ def part_colours(rgb: np.ndarray, mask: np.ndarray, P: np.ndarray, height: int) 
     hands = [_hand_colour(rgb, mask, P, s) for s in ("left", "right")]
     hands = [h for h in hands if h is not None]
     out["hands"] = np.mean(hands, axis=0) if hands else None
+    feet = [_foot_colour(rgb, mask, P, s) for s in ("left", "right")]
+    feet = [f for f in feet if f is not None]
+    out["feet"] = np.mean(feet, axis=0) if feet else None
     return out
+
+
+def _foot_colour(rgb: np.ndarray, mask: np.ndarray, P: np.ndarray, side: str) -> np.ndarray | None:
+    """Middle Lab colour of a foot: a disc between the heel and the toe. None when the joints are not seen."""
+    heel, toe = FOOT_POINTS[side]
+    if P.shape[0] <= toe or min(P[heel, 2], P[toe, 2]) < FOOT_VISIBLE:
+        return None
+    a, b = P[heel, :2], P[toe, :2]
+    return _median(rgb, _disc(mask.shape, (a + b) / 2, max(2.0, 0.5 * float(np.linalg.norm(b - a)))) & mask)
 
 
 def colour_present(colour: np.ndarray, pixels: list[np.ndarray]) -> float:
@@ -635,7 +651,7 @@ def pose_check(m: dict[str, Any], held_item: str | None = None, after_redraw: bo
     if held_item:
         cautions.append(f"The redraw also takes the {held_item} out of the hands; add it back afterwards with Add an item.")
     if unseen:
-        cautions.append("Gloves, gauntlets and claws are kept but opened; check them in the redrawn picture.")
+        cautions.append("Whatever covers the hands is kept and the hands are opened; check them in the redrawn picture.")
     if (m.get("beyond_body") or 0) >= BEYOND_BODY_CAUTION:
         cautions.append("Parts that stand off the body (a cape, wide sleeves, wings, a tail or extra arms) may be redrawn "
                         "or removed; the redraw is not used if much of your character goes missing, but check them.")
@@ -667,25 +683,31 @@ A_POSE = ("both arms straight and held out from the body at about 45 degrees, ha
 # The feet's gap the redraw is asked for, over the height; the "may join" limit is ANKLE_MAY. A quarter of the height was asked
 # before and the kept redraw of the boy came out at 0.222, under the limit; a third gives room.
 POSE_READY = "Redraw the character ready for 3D in a wide A pose: " + A_POSE
-POSE_SUFFIX = (" Change only the pose. Keep everything else exactly the same: the same character, face, hair, skin colour, "
+# The no-added-clothing sentence of all three redraws (the pose redraw, the hand redraw, the whole-figure redraw). It
+# names no garment on purpose: a sentence that says "no socks" can add socks. It speaks of what covers a body part.
+# Chosen on the WP-09 card test: the first wording ("as covered, or as bare") added fingerless gloves to the caped hero in the
+# hand redraw (1 of 25 draws; "covered" may cue coverings); this one (and two others) added nothing in 18 draws.
+KEEP_WORN = " Keep the outfit exactly as in the picture, with the same skin showing."
+POSE_SUFFIX = (" Change only the pose." + KEEP_WORN + " Keep everything else exactly the same: the same character, face, hair, skin colour, "
                "every garment and its colours and materials, everything worn on the arms, hands and legs, the body "
                "proportions and the art style, camera angle, size and framing, the whole body in frame, on a plain white "
                "background.")
 BARE_HANDS = " Both hands are bare skin, as in the picture."
+# Only when the measure found both hands and their colour is far from the face's skin. A hand that was merely not found
+# (hidden, in a sleeve, behind the body) says nothing about gloves, so it gets no sentence at all (WP-09).
 GLOVED_HANDS = " Keep the same gloves or gauntlets, opened."
 KEEP_GREY = " Keep the picture black and white."
 
 
 def pose_prompt(m: dict[str, Any] | None = None, neutral_mouth_sentence: str = "") -> str:
-    """The redraw's instruction: the A pose, the sentences the measure supports (bare or gloved hands, black and
+    """The redraw's instruction: the A pose, the sentences the measure supports (bare or measured gloved hands, black and
     white), the mouth sentence when asked, and the keep-everything suffix."""
     extra = ""
     if m and not m.get("error"):
         gaps = [h.get("skin_gap") for h in (m.get("hands") or {}).values() if h.get("skin_gap") is not None]
-        states = [h.get("state") for h in (m.get("hands") or {}).values()]
-        if gaps and max(gaps) < GUARD_SKIN_BEFORE:
+        if len(gaps) == 2 and max(gaps) < GUARD_SKIN_BEFORE:
             extra += BARE_HANDS
-        elif (gaps and min(gaps) > GUARD_SKIN_AFTER) or (states and all(s == "not_found" for s in states)):
+        elif len(gaps) == 2 and min(gaps) > GUARD_SKIN_AFTER:
             extra += GLOVED_HANDS
         if m.get("grey"):
             extra += KEEP_GREY
@@ -726,11 +748,15 @@ def _face_shape(rgb: np.ndarray, P: np.ndarray | None = None) -> dict[str, float
             "mouth": float(np.linalg.norm(np.array(lp["right"]) - np.array(lp["left"]))) / eye}
 
 
-def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | Image.Image | np.ndarray) -> dict[str, Any]:
+def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | Image.Image | np.ndarray,
+          area_needs_joints: bool = False) -> dict[str, Any]:
     """Did the pose redraw keep the character? Compares the person's cut-out with the redraw's: colour added to a
     black-and-white picture, the colour mix, parts removed (figure area), each body part's colour, gloves added to bare
     hands, and the face's proportions. ok False with reasons (plain phrases) when any fails; not_compared names what
-    could not be compared. Never raises."""
+    could not be compared. Never raises. area_needs_joints: the figure's area is judged only when the person's joints
+    are found in both pictures (the whole-figure redraw also changes the framing and the scale, so a cut-off or
+    differently framed picture shrinks or grows the figure without any part being removed; without joints nothing
+    says which it was)."""
     out: dict[str, Any] = {"ok": True, "reasons": [], "not_compared": [], "measures": {}}
     try:
         a, b = load(original), load(redraw)
@@ -745,16 +771,20 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
     me["palette_overlap"] = round(overlap, 3)
     if overlap < GUARD_PALETTE and not out["reasons"]:
         out["reasons"].append("the colours changed")
-    area_a = a["mask"].sum() / float(a["height"]) ** 2
-    area_b = b["mask"].sum() / float(b["height"]) ** 2
-    me["area_ratio"] = round(float(area_b / max(1e-9, area_a)), 3)
-    if me["area_ratio"] < GUARD_AREA:
-        out["reasons"].append("parts of the character were removed")
     Pa = Pb = None
     try:
         Pa, Pb = pose_points(a["rgb"]), pose_points(b["rgb"])
     except Exception:  # noqa: BLE001
         pass
+    area_a = a["mask"].sum() / float(a["height"]) ** 2
+    area_b = b["mask"].sum() / float(b["height"]) ** 2
+    me["area_ratio"] = round(float(area_b / max(1e-9, area_a)), 3)
+    seen = Pa is not None and Pb is not None and pose_score(Pa) >= POSE_SCORE_MIN and pose_score(Pb) >= POSE_SCORE_MIN
+    if me["area_ratio"] < GUARD_AREA:
+        if seen or not area_needs_joints:
+            out["reasons"].append("parts of the character were removed")
+        else:
+            out["not_compared"].append("whether parts of the character were removed (the figure's size changed and no person's joints were found)")
     if Pa is None or Pb is None or pose_score(Pa) < POSE_SCORE_MIN or pose_score(Pb) < POSE_SCORE_MIN:
         out["not_compared"].append("the colour of each garment, the skin and the hands (no person's joints found)")
     else:
@@ -762,7 +792,7 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
         figure_px = _lab(a["rgb"])[a["mask"]]
         figure_px = figure_px[::max(1, len(figure_px) // 20000)]
         parts = {}
-        for name in ("face", "torso", "upper arms", "forearms", "hands", "thighs", "shins"):
+        for name in ("face", "torso", "upper arms", "forearms", "hands", "thighs", "shins", "feet"):
             if pa.get(name) is None or pb.get(name) is None:
                 out["not_compared"].append(f"the {name}" if name != "face" else "the skin of the face")
                 continue
@@ -776,15 +806,43 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
             any(pa.get(k) is not None and _de(pb[n], pa[k]) <= GUARD_PART_DE for k in PART_NEIGHBOURS.get(n, ()))
             or colour_present(pb[n], [pa["_pixels"].get(k) for k in (n, *PART_NEIGHBOURS.get(n, ()))]) >= COLOUR_PRESENT
             or colour_present(pb[n], [figure_px]) >= COLOUR_PRESENT_FIGURE)}
+        # ... but never for skin: a bare area that took another colour had something put on it (WP-09).
+        bare_before = {n for n in ("upper arms", "forearms", "hands", "thighs", "shins", "feet")
+                       if pa.get(n) is not None and pa.get("face") is not None and _de(pa[n], pa["face"]) < GUARD_SKIN_BEFORE}
+        explained -= bare_before
         me["explained_by_neighbour"] = sorted(explained)
+        # Bare skin is never explained away (WP-09): a bare area that now has another colour had something put on it,
+        # whatever colour that is elsewhere on the figure; hands and feet that were covered and are now skin had it
+        # taken off. The arms' and legs' own skin showing out of a sleeve or hem is not that (skin after, not before).
+        covered, bared = [], []
+        if pa.get("face") is not None and pb.get("face") is not None:
+            skin = {}
+            for n in ("upper arms", "forearms", "hands", "thighs", "shins", "feet"):
+                if pa.get(n) is None or pb.get(n) is None:
+                    continue
+                before, after = _de(pa[n], pa["face"]), _de(pb[n], pb["face"])
+                skin[n] = [before, after]
+                if before < GUARD_SKIN_BEFORE and after > GUARD_SKIN_AFTER:
+                    covered.append(n)
+                elif n in ("hands", "feet") and before > GUARD_SKIN_AFTER and after < GUARD_SKIN_BEFORE:
+                    bared.append(n)
+            me["skin"] = skin
+            if "hands" in skin:
+                me["hand_skin"] = skin["hands"]
         changed = [n for n, d in parts.items()
-                   if d > (GUARD_HAND_DE if n == "hands" else GUARD_PART_DE) and n not in explained]
-        if pa.get("hands") is not None and pa.get("face") is not None and pb.get("hands") is not None and pb.get("face") is not None:
-            before, after = _de(pa["hands"], pa["face"]), _de(pb["hands"], pb["face"])
-            me["hand_skin"] = [before, after]
-            if before < GUARD_SKIN_BEFORE and after > GUARD_SKIN_AFTER:
-                out["reasons"].append("gloves were added to bare hands")
-                changed = [n for n in changed if n != "hands"]
+                   if d > (GUARD_HAND_DE if n == "hands" else GUARD_PART_DE) and n not in explained
+                   and n not in covered and n not in bared]
+        if "hands" in covered:
+            out["reasons"].append("gloves were added to bare hands")
+        if "feet" in covered:
+            out["reasons"].append("footwear was added to bare feet")
+        others = [n for n in covered if n not in ("hands", "feet")]
+        if others:
+            out["reasons"].append("something was put on the bare skin of the " + _list(others))
+        if "hands" in bared:
+            out["reasons"].append("the gloves were taken off")
+        if "feet" in bared:
+            out["reasons"].append("the footwear was taken off")
         if changed:
             out["reasons"].append(("the colour of the " if len(changed) == 1 else "the colours of the ")
                                   + _list(["skin of the face" if n == "face" else n for n in changed]) + " changed")
@@ -820,6 +878,26 @@ def guard_words(g: dict[str, Any], kept_anyway: bool = False, retried: bool = Fa
     return ("The pose redraw changed your character (" + _list(g["reasons"]) + ")"
             + (", also on a second try" if retried else "") + ", so it was not used. The sides were drawn from your own "
             "picture. You can look at the redraw and keep it anyway." + nc)
+
+
+def redraw_guard_words(g: dict[str, Any], what: str, retried: bool = False) -> str:
+    """The sentence of the hand_guard and redraw_guard checks. `what` names the redraw ("The hand redraw", "The redraw"). A
+    redraw that changed the character is a warning: the sentence says what changed and which picture is in use."""
+    nc = ("" if not g.get("not_compared") else
+          " Not compared: " + _list(g["not_compared"]) + "; compare them yourself.")
+    if g.get("ok"):
+        return f"{what} kept what your character wears and its colours." + nc
+    return (f"{what} changed your character ({_list(g.get('reasons') or ['unknown'])})"
+            + (", also on a second try" if retried else "") + ". Look at it before you use it." + nc)
+
+
+def redraw_guard_check(check_id: str, what: str, g: dict[str, Any], retried: bool, used: str) -> dict[str, Any]:
+    """The warn check for a guarded redraw outside step 2. `used` says which picture is in use when the guard failed."""
+    from . import quality
+
+    words = redraw_guard_words(g, what, retried) + ("" if g.get("ok") else " " + used)
+    return quality.check(check_id, bool(g.get("ok")), "kept" if g.get("ok") else "changed", "kept",
+                         vars={"words": words, "reasons": g.get("reasons") or [], "not_compared": g.get("not_compared") or []})
 
 
 # --- which try of the pose redraw to keep ---------------------------------------------------------------------------

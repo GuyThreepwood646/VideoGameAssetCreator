@@ -66,6 +66,8 @@ NOTES: dict[str, tuple[str, str]] = {
     "straight_on": ("by_hand", "Redraw the picture from the first step so the character is seen straight on from the front, with the camera level with the chest."),
     "pose_for_3d": ("by_hand", "Nothing in the app redraws the pose for this version; draw the side views again, or accept it and check the model's arms and hands later."),
     "pose_guard": ("by_hand", "The redraw is already kept or was not saved here, so there is nothing more to press. Your own picture is the one in use."),
+    "hand_guard": ("by_hand", "The hand redraw was not used, so the 3D model was built from your own picture. Build the 3D model again for another try at it, or accept it."),
+    "redraw_guard": ("by_hand", "Look at the redraw next to the version before it. If something was added or taken off, go back to that version, or redraw again from it."),
     "body_marks": ("by_hand", "Under Mark the body below the views, drag each mark it names to the right place, or press These look right."),
     "compose_match": ("by_hand", "Use Combine them again in the first step, or choose the picture you prefer and carry on."),
     # step 3 (3D model)

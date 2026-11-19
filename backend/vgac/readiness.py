@@ -44,7 +44,12 @@ DETAIL_RATIO_MAX = 2.0  # finer detail on one side than the other
 
 # The A pose is buildpose.A_POSE, the same words as step 2's pose redraw.
 HUMANOID_REDRAW = ("Redraw this same character with the same design, colours and outfit, standing in a wide A pose: "
-                   + buildpose.A_POSE + " Whole body in frame, plain light grey background, even lighting.")
+                   + buildpose.A_POSE + buildpose.KEEP_WORN + " Whole body in frame, plain light grey background, even lighting.")
+
+
+def is_humanoid_redraw(instruction: str) -> bool:
+    """True for the fixed humanoid "Redraw it ready for 3D" instruction, which the concept refine guards (WP-09)."""
+    return instruction.strip() == HUMANOID_REDRAW
 SUBJECT_WORDS = {"quadruped": "animal", "multileg": "creature", "winged": "creature", "serpent": "creature",
                  "vehicle": "vehicle", "prop_rigid": "object", "prop_articulated": "object", "environment": "structure",
                  "foliage": "plant"}
