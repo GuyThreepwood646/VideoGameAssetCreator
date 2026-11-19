@@ -1507,6 +1507,10 @@ function hairStyles(x: unknown): HairStyleEntry[] {
 }
 
 const hairLibraryRequests = new Map<string, Promise<HairStyleEntry[]>>()
+// What the New asset form needs from GET /api/hair-library?platform=: whether the built-in library is installed, and how
+// many hairstyles fit that platform (the person's own ones included, as the backend counts them).
+export type HairLibraryOn = { installed: boolean; styles: number }
+const hairLibraryOnRequests = new Map<string, Promise<HairLibraryOn>>()
 
 export const hairApi = {
   panel: (aid: string) => get<HairPanel>(`/api/assets/${aid}/hair`),
@@ -1526,6 +1530,20 @@ export const hairApi = {
     }
     return req
   },
+  libraryOn: (platform: string): Promise<HairLibraryOn> => {
+    let req = hairLibraryOnRequests.get(platform)
+    if (!req) {
+      req = get<{ installed?: boolean }>('/api/hair-library?platform=' + encodeURIComponent(platform)).then(
+        (x) => ({ installed: x?.installed === true, styles: hairStyles(x).length }),
+        (e) => {
+          hairLibraryOnRequests.delete(platform)
+          throw e
+        },
+      )
+      hairLibraryOnRequests.set(platform, req)
+    }
+    return req
+  },
   // Your own hairstyles (backend vgac/my_hair.py, /api/my-hair).
   mine: () => get<MyHairListing>('/api/my-hair'),
   updateMine: (id: string, body: MyHairUpdate) => put<MyHairStyle>(`/api/my-hair/${encodeURIComponent(id)}`, body).then(forgetHairLibrary),
@@ -1536,6 +1554,7 @@ export const hairApi = {
 // The catalogue is cached per page load; adding, changing or removing your own hairstyle makes the next read ask again.
 function forgetHairLibrary<T>(x: T): T {
   hairLibraryRequests.clear()
+  hairLibraryOnRequests.clear()
   return x
 }
 

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, own_images, people, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, people, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -42,6 +42,9 @@ HEALTH_STATS_MAX_AGE = 5.0  # seconds an instance's /system_stats answer is reus
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    blocked = move_gate.blocking_reason()
+    if blocked:  # a move of the big files is unfinished or unreadable: serve nothing (vgac/move_gate.py)
+        raise RuntimeError(blocked)
     settings = get_settings()
     init_db()
     q = JobQueue(settings)  # registers itself as jobs.active_queue() for the API and the autopilot
@@ -738,8 +741,9 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
+    # Left out (None): the settings stored by an earlier start stay. Sent (even {}): they are replaced.
     stage_params = None
-    if body.stage_params:
+    if body.stage_params is not None:
         unknown = [k for k in body.stage_params if k not in STAGES]
         if unknown:
             raise HTTPException(400, f"unknown stage {unknown[0]!r} in stage_params")
@@ -869,7 +873,7 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     if body.edit_addons is not None or "edit_addons" in rparams:
         # This refine's own LoRA choice: the request's, never the parent's (picture_loras.py).
         rparams["edit_addons"] = _edit_choices(body.edit_addons if body.edit_addons is not None else rparams["edit_addons"])
-    inherited = {k: val for k, val in parent.params.items()
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items()
                  if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
@@ -890,7 +894,7 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
-    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in parent.params.items() if k != "fix_for"}, **aparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 

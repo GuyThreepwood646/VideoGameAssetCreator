@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import config, downloader, hardware_setup, setup_settings
+from . import state_lock as state_lock_mod
+from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
 
 log = logging.getLogger("vgac.comfy_install")
@@ -178,6 +181,26 @@ def shipped_packs() -> list[dict[str, Any]]:
     return [dict(v, id=k) for k, v in (shipped().get("node_packs") or {}).items() if isinstance(v, dict)]
 
 
+# The commands run in a cleaned environment (clean_env()), so a name in these families is never expanded, by either program.
+NOT_EXPANDED = ("VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_")
+
+
+def expand_percent(text: str) -> str:
+    """The one rule for a folder setting, the same in the starter's VGAC.exe: a folder that exists under exactly this name is taken as
+    it is (a real folder called %TEMP% stays); else %NAME% is replaced by that environment variable, except the families in
+    NOT_EXPANDED (they are cleaned out of the environment these commands run in). Nothing else is expanded: no $NAME, no ~."""
+    if "%" not in text or Path(text).is_dir():
+        return text
+
+    def one(m: "re.Match[str]") -> str:
+        name = m.group(1)
+        if name.upper().startswith(NOT_EXPANDED):
+            return m.group(0)
+        return os.environ.get(name, m.group(0))
+
+    return re.sub(r"%([^%]+)%", one, text)
+
+
 def data_folder() -> Path:
     """The starter's data folder (machine.json starter.dataFolder; default local/data in the project)."""
     chosen = ""
@@ -190,7 +213,7 @@ def data_folder() -> Path:
     base = downloader.project_dir()
     if not chosen:
         return base / "local" / "data"
-    p = Path(os.path.expandvars(chosen))
+    p = Path(expand_percent(chosen))
     return p if p.is_absolute() else base / p
 
 
@@ -312,8 +335,12 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
     refused: VGAC installs only into a folder it made."""
     m = read_marker(root)
     if m is not None and _in_ledger(root):
+        _ensure_id(root, m)
         return m
+    if m is not None and _adopt_if_proved(root, Ops()):
+        return read_marker(root) or m
     fresh = {"made_by": MADE_BY, "what": "VGAC's own ComfyUI", "version": entry().get("version", ""), "choice": choice,
+             "install_id": _ledger_id(root) or uuid.uuid4().hex,
              "steps": {}, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if (root / MARKER).is_file() and _in_ledger(root):
         log.warning("the marker of VGAC's own ComfyUI could not be read; writing a fresh one (every step checks again)")
@@ -328,8 +355,11 @@ def claim(root: Path, choice: str, fence: Fence) -> dict[str, Any]:
                             "Move those files somewhere else, or choose another data folder for VGAC.")
     root.mkdir(parents=True, exist_ok=True)
     m = fresh
-    (root / MARKER).write_text(json.dumps(m, indent=2), encoding="utf-8")
+    # The ledger first, the marker second: a crash between leaves an empty folder the ledger names (the next claim finishes it), not a
+    # marker without a ledger entry (which nothing would ever accept again, and the folder would then count as somebody else's).
     downloader.record("VGAC's own ComfyUI", root, "added", 0)
+    _stamp_ledger_id(root, m["install_id"])
+    _write_marker(root, m)
     return m
 
 
@@ -762,6 +792,7 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
             src = downloader.project_dir() / str(p["local"])
             g_rmtree(target, ops, fence)
             shutil.copytree(src, guard(target, fence), ignore=shutil.ignore_patterns("__pycache__"))
+            downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
             continue
         z = guard(root / "downloads" / f"pack-{p['id']}.zip", fence)
         spec = Spec(id="pack-" + p["id"], name=str(p.get("name", p["id"])), urls=[str(p["zip"])], dest=z, sha256=str(p.get("sha256", "")),
@@ -773,6 +804,7 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         kids = [k for k in tmp.iterdir() if k.is_dir()]
         g_move(kids[0] if len(kids) == 1 else tmp, target, ops, fence)
         g_rmtree(tmp, ops, fence)
+        downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
 
 
 def step_test(job: Install, ops: Ops, fence: Fence, card_expected: bool) -> None:
@@ -881,7 +913,8 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
                 inst["output_dir"] = e["output_dir"]  # where SkinToken's files are looked for: VGAC's own
                 inst["engine"] = e  # replaced whole, never merged
                 insts[name] = inst
-            config.write_machine(data, mpath)
+            with state_lock(mpath.parent):   # the starter writes this file too (vgac/state_lock.py)
+                config.write_machine(data, mpath)
         except config.ConfigError as err:
             raise DownloadError("settings", f"The engines could not be saved ({err}).", "Press Try again.") from None
     try:
@@ -1017,6 +1050,141 @@ def _in_ledger(root: Path) -> bool:
     return any(isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root) for i in items)
 
 
+def _write_marker(root: Path, m: dict[str, Any]) -> None:
+    """The marker is replaced, never half written: a stop (the starter ends a command that takes too long) leaves the old one or the new."""
+    tmp = root / (MARKER + ".tmp")
+    tmp.write_text(json.dumps(m, indent=2), encoding="utf-8")
+    os.replace(tmp, root / MARKER)
+
+
+def _ledger_items() -> list[Any]:
+    try:
+        return list(json.loads(downloader.ledger_path().read_text(encoding="utf-8-sig")).get("items", []))
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _ledger_id(root: Path) -> str:
+    for i in _ledger_items():
+        if isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root):
+            return str(i.get("id") or "")
+    return ""
+
+
+def _write_ledger(items: list[Any]) -> None:
+    p = downloader.ledger_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_lock_mod.unique_tmp(p)
+    tmp.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _stamp_ledger_id(root: Path, install_id: str) -> None:
+    """Put this install's id on its ledger entry (the entry that names `root`), so the entry can be found again if the folder is
+    renamed or its drive letter changes."""
+    with downloader._ledger_lock, state_lock(downloader.ledger_path().parent):   # shared with VGAC.exe (vgac/state_lock.py)
+        items = _ledger_items()
+        for i in items:
+            if isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root):
+                i["id"] = install_id
+        _write_ledger(items)
+
+
+def _ensure_id(root: Path, m: dict[str, Any]) -> None:
+    """An install made before ids existed gets one (marker and ledger entry) the first time it is looked at."""
+    iid = str(m.get("install_id") or "") or _ledger_id(root)
+    if not iid:
+        iid = uuid.uuid4().hex
+    if m.get("install_id") != iid:
+        m["install_id"] = iid
+        _write_marker(root, m)
+    if _ledger_id(root) != iid:
+        _stamp_ledger_id(root, iid)
+
+
+def _data_folder_is_ours() -> bool:
+    """The data folder carries the starter's marker whose id is the one in the settings (the starter's own proof for it)."""
+    try:
+        mpath = config.machine_path()
+        sid = str(((config.read_machine(mpath).get("starter") or {}) if mpath is not None else {}).get("dataFolderId") or "")
+        d = json.loads((data_folder() / ".vgac-data.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, config.ConfigError):
+        return False
+    return bool(sid) and isinstance(d, dict) and d.get("made_by") == MADE_BY and str(d.get("id")) == sid
+
+
+def _adoptable(root: Path) -> tuple[dict[str, Any] | None, str]:
+    """(the ledger entry that can be moved to `root`, "") or (None, why not). The proof is the same shape as the data folder's: the
+    install's own id is in its marker AND on a ledger entry whose old place is gone, in a data folder that is VGAC's by its id.
+    A marker copied into somebody else's folder has no such entry, and only the folder the settings name (`root`) is ever looked at."""
+    m = read_marker(root)
+    iid = str((m or {}).get("install_id") or "")
+    if not root.is_dir() or m is None or not iid:
+        return None, "its install record has no id VGAC can match with its ledger"
+    if _real(root) != os.path.normcase(os.path.abspath(str(root))):
+        return None, "the install folder is reached through a link"
+    if not _data_folder_is_ours():
+        return None, "the folder for the big files is not shown to be VGAC's (its marker does not match the settings)"
+    hits = [i for i in _ledger_items() if isinstance(i, dict) and i.get("kind") == "added" and str(i.get("id") or "") == iid]
+    if len(hits) != 1:
+        return None, "the ledger has no single entry with this install's id"
+    old = Path(str(hits[0].get("path", "")))
+    if old.exists() and (_real(old) != _real(root)) and (read_marker(old) or {}).get("install_id") == iid:
+        return None, f"another copy of this install still exists at {old}, so VGAC cannot tell which one is the real one"
+    return hits[0], ""
+
+
+def _adopt_if_proved(root: Path, ops: Ops | None = None) -> bool:
+    hit, _ = _adoptable(root)
+    if hit is None:
+        return False
+    # The settings (engines, input and add-on folders) follow first, so that a repeat after a cut-off still finds the old ledger entry
+    # and finishes the job. Its Python environment still names the old place: `check` says venv_stale until rebuild-venv has run.
+    old_root = os.path.abspath(str(hit.get("path", "")))
+    _retarget_settings(old_root, root, fence_for(ops or Ops()))
+    with downloader._ledger_lock, state_lock(downloader.ledger_path().parent):   # shared with VGAC.exe
+        hit, _ = _adoptable(root)
+        if hit is None:
+            return False
+        items = _ledger_items()
+        for i in items:
+            if isinstance(i, dict) and i.get("id") == hit.get("id") and i.get("kind") == "added":
+                i["path"] = str(root)
+        _write_ledger(items)
+    return True
+
+
+KEEP_DIRS = ("output", "user", "input")   # the person's own work in VGAC's ComfyUI: kept, reported under "keeps"
+
+
+def _pinned_custom_nodes() -> set[str]:
+    """The custom_nodes entries that come with the pinned ComfyUI itself (its own examples): they go with ComfyUI, not kept."""
+    listing = tree_list() or {}
+    out: set[str] = set()
+    for f in listing.get("files") or []:
+        parts = str(f.get("path", "")).replace("\\", "/").split("/")
+        if len(parts) >= 2 and parts[0] == "custom_nodes":
+            out.add(parts[1])
+    return out
+
+
+def _user_work(root: Path) -> list[str]:
+    """What a removal keeps of the person's own: non-empty output, user and input folders, and custom nodes the ledger does not
+    list as VGAC's (the same rule as remove; empty folders are VGAC's scaffolding and go)."""
+    owned = {str(_real(Path(str(i.get("path", ""))))) for i in _ledger_items() if isinstance(i, dict) and i.get("kind") == "added" and i.get("path")}
+    out: list[str] = []
+    for base in (root, root / "ComfyUI"):
+        for name in KEEP_DIRS:
+            p = base / name
+            if p.is_dir() and any(f.is_file() for f in p.rglob("*")):
+                out.append(str(p))
+        cn = base / "custom_nodes"
+        if cn.is_dir():
+            pinned = _pinned_custom_nodes()
+            out.extend(str(n) for n in cn.iterdir() if str(_real(n)) not in owned and n.name not in pinned)
+    return out
+
+
 def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = None) -> dict[str, Any]:
     """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it, and only once none of its
     engines runs (the app stops the ones it started; any other is the person's to close). The files go first, then the
@@ -1050,17 +1218,41 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
         m.update({"made_by": MADE_BY, "steps": {}})  # if a locked file stops the removal half way, nothing says done
         save_marker(m, fence)
         kept = ""
+        keeps: list[str] = []   # the person's own work (output, user, input, custom nodes not in the ledger): never deleted here
+        owned_nodes = {str(_real(Path(str(i.get("path", ""))))) for i in _ledger_items()
+                       if isinstance(i, dict) and i.get("kind") == "added" and i.get("path")}
+
+        def sweep_one(item: Path) -> None:
+            if item.name in KEEP_DIRS and item.is_dir() and any(f.is_file() for f in item.rglob('*')):   # empty scaffolding is VGAC's
+                keeps.append(str(item))
+                return
+            if item.name == "custom_nodes" and item.is_dir():
+                pinned = _pinned_custom_nodes()
+                for node in list(item.iterdir()):
+                    if str(_real(node)) in owned_nodes or node.name in pinned:
+                        g_rmtree(node, ops, fence) if node.is_dir() else _retry(node, lambda n=node: guard(n, fence).unlink(), ops)
+                    else:
+                        keeps.append(str(node))
+                if not any(True for _ in item.iterdir()):
+                    _retry(item, lambda: guard(item, fence).rmdir(), ops)   # custom_nodes is emptied of VGAC's packs: it goes too
+                return
+            g_rmtree(item, ops, fence) if item.is_dir() else _retry(item, lambda c=item: guard(c, fence).unlink(), ops)
+
         for child in list(root.iterdir()):
             if child.name == MARKER:
                 continue
-            if child.name == "ComfyUI" and not also_models and (child / "models").is_dir():
+            if child.name == "ComfyUI" and child.is_dir():
+                # the ComfyUI folder is swept like the top level: its models are kept unless asked, its own work and custom nodes too
                 for sub in list(child.iterdir()):
-                    if sub.name != "models":
-                        (g_rmtree(sub, ops, fence) if sub.is_dir() else _retry(sub, lambda s=sub: guard(s, fence).unlink(), ops))
-                kept = str(child / "models")
+                    if sub.name == "models" and not also_models and sub.is_dir():
+                        kept = str(sub)
+                        continue
+                    sweep_one(sub)
+                if not any(True for _ in child.iterdir()):
+                    _retry(child, lambda c=child: guard(c, fence).rmdir(), ops)
                 continue
-            g_rmtree(child, ops, fence) if child.is_dir() else _retry(child, lambda c=child: guard(c, fence).unlink(), ops)
-        if not kept:
+            sweep_one(child)
+        if not kept and not keeps:
             _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
         # Only now that the files are gone: the settings that pointed at them.
         changes: dict[str, Any] = {"instances": {n: {"engine": None} for n in mine}} if mine else {}
@@ -1073,8 +1265,201 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
                 mpath = config.machine_path()
                 if mpath is not None:
                     config.update_machine({"backend": changes}, mpath)
-    return {"removed": True, "kept_models": kept, "engines_cleared": mine,
-            "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")}
+    return {"removed": True, "kept_models": kept, "keeps": keeps, "engines_cleared": mine,
+            "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")
+            + (f" Kept: {len(keeps)} item(s) that VGAC did not make (output, user, input or custom nodes)." if keeps else "")}
+
+
+# --- the command line (the starter's Move and Remove call these; the backend need not be running) -------------------------
+#
+# `python -m vgac.comfy_install <command>` prints ONE json line on stdout and exits 0, or prints {"ok": false, "code", "reason"}
+# and exits non-zero (2 for a refusal). The commands change nothing the guard does not allow; the only deleting is remove().
+#   check                    is there a ComfyUI VGAC made here (marker and ledger)? what would remove() keep? (code "adoptable":
+#                            it is VGAC's by its id but its folder was renamed or changed drive letter: run adopt)
+#   adopt                    point the ledger entry that carries this install's id at the folder the settings name (needs the data
+#                            folder's id to match too; a copied marker in somebody else's folder has no such entry)
+#   remove [--models]        remove(): the same proof, models kept unless --models
+#   retarget <old> <new>     the data folder was moved from <old> to <new> (the settings already name <new>): the settings that
+#                            pointed into <old>/comfyui now point into the same places in <new>/comfyui
+#   rebuild-venv             make its Python environment again (the old one holds the old place's paths)
+
+
+def _require_own(root: Path) -> None:
+    if not root.exists() or read_marker(root) is None or not _in_ledger(root):
+        if root.exists() and _adoptable(root)[0] is not None:
+            raise DownloadError("adoptable", "This ComfyUI is VGAC's (its id matches), but the ledger still names its old place.", "")
+        raise DownloadError("not_ours", "VGAC did not install a ComfyUI in " + str(root) + ", so nothing is done there.", "")
+
+
+def _models_dir(root: Path) -> Path:
+    return root / "ComfyUI" / "models"
+
+
+def _venv_stale(root: Path) -> bool:
+    """Its Python environment names a Python outside this data folder's own (a drive letter or a folder name changed): it will not run
+    until rebuild-venv has made it again."""
+    cfg = root / ".venv" / "pyvenv.cfg"
+    try:
+        for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip().lower().startswith("home") and "=" in line:
+                home = os.path.normcase(os.path.abspath(line.split("=", 1)[1].strip()))
+                mine = os.path.normcase(os.path.abspath(str(data_folder() / "python")))
+                return not (home == mine or home.startswith(mine + os.sep))
+    except OSError:
+        return False
+    return False
+
+
+def adopt(ops: Ops | None = None) -> dict[str, Any]:
+    """The install folder was renamed or its drive letter changed: the ledger entry with this install's id is pointed at it."""
+    root = install_root()
+    if _in_ledger(root) and read_marker(root) is not None:
+        return {"adopted": False, "already": True}
+    if not _adopt_if_proved(root, ops):
+        raise DownloadError("not_ours", f"VGAC cannot show that it made the ComfyUI in {root} ({_adoptable(root)[1]}), so nothing is changed.", "")
+    return {"adopted": True, "venv_stale": _venv_stale(root)}
+
+
+def check() -> dict[str, Any]:
+    root = install_root()
+    _require_own(root)
+    _ensure_id(root, read_marker(root) or {})
+    models = _models_dir(root)
+    keeps = ([str(models)] if models.is_dir() else []) + _user_work(root)
+    return {"root": str(root), "keeps": keeps, "venv_stale": _venv_stale(root)}
+
+
+def _retarget_settings(old_root: str, root: Path, fence: Fence) -> int:
+    """The settings that point into `old_root` now point into the same places in `root`. Every new path goes through guard()."""
+
+    def moved(v: Any) -> Any:
+        if not isinstance(v, str) or not v:
+            return v
+        a = os.path.abspath(v)
+        if os.path.normcase(a) == os.path.normcase(old_root) or os.path.normcase(a).startswith(os.path.normcase(old_root) + os.sep):
+            return str(guard(Path(str(root) + a[len(old_root):]), fence))  # refused unless the new place is inside VGAC's own folder
+        return v
+
+    n = 0
+    with setup_settings._lock:
+        mpath = config.machine_path()
+        if mpath is None:
+            raise DownloadError("settings", "This copy of the app has no machine settings file.", "")
+        try:
+            backend = config.read_machine(mpath).get("backend") or {}
+            change: dict[str, Any] = {}
+            for key in ("comfy_input_dir", "loras_dir"):
+                if moved(backend.get(key)) != backend.get(key):
+                    change[key] = moved(backend.get(key))
+                    n += 1
+            insts: dict[str, Any] = {}
+            for name, inst in (backend.get("instances") or {}).items():
+                if not isinstance(inst, dict):
+                    continue
+                one: dict[str, Any] = {}
+                if moved(inst.get("output_dir")) != inst.get("output_dir"):
+                    one["output_dir"] = moved(inst.get("output_dir"))
+                    n += 1
+                eng = inst.get("engine")
+                if isinstance(eng, dict):
+                    e2 = {k: moved(eng.get(k)) for k in ("comfy_dir", "python", "user_dir", "output_dir", "extra_model_paths") if k in eng}
+                    e2 = {k: v for k, v in e2.items() if v != eng.get(k)}
+                    if e2:
+                        one["engine"] = e2
+                        n += len(e2)
+                if one:
+                    insts[name] = one
+            if insts:
+                change["instances"] = insts
+            if change:
+                config.update_machine({"backend": change}, mpath)
+        except config.ConfigError as err:
+            raise DownloadError("settings", f"The settings could not be updated ({err}).", "Nothing was changed.") from None
+    return n
+
+
+def retarget(old_data: str, new_data: str, ops: Ops | None = None) -> dict[str, Any]:
+    ops = ops or Ops()
+    root = install_root()
+    if _real(Path(new_data)) != _real(data_folder()):
+        raise DownloadError("not_current", f"The settings do not name {new_data} as the data folder, so nothing was changed.", "")
+    _require_own(root)
+    old_root = os.path.abspath(str(Path(old_data) / "comfyui"))
+    if os.path.normcase(old_root) == os.path.normcase(os.path.abspath(str(root))):
+        return {"changed": 0}
+    return {"changed": _retarget_settings(old_root, root, fence_for(ops))}
+
+
+def rebuild_venv(ops: Ops | None = None) -> dict[str, Any]:
+    ops = ops or Ops()
+    root = install_root()
+    _require_own(root)
+    fence = fence_for(ops)
+    with _lock:
+        if _current is not None and _current.state == "working":
+            raise DownloadError("busy", "The install is running.", "Stop it first.")
+        job = Install(state="working")
+        m = read_marker(root) or {}
+        steps = m.setdefault("steps", {})
+        for s in ("venv", "wheels", "packages"):
+            steps.pop(s, None)  # until all three are done again, nothing says the environment is finished
+        save_marker(m, fence)
+        step_venv(job, ops, fence)
+        steps["venv"] = "done"
+        save_marker(m, fence)
+        step_wheels(job, ops, fence)
+        step_packages(job, ops, fence)
+        steps["wheels"] = steps["packages"] = "done"
+        save_marker(m, fence)
+        _cleanup_wheels(ops, fence)
+    return {"rebuilt": True}
+
+
+def _require_install(shown: str | None) -> None:
+    """The caller shows a person a folder and then asks for exactly that one: if the settings name another, nothing is done."""
+    if shown is not None and _real(Path(shown)) != _real(install_root()):
+        raise DownloadError("not_current", f"The settings name {install_root()} for VGAC's own ComfyUI, not {shown}, so nothing was done.", "")
+
+
+def main(argv: list[str], ops: Ops | None = None) -> int:
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    shown: str | None = None
+    if "--install" in argv:
+        k = argv.index("--install")
+        if k + 1 >= len(argv):
+            print(json.dumps({"ok": False, "code": "usage", "reason": "--install needs a folder."}))
+            return 2
+        shown = argv[k + 1]
+        argv = argv[:k] + argv[k + 2:]
+    try:
+        if argv and argv[0] in ("check", "remove", "rebuild-venv", "adopt"):
+            _require_install(shown)
+        cmd = argv[0] if argv else ""
+        if cmd == "check" and len(argv) == 1:
+            r = check()
+        elif cmd == "remove" and set(argv[1:]) <= {"--models"}:
+            r = remove(also_models="--models" in argv[1:], ops=ops)
+        elif cmd == "adopt" and len(argv) == 1:
+            r = adopt(ops)
+        elif cmd == "retarget" and len(argv) == 3:
+            r = retarget(argv[1], argv[2], ops)
+        elif cmd == "rebuild-venv" and len(argv) == 1:
+            r = rebuild_venv(ops)
+        else:
+            print(json.dumps({"ok": False, "code": "usage", "reason": "Commands: check, adopt, remove [--models], retarget <old> <new>, rebuild-venv."}))
+            return 2
+    except DownloadError as e:
+        print(json.dumps({"ok": False, "code": e.code, "reason": f"{e.message} {e.fix}".strip(), "adoptable": e.code == "adoptable"}))
+        return 2
+    except config.ConfigError as e:
+        print(json.dumps({"ok": False, "code": "settings", "reason": f"The app's settings could not be read ({e})."}))
+        return 2
+    except Exception as e:  # noqa: BLE001
+        log.exception("comfy_install command failed")
+        print(json.dumps({"ok": False, "code": "unexpected", "reason": f"Something unexpected went wrong ({type(e).__name__})."}))
+        return 1
+    print(json.dumps({"ok": True, **r}))
+    return 0
 
 
 # --- starting the engines in the running app ----------------------------------------------------------------------------
@@ -1179,3 +1564,7 @@ def post_remove(body: RemoveIn) -> dict[str, Any]:
         return remove(body.also_models, supervisor=q.supervisor if q else None)
     except DownloadError as e:
         raise _bad(e) from None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

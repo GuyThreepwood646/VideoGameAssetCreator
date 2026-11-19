@@ -13,6 +13,7 @@ import { useMyAddons, withMyAddons } from './AddMyAddon'
 import { EditLoras } from './EditLoras'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
+import { defaultFor } from './stepSettings'
 
 const SIZE_OPTIONS = [768, 1024, 1280, 1536, 2048]
 
@@ -547,7 +548,7 @@ function defaultFor(p: AdjustParam): unknown {
   }
 }
 
-function AdjustField({
+export function AdjustField({
   param: p,
   value,
   onChange,

@@ -15,6 +15,26 @@ public class FakeHost : IHost
     public bool CorruptDownload;
     public long Free = 100L << 30;
     public int ExitCode;
+    public bool FailPip;
+    public static byte[] Mz() { return new byte[] { 0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00 }; }
+    // The Python folder as a real uv 0.8.2 leaves it (listed by running "uv venv --managed-python" with UV_PYTHON_INSTALL_DIR set):
+    // .temp (a folder), .lock, .gitignore, and cpython-<version>-windows-x86_64-none holding python.exe. Returns the cpython folder.
+    public static string MakeUvPython(string pyDir, string version)
+    {
+        string home = Path.Combine(pyDir, "cpython-" + version + "-windows-x86_64-none");
+        Directory.CreateDirectory(home);
+        File.WriteAllBytes(Path.Combine(home, "python.exe"), Mz());
+        Directory.CreateDirectory(Path.Combine(pyDir, ".temp"));
+        File.WriteAllText(Path.Combine(pyDir, ".gitignore"), "*");
+        File.WriteAllText(Path.Combine(pyDir, ".lock"), "");
+        return home;
+    }
+    public static void MakeUvCache(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\r\n# This file is a cache directory tag created by uv.\r\n");
+        File.WriteAllText(Path.Combine(dir, ".gitignore"), "*");
+    }
     public string NodeVersion = null;
 
     public void Download(string url, string dest, string sha256, Action<long, long> progress)
@@ -30,29 +50,42 @@ public class FakeHost : IHost
     {
         Calls.Add("unzip " + Path.GetFileName(zip));
         Directory.CreateDirectory(destDir);
-        if (zip.Contains("uv")) File.WriteAllText(Path.Combine(destDir, "uv.exe"), "uv");
+        if (zip.Contains("uv")) File.WriteAllBytes(Path.Combine(destDir, "uv.exe"), Mz());   // a real download holds a real program
         else
         {
             string inner = Path.Combine(destDir, "node-v22-win-x64");
             Directory.CreateDirectory(inner);
-            File.WriteAllText(Path.Combine(inner, "node.exe"), "node");
+            File.WriteAllBytes(Path.Combine(inner, "node.exe"), Mz());
         }
     }
 
     public int Run(string exe, string args, string cwd, Dictionary<string, string> env, string logFile)
     {
         Calls.Add("run " + Path.GetFileName(exe) + " " + args.Split(' ')[0] + (args.StartsWith("/d") ? " " + args.Split(' ')[3] : ""));
+        // What the real uv leaves behind: its own Python folder (a cpython-... folder holding python.exe), its cache (with the tag file every uv
+        // cache carries) and, for "venv", a venv whose pyvenv.cfg points at that Python. Made the moment the step runs, as the real tool does.
+        string pyDir = null, cacheDir = null;
+        if (env != null && env.ContainsKey("UV_PYTHON_INSTALL_DIR")) pyDir = env["UV_PYTHON_INSTALL_DIR"];
+        if (env != null && env.ContainsKey("UV_CACHE_DIR")) cacheDir = env["UV_CACHE_DIR"];
+        if (FailPip && args.StartsWith("pip install")) { if (cacheDir != null) MakeUvCache(cacheDir); File.WriteAllText(logFile, "pip failed"); return 1; }
+        if (ExitCode == 0 && (args.StartsWith("venv") || args.StartsWith("pip install")) && cacheDir != null) MakeUvCache(cacheDir);
         if (ExitCode == 0 && args.StartsWith("venv"))
         {
-            // what uv does: a venv with a python in it
             string venv = args.Split('"')[1];
+            string home = null;
+            if (pyDir != null)
+            {
+                home = MakeUvPython(pyDir, "3.13.1");
+            }
             Directory.CreateDirectory(Path.Combine(venv, "Scripts"));
             File.WriteAllText(Path.Combine(venv, "Scripts", "python.exe"), "py");
+            File.WriteAllText(Path.Combine(venv, "pyvenv.cfg"), "home = " + (home ?? "C:\\somewhere") + "\r\nversion = 3.13.1\r\n");
         }
         if (ExitCode == 0 && args.Contains("run build"))
         {
-            Directory.CreateDirectory(Path.Combine(cwd, "dist"));
-            File.WriteAllText(Path.Combine(cwd, "dist", "index.html"), "<html>");
+            string outDir = args.Contains("--outDir dist-new") ? "dist-new" : "dist";
+            Directory.CreateDirectory(Path.Combine(cwd, outDir));
+            File.WriteAllText(Path.Combine(cwd, outDir, "index.html"), "<html>");
         }
         File.WriteAllText(logFile, "log");
         return ExitCode;
@@ -139,10 +172,18 @@ public static partial class T
             DownloadChecksumAndResume();
             BridgeAnswersOnlyItsList();
             LauncherAll(args);
+            AfterwardsAll();
+            SafetyAll();
+            Safety2All();
+            Safety3All();
+            Safety4All();
+            Safety5All();
+            Safety6All();
+            Safety7All();
         }
         finally
         {
-            foreach (string t in temps) { try { if (Directory.Exists(t)) Directory.Delete(t, true); } catch (Exception) { } }
+            foreach (string t in temps) { try { if (Directory.Exists(t)) SafeFs.DeleteTree(t); } catch (Exception) { } }
         }
         Console.WriteLine(passed + " checks passed, " + failed + " failed");
         return failed == 0 ? 0 : 1;
@@ -220,7 +261,7 @@ public static partial class T
         Check(File.Exists(Path.Combine(l.NodeDir, "node.exe")), "node.exe in the data folder (inner folder flattened)");
         Check(File.Exists(Path.Combine(root, "local", "installed.json")), "ledger written");
         string ledger = File.ReadAllText(Path.Combine(root, "local", "installed.json"));
-        Check(ledger.Contains("\"kind\": \"added\"") && ledger.Contains("Node.js") && ledger.Contains(".venv"), "ledger lists what was added");
+        Check(ledger.Contains("\"kind\": \"added\"") && !ledger.Contains("Node.js") && ledger.Contains(".venv"), "ledger lists what was added in the project (nothing inside the data folder)");
         Check(File.Exists(new SetupLog(root).Path) && File.ReadAllText(new SetupLog(root).Path).Contains("step screens done"), "setup.log has the steps");
         Check(!Directory.Exists(l.Downloads) || Directory.GetFiles(l.Downloads).Length == 0, "downloaded zips removed after unpacking");
     }
@@ -245,6 +286,8 @@ public static partial class T
         var h = new FakeHost { ExitCode = 3 };
         var m = MachineFile.Load(root);
         var l = Layout.From(root, m);
+        DataFolders.Stamp(l.DataFolder, m);            // the folder for the big files is already VGAC's (an earlier run made uv in it)
+        m = MachineFile.Load(root); l = Layout.From(root, m);
         Directory.CreateDirectory(Path.GetDirectoryName(l.UvExe));
         File.WriteAllText(l.UvExe, "uv");
         StarterError got = null;

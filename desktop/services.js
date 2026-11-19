@@ -13,6 +13,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { blockingReason } = require('./movegate');
 const { spawn } = require('child_process');
 const EventEmitter = require('events');
 const procs = require('./procs');
@@ -105,9 +106,13 @@ class Supervisor extends EventEmitter {
       this.distExists = fs.existsSync(path.join(this.resolve(cfg.frontend.dist), 'index.html'));
       await this._readGpus(h);
       this._applyComfyA(a);
+      // While a move of the big files is unfinished or unreadable, nothing is started; a service already answering is left alone.
+      const gate = blockingReason(cfg.projectRoot);
       if (this.gpuOff('b')) await this._applyComfyBOff(b);
+      else if (gate && !b.ok) this._set('comfyB', 'down', gate);
       else await this._applyStartable('comfyB', b, () => this.startComfyB());
-      await this._applyStartable('backend', h, () => this.startBackend(), (r) => {
+      if (gate && !h.ok) this._set('backend', 'down', gate);
+      else await this._applyStartable('backend', h, () => this.startBackend(), (r) => {
         try { return r.ok && JSON.parse(r.text).ok === true; } catch (_) { return false; }
       });
       await this._applyUi(h, u);
@@ -368,6 +373,9 @@ class Supervisor extends EventEmitter {
   }
 
   startComfyB() {
+    // The start gate: nothing starts while a move of the big files is unfinished or unreadable (movegate.js).
+    const gate = blockingReason(this.cfg.projectRoot);
+    if (gate) { this.autoStarted.comfyB = false; return this._set('comfyB', 'down', gate); }
     if (this.gpuOff('b')) {
       // "Start anyway" (or a restart) while card b is off in the app: turn it back on there first. If the backend
       // is down this is sent as soon as it answers; until then the card counts as on here.
@@ -400,6 +408,9 @@ class Supervisor extends EventEmitter {
 
   startBackend() {
     const cfg = this.cfg.backend;
+    // The start gate: nothing starts while a move of the big files is unfinished or unreadable (movegate.js).
+    const gate = blockingReason(this.cfg.projectRoot);
+    if (gate) { this.autoStarted.backend = false; return this._set('backend', 'down', gate); }
     const python = this.resolve(cfg.python);
     if (!fs.existsSync(python)) return this._set('backend', 'error', `Python not found: ${python}`);
     const log = this._openLog(this.resolve(cfg.log));

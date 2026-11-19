@@ -429,8 +429,23 @@ def set_setting(key: str, value: Any, supervisor: Any = None) -> dict[str, Any]:
         message = f"{spec.label} is set and is used from now on."
     else:
         message = f"{spec.label} is saved. It is used the next time the app starts; restart it to apply it."
+    warning = long_library_warning(after) if key == "library_path" and changed else None
+    if warning:
+        message = f"{message} {warning}"
     return {"key": key, "label": spec.label, "changed": changed, "from": before, "to": after, "applies": spec.applies,
-            "message": message, "restart_needed": pending, "missing": missing_now(now_saved, supervisor)}
+            "message": message, "warning": warning, "restart_needed": pending,
+            "missing": missing_now(now_saved, supervisor)}
+
+
+LIBRARY_WARN_LENGTH = 120  # the folder alone; files inside it add about 140 more, which is near Windows' 260 limit
+
+
+def long_library_warning(folder: Any) -> str | None:
+    """A plain sentence when the library folder path is long enough that files inside it may pass Windows' limit."""
+    if not isinstance(folder, str) or len(folder) <= LIBRARY_WARN_LENGTH:
+        return None
+    return (f"Warning: this folder path is {len(folder)} characters long. Files inside it can pass Windows' 260-character "
+            "limit, and Blender then cannot open them. A shorter folder, for example C:\\VGAC\\library, is safer.")
 
 
 def set_engines(comfy_dir: str, python: str, main: str, extra_model_paths: str | None, cards: dict[str, int],

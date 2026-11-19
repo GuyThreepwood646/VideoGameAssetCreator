@@ -93,6 +93,53 @@ namespace Vgac.Starter
         }
     }
 
+    // The one named lock for the files VGAC rewrites in local/ (machine.json, installed.json). Held as a file, local/state.lock,
+    // created exclusively; the backend takes the same lock (backend/vgac/state_lock.py), so a read-modify-write is never
+    // overwritten by the other program. A lock left by a process that died is broken after StaleSeconds (a save takes milliseconds).
+    public static class StateLock
+    {
+        public const string FileName = "state.lock";
+        public const int StaleSeconds = 60;
+        public static int WaitMs = 10000;   // a variable so the tests can shorten the wait
+
+        public static void Hold(string localDir, Action body)
+        {
+            Directory.CreateDirectory(localDir);
+            string lockPath = Path.Combine(localDir, FileName);
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(WaitMs);
+            FileStream fs = null;
+            for (;;)
+            {
+                try { fs = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None); break; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                if (IsStale(lockPath)) { try { File.Delete(lockPath); } catch (Exception) { } }
+                if (DateTime.UtcNow >= deadline)
+                    throw new StarterError("Another VGAC window or process is saving its settings (local\\state.lock).",
+                        "Wait a moment and try again. Nothing was changed.");
+                System.Threading.Thread.Sleep(50);
+            }
+            try
+            {
+                byte[] who = Encoding.ASCII.GetBytes("starter " + System.Diagnostics.Process.GetCurrentProcess().Id + "\r\n");
+                fs.Write(who, 0, who.Length);
+                fs.Close(); fs = null;
+                body();
+            }
+            finally
+            {
+                if (fs != null) fs.Close();
+                try { File.Delete(lockPath); } catch (Exception) { }
+            }
+        }
+
+        static bool IsStale(string lockPath)
+        {
+            try { return (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath)).TotalSeconds > StaleSeconds; }
+            catch (Exception) { return false; }
+        }
+    }
+
     // local/machine.json: one file for this computer, shared with the backend ("backend" section) and the launcher
     // ("desktop" section). The starter owns only the "starter" section and keeps every other section as it found it.
     public class MachineFile
@@ -153,24 +200,35 @@ namespace Vgac.Starter
             return null;
         }
 
+        readonly List<string[]> changes = new List<string[]>();
+
         public void Set(string section, string key, string value)
         {
             Section(section)[key] = value;
+            changes.Add(new[] { section, key, value });
         }
 
-        // Temporary file beside it, then swap; the old file stays as machine.json.bak.
+        // Temporary file beside it, then swap; the old file stays as machine.json.bak. Only what THIS object changed (Set) is laid over
+        // the file as it is now, so a copy held across something that rewrote the file (the backend's own settings, another window) never
+        // puts old values back.
         public void Save()
         {
-            string dir = System.IO.Path.GetDirectoryName(Path);
-            Directory.CreateDirectory(dir);
-            string tmp = Path + ".tmp";
-            File.WriteAllText(tmp, Json.Write(Data), new UTF8Encoding(false));
+            StateLock.Hold(System.IO.Path.GetDirectoryName(Path), SaveUnlocked);
+        }
+
+        void SaveUnlocked()
+        {
             if (File.Exists(Path))
             {
-                File.Copy(Path, Path + ".bak", true);
-                File.Delete(Path);
+                try
+                {
+                    Data = Json.ParseObject(File.ReadAllText(Path, Encoding.UTF8));
+                    foreach (string[] c in changes) Section(c[0])[c[1]] = c[2];
+                }
+                catch (Exception) { /* unreadable now: what is in memory is written, as before */ }
             }
-            File.Move(tmp, Path);
+            changes.Clear();
+            SafeFs.WriteAtomic(Path, Json.Write(Data), Path + ".bak", true);
         }
     }
 
@@ -225,7 +283,16 @@ namespace Vgac.Starter
             return l;
         }
 
+        // What this object changed, laid over the file as it is now when it is saved (see MachineFile.Save).
+        readonly List<Action> ops = new List<Action>();
+
         public void Add(string what, string path, string kind, long bytes)
+        {
+            Action op = delegate { DoAdd(what, path, kind, bytes); };
+            ops.Add(op); op();
+        }
+
+        void DoAdd(string what, string path, string kind, long bytes)
         {
             foreach (object o in Items)
             {
@@ -238,18 +305,96 @@ namespace Vgac.Starter
             e["kind"] = kind;
             e["bytes"] = bytes;
             e["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            e["file_id"] = SafeFs.FileId(path);   // A2: which folder this is, so removal can tell it is still the one VGAC added
             Items.Add(e);
+        }
+
+        // Drops the entries for a path and everything below it (after that path has been deleted).
+        public void RemoveUnder(string path)
+        {
+            Action op = delegate { DoRemoveUnder(path); };
+            ops.Add(op); op();
+        }
+
+        // Entries for oldRoot, or below it, now name newRoot (a folder that moved).
+        public void RewritePaths(string oldRoot, string newRoot)
+        {
+            Action op = delegate { DoRewritePaths(oldRoot, newRoot, null); };
+            ops.Add(op); op();
+        }
+
+        // B8: only the entries under the named items of oldRoot (what the move copied) are rewritten; any other entry keeps its path.
+        public void RewritePathsUnder(string oldRoot, string newRoot, IEnumerable<string> names)
+        {
+            var list = new List<string>(names);
+            Action op = delegate { DoRewritePaths(oldRoot, newRoot, list); };
+            ops.Add(op); op();
+        }
+
+        void DoRewritePaths(string oldRoot, string newRoot, List<string> only)
+        {
+            string o = System.IO.Path.GetFullPath(oldRoot).TrimEnd('\\').ToLowerInvariant();
+            for (int i = 0; i < Items.Count; i++)
+            {
+                var d = Items[i] as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("path")) continue;
+                string np = System.IO.Path.GetFullPath(Convert.ToString(d["path"])).TrimEnd('\\');
+                if (np.ToLowerInvariant() == o || np.ToLowerInvariant().StartsWith(o + "\\")) d["path"] = newRoot.TrimEnd('\\') + np.Substring(oldRoot.TrimEnd('\\').Length);
+                else continue;
+                // B8: with a list of names, an entry outside those items is left as it was (the rewrite above is undone for it)
+                if (only != null && !only.Exists(n => np.ToLowerInvariant().StartsWith(o + "\\" + n.ToLowerInvariant() + "\\") || np.ToLowerInvariant() == o + "\\" + n.ToLowerInvariant()))
+                    d["path"] = np;
+            }
+        }
+
+        void DoRemoveUnder(string path)
+        {
+            string p = System.IO.Path.GetFullPath(path).TrimEnd(System.IO.Path.DirectorySeparatorChar).ToLowerInvariant();
+            Items.RemoveAll(delegate(object o)
+            {
+                var d = o as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("path")) return false;
+                string e;
+                try { e = System.IO.Path.GetFullPath(Convert.ToString(d["path"])).TrimEnd(System.IO.Path.DirectorySeparatorChar).ToLowerInvariant(); } catch (Exception) { return false; }
+                return e == p || e.StartsWith(p + System.IO.Path.DirectorySeparatorChar);
+            });
+        }
+
+        public bool Has(string path, string kind)
+        {
+            foreach (object o in Items)
+            {
+                var d = o as Dictionary<string, object>;
+                if (d != null && d.ContainsKey("path") && string.Equals(Convert.ToString(d["path"]), path, StringComparison.OrdinalIgnoreCase)
+                    && (kind == null || (d.ContainsKey("kind") && Convert.ToString(d["kind"]) == kind))) return true;
+            }
+            return false;
         }
 
         public void Save()
         {
+            StateLock.Hold(System.IO.Path.GetDirectoryName(Path), SaveUnlocked);
+        }
+
+        void SaveUnlocked()
+        {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
+            if (File.Exists(Path))
+            {
+                try
+                {
+                    var d = Json.ParseObject(File.ReadAllText(Path, Encoding.UTF8));
+                    object items; var fresh = new List<object>();
+                    if (d.TryGetValue("items", out items)) { var arr = items as System.Collections.IEnumerable; if (arr != null) foreach (object o in arr) fresh.Add(o); }
+                    Items = fresh;                                   // the file as it is now (the backend writes it too) ...
+                    foreach (Action op in ops) op();                 // ... with this object's own changes laid over it
+                }
+                catch (Exception) { /* a damaged file is written again from memory */ }
+            }
+            ops.Clear();
             var root = new Dictionary<string, object>();
             root["items"] = Items;
-            string tmp = Path + ".tmp";
-            File.WriteAllText(tmp, Json.Write(root), new UTF8Encoding(false));
-            if (File.Exists(Path)) File.Delete(Path);
-            File.Move(tmp, Path);
+            SafeFs.WriteAtomic(Path, Json.Write(root), null, true);
         }
     }
 

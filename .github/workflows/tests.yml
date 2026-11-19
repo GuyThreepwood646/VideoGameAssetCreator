@@ -97,3 +97,4 @@ jobs:
       # These two test files need no installed packages, so there is no npm install (and no Electron download).
       - run: node desktop/appbridge.test.js
       - run: node desktop/machine.test.js
+      - run: node desktop/movegate.test.js

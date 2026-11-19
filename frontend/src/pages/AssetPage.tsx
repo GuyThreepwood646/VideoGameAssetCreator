@@ -10,7 +10,8 @@ import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pip
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
 import { StagePanel } from '../pipeline/StagePanel'
-import { DescriptionEdit } from '../pipeline/Brief'
+import { DescriptionEdit, DescriptionReach } from '../pipeline/Brief'
+import { showsDescriptionNote } from '../pipeline/descriptionNote'
 import { ViewerLookContext, ViewerPausedContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
@@ -462,6 +463,7 @@ export default function AssetPage() {
             <Info term="term.prompt" />
           </div>
           <DescriptionEdit asset={asset} field="prompt" onSaved={reload} onError={setError} emptyText="None yet" />
+          {showsDescriptionNote(stage) && <DescriptionReach asset={asset} onError={setError} />}
         </div>
       </aside>
       <section className="stage-main">
