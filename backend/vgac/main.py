@@ -27,7 +27,7 @@ from . import __version__, autopilot, cardmem, compose, estimates, fixes, librar
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
-                 job_to_dict, project_to_dict, session_factory, version_to_dict, _iso)
+                 job_to_dict, project_to_dict, session_factory, version_to_dict, _iso, is_stopped)
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
@@ -916,11 +916,12 @@ def reject_version(vid: str, db: Session = Depends(get_session)) -> dict[str, An
 
 @app.delete("/api/versions/{vid}")
 def delete_version(vid: str, with_later: bool = False, db: Session = Depends(get_session)) -> dict[str, Any]:
-    """Remove a version with its files and its job log lines. A kept version, or one still in the queue, stays (409).
-    When other versions were made from it (a later step built on it, or a change of it), they go too only with
-    with_later=true; without it the answer is 409 and says how many."""
+    """Remove a version with its files and its job log lines. A finished kept version, or one still in the queue, stays
+    (409). A stopped or failed version goes even if an older row still marks it kept. When other versions were made
+    from it (a later step built on it, or a change of it), they go too only with with_later=true; without it the
+    answer is 409 and says how many."""
     v = _version(db, vid)
-    if v.selected:
+    if v.selected and not (is_stopped(v) or v.status == "error"):
         raise HTTPException(409, "this version is kept; keep another version first, or reject it")
     # The version and everything made from it, at any step, children before their parents.
     tree: list[Version] = []

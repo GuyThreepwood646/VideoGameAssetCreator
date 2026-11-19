@@ -704,3 +704,23 @@ def test_the_picture_checks_say_which_snippet_fixes_them(client, fake_execute):
     assert "fix_snippet" not in arms and arms["fix"]["op"] == "refine"  # withheld: its own button stays, no tick box
     ok = guidance.describe_check({"name": "soft_light", "id": "soft_light", "passed": True, "value": 0.5, "limit": 0.3, "vars": {}})
     assert "fix_snippet" not in ok
+
+
+def test_a_failed_first_version_is_not_kept_and_can_be_deleted(client, fake_execute):
+    p, a = _project_asset(client)
+    aid = a["id"]
+    bad = client.post(f"/api/assets/{aid}/stages/concept/run", json={"params": {"fail": True}}).json()
+    assert wait_job(client, bad["job"]["id"])["status"] == "error"
+    v = client.get(f"/api/versions/{bad['version']['id']}").json()
+    assert v["status"] == "error" and v["selected"] is False
+
+    # The failed version is not kept, so the next step cannot start; a finished kept version still blocks delete.
+    assert client.post(f"/api/assets/{aid}/stages/turnaround/run", json={}).status_code == 409
+    r = client.delete(f"/api/versions/{bad['version']['id']}")
+    assert r.status_code == 200
+    assert client.get(f"/api/assets/{aid}").json()["stages"]["concept"] == []
+
+    good = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    wait_job(client, good["job"]["id"])
+    assert client.delete(f"/api/versions/{good['version']['id']}").status_code == 409
+

@@ -3,7 +3,10 @@
 Every job copies its inputs there (ComfyClient.stage_input) under a name that starts with "vgac_" and carries the
 version's (or for the style read, the job's) first eight id characters. Nothing removed them, so the folder filled
 with thousands of files from deleted projects. After every job, and once when the queue starts, each "vgac_" file at
-the top of the folder is removed unless a queued or running job still needs it (its version or job id is in the name).
+the top of the folder is removed unless a queued or running job still needs it (its version or job id is in the name)
+or it was written in the last MIN_AGE_S seconds. The age rule matters when more than one backend shares one ComfyUI
+(a test backend beside the person's own): each backend sees only its own queue, so without it one would delete the
+other's inputs between staging and use.
 
 Only "vgac_" files are touched; the person's own pictures and ComfyUI's subfolders stay.
 """
@@ -11,6 +14,7 @@ Only "vgac_" files are touched; the person's own pictures and ComfyUI's subfolde
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -21,6 +25,7 @@ from .db import Job, session_factory
 log = logging.getLogger(__name__)
 
 PREFIX = "vgac_"
+MIN_AGE_S = 6 * 3600   # longer than any one job runs, so another backend's live inputs are never removed
 
 
 def active_ids() -> set[str]:
@@ -34,15 +39,16 @@ def active_ids() -> set[str]:
     return out
 
 
-def sweep(input_dir: Path | str | None, keep: Iterable[str]) -> int:
-    """Remove the "vgac_" files in input_dir whose name has none of the ids in keep. Returns how many went. Never
-    raises (a file ComfyUI has open stays for the next sweep)."""
+def sweep(input_dir: Path | str | None, keep: Iterable[str], min_age_s: float = MIN_AGE_S) -> int:
+    """Remove the "vgac_" files in input_dir whose name has none of the ids in keep and that are older than min_age_s.
+    Returns how many went. Never raises (a file ComfyUI has open stays for the next sweep)."""
     if not input_dir:
         return 0
     d = Path(input_dir)
     if not d.is_dir():
         return 0
     keep = set(keep)
+    cutoff = time.time() - min_age_s
     n = 0
     for p in d.iterdir():
         name = p.name
@@ -51,6 +57,8 @@ def sweep(input_dir: Path | str | None, keep: Iterable[str]) -> int:
         if any(k in name for k in keep):
             continue
         try:
+            if p.stat().st_mtime > cutoff:
+                continue
             p.unlink()
             n += 1
         except OSError:

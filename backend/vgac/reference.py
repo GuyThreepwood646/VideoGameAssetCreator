@@ -214,6 +214,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("head_sway", "select", "auto", options=["auto", "hair", "all", "none"], categories=["humanoid"],
                label="What may sway on the head",
                description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before). Nothing on the head sways holds the head still, hair included, built-in or from the library"),
+        # How far the arms hang from the sides in the built-in walk, idle and turn moves (blender/gait.py ARM_POSE_SHIFT_DEG).
+        _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose",
+               description="How far the arms hang from the sides in the walk, the stand still and the turns. Close tucks them in, Relaxed is the usual pose, Open holds them a little further out. The character's body and skin are not changed"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),

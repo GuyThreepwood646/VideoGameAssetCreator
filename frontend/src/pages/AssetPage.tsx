@@ -303,6 +303,12 @@ export default function AssetPage() {
         const keep = autopilot && autopilot.status !== 'idle' ? { stop_on: autopilot.stop_on as AutopilotBody['stop_on'], until_stage: autopilot.until_stage as StageId } : {}
         return api.startAutopilot(aid, { ...keep, from_stage: from })
       }),
+    startAgain: (from: StageId) =>
+      void apCall(async () => {
+        for (const v of asset ? stoppedVersions(asset, from) : []) await api.deleteVersion(v.id)
+        const keep = autopilot && autopilot.status !== 'idle' ? { stop_on: autopilot.stop_on as AutopilotBody['stop_on'], until_stage: autopilot.until_stage as StageId } : {}
+        return api.startAutopilot(aid, { ...keep, from_stage: from })
+      }),
     // Proposed contract: POST autopilot {fix: {stage, params}} re-runs that stage with the fix, then continues.
     fixAndContinue: (fix: FixRequest) => void apCall(() => api.startAutopilot(aid, { fix: { stage: fix.stage, params: fix.params, ...(fix.op === 'refine' && fix.instruction ? { op: fix.op, instruction: fix.instruction } : {}) } })),
     continueAnyway: () =>

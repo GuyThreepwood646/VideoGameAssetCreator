@@ -9,7 +9,7 @@ import time
 import pytest
 
 from vgac import stages
-from vgac.db import Job, session_factory
+from vgac.db import Job, Version, session_factory
 
 from test_api import _project_asset, client, fake_execute, wait_job  # noqa: F401  (fixtures)
 
@@ -324,3 +324,66 @@ def test_redrawing_views_after_a_stopped_redraw_was_set_aside(client, gate):  # 
     assert client.get(f"/api/versions/{again['version']['id']}").json()["status"] == "done"
     assert len(_versions(client, aid, "turnaround")) == before + 2
 
+
+
+def test_a_stopped_first_version_is_not_kept_and_can_be_deleted(client, gate):  # noqa: F811
+    p, a = _project_asset(client)
+    aid = a["id"]
+    first = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    vid = first["version"]["id"]
+    assert first["version"]["selected"] is True  # the first version of a step is kept while it runs
+    _until(lambda: client.get(f"/api/jobs/{first['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+
+    # A stopped version is not kept, so the next step cannot start from it.
+    v = _versions(client, aid, "concept")[0]
+    assert v["selected"] is False
+    assert client.post(f"/api/assets/{aid}/stages/turnaround/run", json={}).status_code == 409
+
+    # The stopped version can be deleted; the step is empty again.
+    r = client.delete(f"/api/versions/{vid}")
+    assert r.status_code == 200 and r.json()["deleted"] == vid
+    assert _versions(client, aid, "concept") == []
+
+    # A new run works, and as the first version of the step it is kept.
+    gate["hold"] = False
+    new = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    assert wait_job(client, new["job"]["id"])["status"] == "done"
+    assert _versions(client, aid, "concept")[0]["selected"] is True
+    assert client.post(f"/api/assets/{aid}/stages/turnaround/run", json={}).status_code == 200
+
+
+def test_resume_keeps_a_stopped_first_version_again(client, gate):  # noqa: F811
+    p, a = _project_asset(client)
+    aid = a["id"]
+    first = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    vid = first["version"]["id"]
+    _until(lambda: client.get(f"/api/jobs/{first['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+    assert _versions(client, aid, "concept")[0]["selected"] is False
+
+    # Resume puts the step back in the queue and keeps it again, since the step had no kept version.
+    gate["hold"] = False
+    out = client.post(f"/api/assets/{aid}/resume", json={"stage": "concept"}).json()
+    assert [x["id"] for x in out["resumed"]] == [vid]
+    assert wait_job(client, first["job"]["id"])["status"] == "done"
+    v = _versions(client, aid, "concept")[0]
+    assert v["status"] == "done" and v["selected"] is True
+    assert client.post(f"/api/assets/{aid}/stages/turnaround/run", json={}).status_code == 200
+
+
+def test_a_stopped_version_marked_kept_by_an_older_row_can_be_deleted(client, gate):
+    p, a = _project_asset(client)
+    aid = a["id"]
+    first = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    vid = first["version"]["id"]
+    _until(lambda: client.get(f"/api/jobs/{first['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+    # A row stopped before this change may still say kept: removal must still work.
+    with session_factory()() as db:
+        db.get(Version, vid).selected = True
+        db.commit()
+    assert client.delete(f"/api/versions/{vid}").status_code == 200

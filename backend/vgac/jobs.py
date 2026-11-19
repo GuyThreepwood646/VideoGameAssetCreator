@@ -925,9 +925,11 @@ class InstanceWorker:
                             elif cancelled:
                                 v.status = "rejected"
                                 v.error = STOPPED_ERROR
+                                v.selected = False  # a stopped version is not kept
                             else:
                                 v.status = "error"
                                 v.error = error
+                                v.selected = False  # a failed version is not kept
                             db.commit()
                             _publish_version(v)
         if not requeued:
@@ -1232,6 +1234,7 @@ class JobQueue:
                     if v is not None and v.status in ("queued", "running"):
                         v.status = "rejected"
                         v.error = STOPPED_ERROR
+                        v.selected = False  # a stopped version is not kept
                         db.commit()
                         _publish_version(v)
                 db.commit()
@@ -1313,6 +1316,9 @@ class JobQueue:
                     job.finished_at = None
                     v.status = "queued"
                     v.error = None
+                    if db.scalar(select(Version.id).where(Version.asset_id == asset_id, Version.stage == v.stage,
+                                                          Version.selected == True)) is None:  # noqa: E712
+                        v.selected = True  # the step has no kept version: this one is kept again
                     db.commit()
                     _publish_job(job)
                     _publish_version(v)
