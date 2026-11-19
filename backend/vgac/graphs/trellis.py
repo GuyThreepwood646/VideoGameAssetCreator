@@ -23,7 +23,10 @@ UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
 
 
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
-                  remesh: bool = True, padding: int = 1, tex_steps: int = 24) -> dict[str, Any]:
+                  remesh: bool = True, padding: int = 1, tex_steps: int = 24, texture_seed: int | None = None) -> dict[str, Any]:
+    """texture_seed is the texture sampler's own seed; None keeps today's seed + 1. Changing only it reruns the texture
+    stage and the bake, while ComfyUI reuses the cached shape stages (the texture-only retry, texcolour.py)."""
+    tseed = seed + 1 if texture_seed is None else int(texture_seed)
     g: dict[str, Any] = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},
@@ -51,7 +54,7 @@ def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: 
         "dshape": {"class_type": "VaeDecodeShapeTrellis", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
         "tex": {"class_type": "Trellis2TextureStage", "inputs": {"positive": ["upst", 0], "negative": ["upst", 1], "shape_latent": ["k3", 0]}},
         "k4": {"class_type": "KSampler", "inputs": {"model": ["unet", 0], "positive": ["tex", 0], "negative": ["tex", 1], "latent_image": ["tex", 2],
-                                                   "seed": seed + 1, "steps": int(tex_steps), "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+                                                   "seed": tseed, "steps": int(tex_steps), "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
         "dtex": {"class_type": "VaeDecodeTextureTrellis", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
         "info": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["dshape", 0]}},
     }
