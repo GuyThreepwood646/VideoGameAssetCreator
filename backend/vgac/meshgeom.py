@@ -13,7 +13,9 @@ Buildings have bad examples to calibrate on; the other routes have good examples
 set well above the good results and well below the damage seen on buildings.
 
 BLOCK_ROUTES is the switch that lets this check stop an automatic build (autopilot.STOP_AND_ASK). It is empty: warn only,
-until the limits are calibrated on bad examples from each route (decision D23).
+until the limits are calibrated on bad examples from each route (decision D23). Buildings are the first candidate: on the
+WP-44 standard-detail pairs the five building pieces pass these limits with the rebuild on and fail them all with it off.
+Low-poly buildings are not measured yet, so the decision waits for the low-poly pairs.
 """
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ LIMITS: dict[str, dict[str, float | None]] = {
     "plants":       {"folded": 0.20, "open": None, "bad_joins": None, "slivers": 0.05, "largest_piece": None},
 }
 
-# Routes where a failed check stops an automatic build (Stop for serious problems). Empty until calibrated.
+# Routes where a failed check stops an automatic build (Stop for serious problems). Empty until calibrated (see above).
 BLOCK_ROUTES: frozenset[str] = frozenset()
 
 PROBLEM_WORDS = {
