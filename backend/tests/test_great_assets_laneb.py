@@ -47,6 +47,7 @@ SAMPLES = {
     "clips_loop": ((True, True), ("walk", True)),
     "clips_face_forward": ((12, 60), (178, 60)),  # hand-off: degrees the body turns from the prefab's forward, worst move
     "library_clips": ((15, ">0"), (0, ">0")),
+    "library_missing": (("", "found on this PC"), ("ual1", "found on this PC")),
     "added_moves": ((5, 5), (3, 5)),
     "controller_ready": ((True, True), (False, True)),
     "placement_exact": ((0.0001, 0.02), (0.3, 0.02)),
@@ -215,7 +216,7 @@ def test_select_knobs_carry_plain_option_labels():
         labels = p["option_labels"]
         assert set(labels) == {str(o) for o in p["options"]}, (stage, name)
         assert all(isinstance(v, str) and v for v in labels.values())
-    assert stages["export"]["clips_library"]["option_labels"]["ual1"] == "Standard human moves (46 animations)"
+    assert stages["export"]["clips_library"]["option_labels"]["ual1"] == "Standard human moves (42 animations)"
     assert stages["rig"]["template"]["option_labels"]["mixamo"] == "Standard human skeleton"
     assert stages["export"]["collider"]["option_labels"]["hull"] == "One wrapped shape"
     assert stages["prep"]["face_yaw"]["option_labels"]["90"] == "Turned a quarter to the left"

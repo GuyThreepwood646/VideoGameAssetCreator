@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
+import { FeaturePhotos } from '../components/FeaturePhotos'
+import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
 import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
@@ -255,7 +257,9 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [error, setError] = useState<unknown>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
   const [autopilot, setAutopilot] = useState(autopilotDefault())
-  const [startFrom, setStartFrom] = useState<'words' | 'picture' | 'model'>('words')
+  const [startFrom, setStartFrom] = useState<StartFrom>('words')
+  // Feature photos (a face, a body, an outfit): one combined first picture, or the face close-up for step 4.
+  const [featureSlots, setFeatureSlots] = useState<FeatureSlot[]>([])
   // A 3D model the person has (step 3 "Use my own 3D model"): sent after the asset is made.
   const [modelFile, setModelFile] = useState<File | null>(null)
   const [modelProgress, setModelProgress] = useState<number | null>(null)
@@ -346,6 +350,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   const fromModel = startFrom === 'model'
   const hairOffered = !fromModel && (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
   const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
+  const features = usedFeatures(featureSlots, startFrom, category)
   const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || (fromModel && modelFile ? nameFromFile(modelFile.name) : '') || 'Untitled'
 
   const submit = async (e: FormEvent) => {
@@ -366,12 +371,24 @@ function CreateAssetForm({ project }: { project: Project }) {
         parts,
         ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
+        // A box round the main person cuts the photo first; the people found are recorded with it (no box = the whole photo).
+        ...(features.length && !fromModel
+          ? {
+              features: features.map((f) => {
+                const crop = featureCrop(f, category)
+                const found = foundPeople(f).length
+                return { role: f.role, image: f.picture!.dataUrl, ...(f.note.trim() ? { note: f.note.trim() } : {}), ...(crop ? { crop } : {}), ...(found ? { people_found: found } : {}) }
+              }),
+            }
+          : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
         ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
       if (fromModel && modelFile) {
+        // A face photo with a model is the step 4 face close-up only: nothing is drawn for a model the person has.
+        if (features[0]) await api.setFaceCloseup(a.id, features[0].picture!.dataUrl)
         // The model is read on step 3; Autopilot can carry on from there once the model is in.
         setModelProgress(0)
         try {
@@ -468,6 +485,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <div className="muted small">Template: {PROMPT_TEMPLATE}</div>
         </Field>
       )}
+      <FeaturePhotos slots={featureSlots} onChange={setFeatureSlots} startFrom={startFrom} category={category} disabled={busy} />
       <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
       </Field>
@@ -653,7 +671,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           {busy ? (fromModel && modelProgress !== null ? 'Sending your model...' : 'Creating...') : fromModel ? 'Create and read my model' : autopilot ? 'Create and make it' : 'Create asset'}
         </button>
         <span className="muted small">
-          {fromModel ? 'Next: Blender reads your model and takes pictures of it for steps 1 and 2.' : autopilot ? 'Next: every step runs by itself.' : fromPicture ? 'Next: we cut out your picture and check it is ready for 3D.' : 'Next: we paint the first picture.'}
+          {fromModel ? 'Next: Blender reads your model and takes pictures of it for steps 1 and 2.' : autopilot ? 'Next: every step runs by itself.' : fromPicture ? (features.some((f) => f.role !== 'face') ? 'Next: we draw one picture from your picture and your feature photos.' : 'Next: we cut out your picture and check it is ready for 3D.') : features.length ? 'Next: we draw one picture from your feature photos and description.' : 'Next: we paint the first picture.'}
         </span>
         <ErrorText error={error} />
       </div>

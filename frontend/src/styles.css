@@ -3778,20 +3778,20 @@ button.small-btn .resume-icon {
   max-width: 80ch;
 }
 
-/* Step 0.5: a character from several of your own pictures (pipeline/ComposePanel.tsx). */
-.compose-slots {
+/* Feature photos in the New asset form (components/FeaturePhotos.tsx). */
+.feature-slots {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
-  margin: 10px 0;
+  margin: 6px 0;
 }
-.compose-slot {
+.feature-slot {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.rail-stage-half .rail-index {
-  font-size: 0.85em;
+.feature-add {
+  flex-wrap: wrap;
 }
 
 /* Step 2: the Pose for 3D first picture above the views */
@@ -3860,6 +3860,44 @@ button.small-btn .resume-icon {
 .status-chip > summary::-webkit-details-marker,
 .help-menu > summary::-webkit-details-marker {
   display: none;
+}
+/* The View menu: a text button in the top bar and a plain list of items under it (the status-pop card look). */
+.view-menu {
+  position: relative;
+}
+.view-menu-button {
+  height: var(--control-md);
+  padding: 0 var(--s2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.view-pop {
+  min-width: 180px;
+  gap: var(--s1);
+  padding: var(--s1);
+}
+.view-pop[hidden] {
+  display: none;
+}
+.view-item {
+  display: block;
+  width: 100%;
+  padding: var(--s2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.view-item:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.15));
 }
 .help-menu > summary {
   width: var(--control-md);
@@ -4468,7 +4506,8 @@ button.preset-card:hover:not(:disabled) {
 .your-library .row-between { flex-wrap: wrap; gap: var(--s2); }
 .your-library-actions { display: inline-flex; gap: var(--s2); margin-left: var(--s2); }
 /* Mark the body: the marks the app could not see on a picture, each with a button to place it */
-.body-marks-unseen { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.body-marks-unseen { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.body-marks-unseen > div { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .body-marks-unseen .chip { cursor: pointer; }
 .picture-viewer-foot .body-marks-unseen { flex-basis: 100%; }
 .picture-viewer-foot .row-between { flex-wrap: wrap; gap: 6px; }
@@ -4542,7 +4581,8 @@ button.preset-card:hover:not(:disabled) {
     position: relative;
   }
   .status-chip,
-  .help-menu {
+  .help-menu,
+  .view-menu {
     position: static;
   }
   .status-pop {

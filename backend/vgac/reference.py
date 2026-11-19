@@ -162,7 +162,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
-               description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
+               description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
         # paints from the front, the sides and the back only.
         _param("quarter_pictures", "boolean", True, categories=["humanoid"], label="Paint from the three-quarter pictures",
@@ -211,9 +211,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Where the 3D build joined the legs low down (a strand between the shoes), split them so they move apart; a tabard or cape between the legs is left whole"),
         _param("springs", "boolean", True, categories=["humanoid"], label="Spring bones (small extra bones that sway on their own)",
                description="A ponytail, braid, cape or tail that hangs clear of the body gets a short chain of bones and sways in every move; hair resting on the shoulders and rigid things like a scabbard are left alone"),
-        _param("head_sway", "select", "auto", options=["auto", "hair", "all"], categories=["humanoid"],
+        _param("head_sway", "select", "auto", options=["auto", "hair", "all", "none"], categories=["humanoid"],
                label="What may sway on the head",
-               description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before)"),
+               description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before). Nothing on the head sways holds the head still, hair included, built-in or from the library"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),

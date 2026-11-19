@@ -1,5 +1,5 @@
 // "Crop the face from it": drag a box around the face on a picture; the crop becomes its own picture. A tight face
-// crop given as the Face picture is what carries a likeness into step 0.5 (a whole photo alone gave a generic face).
+// crop given as the Face picture is what carries a likeness into the combined first picture (a whole photo alone gave a generic face).
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { PickedImage } from './ImageDrop'
 

@@ -87,7 +87,6 @@
    "dest": "checkpoints/3D Rendering",
    "save_as": "Hunyuan3D-2mv.fp16.safetensors",
    "publisher": true,
-   "optin": "hunyuan",
    "licence_page": "https://huggingface.co/tencent/Hunyuan3D-2mv/blob/main/LICENSE",
    "note": "Saved under the name the app expects (Hunyuan3D-2mv.fp16.safetensors); the publisher's file is hunyuan3d-dit-v2-mv/model.fp16.safetensors."
   },
@@ -504,7 +503,7 @@
    "author": "Quaternius",
    "licence": "CC0 1.0",
    "page": "https://quaternius.itch.io/universal-animation-library",
-   "check_file": "AnimationLibrary_Unity_Standard.fbx"
+   "check_file": "UAL1_Standard.fbx"
   },
   "ual2": {
    "name": "Universal Animation Library 2 (Standard)",
@@ -701,8 +700,7 @@
    "id": "hunyuan",
    "name": "Second 3D route (Hunyuan3D-2mv)",
    "required": false,
-   "gate": "hunyuan",
-   "what": "A second way to make the 3D model. It has a licence you must read and accept yourself.",
+   "what": "A second way to make the 3D model. It is under the Tencent Hunyuan Community Licence: a request to Tencent is needed above 1 million monthly users of your products.",
    "items": [
     "model:hy3d_mv"
    ]
@@ -730,14 +728,6 @@
   }
  ],
  "gates": {
-  "hunyuan": {
-   "phrase": "I have read this and I am not in the EU, UK or South Korea",
-   "notice": [
-    "Hunyuan3D-2mv is under the Tencent Hunyuan Community Licence. Read it first: https://huggingface.co/tencent/Hunyuan3D-2mv/blob/main/LICENSE",
-    "It is NOT granted in the European Union, the United Kingdom or South Korea: people there must not use it.",
-    "A request to Tencent is needed above 1 million monthly users of your products. It is off by default."
-   ]
-  },
   "anima": {
    "phrase": "I have read this",
    "notice": [

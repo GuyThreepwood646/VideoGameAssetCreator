@@ -63,7 +63,7 @@ const ROWS: Row[] = [
   ['ual2', 'Yes', 'Nod (yes)', 'talking', false, 2.5, 'yes'],
   ['ual1', 'Swim_Fwd_Loop', 'Swim', 'swimming', true, 1.33, 'swim_fwd'],
   ['ual1', 'Swim_Idle_Loop', 'Tread water', 'swimming', true, 3.33, 'swim_idle'],
-  ['ual2', 'ClimbUp_1m_RM', 'Climb up a ledge (1 m)', 'climbing', false, 0.67, 'climb_up_1m', true],
+  ['ual2', 'ClimbUp_1m', 'Climb up a ledge (1 m)', 'climbing', false, 0.67, 'climb_up_1m', false],
   ['ual2', 'Slide_Loop', 'Slide (sliding)', 'climbing', true, 2, 'slide'],
   ['ual2', 'Zombie_Walk_Fwd_Loop', 'Zombie walk', 'zombie', true, 1.33, 'zombie_walk_fwd'],
 ]

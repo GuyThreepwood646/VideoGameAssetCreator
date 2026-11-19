@@ -332,13 +332,13 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
 MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs",
-                "idle_source")
+                "idle_source", "head_sway")
 # anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
 # keys are never present, so listing them changes nothing there.
 ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
               "anim_body", "hair_bind")
-_ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "retarget_error",
-                 "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
+_ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "library_missing",
+                 "retarget_error", "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
                  "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs", "hair_bind")
 KEEP_MARKER = "_keep_when_done"
 
@@ -517,6 +517,17 @@ def use_library(sc: StageContext, params: dict[str, Any]) -> tuple[bool, str | N
     if library_file((sc.settings.clips_libraries or {}).get(lib_id)) is None:
         return False, f"clip library {lib_id} not found on disk"
     return True, None
+
+
+def library_missing_of(sc: StageContext, params: dict[str, Any]) -> list[str] | None:
+    """[the chosen library id] when a humanoid asked for its clip library and the file is not on disk, else None.
+    Only humanoids get the warning: a non-humanoid, built-in moves and "no library" are not a missing library."""
+    if clips_source(params) == "procedural" or sc.category.get("rig_engine") != "skintoken_mixamo" or not sc.category.get("library_clips"):
+        return None
+    lib_id = params.get("clips_library") or "ual1"
+    if lib_id == "none" or library_file((sc.settings.clips_libraries or {}).get(lib_id)) is not None:
+        return None
+    return [lib_id]
 
 
 def chosen_moves_of(category: dict[str, Any], params: dict[str, Any]) -> Any:
@@ -770,18 +781,20 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     retarget_error; metrics say which clips came from where and how long it took."""
     ok, reason = use_library(sc, params)
     if not ok:
-        sc.set_metrics(library_skipped=reason)
+        sc.set_metrics(library_skipped=reason, library_missing=library_missing_of(sc, params))
         return
     from .. import moves as moves_mod
 
     removed = moves_mod.removed_list(params)
     rows = moves_mod.move_rows(sc.category, params, chosen_moves)
     if not rows:
-        sc.set_metrics(library_skipped="no library clips match the chosen moves")
+        sc.set_metrics(library_skipped="no library clips match the chosen moves", library_missing=None)
         return
     libs, lib_missing = moves_mod.libraries_for(rows, sc.settings)
     if not libs:
-        sc.set_metrics(library_skipped=next(iter(lib_missing.values()), "no clip library found on disk"))
+        packs_gone = [k for k in lib_missing if not k.startswith(moves_mod.MINE_PREFIX)]
+        sc.set_metrics(library_skipped=next(iter(lib_missing.values()), "no clip library found on disk"),
+                       library_missing=packs_gone or None)
         return
     spec_path = sc.dir / "anim_retarget_spec.json"
     spec_path.write_text(json.dumps(moves_mod.spec_rows(rows), indent=1), encoding="utf-8")
@@ -798,7 +811,7 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
         # Built-in moves the person took off (and built-in copies of removed library moves) are not kept.
         args += ["--keep", ",".join(c for c in proc if c not in removed) or "none"]
     t0 = time.monotonic()
-    sc.set_metrics(library_skipped=None)
+    sc.set_metrics(library_skipped=None, library_missing=None)
     try:
         sc.progress(0.82, "moving the hand-made clips onto the skeleton")
         await sc.blender("retarget.py", args, log_name="retarget.log", timeout=sc.settings.blender_timeout_seconds)
@@ -929,7 +942,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
 
 
 def _description(sc: StageContext) -> str:
-    """The asset's description and the words given with its first picture (step 0.5), for the spring bones' head words."""
+    """The asset's description and the words given with its first picture (feature photos), for the spring bones' head words."""
     words = [getattr(sc.asset, "prompt", "") or ""]
     try:
         for v in sc.iter_lineage(include_self=False):
@@ -1274,6 +1287,10 @@ async def judge(sc: StageContext) -> None:
             lib = m.get("library_clips") or []
             checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",
                                         vars={"count": len(lib), "reason": m.get("retarget_error") or ""}))
+        # A humanoid whose chosen clip library is not on disk: a warning (owner decision D12), not a stop.
+        if m.get("library_missing"):
+            checks.append(quality.check("library_missing", False, ", ".join(m["library_missing"]), "found on this PC",
+                                        vars={"library": ", ".join(m["library_missing"])}))
         # Moves the person added ("Add a move"): every one made, or which were not and why.
         added = [x for x in (m.get("moves") or []) if isinstance(x, dict) and x.get("added")]
         if added:

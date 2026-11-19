@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, estimates, fixes, library, move_gate, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, people, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 app.include_router(own_images.router)  # start from your own images (own_images.py)
+app.include_router(people.router)  # the people in a feature photo, for the suggested box (people.py)
 app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
-app.include_router(__import__("vgac.compose", fromlist=["router"]).router)  # step 0.5: a character from several pictures (compose.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
@@ -166,6 +166,10 @@ class AssetIn(BaseModel):
     # The person chose a look other than the project's on purpose ("Use a different look for this asset"). Without it
     # a look that differs from the project's is refused (_check_project_look).
     different_look: bool | None = None
+    # Feature photos (compose.py): the person's own pictures of a face, a body, an outfit or anything else. Step 1 is
+    # then ONE picture combined from them (with `image` first when given); a human's first face picture is also kept
+    # as the asset's own face close-up for the step 4 face pass.
+    features: list[compose.FeatureIn] | None = Field(default=None, max_length=compose.PICTURES_MAX)
 
 
 class AssetPatch(BaseModel):
@@ -562,6 +566,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     cat = reference.category(body.category)
     _check_concept_model("concept_model", body.concept_model)
     picture = own_images.decode_or_400(body.image) if body.image else None  # start from a picture: checked first
+    features = compose.check(body.category, body.features or [])
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
     if body.face_matters is False:
@@ -577,11 +582,17 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     if body.hair is not None:
         hairlib.set_choice(db, a, body.hair, changed_by="form")
         db.refresh(a)
+    face_closeup = compose.keep_face_closeup(a, features)
+    extra: dict[str, Any] = {"face_closeup": True} if face_closeup else {}
+    if compose.needs_drawing(features, picture):
+        started = compose.start(db, a, features, picture)
+        db.refresh(a)
+        return {**asset_to_dict(a), **extra, "compose": started}
     if picture is None:
-        return asset_to_dict(a)
+        return {**asset_to_dict(a), **extra}
     started = own_images.start_concept_from_picture(db, a, picture)
     db.refresh(a)
-    return {**asset_to_dict(a), "upload": started}
+    return {**asset_to_dict(a), **extra, "upload": started}
 
 
 class VariantIn(BaseModel):

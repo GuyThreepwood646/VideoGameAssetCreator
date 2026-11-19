@@ -140,3 +140,53 @@ def test_zero_negative_is_a_setting_and_the_default_graph_is_untouched(tmp_path)
     assert sc.graphs[0] == qwen_edit.angle_graph("in.png", qwen_edit.view_prompt("left", ""), 7, "vgac/a/turnaround/v/left_7", lora_strength=0.9)
     # the bake-off's graph builder is still compared with the unchanged default (tests/test_graphs.py)
     assert qwen_edit.angle_graph("i", "p", 1, "x")["neg"]["class_type"] == "TextEncodeQwenImageEditPlus"
+
+
+# --- D21: the pose sentence is for humanoids only (WP-01) -------------------------------------------------------------
+
+NON_HUMANOID = ["environment", "prop_rigid", "prop_articulated", "vehicle", "foliage", "quadruped", "multileg", "winged",
+                "serpent"]
+
+
+def test_every_non_humanoid_view_is_the_bare_view_tag():
+    for category in NON_HUMANOID:
+        for view in qwen_edit.VIEWS:
+            assert qwen_edit.view_prompt(view, "", category) == qwen_edit.VIEWS[view], (category, view)
+
+
+def test_no_category_is_the_bare_view_tag_too():
+    for view in qwen_edit.VIEWS:
+        assert qwen_edit.view_prompt(view) == qwen_edit.VIEWS[view]
+
+
+def test_the_humanoid_prompt_is_unchanged():
+    for view in qwen_edit.VIEWS:
+        assert qwen_edit.view_prompt(view, "", "humanoid") == qwen_edit.VIEWS[view] + " " + qwen_edit.POSE_KEEP
+
+
+def test_the_humanoid_prompt_keeps_its_extra_text_after_the_pose_sentence():
+    assert qwen_edit.view_prompt("back", "same face", "humanoid") == (
+        qwen_edit.VIEWS["back"] + " " + qwen_edit.POSE_KEEP + " same face")
+
+
+def test_the_non_humanoid_extra_text_is_kept_without_the_pose_sentence():
+    assert qwen_edit.view_prompt("left", "same face", "vehicle") == qwen_edit.VIEWS["left"] + " same face"
+
+
+def test_the_stage_passes_the_asset_category_to_the_view_prompt(tmp_path):
+    for category in ("humanoid", "vehicle"):
+        sc = RecordingSC(tmp_path, {})
+        sc.asset = SimpleNamespace(category=category)
+        asyncio.run(turnaround._generate_view(sc, "in.png", "left", 7, 0.9, "", 0.0, 0.1))
+        assert sc.graphs[0] == qwen_edit.angle_cutout_graph(
+            "in.png", qwen_edit.view_prompt("left", "", category), 7, "vgac/a/turnaround/v/left_7",
+            "vgac/a/turnaround/v/left", lora_strength=0.9, zero_negative=True), category
+
+
+def test_the_two_job_path_passes_the_asset_category_too(tmp_path):
+    for category in ("humanoid", "vehicle"):
+        sc = RecordingSC(tmp_path, {"cutout_in_graph": False, "zero_negative": False})
+        sc.asset = SimpleNamespace(category=category)
+        asyncio.run(turnaround._generate_view(sc, "in.png", "left", 7, 0.9, "", 0.0, 0.1))
+        assert sc.graphs[0] == qwen_edit.angle_graph(
+            "in.png", qwen_edit.view_prompt("left", "", category), 7, "vgac/a/turnaround/v/left_7", lora_strength=0.9), category

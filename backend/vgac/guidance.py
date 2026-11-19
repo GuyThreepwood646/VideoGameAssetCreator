@@ -192,7 +192,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                 "options": {"fbx": "FBX (Unity, Unreal, Godot)", "glb": "GLB (web, Godot, Blender)"}},
     "unity": {"simple": True, "help": {"meaning": "Also build and check a Unity prefab.", "why": "Confirms the asset works in an engine and gives you a ready prefab.", "technical": "Unity batch import"}},
     "clips_library": {"simple": True, "help": {"meaning": "Which free animation set to attach to a human-style skeleton.", "why": "Gives walk, run, jump and more without any animation work.", "technical": "CC0 clip library retargeted through Humanoid"},
-                      "options": {"ual1": "Standard human moves (46 animations)", "ual2": "Extra human moves (second library)", "none": "Only its own walk and idle"}},
+                      "options": {"ual1": "Standard human moves (42 animations)", "ual2": "Extra human moves (second library)", "none": "Only its own walk and idle"}},
     "sprites": {"simple": True, "help": {"meaning": "Also render 2D sprite sheets.", "why": "For 2D or top-down games that draw pictures instead of 3D models.", "technical": "8-direction sprite sheets with atlas"}},
     "sprite_directions": {"simple": False, "help": {"meaning": "How many directions to render.", "why": "8 covers top-down games; 4 is enough for side-scrollers.", "technical": "Sprite yaw count"}},
     "sprite_size": {"simple": False, "help": {"meaning": "Pixel size of one sprite frame.", "why": "Match your game's sprite scale.", "technical": "Sprite frame size"}},
@@ -240,7 +240,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "source_project": {"simple": False, "help": {"meaning": "Paints your own picture's colours and detail onto the side of the model it shows, and the drawn views onto the other sides, so the model looks like the picture; adds about 2 minutes. Automatic does it for characters on smooth looks; turn it on to try it on other models, or off if it leaves patches.",
                                                  "why": "The 3D builder makes up its colours and they come out soft. Your own picture is used first, then the views drawn from it.",
                                                  "technical": "Picture fitted to a render by outline and optical flow, projected through the UVs with depth, edge and stretch limits (vgac/srcproject.py)"}},
-    "face_closeup_guided": {"simple": False, "help": {"meaning": "With a picture of the real face (your own close-up in this step, or the Face picture in step 0.5), the close-up is drawn with that face's features.",
+    "face_closeup_guided": {"simple": False, "help": {"meaning": "With a picture of the real face (your own close-up in this step, or the face picture given with the new asset), the close-up is drawn with that face's features.",
                                                       "why": "The close-up keeps the painting's pose, expression and light and takes the eyes, nose, mouth, skin and hair from your picture, so the model looks more like the person. Without a face picture this changes nothing.",
                                                       "technical": "Qwen-Image-Edit with the painted crop as Picture 1 and the face picture as Picture 2; two tries, each checked like any close-up"}},
     "quarter_pictures": {"simple": False, "help": {"meaning": "Whether the two three-quarter pictures from step 2 are painted onto the model, the head included.",
@@ -252,7 +252,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "part_legs": {"simple": False, "help": {"meaning": "Where the 3D build joined the legs together low down (a strand between the shoes), the legs are split so each moves on its own.",
                                             "why": "Joined legs drag each other along when the character walks and stretch the shoes. A tabard or cape between the legs is left whole.",
                                             "technical": "Spring-bone pass (springs.py): separates leg weights below the knee when the legs share vertices near the feet"}},
-    "head_sway": {"simple": False, "help": {"meaning": "Chooses which parts on the head may sway: only hair (and a headscarf, ribbon or veil named in the description), or everything that hangs.",
+    "head_sway": {"simple": False, "help": {"meaning": "Chooses which parts on the head may sway: only hair (and a headscarf, ribbon or veil named in the description), everything that hangs, or nothing on the head, so the head and hair stay still.",
                                             "why": "A hat brim, hood or helmet should move with the head, so Automatic only lets hair sway. Pick Everything that hangs to get the older behaviour.",
                                             "technical": "head_sway auto | hair | all; selects which head-attached meshes get spring-bone chains"}},
     "sprite_frames": {"simple": False, "help": {"meaning": "How many pictures each move gets in the 2D sprite sheet.",
@@ -662,6 +662,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
     },
+    # Humanoid whose clip library is not on this PC (rig.library_missing_of). No button: the library has to come back first.
+    "library_missing": {
+        "severity": "warn",
+        "ok": "The shared animation library is on this PC.",
+        "fail": "The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.",
+    },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {
         "severity": "warn",
@@ -1064,7 +1070,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": _redraw_fix,
         "fix_label": "Redraw it in even light",
     },
-    # A picture combined from the person's own pictures (step 0.5, stages/concept.compose_check): the clothes or the hair
+    # A picture combined from the person's own pictures (feature photos, stages/concept.compose_check): the clothes or the hair
     # colour drifted from the pictures. A warning only; the Fix combines the same pictures again.
     "compose_match": {
         "severity": "warn",

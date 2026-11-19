@@ -19,7 +19,7 @@
   -Only          with -Models: only these ids (for example -Only clay_finish,birefnet); ids are in the first column of downloads.json
   -ProjectRoot   defaults to the folder above this script (for tests against a throwaway copy).
 
-  Licence questions: Hunyuan3D-2mv, Anima and Gemma 3 each need a sentence typed by you. This script never accepts
+  Licence questions: Anima and Gemma 3 each need a sentence typed by you. This script never accepts
   terms for you, and -Yes does not answer them.
 
   Models are never bundled. Sources are in setup\downloads.json (edit a link there, no code change). Your own
@@ -204,10 +204,6 @@ $dlLocalPath = Join-Path $PSScriptRoot 'downloads.local.json'
 if (Test-Path -LiteralPath $dlLocalPath) { try { $dlLocal = Get-Content -LiteralPath $dlLocalPath -Raw | ConvertFrom-Json } catch { Write-Host "Could not read $dlLocalPath : $($_.Exception.Message)" } }
 
 $OptIn = @{
-    hunyuan = @{ Phrase = 'I have read this and I am not in the EU, UK or South Korea'
-        Notice = @('Hunyuan3D-2mv is under the Tencent Hunyuan Community Licence. Read it first: https://huggingface.co/tencent/Hunyuan3D-2mv/blob/main/LICENSE',
-                   'It is NOT granted in the European Union, the United Kingdom or South Korea: people there must not use it.',
-                   'A request to Tencent is needed above 1 million monthly users of your products. It is off by default.') }
     anima = @{ Phrase = 'I have read this'
         Notice = @('Anima: the model itself is non-commercial. What it makes may be used commercially. Do not sell or host the model file itself.',
                    'Page: https://huggingface.co/circlestone-labs/Anima') }
@@ -687,7 +683,7 @@ if ($Settings) {
     foreach ($id in 'ual1', 'ual2') {
         $d = Join-Path $Root "data\animations\$id"
         if (Test-Path -LiteralPath $d) {
-            $f = if ($id -eq 'ual1') { 'AnimationLibrary_Unity_Standard.fbx' } else { 'UAL2_Standard.fbx' }
+            $f = if ($id -eq 'ual1') { 'UAL1_Standard.fbx' } else { 'UAL2_Standard.fbx' }
             $hit = Get-ChildItem -LiteralPath $d -Filter $f -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($hit) { Set-CfgLine $id ('"' + (& $fwd $hit.FullName) + '"') '  ' }
         }

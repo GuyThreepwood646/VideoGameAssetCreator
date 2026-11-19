@@ -7,6 +7,7 @@ import { closeGuide, openGuide, useGuide } from './guide'
 import { notifyEnabled, setNotifyEnabled, Toasts } from './notify'
 import { PictureZoom } from './components/PictureViewer'
 import { SupportLink } from './SupportLink'
+import { ViewMenu } from './ViewMenu'
 
 export default function App() {
   const mode = useEventMode()
@@ -42,6 +43,7 @@ export default function App() {
         <SetupBadge />
         <HealthBadge />
         <SupportLink />
+        <ViewMenu />
         <HelpMenu />
       </header>
       <EngineBanner />

@@ -97,7 +97,7 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
                 raise ValueError(f"the {stage} step cannot upscale")
             await fn(sc, params)
         elif op == "compose":
-            # Step 0.5: a new concept picture from several of the person's own pictures (vgac/compose.py).
+            # Feature photos: one concept picture combined from the person's own pictures (vgac/compose.py).
             from .. import compose
 
             await compose.run(sc, params)

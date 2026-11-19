@@ -171,7 +171,7 @@ COMPOSE_MAX = 3  # TextEncodeQwenImageEditPlus takes image1 to image3
 
 def compose_graph(image_names: list[str], prompt: str, seed: int, prefix: str, width: int = 1024,
                   height: int = 1024) -> dict[str, Any]:
-    """One new picture from up to three source pictures (step 0.5, stages/compose.py): the edit graph with each
+    """One new picture from up to three source pictures (feature photos, vgac/compose.py): the edit graph with each
     picture wired into image1..image3 of both TextEncodeQwenImageEditPlus nodes, so the prompt can name them as
     Picture 1 to Picture 3. The output size is the latent's, not the first picture's."""
     if not 1 <= len(image_names) <= COMPOSE_MAX:
@@ -216,8 +216,14 @@ BACK_SIDES_SENTENCE = ("Picture 2 shows this character's left side and Picture 3
                        "Do not copy the pose or the turn of Pictures 2 and 3; show the back of Picture 1.")
 
 
-def view_prompt(view: str, extra: str = "") -> str:
+# D21 (2026-11-18): only humanoids get POSE_KEEP. On a static building or prop the sentence put people into the pictures
+# (4 of 6 with it, 0 of 6 without, same seed). Non-humanoid views get the bare view tag and nothing else. Do not add
+# "nothing is added" wording, and do not use a negative prompt: these views run at cfg 1.0, where negatives do nothing.
+# Card check 2026-11-18 (WP-01, five categories, seed 7, left turn; animal also back): no pose sentence, the pictures kept
+# their subjects and the animal kept four legs in the left and back views. Not run through the full app pipeline.
+def view_prompt(view: str, extra: str = "", category: str | None = None) -> str:
     if view not in VIEWS:
         raise ValueError(f"unknown view {view!r}; known: {sorted(VIEWS)}")
-    p = (VIEWS[view] + " " + POSE_KEEP).strip()
+    base = VIEWS[view] + " " + POSE_KEEP if category == "humanoid" else VIEWS[view]
+    p = base.strip()
     return (p + " " + extra.strip()) if extra and extra.strip() else p
