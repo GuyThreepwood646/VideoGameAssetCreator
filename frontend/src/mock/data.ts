@@ -176,10 +176,10 @@ export const lookPresets: LookPreset[] = [
     description: 'Chunky low-polygon shapes and soft blurry textures, like a late-1990s console game. Good for nostalgic 3D games.',
     style_preset: 'retro64',
     style_lock: {
-      prompt_block: 'An in-game real-time 3D model from a late-1990s 64-bit console game: chunky low-polygon shapes, smooth vertex shading, soft blurry low-resolution textures, bold saturated colours, plain background. Not pixel art, no voxels.',
+      prompt_block: 'An in-game real-time 3D model from a late-1990s 64-bit home console game, a low-polygon mesh rendered in real time, not a drawing or illustration. Smooth gouraud vertex shading, slightly angular silhouettes, chunky simplified hands and details, blurry low-resolution bilinear-filtered textures, bold saturated colours, bright ambient light with one warm key light from the upper left, a soft round blob shadow underneath, the whole image slightly soft like a low-resolution frame upscaled.',
       model: 'zturbo',
       loras: [],
-      palette: ['#2b3a67', '#e84855', '#f9dc5c', '#3bb273', '#f4f1de'],
+      palette: [],
       negative: 'photographic, realistic skin, pixel art, voxels, cubes, text, logos',
     },
     example_prompt: 'A stout adventurer in a green tunic with a short sword and a wooden shield.',

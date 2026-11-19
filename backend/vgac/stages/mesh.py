@@ -3,6 +3,13 @@
 trellis (default): TRELLIS.2 shape + texture + native post chain from one RGBA cutout, output model.glb with
 base_color, metallic, roughness, normal and ao PNGs, decimated to the category/platform triangle budget.
 hy3d: Hunyuan3D-2mv from the four turnaround views over white (shape only, Tencent licence recorded).
+builder (trellis engine only): "trellis2" (the default) builds from one picture; "pixal3d" builds from the front, left,
+back and right cut-outs of step 2 with graphs/pixal3d.py (same output, same post chain, colour rebuilds and audit). A
+Pixal3D build records input_view "front" (the picture the model is posed to and painted from first) and the camera angle
+it used (metrics.camera_fov_deg, with camera_fov_source "picture" for MoGe-2's estimate of the front picture, the default,
+or "chosen" for the version's camera_angle). It is refused, in plain words, when its files are missing (vgac/pixal3d.py)
+and on the bald route (no bald back picture is drawn); it never edits the picture (no hand edit, no described edit) and
+never builds the head on its own. The builder is in params.builder, metrics.builder and metrics.recipe.mesh.builder.
 The default triangle target sits 2 percent under the budget so prep need not decimate again (G05 a). UnwrapMesh
 padding is max(4, texture / 256) texels and every map is grown max(8, texture / 128) texels into the empty space
 after the bake (G03); metrics record the atlas share used, the measured gutter and the UV hash of the baked mesh.
@@ -51,6 +58,7 @@ from typing import Any
 from .. import colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
+from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
 from ..graphs.qwen_edit import edit_graph
 from ..graphs.trellis import IMAGE_NODES, UNWRAP_PADDING_MAX, convert_graph
 from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dilate_png, dilation_px, gutter_px, image_size,
@@ -111,7 +119,7 @@ def _input_image(sc: StageContext, input_view: str) -> Path:
 # input_view_origin is recorded only when this step switched the view ("pose"); a recorded view that is that one, or the
 # category's default, is decided again on every build, and any other recorded view was the person's. So a person who
 # picks `quarter` by hand gets the default's behaviour (the chooser may still switch it).
-BUILD_VIEW_ORIGINS = ("pose",)
+BUILD_VIEW_ORIGINS = ("pose", "four_views")  # four_views: the front a Pixal3D build recorded (never a choice)
 
 
 def pick_build_view(first: dict[str, Any] | None, second: dict[str, Any] | None) -> tuple[str, str]:
@@ -262,13 +270,56 @@ def finish_maps(glb: Path, maps: dict[str, Path], tex: int) -> dict[str, Any]:
 
 
 DEFAULT_TEX_STEPS = 24  # the texture sampler's steps (graphs/trellis.py); 12 on request (Adjust)
+DEFAULT_BUILDER = "trellis2"
+
+
+def builder_of(params: dict[str, Any] | None) -> str:
+    """The version's builder: "trellis2" unless it names another of reference.MESH_BUILDERS."""
+    b = (params or {}).get("builder") or DEFAULT_BUILDER
+    if b not in reference.MESH_BUILDERS:
+        raise ValueError(f"unknown 3D builder {b!r}")
+    return b
+
+
+def four_views(sc: StageContext) -> dict[str, Path]:
+    """The front, left, back and right cut-outs of step 2 for the four-view build; a plain error when one is missing."""
+    if hairlib.is_library(sc):
+        raise ValueError("The four-view builder (Pixal3D) builds the hair with the model; it cannot build with hair from the "
+                         "library, because no bald back picture is drawn. Use TRELLIS.2, or the hair built with the 3D model.")
+    out: dict[str, Path] = {}
+    for v in PIXAL3D_VIEWS:
+        p = sc.lineage_file(f"{v}_cutout", ("turnaround",))
+        if p is None or not Path(p).is_file():
+            raise FileNotFoundError(f"The four-view builder (Pixal3D) needs the {v} picture from Check all sides, and it is missing. "
+                                    "Draw the side views again, or use TRELLIS.2.")
+        out[v] = Path(p)
+    return out
+
+
+def recipe_with_builder(rec: dict[str, Any], builder: str) -> dict[str, Any]:
+    """metrics.recipe for the 3D step: the recipe's mesh and surface sections, the mesh section with the builder used."""
+    out = reference.recipe_record(rec, "mesh", "surface")
+    out["mesh"] = {**(out.get("mesh") or {}), "builder": builder}
+    return out
 
 
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
-    default_view = sc.category.get("input_view_default") or "concept"
-    # A view the person chose is kept as it is; the default (and a view this step chose itself) is decided again here.
-    by_hand = bool(params.get("input_view")) and params["input_view"] != default_view and params.get("input_view_origin") not in BUILD_VIEW_ORIGINS
-    decided = {"view": params["input_view"], "why": "none", "measures": {}} if by_hand else await choose_build_view(sc, default_view)
+    builder = builder_of(params)
+    views: dict[str, Path] | None = None
+    if builder == "pixal3d":
+        from .. import pixal3d
+
+        missing = pixal3d.missing_files(fresh=True)
+        if missing:
+            raise FileNotFoundError("The four-view builder (Pixal3D) needs model files that are not installed: " + ", ".join(missing)
+                                    + ". Use TRELLIS.2, or put the files in the ComfyUI models folders.")
+        views = four_views(sc)
+        decided = {"view": "front", "why": "none", "measures": {}}
+    else:
+        default_view = sc.category.get("input_view_default") or "concept"
+        # A view the person chose is kept as it is; the default (and a view this step chose itself) is decided again here.
+        by_hand = bool(params.get("input_view")) and params["input_view"] != default_view and params.get("input_view_origin") not in BUILD_VIEW_ORIGINS
+        decided = {"view": params["input_view"], "why": "none", "measures": {}} if by_hand else await choose_build_view(sc, default_view)
     input_view = decided["view"]
     rec = stage_recipe(sc)
     # The TRELLIS builder only: more triangles than the budget, on purpose, for the clean-up step's weighted decimation
@@ -284,20 +335,32 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     padding = resolve_padding(params, tex)
     # The side views step already opened the hands when its version holds a pose-ready picture.
     posed = bool(params.get("hand_edit")) and sc.lineage_file("pose_ready_cutout", ("turnaround",)) is not None
-    if params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
+    if views is None and params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
         # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
         await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
         sc.set_params(hand_edit=True)
-    src = _input_image(sc, input_view)
-    sc.set_params(engine="trellis", input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
+    src = views["front"] if views is not None else _input_image(sc, input_view)
+    sc.set_params(engine="trellis", builder=builder, input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                   head_room=targets.get("head_room"), first_seed=None)
+    if views is not None:
+        sc.set_params(input_view_origin="four_views")
+    elif params.get("input_view_origin") == "four_views":
+        sc.set_params(input_view_origin=None)
     if decided["why"] in ("switched", "both_lost"):  # nothing is recorded when the chooser changed nothing and found nothing wrong
         if decided["why"] == "switched":
             sc.set_params(input_view_origin="pose")
         sc.set_metrics(build_view=decided, build_view_note=build_view_words(decided))
-    sc.use_model("trellis2")
-    name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
+    if views is None:
+        sc.use_model("trellis2")
+        name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_mesh_in.png")
+        names = None
+    angle = camera_angle_of(params) if views is not None else None
+    if views is not None:
+        for mid in ("pixal3d_mv", "pixal3d_dino") + (("moge2",) if angle is None else ()):
+            sc.use_model(mid)
+        names = {v: await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_mesh_in_{v}.png") for v, p in views.items()}
+        name = names["front"]
     sc.register("input", sc.copy_in(src, "input_image.png"))
     picture = None
     if sc.asset.category != "material":
@@ -310,7 +373,7 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
 
     async def build_once(seed: int, n: int) -> dict[str, Any]:
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
-                                    tex_steps=tex_steps, match_to=src)
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
@@ -329,13 +392,13 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     # took more than one build.
     sc.set_params(seed=kept["seed"], first_seed=first_seed if kept["seed"] != first_seed else None)
     sc.set_metrics(**kept["metrics"])
-    sc.set_metrics(engine="trellis", seed=kept["seed"], elapsed_seconds=kept["elapsed"], target_faces=target_faces, texture_size=tex,
+    sc.set_metrics(engine="trellis", builder=builder, seed=kept["seed"], elapsed_seconds=kept["elapsed"], target_faces=target_faces, texture_size=tex,
                    unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
-                   normal_map=keep_normal, recipe=reference.recipe_record(rec, "mesh", "surface"),
+                   normal_map=keep_normal, recipe=recipe_with_builder(rec, builder),
                    elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
-    if headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
+    if views is None and headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
         await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, tex_steps)
 
 
@@ -461,11 +524,15 @@ def _bring_back(src: Path, dest_dir: Path) -> None:
 async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_faces: int, tex: int, upsample: int, remesh: bool,
                          padding: int, keep_normal: bool, picture: dict[str, Any] | None,
                          dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
-                         match_to: Path | None = None) -> dict[str, Any]:
+                         match_to: Path | None = None, views: dict[str, str] | None = None,
+                         fov: float | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
     (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
-    (colourmatch.py; None for the head build and anything without a picture). Returns {seed, elapsed, maps, other, metrics, match}."""
+    (colourmatch.py; None for the head build and anything without a picture). `views`: the uploaded front, left, back
+    and right names for the Pixal3D four-view build (graphs/pixal3d.py) in place of the one picture `name`; `fov` its
+    camera angle (None: the front picture's own estimate).
+    Returns {seed, elapsed, maps, other, metrics, match}."""
     out = Path(dest) if dest is not None else sc.dir
     if tag:
         prefix = sc.prefix(tag if n == 0 else f"{tag}{n + 1}")
@@ -473,10 +540,14 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         base, span = 0.76, 0.02
     else:
         prefix = sc.prefix() if n == 0 else sc.prefix(f"try{n + 1}")
-        message = "TRELLIS.2 convert" if n == 0 else f"TRELLIS.2 convert, build {n + 1}"
+        what = "Pixal3D four-view build" if views else "TRELLIS.2 convert"
+        message = what if n == 0 else f"{what}, build {n + 1}"
         base, span = 0.05, 0.7
-    entry = await sc.comfy(convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps),
-                           poll=5.0, message=message, base=base, span=span)
+    if views:
+        graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps, fov=fov)
+    else:
+        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
+    entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal:
         # The recipe's look: no bump map (the GLB's own copy goes too).
@@ -494,6 +565,11 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             else:
                 other.append(key)
     metrics: dict[str, Any] = {}
+    if views:
+        used = camera_fov(entry) if fov is None else round(float(fov), 2)
+        if used is not None:
+            metrics["camera_fov_deg"] = used
+        metrics["camera_fov_source"] = "picture" if fov is None else "chosen"
     if keep_normal:
         # The builder writes the normal map's green channel upside down (vgac/normalfix.py): flipped once, here, in
         # normal.png and in the GLB's own copy, and the version marked so the clean-up step never flips it again.
@@ -516,6 +592,22 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
             metrics["texture_match_error"] = str(e)[:300]
     return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
+
+
+def camera_angle_of(params: dict[str, Any] | None) -> float | None:
+    """The version's Pixal3D camera angle in degrees, or None for the front picture's own estimate."""
+    v = (params or {}).get("camera_angle")
+    return None if v in (None, "") else float(v)
+
+
+def camera_fov(entry: dict[str, Any]) -> float | None:
+    """The horizontal camera angle MoGe-2 estimated for the front picture (the four-view graph's PreviewAny), rounded."""
+    for t in ComfyClient.texts_of(entry, FOV_NODE):
+        try:
+            return round(float(t), 2)
+        except ValueError:
+            continue
+    return None
 
 
 async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
@@ -841,7 +933,8 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     for key in EDIT_PARAMS:
         merged.pop(key, None)  # the parent's edit is used below as the picture to edit, never as this version's own
     sc.set_params(instruction=instruction, refine_of=parent.id if parent else None)
-    if (merged.get("engine") or "trellis") == "trellis" and instruction.strip() and merged.get("edit_picture") is not False:
+    if ((merged.get("engine") or "trellis") == "trellis" and builder_of(merged) == DEFAULT_BUILDER and instruction.strip()
+            and merged.get("edit_picture") is not False):
         input_view = merged.get("input_view") or sc.category.get("input_view_default") or "concept"
         merged["input_view"] = input_view
         if sc.file(EDITED_KEY) is None:  # a Resume keeps the edit it already made
@@ -859,7 +952,7 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
         merged.pop(key, None)
     # Fine-tune of a version built from an edited picture keeps that picture (same engine and view only).
     input_view = merged.get("input_view") or sc.category.get("input_view_default") or "concept"
-    kept = _parent_edit(sc, input_view) if (merged.get("engine") or "trellis") == "trellis" else None
+    kept = _parent_edit(sc, input_view) if (merged.get("engine") or "trellis") == "trellis" and builder_of(merged) == DEFAULT_BUILDER else None
     if kept is not None and sc.file(EDITED_KEY) is None:
         sc.register(EDITED_KEY, sc.copy_in(kept, "edited_cutout.png"))
         pic = library.version_file(parent, "edited_picture", sc.settings) if parent else None

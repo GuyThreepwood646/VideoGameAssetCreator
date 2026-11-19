@@ -11,6 +11,7 @@ from test_api import client, fake_execute  # noqa: F401  (fixtures)
 
 OLD_LOOK_IDS = {"painted_fantasy": "painted", "clean_cartoon": "cel", "realistic": "realistic_pbr", "clay_toy": "clay"}
 OLD_STYLE_IDS = {"painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
+NO_PALETTE = {"retro64"}
 
 
 def test_every_style_is_one_look_with_both_parts():
@@ -19,7 +20,10 @@ def test_every_style_is_one_look_with_both_parts():
     for lid, look in looks.items():
         lock = look["style_lock"]
         assert look["label"] and look["description"] and look["example_prompt"], lid
-        assert lock["preset"] == lid and lock["model"] and lock["prompt_block"] and lock["palette"], lid
+        assert lock["preset"] == lid and lock["model"] and lock["prompt_block"], lid
+        # Retro 64's palette is empty on purpose: with its late-90s add-on the palette sentence painted colours the
+        # description never asked for (look research 2026-11-16, row J).
+        assert lock["palette"] or lid in NO_PALETTE, lid
         style = reference.style(lid)  # the pipeline part: model, prompt block and recipe still load as before
         assert style["model"] and style["prompt_block"], lid
         assert look["style_preset"] == lid

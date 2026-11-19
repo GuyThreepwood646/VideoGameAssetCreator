@@ -123,7 +123,7 @@ Blender and Unity it found.
 | 16 | ComfyUI Desktop 0.34.0 or newer (tested with 0.45.3) | The engine that runs the picture, 3D and rigging models. The app talks to it over HTTP at the ports in `backend/config.yaml` | about 5 GB with its Python | comfy.org (its own installer) | GPL-3.0 | By hand |
 | 17 | Custom node packs: `ComfyUI-SkinToken` (rigging), `vgac-nodes` (the project's own mesh loader, in this repo), plus the packs that supply the TRELLIS.2, Hunyuan3D and background-removal nodes | Parts of the graphs the app sends | small each | ComfyUI Manager, or each pack's GitHub page | Each pack's own licence | By hand. The app's own "Is everything ready?" check lists which node classes are missing |
 | 18 | Models, exact file names from `backend/vgac/data/models.yaml` | The picture, side-view, 3D and rigging models | About 60 to 100 GB in all (estimate) | Each model's official page (Hugging Face) | See the next table | By hand |
-| 19 | Add-ons (small LoRA files), names from `backend/vgac/data/addons.yaml` | Extra looks (clay, PS1 style) and the two the side views need | tens to hundreds of MB each | Hugging Face pages named in `addons.yaml` | Apache-2.0 | By hand |
+| 19 | Add-ons (small LoRA files), names from `backend/vgac/data/addons.yaml` | Extra looks (clay, PS1 style), the two the side views need, and the late-90s add-on the Retro 64 look always loads (in the Starter set) | tens to hundreds of MB each | Hugging Face pages named in `addons.yaml` | Apache-2.0 | By hand |
 
 Model files the check looks for (exact names, no folder is ever listed):
 
@@ -137,6 +137,7 @@ Model files the check looks for (exact names, no folder is ever listed):
 | `qwen_image_edit_2511_fp8mixed.safetensors` | Side views and picture edits | B | Apache-2.0 | Yes |
 | `qwen-image-edit-2511-multiple-angles-lora.safetensors` | Side views | B | Apache-2.0 | Yes |
 | `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` | Fast side views | B | Apache-2.0 | Yes |
+| `zit_ps1_redmond.safetensors` (in `loras\VGAC`) | The Retro 64 look's pictures (late-90s add-on); a warning when missing, since only that look needs it | B | Apache-2.0 | Yes, for Retro 64 |
 | `birefnet.safetensors` | Cutting the picture out | B | MIT | Yes |
 | `trellis_2_int8_convrot.safetensors` | TRELLIS.2, builds the 3D model | A | MIT | Yes |
 | `Hunyuan3D-2mv.fp16.safetensors` | Hunyuan3D, the other 3D route | A | Tencent Hunyuan Community Licence | Optional |

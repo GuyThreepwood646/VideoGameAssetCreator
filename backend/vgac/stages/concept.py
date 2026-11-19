@@ -9,7 +9,9 @@ instruction edit of the parent image, optionally limited to a mask. adjust: re-r
 Add-ons (data/addons.yaml): the recipe's defaults, then the project style lock's `loras` (registry ids, optionally
 "id:strength"), then the version's `addons` knob ({id: off | subtle | normal | strong}). Each is applied only when the
 chosen model is in its base_models; unknown ids are reported in metrics.addons_unknown, never a failure. The version
-records the recipe (metrics.recipe) and the add-ons applied (params.addons_applied, metrics.addons).
+records the recipe (metrics.recipe) and the add-ons applied (params.addons_applied, metrics.addons). An add-on the look's
+recipe loads (Retro 64's late-90s add-on) that the engine does not have stops the step before anything is drawn, with
+what is missing and how to get it (missing_look_addons); the setup check lists the same file.
 """
 
 from __future__ import annotations
@@ -135,6 +137,33 @@ def resolve_concept_addons(sc: StageContext, model: str, params: dict[str, Any],
     return reference.resolve_addons(model, "concept", rec["addons"], lock.get("loras"), params.get("addons") or None)
 
 
+def missing_look_addons_message(missing: list[dict[str, Any]], look: str) -> str:
+    """The plain sentence for a look's add-on the engine lacks (the setup check names the same file)."""
+    names = ", ".join(f"{a.get('label') or a['id']} ({str(a['file']).replace(chr(92), '/').rsplit('/', 1)[-1]})" for a in missing)
+    one = len(missing) == 1
+    return (f"The {look} look needs {'an add-on that is' if one else 'add-ons that are'} not installed in ComfyUI: {names}. "
+            "It is part of the Starter set: on the System page choose 'Get or check the models' and get the Starter set "
+            "again (files you have are skipped), or run setup\\Setup-Extras.ps1 -Models -Install. Then restart ComfyUI "
+            "and run this step again.")
+
+
+async def missing_look_addons(sc: StageContext, applied: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The add-ons the look's recipe loads (source "recipe") that the concept engine does not
+    list. Empty when all are there, or when the engine cannot be asked (the step then runs as before)."""
+    from ..preflight import combo_choices, has_file
+
+    need = [a for a in applied if a.get("source") == "recipe" and a.get("file")]
+    if not need:
+        return []
+    try:
+        choices = combo_choices(await sc.client().object_info("LoraLoaderModelOnly"), "lora_name")
+    except Exception:  # noqa: BLE001  (an engine that does not answer is the submit's problem)
+        return []
+    if choices is None:
+        return []
+    return [a for a in need if not has_file(choices, str(a["file"]))]
+
+
 async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     rec = stage_recipe(sc)
     model = resolve_model(sc, params)
@@ -162,6 +191,10 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
                   addons_applied={a["id"]: a["strength"] if a["strength"] != "custom" else a["value"] for a in applied})
     sc.set_metrics(recipe=reference.recipe_record(rec, "concept", "addons"), addons=applied, addons_ignored=adds["ignored"],
                    addons_unknown=adds["unknown"], prompt_final=prompt_with_triggers(prompt, applied))
+    missing = await missing_look_addons(sc, applied)
+    if missing:
+        style = getattr(sc, "style", None) or {}
+        raise RuntimeError(missing_look_addons_message(missing, str(style.get("look") or style.get("label") or "chosen")))
     sc.use_model(model)
     for a in applied:
         sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])

@@ -292,6 +292,10 @@ Want to help with the code? Read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Other documents: [ARCHITECTURE.md](ARCHITECTURE.md) (how the application is built), [docs/API.md](docs/API.md) (the full API contract), [docs/BACKEND.md](docs/BACKEND.md) (backend code map), [docs/BUILD-THE-EXE.md](docs/BUILD-THE-EXE.md) (building the launcher).
 
+## Support the project
+
+VGAC is free. If it is useful to you, you can [support it on Ko-fi](https://ko-fi.com/guythreepwood646). It is optional, and nothing in the app depends on it.
+
 ---
 
 ## Licence

@@ -6,6 +6,7 @@ import { useEventMode } from './events'
 import { closeGuide, openGuide, useGuide } from './guide'
 import { notifyEnabled, setNotifyEnabled, Toasts } from './notify'
 import { PictureZoom } from './components/PictureViewer'
+import { SupportLink } from './SupportLink'
 
 export default function App() {
   const mode = useEventMode()
@@ -40,6 +41,7 @@ export default function App() {
         )}
         <SetupBadge />
         <HealthBadge />
+        <SupportLink />
         <HelpMenu />
       </header>
       <EngineBanner />

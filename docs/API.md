@@ -80,8 +80,8 @@ Library
 
 concept: model, seed, width, height, steps, readiness_block (bool), prompt_override
 turnaround: views [front,left,back,right,quarter,top], turn_method "standard|sheet|shadow_free" (sheet: humanoid only, shadow_free: prop_rigid only; the knob's options_by_category lists them; another category drops the knob), lora_strength (standard only), seed, auto_reroll (bool)
-mesh: engine "trellis|hy3d", input_view "concept|front|quarter", target_faces, texture_size, upsample (1024|1536), seed, remesh (bool), head_build (bool, humanoid; empty means on where it applies), head_crop (0.18 to 0.4, empty means 0.26)
-prep: height_m, symmetric (bool), pivot "base|center", smooth_angle
+mesh: engine "trellis|hy3d", builder "trellis2|pixal3d" (trellis engine; pixal3d builds from the front, left, back and right views and is listed, and accepted, only when its model files are present; recorded in params, metrics.builder and metrics.recipe.mesh.builder; a build records metrics.camera_fov_deg and camera_fov_source), camera_angle (Pixal3D only, degrees 1 to 170; empty is the front picture's own estimate, "picture"; a number is "chosen"), input_view "concept|front|quarter", target_faces, texture_size, upsample (1024|1536), seed, remesh (bool), head_build (bool, humanoid; empty means on where it applies), head_crop (0.18 to 0.4, empty means 0.26)
+prep: height_m, symmetric (bool), pivot "base|center", smooth_angle, quarter_pictures (bool, humanoid, default true; false leaves the two three-quarter pictures out of the picture projection and the face pass)
 rig: template "auto|mixamo|generic|none", target_faces, group_per_vertex, bottom_center_origin, bend_test (bool)
 export: lods [ratios], collider "hull|none", formats [fbx, glb], unity (bool), clips_library "ual1|ual2|none", sprites (bool), sprite_directions, sprite_size
 

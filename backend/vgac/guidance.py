@@ -82,6 +82,13 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "auto_reroll": {"simple": True, "help": {"meaning": "Retry a view automatically when it fails the consistency check.", "why": "Saves you clicking regenerate on bad views.", "technical": "Auto re-roll on failed checks"}},
     "engine": {"simple": True, "help": {"meaning": "Which image-to-3D model (builder) to use.", "why": "TRELLIS.2 gives the most detail from one picture; Hunyuan3D uses all four side views, better for long animals.", "technical": "Image-to-3D engine: trellis or hy3d"},
                "options": {"trellis": "TRELLIS (most detail from one picture)", "hy3d": "Hunyuan (uses all four sides; good for long animals)"}},
+    "builder": {"simple": True, "help": {"meaning": "Which model builds the 3D shape: TRELLIS.2 from one picture, or Pixal3D from the front, left, back and right pictures together.",
+                                         "why": "Pixal3D sees all four sides, so the head and ears follow the side pictures; TRELLIS.2 guesses the sides from the front picture. Either way your pictures are painted on afterwards. Pixal3D is offered only when its model files are installed.",
+                                         "technical": "TRELLIS.2 (one picture) or Pixal3D multi-view (four views, camera angle estimated from the front picture by MoGe-2)"},
+                "options": {"trellis2": "TRELLIS.2 (from one picture)", "pixal3d": "Pixal3D (from all four sides)"}},
+    "camera_angle": {"simple": False, "help": {"meaning": "For Pixal3D only: how wide the camera's view is taken to be in the four pictures, in degrees. Empty uses the angle estimated from your front picture.",
+                                              "why": "The estimate keeps the eyes open on the model; a narrow angle such as 20 can give closed eyelids but on some faces fits the painted face better. Try both and keep the better one.",
+                                              "technical": "Pixal3DMultiViewConditioning fov; empty wires MoGe-2's horizontal field of view of the framed front crop (MoGeGeometryToFOV)"}},
     "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front. Left alone, a person is built from the three-quarter view, or from the other three-quarter view when the first one lost the pose of the arms and legs in your picture; a view you pick yourself is always used.", "technical": "Conditioning image selection; input_view_origin records whether the view was chosen by hand"},
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view", "quarter2": "Three-quarter view (other side)"}},
     "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
@@ -236,6 +243,9 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_closeup_guided": {"simple": False, "help": {"meaning": "With a picture of the real face (your own close-up in this step, or the Face picture in step 0.5), the close-up is drawn with that face's features.",
                                                       "why": "The close-up keeps the painting's pose, expression and light and takes the eyes, nose, mouth, skin and hair from your picture, so the model looks more like the person. Without a face picture this changes nothing.",
                                                       "technical": "Qwen-Image-Edit with the painted crop as Picture 1 and the face picture as Picture 2; two tries, each checked like any close-up"}},
+    "quarter_pictures": {"simple": False, "help": {"meaning": "Whether the two three-quarter pictures from step 2 are painted onto the model, the head included.",
+                                                    "why": "They fill in the cheeks and the sides of the head. If the head shows a second ear or a seam on the cheek, try it off: the front, side and back pictures still paint the model.",
+                                                    "technical": "Leaves the quarter and quarter2 cut-outs out of the picture projection and the face pass's side views"}},
     "face_sides": {"simple": False, "help": {"meaning": "Paints the sides of the face from the side views of step 2, where the front picture cannot reach.",
                                              "why": "It hides the seam where the front painting ends on the cheek. Turn it off if it leaves smudges by the ears or the neck; the front of the face is unchanged either way.",
                                              "technical": "Second projections from the quarter and side cut-outs, only where the front painted little"}},
@@ -300,13 +310,46 @@ def _size_fix(c: dict[str, Any]) -> dict[str, Any]:
     return {"stage": "prep", "params": params}
 
 
-FACING_UNSURE = ("The model may face the wrong way: from the outline alone its front and its back look almost the same, and "
-                 "nothing else could tell them apart (the toes: {toes_reason}; the colours of the front and back pictures did not "
-                 "settle it either). It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
-                 "from the front; if the face is on the back of the head, turn it round.")
+FACING_UNSURE = ("The model may face the wrong way. Its outline looks almost the same from the front and from behind, its toes "
+                 "could not be read because {toes_reason}, and the colours of the front and back pictures did not settle it either. "
+                 "It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model from the front; "
+                 "if the face is on the back of the head, turn it round.")
 FACING_UNSURE_FLAT = ("The model may face the wrong way: the 3D step built it flat, like a card, so its front cannot be told from "
                       "its back. It was turned {value} degrees, keeping the side the 3D step built as its front. Look at the model "
                       "from the front; if the face is on the back, turn it round. A flat model may also be worth building again.")
+
+
+FACING_OK = {
+    "tests": ("The two ways of telling which way the model faces (its outline against the side pictures, and where its toes "
+              "point) agree. It was turned {applied} degrees."),
+    "colour": ("Its outline looks almost the same from the front and from behind, and its toes could not be read because "
+               "{toes_reason}, but the colours of the front and back pictures confirm the side the 3D step built as its front. "
+               "It was turned {value} degrees."),
+    "colour_overruled": ("Its outline looks almost the same from the front and from behind, and its toes could not be read "
+                         "because {toes_reason}, but the colours of the front and back pictures show the 3D step built it facing "
+                         "backwards, so it was turned round: {value} degrees."),
+    "chosen": "It was turned {value} degrees, as you chose.",
+}
+
+
+def _facing_ok(c: dict[str, Any]) -> str:
+    state = _var(c, "state") or "tests"
+    text = FACING_OK.get(state, FACING_OK["tests"])
+    if state == "chosen" and _var(c, "differs"):
+        text += " The app's own tests would have turned it {decided} degrees."
+    if state == "tests" and _var(c, "applied") is None:
+        text = text.split(" It was turned")[0]
+    return text
+
+
+def _facing_fail(c: dict[str, Any]) -> str:
+    if _var(c, "unsure"):
+        return FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE
+    text = ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but "
+            "its toes say {toes_turn} degrees, {value} degrees apart.")
+    if _var(c, "by") and _var(c, "applied") is not None:
+        text += " It went with the {by} and was turned {applied} degrees."
+    return text + " Look at the model from the front; if the face is on the back of the head, turn it."
 
 
 def _facing_fix(c: dict[str, Any]) -> dict[str, Any] | None:
@@ -490,11 +533,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "facing_tests": {
         "severity": "warn",
-        "ok": "The two ways of telling which way the model faces (its outline against the side pictures, and where its toes point) agree.",
-        "fail": lambda c: (FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE) if _var(c, "unsure") else (
-                 "The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but its "
-                 "toes say {toes_turn} degrees, {value} degrees apart. Look at the model from the front; if the face is on the back "
-                 "of the head, turn it."),
+        "ok": _facing_ok,
+        "fail": _facing_fail,
         "fix_label": lambda c: "Turn it round" if _var(c, "unsure") else "Turn it to face forward",
         "vars": lambda c: {"outline_turn": _var(c, "outline_turn") if _var(c, "outline_turn") is not None else "?",
                            "toes_turn": _var(c, "toes_turn") if _var(c, "toes_turn") is not None else "?"},

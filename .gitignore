@@ -24,16 +24,16 @@ unity-sandbox/UserSettings/
 unity-sandbox/Assets/VGAC/
 unity-sandbox/Assets/VGAC.meta
 
-# Experiment outputs and scratch
-bakeoff/out/
-bakeoff/realistic_test/
-bakeoff/rig_paint_experiment/
-bakeoff/__pycache__/
+# Experiment outputs and scratch. Each bakeoff experiment gets its own subfolder holding renders,
+# models, downloaded weights and throwaway scripts; all of it stays on the owner's computer. The
+# tools at the top of bakeoff/ and the recipes are the parts worth keeping, so they are not ignored.
+bakeoff/*/
+!bakeoff/recipes/
 tools/e2e_report.json
 exports/
 
-# Desktop launcher build output
-desktop/dist/
+# Desktop launcher build output (dist/, dist-new/, and any other dist* the build writes)
+desktop/dist*/
 desktop/node_modules/
 
 # Animation packs: each user downloads these at setup (setup/downloads.json, setup/Setup-Extras.ps1 -Packs)
