@@ -124,7 +124,8 @@ public static partial class T
         var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "t3b");
         Mover(s2, null).Start(to2, new Progress());
         string text2 = MoveView.RestartText(s2.Root);
-        Check(text2.Contains("delete it by hand") && !text2.Contains("keep"), "T3: after an ordinary move it says the old folder can be deleted: " + text2);
+        // the scene's old folder holds a file VGAC did not make (keepme.txt): it is named and kept (A5), so "delete by hand" is not offered
+        Check(text2.Contains("keepme.txt") && text2.Contains("keep them") && !text2.Contains("delete it by hand"), "T3: after an ordinary move a leftover is named and kept, not offered for deletion: " + text2);
     }
 
     static void T10ChoosingAFolderIsGated()

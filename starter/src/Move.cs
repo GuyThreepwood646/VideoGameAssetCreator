@@ -215,25 +215,33 @@ namespace Vgac.Starter
         // there by 'Finish anyway') must be kept.
         public static string RestartText(string root)
         {
-            string to = "the new folder", old = null, leftover = null; bool keep = false; long bytes = 0;
+            string to = "the new folder", old = null, leftover = null; bool keep = false; long bytes = 0; var left = new List<string>();
             try
             {
                 var d = Json.ParseObject(File.ReadAllText(MoveRules.RestartPath(root), Encoding.UTF8));
                 to = Convert.ToString(d["moved_to"]); old = Convert.ToString(d["old_folder"]);
                 object k; keep = d.TryGetValue("keep_old_comfyui", out k) && k is bool && (bool)k;
+                object lo; if (d.TryGetValue("leftovers", out lo) && lo is System.Collections.IEnumerable && !(lo is string))
+                    foreach (object x in (System.Collections.IEnumerable)lo) if (x != null) left.Add(Convert.ToString(x));
                 object lc; if (d.TryGetValue("leftover_comfyui", out lc) && lc != null) leftover = Convert.ToString(lc);
                 object lb; if (d.TryGetValue("leftover_bytes", out lb) && lb != null) bytes = Convert.ToInt64(lb);
             }
             catch (Exception) { }
             string head = "The big files are now in " + to + ". VGAC has to be restarted to use them: close this window and press the button below.";
             if (old == null) return head;
+            string text;
             if (keep)
             {
-                string text = head + "\r\n\r\nVGAC's own ComfyUI was NOT moved: it keeps running from " + Path.Combine(old, "comfyui") + ". Keep the old folder (" + old + "); do not delete it.";
+                text = head + "\r\n\r\nVGAC's own ComfyUI was NOT moved: it keeps running from " + Path.Combine(old, "comfyui") + ". Keep the old folder (" + old + "); do not delete it.";
                 if (leftover != null) text += "\r\n\r\nA leftover copy of ComfyUI is in " + leftover + " (" + (bytes / (1024.0 * 1024.0)).ToString("0.0") + " MB). It is no longer used by VGAC and is not running. It can be deleted by hand once you are happy with the new place.";
-                return text;
             }
-            return head + "\r\n\r\n" + OldFolderSentence(old);
+            else text = head + "\r\n\r\n" + (left.Count > 0 ? "The old folder (" + old + ") is no longer used by VGAC." : OldFolderSentence(old));
+            if (left.Count > 0)
+            {
+                // something the move did not copy is still in the old folder: each is named and kept, never offered for deletion here
+                text += "\r\n\r\nThe old folder still holds things the move did not copy. They are not VGAC's to delete, so keep them:\r\n   " + string.Join("\r\n   ", left.ToArray());
+            }
+            return text;
         }
 
         public static string OldFolderSentence(string oldFolder)
@@ -574,7 +582,7 @@ namespace Vgac.Starter
                 }
             }
             if (note != null) log.Line("move: " + note);
-            WriteRestartMarker(j, comfyLeftBehind);         // only now: everything that could still fail is behind us
+            WriteRestartMarker(j, comfyLeftBehind, OldLeftovers(j));   // only now: everything that could still fail is behind us
             if (!DeleteJournal()) return "The files are switched to the new folder, but VGAC could not remove the move's record (local\\move.json). Restart VGAC; if it says a move is unfinished, open Maintenance and press Continue.";
             log.Line("move: switched to " + j.To + "; the old folder " + j.From + " is no longer used");
             return null;
@@ -590,10 +598,38 @@ namespace Vgac.Starter
             catch (Exception e) { log.Line("move: could not remove the marker of the ComfyUI copy in " + copyDir + " (" + e.Message + ")"); }
         }
 
-        void WriteRestartMarker(MoveJournal j, bool comfyLeftBehind)
+        // What is in the old folder that the move did not copy (the moved names and the marker are not listed: their copies are VGAC's).
+        // Saved in the restart marker so the window can name each one and say to keep it.
+        List<string> OldLeftovers(MoveJournal j)
+        {
+            var res = new List<string>();
+            try
+            {
+                if (!Directory.Exists(j.From)) return res;
+                var moved = new HashSet<string>(j.Names, StringComparer.OrdinalIgnoreCase);
+                foreach (string e in Directory.GetFileSystemEntries(j.From))
+                {
+                    string n = Path.GetFileName(e);
+                    if (moved.Contains(n) || string.Equals(n, DataFolders.MarkerName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.Equals(n, "tools", StringComparison.OrdinalIgnoreCase) && Directory.Exists(e))
+                    {
+                        // tools holds uv and node (moved) beside whatever else the person or an older version left: only the rest is listed
+                        foreach (string t in Directory.GetFileSystemEntries(e))
+                            if (!moved.Contains(Path.GetFileName(t)) && !moved.Contains("tools\\" + Path.GetFileName(t))) res.Add(t);
+                        continue;
+                    }
+                    res.Add(e);
+                }
+            }
+            catch (Exception) { }
+            return res;
+        }
+
+        void WriteRestartMarker(MoveJournal j, bool comfyLeftBehind, List<string> leftovers)
         {
             var d = new Dictionary<string, object>();
             d["moved_to"] = j.To; d["old_folder"] = j.From;
+            d["leftovers"] = leftovers ?? new List<string>();
             if (comfyLeftBehind)
             {
                 d["keep_old_comfyui"] = true;     // the window must say to KEEP the old folder

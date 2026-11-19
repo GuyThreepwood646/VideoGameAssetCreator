@@ -1,4 +1,4 @@
-// The ninth review: while a move is unfinished nothing may change the old place or run on it; Continue re-checks everything.
+﻿// The ninth review: while a move is unfinished nothing may change the old place or run on it; Continue re-checks everything.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,6 +21,7 @@ public static partial class T
         J1UpdateCrashKeepsAStartableExe();
         J2CommittedCopyMustMatchGit();
         K1NetworkFolderRefused();
+        K2OldFolderLeftoversAreNamedNotDeleted();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -207,6 +208,22 @@ public static partial class T
             return 0;
         }
         bool pulled;
+    }
+
+    // A5: after the switch, what the move did not copy in the old folder is named and kept; "delete by hand" only when nothing is left
+    static void K2OldFolderLeftoversAreNamedNotDeleted()
+    {
+        var s = Movable();
+        Put(Path.Combine(s.Data, "their-notes.txt"), "not VGAC's");
+        string to = Path.Combine(Tmp("k2-target"), "k2");
+        Check(Mover(s, null).Start(to, new Progress()) == null, "K2: the move starts with a foreign file in the old folder");
+        string text = MoveView.RestartText(s.Root);
+        Check(text.Contains("their-notes.txt") && text.Contains("keep them") && !text.Contains("delete it by hand"), "K2: the leftover is named and kept, not offered for deletion: " + text);
+        var s2 = Movable(); string to2 = Path.Combine(Tmp("k2-target"), "k2b");
+        File.Delete(Path.Combine(s2.Data, "keepme.txt"));   // nothing left in the old folder except what the move copied
+        Mover(s2, null).Start(to2, new Progress());
+        string text2 = MoveView.RestartText(s2.Root);
+        Check(text2.Contains("delete it by hand") && !text2.Contains("keep them"), "K2: with nothing left the old folder may be deleted by hand: " + text2);
     }
 
     // A6: a network folder is refused as a home for the big files
