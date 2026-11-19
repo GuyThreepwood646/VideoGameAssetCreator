@@ -307,7 +307,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
                    decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
-                   **head_metrics(report, head))
+                   shape_loss=report.get("shape_loss"), **head_metrics(report, head))
     if report.get("grid"):
         sc.set_metrics(**grid_metrics(report["grid"]))
         tiling = report.get("tiling_png")
