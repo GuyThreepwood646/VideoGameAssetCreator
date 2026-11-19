@@ -321,7 +321,7 @@ export const stages: StageInfo[] = [
         type: 'number',
         min: 0.01,
         max: 100,
-        step: 0.05,
+        step: 0.01,
         default: 1.8,
         // Scenery snaps to the grid instead (grid_footprint, grid_height, grid_m).
         categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage'],
