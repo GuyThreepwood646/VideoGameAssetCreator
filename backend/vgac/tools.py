@@ -7,6 +7,8 @@ job context so a cancel can kill it.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -62,8 +64,35 @@ def blender_cmd(settings: Settings, script: str, args: list[Any]) -> list[str]:
     return [str(settings.blender_exe), "-b", "--python", str(script_path), "--", *[str(a) for a in args]]
 
 
+LONG_PATH_LIMIT = 260  # Windows MAX_PATH: a path this many characters or longer cannot be opened by Blender's Python
+_ABSOLUTE_LOOKING = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def check_blender_paths(args: list[Any]) -> None:
+    """Raise ToolError before Blender starts when a path argument is too long for Windows to open.
+
+    Path objects and strings that look like absolute paths (a drive or a UNC share) are checked; other arguments
+    are ignored. Without this check Blender's glTF importer fails with only "Please select a file"."""
+    longest = 0
+    for a in args:
+        if isinstance(a, Path):
+            text = str(a)
+        elif isinstance(a, str) and _ABSOLUTE_LOOKING.match(a):
+            text = a
+        else:
+            continue
+        n = len(os.path.abspath(text))
+        if n >= LONG_PATH_LIMIT:
+            longest = max(longest, n)
+    if longest:
+        raise ToolError(f"A file path is too long for Blender ({longest} characters; the limit is {LONG_PATH_LIMIT - 1}). "
+                        "Move the library to a shorter folder, for example C:\\VGAC\\library, in Settings "
+                        "(Library folder).")
+
+
 def run_blender(settings: Settings, script: str, args: list[Any], log_path: Path | None = None, timeout: float | None = 3600,
                 on_start: Callable[[subprocess.Popen], None] | None = None) -> str:
+    check_blender_paths(args)
     return run_process(blender_cmd(settings, script, args), log_path=log_path, timeout=timeout, on_start=on_start)
 
 
