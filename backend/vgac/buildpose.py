@@ -685,9 +685,9 @@ A_POSE = ("both arms straight and held out from the body at about 45 degrees, ha
 POSE_READY = "Redraw the character ready for 3D in a wide A pose: " + A_POSE
 # The no-added-clothing sentence of all three redraws (the pose redraw, the hand redraw, the whole-figure redraw). It
 # names no garment on purpose: a sentence that says "no socks" can add socks. It speaks of what covers a body part.
-# UNTESTED ON A CARD until the WP-09 sheet (bakeoff/wp09) is read.
-KEEP_WORN = (" Do not add, remove or change anything the character wears: each hand, arm, leg and foot stays as covered, or as "
-             "bare, as it is in the picture.")
+# Chosen on the WP-09 card test: the first wording ("as covered, or as bare") added fingerless gloves to the caped hero in the
+# hand redraw (1 of 25 draws; "covered" may cue coverings); this one (and two others) added nothing in 18 draws.
+KEEP_WORN = " Keep the outfit exactly as in the picture, with the same skin showing."
 POSE_SUFFIX = (" Change only the pose." + KEEP_WORN + " Keep everything else exactly the same: the same character, face, hair, skin colour, "
                "every garment and its colours and materials, everything worn on the arms, hands and legs, the body "
                "proportions and the art style, camera angle, size and framing, the whole body in frame, on a plain white "
