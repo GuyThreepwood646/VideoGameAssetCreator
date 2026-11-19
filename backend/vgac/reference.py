@@ -48,7 +48,8 @@ DELIGHT_OPTIONS = ("auto", "remove", "keep")
 # Recipes: an add-on's three strength steps, plus "off"; the prep shading choice (auto follows the recipe).
 STRENGTH_NAMES = ("subtle", "normal", "strong")
 ADDON_CHOICES = ("off",) + STRENGTH_NAMES
-# The one model id a personal LoRA made for Qwen-Image-Edit names (not a painter: models.yaml has no entry for it).
+# The one model id a personal LoRA made for Qwen-Image-Edit names. It has an entry in models.yaml (qwen_edit) but no
+# `concept` flag, so it is not a painter and is not offered in the concept step.
 EDIT_MODEL = "qwen_edit"
 SHADING_OPTIONS = ("auto", "smooth", "flat")
 # Step 3's builders (stages/mesh.py): TRELLIS.2 from one picture (the default), Pixal3D from four views.

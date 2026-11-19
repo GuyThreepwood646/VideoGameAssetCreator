@@ -335,6 +335,30 @@ def test_prefill_reads_qwen_edit_from_file_name(mine_settings):
     assert out["family"] == "Qwen-Image-Edit" and out["base_models"] == ["qwen_edit"] and out["warning"] == ""
 
 
+@pytest.mark.parametrize("name", ["qwen-edit-style.safetensors", "qie2511_x.safetensors", "my_qie2511_x.safetensors",
+                                  "Qwen_Image_Edit_2511.safetensors"])
+def test_prefill_reads_common_qwen_edit_names(mine_settings, name):
+    from vgac.user_addons import prefill
+
+    out = prefill({}, {LORA_KEY: {}}, name)
+    assert out["family"] == "Qwen-Image-Edit" and out["base_models"] == ["qwen_edit"]
+
+
+def test_prefill_metadata_beats_a_qwen_file_name(mine_settings):
+    from vgac.user_addons import prefill
+
+    out = prefill({"modelspec.architecture": "flux-1-dev/lora"}, {LORA_KEY: {}}, "flux_like_qwen_image.safetensors")
+    assert out["family"] == "FLUX.1" and out["base_models"] == [] and "FLUX.1" in out["painter_note"]
+
+
+def test_prefill_qwen_in_metadata_beats_other_family_in_metadata(mine_settings):
+    from vgac.user_addons import prefill
+
+    out = prefill({"modelspec.architecture": "qwen-image-edit-2511/lora", "modelspec.title": "flux-1-dev style"},
+                  {LORA_KEY: {}}, "x.safetensors")
+    assert out["family"] == "Qwen-Image-Edit" and out["base_models"] == ["qwen_edit"]
+
+
 def test_clay_name_is_not_read_as_anima(mine_settings):
     from vgac.user_addons import prefill
 

@@ -197,8 +197,19 @@ TRIGGER_FIELDS = ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words",
 UNSURE = "We could not tell which model this was made for."
 QWEN_EDIT_FAMILY = "Qwen-Image-Edit"
 QWEN_FAMILY = "Qwen-Image"
-QWEN_EDIT_RE = re.compile(r"qwen[-_ ]?image[-_ ]?edit")
+# Qwen-Image-Edit names: "qwen-image-edit", "qwen-edit", and the 2511 release as "qie2511" (not after a letter, so
+# "my_qie2511_x" matches; \b would not fire after an underscore).
+QWEN_EDIT_RE = re.compile(r"qwen[-_ ]?(image[-_ ]?)?edit|(?<![a-z])qie[-_ ]?\d{4}")
 QWEN_RE = re.compile(r"qwen[-_ ]?image")
+
+
+def qwen_kind(text: str) -> str:
+    """"Qwen-Image-Edit" or "Qwen-Image" when the text (lower case) names one, else ""."""
+    if QWEN_EDIT_RE.search(text):
+        return QWEN_EDIT_FAMILY
+    if QWEN_RE.search(text):
+        return QWEN_FAMILY
+    return ""
 # Shown on a LoRA made for plain Qwen-Image that is used for picture edits (made_for "qwen_image").
 QWEN_PLAIN_WARNING = ("This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. "
                       "It may only partly work, or change results in ways you do not expect. Try it at Subtle first.")
@@ -314,17 +325,18 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
         family, picks = "Chroma", ["chroma"]
     elif re.search(r"\banima\b", arch):
         family, picks = "Anima", ["anima"]
-    elif QWEN_EDIT_RE.search(both):
-        family, picks = QWEN_EDIT_FAMILY, [reference.EDIT_MODEL]
-    elif QWEN_RE.search(both):
-        family, picks = QWEN_FAMILY, [reference.EDIT_MODEL]
-        warning = QWEN_PLAIN_WARNING
     else:
-        for pattern, fam in OTHER_FAMILIES:
-            if pattern.search(arch):
-                family = fam
-                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models."
-                break
+        # Order: Qwen named in the metadata, then the other families named in the metadata, then Qwen named in the
+        # file name or the name fields. A file name never outweighs what the metadata says.
+        other = next((fam for pattern, fam in OTHER_FAMILIES if pattern.search(arch)), "")
+        qwen = qwen_kind(arch) or ("" if other else qwen_kind(names))
+        if qwen:
+            family, picks = qwen, [reference.EDIT_MODEL]
+            if qwen == QWEN_FAMILY:
+                warning = QWEN_PLAIN_WARNING
+        elif other:
+            family = other
+            note = f"It looks like it was made for {other}, which this app does not use. It will probably not work with any of these models."
     if not family:
         family = _family_from_keys(tensors)
         if family == "Stable Diffusion":
