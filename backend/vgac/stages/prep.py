@@ -241,7 +241,9 @@ async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Pat
                    shrink_rebaked=True, texture_size=tex)
     sc.register("glb", out)
     sc.register("report", sc.dir / "prep_report.json")
-    result = await asyncio.to_thread(texture_pass, out, full, maps, sc.dir, tex, delight, pbr_fix, True, look, light_after)
+    # The maps were baked onto the shrunk model (out), so that is the bake reference the layout check compares against
+    # (the same rule as the normal flow: bake_glb = out once rebaked). The painted full-detail model is the bake source only.
+    result = await asyncio.to_thread(texture_pass, out, out, maps, sc.dir, tex, delight, pbr_fix, True, look, light_after)
     for key, p in result["files"].items():
         sc.register(key, p)
     sc.set_metrics(**result["metrics"])

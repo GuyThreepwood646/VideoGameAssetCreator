@@ -77,3 +77,37 @@ def test_no_remesh_unless_asked():
     g = hy3d.hy3d_graph(VIEWS, "p", seed=733377461, unwrap_resolution=2048, unwrap_padding=8)
     assert "remesh" not in g
     assert g["unwrap"]["inputs"]["mesh"] == ["mesh", 0]
+
+
+def test_shrink_measures_the_paint_against_the_shipped_model(tmp_path, monkeypatch):
+    """The layout check (bake_match) must compare the maps with the shrunk model they were baked onto, not with the
+    painted full-detail bake source. Before the fix, shrink_after_paint passed the full model as the bake reference,
+    so bake_match read 0 on a correct paint."""
+    import asyncio
+
+    from vgac.stages import prep as prep_mod
+
+    out = tmp_path / "prep.glb"
+    out.write_bytes(b"shipped")
+    seen = {}
+
+    def fake_texture_pass(final_glb, bake_glb, maps, out_dir, tex, delight, pbr_fix, fill=False, look=None, light_after=False):
+        seen["final"] = final_glb
+        seen["bake"] = bake_glb
+        return {"metrics": {}, "files": {}}
+
+    async def fake_blender(script, args, log_name=None):
+        (tmp_path / "prep_report.json").write_text('{"triangles": 2900, "rebaked": true, "rebake_maps": {}}')
+
+    class FakeSC:
+        dir = tmp_path
+        def progress(self, *a, **k): pass
+        async def blender(self, *a, **k): await fake_blender(*a, **k)
+        def register(self, *a, **k): pass
+        def set_metrics(self, **k): pass
+
+    monkeypatch.setattr(prep_mod, "texture_pass", fake_texture_pass)
+    size = {"size_m": 1.8, "size_axis": "height"}
+    asyncio.run(prep_mod.shrink_after_paint(FakeSC(), out, {}, 3000, size, "base", 60.0, "smooth", 2048, {}, "auto", False, False, True))
+    assert seen["final"] == out
+    assert seen["bake"] == out
