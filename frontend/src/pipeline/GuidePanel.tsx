@@ -31,6 +31,8 @@ type Props = {
   onRun: () => void
   onRunNext: (next: StageId) => void
   onRetry: (failed: Version) => void
+  // Delete the given stopped or failed version(s) and make the step again from the start (StagePanel asks first).
+  onStartAgain: (gone: Version[]) => void
   // Stop this step now, run the stopped step again with the same settings, or leave it stopped.
   onStop: () => void
   onResume: () => void
@@ -145,7 +147,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStartAgain, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -240,6 +242,10 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
           <button type="button" className="link small" disabled={busy} onClick={onDismissStopped} title="Sets the stopped version aside so you can start this step differently or carry on with what you have">
             Leave it stopped
           </button>
+          {' or '}
+          <button type="button" className="link small" disabled={busy} onClick={() => onStartAgain(stoppedVersions(asset, stage))} title="Deletes the stopped version and makes this step again from the start">
+            Delete and start again
+          </button>
         </div>
       )
       break
@@ -254,11 +260,21 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
           <span className="btn-est">{fmtDuration(est)}</span>
         </button>
       )
-      extra = failed.error ? (
-        <Disclosure label="Show details">
-          <pre className="raw-error">{failed.error}</pre>
-        </Disclosure>
-      ) : null
+      extra = (
+        <>
+          {failed.error ? (
+            <Disclosure label="Show details">
+              <pre className="raw-error">{failed.error}</pre>
+            </Disclosure>
+          ) : null}
+          <div className="muted small">
+            Or{' '}
+            <button type="button" className="link small" disabled={busy} onClick={() => onStartAgain([failed])} title="Deletes the failed version and makes this step again from the start">
+              Delete and start again
+            </button>
+          </div>
+        </>
+      )
       break
     }
     case 'review': {

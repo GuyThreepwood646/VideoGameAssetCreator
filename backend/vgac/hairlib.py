@@ -503,6 +503,15 @@ def bald_state(db: Session, a: Asset) -> str:
         return "none"
     v = _selected(db, a.id, "turnaround")
     if v is None:
+        # A stopped or failed version is not kept (jobs.py), so with nothing kept the newest version tells the state.
+        from sqlalchemy import select as sql_select
+
+        newest = db.scalar(sql_select(Version).where(Version.asset_id == a.id, Version.stage == "turnaround")
+                           .order_by(Version.created_at.desc()).limit(1))
+        if newest is not None and is_stopped(newest):
+            return "stopped"
+        if newest is not None and newest.status == "error":
+            return "failed"
         return "none"
     if v.status in ("queued", "running"):
         return "drawing"
