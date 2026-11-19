@@ -219,7 +219,8 @@ BACK_SIDES_SENTENCE = ("Picture 2 shows this character's left side and Picture 3
 # D21 (2026-11-18): only humanoids get POSE_KEEP. On a static building or prop the sentence put people into the pictures
 # (4 of 6 with it, 0 of 6 without, same seed). Non-humanoid views get the bare view tag and nothing else. Do not add
 # "nothing is added" wording, and do not use a negative prompt: these views run at cfg 1.0, where negatives do nothing.
-# UNTESTED ON A CARD: the non-humanoid bare-tag prompt has not yet been run on a card (see WP-01 card check).
+# Card check 2026-11-18 (WP-01, five categories, seed 7, left turn; animal also back): no pose sentence, the pictures kept
+# their subjects and the animal kept four legs in the left and back views. Not run through the full app pipeline.
 def view_prompt(view: str, extra: str = "", category: str | None = None) -> str:
     if view not in VIEWS:
         raise ValueError(f"unknown view {view!r}; known: {sorted(VIEWS)}")
