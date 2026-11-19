@@ -871,17 +871,15 @@ def dismiss_stopped(aid: str, body: StageIn, db: Session = Depends(get_session))
 
 def _refine_views(parent: Version, body: RefineIn) -> list[str] | None:
     """The views a turnaround redraw names (`views`, else `view`), checked before anything is made: a view the
-    version does not have is a 400 here, not a failed version in the history."""
-    if body.views is None:
-        wanted = [body.view] if body.view and parent.stage == "turnaround" else []
-    elif parent.stage != "turnaround":
-        raise HTTPException(400, "only the turnaround step redraws views")
-    elif not body.views:
-        raise HTTPException(400, "no views were chosen to redraw")
-    else:
-        wanted = list(dict.fromkeys(body.views))
-    if not wanted:
+    version does not have is a 400 here, not a failed version in the history. A turnaround redraw always names its
+    views: with none named there is nothing to redraw (never a quiet fall back to the front view)."""
+    if parent.stage != "turnaround":
+        if body.views is not None:
+            raise HTTPException(400, "only the turnaround step redraws views")
         return None
+    wanted = list(dict.fromkeys(body.views if body.views is not None else ([body.view] if body.view else [])))
+    if not wanted:
+        raise HTTPException(400, "Choose which views to change. Nothing was redrawn.")
     from .stages.turnaround import turnaround_views  # late: the stage module loads the imaging code
 
     have = turnaround_views(parent)
@@ -890,7 +888,7 @@ def _refine_views(parent: Version, body: RefineIn) -> list[str] | None:
             raise HTTPException(400, f"unknown view {view!r}")
         if view not in have:
             raise HTTPException(400, f"this version has no {view} view to redraw")
-    return wanted if body.views is not None else None
+    return wanted
 
 
 @app.post("/api/versions/{vid}/refine")

@@ -680,11 +680,11 @@ on('POST', '/api/versions/:vid/refine', (m, body) => {
   if (!instruction) throw new HttpError(422, 'instruction is required')
   const params: Record<string, unknown> = { ...version.params, ...((body.params as Record<string, unknown>) ?? {}), instruction, seed: Math.floor(Math.random() * 100000) }
   if (body.view) params.view = body.view
-  if (Array.isArray(body.views)) {
-    // Several views of a turnaround redrawn together (the mock draws every view again).
-    const views = [...new Set(body.views.map(String))]
-    if (version.stage !== 'turnaround') throw new HttpError(400, 'only the turnaround step redraws views')
-    if (!views.length) throw new HttpError(400, 'no views were chosen to redraw')
+  if (version.stage !== 'turnaround' && Array.isArray(body.views)) throw new HttpError(400, 'only the turnaround step redraws views')
+  if (version.stage === 'turnaround') {
+    // The views a turnaround redraw names; none named is refused (never a quiet fall back to the front).
+    const views = [...new Set((Array.isArray(body.views) ? body.views : body.view ? [body.view] : []).map(String))]
+    if (!views.length) throw new HttpError(400, 'Choose which views to change. Nothing was redrawn.')
     if (version.status !== 'done') throw new HttpError(409, `version is ${version.status}, not done`)
     params.refined_views = views
     params.refined_view = views[0]

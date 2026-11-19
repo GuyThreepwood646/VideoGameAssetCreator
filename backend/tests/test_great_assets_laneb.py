@@ -62,6 +62,7 @@ SAMPLES = {
     "collider_triangles": ((236, 255), (300, 255)),
     "collider_count": ((3, 8), (12, 8)),
     "openings_clear": ((0, 0), (1, 0)),
+    "model_whole": ((0.005, 0.03), (0.069, 0.03)),  # step 3: share of folded edges against the route's limit
     "bake_matches": ((1.0, 0.99), (0.45, 0.99)),
     "normal_map_upright": ((0.57, 1.25), (1.77, 1.25)),  # normal map green channel: seam disagreement as is over flipped
     "texture_matches_picture": ((0.82, 0.5), (0.16, 0.5)),  # 3D step: base colour brightness over the picture's
