@@ -58,3 +58,13 @@ def test_empty_cutout_is_not_read_as_agreement(tmp_path):
     empty.save(p)
     c = side_agree.check("left", p, f, b)
     assert c["passed"] is False
+
+
+def test_side_on_a_taller_picture_with_the_same_figure_share_agrees(tmp_path):
+    # A side or back is often drawn on a taller canvas (1536 by 2048) than the front (1024 by 1024): the same share of
+    # the picture is the same figure, so it agrees.
+    f = _figure(tmp_path / "front.png", h=400, bottom=700, size=(512, 800))
+    b = _figure(tmp_path / "back.png", h=400, bottom=700, size=(512, 800))
+    s = _figure(tmp_path / "side.png", h=500, w=60, bottom=875, size=(384, 1000))  # 0.5 of picture, as front 0.5
+    c = side_agree.check("left", s, f, b)
+    assert c["passed"] is True, c

@@ -136,6 +136,14 @@ def hair_check(res: dict[str, Any]) -> dict[str, Any]:
 MAX_REROLLS = 2
 # side_agree (vgac/side_agree.py): the left and right views checked against the front and back once all three exist.
 SIDE_CHECKED = ("left", "right")
+# UNTESTED ON A CARD: True: the side views are checked by side_agree after all views exist. False, or `side_agree: false` in a
+# version's settings: never. metrics.views[view].checks carries the result when on.
+SIDE_AGREE = True
+
+
+def side_agree_on(sc: StageContext) -> bool:
+    chosen = (getattr(getattr(sc, "version", None), "params", None) or {}).get("side_agree")
+    return SIDE_AGREE if chosen is None else bool(chosen)
 # Views drawn from opposite sides of the figure. The later-drawn one of a pair is checked against the earlier one
 # (same_side): mirror images of each other when right, the same way round when one was drawn from the wrong side.
 # Only left and right also take the mirror_iou limit, as before.
@@ -1095,8 +1103,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     async def settle_sides() -> None:
         """side_agree on each left and right view once the front and back cut-outs exist (a side can be drawn before the
         back). A failing side view is drawn again on its own card, up to MAX_REROLLS, as the back's hair check is."""
-        if _category(sc) != "humanoid":
+        if _category(sc) != "humanoid" or not side_agree_on(sc):
             return
+        side_redrawn = False
         for view in SIDE_CHECKED:
             while view in results and view not in supplied:
                 fr, bk, cut = sc.file("front_cutout"), sc.file("back_cutout"), sc.file(f"{view}_cutout")
@@ -1119,7 +1128,12 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                     _publish_views(sc, results)
                     break
                 # A redraw runs on the job's own card: a side drawn on a lent card may already have been handed back.
+                side_redrawn = True
                 await do_view(view, None, "check", info.get("rerolls", 0) + 1)
+        # A redrawn side changes the picture the back's hair was compared with: measure the hair again.
+        if side_redrawn and "back" in results and "back" not in supplied and _category(sc) == "humanoid" and not _bald_on(sc, params):
+            hair_open[0] = True
+            await settle_hair(True)
 
     left = [v for v in LEFT_SIDE if v in todo]
     right = [v for v in RIGHT_SIDE if v in todo]
