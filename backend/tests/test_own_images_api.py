@@ -323,7 +323,7 @@ def test_refine_with_a_reference_picture_is_wired_as_picture_two(client, engine)
     assert client.post(f"/api/versions/{vid}/refine", json={"instruction": "x", "reference_image": "@@@"}).status_code == 400
     t = client.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()
     wait_job(client, t["job"]["id"])
-    bad = client.post(f"/api/versions/{t['version']['id']}/refine", json={"instruction": "x", "reference_image": b64(figure())})
+    bad = client.post(f"/api/versions/{t['version']['id']}/refine", json={"instruction": "x", "views": ["front"], "reference_image": b64(figure())})
     assert bad.status_code == 400 and "first picture" in bad.json()["detail"]
     assert m["category"] == "material"
 

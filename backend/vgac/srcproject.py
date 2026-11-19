@@ -947,13 +947,17 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
 def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
           n_primary: int = 1, heads: list[bool] | None = None,
           parts: dict[str, Any] | None = None,
-          shifts: list[np.ndarray | None] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+          shifts: list[np.ndarray | None] | None = None,
+          layers: list[dict[str, np.ndarray]] | None = None,
+          colours: list[np.ndarray] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
     of priority: each one, and every view after them, fades out where the ones before it see well. Head views (heads[i],
     first among them) hand over to one another the same way, and every other view stays off as far as a head view covers
     the surface (its "cover" from project_view; HEAD_HANDOVER of its weight when it has none): no whole-body fit paints
     the head once a head view has, and they meet down the neck, over the head views' neck fade. parts, when given, gets
-    the head views' and the other views' sums apart ("head", "body": (num (N,3), den (N))), for the tone match. Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
+    the head views' and the other views' sums apart ("head", "body": (num (N,3), den (N))), for the tone match. layers, when
+    given, is filled with each view's texels, the weight it ended with after the hold-offs and the colour sampled for it
+    (for tone_adjust); colours, when given, stands in for that sampling (the same arrays, adjusted). Returns (paint (N,3), alpha (N), dominant view per texel, -1 for none)."""
     N = atlas.idx.size
     heads = heads or [False] * len(projs)
     num, den, wmax, dom = np.zeros((N, 3)), np.zeros(N), np.zeros(N), np.full(N, -1)
@@ -989,9 +993,14 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
             seen = np.zeros(N)
             seen[sel] = w
             suppress = suppress * (1.0 - np.clip(seen / FRONT_PRIORITY, 0.0, 1.0))
-        col = catmull(img, p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
-        if shifts is not None and shifts[i] is not None:  # a three-quarter head view's tone, matched to the front's
-            col = np.clip(col + shifts[i][None], 0.0, 1.0)
+        if colours is not None:
+            col = colours[i]
+        else:
+            col = catmull(img, p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
+            if shifts is not None and shifts[i] is not None:  # a three-quarter head view's tone, matched to the front's
+                col = np.clip(col + shifts[i][None], 0.0, 1.0)
+        if layers is not None:
+            layers.append({"sel": sel, "w": w, "col": col})
         ww = w ** BLEND_POW
         num[sel] += col * ww[:, None]
         den[sel] += ww
@@ -1815,6 +1824,84 @@ def head_tone_offsets(atlas: Atlas, views: list[View], projs: list[dict[str, np.
     return out, rec
 
 
+JOIN_BLEND = True         # each whole-body view's colour levelled to the views before it by a smooth field fitted on the overlap, carried only a few centimetres from the joins
+TONE_SEEN = 0.05          # raw weight over which a view counts as seeing a texel for the match
+TONE_MIN = 500            # texels two views must share (same material) for a view's tone to be matched
+TONE_GUARD = (12.0, 40.0)  # Lab distance in (a, b) and in L above which a texel is not the same material in both views
+JOIN_CELL = 0.012         # metres: the surface cell the join field is smoothed at
+JOIN_MAX = 0.2            # the largest shift per channel the join field may give
+JOIN_RES = 0.08           # a texel whose difference is further than this from the first field is dropped and the field made again
+
+
+def _guarded(ref: np.ndarray, col: np.ndarray) -> np.ndarray:
+    """Which of the shared texels hold the same material in both views: the two colours within TONE_GUARD in Lab (a, b and L
+    apart), so a hair edge lying over skin in one view and not the other is not read as a difference of tone."""
+    d = face.to_lab(ref[None])[0] - face.to_lab(col[None])[0]
+    return (np.linalg.norm(d[:, 1:], axis=1) < TONE_GUARD[0]) & (np.abs(d[:, 0]) < TONE_GUARD[1])
+
+
+def tone_adjust(atlas: Atlas, views: list[View], projs: list[dict[str, np.ndarray]],
+                layers: list[dict[str, np.ndarray]]) -> tuple[list[np.ndarray], dict[str, Any]]:
+    """The colour each view paints with once its tone agrees with the views before it where they see the same surface
+    (WP-50 trial B, JOIN_BLEND). Head views stay as they are (head_tone_offsets and neck_tone_match have them) and so does the first
+    whole-body view, the person's own picture. Each other whole-body view, in order, is compared with the weighted mean
+    of the views already settled, over the texels both see (raw weight over TONE_SEEN) that hold the same material in
+    both (_guarded); its colour is moved by a smooth surface field (surface_correction) that is nothing beyond a few
+    centimetres from those texels, so what is away from the joins is not touched. A single gain or offset per view was
+    tried first and rejected: it recoloured the back of the live M1 run and failed the paint harness on W1 R5. Returns
+    (colour per view, record)."""
+    names = [v.name for v in views]
+    cols = [l["col"] for l in layers]
+    N = atlas.idx.size
+    rn, rw = np.zeros((N, 3)), np.zeros(N)
+    first = next((i for i, n in enumerate(names) if not n.startswith(HEAD_VIEW)), None)
+    rec: dict[str, Any] = {}
+
+    def settle(i: int) -> None:
+        sel, w = projs[i]["sel"], projs[i]["w"] ** 2
+        rn[sel] += cols[i] * w[:, None]
+        rw[sel] += w
+
+    for i, n in enumerate(names):
+        if n.startswith(HEAD_VIEW) or i == first:
+            settle(i)
+    for i, n in enumerate(names):
+        if n.startswith(HEAD_VIEW) or i == first:
+            continue
+        sel, w = projs[i]["sel"], projs[i]["w"]
+        m = (w > TONE_SEEN) & (rw[sel] > TONE_SEEN ** 2) & ~atlas.is_gut[sel]
+        if m.sum() >= TONE_MIN:
+            ref = rn[sel[m]] / rw[sel[m]][:, None]
+            ok = _guarded(ref, cols[i][m])
+        else:
+            ok = np.zeros(0, bool)
+        if ok.sum() < TONE_MIN:
+            rec[n] = {"shared": int(ok.sum()), "matched": False}
+            settle(i)
+            continue
+        col = cols[i]
+        r: dict[str, Any] = {"shared": int(ok.sum()), "matched": True}
+        ref_ok, at = ref[ok], np.flatnonzero(m)[ok]
+        delta = np.zeros((N, 3))
+        alpha = np.zeros(N)
+        tex = sel[at]
+        delta[tex] = ref_ok - col[at]
+        alpha[tex] = np.clip(w[at] / 0.3, 0.0, 1.0)
+        corr, reach = surface_correction(atlas, delta, alpha, JOIN_CELL)
+        far = np.abs(delta[tex] - corr[tex]).max(1) > JOIN_RES
+        if far.any() and (~far).sum() >= TONE_MIN:
+            alpha[tex[far]] = 0.0
+            corr, reach = surface_correction(atlas, delta, alpha, JOIN_CELL)
+        fld = np.clip(corr[sel], -JOIN_MAX, JOIN_MAX) * reach[sel][:, None]
+        col = np.clip(col + fld, 0.0, 1.0)
+        r["field_median"] = round(float(np.median(np.abs(fld).max(1))), 4)
+        r["field_texels"] = int((np.abs(fld).max(1) > 0.005).sum())
+        cols[i] = col
+        rec[n] = r
+        settle(i)
+    return cols, rec
+
+
 NECK_HANDOVER_MIN = 0.02  # metres: the least height over which the neck's paint should pass from the head views to the body fits
 
 
@@ -1882,8 +1969,14 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         projs = list(pool.map(lambda v: project_view(atlas, v), views))
     parts: dict[str, Any] = {}
     shifts, tone_rec = head_tone_offsets(atlas, views, projs, images)
-    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, [v.name.startswith(HEAD_VIEW) for v in views], parts,
-                                shifts)
+    heads_ = [v.name.startswith(HEAD_VIEW) for v in views]
+    layers: list[dict[str, np.ndarray]] | None = [] if JOIN_BLEND else None
+    paint_, alpha_, dom = blend(atlas, projs, images, n_primary, heads_, parts, shifts, layers=layers)
+    join_rec = None
+    if layers is not None:  # the views' colours matched where they meet, then blended again with the same weights
+        cols, join_rec = tone_adjust(atlas, views, projs, layers)
+        parts = {}
+        paint_, alpha_, dom = blend(atlas, projs, images, n_primary, heads_, parts, shifts, colours=cols)
     handover = neck_handover(atlas, parts, zone) if zone and zone.get("found") else None
     if "head" in parts and "body" in parts and zone and zone.get("neck") and zone.get("chin"):
         paint_ = neck_tone_match(atlas, parts, zone, paint_)
@@ -1893,7 +1986,7 @@ def compose(atlas: Atlas, views: list[View], images: list[np.ndarray], n_primary
         atlas.zone["head_painted"] = hv[np.where(dom >= 0, dom, len(views))]
     new = finish(atlas, tex, paint_, alpha_, atlas.zone, extra)
     return {"projs": projs, "paint": paint_, "alpha": alpha_, "dom": dom, "base_color": new, "zone": atlas.zone,
-            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "hole_fill": extra.get("hole_fill"), "neck_handover": handover, "head_tone": tone_rec}
+            "fill": extra.get("fill"), "under_fill": extra.get("under_fill"), "hole_fill": extra.get("hole_fill"), "neck_handover": handover, "head_tone": tone_rec, "join_blend": join_rec}
 
 
 # --- measures ---------------------------------------------------------------------------------------------------

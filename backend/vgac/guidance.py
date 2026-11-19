@@ -108,7 +108,8 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "hand_edit": {"simple": False, "help": {"meaning": "Redraws only the hands in the picture the 3D model is built from, open with the fingers apart, so the model gets separate fingers; the pose and anything held are meant to stay. Not needed when Pose for 3D first was on in step 2, and leave it off for claws or robot hands, which it can turn into human hands.",
                                             "why": "Use it when step 2 was made without Pose for 3D first and the hands came out as mittens. It changes less than Pose for 3D first, and adds about a minute. Tried on two characters so far.",
                                             "technical": "hand_edit: one Qwen-Image-Edit pass on the build's input picture before TRELLIS (stages/mesh.py HAND_EDIT); skipped when the step 2 version holds a pose_ready picture"}},
-    "remesh": {"simple": False, "help": {"meaning": "Rebuild the surface as one solid shell before simplifying.", "why": "Removes double walls and closes holes; keep it on.", "technical": "RemeshMesh (solid sign mode)"}},
+    "remesh": {"simple": False, "help": {"meaning": "Rebuild the surface as one solid shell before simplifying.",
+                         "why": "Characters and creatures: keep it on, it removes double walls. Plants: untested so far; thin leaves may come out thicker. Hard objects (props, vehicles): it can round crisp edges and thicken or lose thin parts, so turn it off if the edges matter. Buildings and scenery: off by default so doorways and arches stay open, but a building built with it off at a low triangle count can come out torn; the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.", "technical": "RemeshMesh (solid sign mode)"}},
     "size_m": {"simple": True, "help": {"meaning": "How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.", "why": "Keeps everything in proportion, so a car is car-sized next to your character.", "technical": "Uniform scale so the extent on size_axis equals size_m"}},
     "face_yaw": {"simple": True, "help": {"meaning": "Which side of the model the game treats as its front.", "why": "Characters walk and cars drive toward their front; if it is wrong, they move sideways.", "technical": "Yaw about Y so the concept front faces +Z"},
                  "options": {"auto": "Automatic", "0": "As built", "90": "Turned a quarter to the left", "180": "Turned around", "270": "Turned a quarter to the right"}},
@@ -508,6 +509,19 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": lambda c: "The surface is closed with no holes." if _is_zero(c)
         else "The surface has {value:n} open edges, few enough to be harmless.",
         "fail": "The surface has {value:n} open edges, so it may show small holes. Harmless for most game uses.",
+    },
+    # Step 3 geometry (vgac/meshgeom.py): measured in Blender after joining the texture-seam duplicates. Warn only; whether an
+    # automatic build stops on it is meshgeom.BLOCK_ROUTES (empty until calibrated on bad examples from each route).
+    "model_whole": {
+        "severity": "warn",
+        "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
+        "fail": "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
+                "the grey views under the model.",
+        # Scenery built with the rebuild off is the case seen: it comes out torn and the rebuild on made it whole. Every other
+        # case gets the new-draw button from fixnotes.EXTRA_FIXES.
+        "fix": lambda c: ({"stage": "mesh", "params": {"seed": None, "remesh": True}}
+                          if _var(c, "route") == "buildings" and _var(c, "rebuild") is False else None),
+        "fix_label": "Build it again with Remesh on",
     },
     "degenerate_faces": {
         "severity": "warn",
@@ -1191,6 +1205,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": lambda c: _var(c, "words") or "The three-quarter view the model was built from has the arms and legs where they are in your picture.",
         "fail": lambda c: _var(c, "words") or "Both three-quarter views have the arms or legs in a different place from your picture, so the model can grow the arms into the body.",
+        "fix": lambda c: {"stage": "turnaround", "params": {}},
+        "fix_label": "Draw the side views again",
+    },
+    # A left or right view (vgac/side_agree.py): the same figure height as the front and back, and the feet at the same level.
+    # UNTESTED ON A CARD: the limits were set on the processor (bakeoff/wp51a). The sentence is the check's own (vars words).
+    "side_agree": {
+        "severity": "warn",
+        "ok": lambda c: _var(c, "words") or "The side view is the same height as the front and back, and its feet are at the same level.",
+        "fail": lambda c: _var(c, "words") or "This side view does not match the front and back. Draw this view again.",
         "fix": lambda c: {"stage": "turnaround", "params": {}},
         "fix_label": "Draw the side views again",
     },

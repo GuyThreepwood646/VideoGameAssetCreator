@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import bodymarks, buildpose, hair_sides, hairlib, library, quality, reference
+from .. import bodymarks, buildpose, hair_sides, hairlib, library, quality, reference, side_agree
 from ..db import Version
 from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
@@ -134,6 +134,16 @@ def hair_check(res: dict[str, Any]) -> dict[str, Any]:
 
 
 MAX_REROLLS = 2
+# side_agree (vgac/side_agree.py): the left and right views checked against the front and back once all three exist.
+SIDE_CHECKED = ("left", "right")
+# UNTESTED ON A CARD: True: the side views are checked by side_agree after all views exist. False, or `side_agree: false` in a
+# version's settings: never. metrics.views[view].checks carries the result when on.
+SIDE_AGREE = True
+
+
+def side_agree_on(sc: StageContext) -> bool:
+    chosen = (getattr(getattr(sc, "version", None), "params", None) or {}).get("side_agree")
+    return SIDE_AGREE if chosen is None else bool(chosen)
 # Views drawn from opposite sides of the figure. The later-drawn one of a pair is checked against the earlier one
 # (same_side): mirror images of each other when right, the same way round when one was drawn from the wrong side.
 # Only left and right also take the mirror_iou limit, as before.
@@ -846,10 +856,13 @@ def stale_kept_views(keep: dict[str, dict[str, Any]] | None, chosen: list[str]) 
 
 async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any], source: Version | None,
                      keep: dict[str, dict[str, Any]] | None = None, extra: str = "",
-                     supplied: dict[str, Path] | None = None, method: str | None = None) -> None:
+                     supplied: dict[str, Path] | None = None, method: str | None = None,
+                     edit_views: dict[str, Path] | None = None) -> None:
     """Generate and check `views` from the concept image of `source`. Views in `supplied` are the person's own
     pictures: cut out and checked like the rest, never redrawn; one that fails a check warns and is kept. `method`
-    (default: the params' turn_method) says how the views are turned (TURN_METHODS)."""
+    (default: the params' turn_method) says how the views are turned (TURN_METHODS). `edit_views` {view: picture}: a
+    view changed by editing that picture with the typed words (`extra`), without the turn LoRA, instead of being
+    drawn again from the concept (see EDIT_THE_VIEW)."""
     supplied = dict(supplied or {})
     chosen_method = turn_method(_category(sc), params)
     method = method or chosen_method
@@ -943,6 +956,14 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             if view == "front":
                 return dict(cam["front"]), "shadow_free"
             return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n, loras=view_loras), "shadow_free"
+        if edit_views and view in edit_views:
+            on = {"instance": card} if card else {}
+            edit_name = await sc.stage_input(edit_views[view], f"vgac_{sc.version.id[:8]}_{view}_edit_src.png", **on)
+            entry = await sc.comfy(edit_graph(edit_name, instruction, seed, sc.prefix(f"{view}_{seed}")), message=f"view {view} (edited)",
+                                   base=at, span=width / n * 0.7, **on)
+            raw = await sc.download_image(entry, "save", sc.dir / f"{view}_raw.png", **on)
+            res = await sc.cutout(raw, view, base=at + width / n * 0.7, span=width / n * 0.3, **on)
+            return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}, "edit"
         sc.use_model("qwen_angles_lora")
         used.add("standard")
         refs = await side_references(card) if view == "back" and back_refs else []
@@ -1036,7 +1057,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             info["method"] = drew
             # The person's own LoRAs this view was drawn with (none for a supplied picture or the shadow-free front,
             # which is the concept's cut-out), so a kept view reports what it really had.
-            info["loras"] = [] if drew == "supplied" or (drew == "shadow_free" and view == "front") else [a["id"] for a in view_loras]
+            info["loras"] = [] if drew in ("supplied", "edit") or (drew == "shadow_free" and view == "front") else [a["id"] for a in view_loras]
             if card or home:
                 info["card"] = card or home
             if view in supplied:
@@ -1079,6 +1100,41 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             return
         await do_view("back", back_card.get("back"), "check", info.get("rerolls", 0) + 1)
 
+    async def settle_sides() -> None:
+        """side_agree on each left and right view once the front and back cut-outs exist (a side can be drawn before the
+        back). A failing side view is drawn again on its own card, up to MAX_REROLLS, as the back's hair check is."""
+        if _category(sc) != "humanoid" or not side_agree_on(sc):
+            return
+        side_redrawn = False
+        for view in SIDE_CHECKED:
+            while view in results and view not in supplied:
+                fr, bk, cut = sc.file("front_cutout"), sc.file("back_cutout"), sc.file(f"{view}_cutout")
+                info = results[view]
+                if not (fr and bk and cut):
+                    # Not measured, never read as agreement: a missing picture is flagged, not redrawn.
+                    res = quality.not_measured("side_agree", f"the {view} view", "its front, back or side picture is missing")
+                    info["checks"] = [c for c in info.get("checks", []) if c.get("name") != "side_agree"] + [res]
+                    info["passed"] = info["ok"] = False
+                    info["flagged"] = True
+                    _publish_views(sc, results)
+                    break
+                res = await asyncio.to_thread(side_agree.check, view, cut, fr, bk)
+                checks = [c for c in info.get("checks", []) if c.get("name") != "side_agree"] + [res]
+                info["checks"] = checks
+                info["side_agree"] = {"height": res["value"], "feet": res["vars"]["feet"]}
+                info["passed"] = info["ok"] = all(c["passed"] for c in checks)
+                if info["passed"] or not auto_reroll or info.get("rerolls", 0) >= MAX_REROLLS:
+                    info["flagged"] = not info["passed"]
+                    _publish_views(sc, results)
+                    break
+                # A redraw runs on the job's own card: a side drawn on a lent card may already have been handed back.
+                side_redrawn = True
+                await do_view(view, None, "check", info.get("rerolls", 0) + 1)
+        # A redrawn side changes the picture the back's hair was compared with: measure the hair again.
+        if side_redrawn and "back" in results and "back" not in supplied and _category(sc) == "humanoid" and not _bald_on(sc, params):
+            hair_open[0] = True
+            await settle_hair(True)
+
     left = [v for v in LEFT_SIDE if v in todo]
     right = [v for v in RIGHT_SIDE if v in todo]
     lease, why = await _borrow_for_sides(sc, method, left, right)
@@ -1101,6 +1157,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             for view in [v for v in todo if v != "front" and v not in left and v not in right]:
                 await do_view(view)   # the back (and any other view) after both sides
         await settle_hair(True)
+        await settle_sides()
     finally:
         if lease is not None and not lease.ended:
             await lease.end(interrupt=True)   # stopped or failed part-way: stop what is left on the lent card
@@ -1248,7 +1305,9 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     parent = sc.parent
     if parent is None or parent.stage != "turnaround":
         raise ValueError("turnaround refine needs a turnaround parent version")
-    targets = list(dict.fromkeys(views or [view or "front"]))
+    targets = list(dict.fromkeys(views or ([view] if view else [])))
+    if not targets:
+        raise ValueError("no views were chosen to redraw")  # the API refuses this first; never a quiet fall back to the front
     all_views = turnaround_views(parent)
     for t in targets:
         if t not in all_views:
@@ -1276,9 +1335,33 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
         raise ValueError("turnaround parent has no concept parent")
     # The sheet draws all five sides at once, so a redraw of some of them uses the standard turn.
     method = "standard" if turn_method(_category(sc), merged) == "sheet" else None
-    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction, method=method)
+    edit_views = await _edit_picture(sc, parent, targets, instruction)
+    if edit_views:
+        method = "standard"  # no sheet or shadow-free set-up for a view that is edited
+    await _run_views(sc, targets, merged, grand, keep=keep, extra=instruction, method=method, edit_views=edit_views)
     # _run_views records the views it drew; the version holds all of them (as upload does).
     sc.set_params(views=all_views)
+
+
+# EDIT_THE_VIEW, non-humanoids only (WP-42 card trial, 2026-11-19, Nutra Pak, "remove the people", five views): a typed change to ONE view is
+# made by editing that view's own picture with the picture editor, without the turn LoRA. Redrawing it from the concept
+# with the words added changed the design (a window lost on the back, the right side rebuilt) and a removal stayed weak;
+# the edit kept the view as it was and took the people out of every view (docs/research, sheet in the WP-42 notes).
+# Several views, a plain redraw (no words) and a person's own picture still go through the concept: a redraw must be
+# able to change the view, and several views must stay alike. UNTESTED ON A CARD as code here: only the trial's
+# equivalent (the first-picture edit of each stored view) ran on a card.
+PLAIN_REDRAW_WORDS = "Redraw this view"
+
+
+async def _edit_picture(sc: StageContext, parent: Version, targets: list[str], instruction: str) -> dict[str, Path] | None:
+    """{view: the parent's picture of it} when this refine changes one view of a non-humanoid with typed words, else None."""
+    words = (instruction or "").strip()
+    if _category(sc) == "humanoid":
+        return None  # the edit never ran on a person (pose_held, hair and bald copies): people still redraw from the concept
+    if len(targets) != 1 or not words or words == PLAIN_REDRAW_WORDS or targets[0] in (parent.params.get("supplied_views") or []):
+        return None
+    p = library.version_file(parent, targets[0], sc.settings)
+    return {targets[0]: Path(p)} if p is not None and Path(p).is_file() else None
 
 
 def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -1339,6 +1422,8 @@ async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
     merged = inherit(parent.params if parent else {}, params)
     if not params.get("bald_only"):
         merged.pop("bald_only", None)  # the marker belongs to the adjust that asked for it
+    for key in ("refined_view", "refined_views"):
+        merged.pop(key, None)  # what the parent's change redrew is not what this settings change does
     views = list(merged.get("views") or DEFAULT_VIEWS)
     if parent is not None and parent.stage == "turnaround":
         # The concept source is the turnaround parent's parent; this version's own parent stays the turnaround.

@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
+from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
@@ -375,17 +375,27 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     tries_dir = sc.dir / TRIES_DIR
     shutil.rmtree(tries_dir, ignore_errors=True)  # a Resume starts the tries again from the first
 
+    # Texture-only tries come first (the shape is kept; see texcolour.try_plan), then full rebuilds. The four-view build
+    # has no texture seed in its graph and keeps full rebuilds only.
+    texture_tries = texcolour.TEXTURE_TRIES if views is None else 0
+
     async def build_once(seed: int, n: int) -> dict[str, Any]:
+        tseed = texcolour.try_plan(first_seed, n, texture_tries)[1]
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
-                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle, texture_seed=tseed)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
+        if texcolour.try_kind(n, texture_tries) == "texture_only":
+            sc.progress(0.05, f"The colours came out too dark against the picture, so only the texture is painted again "
+                              f"(build {n + 1} of {texcolour.MAX_TRIES})")
+            return
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
                           f"(build {n + 1} of {texcolour.MAX_TRIES})")
 
     best, tries = await texcolour.build_with_rerolls(first_seed, picture is not None, build_once,
                                                      lambda n: _keep_aside(sc.dir, tries_dir / f"try{n + 1}"),
-                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry)
+                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry,
+                                                     texture_tries=texture_tries)
     shutil.rmtree(tries_dir, ignore_errors=True)
     kept = tries[best]
     for key in ("glb", *kept["maps"].keys(), *kept["other"]):
@@ -529,7 +539,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
                          padding: int, keep_normal: bool, picture: dict[str, Any] | None,
                          dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
                          match_to: Path | None = None, views: dict[str, str] | None = None,
-                         fov: float | None = None) -> dict[str, Any]:
+                         fov: float | None = None, texture_seed: int | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
     (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
@@ -550,7 +560,8 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
     if views:
         graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps, fov=fov)
     else:
-        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
+        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps,
+                              texture_seed=texture_seed)
     entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal:
@@ -569,6 +580,8 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             else:
                 other.append(key)
     metrics: dict[str, Any] = {}
+    if texture_seed is not None:
+        metrics["texture_seed"] = int(texture_seed)
     if views:
         used = camera_fov(entry) if fov is None else round(float(fov), 2)
         if used is not None:
@@ -682,9 +695,34 @@ async def audit(sc: StageContext) -> None:
             sc.register("sheet", sheet)
     except Exception as e:  # Blender missing or render failed: keep the mesh, record the problem
         sc.set_metrics(audit_error=str(e)[:500])
+    await measure_geometry(sc, glb)
     if hairlib.is_library(sc):
         await rank_hair(sc, glb)
     await judge(sc)
+
+
+GREY_DIR = "grey"
+GREY_LABELS = {0: "front", 90: "right", 180: "back", 270: "left"}
+
+
+async def measure_geometry(sc: StageContext, glb: Path) -> None:
+    """Is the model whole (vgac/meshgeom.py): Blender joins the seam duplicates and counts open edges, bad joins, folded
+    edges, slivers and pieces (metrics.geometry), and draws four grey views with the texture off (file grey_sheet),
+    because a texture can hide damage. Nothing for materials. Never fails the job."""
+    if meshgeom.route_of(sc.asset.category) is None:
+        return
+    try:
+        sc.progress(0.9, "checking the model is whole")
+        out = sc.dir / GREY_DIR
+        await sc.blender("mesh_health.py", [glb, out, 384], log_name="mesh_health.log", timeout=sc.settings.blender_timeout_seconds)
+        report = json.loads((out / "health.json").read_text())
+        sc.set_metrics(geometry=meshgeom.summary(sc.asset.category, report))
+        paths = [out / f"grey_{y}.png" for y in report.get("yaws", GREY_LABELS)]
+        sheet = await asyncio.to_thread(contact_sheet, paths, sc.dir / "grey_sheet.png", cell=384, columns=4,
+                                        labels=[GREY_LABELS.get(y, str(y)) + ", no texture" for y in report.get("yaws", GREY_LABELS)])
+        sc.register("grey_sheet", sheet)
+    except Exception as e:  # noqa: BLE001  (Blender missing or the render failed: keep the mesh, record the problem)
+        sc.set_metrics(geometry_error=str(e)[:500])
 
 
 HAIR_RANK_DIR = "hair_rank"
@@ -839,6 +877,9 @@ async def judge(sc: StageContext) -> None:
     if hg:
         checks.append(buildpose.redraw_guard_check("hand_guard", "The hand redraw", hg, int(hg.get("tries") or 1) > 1,
                                                    "It was not used; the 3D model was built from your own picture."))
+    gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"))
+    if gc:
+        checks.append(gc)
     sc.set_metrics(**quality.summarise(checks))
 
 
