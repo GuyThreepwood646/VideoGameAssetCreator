@@ -88,9 +88,8 @@ program has open.
 - Update: "Update VGAC now" runs `git pull --ff-only` (nothing is merged or overwritten). VGAC.exe is running, so git writes the
   committed copy beside it first, then VGAC.exe is swapped for that copy in one step and the running file becomes VGAC.old.exe (Windows allows that); restart VGAC afterwards. The old
   file is deleted at the next start only if it is the file VGAC recorded and it was the published one (a build you made
-  yourself is kept). If the rename fails, nothing is changed. While VGAC.exe is aside a note, VGAC-RESTORE.txt, sits beside the project's
-  files saying how to put it back (rename VGAC.old.exe to VGAC.exe) in the rare case the computer stops right then; it is removed when the
-  update is through. The screens are built beside the live ones and swapped in with two
+  yourself is kept). If the swap fails, nothing is changed. The swap is one step (File.Replace), so VGAC.exe is never missing: a stop
+  during the update leaves either the old file or the new one under the name, and VGAC.old.exe is the working copy of the old one. The screens are built beside the live ones and swapped in with two
   renames, so the running app never sees a half-built folder. Updating asks first when jobs are running, like Quit. The new Python
   packages and screens that an update needs are not installed in the same click: you are shown the steps (they run pip and npm from the
   files just pulled) and say yes. A second update does not replace a VGAC.old.exe that is your own build.
