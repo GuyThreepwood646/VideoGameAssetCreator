@@ -904,7 +904,8 @@ export const api = {
   getMarks: (vid: string) => get<BodyMarks>(`/api/versions/${vid}/marks`),
   moveMarks: (vid: string, moves: MarkMove[]) => put<BodyMarks>(`/api/versions/${vid}/marks`, { moves }),
   acceptMarks: (vid: string) => put<BodyMarks>(`/api/versions/${vid}/marks`, { accept: true }),
-  resetMarks: (vid: string, view?: MarkView) => post<BodyMarks>(`/api/versions/${vid}/marks/reset`, view ? { view } : {}),
+  resetMarks: (vid: string, view?: MarkView, joint?: string) =>
+    post<BodyMarks>(`/api/versions/${vid}/marks/reset`, view ? (joint ? { view, joint } : { view }) : {}),
   paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
   styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),

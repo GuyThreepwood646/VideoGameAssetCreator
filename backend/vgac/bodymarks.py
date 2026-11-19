@@ -566,12 +566,18 @@ def accept(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
-def reset(doc: dict[str, Any], view: str | None = None) -> dict[str, Any]:
-    """Back to the app's marks: the person's moves dropped (on one picture, or all), and any "these look right"."""
+def reset(doc: dict[str, Any], view: str | None = None, joint: str | None = None) -> dict[str, Any]:
+    """Back to the app's marks: the person's moves dropped (one mark, one picture, or all), and any "these look right".
+    Dropping one mark the app did not see takes it off the picture again, ready to be placed."""
+    edited = doc.get("edited") or {}
     if view is None:
         doc["edited"] = {}
+    elif joint is None:
+        edited.pop(view, None)
     else:
-        (doc.get("edited") or {}).pop(view, None)
+        (edited.get(view) or {}).pop(joint, None)
+        if view in edited and not edited[view]:
+            edited.pop(view)
     doc["accepted"] = None
     return doc
 
