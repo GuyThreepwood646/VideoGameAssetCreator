@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import face, facing, guidance, hairlib, hairmat, headtris, imaging, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -188,15 +188,40 @@ def facing_colour(sc: StageContext) -> Any:
         return None
 
 
+def own_mesh_glb(sc: Any) -> tuple[Any, Path | None]:
+    """The mesh version this clean-up works on and its GLB. The walk is the prep's own lineage: its parent, or, for a
+    clean-up made from an earlier clean-up, the mesh that one came from. A selected mesh elsewhere in the asset is
+    never used: a model cleaned from another model's GLB is a different model. (None, None) when there is no mesh."""
+    for v in sc.iter_lineage(include_self=False):
+        if v.stage == "mesh":
+            return v, library.version_file(v, "glb", sc.settings)
+    return None, None
+
+
+def own_texture_maps(mesh_v: Any, keys: list[str] | tuple[str, ...], settings: Any = None) -> tuple[dict[str, Path], list[str]]:
+    """The texture maps of the mesh version prep works on, and the keys it does not have. Never taken from another
+    mesh version: a map baked for another model would not match this model's UV layout (a Hunyuan3D mesh has none)."""
+    if mesh_v is None:
+        return {}, list(keys)
+    found: dict[str, Path] = {}
+    missing: list[str] = []
+    for k in keys:
+        p = library.version_file(mesh_v, k, settings)
+        if p is None:
+            missing.append(k)
+        else:
+            found[k] = p
+    return found, missing
+
+
 async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, reason="material category has no mesh")
         return
-    src = sc.lineage_file("glb", ("mesh",))
+    mesh_v, src = own_mesh_glb(sc)
     if src is None:
-        raise FileNotFoundError("no mesh glb in lineage")
+        raise FileNotFoundError("This model has no 3D mesh file to clean up. Build the 3D model again, then clean up.")
     size = resolve_size(sc.asset.category, params, sc.asset.prompt)
-    mesh_v = sc.stage_version("mesh")
     toes = await asyncio.to_thread(facing.toes_of_file, src, sc.asset.category)
     facing_ = await asyncio.to_thread(resolve_facing, sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None,
                                       toes, facing_colour(sc))
@@ -210,7 +235,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     surface = resolve_surface(sc.style, params)
     rec = stage_recipe(sc)
     shading = resolve_shading(rec, params)
-    mesh_v_params = sc.stage_version("mesh").params if sc.stage_version("mesh") else {}
+    mesh_v_params = mesh_v.params if mesh_v is not None else {}
     tri_limit = prep_triangle_limit(rec, mesh_v_params, sc.budget)
     hair = hair_plan(sc, params, mesh_v, tri_limit["limit"]) if hairlib.is_library(sc) else None
     if hair is not None:
@@ -246,8 +271,13 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         args += ["--grid", grid["grid_m"], "--grid-footprint", grid["grid_footprint"], "--grid-height", grid["grid_height"],
                  "--tiling", sc.dir / "tiling.png"]
     keep_normal = bool(rec["mesh"]["normal_map"])
-    mesh_maps = {k: sc.lineage_file(k, ("mesh",)) for k in TEXTURE_KEYS if keep_normal or k != "normal"}
-    mesh_maps = {k: p for k, p in mesh_maps.items() if p is not None}
+    # Only the mesh version prep is working on supplies the maps: a map from another model (another engine, or a
+    # selected version elsewhere in the asset) would be baked onto this model's UVs. Missing maps are said, not borrowed.
+    mesh_maps, missing_maps = own_texture_maps(mesh_v, [k for k in TEXTURE_KEYS if keep_normal or k != "normal"], sc.settings)
+    if missing_maps:
+        sc.set_metrics(texture_maps_missing=missing_maps,
+                       texture_maps_note=("The 3D model has no texture maps of its own, so prep leaves its surface as it is: nothing is painted or re-baked."
+                                          if not mesh_maps else "Some texture maps are missing from the 3D model; prep uses only the ones it has."))
     repaired = await repair_normal(sc, mesh_v, src, mesh_maps, keep_normal)
     if repaired:
         src, mesh_maps["normal"] = repaired["glb"], repaired["normal"]

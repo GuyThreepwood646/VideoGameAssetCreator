@@ -228,9 +228,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Where the 3D build joined the legs low down (a strand between the shoes), split them so they move apart; a tabard or cape between the legs is left whole"),
         _param("springs", "boolean", True, categories=["humanoid"], label="Spring bones (small extra bones that sway on their own)",
                description="A ponytail, braid, cape or tail that hangs clear of the body gets a short chain of bones and sways in every move; hair resting on the shoulders and rigid things like a scabbard are left alone"),
-        _param("head_sway", "select", "auto", options=["auto", "hair", "all"], categories=["humanoid"],
+        _param("head_sway", "select", "auto", options=["auto", "hair", "all", "none"], categories=["humanoid"],
                label="What may sway on the head",
-               description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before)"),
+               description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before). Nothing on the head sways holds the head still, hair included, built-in or from the library"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),

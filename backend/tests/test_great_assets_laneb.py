@@ -19,6 +19,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 # A sample value and limit per check that make it pass and fail (value, limit, passed).
 SAMPLES = {
     "triangle_budget": ((18000, 20000), (26000, 20000)),
+    "hy3d_raw_triangles": ((308546, 3000), (308546, 3000)),
     "manifold": ((0, 4), (200, 4)),
     "watertight": ((0, 4), (90, 4)),
     "degenerate_faces": ((0, 0), (3, 0)),
@@ -47,6 +48,7 @@ SAMPLES = {
     "clips_loop": ((True, True), ("walk", True)),
     "clips_face_forward": ((12, 60), (178, 60)),  # hand-off: degrees the body turns from the prefab's forward, worst move
     "library_clips": ((15, ">0"), (0, ">0")),
+    "library_missing": (("", "found on this PC"), ("ual1", "found on this PC")),
     "added_moves": ((5, 5), (3, 5)),
     "controller_ready": ((True, True), (False, True)),
     "placement_exact": ((0.0001, 0.02), (0.3, 0.02)),

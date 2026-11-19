@@ -610,6 +610,12 @@ def camera_fov(entry: dict[str, Any]) -> float | None:
     return None
 
 
+# Tencent's own Hunyuan3D-2mv settings (graphs/hy3d.py explains the source).
+HY3D_STEPS = 50
+HY3D_CFG = 5.0
+HY3D_OCTREE = 384
+
+
 async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
     seed = int(params.get("seed") or random_seed())
     names = {}
@@ -618,9 +624,12 @@ async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
         if p is None:
             raise FileNotFoundError(f"hy3d needs turnaround view {v} over white")
         names[v] = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_hy_{v}.png")
-    sc.set_params(engine="hy3d", seed=seed, steps=int(params.get("steps") or 20), cfg=float(params.get("cfg") or 7.5))
+    steps = int(params.get("steps") or HY3D_STEPS)
+    cfg = float(params.get("cfg") or HY3D_CFG)
+    octree = int(params.get("octree") or HY3D_OCTREE)
+    sc.set_params(engine="hy3d", seed=seed, steps=steps, cfg=cfg, octree=octree)
     sc.use_model("hy3d_mv")
-    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=int(params.get("steps") or 20), cfg=float(params.get("cfg") or 7.5), seed=seed),
+    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree),
                            poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     sc.register("glb", glb)
@@ -738,6 +747,22 @@ def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     return platform, None
 
 
+HY3D_RAW_NOTE = "hy3d_raw_triangles"
+
+
+def raw_triangle_note(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any], tris: int | None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Hunyuan3D has no decimation in its graph, so its step 3 count is the raw marching-cubes output. It is not judged
+    here: prep reduces it to prep_triangle_limit and judges that. Returns (the plain note check or None, the metrics to record:
+    the raw count and the limit prep will use)."""
+    from .prep import prep_triangle_limit
+
+    pl = prep_triangle_limit(rec, params, budget)
+    metrics = {"hy3d_raw_triangles": tris, "hy3d_prep_limit": pl["limit"], "hy3d_prep_limit_source": pl["source"]}
+    if tris is None:
+        return None, metrics
+    return quality.check(HY3D_RAW_NOTE, True, tris, pl["limit"]), metrics
+
+
 def texture_target(rec: dict[str, Any], budget: dict[str, Any], baked: bool = False) -> tuple[int | None, dict[str, Any] | None]:
     """The texture size limit a check measures against: the recipe's when smaller than the platform's. baked: the 3D
     step's own maps, which a look with a bake size (Retro 64) makes at that size before the clean-up shrinks them."""
@@ -765,9 +790,15 @@ async def judge(sc: StageContext) -> None:
     checks = with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                        tex_vars, "_budget")
     tris = sc.version.metrics.get("triangles")
-    limit, tvars = triangle_target(rec, sc.version.params, sc.budget)
-    if tris is not None and limit:
-        checks.append(quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=tvars))
+    if (sc.version.params or {}).get("engine") == "hy3d":
+        note, hm = raw_triangle_note(rec, sc.version.params, sc.budget, tris)
+        sc.set_metrics(**hm)
+        if note:
+            checks.append(note)
+    else:
+        limit, tvars = triangle_target(rec, sc.version.params, sc.budget)
+        if tris is not None and limit:
+            checks.append(quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=tvars))
     iou = sc.version.metrics.get("silhouette_iou")
     if iou is not None:
         # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,

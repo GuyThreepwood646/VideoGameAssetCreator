@@ -128,6 +128,21 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...(runParams(stage) ?? {}), ...params } }))
 
   const run = () => act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: runParams(stage) }))
+  // Delete the stopped or failed version(s), then make this step again from the start with its usual settings.
+  const startAgain = async (gone: Version[]) => {
+    const ok = await confirm.ask({
+      title: 'Delete and start again?',
+      body: `${gone.length > 1 ? 'These versions are' : 'This version is'} deleted, with its files. This cannot be undone. The step is then made again from the start.`,
+      confirmLabel: 'Delete and start again',
+      danger: true,
+    })
+    if (!ok) return
+    void act(async () => {
+      setActiveId(null)
+      for (const v of gone) await api.deleteVersion(v.id)
+      await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: runParams(stage) })
+    })
+  }
   const runNext = (next: StageId) =>
     act(async () => {
       await api.runStage(asset.id, next, { params: runParams(next) })
@@ -266,6 +281,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onRun={run}
         onRunNext={runNext}
         onRetry={retry}
+        onStartAgain={startAgain}
         onStop={onStop}
         onResume={onResume}
         onDismissStopped={dismissStopped}

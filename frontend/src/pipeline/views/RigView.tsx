@@ -91,6 +91,8 @@ export function RigView({ version }: { version: Version }) {
   const moves = movesLine(m.clips)
   const movesFrom = movesSourceLine(m)
   const missing = movesPlain(m.missing_clips)
+  // A humanoid whose shared clip library is not on this PC (the check library_missing says the same in the check list).
+  const libMissing = Array.isArray(m.library_missing) && m.library_missing.length > 0
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
@@ -101,8 +103,15 @@ export function RigView({ version }: { version: Version }) {
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {(hbLine || moves || missing.length > 0 || namesFixed) && (
+      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing) && (
         <div className="rig-lines small">
+          {libMissing && (
+            <div>
+              <span className="warn-mark">CHECK</span>
+              The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.
+              To get it back, run setup\Setup-Extras.ps1 -Packs -Install, or unzip it into data\animations by hand. Then make the moves again.
+            </div>
+          )}
           {namesFixed && (
             <div>
               Bone names: corrected to the standard names, so other tools recognise the skeleton.
