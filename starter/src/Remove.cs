@@ -718,6 +718,8 @@ namespace Vgac.Starter
                 if (g.Id == "settings") { settingsTicked = true; continue; }   // after everything else
                 foreach (RemovalItem it in g.Items)
                 {
+                    try
+                    {
                     if (it.BinShown == null) { res.Skipped.Add(it.Path + ": not shown in the summary, so not removed"); log.Line("remove: not shown, not removed: " + it.Path); continue; }   // A8: only what was shown
                     if (keepPythonDir != null && it.Kind == "data-folder" && it.Tag == "python")
                     {
@@ -744,6 +746,12 @@ namespace Vgac.Starter
                     RemoveOne(g, it, recycler, permanentFor, res, log);
                     SafeFs.Point("remove", "item:" + it.What);
                     if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) { Mark(l.ProjectRoot, it.Path, false); ledger.RemoveUnder(it.Path); ledger.Save(); parentsTouched.Add(SafeFs.Norm(System.IO.Path.GetDirectoryName(it.Path))); }
+                    }
+                    catch (IOException e)
+                    {
+                        // B5: this item is said to be skipped; the rest of the list still runs (a failure of the disk or of a file)
+                        res.Skipped.Add(it.Path + ": could not be removed (" + e.Message + ")"); log.Line("remove: skipped " + it.Path + " after an error: " + e.Message);
+                    }
                 }
                 if (g.Id == "tools") TidyEmptyParents(l, ledger, log, parentsTouched);
             }

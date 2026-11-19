@@ -37,6 +37,7 @@ namespace Vgac.Starter
             string tmp = uniqueTemp ? path + "." + Guid.NewGuid().ToString("N") + ".tmp" : path + ".tmp";
             File.WriteAllText(tmp, text, new UTF8Encoding(false));
             Point("save", path + " (written)");
+            ClearReadOnly(tmp); ClearReadOnly(path); if (backup != null) ClearReadOnly(backup);   // a read-only file would refuse the replace
             if (File.Exists(path))
             {
                 // Windows (an antivirus, the indexer) can hold the file for a moment: try again, then overwrite in place (the old file is never
@@ -55,11 +56,36 @@ namespace Vgac.Starter
             Point("save", path + " (replaced)");
         }
 
+        // Removes the read-only attribute from a file that exists (so it can be replaced or deleted). Nothing is done otherwise.
+        public static void ClearReadOnly(string p)
+        {
+            try { if (File.Exists(p)) { FileAttributes a = File.GetAttributes(p); if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(p, a & ~FileAttributes.ReadOnly); } }
+            catch (Exception) { }
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern uint GetFinalPathNameByHandleW(IntPtr h, StringBuilder buf, uint len, uint flags);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool FlushFileBuffers(IntPtr h);
+
+        // Every file under `root` is written through to the disk (FlushFileBuffers). Null when all were; else the first problem.
+        public static string FlushTree(string root)
+        {
+            try
+            {
+                foreach (string f in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    IntPtr h = CreateFileW(f, 0x40000000, 7, IntPtr.Zero, 3, 0x80, IntPtr.Zero);   // GENERIC_WRITE, OPEN_EXISTING
+                    if (h == (IntPtr)(-1)) return "could not open " + f + " to save it to the disk";
+                    try { if (!FlushFileBuffers(h)) return "could not save " + f + " to the disk"; }
+                    finally { CloseHandle(h); }
+                }
+                return null;
+            }
+            catch (Exception e) { return "the copied files could not be saved to the disk (" + e.Message + ")"; }
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         struct ByHandleInfo

@@ -554,6 +554,8 @@ namespace Vgac.Starter
         string Finish(MoveJournal j, bool force)
         {
             SafeFs.Point("move", "before-switch");
+            string flushed = SafeFs.FlushTree(j.To);   // B4: the copy is on the disk before the settings name it
+            if (flushed != null) return "The big files are copied, but " + flushed + ". Nothing was switched. Press Continue to try again.";
             SetDataFolder(j.To);
             RewriteLedger(j.From, j.To);
             string note = null; bool comfyLeftBehind = false;

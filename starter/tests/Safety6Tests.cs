@@ -23,6 +23,7 @@ public static partial class T
         K1NetworkFolderRefused();
         K2OldFolderLeftoversAreNamedNotDeleted();
         K3BinPromiseIsKeptOrSaid();
+        K4ReadOnlyTargetIsReplaced();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -209,6 +210,16 @@ public static partial class T
             return 0;
         }
         bool pulled;
+    }
+
+    // B3: a read-only file in the way is cleared and replaced; nothing is left behind
+    static void K4ReadOnlyTargetIsReplaced()
+    {
+        string dir = Tmp("k4"); Directory.CreateDirectory(dir);
+        string p = Path.Combine(dir, "settings.json"); File.WriteAllText(p, "old");
+        File.SetAttributes(p, FileAttributes.ReadOnly);
+        SafeFs.WriteAtomic(p, "new", null);
+        Check(File.ReadAllText(p) == "new" && !File.Exists(p + ".tmp"), "K4: a read-only file is replaced by the write, with no temporary file left");
     }
 
     // A8: an item the summary promised to the Recycle Bin is never deleted outright when the bin refuses it
