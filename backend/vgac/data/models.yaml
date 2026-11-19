@@ -35,7 +35,7 @@ models:
   skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400}
   blender: {name: Blender, file: "", licence: GPL (tool), version: "5.2.3"}
   unity: {name: Unity Editor (sandbox import), file: "", licence: Unity Personal/Pro (tool), version: "6000.4.3f1"}
-  ual1: {name: Universal Animation Library Standard (CC0), file: AnimationLibrary_Unity_Standard.fbx, licence: CC0, version: "1"}
+  ual1: {name: Universal Animation Library Standard (CC0), file: UAL1_Standard.fbx, licence: CC0, version: "3.0"}
   ual2: {name: Universal Animation Library 2 Standard (CC0), file: UAL2_Standard.fbx, licence: CC0, version: "1"}
   hair_library: {name: "VGAC hair library (Quaternius Universal Base Characters, MakeHuman hair, rule-built styles)", file: "", licence: CC0, version: "1"}
 #
