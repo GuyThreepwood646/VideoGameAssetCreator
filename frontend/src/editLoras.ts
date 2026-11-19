@@ -11,7 +11,7 @@ export const EDIT_MODEL_LABEL = 'Picture edits (Qwen-Image-Edit)'
 export const EDIT_KNOBS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
 export type EditKnob = (typeof EDIT_KNOBS)[number]
 export const EDIT_KNOB_LABELS: Record<EditKnob, string> = {
-  edit_addons: 'Refine',
+  edit_addons: 'Refine or combined photos',
   view_addons: 'Side views',
   pose_addons: 'Pose redraw',
   face_addons: 'Face close-up',
