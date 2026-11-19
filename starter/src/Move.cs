@@ -554,6 +554,9 @@ namespace Vgac.Starter
         string Finish(MoveJournal j, bool force)
         {
             SafeFs.Point("move", "before-switch");
+            // B10: looked at again just before the switch: something may have opened a file in the old folder during the copy
+            List<string> late = MoveRules.Blockers(j.From, procs, OwnPid());
+            if (late.Count > 0) return "Close these first, they have files open in the old folder: " + string.Join(", ", late.ToArray()) + ". Nothing was switched; press Continue again.";
             string flushed = SafeFs.FlushTree(j.To);   // B4: the copy is on the disk before the settings name it
             if (flushed != null) return "The big files are copied, but " + flushed + ". Nothing was switched. Press Continue to try again.";
             SetDataFolder(j.To);
