@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
+from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, normalfix, quality, reference, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
@@ -65,7 +65,7 @@ from ..imaging import (VIEW_YAW, atlas_used, best_alignment, contact_sheet, dila
                        load_uv_mesh, rasterise_uv, silhouette, unwrap_padding, uv_hash)
 from .base import StageContext, random_seed
 from .concept import stage_recipe
-from .turnaround import SECOND_QUARTER, THREEQ_ARM_RANGE, pose_check
+from .turnaround import POSE_GUARD_RETRIES, SECOND_QUARTER, THREEQ_ARM_RANGE, pose_check
 
 TEXTURE_KEYS = ("base_color", "metallic", "roughness", "normal", "ao")
 # G05 (a): the mesh stage aims this far under the platform budget so prep does not have to decimate again.
@@ -335,9 +335,12 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     padding = resolve_padding(params, tex)
     # The side views step already opened the hands when its version holds a pose-ready picture.
     posed = bool(params.get("hand_edit")) and sc.lineage_file("pose_ready_cutout", ("turnaround",)) is not None
-    if views is None and params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None:
+    if views is None and params.get("hand_edit") and not posed and sc.asset.category == "humanoid" and sc.file(EDITED_KEY) is None \
+            and not (sc.version.params or {}).get("hand_edit_refused"):
         # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
-        await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None)
+        # Guarded (WP-09): a redraw that adds or takes off clothing is drawn again, then not used (hand_guard check).
+        if await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None, guarded=True) is None:
+            sc.set_params(hand_edit_refused=True)
         sc.set_params(hand_edit=True)
     src = views["front"] if views is not None else _input_image(sc, input_view)
     sc.set_params(engine="trellis", builder=builder, input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
@@ -831,6 +834,10 @@ async def judge(sc: StageContext) -> None:
     pb = build_view_check(sc.version.metrics)
     if pb:
         checks.append(pb)
+    hg = (sc.version.metrics or {}).get("hand_guard")
+    if hg:
+        checks.append(buildpose.redraw_guard_check("hand_guard", "The hand redraw", hg, int(hg.get("tries") or 1) > 1,
+                                                   "It was not used; the 3D model was built from your own picture."))
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -1014,7 +1021,7 @@ EDITED_KEY = "edited_cutout"
 # The hand redraw (the mesh param hand_edit): what the phase 0 trials used. Fingers resolve in the build only when they
 # are separate in the picture, and the three-quarter view shows a hand edge-on unless its back faces the camera.
 HAND_EDIT = ("Redraw only the hands: each hand open with the back of the hand toward the camera, all five fingers straight, long and "
-             "slightly spread apart with clear gaps between them, thumb separate.")
+             "slightly spread apart with clear gaps between them, thumb separate." + buildpose.KEEP_WORN)
 # Params that belong to one version's own picture edit: never inherited as they are.
 EDIT_PARAMS = ("picture_edit", "edit_seed", "edit_from")
 # After the person's words, so the edit changes only what they asked for and the cutout stays usable for 3D.
@@ -1064,24 +1071,18 @@ def _picture_cards(sc: StageContext) -> list[str]:
     return out
 
 
-async def _edit_picture(sc: StageContext, instruction: str, src: Path, edit_from: str | None) -> Path:
-    """Edit the input picture with the instruction and cut it out; registers edited_picture and edited_cutout."""
+async def _edit_once(sc: StageContext, instruction: str, white: Path, w: int, h: int, cards: list[str], n: int) -> dict[str, Any]:
+    """One edit of the white-backed picture on the first card that works, and its cut-out; try n (0 first) names the files."""
     seed = random_seed()
-    white = await asyncio.to_thread(imaging.white_composite, src, sc.dir / "edit_source.png")
-    w, h = edit_size(*image_size(white))
-    cards = _picture_cards(sc)
-    if not cards:
-        raise RuntimeError("no graphics card can edit the picture")
-    sc.use_model("qwen_edit")
-    sc.use_model("qwen_lightning_lora")
+    suffix = "" if n == 0 else f"_{n + 1}"
     last: Exception | None = None
     for card in cards:
         try:
             name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_mesh_edit_src.png", card)
             entry = await sc.comfy(edit_graph(name, edit_prompt(instruction), seed, sc.prefix("edit"), w, h), instance=card, poll=1.0,
-                                   message="Editing the picture as described", base=0.0, span=0.04)
-            edited = await sc.download_image(entry, "save", sc.dir / "edited_picture.png", card)
-            cut = await sc.cutout(Path(edited), "edited_cutout", instance=card, base=0.04, span=0.01)
+                                   message="Editing the picture as described" + (", second try" if n else ""), base=0.0, span=0.04)
+            edited = await sc.download_image(entry, "save", sc.dir / f"edited_picture{suffix}.png", card)
+            cut = await sc.cutout(Path(edited), f"edited_cutout{suffix}", instance=card, base=0.04, span=0.01)
             break
         except Exception as e:  # noqa: BLE001  (try the next card; a cancelled job stops at once)
             if type(e).__name__ == "JobCancelled":
@@ -1092,9 +1093,41 @@ async def _edit_picture(sc: StageContext, instruction: str, src: Path, edit_from
     stats = cut.get("stats") or {}
     if stats.get("empty") or float(stats.get("coverage") or 0) < 0.02:
         raise RuntimeError("the edited picture came out without the character; try the change again or word it differently")
-    sc.register("edited_picture", edited)
-    sc.register(EDITED_KEY, cut["cutout"])
-    sc.set_params(picture_edit=True, edit_seed=seed, edit_from=edit_from)
-    sc.set_metrics(picture_edit={"seed": seed, "card": card, "size": [w, h], "elapsed_seconds": entry.get("elapsed_seconds"),
-                                 "prompt": edit_prompt(instruction)})
-    return Path(cut["cutout"])
+    return {"seed": seed, "card": card, "entry": entry, "picture": edited, "cutout": Path(cut["cutout"])}
+
+
+async def _edit_picture(sc: StageContext, instruction: str, src: Path, edit_from: str | None, guarded: bool = False) -> Path | None:
+    """Edit the input picture with the instruction and cut it out; registers edited_picture and edited_cutout.
+    guarded: the character guard (buildpose.guard) compares each try with `src`; a refused try is drawn again with a
+    new seed (POSE_GUARD_RETRIES more times), and when every try is refused nothing is registered and None comes back
+    (the hand_guard check, from metrics.hand_guard, then says so). UNTESTED ON A CARD (WP-09)."""
+    white = await asyncio.to_thread(imaging.white_composite, src, sc.dir / "edit_source.png")
+    w, h = edit_size(*image_size(white))
+    cards = _picture_cards(sc)
+    if not cards:
+        raise RuntimeError("no graphics card can edit the picture")
+    sc.use_model("qwen_edit")
+    sc.use_model("qwen_lightning_lora")
+    tries: list[dict[str, Any]] = []
+    for n in range(1 + (POSE_GUARD_RETRIES if guarded else 0)):
+        made = await _edit_once(sc, instruction, white, w, h, cards, n)
+        if guarded:
+            made["guard"] = await asyncio.to_thread(buildpose.guard, src, made["cutout"])
+        tries.append(made)
+        if not guarded or made["guard"]["ok"]:
+            break
+    kept = tries[-1]
+    if guarded:
+        g = kept["guard"]
+        sc.set_metrics(hand_guard={"tries": len(tries), "ok": g["ok"], "reasons": g["reasons"], "not_compared": g["not_compared"],
+                                   "seeds": [t["seed"] for t in tries], "measures": [t["guard"].get("measures") for t in tries]})
+        if not g["ok"]:
+            sc.register("hand_refused_picture", kept["picture"])
+            sc.register("hand_refused_cutout", kept["cutout"])
+            return None
+    sc.register("edited_picture", kept["picture"])
+    sc.register(EDITED_KEY, kept["cutout"])
+    sc.set_params(picture_edit=True, edit_seed=kept["seed"], edit_from=edit_from)
+    sc.set_metrics(picture_edit={"seed": kept["seed"], "card": kept["card"], "size": [w, h],
+                                 "elapsed_seconds": kept["entry"].get("elapsed_seconds"), "prompt": edit_prompt(instruction)})
+    return kept["cutout"]

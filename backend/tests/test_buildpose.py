@@ -200,8 +200,20 @@ def test_the_wording_asks_for_a_wide_a_pose_and_keeps_the_rest():
     assert "glove" not in text.lower()  # gloves are never named unless the picture has them
     bare = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 3.0}, "right": {"skin_gap": 4.0}}, "grey": True})
     assert buildpose.BARE_HANDS.strip() in bare and buildpose.KEEP_GREY.strip() in bare
-    gloved = buildpose.pose_prompt({"hands": {"left": {"state": "not_found"}, "right": {"state": "not_found"}}})
+    # hands that were only not found (hidden, in sleeves) say nothing about gloves: neutral wording (WP-09)
+    unseen = buildpose.pose_prompt({"hands": {"left": {"state": "not_found"}, "right": {"state": "not_found"}}})
+    assert "glove" not in unseen.lower() and "gauntlet" not in unseen.lower() and buildpose.BARE_HANDS.strip() not in unseen
+    unseen = buildpose.pose_prompt({"hands": {"left": {"state": "not_found", "skin_gap": None}, "right": {"state": "not_found"}}})
+    assert "glove" not in unseen.lower()
+    # measured gloved hands (both far from the face's skin) keep the sentence
+    gloved = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 40.0}, "right": {"skin_gap": 35.0}}})
     assert buildpose.GLOVED_HANDS.strip() in gloved
+    one = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 40.0}, "right": {"state": "not_found"}}})
+    assert "glove" not in one.lower()
+    # the no-clothing sentence names no garment, and every route carries it
+    assert buildpose.KEEP_WORN.strip() in text
+    for word in ("glove", "sock", "boot", "shoe", "gauntlet", "sleeve"):
+        assert word not in buildpose.KEEP_WORN.lower()
     assert turnaround.pose_ready_prompt(True).count("closed mouth") == 1
 
 
@@ -271,11 +283,16 @@ def test_guard_part_colours_and_gloves_with_joints(monkeypatch):
     assert not g["ok"] and any("forearms" in r for r in g["reasons"]), g
     # a colour already on the character (the trousers' blue on the forearm, as a print shows another of its colours
     # from another angle) is not a change
+    sleeved = base.copy()
     shown = base.copy()
     for a, b in (((376, 248), (440, 318)), ((136, 248), (72, 318))):  # the part is both forearms
+        ImageDraw.Draw(sleeved).line([a, b], fill=(180, 60, 60), width=24)
         ImageDraw.Draw(shown).line([a, b], fill=(40, 40, 120), width=24)
-    g = buildpose.guard(cut(base), cut(shown))
+    g = buildpose.guard(cut(sleeved), cut(shown))
     assert g["ok"] and "forearms" in g["measures"]["explained_by_neighbour"], g
+    # ... but a bare forearm that turns into another colour is never explained away (WP-09): something was put on it
+    g = buildpose.guard(cut(base), cut(shown))
+    assert not g["ok"] and any("bare skin of the forearms" in r for r in g["reasons"]), g
 
 
 # The stored pose redraws (docs: notes of 2026-11-13): the eye's verdict for each. Run only where the library holds
@@ -561,3 +578,54 @@ def test_one_try_says_nothing_about_tries(step, monkeypatch):
     sc = _SC(step.dir, step.person)
     asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
     assert "redrawn" not in _checks(sc)["pose_guard"]["help"]
+
+
+def test_guard_feet_bare_stay_bare_and_footwear_stays(monkeypatch):
+    """WP-09: footwear added to bare feet, and footwear or gloves taken off, are refused; the same feet pass."""
+    base = figure("wide", legs="apart")
+    fig = buildpose.load(cut(base))
+    ys, xs = np.nonzero(fig["mask"])
+    top = ys.min()
+    ox = 256 - (xs.min() + xs.max()) / 2
+
+    def at(x, y):
+        return (x - ox, y - 70 + top)
+    P = np.zeros((33, 3))
+    P[:, 2] = 0.99
+    for i, xy in {buildpose.NOSE: (256, 115), buildpose.L_EYE: (270, 105), buildpose.R_EYE: (242, 105),
+                  buildpose.L_SH: (296, 165), buildpose.R_SH: (216, 165), buildpose.L_EL: (376, 248), buildpose.R_EL: (136, 248),
+                  buildpose.L_WR: (440, 318), buildpose.R_WR: (72, 318), 17: (446, 326), 19: (450, 328), 18: (66, 326), 20: (62, 328),
+                  buildpose.L_HIP: (270, 430), buildpose.R_HIP: (242, 430), buildpose.L_KN: (300, 560), buildpose.R_KN: (212, 560),
+                  buildpose.L_AN: (340, 690), buildpose.R_AN: (172, 690),
+                  29: (350, 700), 31: (354, 712), 30: (162, 700), 32: (158, 712)}.items():
+        P[i, :2] = at(*xy)
+    monkeypatch.setattr(buildpose, "pose_points", lambda rgb: P.copy())
+
+    def feet(colour, r):
+        im = base.copy()
+        for x in (352, 160):
+            ImageDraw.Draw(im).ellipse([x - r, 706 - r, x + r, 706 + r], fill=colour)
+        return im
+    skin, boot = (230, 190, 150), (30, 30, 30)
+    bare, booted = feet(skin, 16), feet(boot, 20)
+    same = buildpose.guard(cut(bare), cut(bare))
+    assert same["ok"] and "feet" in same["measures"]["skin"], same
+    assert buildpose.guard(cut(booted), cut(booted))["ok"]
+    g = buildpose.guard(cut(bare), cut(booted))
+    assert not g["ok"] and "footwear was added to bare feet" in g["reasons"], g
+    g = buildpose.guard(cut(booted), cut(bare))
+    assert not g["ok"] and "the footwear was taken off" in g["reasons"], g
+    # a bare foot turned another colour that the figure already has (the trousers' blue) is no longer forgiven
+    g = buildpose.guard(cut(bare), cut(feet((40, 40, 120), 20)))
+    assert not g["ok"] and "footwear was added to bare feet" in g["reasons"], g
+
+
+def test_redraw_guard_words_and_check_are_plain():
+    ok = {"ok": True, "reasons": [], "not_compared": []}
+    bad = {"ok": False, "reasons": ["footwear was added to bare feet"], "not_compared": ["the feet"]}
+    c = buildpose.redraw_guard_check("hand_guard", "The hand redraw", ok, False, "unused")
+    assert c["passed"] and "kept what your character wears" in c["help"]
+    c = buildpose.redraw_guard_check("redraw_guard", "The redraw", bad, True, "It is kept.")
+    assert not c["passed"] and c["severity"] == "warn"
+    assert "footwear was added to bare feet" in c["help"] and "second try" in c["help"] and "It is kept." in c["help"]
+    assert "Not compared: the feet" in c["help"]

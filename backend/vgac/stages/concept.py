@@ -248,6 +248,12 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     drawn = await _face_check(sc, cutout)
     if drawn is not None:
         checks.append(drawn)
+    rg = (getattr(getattr(sc, "version", None), "metrics", None) or {}).get("redraw_guard")
+    if rg:
+        from .. import buildpose
+
+        checks.append(buildpose.redraw_guard_check("redraw_guard", "The redraw", rg, int(rg.get("tries") or 1) > 1,
+                                                   "It is kept because you asked for it; the version before it is unchanged."))
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -590,9 +596,37 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
         sc.set_params(reference_experimental=True)
     # The person's own LoRAs for this refine only: the request's choice (never the parent's, which the job does not carry).
     loras = await edit_loras(sc, "edit_addons", params)
-    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
-                           message="instruction edit" + (" with a reference picture" if ref_name else ""), base=0.05, span=0.6)
-    edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
+    # "Redraw it ready for 3D" (readiness.HUMANOID_REDRAW) is guarded (WP-09): a redraw that adds or takes off clothing is
+    # drawn again with a new seed, and when every try is refused the last is kept with a redraw_guard warning.
+    # UNTESTED ON A CARD.
+    from .. import buildpose, readiness
+
+    person = None
+    if mask_png is None and readiness.is_humanoid_redraw(instruction) and ref_name is None:
+        person = library.version_file(parent, "cutout", sc.settings)
+    tries = 1
+    if person is not None:
+        from .turnaround import POSE_GUARD_RETRIES
+
+        tries += POSE_GUARD_RETRIES
+    guard: dict[str, Any] | None = None
+    for n in range(tries):
+        if n:
+            seed = random_seed()
+            sc.set_params(seed=seed)
+        entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
+                               message="instruction edit" + (" with a reference picture" if ref_name else "") + (", another try" if n else ""),
+                               base=0.05, span=0.6)
+        edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
+        if person is None:
+            break
+        cut = await sc.cutout(Path(edited), "guard_cutout")
+        guard = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]))
+        if guard["ok"]:
+            break
+    if guard is not None:
+        sc.set_metrics(redraw_guard={"tries": n + 1, "ok": guard["ok"], "reasons": guard["reasons"],
+                                     "not_compared": guard["not_compared"], "measures": guard.get("measures")})
     if mask_png is not None:
         sc.register("edit_raw", edited)
         edited = apply_mask(src, edited, mask_png, sc.dir / "image.png")
