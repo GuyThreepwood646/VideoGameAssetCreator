@@ -173,10 +173,7 @@ namespace Vgac.Starter
             var d = new Dictionary<string, object>();
             d["pid"] = r.Pid; d["created"] = r.CreatedTicks.ToString(); d["exe"] = r.Exe; d["cmd"] = r.CommandLine;
             d["starterPid"] = r.StarterPid; d["starterCreated"] = r.StarterCreatedTicks.ToString();
-            string tmp = p + ".tmp";
-            File.WriteAllText(tmp, Json.Write(d), new UTF8Encoding(false));
-            if (File.Exists(p)) File.Delete(p);
-            File.Move(tmp, p);
+            SafeFs.WriteAtomic(p, Json.Write(d), null);
         }
 
         public static OwnedRecord Load(string projectRoot)
@@ -264,6 +261,7 @@ namespace Vgac.Starter
         public string OkLabel = "Quit";
         public string CancelLabel = "Cancel";
         public bool DefaultCancel;
+        public bool Block;          // not a question: the thing cannot be done now
     }
 
     public static class QuitPolicy
@@ -345,6 +343,13 @@ namespace Vgac.Starter
 
     public static class LauncherRules
     {
+        // A setup error whose advice is to choose another folder gets the Choose button, not only Close.
+        public static bool ErrorOffersChoose(StarterError e)
+        {
+            string fix = e == null ? null : e.Fix;
+            return fix != null && (fix.Contains("Choose another folder") || fix.Contains("Choose a real folder"));
+        }
+
         // The status window's X. Windows ending the session (or Task Manager) is never argued with. Before the app window
         // exists (or in the browser fallback) closing it means quit; afterwards it only hides, the tray stays.
         public static CloseOutcome StatusWindowClosing(bool quitting, bool systemEnding, bool appWindowOpen)

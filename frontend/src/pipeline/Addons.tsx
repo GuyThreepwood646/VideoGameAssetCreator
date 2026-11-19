@@ -6,7 +6,8 @@ import { useState } from 'react'
 import { api, type AddonChoice, type AddonEntry, type Recipe, type StrengthName, type TurnMethod, type Version } from '../api'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
-import { joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
+import { editLoraNotes } from '../editLoras'
+import { addonRemoveWords, joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
 import { addonLocked, strengthsEqual } from '../recipe'
 import { AddMyAddon, reloadMyAddons } from './AddMyAddon'
 
@@ -208,6 +209,9 @@ function AddonRowView({
         )}
       </div>
       {a.help?.meaning && <div className="muted small addon-meaning">{a.help.meaning}</div>}
+      {a.mine && a.placement && (a.placement.file_missing || a.placement.source_missing) && (
+        <div className="error small addon-placement">{a.placement.note}</div>
+      )}
       {removable && <RemoveMine entry={a} disabled={disabled} />}
       {locked && (
         <div className="muted small addon-lock">
@@ -218,7 +222,7 @@ function AddonRowView({
   )
 }
 
-// Remove one of your own add-ons from the list. The file stays in the add-on folder.
+// Remove one of your own add-ons from the list. Only a link or copy the app made is deleted (the words say which), never an original.
 function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean }) {
   const [asking, setAsking] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -235,7 +239,7 @@ function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean 
     <div className="addon-mine-actions small">
       {asking ? (
         <>
-          <span>Take it off your list? The file stays in the LoRA folder, so you can set it up again later.</span>
+          <span>Take it off your list? {addonRemoveWords(entry.placement?.mode)}</span>
           <button type="button" onClick={remove}>
             Remove
           </button>
@@ -274,7 +278,13 @@ export function TurnaroundAddons({ entries, method = 'standard' }: { entries: Ad
 }
 
 // "Not used: ..." after a run: add-ons the version asked for that the painter could not use or the app does not know.
+// The version details: the style LoRAs it skipped, then your picture-edit LoRAs it could not use (per use).
 export function addonsNotUsed(v: Version | undefined | null, catalog: AddonEntry[] | undefined): string | null {
+  const notes = [styleAddonsNotUsed(v, catalog), ...editLoraNotes(v)].filter((n): n is string => !!n)
+  return notes.length ? notes.join(' ') : null
+}
+
+function styleAddonsNotUsed(v: Version | undefined | null, catalog: AddonEntry[] | undefined): string | null {
   if (!v) return null
   const unknown = Array.isArray(v.metrics.addons_unknown) ? (v.metrics.addons_unknown as unknown[]).map(String) : []
   const ignored = Array.isArray(v.metrics.addons_ignored)

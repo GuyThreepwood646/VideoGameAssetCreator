@@ -234,6 +234,19 @@ export const platforms: Platform[] = [
   { id: 'high', label: 'High end', triangles_character: 80000, triangles_prop: 10000, texture: 4096 },
 ]
 
+// Your own LoRAs for one picture-edit use, as the backend serves the knob (type edit_addons). api.ts does not list that
+// type yet, so the mock casts it; FineTune checks it by its text (isEditKnob).
+const editKnob = (name: string, label: string, extra: Record<string, unknown> = {}) =>
+  ({
+    name,
+    label,
+    type: 'edit_addons' as unknown as 'addons',
+    options: ['off', 'subtle', 'normal', 'strong'],
+    default: null,
+    description: 'Your own LoRAs for this use only; empty uses none',
+    ...extra,
+  }) as StageInfo['adjust_schema'][number]
+
 export const stages: StageInfo[] = [
   {
     id: 'concept',
@@ -269,6 +282,8 @@ export const stages: StageInfo[] = [
         options_by_category: { humanoid: ['standard', 'sheet'], prop_rigid: ['standard', 'shadow_free'] },
       },
       { name: 'lora_strength', label: 'Multi-angle LoRA strength', type: 'number', min: 0, max: 1.5, step: 0.05, default: 0.9 },
+      editKnob('view_addons', 'Your LoRAs for the side views', { description: 'Your own LoRAs for the side views, loaded after the built-in views LoRA. Empty uses none' }),
+      editKnob('pose_addons', 'Your LoRAs for the pose redraw', { categories: ['humanoid'] }),
       { name: 'seed', label: 'Seed', type: 'integer', min: 0, max: 2147483647, step: 1, default: 77 },
       { name: 'auto_reroll', label: 'Re-roll failing views (twice)', type: 'boolean', default: true },
     ],
@@ -298,6 +313,7 @@ export const stages: StageInfo[] = [
     id: 'prep',
     label: 'Prep',
     adjust_schema: [
+      editKnob('face_addons', 'Your LoRAs for the face close-up', { categories: ['humanoid'] }),
       // 3.2: size_m replaces height_m (read as an alias); null means the category's size. Not for scenery or materials.
       {
         name: 'size_m',
@@ -305,7 +321,7 @@ export const stages: StageInfo[] = [
         type: 'number',
         min: 0.01,
         max: 100,
-        step: 0.05,
+        step: 0.01,
         default: 1.8,
         // Scenery snaps to the grid instead (grid_footprint, grid_height, grid_m).
         categories: ['humanoid', 'quadruped', 'winged', 'multileg', 'serpent', 'vehicle', 'prop_rigid', 'prop_articulated', 'foliage'],

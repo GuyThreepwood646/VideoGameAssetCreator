@@ -921,3 +921,88 @@ def parse_clip_spec(spec) -> list:
 def clip_spec_text(rows) -> str:
     """The inverse of parse_clip_spec, for the command line."""
     return ",".join(f"{n}={'|'.join(c)}" for n, c in rows)
+
+
+# ---- arm pose: each upper arm's angle from straight down (procanim; the rig setting arm_pose) ---------------------
+# The built-in idle, walk, run and turn drop each arm from its own measured rest angle to a target angle from straight
+# down, so a character whose arms rest raised keeps them down. The rest mesh and its weights are never changed.
+ARM_TARGET_DEG = {"idle": 24.0, "walk": 23.0, "run": 35.0, "turn": 22.0}
+ARM_POSE_CHOICES = ("close", "relaxed", "open")
+ARM_POSE_DEFAULT = "relaxed"
+ARM_POSE_SHIFT_DEG = {"close": -8.0, "relaxed": 0.0, "open": 10.0}
+ARM_MIN_DEG = 10.0         # an arm never comes closer than this to straight down, whatever the setting
+WALK_ARM_SWING_DEG = 20.0  # the walk's forward and back swing of the upper arm about the arm's swing axis
+
+
+def arm_pose_choice(value) -> str:
+    """The arm_pose setting as one of ARM_POSE_CHOICES: None or empty is the default; anything else raises."""
+    if value is None or value == "":
+        return ARM_POSE_DEFAULT
+    if value not in ARM_POSE_CHOICES:
+        raise ValueError(f"arm_pose must be one of {list(ARM_POSE_CHOICES)}")
+    return value
+
+
+def angle_from_down(v, up=(0.0, 0.0, 1.0)) -> float:
+    """Degrees between direction v and straight down (the opposite of up). 0 hangs down, 180 points straight up."""
+    n = v_len(v)
+    if n < 1e-12:
+        return 0.0
+    c = -v_dot(v, up) / (n * v_len(up))
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def rest_arm_angle(shoulder, elbow, up=(0.0, 0.0, 1.0)) -> float:
+    """The measured rest angle of an upper arm: from its shoulder joint to the elbow, in degrees from straight down."""
+    return angle_from_down(v_sub(elbow, shoulder), up)
+
+
+def arm_target_deg(clip: str, choice: str | None = None) -> float:
+    """The angle from straight down an upper arm should hold in this clip, before the body's own limits."""
+    if clip not in ARM_TARGET_DEG:
+        raise ValueError(f"no arm target for clip {clip!r}")
+    return ARM_TARGET_DEG[clip] + ARM_POSE_SHIFT_DEG[arm_pose_choice(choice)]
+
+
+def hip_clear_min_deg(shoulder_out: float, arm_len: float, hip_half: float) -> float:
+    """The smallest angle from straight down that keeps the hand outside the hip line. With the arm taken straight, the
+    hand sits about shoulder_out + arm_len * sin(angle) from the centre line and must reach hip_half. 0 when the
+    shoulder is already outside the hips or the arm has no length."""
+    if arm_len <= 1e-9 or shoulder_out >= hip_half:
+        return 0.0
+    return math.degrees(math.asin(min(1.0, (hip_half - shoulder_out) / arm_len)))
+
+
+def arm_hold_deg(clip: str, choice: str | None = None, shoulder_out: float | None = None,
+                 arm_len: float | None = None, hip_half: float | None = None, extra: float = 0.0) -> float:
+    """The angle from straight down an upper arm is held at in a clip: the clip's target (with the arm_pose setting and
+    an optional extra, such as the idle breath) clamped to at least ARM_MIN_DEG and, when the skeleton's widths are
+    given, to the angle that keeps the hand outside the hips."""
+    hold = max(ARM_MIN_DEG, arm_target_deg(clip, choice) + extra)
+    if shoulder_out is not None and arm_len is not None and hip_half is not None:
+        hold = max(hold, hip_clear_min_deg(shoulder_out, arm_len, hip_half))
+    return hold
+
+
+def arm_drop_deg(rest_deg: float, clip: str, choice: str | None = None, shoulder_out: float | None = None,
+                 arm_len: float | None = None, hip_half: float | None = None, extra: float = 0.0) -> float:
+    """Degrees the upper arm rotates toward straight down so it holds the clip's angle. Positive drops the arm; a
+    negative value lifts an arm that rests closer to the body than its target."""
+    return rest_deg - arm_hold_deg(clip, choice, shoulder_out, arm_len, hip_half, extra)
+
+
+def swung_arm_angle(hold_deg: float, swing_deg: float) -> float:
+    """Angle from straight down after an upper arm held at hold_deg in the side plane swings swing_deg about the
+    lateral axis: cos(angle) = cos(hold) * cos(swing)."""
+    c = math.cos(math.radians(hold_deg)) * math.cos(math.radians(swing_deg))
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def walk_arm_mean_deg(clip: str = "walk", choice: str | None = None, samples: int = 256) -> float:
+    """Mean angle from straight down of the upper arm over one built-in walk cycle once it is dropped to its hold: the
+    walk swings it WALK_ARM_SWING_DEG each way. The hold does not depend on the rest angle, which the drop removes."""
+    hold = arm_hold_deg(clip, choice)
+    total = 0.0
+    for i in range(samples):
+        total += swung_arm_angle(hold, WALK_ARM_SWING_DEG * math.cos(2 * math.pi * i / samples))
+    return total / samples

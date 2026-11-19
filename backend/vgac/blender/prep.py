@@ -32,23 +32,29 @@ from above, so the concept's front ends up facing Blender -Y, which is +Z in glT
 bounding-box extent on the size axis equals --size (height: Z; horizontal: the larger of X and Y; longest: the largest
 of all three); move the pivot (base centre or bounding-box centre) to the origin; weld vertices split along UV chart
 borders; optional symmetrize across X; smooth shading with auto-smooth at the crease angle, or with --shading flat (the low-poly recipe)
-flat shading, every face its own normal, which the glTF export writes as split vertices; export GLB; write
-<out>_report.json with triangle count, dimensions, the measured size, bone count and a manifold check.
+flat shading, every face its own normal, which the glTF export writes as split vertices; measure the shape loss
+(shapeloss.py, WP-16: the pre-reduction copy against the final mesh, distances as shares of the height; metrics only);
+export GLB; write <out>_report.json with triangle count, dimensions, the measured size, bone count, a manifold check
+and the shape_loss block.
 """
 import json
 import math
 import os
 import sys
+import time
 
 import bmesh
 import bpy
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
 import gridfit  # noqa: E402  (pure maths next to this script)
 import headweight  # noqa: E402
 import rebake  # noqa: E402
+import shapeloss  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
 argv = _common.after_double_dash()
 src, dst, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
@@ -124,6 +130,49 @@ def extent(lo, hi):
     return d.z
 
 
+def mesh_arrays(obj):
+    """World-space vertex positions (V, 3) and loop triangles (T, 3) of a mesh object, as numpy arrays."""
+    me = obj.data
+    me.calc_loop_triangles()
+    co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    me.vertices.foreach_get("co", co)
+    tris = np.empty(len(me.loop_triangles) * 3, dtype=np.int64)
+    me.loop_triangles.foreach_get("vertices", tris)
+    m = np.array(obj.matrix_world, dtype=float)
+    world = co.reshape(-1, 3).astype(float) @ m[:3, :3].T + m[:3, 3]
+    return world, tris.reshape(-1, 3)
+
+
+def nearest_distances(tree, points):
+    """The distance from each point (an (n, 3) array) to the nearest surface point of a BVH tree."""
+    out = np.empty(len(points))
+    for i, p in enumerate(points.tolist()):
+        out[i] = tree.find_nearest(p)[3]
+    return out
+
+
+def measure_shape_loss(pre_obj, fin_obj):
+    """The shape_loss block (WP-16): the copy from before the reduction against the final mesh, both ways."""
+    t0 = time.perf_counter()
+    pre_v, pre_t = mesh_arrays(pre_obj)
+    fin_v, fin_t = mesh_arrays(fin_obj)
+    tree_pre = BVHTree.FromPolygons(pre_v.tolist(), pre_t.tolist(), all_triangles=True)
+    tree_fin = BVHTree.FromPolygons(fin_v.tolist(), fin_t.tolist(), all_triangles=True)
+    block = shapeloss.measure(pre_v, pre_t, fin_v, fin_t,
+                              lambda p: nearest_distances(tree_fin, p),
+                              lambda p: nearest_distances(tree_pre, p))
+    block["seconds"] = round(time.perf_counter() - t0, 2)
+    return block
+
+
+def drop_object(obj):
+    """Remove a helper object and its mesh data, so the export (which takes the whole selection) never sees it."""
+    me = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if me is not None and me.users == 0:
+        bpy.data.meshes.remove(me)
+
+
 if yaw:
     root.rotation_mode = "XYZ"  # glTF imports use quaternions, which ignore rotation_euler
     root.rotation_euler = (0.0, 0.0, math.radians(yaw))
@@ -189,6 +238,8 @@ if symmetric:
 # symmetrized, already mirrored (its mirrored half samples the kept half's texels, so the colours and the bumps match
 # the symmetric shape exactly instead of being fetched from the original, lopsided surface).
 bake_source = rebake.copy_object(mesh, "vgac_bake_source") if maps and rebake_mode != "never" else None
+# Shape loss (WP-16): the same surface before the reduction, measured against the final mesh below, then removed.
+shape_source = rebake.copy_object(mesh, "vgac_shape_source")
 
 # Triangle budget: symmetrize and welding can push the count over the platform budget; decimate back to it.
 budget = int(_common.opt("--budget", 0))
@@ -319,6 +370,14 @@ if grid_plan is not None:
         "tile_axes": tiles["axes"], "tile_pitch_m": tiles["pitch"], "tile_gap_cm": tiles["gap_cm"],
     }
 
+# Shape loss (WP-16, metrics only): the nearest-surface distances both ways, against the copy from before the reduction.
+shape_report = {}
+try:
+    shape_report["shape_loss"] = measure_shape_loss(shape_source, mesh)
+except Exception as exc:  # a metric, never a reason to fail prep
+    shape_report["shape_loss_error"] = str(exc)[:300]
+drop_object(shape_source)
+
 mesh.data.calc_loop_triangles()
 bm = bmesh.new()
 bm.from_mesh(mesh.data)
@@ -356,6 +415,7 @@ report = {
     **({"hand_triangles_final": headweight.hand_count(mesh.data, headweight.hand_zones(mesh))} if hand_gain > 0 else {}),
     "texture_size": tex_size,
     **bake_report,
+    **shape_report,
 }
 if grid_report is not None:
     report["grid"] = grid_report

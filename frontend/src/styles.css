@@ -1390,6 +1390,13 @@ button.btn-lg {
   grid-template-columns: repeat(3, 1fr);
   gap: var(--s2) var(--s3);
 }
+/* The step settings sit in narrow places (the New asset form, the Make it card): as many columns as fit. */
+.step-settings .adjust-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.step-settings .adjust-grid > * {
+  min-width: 0;
+}
 .slider-row {
   display: flex;
   gap: var(--s2);
@@ -1648,6 +1655,15 @@ button.btn-lg {
 .redraw-summary {
   flex: 1 1 320px;
   min-width: 0;
+}
+.redraw-words {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  flex: 1 1 100%;
+}
+.redraw-words input {
+  width: 100%;
 }
 .redraw-own {
   margin-top: var(--s1);
@@ -3776,6 +3792,14 @@ button.small-btn .resume-icon {
 }
 .first-build-intro {
   max-width: 80ch;
+}
+
+/* Step 1 picture count on the empty card: one or two pictures, remembered in the browser. */
+.concept-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
 }
 
 /* Feature photos in the New asset form (components/FeaturePhotos.tsx). */

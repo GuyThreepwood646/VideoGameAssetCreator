@@ -428,12 +428,14 @@ def accept(use: list[int] | None = None, three_d: int | None = None, min_free_ra
         patch = fit_patch(plan.patch, saved_before)
         try:
             effective(patch)
-            data = config.merge(config.read_machine(mpath), {"backend": patch})
-            # update_machine would drop a null; the file must keep it, or the defaults bring the instance back.
-            for name, p in (patch.get("instances") or {}).items():
-                if p is None:
-                    data.setdefault("backend", {}).setdefault("instances", {})[name] = None
-            config.write_machine(data, mpath)
+            from .state_lock import state_lock   # the starter writes this file too (vgac/state_lock.py)
+            with state_lock(mpath.parent):
+                data = config.merge(config.read_machine(mpath), {"backend": patch})
+                # update_machine would drop a null; the file must keep it, or the defaults bring the instance back.
+                for name, p in (patch.get("instances") or {}).items():
+                    if p is None:
+                        data.setdefault("backend", {}).setdefault("instances", {})[name] = None
+                config.write_machine(data, mpath)
         except ConfigError as err:
             raise setup_settings.SettingError(f"That would leave the app unable to start, so it was not saved: {err}") from None
         saved = config.load_settings(create_library=False)

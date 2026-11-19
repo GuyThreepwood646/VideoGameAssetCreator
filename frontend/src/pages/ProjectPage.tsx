@@ -1,7 +1,7 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -12,7 +12,12 @@ import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
 import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
-import { HairFormLine, hairLibraryOffer } from '../pipeline/HairSetting'
+import { editLoras } from '../editLoras'
+import { EditLoras } from '../pipeline/EditLoras'
+import { useMyAddons } from '../pipeline/AddMyAddon'
+import { HairFormRow, hairFormState, hairLibraryOffer, useHairLibraryCheck } from '../pipeline/HairSetting'
+import { StepSettingsChoice } from '../pipeline/StepSettingsChoice'
+import { mergeStepParams, type StepParams } from '../pipeline/stepSettings'
 import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook, usePresets, type LookChoice } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
@@ -260,6 +265,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [startFrom, setStartFrom] = useState<StartFrom>('words')
   // Feature photos (a face, a body, an outfit): one combined first picture, or the face close-up for step 4.
   const [featureSlots, setFeatureSlots] = useState<FeatureSlot[]>([])
+  // The person's own LoRAs for combining the feature photos (edit_addons); only shown when photos are chosen.
+  const [combineLoras, setCombineLoras] = useState<Record<string, EditChoice>>({})
   // A 3D model the person has (step 3 "Use my own 3D model"): sent after the asset is made.
   const [modelFile, setModelFile] = useState<File | null>(null)
   const [modelProgress, setModelProgress] = useState<number | null>(null)
@@ -275,6 +282,8 @@ function CreateAssetForm({ project }: { project: Project }) {
   const [lookOpen, setLookOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [poseFirst, setPoseFirst] = useState(false)
+  // Settings changed for each step of the automatic build (only the changed values).
+  const [stepSettings, setStepSettings] = useState<StepParams>({})
   // The project's ready-made look names the asset style new assets default to. It stays unknown until the looks have
   // loaded, so the form never starts on the first look in the list.
   const projectLook = presetById(presets, project.style_lock.preset)
@@ -348,9 +357,14 @@ function CreateAssetForm({ project }: { project: Project }) {
 
   const fromPicture = startFrom === 'picture'
   const fromModel = startFrom === 'model'
-  const hairOffered = !fromModel && (fromPicture || !!prompt.trim()) && hairLibraryOffer(prompt, style, category).ok
+  // The Hair row is always shown for a humanoid. Its library choice is offered only where the app can use it, else disabled with the reason.
+  const hairRow = category === 'humanoid'
+  const hairRule = fromModel ? { ok: false, reason: 'A 3D model you bring is used as it is.' } : hairLibraryOffer(prompt, style, category)
+  const hairState = hairFormState(hairRule, useHairLibraryCheck(platform, hairRow && hairRule.ok), platform)
   const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
   const features = usedFeatures(featureSlots, startFrom, category)
+  const myLoras = useMyAddons(features.length > 0 && startFrom !== 'model')
+  const combineChoices = Object.fromEntries(Object.entries(combineLoras).filter(([id, c]) => c !== 'off' && editLoras(myLoras).some((e) => e.id === id)))
   const fallbackName = autoName(prompt) || (fromPicture && picture ? nameFromFile(picture.name) : '') || (fromModel && modelFile ? nameFromFile(modelFile.name) : '') || 'Untitled'
 
   const submit = async (e: FormEvent) => {
@@ -381,8 +395,9 @@ function CreateAssetForm({ project }: { project: Project }) {
               }),
             }
           : {}),
+        ...(Object.keys(combineChoices).length && features.length && !fromModel ? { edit_addons: combineChoices } : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
-        ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
+        ...(hairRow && hairState.usable && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
       })
       rememberConceptModel(a.id, model && model !== suggestion?.model ? model : null)
@@ -403,7 +418,9 @@ function CreateAssetForm({ project }: { project: Project }) {
       if (autopilot) {
         // Build it automatically. A backend without the endpoint (404) just lands on the asset page.
         try {
-          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', ...(fromPicture && category === 'humanoid' && poseFirst ? { stage_params: { turnaround: { pose_ready: true } } } : {}) })
+          // Pose for 3D first is one of the step settings; a setting the person changed under the step settings wins.
+          const stage_params = mergeStepParams(fromPicture && category === 'humanoid' && poseFirst ? { turnaround: { pose_ready: true } } : undefined, stepSettings)
+          await api.startAutopilot(a.id, { stop_on: 'block', until_stage: 'export', stage_params })
         } catch (err) {
           if (!(err instanceof ApiError && err.status === 404)) console.warn('autopilot did not start', err)
         }
@@ -486,6 +503,15 @@ function CreateAssetForm({ project }: { project: Project }) {
         </Field>
       )}
       <FeaturePhotos slots={featureSlots} onChange={setFeatureSlots} startFrom={startFrom} category={category} disabled={busy} />
+      {features.length > 0 && !fromModel && (
+        <EditLoras
+          purpose="Your LoRAs for combining the photos"
+          entries={editLoras(myLoras)}
+          choices={combineLoras}
+          disabled={busy}
+          onChange={(id, choice) => setCombineLoras((cur) => ({ ...cur, [id]: choice }))}
+        />
+      )}
       <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
       </Field>
@@ -500,11 +526,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <Info term="term.hair_pictures" />
         </div>
       ))}
-      {hairOffered && (
-        <ExtraChip summary={hairChoice === 'library' ? 'Hair: from the library.' : 'Hair: built with the 3D model.'}>
-          <HairFormLine value={hairChoice} onChange={setHairChoice} platform={platform} />
-        </ExtraChip>
-      )}
+      {hairRow && <HairFormRow value={hairChoice} onChange={setHairChoice} state={hairState} platform={platform} />}
       {category === 'humanoid' && (
         <label className="check-item" title="Off for a hidden or very simple face: the clean-up step then skips the face pass">
           <input type="checkbox" checked={faceMatters} onChange={(e) => setFaceMatters(e.target.checked)} />
@@ -666,6 +688,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <span className="muted small block">Runs every step and only stops if something needs you.</span>
         </span>
       </label>
+      {autopilot && <StepSettingsChoice category={category} platform={platform} look={style} stages={ref?.stages ?? null} disabled={busy} onChange={setStepSettings} />}
       <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? (fromModel && modelProgress !== null ? 'Sending your model...' : 'Creating...') : fromModel ? 'Create and read my model' : autopilot ? 'Create and make it' : 'Create asset'}

@@ -11,6 +11,14 @@ using System.Text;
 
 namespace Vgac.Starter
 {
+    public static class ErrorBoxes
+    {
+        [DllImport("kernel32.dll")] static extern uint SetErrorMode(uint mode);
+
+        // Windows' own error boxes ("unsupported application", "file not found") are not shown for programs this one starts.
+        public static void Off() { SetErrorMode(0x0001 | 0x8000); }   // FAILCRITICALERRORS | NOOPENFILEERRORBOX
+    }
+
     public static class NativeProcess
     {
         [StructLayout(LayoutKind.Sequential)]

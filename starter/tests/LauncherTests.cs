@@ -563,7 +563,7 @@ public static partial class T
             string log = Path.Combine(dir, "child.log");
             int pid = NativeProcess.StartLogged(me, args, dir, log, null);
             for (int i = 0; i < 50 && IsAlive(pid); i++) Thread.Sleep(100);
-            string text = File.ReadAllText(log);
+            string text = ReadShared(log);
             Check(text.Contains("inherited=no"), "the launch hands the child only its log handles, not the extra one (" + text.Trim().Replace("\r\n", " | ") + ")");
         }
         finally { CloseHandle(leak); }
@@ -728,7 +728,7 @@ public static partial class T
         var env = new Dictionary<string, string>(); env["VGAC_TEST_FLAG"] = "yes";
         int pid = NativeProcess.StartLogged(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/c echo flag=%VGAC_TEST_FLAG%& echo to-stderr 1>&2", dir, logFile, env);
         for (int i = 0; i < 30 && IsAlive(pid); i++) Thread.Sleep(100);
-        string text = File.ReadAllText(logFile);
+        string text = ReadShared(logFile);
         Check(text.Contains("flag=yes"), "the child got the extra environment");
         Check(text.Contains("to-stderr"), "stderr goes to the same file");
 
@@ -749,6 +749,21 @@ public static partial class T
         long after = new FileInfo(log2).Length;
         Check(after > before, "and it still writes its log (" + before + " -> " + after + " bytes)");
         try { Process.GetProcessById(child).Kill(); } catch (Exception) { }
+    }
+
+    // A log the child may still have open: read it with sharing, and give the child a moment to finish writing.
+    static string ReadShared(string path)
+    {
+        for (int i = 0; i < 20; i++)
+        {
+            try
+            {
+                using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var r = new StreamReader(f, Encoding.UTF8)) return r.ReadToEnd();
+            }
+            catch (IOException) { Thread.Sleep(100); }
+        }
+        return "";
     }
 
     static bool IsAlive(int pid)

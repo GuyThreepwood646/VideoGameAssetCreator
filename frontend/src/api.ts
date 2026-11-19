@@ -315,7 +315,7 @@ export type Platform = {
 export type AdjustParam = {
   name: string
   label?: string
-  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string' | 'addons'
+  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string' | 'addons' | 'edit_addons'
   // type 'addons' (concept): every concept add-on the app knows. The value is {id: off | subtle | normal | strong}.
   catalog?: AddonEntry[]
   min?: number
@@ -377,7 +377,10 @@ export type AddonEntry = {
   id: string
   label: string
   help: HelpText
-  stage: 'concept' | 'turnaround'
+  stage: 'concept' | 'turnaround' | 'edit'
+  // Picture-edit LoRAs (GET /api/my-addons): what the file was made for and the warning for a plain Qwen-Image one.
+  made_for?: MadeFor
+  warning?: string
   base_models: string[]
   strengths: Record<StrengthName, number>
   default_strength: StrengthName
@@ -394,11 +397,20 @@ export type AddonEntry = {
   mine?: boolean
   file_name?: string
   added_at?: string
+  // Your own add-ons only: how the file is kept (see AddonPlacement).
+  placement?: AddonPlacement
 }
+
+// How one of your LoRA files is kept. mode: 'in_place' (used where it is), 'link' (a second name made by the app, same drive), 'copy' (a copy
+// made by the app) or '' (a file you put in the app's folder yourself). `note` is the plain sentence to show, and says when the file or its
+// original is gone.
+export type AddonPlacement = { mode: 'in_place' | 'link' | 'copy' | ''; note: string; source: string; source_missing: boolean; file_missing: boolean }
 
 // Your own add-ons (backend user_addons.py, docs/API.md "your own LoRAs").
 export type MyAddonsListing = {
   addons: AddonEntry[]
+  // The picture-edit model a LoRA can be made for (user_addons.listing: edit_models).
+  edit_models?: { id: string; label: string }[]
   // The one folder the app keeps add-on files in (VGAC/mine/ inside ComfyUI's loras folder).
   folder: string
   folder_exists: boolean
@@ -406,10 +418,32 @@ export type MyAddonsListing = {
   painters: { id: string; label: string }[]
 }
 // What the short form can start with, read from the file's header (never its data).
-export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string }
+export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string; made_for?: MadeFor | ''; warning?: string }
 export type UploadedAddon = { file_name: string; bytes: number; prefill: AddonPrefill }
 export type UnregisteredAddon = { file_name: string; bytes: number; prefill?: AddonPrefill; error?: string }
-export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string }
+export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string; in_place?: boolean; made_for?: MadeFor | '' }
+export type MyAddonChange = Omit<MyAddonIn, 'file_name' | 'in_place'>
+// POST /api/my-addons/place (desktop app): what was done with the file at a real path, or (copy_needed) what a copy would do.
+export type AddonPlaced = {
+  route: 'in_place' | 'already_here' | 'link' | 'copy' | 'copy_needed'
+  file_name: string
+  in_place: boolean
+  bytes: number
+  prefill: AddonPrefill
+  source: string
+  message: string
+  folder?: string
+  can_copy?: boolean
+  free?: number
+}
+export type RemovedAddon = { removed: string; file_name: string; file_kept: boolean; file_removed: boolean; mode: string; message: string }
+
+// Your LoRAs for the picture-edit uses (picture_loras.py). Each use has its own choice; a LoRA is for picture edits when its stage is edit.
+export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
+// What a picture-edit LoRA was made for (user_addons.MADE_FOR_EDIT / MADE_FOR_PLAIN). Plain also covers "not sure".
+export type MadeFor = 'qwen_image_edit' | 'qwen_image'
+export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string }
+export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 export type Recipe = {
   id: string
   style: string
@@ -717,7 +751,7 @@ export type GpuSharingPatch = { default_instance?: string | null; share_when_bus
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 // reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
 // `views` (Check all sides): several views redrawn together in one new version.
-export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string; fix_for?: string[] }
+export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string; fix_for?: string[]; edit_addons?: Record<string, EditChoice> }
 // POST /api/versions/{vid}/fix-plan: the one redraw instruction for the ticked failed checks. `dropped` are ticks that could not be joined.
 export type FixPlan = { instruction: string | null; used: string[]; snippets: string[]; dropped: { check: string; reason: string; text: string }[]; words: number; max_changes: number }
 export type DeleteResult = { ok: boolean; deleted: string }
@@ -814,7 +848,22 @@ export type Health = {
   queue: Record<string, { paused: boolean; enabled?: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
 }
 
+// The person's saved step settings for one platform and look. `applied` is `saved` brought down to the look's limits
+// for the asset's category; `notes` says plainly what was brought down.
+export type StepDefaults = {
+  platform: string
+  look: string
+  saved: Partial<Record<StageId, Record<string, unknown>>>
+  applied: Partial<Record<StageId, Record<string, unknown>>>
+  notes: string[]
+}
+
 export const api = {
+  // Saved step settings (Choose each step's settings, "Save as my defaults")
+  getStepDefaults: (platform: string, look: string, category: string) => get<StepDefaults>('/api/step-defaults' + q({ platform, look, category })),
+  saveStepDefaults: (platform: string, look: string, category: string, stages: Partial<Record<StageId, Record<string, unknown>>>) =>
+    put<StepDefaults>('/api/step-defaults' + q({ platform, look, category }), { stages }),
+  clearStepDefaults: (platform: string, look: string, category: string) => del<StepDefaults>('/api/step-defaults' + q({ platform, look, category })),
   // Reference data
   health: () => get<Health>('/api/health'),
   gpus: () => get<Gpu[]>('/api/gpus'),
@@ -890,7 +939,7 @@ export const api = {
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty. features: feature photos; step 1 is
     // then one picture combined from them (compose), and a human's face photo is kept as the face close-up.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean; edit_addons?: Record<string, EditChoice> },
   ) => post<Asset & { upload?: RunResult; compose?: RunResult; face_closeup?: boolean }>(`/api/projects/${pid}/assets`, body),
 
   // The people in a feature photo, for the suggested box (backend vgac/people.py). Never blocks the form: a failure is a status.
@@ -964,7 +1013,9 @@ export const api = {
   // Your own add-ons
   myAddons: () => get<MyAddonsListing>('/api/my-addons'),
   addMyAddon: (body: MyAddonIn) => post<AddonEntry>('/api/my-addons', body),
-  removeMyAddon: (id: string) => del<{ removed: string; file_name: string; file_kept: boolean }>(`/api/my-addons/${encodeURIComponent(id)}`),
+  removeMyAddon: (id: string) => del<RemovedAddon>(`/api/my-addons/${encodeURIComponent(id)}`),
+  updateMyAddon: (id: string, body: MyAddonChange) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}`, body),
+  placeAddon: (path: string, makeCopy = false) => post<AddonPlaced>('/api/my-addons/place', { path, make_copy: makeCopy }),
   unregisteredAddons: () => get<UnregisteredAddon[]>('/api/my-addons/unregistered'),
   openAddonFolder: () => post<{ opened: boolean; folder: string; front?: boolean | null }>('/api/my-addons/open-folder'),
   uploadAddon: (file: File, onProgress?: (fraction: number) => void) => uploadAddonFile(file, onProgress),
@@ -1495,6 +1546,10 @@ function hairStyles(x: unknown): HairStyleEntry[] {
 }
 
 const hairLibraryRequests = new Map<string, Promise<HairStyleEntry[]>>()
+// What the New asset form needs from GET /api/hair-library?platform=: whether the built-in library is installed, and how
+// many hairstyles fit that platform (the person's own ones included, as the backend counts them).
+export type HairLibraryOn = { installed: boolean; styles: number }
+const hairLibraryOnRequests = new Map<string, Promise<HairLibraryOn>>()
 
 export const hairApi = {
   panel: (aid: string) => get<HairPanel>(`/api/assets/${aid}/hair`),
@@ -1514,6 +1569,20 @@ export const hairApi = {
     }
     return req
   },
+  libraryOn: (platform: string): Promise<HairLibraryOn> => {
+    let req = hairLibraryOnRequests.get(platform)
+    if (!req) {
+      req = get<{ installed?: boolean }>('/api/hair-library?platform=' + encodeURIComponent(platform)).then(
+        (x) => ({ installed: x?.installed === true, styles: hairStyles(x).length }),
+        (e) => {
+          hairLibraryOnRequests.delete(platform)
+          throw e
+        },
+      )
+      hairLibraryOnRequests.set(platform, req)
+    }
+    return req
+  },
   // Your own hairstyles (backend vgac/my_hair.py, /api/my-hair).
   mine: () => get<MyHairListing>('/api/my-hair'),
   updateMine: (id: string, body: MyHairUpdate) => put<MyHairStyle>(`/api/my-hair/${encodeURIComponent(id)}`, body).then(forgetHairLibrary),
@@ -1524,6 +1593,7 @@ export const hairApi = {
 // The catalogue is cached per page load; adding, changing or removing your own hairstyle makes the next read ask again.
 function forgetHairLibrary<T>(x: T): T {
   hairLibraryRequests.clear()
+  hairLibraryOnRequests.clear()
   return x
 }
 

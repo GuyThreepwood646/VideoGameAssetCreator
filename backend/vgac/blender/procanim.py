@@ -29,7 +29,7 @@ import gait  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 # ---- arguments -----------------------------------------------------------------------------------------------
-_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed")
+_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
@@ -38,6 +38,7 @@ motion_arg = _common.opt("--motion", None)
 clips_arg = _common.opt("--clips", None)
 SIZE = gait.factor(_common.opt("--size", None), gait.MOVE_SIZE)
 SPEED = gait.factor(_common.opt("--speed", None), gait.MOVE_SPEED)
+ARM_POSE = gait.arm_pose_choice(_common.opt("--arm-pose", None))  # close, relaxed (default) or open
 
 _common.open_glb(src)
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -352,6 +353,20 @@ for a in arm_info:
     a["upper"] = a["bones"][1] if len(a["bones"]) >= 4 else a["bones"][0]
     i = a["bones"].index(a["upper"])
     a["fore"] = a["bones"][i + 1] if i + 1 < len(a["bones"]) else None
+    # The arm's measured rest angle from straight down (upper arm: shoulder to elbow), and the axis its drop turns about:
+    # perpendicular to the upper arm and to up, so the drop changes that angle and nothing else.
+    elbow = head[a["fore"]] if a["fore"] else head[a["leaf"]]
+    a["rest_deg"] = gait.rest_arm_angle(head[a["upper"]], elbow, up)
+    a["shoulder_out"] = abs(lat_of(head[a["upper"]]))
+    a["arm_len"] = (tail[a["leaf"]] - head[a["upper"]]).length
+    a["drop_axis"] = unit((elbow - head[a["upper"]]).cross(up), a["out_axis"])
+# Hips: the mean half width of the legs' top joints; a hand may not cross this line (gait.arm_hold_deg).
+hip_half = (sum(abs(lat_of(head[li["bones"][0]])) for li in leg_info) / len(leg_info)) if leg_info else None
+report["arm_pose"] = {"choice": ARM_POSE, "hip_half": hip_half, "arms": [
+    {"side": a["side"], "rest_deg": round(a["rest_deg"], 2), "shoulder_out": round(a["shoulder_out"], 4),
+     "arm_len": round(a["arm_len"], 4),
+     "holds": {c: round(gait.arm_hold_deg(c, ARM_POSE, a["shoulder_out"], a["arm_len"], hip_half), 2) for c in gait.ARM_TARGET_DEG}}
+    for a in arm_info]}
 
 # Serpent joints: body position 0 (head) .. 1 (tail) and the sign that turns a local bend into the same
 # head-to-tail curvature whichever way the bone tree runs.
@@ -589,10 +604,12 @@ def arms_swing(P, u, deg, elbow=0.0, phase_from_legs=True):
             P.r(a["fore"], a["swing_axis"], elbow * (0.6 + 0.4 * max(0.0, s)))
 
 
-def arms_relax(P, deg):
-    """Bring A-pose arms down toward the sides."""
+def arms_relax(P, clip, extra=0.0):
+    """Drop each upper arm from its measured rest angle to the clip's hold from straight down (gait.arm_drop_deg, with
+    the arm_pose setting, the hip clamp and an optional extra such as the idle breath)."""
     for a in arm_info:
-        P.r(a["upper"], a["out_axis"], -deg)
+        d = gait.arm_drop_deg(a["rest_deg"], clip, ARM_POSE, a["shoulder_out"], a["arm_len"], hip_half, extra)
+        P.r(a["upper"], a["drop_axis"], -d)
 
 
 def wing_pose(P, w, flap_deg, sweep_deg=0.0, fold=0.0, lag_curve=None):
@@ -1052,7 +1069,7 @@ def clip_idle(P, t):
         spine_yaw(P, 3 * A * math.sin(2 * math.pi * t + 0.5))
         for n in spine[1:2]:
             P.r(n, forward, -3 * A * math.sin(2 * math.pi * t))
-        arms_relax(P, (18 + 3 * breath) * A)
+        arms_relax(P, "idle", extra=-3 * breath * A)
         arms_swing(P, t, 2 * A, elbow=(8 + 4 * breath) * A, phase_from_legs=False)
         if _plant_ok:
             plant_idle_feet(P, _stance)
@@ -1122,7 +1139,7 @@ def _walk_like(P, t, run):
         spine_pitch(P, lean * 0.6 + (2.5 * A * math.cos(4 * math.pi * t) if run else 0))
         head_pitch(P, -lean * 0.8)
         head_yaw(P, -0.6 * pelvis * math.cos(2 * math.pi * t))
-        arms_relax(P, (14 if run else 11) * A)
+        arms_relax(P, "run" if run else "walk")
         # Arms swing from the shoulder against the same-side leg; the elbow stays bent in the run.
         for a in arm_info:
             sgn = -1.0 if a["left"] else 1.0
@@ -1132,7 +1149,7 @@ def _walk_like(P, t, run):
                 if a["fore"]:
                     P.r(a["fore"], a["swing_axis"], A * (82 + 12 * s))
             else:
-                P.r(a["upper"], a["swing_axis"], A * 20 * s)
+                P.r(a["upper"], a["swing_axis"], A * gait.WALK_ARM_SWING_DEG * s)
                 if a["fore"]:
                     P.r(a["fore"], a["swing_axis"], A * (14 + 8 * max(0.0, s)))
         if feet:
@@ -1191,7 +1208,7 @@ def _turn(P, t, sign):
     spine_yaw(P, 8 * A * sign * math.sin(math.pi * t))
     tail_wave(P, t, 12 * A)
     if biped:
-        arms_relax(P, 10 * A)
+        arms_relax(P, "turn")
         arms_swing(P, t * 2, 10 * A, elbow=10 * A)
     if wing_info:
         wings_folded(P, 1.0)
@@ -1756,6 +1773,17 @@ if "walk" in rows:
     S = sample("walk", [1, 1 + max(1, rows["walk"]["motion_frames"] // 4)])
     report["walk_probe"] = {"bone": _probe, "angle": round(math.radians(max_delta(S, _probe)), 3)}
     print("WALK_PROBE", _probe, report["walk_probe"]["angle"])
+    # The walk's measured upper-arm angle from straight down, over eight frames of the cycle (the walk track is soloed).
+    arm_angles = {}
+    if arm_info:
+        S = sample("walk", [1 + int(round(rows["walk"]["motion_frames"] * i / 8)) for i in range(8)])
+        for a in arm_info:
+            if not a["fore"]:
+                continue
+            vals = [gait.angle_from_down(W.to_3x3() @ (s[a["fore"]].translation - s[a["upper"]].translation), up) for s in S]
+            arm_angles[a["side"]] = {"mean_deg": round(sum(vals) / len(vals), 2), "min_deg": round(min(vals), 2),
+                                     "max_deg": round(max(vals), 2)}
+        report["arm_pose"]["walk_measured"] = arm_angles
     for t in arm.animation_data.nla_tracks:
         t.mute = False
 report["clip_table"] = table

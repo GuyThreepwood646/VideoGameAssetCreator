@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, own_images, people, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, people, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
+from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -42,6 +42,9 @@ HEALTH_STATS_MAX_AGE = 5.0  # seconds an instance's /system_stats answer is reus
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    blocked = move_gate.blocking_reason()
+    if blocked:  # a move of the big files is unfinished or unreadable: serve nothing (vgac/move_gate.py)
+        raise RuntimeError(blocked)
     settings = get_settings()
     init_db()
     q = JobQueue(settings)  # registers itself as jobs.active_queue() for the API and the autopilot
@@ -167,6 +170,8 @@ class AssetIn(BaseModel):
     # then ONE picture combined from them (with `image` first when given); a human's first face picture is also kept
     # as the asset's own face close-up for the step 4 face pass.
     features: list[compose.FeatureIn] | None = Field(default=None, max_length=compose.PICTURES_MAX)
+    # The person's own LoRAs for combining the feature photos (compose.py): {id: off | subtle | normal | strong}.
+    edit_addons: dict[str, str] | None = None
 
 
 class AssetPatch(BaseModel):
@@ -198,6 +203,18 @@ class RefineIn(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     # The failed checks this redraw is meant to fix (fixes.compose made the instruction); stored as params.fix_for.
     fix_for: list[str] | None = Field(default=None, max_length=12)
+    # The person's own LoRAs for this refine only (picture_loras.py): {id: off | subtle | normal | strong}. Never inherited.
+    edit_addons: dict[str, str] | None = None
+
+
+def _edit_choices(value: Any) -> dict[str, str] | None:
+    """The person's LoRA choices for a picture-edit use, checked (reference.clean_edit_choices); 400 with the plain message."""
+    if value is None:
+        return None
+    try:
+        return reference.clean_edit_choices(value, "edit_addons")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class FixPlanIn(BaseModel):
@@ -564,6 +581,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     _check_concept_model("concept_model", body.concept_model)
     picture = own_images.decode_or_400(body.image) if body.image else None  # start from a picture: checked first
     features = compose.check(body.category, body.features or [])
+    edit_addons = _edit_choices(body.edit_addons)  # checked before anything is saved
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
     if body.face_matters is False:
@@ -582,7 +600,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     face_closeup = compose.keep_face_closeup(a, features)
     extra: dict[str, Any] = {"face_closeup": True} if face_closeup else {}
     if compose.needs_drawing(features, picture):
-        started = compose.start(db, a, features, picture)
+        started = compose.start(db, a, features, picture, edit_addons=edit_addons)
         db.refresh(a)
         return {**asset_to_dict(a), **extra, "compose": started}
     if picture is None:
@@ -723,8 +741,9 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
+    # Left out (None): the settings stored by an earlier start stay. Sent (even {}): they are replaced.
     stage_params = None
-    if body.stage_params:
+    if body.stage_params is not None:
         unknown = [k for k in body.stage_params if k not in STAGES]
         if unknown:
             raise HTTPException(400, f"unknown stage {unknown[0]!r} in stage_params")
@@ -732,6 +751,41 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     try:
         return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix, from_stage=body.from_stage,
                                stage_params=stage_params)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class StepDefaultsIn(BaseModel):
+    # {step id: {setting: value}}: replaces the saved settings of each step named; an empty set clears that step.
+    stages: dict[str, dict[str, Any]]
+
+
+@app.get("/api/step-defaults")
+def get_step_defaults(platform: str, look: str, category: str | None = None) -> dict[str, Any]:
+    """The person's saved step settings for a platform and look: `saved` as stored, `applied` clamped to the look's
+    limits for `category`, and `notes` saying plainly what was brought down."""
+    try:
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/step-defaults")
+def put_step_defaults(platform: str, look: str, body: StepDefaultsIn, category: str | None = None) -> dict[str, Any]:
+    """Save settings for the steps named (400 with a plain message, nothing saved, if any value is refused)."""
+    try:
+        step_defaults.save(platform, look, body.stages)
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/step-defaults")
+def delete_step_defaults(platform: str, look: str, stage: str | None = None, category: str | None = None) -> dict[str, Any]:
+    """Forget the saved settings of one step (`stage`) or of every step for this platform and look."""
+    try:
+        step_defaults.clear(platform, look, stage)
+        return step_defaults.get(platform, look, category)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -817,17 +871,15 @@ def dismiss_stopped(aid: str, body: StageIn, db: Session = Depends(get_session))
 
 def _refine_views(parent: Version, body: RefineIn) -> list[str] | None:
     """The views a turnaround redraw names (`views`, else `view`), checked before anything is made: a view the
-    version does not have is a 400 here, not a failed version in the history."""
-    if body.views is None:
-        wanted = [body.view] if body.view and parent.stage == "turnaround" else []
-    elif parent.stage != "turnaround":
-        raise HTTPException(400, "only the turnaround step redraws views")
-    elif not body.views:
-        raise HTTPException(400, "no views were chosen to redraw")
-    else:
-        wanted = list(dict.fromkeys(body.views))
-    if not wanted:
+    version does not have is a 400 here, not a failed version in the history. A turnaround redraw always names its
+    views: with none named there is nothing to redraw (never a quiet fall back to the front view)."""
+    if parent.stage != "turnaround":
+        if body.views is not None:
+            raise HTTPException(400, "only the turnaround step redraws views")
         return None
+    wanted = list(dict.fromkeys(body.views if body.views is not None else ([body.view] if body.view else [])))
+    if not wanted:
+        raise HTTPException(400, "Choose which views to change. Nothing was redrawn.")
     from .stages.turnaround import turnaround_views  # late: the stage module loads the imaging code
 
     have = turnaround_views(parent)
@@ -836,7 +888,7 @@ def _refine_views(parent: Version, body: RefineIn) -> list[str] | None:
             raise HTTPException(400, f"unknown view {view!r}")
         if view not in have:
             raise HTTPException(400, f"this version has no {view} view to redraw")
-    return wanted if body.views is not None else None
+    return wanted
 
 
 @app.post("/api/versions/{vid}/refine")
@@ -851,7 +903,11 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     _check_mask(body.mask_png)
     reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
-    inherited = {k: val for k, val in parent.params.items() if k not in ("reference_experimental", "fix_for")}
+    if body.edit_addons is not None or "edit_addons" in rparams:
+        # This refine's own LoRA choice: the request's, never the parent's (picture_loras.py).
+        rparams["edit_addons"] = _edit_choices(body.edit_addons if body.edit_addons is not None else rparams["edit_addons"])
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items()
+                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
     if body.fix_for and parent.stage != "concept":
@@ -871,7 +927,7 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
         raise HTTPException(409, f"version is {parent.status}, not done")
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
-    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in parent.params.items() if k != "fix_for"}, **aparams})
+    v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 

@@ -23,6 +23,7 @@ from . import pipeline
 from .db import SET_ASIDE_ERROR, Asset, Version, _iso, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .jobs import active_queue
+from . import reference
 from .reference import STAGE_ORDER
 
 log = logging.getLogger(__name__)
@@ -192,7 +193,8 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     from_stage: go back to that step. It is made again, built on what is kept in the step before it, and every step
     after it is rebuilt; the results they had are set aside (still in the history).
     stage_params = {stage: params}: the settings the person chose for a step's first build; used whenever this run
-    starts that step afresh (never for a fix or a resume)."""
+    starts that step afresh (never for a fix or a resume). None (not given) keeps the settings stored by an earlier
+    start, so Resume and going back to an earlier step keep them; a given dict replaces them ({} clears them)."""
     if from_stage is not None and from_stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage {from_stage!r}")
     if until_stage not in STAGE_ORDER:
@@ -210,9 +212,10 @@ def start(aid: str, until_stage: str = "export", stop_on: str = "block", fix: di
     t = _tasks.get(aid)
     if t is not None and not t.done():
         return _set(aid)
+    # Not given: the stored settings stay (Resume, going back to a step). Given: they are replaced.
+    chosen = {} if stage_params is None else {"stage_params": stage_params or None}
     state = _set(aid, status="running", reason=None, stop_on=stop_on, until_stage=until_stage, started_at=_iso(utcnow()),
-                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False, note=None,
-                 stage_params=stage_params or None)
+                 pending_fix=fix or None, pending_from=from_stage, stopped_by_user=False, note=None, **chosen)
     _tasks[aid] = asyncio.get_running_loop().create_task(_run(aid))
     return state
 
@@ -372,13 +375,13 @@ async def _run(aid: str) -> None:
                     replaced = base if fix.get("op") == "refine" else (kept if kept is not None and kept.status == "done" else None)
                     fallback = kept.id if kept is not None and kept.status == "done" else None
                     if fix.get("op") == "refine" and base is not None:
-                        inherited = {k: val for k, val in base.params.items() if k != "reference_experimental"}
+                        inherited = {k: val for k, val in reference.inherited_params(fstage, base.params).items() if k != "reference_experimental"}
                         v = pipeline.new_version(db, a, fstage, base, {**inherited, **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "refine", {"instruction": fix["instruction"], "view": None, "mask_png": None,
                                                                     "params": fix.get("params") or {}})
                         pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
                     elif kept is not None and kept.status == "done":
-                        v = pipeline.new_version(db, a, fstage, kept, {**kept.params, **(fix.get("params") or {})})
+                        v = pipeline.new_version(db, a, fstage, kept, {**reference.inherited_params(fstage, kept.params), **(fix.get("params") or {})})
                         job = pipeline.submit(db, a, v, "adjust", {"params": fix.get("params") or {}})
                         pairs = [{"job": job_to_dict(job), "version": version_to_dict(v)}]
                     else:

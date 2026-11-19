@@ -13,6 +13,8 @@ import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
 import { useConfirm } from '../components/Confirm'
 import { attentionItems, finishLineFix, finishLines, unityHowto } from './finish'
+import { StepSettingsChoice } from './StepSettingsChoice'
+import { type StepParams } from './stepSettings'
 import { UnityHandoff, unityImportOf } from './UnityHandoff'
 import { Deliverables, deliverableKeys } from './views/ExportView'
 
@@ -70,11 +72,13 @@ export function makeItEstimate(asset: Asset, stages: StageInfo[] | null, estimat
 export function MakeItAction({ asset, stages, estimates, busy, primary, onStart }: { asset: Asset; stages: StageInfo[] | null; estimates: Record<string, number> | null; busy: boolean; primary: boolean; onStart: (body: AutopilotBody) => void }) {
   const [stopOn, setStopOn] = useState<StopOn>('block')
   const [changing, setChanging] = useState(false)
+  // The settings the person changed for each step; sent with every start, so a start with nothing changed uses the usual ones.
+  const [steps, setSteps] = useState<StepParams>({})
   const est = makeItEstimate(asset, stages, estimates)
   const opt = STOP_ON_OPTIONS.find((o) => o.id === stopOn) ?? STOP_ON_OPTIONS[0]
   return (
     <div className="make-it">
-      <button type="button" className={primary ? 'primary' : ''} disabled={busy} onClick={() => onStart({ stop_on: stopOn, until_stage: 'export' })} title="Runs every remaining step and keeps each result that passes its checks">
+      <button type="button" className={primary ? 'primary' : ''} disabled={busy} onClick={() => onStart({ stop_on: stopOn, until_stage: 'export', stage_params: steps })} title="Runs every remaining step and keeps each result that passes its checks">
         Make it
         {est > 0 && <span className="btn-est">{fmtDuration(est)}</span>}
       </button>
@@ -101,6 +105,7 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         <Info term="term.stop_on" />
       </label>
       )}
+      <StepSettingsChoice category={asset.category} platform={asset.platform_target} look={asset.style_preset} stages={stages} disabled={busy} onChange={setSteps} />
     </div>
   )
 }

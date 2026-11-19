@@ -361,7 +361,9 @@ def update_machine(changes: dict[str, Any], path: Path | str | None = None,
                    defaults: Path | str | None = None) -> Path:
     """Lay `changes` over the current machine file (merge(); a None removes a key) and write it (write_machine)."""
     path = Path(path or MACHINE_PATH)
-    return write_machine(merge(read_machine(path), changes), path, defaults)
+    from .state_lock import state_lock  # the read and the write hold the shared lock, so the starter's writes are not lost
+    with state_lock(path.parent):
+        return write_machine(merge(read_machine(path), changes), path, defaults)
 
 
 _problem = ""

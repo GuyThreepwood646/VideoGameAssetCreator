@@ -128,6 +128,7 @@ async def run(sc, params: dict[str, Any]) -> None:
     """Draw the combined picture from files.compose_1..N, then the cutout and readiness checks of step 1."""
     from .stages import concept
     from .stages.base import random_seed
+    from .stages.picture_loras import edit_loras
 
     p = {**(sc.version.params or {}), **(params or {})}
     roles = list(p.get("compose_roles") or [])
@@ -160,8 +161,10 @@ async def run(sc, params: dict[str, Any]) -> None:
             sheet([Image.open(paths[i]) for i in group]).save(src)
             sc.register("compose_sheet", src)
         names.append(await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_compose_{n}.png"))
+    # The person's own LoRAs for combining (edit_addons): checked on every card before the job; a later adjust carries them.
+    loras = await edit_loras(sc, "edit_addons", p)
     sc.progress(0.05, "combining your pictures")
-    entry = await sc.comfy(compose_graph(names, prompt, seed, sc.prefix("compose"), width=width, height=height),
+    entry = await sc.comfy(compose_graph(names, prompt, seed, sc.prefix("compose"), width=width, height=height, loras=loras),
                            message=f"combining {len(roles)} picture{'s' if len(roles) > 1 else ''}", base=0.05, span=0.6)
     image = await sc.download_image(entry, "save", sc.dir / "image.png")
     sc.register("image", image)
@@ -249,9 +252,10 @@ def _register(db: Session, v: Version, key: str, path) -> None:
     db.commit()
 
 
-def start(db: Session, a: Asset, features: Checked, picture: Image.Image | None, seed: int | None = None) -> dict[str, Any]:
+def start(db: Session, a: Asset, features: Checked, picture: Image.Image | None, seed: int | None = None,
+          edit_addons: dict[str, str] | None = None) -> dict[str, Any]:
     """The one step 1 picture combined from the feature photos (the person's main picture first, as "character"):
-    {job, version}. The asset's description gives the words."""
+    {job, version}. The asset's description gives the words; `edit_addons` is the person's LoRAs for combining."""
     from .stages.base import random_seed
 
     pairs = ([({"role": "character", "note": None}, picture)] if picture is not None else []) + list(features)
@@ -259,7 +263,8 @@ def start(db: Session, a: Asset, features: Checked, picture: Image.Image | None,
     words = (a.prompt or "").strip() or None
     v = pipeline.new_version(db, a, "concept", None, {"source": "compose", "compose_roles": roles, "words": words,
                                                        "seed": int(seed if seed is not None else random_seed()),
-                                                       "model": "qwen_edit", "readiness_block": True})
+                                                       "model": "qwen_edit", "readiness_block": True,
+                                                       **({"edit_addons": edit_addons} if edit_addons else {})})
     folder = library.version_dir(a, v, get_settings())
     for i, (_, img) in enumerate(pairs, start=1):
         _register(db, v, f"compose_{i}", uploads.save_png(uploads.flatten(img) if img.mode == "RGBA" else img, folder, f"compose_{i}.png"))
