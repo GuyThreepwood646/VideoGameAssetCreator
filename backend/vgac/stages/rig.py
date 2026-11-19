@@ -929,7 +929,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
 
 
 def _description(sc: StageContext) -> str:
-    """The asset's description and the words given with its first picture (step 0.5), for the spring bones' head words."""
+    """The asset's description and the words given with its first picture (feature photos), for the spring bones' head words."""
     words = [getattr(sc.asset, "prompt", "") or ""]
     try:
         for v in sc.iter_lineage(include_self=False):

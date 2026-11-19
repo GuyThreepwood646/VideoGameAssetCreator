@@ -179,7 +179,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
                options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; empty uses none"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
-               description="With your own close-up, or a face picture in step 0.5, the close-up is drawn with that face's features; off draws it from the painting alone"),
+               description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
         # paints from the front, the sides and the back only.
         _param("quarter_pictures", "boolean", True, categories=["humanoid"], label="Paint from the three-quarter pictures",

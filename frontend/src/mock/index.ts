@@ -523,6 +523,30 @@ on('GET', '/api/projects/:pid/assets', (m) => {
   findProject(m.groups!.pid)
   return store.assets.filter((a) => a.project_id === m.groups!.pid)
 })
+// The people in a feature photo (backend vgac/people.py), made up for the mock. The picture's width (read from its PNG
+// header) picks the answer, so each state can be shown: 600 px wide = two people, 300 = none, 200 = the detector fails,
+// anything else = one person in the middle.
+function pngWidth(dataUrl: string): number {
+  const bin = atob((dataUrl.split(',')[1] ?? '').slice(0, 40))
+  const u32 = (i: number) => ((bin.charCodeAt(i) << 24) | (bin.charCodeAt(i + 1) << 16) | (bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3)) >>> 0
+  return u32(16)
+}
+on('POST', '/api/people', (_m, body) => {
+  const image = String(body.image ?? '')
+  const width = pngWidth(image)
+  const height = Math.round(width * 1.25)
+  if (width === 200) throw new HttpError(500, 'the person finder failed')
+  if (width === 300) return { status: 'none', picture: { width, height }, people: [], main: null, suggested: null }
+  const boxes = width === 600
+    ? [{ x: 40, y: 80, w: 200, h: 500 }, { x: 380, y: 120, w: 180, h: 420 }]
+    : [{ x: Math.round(width * 0.2), y: Math.round(height * 0.1), w: Math.round(width * 0.6), h: Math.round(height * 0.8) }]
+  const pad = (b: { x: number; y: number; w: number; h: number }) => {
+    const x = Math.max(0, Math.round(b.x - b.w * 0.1)); const y = Math.max(0, Math.round(b.y - b.h * 0.06))
+    return { x, y, w: Math.min(width - x, Math.round(b.w * 1.2)), h: Math.min(height - y, Math.round(b.h * 1.12)) }
+  }
+  const main = 0 // the first box is the larger and more central one in both mock pictures
+  return { status: 'ok', picture: { width, height }, people: boxes.map((b) => ({ box: b, score: 0.9 })), main, suggested: pad(boxes[main]) }
+})
 on('POST', '/api/projects/:pid/assets', (m, body) => {
   const p = findProject(m.groups!.pid)
   const name = String(body.name ?? '').trim()
@@ -549,10 +573,18 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
     stages: {},
   }
   if (typeof body.image === 'string') checkPicture(body.image) // a bad picture makes no asset, like the backend
+  const features = checkFeatures(a.category, body.features)
   store.assets.push(a)
   mockItemsOnCreate(a, body.items) // carried items set aside (items.ts)
-  if (typeof body.image === 'string') return { ...a, upload: uploadConcept(a, body.image, null) }
-  return a
+  // Feature photos (backend compose.py): a human's first big enough face is kept as the face close-up, and step 1 is
+  // ONE picture combined from all of them (the person's own picture first), unless the only ones are faces.
+  const face = a.category === 'humanoid' ? features.find((f) => f.role === 'face') : undefined
+  const extra = face ? { face_closeup: true } : {}
+  if (face) faceCloseups.set(a.id, { image: face.image, updated: Math.floor(Date.now() / 1000) })
+  const own = typeof body.image === 'string' ? body.image : null
+  if (features.length && (!own || features.some((f) => f.role !== 'face'))) return { ...a, ...extra, compose: composeConcept(a, features, own) }
+  if (own) return { ...a, ...extra, upload: uploadConcept(a, own, null) }
+  return { ...a, ...extra }
 })
 on('GET', '/api/assets/:id', (m) => findAsset(m.groups!.id))
 on('POST', '/api/assets/:id/variants', (m, body) => {
@@ -709,6 +741,50 @@ function putUpload(v: Version, key: string, img: string): string {
   files.set(path, img)
   return path
 }
+type Feature = { role: string; image: string; note: string | null }
+const FEATURE_ROLES = ['face', 'body', 'outfit', 'other']
+function checkFeatures(category: string, raw: unknown): Feature[] {
+  if (raw == null) return []
+  if (!Array.isArray(raw)) throw new HttpError(422, 'features must be a list')
+  if (raw.length > 6) throw new HttpError(422, 'at most 6 feature photos')
+  if (raw.length && ['material', 'environment', 'foliage'].includes(category)) throw new HttpError(400, 'Feature photos work for characters, creatures and props, not for this kind of asset.')
+  return raw.map((f: Record<string, unknown>, k) => {
+    const role = String(f.role ?? 'other')
+    if (!FEATURE_ROLES.includes(role)) throw new HttpError(400, `feature photo ${k + 1}: role must be one of ${FEATURE_ROLES.join(', ')}`)
+    checkPicture(f.image, `${role} picture`)
+    return { role, image: String(f.image), note: typeof f.note === 'string' && f.note.trim() ? f.note.trim() : null }
+  })
+}
+// One concept version for all the pictures (backend compose.start): one job, so step 1 shows one run.
+function composeConcept(a: Asset, features: Feature[], own: string | null) {
+  const pics = [...(own ? [{ role: 'character', image: own, note: null }] : []), ...features]
+  const v = newVersion(a, 'concept', null, { source: 'compose', compose_roles: pics.map((f) => ({ role: f.role, note: f.note })), words: a.prompt.trim() || null, model: 'qwen_edit', seed: Math.floor(Math.random() * 100000) })
+  pics.forEach((f, i) => (v.files[`compose_${i + 1}`] = putUpload(v, `compose_${i + 1}`, f.image)))
+  const job = startJob(a, v, 'concept.compose')
+  return { job: clone(job), version: clone(v) }
+}
+// Your own close-up of the face (backend own_images.py), kept per asset.
+const faceCloseups = new Map<string, { image: string; updated: number }>()
+const closeupState = (aid: string) => {
+  const c = faceCloseups.get(aid)
+  if (!c) return { image: null, updated: null }
+  const path = `projects/mock/assets/${aid}/own/face_closeup.png`
+  files.set(path, c.image)
+  return { image: path, updated: c.updated }
+}
+on('GET', '/api/assets/:id/face-closeup', (m) => closeupState(findAsset(m.groups!.id).id))
+on('POST', '/api/assets/:id/face-closeup', (m, body) => {
+  const a = findAsset(m.groups!.id)
+  if (a.category !== 'humanoid') throw new HttpError(400, 'A face close-up is used only for human characters.')
+  checkPicture(body.image, 'close-up')
+  faceCloseups.set(a.id, { image: String(body.image), updated: Math.floor(Date.now() / 1000) })
+  return closeupState(a.id)
+})
+on('DELETE', '/api/assets/:id/face-closeup', (m) => {
+  const a = findAsset(m.groups!.id)
+  faceCloseups.delete(a.id)
+  return closeupState(a.id)
+})
 function uploadConcept(a: Asset, img: string, note: string | null) {
   checkPicture(img)
   if (note && !a.prompt.trim()) a.prompt = note
@@ -1037,13 +1113,15 @@ function apNextStage(asset: Asset): StageId | null {
   return null
 }
 
-function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params: Record<string, unknown> }) {
+function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params: Record<string, unknown> }, inflight?: { version: Version; job: Job }) {
   const st = apState(asset)
   const idx = STAGES.indexOf(stage)
   const parent = idx > 0 ? (asset.selected[STAGES[idx - 1]] ?? null) : null
   let version: Version
-  let kind: string
-  if (fix) {
+  let kind = ''
+  if (inflight) {
+    version = inflight.version
+  } else if (fix) {
     const kept = (asset.stages[stage] ?? []).find((v) => v.id === asset.selected[stage])
     const base = kept?.params ?? stageParamsDefault(stage)
     version = newVersion(asset, stage, kept ? kept.id : parent, { ...base, ...fix.params, autopilot: true })
@@ -1064,7 +1142,7 @@ function apRunStage(asset: Asset, stage: StageId, fix?: { stage: StageId; params
     version = newVersion(asset, stage, parent, params)
     kind = `${stage}.run`
   }
-  const job = startJob(asset, version, kind)
+  const job = inflight ? inflight.job : startJob(asset, version, kind)
   st.status = 'running'
   st.stage = stage
   st.job_id = job.id
@@ -1114,12 +1192,15 @@ function apStep(asset: Asset) {
     apStop(asset, 'done', null)
     return
   }
-  const running = (asset.stages[next] ?? []).some((v) => v.status === 'queued' || v.status === 'running')
-  if (running) {
+  // As the backend (autopilot.py): a version already queued or running in this step (the first picture started with
+  // the new asset) is waited for, never duplicated.
+  const running = (asset.stages[next] ?? []).find((v) => v.status === 'queued' || v.status === 'running')
+  const job = running ? store.jobs.find((j) => j.version_id === running.id && (j.status === 'queued' || j.status === 'running')) : undefined
+  if (running && !job) {
     apStop(asset, 'error', `"${next}" is already running; wait for it, then start the autopilot again.`)
     return
   }
-  apRunStage(asset, next)
+  apRunStage(asset, next, undefined, running && job ? { version: running, job } : undefined)
 }
 
 on('GET', '/api/assets/:id/autopilot', (m) => apState(findAsset(m.groups!.id)))

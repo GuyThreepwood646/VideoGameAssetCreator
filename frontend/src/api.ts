@@ -722,8 +722,13 @@ export type RefineBody = { instruction: string; view?: string; views?: string[];
 export type FixPlan = { instruction: string | null; used: string[]; snippets: string[]; dropped: { check: string; reason: string; text: string }[]; words: number; max_changes: number }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
-export type ComposeRole = 'face' | 'body' | 'outfit' | 'other'
-export type ComposeBody = { pictures: { role: ComposeRole; image: string; note?: string }[]; words?: string; count?: number }
+// A feature photo given with a new asset (backend vgac/compose.py): what the person's own picture is of.
+export type FeatureRole = 'face' | 'body' | 'outfit' | 'other'
+export type FeaturePhoto = { role: FeatureRole; image: string; note?: string; crop?: PersonBox; people_found?: number }
+// A box in a picture's own pixels (people.py): the person the form suggests, or the box the person set.
+export type PersonBox = { x: number; y: number; w: number; h: number }
+// The people the form found in a feature photo (POST /api/people). Only status ok has people and a suggested box.
+export type PeopleResult = { status: 'ok' | 'none' | 'unavailable' | 'failed'; picture: { width: number; height: number }; people: { box: PersonBox; score: number }[]; main: number | null; suggested: PersonBox | null }
 export type VariantResult = { asset: Asset; job: Job; version: Version }
 
 export class ApiError extends Error {
@@ -883,14 +888,16 @@ export const api = {
   listAssets: (pid: string) => get<AssetSummary[]>(`/api/projects/${pid}/assets`),
   createAsset: (
     pid: string,
-    // image: start from a picture (a data: URL); the prompt may then be empty.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean },
-  ) => post<Asset & { upload?: RunResult }>(`/api/projects/${pid}/assets`, body),
+    // image: start from a picture (a data: URL); the prompt may then be empty. features: feature photos; step 1 is
+    // then one picture combined from them (compose), and a human's face photo is kept as the face close-up.
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean },
+  ) => post<Asset & { upload?: RunResult; compose?: RunResult; face_closeup?: boolean }>(`/api/projects/${pid}/assets`, body),
+
+  // The people in a feature photo, for the suggested box (backend vgac/people.py). Never blocks the form: a failure is a status.
+  findPeople: (image: string) => post<PeopleResult>(`/api/people`, { image }),
 
   // Your own pictures
   uploadConcept: (aid: string, body: { image: string; note?: string }) => post<RunResult>(`/api/assets/${aid}/stages/concept/upload`, body),
-  // Step 0.5: one or more concept candidates combined from several of your own pictures (backend vgac/compose.py).
-  composeConcept: (aid: string, body: ComposeBody) => post<{ versions: RunResult[] }>(`/api/assets/${aid}/stages/concept/compose`, body),
   uploadView: (vid: string, view: string, image: string) => post<RunResult>(`/api/versions/${vid}/views/${view}/upload`, { image }),
   // Your own 3D model on step 3 (backend vgac/model_import.py): GLB, glTF, FBX, OBJ or a zip with its pictures.
   uploadModel: (aid: string, file: File, onProgress?: (fraction: number) => void) => uploadModelFile(aid, file, onProgress),

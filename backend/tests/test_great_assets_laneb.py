@@ -215,7 +215,7 @@ def test_select_knobs_carry_plain_option_labels():
         labels = p["option_labels"]
         assert set(labels) == {str(o) for o in p["options"]}, (stage, name)
         assert all(isinstance(v, str) and v for v in labels.values())
-    assert stages["export"]["clips_library"]["option_labels"]["ual1"] == "Standard human moves (46 animations)"
+    assert stages["export"]["clips_library"]["option_labels"]["ual1"] == "Standard human moves (42 animations)"
     assert stages["rig"]["template"]["option_labels"]["mixamo"] == "Standard human skeleton"
     assert stages["export"]["collider"]["option_labels"]["hull"] == "One wrapped shape"
     assert stages["prep"]["face_yaw"]["option_labels"]["90"] == "Turned a quarter to the left"

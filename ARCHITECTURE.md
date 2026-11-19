@@ -107,6 +107,8 @@ Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and
 
 The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VGAC/mine/` under `loras_dir`), pictures (`own_images.py`, `uploads.py`), 3D model (`model_import.py`), hairstyles (`my_hair.py`, `library/my_hair/`), moves (`moves.py`, `library/my_moves/`), items (`items.py`, `sockets.py`).
 
+Feature photos (New asset form, `components/FeaturePhotos.tsx`) go to `compose.py` with the new asset: one step 1 picture from several photos (one job, one version). For a human's photos, `people.py` (`POST /api/people`, the MediaPipe pose landmarker) suggests an editable box round the main person, pulled in halfway to any neighbour beside them; the picture is cut to the box before drawing, and keeping the whole photo with others in it is warned and recorded. A human's face photo is also kept as the asset's face close-up for step 4.
+
 ## 6. Not in the repository
 
 | Not tracked | Source |
@@ -116,7 +118,7 @@ The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VG
 | `local/` | this PC's settings (`machine.json`, `.bak`) |
 | `backend/.venv/`, `node_modules/`, `frontend/dist/`, `desktop/dist/` | `setup/Check-Setup.ps1 -Install` and the build commands |
 | AI models, ComfyUI node packs, Blender, Unity | each user; `setup/Setup-Extras.ps1` with `setup/downloads.json` (licence confirmations are typed by the user) |
-| `data/animations/` (two CC0 clip packs, `clips_libraries`) | downloaded by the user |
+| `data/animations/` (two CC0 clip packs, Quaternius UAL 3.0, `clips_libraries`; the plain files are read, the `*_RM` root-motion copies are not, so travelling clips play in place) | downloaded by the user |
 | research, plans, audits, `STATUS.md`, `REVIEW.md`, `docs/*` except the six guides | owner's computer only |
 
 Licences: the app is GPL-3.0-or-later; the files copied into a person's Unity project (`unity-sandbox/Assets/Editor`, `VgacScripts`, `VgacShaders`) are MIT. Model licences: `data/models.yaml`.

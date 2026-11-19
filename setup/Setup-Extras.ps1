@@ -687,7 +687,7 @@ if ($Settings) {
     foreach ($id in 'ual1', 'ual2') {
         $d = Join-Path $Root "data\animations\$id"
         if (Test-Path -LiteralPath $d) {
-            $f = if ($id -eq 'ual1') { 'AnimationLibrary_Unity_Standard.fbx' } else { 'UAL2_Standard.fbx' }
+            $f = if ($id -eq 'ual1') { 'UAL1_Standard.fbx' } else { 'UAL2_Standard.fbx' }
             $hit = Get-ChildItem -LiteralPath $d -Filter $f -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($hit) { Set-CfgLine $id ('"' + (& $fwd $hit.FullName) + '"') '  ' }
         }

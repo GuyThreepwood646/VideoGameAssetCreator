@@ -18,8 +18,8 @@ from vgac.blender import gait
 from vgac.stages import export, rig
 
 ROOT = Path(__file__).resolve().parents[2]
-UAL1 = ROOT / "data/animations/ual1/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb"
-UAL2 = ROOT / "data/animations/ual2/Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb"
+UAL1 = ROOT / "data/animations/ual1/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb"
+UAL2 = ROOT / "data/animations/ual2/Universal Animation Library 2[Standard]/Unreal-Godot/UAL2_Standard.glb"
 
 HUMANOID = {"id": "humanoid", "rig_engine": "skintoken_mixamo", "motion": "legs", "clips": ["idle", "walk", "turn_left", "death"],
             "library_clips": [{"name": "idle", "from": ["Idle_Loop"], "move": "idle", "loop": True},
@@ -74,7 +74,7 @@ def test_helper_and_end_bones_are_not_mapped():
 def test_both_packs_have_a_plain_name_and_group_for_every_clip(tmp_path):
     s = SimpleNamespace(clips_libraries={"ual1": UAL1, "ual2": UAL2}, library_path=tmp_path)
     groups = {g for g, _ in moves.GROUPS}
-    for pack, count in (("ual1", 43), ("ual2", 41)):
+    for pack, count in (("ual1", 42), ("ual2", 42)):  # every clip in the file but the T-pose reference
         rows = moves.pack_clips(s, pack)
         assert len(rows) == count
         for r in rows:
@@ -85,12 +85,12 @@ def test_both_packs_have_a_plain_name_and_group_for_every_clip(tmp_path):
     by = {c["id"]: c for c in cat["clips"]}
     assert by["ual2:Sword_Block"]["label"] == "Block with a sword" and not by["ual2:Sword_Block"]["loop"]
     assert by["ual1:Sitting_Idle_Loop"]["loop"] and by["ual1:Sitting_Idle_Loop"]["name"] == "sit_chair"
-    assert by["ual2:ClimbUp_1m_RM"]["moves_character"] and "ual1:Roll_RM" not in by and "ual1:A_TPose" not in by
+    assert not by["ual2:ClimbUp_1m"]["moves_character"] and "ual1:A_TPose" not in by and "ual2:Sword_Heavy_Combo" in by
 
 
 def test_clip_names_and_readable_labels():
     assert moves.clip_name("Sitting_Idle_Loop") == "sitting_idle"
-    assert moves.clip_name("ClimbUp_1m_RM") == "climb_up_1m"
+    assert moves.clip_name("ClimbUp_1m") == "climb_up_1m"
     assert moves.humanise("Armature|mixamo.com|Layer0") == "" and moves.humanise("Armature|Scene") == ""
     assert moves.humanise("standing_taunt") == "Standing taunt"
 

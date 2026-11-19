@@ -198,7 +198,7 @@ COMPOSE_MAX = 3  # TextEncodeQwenImageEditPlus takes image1 to image3
 
 def compose_graph(image_names: list[str], prompt: str, seed: int, prefix: str, width: int = 1024,
                   height: int = 1024, loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """One new picture from up to three source pictures (step 0.5, stages/compose.py): the edit graph with each
+    """One new picture from up to three source pictures (feature photos, vgac/compose.py): the edit graph with each
     picture wired into image1..image3 of both TextEncodeQwenImageEditPlus nodes, so the prompt can name them as
     Picture 1 to Picture 3. The output size is the latent's, not the first picture's."""
     if not 1 <= len(image_names) <= COMPOSE_MAX:

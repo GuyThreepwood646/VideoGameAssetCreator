@@ -633,7 +633,7 @@ def closeup_source(crop: Path, closeup: Path, painted_head_px: float, dest: Path
 # own colour is laid back over the close-up (closeup_source), so a guided close-up may differ in hair colour up to
 # CLOSEUP_HAIR_MAX_GUIDED. Two tries, each judged by the same guard; the first that passes is used. Lining your own
 # close-up up directly (frame_own) is the fallback: a photo with another expression rarely lines up.
-# A margin round a tight crop. The editor draws a head-and-shoulders close-up: from a crop the head fills (step 0.5's
+# A margin round a tight crop. The editor draws a head-and-shoulders close-up: from a crop the head fills (a feature photo's
 # man, face 688 of 1024 px wide) it zoomed out, so every close-up landed smaller and lower than the painting and was
 # refused (likeness 0.28 to 0.39). Shrunk into a grey margin first and cut back to the crop's framing afterwards, the
 # guided ones scored 0.88 and 0.90 with the features in place (0.003 to 0.005 of the face's width). Guided close-ups get
@@ -689,7 +689,7 @@ def guided_tries(photo: bool) -> list[tuple[str, str]]:
 
 
 def compose_face_picture(sc: StageContext) -> Path | None:
-    """Step 0.5's face picture, when the first picture came from step 0.5 and one picture was given as the face."""
+    """The face feature photo, when the first picture was combined from feature photos and one of them was the face."""
     for v in sc.iter_lineage(include_self=False):
         if v.stage != "concept":
             continue
@@ -1481,7 +1481,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     if not reachable and own is None:
         return _skipped("no_card", t0, record)
 
-    # A. The close-up. With a picture of the real face (your own close-up, or step 0.5's face picture) the close-up is
+    # A. The close-up. With a picture of the real face (your own close-up, or the face feature photo) the close-up is
     # drawn from the painted crop guided by it (guide_picture). Otherwise, or when no guided one passes the check: your
     # own close-up lined up directly, else a close-up drawn from the crop alone when the painting has fewer pixels
     # across the face than the texture will hold.
@@ -1644,7 +1644,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         except Exception as e:  # noqa: BLE001  (a picture that cannot be used: today's path)
             closeup.update(used=False, reason="own_error", error=str(e)[:300])
     elif source == "painting" and reachable and (closeup_wanted(params, crop_px, wanted) if guide is not None else closeup["wanted"]):
-        # also after guided close-ups that did not pass (step 0.5's face with another expression): the plain close-up
+        # also after guided close-ups that did not pass (a face feature photo with another expression): the plain close-up
         sc.progress(0.77, "Drawing a close-up of the painted face")
         try:
             tries = await draw_tries(closeup_tries(look, photo), None, "painted_head_closeup", "Drawing a close-up of the painted face",
