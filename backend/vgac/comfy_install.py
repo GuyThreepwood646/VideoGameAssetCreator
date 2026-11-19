@@ -911,7 +911,8 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
                 inst["output_dir"] = e["output_dir"]  # where SkinToken's files are looked for: VGAC's own
                 inst["engine"] = e  # replaced whole, never merged
                 insts[name] = inst
-            config.write_machine(data, mpath)
+            with state_lock(mpath.parent):   # the starter writes this file too (vgac/state_lock.py)
+                config.write_machine(data, mpath)
         except config.ConfigError as err:
             raise DownloadError("settings", f"The engines could not be saved ({err}).", "Press Try again.") from None
     try:
@@ -1139,7 +1140,7 @@ def _adopt_if_proved(root: Path, ops: Ops | None = None) -> bool:
     # and finishes the job. Its Python environment still names the old place: `check` says venv_stale until rebuild-venv has run.
     old_root = os.path.abspath(str(hit.get("path", "")))
     _retarget_settings(old_root, root, fence_for(ops or Ops()))
-    with downloader._ledger_lock:
+    with downloader._ledger_lock, state_lock(downloader.ledger_path().parent):   # shared with VGAC.exe
         hit, _ = _adoptable(root)
         if hit is None:
             return False

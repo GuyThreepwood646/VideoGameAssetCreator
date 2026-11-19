@@ -35,9 +35,14 @@ put(MOVE_RECORD, '{}');
 assert.ok(/restarted first/.test(blockingReason(root)), 'restart sentence first');
 
 // an unreadable place (the file check throws) refuses and says why
-const broken = { existsSync() { throw new Error('access denied'); } };
+const broken = { statSync() { const e = new Error('access denied'); e.code = 'EACCES'; throw e; } };
 const why = blockingReason(root, broken);
 assert.ok(why !== null && /cannot tell/.test(why) && /access denied/.test(why), 'a check that throws refuses: ' + why);
+// a missing file is clear; a non-ENOENT error refuses even when the other file is absent
+const absent = { statSync() { const e = new Error('no'); e.code = 'ENOENT'; throw e; } };
+assert.strictEqual(blockingReason(root, absent), null, 'no such file is clear');
+const denied = { statSync(p) { if (p.endsWith('move.json')) { const e = new Error('denied'); e.code = 'EPERM'; throw e; } const e = new Error('no'); e.code = 'ENOENT'; throw e; } };
+assert.ok(blockingReason(root, denied) !== null, 'a permission error on the move record refuses');
 
 clear();
 fs.rmSync(root, { recursive: true, force: true });

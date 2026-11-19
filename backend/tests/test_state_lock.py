@@ -66,3 +66,20 @@ def test_record_in_downloader_takes_the_lock(tmp_path, monkeypatch):
     with pytest.raises(StateLockBusy):
         downloader.record("test", tmp_path / "x", "added", 0)
     assert not (local / "installed.json").exists()
+
+
+def test_permission_error_on_open_is_retried_until_free(tmp_path, monkeypatch):
+    # Windows can refuse the open while another process holds the lock file: that is a wait, not a crash.
+    real_open = os.open
+    calls = {"n": 0}
+
+    def flaky(path, flags, *a, **k):
+        if str(path).endswith(LOCK_NAME) and calls["n"] < 2:
+            calls["n"] += 1
+            raise PermissionError("held by another process")
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(state_lock.os, "open", flaky)
+    with hold(tmp_path, wait_seconds=5):
+        assert calls["n"] == 2
+    assert not (tmp_path / LOCK_NAME).exists()

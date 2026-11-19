@@ -42,7 +42,7 @@ def state_lock(local_dir: Path | str, wait_seconds: float = WAIT_SECONDS) -> Ite
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):   # Windows can refuse the open while another process holds the file
             if _is_stale(lock):
                 try:
                     os.remove(lock)

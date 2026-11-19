@@ -17,11 +17,17 @@ const RESTART = 'VGAC has been moved to a new folder for the big files and has t
 
 // null when nothing blocks the start; else the plain reason. Read from the files on each call. An unreadable place is a
 // refusal (never a guess).
+// statSync, not existsSync: existsSync answers false for every error, so a folder that cannot be read would look clear.
+// Only "no such file" counts as clear; any other error refuses.
+function present(file, f) {
+  try { f.statSync(file); return true; } catch (e) { if (e && e.code === 'ENOENT') return false; throw e; }
+}
+
 function blockingReason(projectRoot, fsImpl) {
   const f = fsImpl || fs;
   try {
-    if (f.existsSync(path.join(projectRoot, RESTART_MARKER))) return RESTART;
-    if (f.existsSync(path.join(projectRoot, MOVE_RECORD))) return UNFINISHED;
+    if (present(path.join(projectRoot, RESTART_MARKER), f)) return RESTART;
+    if (present(path.join(projectRoot, MOVE_RECORD), f)) return UNFINISHED;
     return null;
   } catch (e) {
     return `VGAC cannot tell whether a move of the big files is unfinished (${e && e.message ? e.message : e}), so nothing runs. ` +
