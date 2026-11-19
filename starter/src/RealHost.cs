@@ -11,7 +11,7 @@ using System.Threading;
 
 namespace Vgac.Starter
 {
-    public class RealHost : IHost
+    public class RealHost : IHost, IAbortable
     {
         volatile Process current;     // the setup program running now (uv, npm), so quitting can stop it
 
@@ -111,7 +111,20 @@ namespace Vgac.Starter
             psi.CreateNoWindow = true;
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
-            if (env != null) foreach (var kv in env) psi.EnvironmentVariables[kv.Key] = kv.Value;
+            // A clean environment on request: nothing inherited that could steer Python, uv or pip, or point the program at settings
+            // other than the project's own (VGAC_*, UV_*, PIP_*, PYTHON*, VIRTUAL_ENV, CONDA_*).
+            if (env != null && env.ContainsKey("VGAC_CLEAN_ENVIRONMENT"))
+            {
+                var drop = new List<string>();
+                foreach (System.Collections.DictionaryEntry de in psi.EnvironmentVariables)
+                {
+                    string k = ((string)de.Key).ToUpperInvariant();
+                    foreach (string pre in new[] { "VGAC_", "UV_", "PIP_", "PYTHON", "VIRTUAL_ENV", "CONDA_" }) if (k.StartsWith(pre)) { drop.Add((string)de.Key); break; }
+                }
+                foreach (string k in drop) psi.EnvironmentVariables.Remove(k);
+            }
+            if (env != null) foreach (var kv in env) if (kv.Key != "VGAC_CLEAN_ENVIRONMENT") psi.EnvironmentVariables[kv.Key] = kv.Value;
+            if (!LooksLikeProgram(exe)) throw new StarterError(Path.GetFileName(exe) + " is damaged or is not a program.", "Try again; VGAC fetches it again if it can.");
             using (var w = new StreamWriter(logFile, true, new UTF8Encoding(false)))
             using (var p = new Process())
             {
@@ -137,8 +150,21 @@ namespace Vgac.Starter
             }
         }
 
+        // A file that is not a program (damaged, empty, or something else with the name) must not reach CreateProcess:
+        // Windows would show its own "unsupported application" box and wait for a click.
+        public static bool LooksLikeProgram(string exe)
+        {
+            try
+            {
+                if (!exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(exe)) return true;   // not ours to judge
+                using (var f = File.OpenRead(exe)) return f.ReadByte() == 'M' && f.ReadByte() == 'Z';
+            }
+            catch (IOException) { return false; }
+        }
+
         public string Capture(string exe, string args)
         {
+            if (!LooksLikeProgram(exe)) return null;
             try
             {
                 var psi = new ProcessStartInfo(exe, args);
@@ -147,9 +173,11 @@ namespace Vgac.Starter
                 psi.RedirectStandardOutput = true;
                 using (var p = Process.Start(psi))
                 {
-                    string o = p.StandardOutput.ReadToEnd();
+                    // read on another thread: a program that never ends must not hold this one past the timeout
+                    var reader = System.Threading.Tasks.Task.Factory.StartNew<string>(delegate { try { return p.StandardOutput.ReadToEnd(); } catch (Exception) { return ""; } });
                     if (!p.WaitForExit(10000)) { try { p.Kill(); } catch (Exception) { } return null; }
-                    return p.ExitCode == 0 ? o : null;
+                    reader.Wait(2000);
+                    return p.ExitCode == 0 ? (reader.IsCompleted ? reader.Result : "") : null;
                 }
             }
             catch (Exception) { return null; }
