@@ -626,7 +626,7 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
                 edited = got
                 break
             cut = await sc.cutout(Path(got), "guard_cutout")
-            verdict = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]))
+            verdict = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]), True)
         except Exception as e:  # noqa: BLE001  (a failed reroll keeps the try before it; a failed first try fails the step)
             if n == 0 or type(e).__name__ == "JobCancelled":
                 raise

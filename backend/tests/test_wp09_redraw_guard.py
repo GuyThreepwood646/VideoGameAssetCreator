@@ -47,7 +47,7 @@ def test_hand_edit_guard_keeps_the_first_pass_and_one_reroll(tmp_path, monkeypat
     other.mkdir()
     sc2, src2 = _sc(other)
     verdicts = iter([BAD, OK])
-    monkeypatch.setattr(buildpose, "guard", lambda a, b: next(verdicts))
+    monkeypatch.setattr(buildpose, "guard", lambda a, b, *rest: next(verdicts))
     assert asyncio.run(mesh_stage._edit_picture(sc2, mesh_stage.HAND_EDIT, src2, None, guarded=True)) is not None
     assert len(sc2.graphs) == 2
 
@@ -89,7 +89,7 @@ def _run_refine(sc, monkeypatch, instruction, verdicts):
     monkeypatch.setattr(concept, "_cutout", no_cutout)
     monkeypatch.setattr("vgac.library.version_file", lambda v, key, _s: person)
     sc.settings = SimpleNamespace()
-    monkeypatch.setattr(buildpose, "guard", lambda a, b: next(verdicts))
+    monkeypatch.setattr(buildpose, "guard", lambda a, b, *rest: next(verdicts))
     asyncio.run(concept.refine(sc, instruction, None, None, {}))
 
 
@@ -135,3 +135,15 @@ def test_a_failed_reroll_falls_back_instead_of_failing_the_step(tmp_path, monkey
     monkeypatch.setattr(mesh_stage, "_edit_once", flaky)
     assert asyncio.run(mesh_stage._edit_picture(sc, mesh_stage.HAND_EDIT, src, None, guarded=True)) is None
     assert sc.version.metrics["hand_guard"]["tries"] == 1 and not sc.version.metrics["hand_guard"]["ok"]
+
+
+def test_area_is_judged_without_joints_only_for_the_pose_and_hand_redraws():
+    """The whole-figure redraw reframes the picture: a cut-off figure redrawn whole is not 'parts removed' when no joints are found."""
+    from tests.own_images_helpers import cut, figure
+    cut_off = cut(figure("wide", legs="apart", offset=(0, 120)))
+    whole = cut(figure("wide", legs="apart"))
+    strict = buildpose.guard(cut_off, whole)
+    assert "parts of the character were removed" in strict["reasons"]
+    lenient = buildpose.guard(cut_off, whole, area_needs_joints=True)
+    assert "parts of the character were removed" not in lenient["reasons"]
+    assert any("parts of the character were removed" in n for n in lenient["not_compared"])

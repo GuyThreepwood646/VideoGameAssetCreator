@@ -748,11 +748,15 @@ def _face_shape(rgb: np.ndarray, P: np.ndarray | None = None) -> dict[str, float
             "mouth": float(np.linalg.norm(np.array(lp["right"]) - np.array(lp["left"]))) / eye}
 
 
-def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | Image.Image | np.ndarray) -> dict[str, Any]:
+def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | Image.Image | np.ndarray,
+          area_needs_joints: bool = False) -> dict[str, Any]:
     """Did the pose redraw keep the character? Compares the person's cut-out with the redraw's: colour added to a
     black-and-white picture, the colour mix, parts removed (figure area), each body part's colour, gloves added to bare
     hands, and the face's proportions. ok False with reasons (plain phrases) when any fails; not_compared names what
-    could not be compared. Never raises."""
+    could not be compared. Never raises. area_needs_joints: the figure's area is judged only when the person's joints
+    are found in both pictures (the whole-figure redraw also changes the framing and the scale, so a cut-off or
+    differently framed picture shrinks or grows the figure without any part being removed; without joints nothing
+    says which it was)."""
     out: dict[str, Any] = {"ok": True, "reasons": [], "not_compared": [], "measures": {}}
     try:
         a, b = load(original), load(redraw)
@@ -767,16 +771,20 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
     me["palette_overlap"] = round(overlap, 3)
     if overlap < GUARD_PALETTE and not out["reasons"]:
         out["reasons"].append("the colours changed")
-    area_a = a["mask"].sum() / float(a["height"]) ** 2
-    area_b = b["mask"].sum() / float(b["height"]) ** 2
-    me["area_ratio"] = round(float(area_b / max(1e-9, area_a)), 3)
-    if me["area_ratio"] < GUARD_AREA:
-        out["reasons"].append("parts of the character were removed")
     Pa = Pb = None
     try:
         Pa, Pb = pose_points(a["rgb"]), pose_points(b["rgb"])
     except Exception:  # noqa: BLE001
         pass
+    area_a = a["mask"].sum() / float(a["height"]) ** 2
+    area_b = b["mask"].sum() / float(b["height"]) ** 2
+    me["area_ratio"] = round(float(area_b / max(1e-9, area_a)), 3)
+    seen = Pa is not None and Pb is not None and pose_score(Pa) >= POSE_SCORE_MIN and pose_score(Pb) >= POSE_SCORE_MIN
+    if me["area_ratio"] < GUARD_AREA:
+        if seen or not area_needs_joints:
+            out["reasons"].append("parts of the character were removed")
+        else:
+            out["not_compared"].append("whether parts of the character were removed (the figure's size changed and no person's joints were found)")
     if Pa is None or Pb is None or pose_score(Pa) < POSE_SCORE_MIN or pose_score(Pb) < POSE_SCORE_MIN:
         out["not_compared"].append("the colour of each garment, the skin and the hands (no person's joints found)")
     else:
