@@ -129,3 +129,61 @@ def test_a_box_outside_the_picture_is_refused(client, engine):  # noqa: F811
     feats = [{"role": "body", "image": b64(Image.new("RGB", (200, 260), (30, 30, 200))), "crop": {"x": 150, "y": 0, "w": 200, "h": 100}}]
     r = client.post(f"/api/projects/{p['id']}/assets", json={"name": "knight", "category": "humanoid", "style_preset": "painted", "prompt": "a knight", "features": feats})
     assert r.status_code == 400 and "outside the picture" in r.text
+
+
+# --- the neighbour limit (suggest_box with the other people) -----------------------------------------------------------
+
+
+def _edges(b):
+    return b["x"], b["x"] + b["w"]
+
+
+def test_a_neighbour_close_on_the_left_limits_only_the_left_edge():
+    main = person(0.40, 0.20, 0.60, 0.80)
+    left = person(0.05, 0.20, 0.385, 0.80)  # same height, its right edge at 154 px (inside the margin); the person's own edge is 160 px
+    alone = people.suggest_box(main, W, H)
+    limited = people.suggest_box(main, W, H, [left])
+    own = people.box_px(main, W, H)
+    assert limited["x"] > alone["x"]  # the left edge moved in, halfway between 128 and 160
+    assert limited["x"] >= 154 and limited["x"] <= own["x"]  # never past the neighbour, never past the person
+    assert limited["x"] + limited["w"] == alone["x"] + alone["w"]  # the right edge is unchanged
+    assert limited["y"] == alone["y"] and limited["h"] == alone["h"]
+
+
+def test_a_neighbour_above_or_below_with_no_vertical_overlap_changes_nothing():
+    main = person(0.40, 0.40, 0.60, 0.80)
+    above = person(0.20, 0.02, 0.80, 0.30)  # wide, but its height is above the person's
+    below = person(0.20, 0.90, 0.80, 0.99)
+    alone = people.suggest_box(main, W, H)
+    assert people.suggest_box(main, W, H, [above, below]) == alone
+
+
+def test_neighbours_on_both_sides_limit_both_edges_and_keep_the_person():
+    main = person(0.40, 0.20, 0.60, 0.80)
+    left = person(0.05, 0.20, 0.385, 0.80)
+    right = person(0.615, 0.20, 0.95, 0.80)  # its left edge at 246 px, inside the margin
+    alone = people.suggest_box(main, W, H)
+    both = people.suggest_box(main, W, H, [left, right])
+    own = people.box_px(main, W, H)
+    lx, rx = _edges(both)
+    ax, arx = _edges(alone)
+    assert lx > ax and rx < arx  # both edges pulled in
+    assert lx <= own["x"] and rx >= own["x"] + own["w"]  # the person's own extent is inside
+
+
+def test_a_neighbour_that_reaches_the_persons_own_edge_does_not_cut_the_person():
+    main = person(0.40, 0.20, 0.60, 0.80)
+    overlapping = person(0.10, 0.20, 0.45, 0.80)  # its right edge (180 px) is past the person's left edge (160 px)
+    alone = people.suggest_box(main, W, H)
+    limited = people.suggest_box(main, W, H, [overlapping])
+    own = people.box_px(main, W, H)
+    assert limited["x"] <= own["x"]  # the person is never cut
+    assert limited["x"] >= alone["x"]
+
+
+def test_the_endpoint_passes_the_other_people_in(client, monkeypatch):
+    main = person(0.40, 0.20, 0.60, 0.80)
+    left = person(0.05, 0.20, 0.30, 0.80)
+    body = _detect(client, monkeypatch, {"status": "ok", "people": [main, left]}).json()
+    assert body["main"] == 0
+    assert body["suggested"] == people.suggest_box(main, W, H, [left])

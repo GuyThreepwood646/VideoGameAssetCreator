@@ -110,12 +110,40 @@ def box_px(person: dict[str, Any], width: int, height: int) -> dict[str, int]:
             "w": max(1, int(round((x1 - x0) * width))), "h": max(1, int(round((y1 - y0) * height)))}
 
 
-def suggest_box(person: dict[str, Any], width: int, height: int) -> dict[str, int]:
-    """The suggested box round the person: their extent plus a margin, kept inside the picture and at least MIN_SIDE."""
+def _limit_at_neighbours(x0: float, x1: float, own: tuple[float, float, float, float], others: list[tuple[float, float, float, float]]) -> tuple[float, float]:
+    """The box's left and right edges, pulled in so they do not reach into a neighbour that shares the main person's height.
+
+    Each such neighbour on the left limits the left edge to halfway between the main person's own left edge and the
+    neighbour's right edge; on the right the same way. A neighbour whose extent already reaches the main person's own
+    edge cannot be separated without cutting the person, so that edge is held at the person's own edge. A neighbour above
+    or below (no vertical overlap) changes nothing. The tightest limit wins when several neighbours share a side."""
+    ox0, oy0, ox1, oy1 = own
+    cx = (ox0 + ox1) / 2
+    for nx0, ny0, nx1, ny1 in others:
+        if ny0 >= oy1 or ny1 <= oy0:  # no vertical overlap: above or below, not beside
+            continue
+        if (nx0 + nx1) / 2 < cx:  # a neighbour on the left
+            limit = ox0 if nx1 >= ox0 else (ox0 + nx1) / 2
+            x0 = max(x0, limit)
+        else:  # a neighbour on the right
+            limit = ox1 if nx0 <= ox1 else (ox1 + nx0) / 2
+            x1 = min(x1, limit)
+    return x0, x1
+
+
+def suggest_box(person: dict[str, Any], width: int, height: int, others: list[dict[str, Any]] | None = None) -> dict[str, int]:
+    """The suggested box round the person: their extent plus a margin, pulled in at any neighbour that shares their height
+    (_limit_at_neighbours), kept inside the picture and at least MIN_SIDE."""
     b = box_px(person, width, height)
     padx, pady = b["w"] * MARGIN_X, b["h"] * MARGIN_Y
     x0, y0 = max(0.0, b["x"] - padx), max(0.0, b["y"] - pady)
     x1, y1 = min(float(width), b["x"] + b["w"] + padx), min(float(height), b["y"] + b["h"] + pady)
+    own = (float(b["x"]), float(b["y"]), float(b["x"] + b["w"]), float(b["y"] + b["h"]))
+    neighbours = []
+    for o in others or []:
+        q = box_px(o, width, height)
+        neighbours.append((float(q["x"]), float(q["y"]), float(q["x"] + q["w"]), float(q["y"] + q["h"])))
+    x0, x1 = _limit_at_neighbours(x0, x1, own, neighbours)
     w = max(x1 - x0, float(min(MIN_SIDE, width)))  # a small person still gets a usable box
     h = max(y1 - y0, float(min(MIN_SIDE, height)))
     x = min(max(0.0, (x0 + x1) / 2 - w / 2), width - w)
@@ -151,7 +179,7 @@ def people_in_picture(body: PeopleIn) -> dict[str, Any]:
     found = find(img)
     people = found["people"]
     main = main_person(people)
-    suggested = suggest_box(people[main], W, H) if main is not None else None
+    suggested = suggest_box(people[main], W, H, [p for i, p in enumerate(people) if i != main]) if main is not None else None
     return {"status": found["status"], "picture": {"width": W, "height": H},
             "people": [{"box": box_px(p, W, H), "score": p["score"]} for p in people],
             "main": main, "suggested": suggested}
