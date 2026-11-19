@@ -1243,7 +1243,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   pivot: { base: 'At the bottom (stands on the ground)', center: 'In the middle (floats or spins)' },
   template: { auto: 'Automatic (from the category)', mixamo: 'Standard human skeleton', generic: 'Fitted to the shape', none: 'No skeleton' },
   formats: { fbx: 'FBX (Unity, Unreal, Godot)', glb: 'GLB (web, Godot, Blender)' },
-  clips_library: { ual1: 'Standard human moves (46 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
+  clips_library: { ual1: 'Standard human moves (42 animations)', ual2: 'Extra human moves (second library)', none: 'Only its own walk and idle' },
   views: { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' },
   turn_method: { standard: 'Standard', sheet: 'All sides in one picture', shadow_free: 'Shadow-free on white' },
   collider: { auto: 'Best fit (recommended)', hull: 'One wrapped shape', decompose: 'Several shapes, for hollow things', mesh: 'Exact shape (only for scenery that never moves)', none: 'None' },

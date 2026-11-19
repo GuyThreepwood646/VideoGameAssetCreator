@@ -14,7 +14,7 @@ from vgac.blender import gait
 from vgac.stages import rig
 
 BLENDER = machine_tools.blender()
-UAL1_GLB = Path(__file__).resolve().parents[2] / "data" / "animations" / "ual1" / "Animation Library[Standard]" / "Godot" / "AnimationLibrary_Godot_Standard.glb"
+UAL1_GLB = Path(__file__).resolve().parents[2] / "data" / "animations" / "ual1" / "Universal Animation Library[Standard]" / "Unreal-Godot" / "UAL1_Standard.glb"
 needs = pytest.mark.skipif(BLENDER is None or not UAL1_GLB.is_file(), reason="needs Blender and the UAL1 clip library")
 
 

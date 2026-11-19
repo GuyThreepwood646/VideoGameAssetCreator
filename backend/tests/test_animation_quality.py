@@ -19,8 +19,8 @@ from vgac.stages import rig
 
 ROOT = Path(__file__).resolve().parents[2]
 BLENDER = machine_blender() or Path("blender-not-found")  # tests/machine_tools.py: VGAC_TEST_BLENDER, settings, PATH
-UAL1_GLB = ROOT / "data/animations/ual1/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb"
-UAL1_FBX = ROOT / "data/animations/ual1/Animation Library[Standard]/Unity/AnimationLibrary_Unity_Standard.fbx"
+UAL1_GLB = ROOT / "data/animations/ual1/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb"
+UAL1_FBX = ROOT / "data/animations/ual1/Universal Animation Library[Standard]/Unity/UAL1_Standard.fbx"
 
 
 def _rand_q(rng):
@@ -79,19 +79,16 @@ def test_tpose_turns_level_the_arms_straighten_the_legs_and_carry_the_fingers():
     assert turns["Spine"] == (1.0, 0.0, 0.0, 0.0) and turns["LeftShoulder"] == (1.0, 0.0, 0.0, 0.0)
 
 
-def test_bone_map_reads_both_library_namings_and_reports_missing_fingers():
-    ual1 = ["root", "DEF-hips", "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-neck", "DEF-head",
-            "DEF-shoulder.L", "DEF-upper_arm.L", "DEF-forearm.L", "DEF-hand.L", "DEF-f_index.01.L", "DEF-thumb.02.L",
-            "DEF-thigh.R", "DEF-shin.R", "DEF-foot.R", "DEF-toe.R"]
-    ue = ["root", "pelvis", "spine_01", "upperarm_l", "lowerarm_l", "hand_l", "index_01_l", "index_04_leaf_l", "ball_r", "calf_r"]
-    assert [gait.library_to_mixamo(n) for n in ual1] == [None, "Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "LeftShoulder",
-                                                        "LeftArm", "LeftForeArm", "LeftHand", "LeftHandIndex1", "LeftHandThumb2",
-                                                        "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase"]
-    assert [gait.library_to_mixamo(n) for n in ue] == [None, "Hips", "Spine", "LeftArm", "LeftForeArm", "LeftHand",
-                                                      "LeftHandIndex1", None, "RightToeBase", "RightLeg"]
+def test_bone_map_reads_the_pack_bone_names_and_reports_missing_fingers():
+    # The 3.0 packs (both): Unreal-style names, read from the GLB's skin joints.
+    ue = ["root", "pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "Head", "clavicle_l", "upperarm_l", "lowerarm_l",
+          "hand_l", "index_01_l", "thumb_02_l", "thigh_r", "calf_r", "foot_r", "ball_r", "index_04_leaf_l", "ball_leaf_r"]
+    assert [gait.library_to_mixamo(n) for n in ue] == [None, "Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "LeftShoulder",
+                                                      "LeftArm", "LeftForeArm", "LeftHand", "LeftHandIndex1", "LeftHandThumb2",
+                                                      "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase", None, None]
     target = ["mixamorig:Hips", "mixamorig:LeftArm", "mixamorig:LeftHandMiddle1", "mixamorig:Extra", "Armature"]
-    m, missing = gait.bone_map(ual1, target)
-    assert m == {"mixamorig:Hips": "DEF-hips", "mixamorig:LeftArm": "DEF-upper_arm.L"}
+    m, missing = gait.bone_map(ue, target)
+    assert m == {"mixamorig:Hips": "pelvis", "mixamorig:LeftArm": "upperarm_l"}
     assert missing == ["LeftHandMiddle1"]  # a finger the library lacks; non-Mixamo bones are not listed
 
 
@@ -260,13 +257,13 @@ def test_retarget_runs_on_a_synthetic_mixamo_skeleton(tmp_path):
 # ---- rig stage wiring ------------------------------------------------------------------------------------------
 
 def _lib_dir(tmp_path):
-    root = tmp_path / "ual1" / "Animation Library[Standard]"
+    root = tmp_path / "ual1" / "Universal Animation Library[Standard]"
     (root / "Unity").mkdir(parents=True)
-    (root / "Godot").mkdir()
+    (root / "Unreal-Godot").mkdir()
     (root / "License.txt").write_text("CC0")
     fbx = root / "Unity" / "lib.fbx"
     fbx.write_bytes(b"fbx")
-    (root / "Godot" / "lib.glb").write_bytes(b"glb")
+    (root / "Unreal-Godot" / "lib.glb").write_bytes(b"glb")
     return fbx
 
 

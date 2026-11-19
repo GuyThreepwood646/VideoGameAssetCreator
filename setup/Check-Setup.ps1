@@ -457,7 +457,7 @@ Check-Folder 'Frontend build (the screens)' 'frontend\dist' 'index.html' 'Run th
 Check-Folder 'Desktop launcher packages' 'desktop\node_modules' '.package-lock.json' 'Run this script with -Install (needs Node and npm).'
 Check-Folder 'Sample 3D file' 'library\samples' 'sample.glb' 'Run this script with -Install (needs the backend venv).'
 
-$packFiles = @{ ual1 = 'AnimationLibrary_Unity_Standard.fbx'; ual2 = 'UAL2_Standard.fbx' }
+$packFiles = @{ ual1 = 'UAL1_Standard.fbx'; ual2 = 'UAL2_Standard.fbx' }
 foreach ($id in 'ual1', 'ual2') {
     $m = [regex]::Match($cfgText, "(?m)^\s+${id}:\s*""([^""]+)""")
     $pth = if ($m.Success) { Abs-Path $m.Groups[1].Value } else { '' }

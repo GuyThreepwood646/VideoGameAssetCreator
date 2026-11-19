@@ -88,7 +88,7 @@ CLIP_TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "Sprint_Loop": ("Sprint", "walking"), "Crouch_Fwd_Loop": ("Crouch walk", "walking"),
         "Jump_Start": ("Jump (take off)", "jumping"), "Jump_Loop": ("Jump (in the air)", "jumping"),
         "Jump_Land": ("Jump (land)", "jumping"), "Roll": ("Roll", "jumping"),
-        "Punch_Enter": ("Raise fists", "fighting"), "Punch_Jab": ("Punch (jab)", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
+        "Punch_Jab": ("Punch (jab)", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
         "Sword_Attack": ("Sword attack", "sword"),
         "Pistol_Idle_Loop": ("Stand with a pistol", "pistol"), "Pistol_Aim_Neutral": ("Aim a pistol ahead", "pistol"),
         "Pistol_Aim_Up": ("Aim a pistol up", "pistol"), "Pistol_Aim_Down": ("Aim a pistol down", "pistol"),
@@ -114,24 +114,26 @@ CLIP_TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "Sword_Block": ("Block with a sword", "sword"), "Sword_Regular_A": ("Sword slash 1", "sword"),
         "Sword_Regular_A_Rec": ("Sword slash 1 (recover)", "sword"), "Sword_Regular_B": ("Sword slash 2", "sword"),
         "Sword_Regular_B_Rec": ("Sword slash 2 (recover)", "sword"), "Sword_Regular_C": ("Sword slash 3 (big)", "sword"),
-        "Sword_Regular_Combo": ("Sword combo (three slashes)", "sword"), "Sword_Dash_RM": ("Sword lunge", "sword"),
+        "Sword_Regular_Combo": ("Sword combo (three slashes)", "sword"), "Sword_Heavy_Combo": ("Sword combo (heavy)", "sword"),
+        "Sword_Dash": ("Sword lunge", "sword"),
         "Idle_Shield_Loop": ("Stand behind a shield", "shield"), "Shield_OneShot": ("Shield bash", "shield"),
-        "Idle_Shield_Break": ("Shield knocked aside", "shield"), "Shield_Dash_RM": ("Shield charge", "shield"),
+        "Idle_Shield_Break": ("Shield knocked aside", "shield"), "Shield_Dash": ("Shield charge", "shield"),
         "Hit_Knockback": ("Get knocked back", "hit"), "LayToIdle": ("Get up from the ground", "hit"),
         "Chest_Open": ("Open a chest", "using"), "Consume": ("Eat or drink", "using"),
         "Farm_Harvest": ("Harvest crops", "work"), "Farm_PlantSeed": ("Plant seeds", "work"), "Farm_Watering": ("Water plants", "work"),
         "TreeChopping_Loop": ("Chop wood", "work"),
         "Idle_Rail_Loop": ("Lean on a rail", "sitting"), "Idle_Rail_Call": ("Lean on a rail and call out", "talking"),
         "Idle_TalkingPhone_Loop": ("Talk on a phone", "talking"), "Idle_No_Loop": ("Shake head (no)", "talking"), "Yes": ("Nod (yes)", "talking"),
-        "ClimbUp_1m_RM": ("Climb up a ledge", "climbing"), "Slide_Start": ("Slide (start)", "climbing"),
+        "ClimbUp_1m": ("Climb up a ledge", "climbing"), "Slide_Start": ("Slide (start)", "climbing"),
         "Slide_Loop": ("Slide", "climbing"), "Slide_Exit": ("Slide (end)", "climbing"),
         "Zombie_Idle_Loop": ("Zombie stand", "zombie"), "Zombie_Walk_Fwd_Loop": ("Zombie walk", "zombie"),
         "Zombie_Scratch": ("Zombie claw attack", "zombie"),
     },
 }
-HIDDEN = {"A_TPose", "Roll_RM", "Sword_Attack_RM", "Hit_Knockback_RM"}
-# Clips that travel: the hips leave the spot (root motion in the library, no in-place copy).
-TRAVELS = {"ClimbUp_1m_RM", "Shield_Dash_RM", "Sword_Dash_RM"}
+HIDDEN = {"A_TPose"}
+# Clips that travel (root motion). Empty: in the 3.0 packs the root motion lives in the *_RM.glb copies, which the
+# retarget does not read (rig.library_file takes the plain GLB), so every clip plays in place.
+TRAVELS: set[str] = set()
 # Held poses and idles whose names do not say "Loop".
 LOOP_EXTRA = {"Sword_Idle", "Pistol_Aim_Neutral", "Pistol_Aim_Up", "Pistol_Aim_Down"}
 # Names for the built-in (procedural) moves a character keeps next to the library ones.
