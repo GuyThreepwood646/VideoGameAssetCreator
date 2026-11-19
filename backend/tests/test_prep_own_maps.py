@@ -84,3 +84,47 @@ def test_keys_are_the_ones_asked_for(files_on_disk):
     maps, missing = prep.own_texture_maps(trellis, ("base_color", "metallic"))
     assert set(maps) == {"base_color", "metallic"}
     assert missing == []
+
+
+# --- the glb: the clean-up reads the mesh of its own lineage, never a selected mesh elsewhere in the asset ---
+
+
+class _FakeSC:
+    """The two StageContext members own_mesh_glb uses: the lineage walk (parent first) and the settings."""
+
+    def __init__(self, lineage, settings=None):
+        self._lineage = lineage
+        self.settings = settings
+
+    def iter_lineage(self, include_self=False):
+        return iter(self._lineage)
+
+
+def test_glb_comes_from_the_parent_mesh_version(files_on_disk):
+    hy = _version(files_on_disk, "hy3d-g1", "hy3d", ())
+    v, glb = prep.own_mesh_glb(_FakeSC([hy]))
+    assert v is hy
+    assert glb == Path(hy.files["glb"])
+
+
+def test_clean_up_made_from_an_earlier_clean_up_reaches_its_mesh(files_on_disk):
+    mesh = _version(files_on_disk, "hy3d-g2", "hy3d", ())
+    earlier_prep = SimpleNamespace(id="prep-1", stage="prep", files={}, params={}, metrics={})
+    v, glb = prep.own_mesh_glb(_FakeSC([earlier_prep, mesh]))
+    assert v is mesh
+    assert glb == Path(mesh.files["glb"])
+
+
+def test_a_selected_sibling_mesh_is_never_used_for_the_glb(files_on_disk):
+    """The old fallback: the parent has no mesh of its own, so the selected TRELLIS mesh supplied the GLB."""
+    _version(files_on_disk, "trellis-g3", "trellis", KEYS)
+    v, glb = prep.own_mesh_glb(_FakeSC([SimpleNamespace(id="concept", stage="turnaround", files={}, params={}, metrics={})]))
+    assert v is None
+    assert glb is None
+
+
+def test_a_mesh_with_no_glb_file_gives_no_glb_not_a_sibling(files_on_disk):
+    hy = SimpleNamespace(id="hy3d-g4", stage="mesh", files={}, params={"engine": "hy3d"}, metrics={})
+    v, glb = prep.own_mesh_glb(_FakeSC([hy]))
+    assert v is hy
+    assert glb is None
