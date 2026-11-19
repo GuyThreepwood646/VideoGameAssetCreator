@@ -215,6 +215,15 @@ mod = cube.modifiers.new("arm", "ARMATURE")
 mod.object = ob
 g = cube.vertex_groups.new(name="mixamorig:Hips")
 g.add([v.index for v in cube.data.vertices], 1.0, "REPLACE")
+# One small cube under each foot: the retarget takes the ground from the lowest mesh vertex, so the mesh must reach the floor.
+for s, x in (("Left", 1), ("Right", -1)):
+    bpy.ops.mesh.primitive_cube_add(size=0.08, location=(0.11 * x, -0.04, 0.04))
+    fc = bpy.context.active_object
+    fc.parent = ob
+    fm = fc.modifiers.new("arm", "ARMATURE")
+    fm.object = ob
+    fg = fc.vertex_groups.new(name="mixamorig:" + s + "Foot")
+    fg.add([v.index for v in fc.data.vertices], 1.0, "REPLACE")
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
 print("BUILD_OK")
@@ -244,9 +253,12 @@ def test_retarget_runs_on_a_synthetic_mixamo_skeleton(tmp_path):
         # Standing clips: the legs follow within the few degrees the foot clean-up needs. Lying down, the body is
         # lifted off the ground where its torso would sink, and the planted feet are reached again by the leg IK.
         for bone in ("LeftUpLeg", "LeftLeg", "RightUpLeg", "RightLeg"):
-            assert det["segment_angle"][bone]["max_deg"] < (20.0 if clip != "death" else 90.0), (clip, bone)
+            assert det["segment_angle"][bone]["max_deg"] < (6.0 if clip != "death" else 25.0), (clip, bone)
         if clip != "death":
             assert det["inverted_knee_frames"] == 0
+        if clip in ("idle", "walk"):
+            # Standing clips keep the body on the floor: no sinking lift (the feet are on the floor in the fixture).
+            assert det["torso_lift_m"] < 0.01, (clip, det["torso_lift_m"])
     side = json.loads((tmp_path / "anim_clips.json").read_text())
     rows = {c["name"]: c for c in side["clips"]}
     assert set(rows) == {"idle", "walk", "death"} and all(c["source"] == "library" for c in rows.values())
