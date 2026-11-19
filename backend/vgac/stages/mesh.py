@@ -747,6 +747,22 @@ def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     return platform, None
 
 
+HY3D_RAW_NOTE = "hy3d_raw_triangles"
+
+
+def raw_triangle_note(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any], tris: int | None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Hunyuan3D has no decimation in its graph, so its step 3 count is the raw marching-cubes output. It is not judged
+    here: prep reduces it to prep_triangle_limit and judges that. Returns (the plain note check or None, the metrics to record:
+    the raw count and the limit prep will use)."""
+    from .prep import prep_triangle_limit
+
+    pl = prep_triangle_limit(rec, params, budget)
+    metrics = {"hy3d_raw_triangles": tris, "hy3d_prep_limit": pl["limit"], "hy3d_prep_limit_source": pl["source"]}
+    if tris is None:
+        return None, metrics
+    return quality.check(HY3D_RAW_NOTE, True, tris, pl["limit"]), metrics
+
+
 def texture_target(rec: dict[str, Any], budget: dict[str, Any], baked: bool = False) -> tuple[int | None, dict[str, Any] | None]:
     """The texture size limit a check measures against: the recipe's when smaller than the platform's. baked: the 3D
     step's own maps, which a look with a bake size (Retro 64) makes at that size before the clean-up shrinks them."""
@@ -774,9 +790,15 @@ async def judge(sc: StageContext) -> None:
     checks = with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                        tex_vars, "_budget")
     tris = sc.version.metrics.get("triangles")
-    limit, tvars = triangle_target(rec, sc.version.params, sc.budget)
-    if tris is not None and limit:
-        checks.append(quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=tvars))
+    if (sc.version.params or {}).get("engine") == "hy3d":
+        note, hm = raw_triangle_note(rec, sc.version.params, sc.budget, tris)
+        sc.set_metrics(**hm)
+        if note:
+            checks.append(note)
+    else:
+        limit, tvars = triangle_target(rec, sc.version.params, sc.budget)
+        if tris is not None and limit:
+            checks.append(quality.check("triangle_budget", tris <= limit * (1 + quality.TRIANGLE_BUDGET_TOLERANCE), tris, limit, vars=tvars))
     iou = sc.version.metrics.get("silhouette_iou")
     if iou is not None:
         # Long-bodied categories (quadruped, serpent, winged) never match a flat concept as closely as a biped does,
