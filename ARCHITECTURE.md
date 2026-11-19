@@ -107,6 +107,8 @@ Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and
 
 The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VGAC/mine/` under `loras_dir`), pictures (`own_images.py`, `uploads.py`), 3D model (`model_import.py`), hairstyles (`my_hair.py`, `library/my_hair/`), moves (`moves.py`, `library/my_moves/`), items (`items.py`, `sockets.py`).
 
+Feature photos (New asset form, `components/FeaturePhotos.tsx`) go to `compose.py` with the new asset: one step 1 picture from several photos (one job, one version). For a human's photos, `people.py` (`POST /api/people`, the MediaPipe pose landmarker) suggests an editable box round the main person, pulled in halfway to any neighbour beside them; the picture is cut to the box before drawing, and keeping the whole photo with others in it is warned and recorded. A human's face photo is also kept as the asset's face close-up for step 4.
+
 ## 6. Not in the repository
 
 | Not tracked | Source |
