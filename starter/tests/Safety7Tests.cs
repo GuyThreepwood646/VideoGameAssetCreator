@@ -116,6 +116,11 @@ public static partial class T
         Check(Mover(s, null).ContinueAnyway(new Progress()) == null, "(finished anyway)");
         string text = MoveView.RestartText(s.Root);
         Check(text.Contains("keep") && text.Contains(Path.Combine(s.Data, "comfyui")) && !text.Contains("can delete"), "T3: after 'Finish anyway' the window says to KEEP the old folder, not that it can be deleted: " + text);
+        // item 3: the leftover copy in the new folder keeps its files, loses its marker, and the window names it with its size
+        string leftover = Path.Combine(to, "comfyui");
+        Check(!File.Exists(Path.Combine(leftover, ComfyGuard.MarkerName)), "I3: the leftover ComfyUI copy in the new folder has no marker any more");
+        Check(Directory.Exists(leftover) && Directory.GetFileSystemEntries(leftover).Length > 0, "I3: the leftover copy's files are not deleted");
+        Check(text.Contains(leftover) && text.Contains("leftover copy of ComfyUI") && text.Contains("MB") && text.Contains("by hand"), "I3: the window names the leftover copy, its size and that it can be deleted by hand: " + text);
         var s2 = Movable(); string to2 = Path.Combine(Tmp("target"), "t3b");
         Mover(s2, null).Start(to2, new Progress());
         string text2 = MoveView.RestartText(s2.Root);

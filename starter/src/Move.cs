@@ -205,17 +205,24 @@ namespace Vgac.Starter
         // there by 'Finish anyway') must be kept.
         public static string RestartText(string root)
         {
-            string to = "the new folder", old = null; bool keep = false;
+            string to = "the new folder", old = null, leftover = null; bool keep = false; long bytes = 0;
             try
             {
                 var d = Json.ParseObject(File.ReadAllText(MoveRules.RestartPath(root), Encoding.UTF8));
                 to = Convert.ToString(d["moved_to"]); old = Convert.ToString(d["old_folder"]);
                 object k; keep = d.TryGetValue("keep_old_comfyui", out k) && k is bool && (bool)k;
+                object lc; if (d.TryGetValue("leftover_comfyui", out lc) && lc != null) leftover = Convert.ToString(lc);
+                object lb; if (d.TryGetValue("leftover_bytes", out lb) && lb != null) bytes = Convert.ToInt64(lb);
             }
             catch (Exception) { }
             string head = "The big files are now in " + to + ". VGAC has to be restarted to use them: close this window and press the button below.";
             if (old == null) return head;
-            if (keep) return head + "\r\n\r\nVGAC's own ComfyUI was NOT moved: it keeps running from " + Path.Combine(old, "comfyui") + ". Keep the old folder (" + old + "); do not delete it.";
+            if (keep)
+            {
+                string text = head + "\r\n\r\nVGAC's own ComfyUI was NOT moved: it keeps running from " + Path.Combine(old, "comfyui") + ". Keep the old folder (" + old + "); do not delete it.";
+                if (leftover != null) text += "\r\n\r\nA leftover copy of ComfyUI is in " + leftover + " (" + (bytes / (1024.0 * 1024.0)).ToString("0.0") + " MB). It is no longer used by VGAC and is not running. It can be deleted by hand once you are happy with the new place.";
+                return text;
+            }
             return head + "\r\n\r\n" + OldFolderSentence(old);
         }
 
@@ -526,6 +533,7 @@ namespace Vgac.Starter
                 {
                     if (!force) return "The files are moved, but VGAC's own ComfyUI could not be told: " + r + " Nothing runs until the move is finished: press Continue to try again, or 'Finish anyway', which ends the move WITHOUT moving VGAC's own ComfyUI (it then keeps running from the old folder, which you must keep).";
                     RewriteLedgerPath(Path.Combine(j.To, "comfyui"), Path.Combine(j.From, "comfyui"));
+                    DropMarkerInLeftoverCopy(Path.Combine(j.To, "comfyui"));   // the copy in the new folder is no longer VGAC's ComfyUI
                     comfyLeftBehind = true;
                     note = "VGAC's own ComfyUI was not moved: it keeps running from " + Path.Combine(j.From, "comfyui") + ", so keep that folder.";
                 }
@@ -549,11 +557,24 @@ namespace Vgac.Starter
 
         void RewriteLedgerPath(string oldPath, string newPath) { RewriteLedger(oldPath, newPath); }
 
+        // After 'Finish anyway' the ComfyUI files stay in the new folder, but its marker goes: no later start or check may take that
+        // copy for the ComfyUI in use (which runs from the old folder). The files are never deleted here.
+        void DropMarkerInLeftoverCopy(string copyDir)
+        {
+            try { string m = Path.Combine(copyDir, ComfyGuard.MarkerName); if (File.Exists(m)) File.Delete(m); log.Line("move: the marker of the ComfyUI copy left in " + copyDir + " was removed; its files stay"); }
+            catch (Exception e) { log.Line("move: could not remove the marker of the ComfyUI copy in " + copyDir + " (" + e.Message + ")"); }
+        }
+
         void WriteRestartMarker(MoveJournal j, bool comfyLeftBehind)
         {
             var d = new Dictionary<string, object>();
             d["moved_to"] = j.To; d["old_folder"] = j.From;
-            if (comfyLeftBehind) d["keep_old_comfyui"] = true;     // the window must say to KEEP the old folder
+            if (comfyLeftBehind)
+            {
+                d["keep_old_comfyui"] = true;     // the window must say to KEEP the old folder
+                string copy = Path.Combine(j.To, "comfyui");
+                d["leftover_comfyui"] = copy; d["leftover_bytes"] = SafeFs.Size(copy, null);   // the window names the copy and its size
+            }
             SafeFs.WriteAtomic(MoveRules.RestartPath(Root), Json.Write(d), null);
             SafeFs.Point("move", "restart-marker");
         }
