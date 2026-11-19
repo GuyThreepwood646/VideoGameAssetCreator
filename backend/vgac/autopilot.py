@@ -404,7 +404,13 @@ async def _run(aid: str) -> None:
                     continue
                 stages_done: list[str] = []
                 target: str | None = None
+                # Steps the category skips (material skips turnaround) are never run, kept or asked about.
+                skips = set(reference.category(a.category).get("skips") or [])
                 for s in STAGE_ORDER:
+                    if s in skips:
+                        if s == until:
+                            break
+                        continue
                     sel = pipeline.selected(db, aid, s)
                     if sel is not None and sel.status == "done":
                         # A kept picture (the person's own, or one made by hand) is asked about once too.

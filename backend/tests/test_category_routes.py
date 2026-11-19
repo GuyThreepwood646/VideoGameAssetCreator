@@ -28,10 +28,6 @@ EXPECTED_ROUTE = {c: FULL_ROUTE for c in ALL_CATEGORIES}
 # 5A: the material category has no turnaround. prep and rig still run as pass-through stages that record a skip
 # (stages/prep.py and stages/rig.py), so the intended order is concept, mesh, prep (skipped), rig (skipped), export.
 EXPECTED_ROUTE["material"] = ["concept", "mesh", "prep", "rig", "export"]
-# Known gap, found by these tests: the autopilot loop (autopilot._run) walks STAGE_ORDER and ignores the category's
-# `skips`, so a material run also builds a turnaround. Strict xfail: it turns into a failure when the gap is fixed,
-# so the marker is then removed.
-MATERIAL_GAP = pytest.mark.xfail(strict=True, reason="autopilot ignores category skips: material runs turnaround")
 # Rig engine per family (5A table): creatures and humanoids rig; hard objects, buildings, plants and materials do not.
 RIG_ENGINE_RIGS = {"humanoid", "quadruped", "winged", "multileg", "serpent"}
 
@@ -66,7 +62,7 @@ def _steps_run(calls):
     return seen
 
 
-@pytest.mark.parametrize("category", [pytest.param(c, marks=MATERIAL_GAP) if c == "material" else c for c in ALL_CATEGORIES])
+@pytest.mark.parametrize("category", ALL_CATEGORIES)
 def test_each_category_reaches_export_and_runs_its_steps_in_order(client, fake_execute, category):
     p, a = _project_asset(client, category=category)
     fake_execute.clear()
@@ -76,7 +72,6 @@ def test_each_category_reaches_export_and_runs_its_steps_in_order(client, fake_e
     assert _steps_run(fake_execute) == EXPECTED_ROUTE[category]
 
 
-@MATERIAL_GAP
 def test_material_skips_turnaround_and_builds_on_concept(client, fake_execute):
     p, a = _project_asset(client, category="material")
     fake_execute.clear()
@@ -85,7 +80,7 @@ def test_material_skips_turnaround_and_builds_on_concept(client, fake_execute):
     assert "turnaround" not in _steps_run(fake_execute)
     # The 3D step builds on the kept picture, not on a turnaround that was never made.
     assert pipeline.previous_stage("material", "mesh") == "concept"
-    assert pipeline.previous_stage("material", "export") == "prep"  # prep records its skip and stays in the chain
+    assert pipeline.previous_stage("material", "export") == "rig"  # prep and rig record their skips and stay in the chain
 
 
 def test_until_stage_stops_before_export(client, fake_execute):
