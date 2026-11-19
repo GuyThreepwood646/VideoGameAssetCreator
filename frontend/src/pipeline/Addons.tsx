@@ -7,7 +7,7 @@ import { api, type AddonChoice, type AddonEntry, type Recipe, type StrengthName,
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
 import { editLoraNotes } from '../editLoras'
-import { joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
+import { addonRemoveWords, joinAnd, modelLabel, STRENGTH_LABELS } from '../help'
 import { addonLocked, strengthsEqual } from '../recipe'
 import { AddMyAddon, reloadMyAddons } from './AddMyAddon'
 
@@ -209,6 +209,9 @@ function AddonRowView({
         )}
       </div>
       {a.help?.meaning && <div className="muted small addon-meaning">{a.help.meaning}</div>}
+      {a.mine && a.placement && (a.placement.file_missing || a.placement.source_missing) && (
+        <div className="error small addon-placement">{a.placement.note}</div>
+      )}
       {removable && <RemoveMine entry={a} disabled={disabled} />}
       {locked && (
         <div className="muted small addon-lock">
@@ -219,7 +222,7 @@ function AddonRowView({
   )
 }
 
-// Remove one of your own add-ons from the list. The file stays in the add-on folder.
+// Remove one of your own add-ons from the list. Only a link or copy the app made is deleted (the words say which), never an original.
 function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean }) {
   const [asking, setAsking] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -236,7 +239,7 @@ function RemoveMine({ entry, disabled }: { entry: AddonEntry; disabled: boolean 
     <div className="addon-mine-actions small">
       {asking ? (
         <>
-          <span>Take it off your list? The file stays in the LoRA folder, so you can set it up again later.</span>
+          <span>Take it off your list? {addonRemoveWords(entry.placement?.mode)}</span>
           <button type="button" onClick={remove}>
             Remove
           </button>
