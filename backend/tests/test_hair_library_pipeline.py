@@ -373,7 +373,7 @@ GOLDEN_OFF = {
              "files": ["ao", "base_color", "glb", "input", "metallic", "normal", "preview", "roughness", "sheet",
                        "views_dir"],
              "metrics": ["atlas_used", "checks", "checks_failed", "checks_passed", "dims", "elapsed_seconds",
-                         "builder", "elapsed_seconds_all", "engine", "gate_ok", "models", "normal_fix", "normal_map",
+                         "builder", "elapsed_seconds_all", "engine", "gate_ok", "geometry_error", "models", "normal_fix", "normal_map",
                          "picture_colour", "recipe", "seed", "silhouette_iou", "silhouette_offset", "silhouette_sign", "silhouette_turn_scores",
                          "target_faces", "target_faces_source", "texture_match", "texture_size", "texture_source",
                          "texture_tries", "texture_try_kept", "texture_try_ratios", "texture_try_seeds", "triangles",
