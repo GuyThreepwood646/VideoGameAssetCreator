@@ -1,6 +1,8 @@
 // Your LoRAs for the picture-edit uses (backend stages/picture_loras.py; the model id is reference.EDIT_MODEL).
-// Kept in their own file until the shared API types (api.ts) take them.
-import type { Version } from './api'
+// The types live in api.ts; the helpers are here.
+import type { EditLora, MadeFor, Version } from './api'
+
+export type { EditChoice, EditListing, EditLora } from './api'
 
 export const EDIT_MODEL = 'qwen_edit'
 export const EDIT_MODEL_LABEL = 'Picture edits (Qwen-Image-Edit)'
@@ -15,8 +17,6 @@ export const EDIT_KNOB_LABELS: Record<EditKnob, string> = {
   face_addons: 'Face close-up',
 }
 
-export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
-
 // A picture-edit step takes at most this many of your LoRAs at once (reference.MAX_EDIT_LORAS on the backend).
 export const EDIT_LORA_LIMIT = 2
 
@@ -24,12 +24,6 @@ export const EDIT_LORA_LIMIT = 2
 export function isEditKnob(type: string): boolean {
   return type === 'edit_addons'
 }
-
-// One of your own LoRAs as GET /api/my-addons lists it: its stage ("edit" for picture edits) and its warning.
-export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string }
-
-// The listing with the picture-edit model the backend adds (user_addons.listing: edit_models).
-export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 
 // What picture_loras.edit_loras records per use, in the version's metrics.
 type UseRecord = { applied?: { id: string; label?: string; strength?: string }[]; ignored?: { id?: string; reason?: string }[]; unknown?: unknown[] }
@@ -81,7 +75,7 @@ export const PLAIN_WARNING =
   'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
 
 // The "made for" the file itself settled, from the listing or the upload's prefill ("" when the file cannot tell).
-export function madeForOf(x: unknown): string {
+export function madeForOf(x: unknown): MadeFor | '' {
   const m = (x as { made_for?: unknown } | null | undefined)?.made_for
   return m === MADE_FOR_EDIT || m === MADE_FOR_PLAIN ? m : ''
 }

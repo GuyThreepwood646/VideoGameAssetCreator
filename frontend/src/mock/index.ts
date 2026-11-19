@@ -4,7 +4,7 @@
 // served by the Vite dev server from ../library (see vite.config.ts).
 import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
-import type { AddonEntry, AddonPrefill, StrengthName, UnregisteredAddon } from '../api'
+import type { AddonEntry, AddonPrefill, MadeFor, StrengthName, UnregisteredAddon } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
 import { addMyHair, changeMyHair, hairCatalogue, hairPanel, myHairListing, OwnHairError, removeMyHair } from './hair'
 import { mockCredits } from './credits'
@@ -1371,7 +1371,7 @@ const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill 
   { file_name: 'plain_sure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Plain sure test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image', painter_note: '', warning: QWEN_PLAIN_WARNING, made_for: 'qwen_image' } },
   { file_name: 'unsure_test.safetensors', bytes: 90_000_000, prefill: { label: 'Unsure test', base_models: [], trigger: '', family: '', painter_note: UNSURE_TEXT, warning: '', made_for: '' } },
 ]
-const myAddons: (AddonEntry & { warning?: string; made_for?: string })[] = []
+const myAddons: (AddonEntry & { warning?: string })[] = []
 // The four picture-edit uses, and the backend's limit of two LoRAs at once for one use (reference.MAX_EDIT_LORAS).
 const EDIT_KNOB_IDS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
 const EDIT_LORA_MAX = 2
@@ -1441,7 +1441,7 @@ on('POST', '/api/my-addons', (_m, body) => {
   const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
   let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
   for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
-  const entry: AddonEntry & { warning?: string; made_for?: string } = {
+  const entry: AddonEntry & { warning?: string } = {
     id,
     label,
     help: {
@@ -1461,7 +1461,7 @@ on('POST', '/api/my-addons', (_m, body) => {
     file_name: fileName,
     added_at: nowIso(),
     // The warning is for a LoRA made for plain Qwen-Image that is used for picture edits (backend _normalise).
-    made_for: madeFor,
+    ...(madeFor ? { made_for: madeFor as MadeFor } : {}),
     warning: edit && madeFor === 'qwen_image' ? QWEN_PLAIN_WARNING : '',
   }
   myAddons.push(entry)

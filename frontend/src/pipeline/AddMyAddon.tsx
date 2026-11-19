@@ -6,7 +6,7 @@
 // This sits inside the Fine-tune <form>, so it uses no <form> of its own, every button is type="button", and Enter in
 // its text boxes never submits Fine-tune.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { api, STYLE_MODELS, type AddonEntry, type AddonPrefill, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
+import { api, STYLE_MODELS, type AddonEntry, type AddonPrefill, type MadeFor, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
 import { fmtBytes } from '../components/ImageDrop'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
@@ -242,7 +242,7 @@ function AddonForm({
   const forEdits = models.includes(EDIT_MODEL)
   const detectedMadeFor = madeForOf(pre)
   const madeForLocked = !!detectedMadeFor
-  const [madeFor, setMadeFor] = useState<string>(detectedMadeFor || madeForOf(editing))
+  const [madeFor, setMadeFor] = useState<MadeFor | ''>(detectedMadeFor || madeForOf(editing))
   const missing = !label.trim()
     ? 'Give the LoRA a name.'
     : models.length === 0

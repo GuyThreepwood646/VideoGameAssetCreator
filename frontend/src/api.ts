@@ -315,7 +315,7 @@ export type Platform = {
 export type AdjustParam = {
   name: string
   label?: string
-  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string' | 'addons'
+  type: 'number' | 'integer' | 'boolean' | 'select' | 'multiselect' | 'string' | 'addons' | 'edit_addons'
   // type 'addons' (concept): every concept add-on the app knows. The value is {id: off | subtle | normal | strong}.
   catalog?: AddonEntry[]
   min?: number
@@ -377,7 +377,10 @@ export type AddonEntry = {
   id: string
   label: string
   help: HelpText
-  stage: 'concept' | 'turnaround'
+  stage: 'concept' | 'turnaround' | 'edit'
+  // Picture-edit LoRAs (GET /api/my-addons): what the file was made for and the warning for a plain Qwen-Image one.
+  made_for?: MadeFor
+  warning?: string
   base_models: string[]
   strengths: Record<StrengthName, number>
   default_strength: StrengthName
@@ -399,6 +402,8 @@ export type AddonEntry = {
 // Your own add-ons (backend user_addons.py, docs/API.md "your own LoRAs").
 export type MyAddonsListing = {
   addons: AddonEntry[]
+  // The picture-edit model a LoRA can be made for (user_addons.listing: edit_models).
+  edit_models?: { id: string; label: string }[]
   // The one folder the app keeps add-on files in (VGAC/mine/ inside ComfyUI's loras folder).
   folder: string
   folder_exists: boolean
@@ -406,10 +411,17 @@ export type MyAddonsListing = {
   painters: { id: string; label: string }[]
 }
 // What the short form can start with, read from the file's header (never its data).
-export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string }
+export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string; made_for?: MadeFor | ''; warning?: string }
 export type UploadedAddon = { file_name: string; bytes: number; prefill: AddonPrefill }
 export type UnregisteredAddon = { file_name: string; bytes: number; prefill?: AddonPrefill; error?: string }
-export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string }
+export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string; made_for?: MadeFor | '' }
+
+// Your LoRAs for the picture-edit uses (picture_loras.py). Each use has its own choice; a LoRA is for picture edits when its stage is edit.
+export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
+// What a picture-edit LoRA was made for (user_addons.MADE_FOR_EDIT / MADE_FOR_PLAIN). Plain also covers "not sure".
+export type MadeFor = 'qwen_image_edit' | 'qwen_image'
+export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string }
+export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 export type Recipe = {
   id: string
   style: string
@@ -717,7 +729,7 @@ export type GpuSharingPatch = { default_instance?: string | null; share_when_bus
 export type RunStageBody = { parent_version_id?: string; params?: Record<string, unknown>; count?: number }
 // reference_image (experimental): a data: URL the concept refine passes to the edit model as a second picture.
 // `views` (Check all sides): several views redrawn together in one new version.
-export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string; fix_for?: string[] }
+export type RefineBody = { instruction: string; view?: string; views?: string[]; mask_png?: string; params?: Record<string, unknown>; reference_image?: string; fix_for?: string[]; edit_addons?: Record<string, EditChoice> }
 // POST /api/versions/{vid}/fix-plan: the one redraw instruction for the ticked failed checks. `dropped` are ticks that could not be joined.
 export type FixPlan = { instruction: string | null; used: string[]; snippets: string[]; dropped: { check: string; reason: string; text: string }[]; words: number; max_changes: number }
 export type DeleteResult = { ok: boolean; deleted: string }
@@ -890,7 +902,7 @@ export const api = {
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty. features: feature photos; step 1 is
     // then one picture combined from them (compose), and a human's face photo is kept as the face close-up.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean; edit_addons?: Record<string, EditChoice> },
   ) => post<Asset & { upload?: RunResult; compose?: RunResult; face_closeup?: boolean }>(`/api/projects/${pid}/assets`, body),
 
   // The people in a feature photo, for the suggested box (backend vgac/people.py). Never blocks the form: a failure is a status.
