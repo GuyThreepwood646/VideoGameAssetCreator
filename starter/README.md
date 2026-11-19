@@ -85,8 +85,8 @@ program has open.
 - Check and repair: a read-only check of what VGAC installed (the app's Python and packages, the screens, uv and Node, the
   records), a plain line for each, and a Fix button that only ever changes what VGAC made. A rebuild puts the old part aside
   first and puts it back if the new one does not work. Linked tools are reported, never changed.
-- Update: "Update VGAC now" runs `git pull --ff-only` (nothing is merged or overwritten). VGAC.exe is running, so it renames
-  itself to VGAC.old.exe just before the pull (Windows allows that) and git writes the new one; restart VGAC afterwards. The old
+- Update: "Update VGAC now" runs `git pull --ff-only` (nothing is merged or overwritten). VGAC.exe is running, so git writes the
+  committed copy beside it first, then VGAC.exe is swapped for that copy in one step and the running file becomes VGAC.old.exe (Windows allows that); restart VGAC afterwards. The old
   file is deleted at the next start only if it is the file VGAC recorded and it was the published one (a build you made
   yourself is kept). If the rename fails, nothing is changed. While VGAC.exe is aside a note, VGAC-RESTORE.txt, sits beside the project's
   files saying how to put it back (rename VGAC.old.exe to VGAC.exe) in the rare case the computer stops right then; it is removed when the
@@ -96,6 +96,7 @@ program has open.
   files just pulled) and say yes. A second update does not replace a VGAC.old.exe that is your own build.
   **If you update by hand in a terminal, close VGAC first, then pull.** A pull that stopped halfway is noticed at the next start
   ("A pull did not finish. Close VGAC, then pull again.").
+  If VGAC.exe will not start after an update, delete it and rename VGAC.old.exe to VGAC.exe.
 - The folder for the big files is VGAC's only when it carries one marker file (`.vgac-data.json`) whose random id is also in
   `local/machine.json` (`starter.dataFolderId`). VGAC claims a folder that is new or empty, before any setup step puts anything in it.
   Inside a claimed folder the fixed names (tools\uv, tools\node, python, uv-cache, downloads, webview2, comfyui, and their .old and
