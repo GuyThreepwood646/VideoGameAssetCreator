@@ -340,8 +340,9 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
         # The picture is edited once so the hands are open and apart (phase 0 of docs/HANDS-PLAN.md); a Resume keeps the edit.
         # Guarded (WP-09): a redraw that adds or takes off clothing is drawn again, then not used (hand_guard check).
         if await _edit_picture(sc, HAND_EDIT, _input_image(sc, input_view), None, guarded=True) is None:
-            sc.set_params(hand_edit_refused=True)
-        sc.set_params(hand_edit=True)
+            sc.set_params(hand_edit=False, hand_edit_refused=True)  # no hands were opened: the build uses the person's picture
+        else:
+            sc.set_params(hand_edit=True)
     src = views["front"] if views is not None else _input_image(sc, input_view)
     sc.set_params(engine="trellis", builder=builder, input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
@@ -1110,7 +1111,13 @@ async def _edit_picture(sc: StageContext, instruction: str, src: Path, edit_from
     sc.use_model("qwen_lightning_lora")
     tries: list[dict[str, Any]] = []
     for n in range(1 + (POSE_GUARD_RETRIES if guarded else 0)):
-        made = await _edit_once(sc, instruction, white, w, h, cards, n)
+        try:
+            made = await _edit_once(sc, instruction, white, w, h, cards, n)
+        except Exception as e:  # noqa: BLE001  (a failed reroll is a refused try; the first failure still fails the step)
+            if n == 0 or type(e).__name__ == "JobCancelled":
+                raise
+            tries[-1]["guard"] = {**tries[-1]["guard"], "ok": False}
+            break
         if guarded:
             made["guard"] = await asyncio.to_thread(buildpose.guard, src, made["cutout"])
         tries.append(made)

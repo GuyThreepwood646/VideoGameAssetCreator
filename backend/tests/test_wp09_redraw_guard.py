@@ -112,3 +112,26 @@ def test_other_refines_are_not_guarded(tmp_path, monkeypatch):
     sc = _refine_sc(tmp_path)
     _run_refine(sc, monkeypatch, "Make the cape red.", iter([]))
     assert len(sc.graphs) == 1 and "redraw_guard" not in sc.version.metrics
+
+
+def test_bare_hands_sentence_needs_both_hands_measured():
+    one = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 3.0}, "right": {"state": "not_found"}}})
+    assert buildpose.BARE_HANDS.strip() not in one
+    both = buildpose.pose_prompt({"hands": {"left": {"skin_gap": 3.0}, "right": {"skin_gap": 4.0}}})
+    assert buildpose.BARE_HANDS.strip() in both
+
+
+def test_a_failed_reroll_falls_back_instead_of_failing_the_step(tmp_path, monkeypatch):
+    sc, src = _sc(tmp_path)
+    monkeypatch.setattr(buildpose, "guard", lambda a, b: BAD)
+    real = mesh_stage._edit_once
+    calls = []
+
+    async def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("the edited picture came out without the character")
+        return await real(*a, **k)
+    monkeypatch.setattr(mesh_stage, "_edit_once", flaky)
+    assert asyncio.run(mesh_stage._edit_picture(sc, mesh_stage.HAND_EDIT, src, None, guarded=True)) is None
+    assert sc.version.metrics["hand_guard"]["tries"] == 1 and not sc.version.metrics["hand_guard"]["ok"]

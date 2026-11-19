@@ -703,7 +703,7 @@ def pose_prompt(m: dict[str, Any] | None = None, neutral_mouth_sentence: str = "
     extra = ""
     if m and not m.get("error"):
         gaps = [h.get("skin_gap") for h in (m.get("hands") or {}).values() if h.get("skin_gap") is not None]
-        if gaps and max(gaps) < GUARD_SKIN_BEFORE:
+        if len(gaps) == 2 and max(gaps) < GUARD_SKIN_BEFORE:
             extra += BARE_HANDS
         elif len(gaps) == 2 and min(gaps) > GUARD_SKIN_AFTER:
             extra += GLOVED_HANDS
@@ -796,6 +796,10 @@ def guard(original: Path | str | Image.Image | np.ndarray, redraw: Path | str | 
             any(pa.get(k) is not None and _de(pb[n], pa[k]) <= GUARD_PART_DE for k in PART_NEIGHBOURS.get(n, ()))
             or colour_present(pb[n], [pa["_pixels"].get(k) for k in (n, *PART_NEIGHBOURS.get(n, ()))]) >= COLOUR_PRESENT
             or colour_present(pb[n], [figure_px]) >= COLOUR_PRESENT_FIGURE)}
+        # ... but never for skin: a bare area that took another colour had something put on it (WP-09).
+        bare_before = {n for n in ("upper arms", "forearms", "hands", "thighs", "shins", "feet")
+                       if pa.get(n) is not None and pa.get("face") is not None and _de(pa[n], pa["face"]) < GUARD_SKIN_BEFORE}
+        explained -= bare_before
         me["explained_by_neighbour"] = sorted(explained)
         # Bare skin is never explained away (WP-09): a bare area that now has another colour had something put on it,
         # whatever colour that is elsewhere on the figure; hands and feet that were covered and are now skin had it

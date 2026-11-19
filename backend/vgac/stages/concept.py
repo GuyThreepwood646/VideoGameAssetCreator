@@ -610,22 +610,37 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
 
         tries += POSE_GUARD_RETRIES
     guard: dict[str, Any] | None = None
+    used = 0
     for n in range(tries):
         if n:
             seed = random_seed()
             sc.set_params(seed=seed)
-        entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
-                               message="instruction edit" + (" with a reference picture" if ref_name else "") + (", another try" if n else ""),
-                               base=0.05, span=0.6)
-        edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
-        if person is None:
+        try:
+            entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
+                                   message="instruction edit" + (" with a reference picture" if ref_name else "") + (", another try" if n else ""),
+                                   base=0.05, span=0.6)
+            # A guarded redraw's tries are kept apart; the last good one becomes image.png below.
+            dest = sc.dir / ("edit_raw.png" if mask_png else f"redraw_try_{n + 1}.png" if person is not None else "image.png")
+            got = await sc.download_image(entry, "save", dest)
+            if person is None:
+                edited = got
+                break
+            cut = await sc.cutout(Path(got), "guard_cutout")
+            verdict = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]))
+        except Exception as e:  # noqa: BLE001  (a failed reroll keeps the try before it; a failed first try fails the step)
+            if n == 0 or type(e).__name__ == "JobCancelled":
+                raise
             break
-        cut = await sc.cutout(Path(edited), "guard_cutout")
-        guard = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]))
+        edited, guard, used = got, verdict, n + 1
         if guard["ok"]:
             break
+    if person is not None:
+        import shutil
+
+        shutil.copyfile(edited, sc.dir / "image.png")
+        edited = sc.dir / "image.png"
     if guard is not None:
-        sc.set_metrics(redraw_guard={"tries": n + 1, "ok": guard["ok"], "reasons": guard["reasons"],
+        sc.set_metrics(redraw_guard={"tries": used, "ok": guard["ok"], "reasons": guard["reasons"],
                                      "not_compared": guard["not_compared"], "measures": guard.get("measures")})
     if mask_png is not None:
         sc.register("edit_raw", edited)
