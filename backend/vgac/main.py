@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, estimates, fixes, library, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, estimates, fixes, library, move_gate, own_images, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -42,6 +42,9 @@ HEALTH_STATS_MAX_AGE = 5.0  # seconds an instance's /system_stats answer is reus
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    blocked = move_gate.blocking_reason()
+    if blocked:  # a move of the big files is unfinished or unreadable: serve nothing (vgac/move_gate.py)
+        raise RuntimeError(blocked)
     settings = get_settings()
     init_db()
     q = JobQueue(settings)  # registers itself as jobs.active_queue() for the API and the autopilot

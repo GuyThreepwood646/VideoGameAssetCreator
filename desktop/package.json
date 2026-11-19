@@ -25,6 +25,7 @@
       "preload-app.js",
       "appbridge.js",
       "machine.js",
+      "movegate.js",
       "services.js",
       "procs.js",
       "status.html",
