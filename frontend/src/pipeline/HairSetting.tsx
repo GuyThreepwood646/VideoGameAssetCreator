@@ -12,7 +12,7 @@ import { fmtDuration, stagePlain } from '../help'
 export const HAIR_SETTING = 'Hair from the library (ready-made hairstyles)'
 export const HAIR_OPTION: Record<HairSource, string> = { model: 'Built with the 3D model', library: 'From the library' }
 export const HAIR_OPTION_HINT: Record<HairSource, string> = {
-  model: 'As before: the hair is part of the 3D model, with strands and shading painted on.',
+  model: 'The hair is part of the 3D model, with strands and shading painted on.',
   library:
     'The 3D model is built bald, and you pick a ready-made hairstyle that the app fits to the head and recolours to your picture. Long hair and ponytails can hang free and swing. It adds about 5 minutes: the bald pictures, then trying the hairstyles on.',
 }

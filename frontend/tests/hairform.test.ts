@@ -14,9 +14,9 @@ test('a library choice that the look or description rules out is disabled, with 
 })
 
 test('a model the person imported keeps its own hair', () => {
-  const s = hairFormState({ ok: false, reason: 'Your own 3D model keeps the hair it has.' }, { state: 'ready', installed: true, styles: 26 }, 'pc_mid')
+  const s = hairFormState({ ok: false, reason: 'A 3D model you bring is used as it is.' }, { state: 'ready', installed: true, styles: 26 }, 'pc_mid')
   assert.equal(s.usable, false)
-  assert.equal(s.reason, 'Your own 3D model keeps the hair it has. ' + KEPT)
+  assert.equal(s.reason, 'A 3D model you bring is used as it is. ' + KEPT)
 })
 
 test('while the library is being checked the choice is disabled, not guessed', () => {

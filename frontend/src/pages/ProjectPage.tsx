@@ -350,7 +350,7 @@ function CreateAssetForm({ project }: { project: Project }) {
   const fromModel = startFrom === 'model'
   // The Hair row is always shown for a humanoid. Its library choice is offered only where the app can use it, else disabled with the reason.
   const hairRow = category === 'humanoid'
-  const hairRule = fromModel ? { ok: false, reason: 'Your own 3D model keeps the hair it has.' } : hairLibraryOffer(prompt, style, category)
+  const hairRule = fromModel ? { ok: false, reason: 'A 3D model you bring is used as it is.' } : hairLibraryOffer(prompt, style, category)
   const hairState = hairFormState(hairRule, useHairLibraryCheck(platform, hairRow && hairRule.ok), platform)
   const ready = !!category && (fromModel ? !!modelFile && category !== 'material' : fromPicture ? !!picture : !!prompt.trim())
   const features = usedFeatures(featureSlots, startFrom, category)
