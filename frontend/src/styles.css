@@ -3778,6 +3778,14 @@ button.small-btn .resume-icon {
   max-width: 80ch;
 }
 
+/* Step 1 picture count on the empty card: one or two pictures, remembered in the browser. */
+.concept-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
 /* Feature photos in the New asset form (components/FeaturePhotos.tsx). */
 .feature-slots {
   display: grid;
