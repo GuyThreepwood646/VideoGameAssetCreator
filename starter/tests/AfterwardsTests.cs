@@ -686,7 +686,7 @@ public static partial class T
         var ticked = new List<string> { "tools", "comfy", "models" };
         string text = RemovalSummary.Text(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), ticked, s.L);
         Check(text.Contains(s.L.PythonDir) && text.Contains(Path.Combine(s.Data, "comfyui")), "the summary names each folder (full path)");
-        Check(text.Contains("Everything in this folder is deleted") && text.Contains("except what VGAC's installer keeps") && text.Contains("models"), "and says truthfully what stays in VGAC's ComfyUI");
+        Check(text.Contains("VGAC's own files in this folder are deleted") && text.Contains("Kept (not deleted, and listed here)") && text.Contains("models"), "and says truthfully what stays in VGAC's ComfyUI");
         Check(text.Contains("checkpoints: 1 file(s)"), "files are listed by their folder with a count");
         Check(text.Contains("Total:") && text.Contains("never followed") && text.Contains("Not touched: the project folder"), "it gives the total and what stays");
         Check(text.Contains("Recycle Bin") || text.Contains("cannot be restored"), "and says which way each group goes");

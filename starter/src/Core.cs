@@ -305,6 +305,7 @@ namespace Vgac.Starter
             e["kind"] = kind;
             e["bytes"] = bytes;
             e["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            e["file_id"] = SafeFs.FileId(path);   // A2: which folder this is, so removal can tell it is still the one VGAC added
             Items.Add(e);
         }
 

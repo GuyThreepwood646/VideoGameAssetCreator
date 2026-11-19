@@ -377,7 +377,14 @@ namespace Vgac.Starter
                 }
                 else if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(path)) == "custom_nodes")
                 {
+                    // A2: a node pack is removed only while it is the very folder VGAC recorded: the same file id, and no file in it
+                    // changed after VGAC added it. A ledger entry without an id (an earlier version) is kept, never guessed at.
+                    string fid = S(d, "file_id"), when0 = S(d, "when");
+                    if (fid.Length == 0) { plan.NotRemoved.Add(path + ": VGAC did not record which folder it added, so it is kept"); continue; }
+                    if (SafeFs.FileId(path) != fid) { plan.NotRemoved.Add(path + ": it is not the folder VGAC added any more (its id changed)"); continue; }
+                    if (PackChangedSince(path, when0)) { plan.NotRemoved.Add(path + ": a file in it changed after VGAC added it"); continue; }
                     var it = new RemovalItem(); it.Id = "pack:" + path; it.GroupId = "packs"; it.Kind = "ledger-pack"; it.Path = path; it.What = S(d, "what"); it.Bytes = SafeFs.Size(path, null);
+                    it.Tag = fid + "|" + when0;
                     g4.Items.Add(it);
                 }
                 else plan.NotRemoved.Add(path + ": VGAC added it, but it is not a file or a node pack, so it is left for you");
@@ -483,6 +490,23 @@ namespace Vgac.Starter
         }
 
         // Checked again just before an item is deleted. null: still fine; else the plain reason it is skipped.
+        // True when a file in the node pack (its __pycache__ aside: ComfyUI writes that itself) was changed after VGAC added it.
+        public static bool PackChangedSince(string packDir, string whenUtc)
+        {
+            DateTime when;
+            if (!DateTime.TryParse(whenUtc ?? "", null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out when)) return true;
+            try
+            {
+                foreach (string f in Directory.GetFiles(packDir, "*", SearchOption.AllDirectories))
+                {
+                    if (f.IndexOf(System.IO.Path.DirectorySeparatorChar + "__pycache__" + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    if (File.GetLastWriteTimeUtc(f) > when.AddMinutes(5)) return true;
+                }
+                return false;
+            }
+            catch (Exception) { return true; }
+        }
+
         public static string Revalidate(RemovalItem it, Layout l, IComfyInstall comfy, Ledger ledger, MachineFile machine)
         {
             if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) return null;
@@ -507,7 +531,11 @@ namespace Vgac.Starter
                     if (!SafeFs.PathHasNoLink(it.Path)) return "it is, or is reached through, a link";
                     long want; long.TryParse(it.Tag ?? "0", out want);
                     return want > 0 && new FileInfo(it.Path).Length != want ? "it is not the file VGAC added any more" : null;
-                case "ledger-pack": return SafeFs.PathHasNoLink(it.Path) && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(it.Path)) == "custom_nodes" ? null : "it is not a node pack folder, or goes through a link";
+                case "ledger-pack":
+                    if (!(SafeFs.PathHasNoLink(it.Path) && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(it.Path)) == "custom_nodes")) return "it is not a node pack folder, or goes through a link";
+                    string[] idWhen = (it.Tag ?? "").Split(new char[] { '|' }, 2);
+                    if (idWhen.Length != 2 || idWhen[0].Length == 0 || SafeFs.FileId(it.Path) != idWhen[0]) return "it is not the folder VGAC added (its id changed)";
+                    return PackChangedSince(it.Path, idWhen[1]) ? "a file in it changed after VGAC added it" : null;
                 case "settings":
                     return SafeFs.Inside(it.Path, l.ProjectRoot) && !SafeFs.IsLink(it.Path) ? null : "it is not inside the project folder";
                 case "work-library":
@@ -556,7 +584,7 @@ namespace Vgac.Starter
                     }
                     else sb.AppendLine("   " + it.Path + "   " + Size(it.Bytes) + mark);
                     if (it.Kind == "comfy-remove")
-                        sb.AppendLine("      Everything in this folder is deleted (its output, input and user folders and its custom nodes too), except what VGAC's installer keeps: " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag.Replace("|", ", ")) + ".");
+                        sb.AppendLine("      VGAC's own files in this folder are deleted. Kept (not deleted, and listed here): " + (string.IsNullOrEmpty(it.Tag) ? "nothing" : it.Tag.Replace("|", ", ")) + ". Your output, input and user folders with files in them, and custom nodes VGAC did not add, are kept too.");
                 }
                 foreach (var kv in byFolder) sb.AppendLine("   " + kv.Key + ": " + counts[kv.Key] + " file(s), " + Size(kv.Value));
             }

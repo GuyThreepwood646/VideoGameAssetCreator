@@ -792,6 +792,7 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
             src = downloader.project_dir() / str(p["local"])
             g_rmtree(target, ops, fence)
             shutil.copytree(src, guard(target, fence), ignore=shutil.ignore_patterns("__pycache__"))
+            downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
             continue
         z = guard(root / "downloads" / f"pack-{p['id']}.zip", fence)
         spec = Spec(id="pack-" + p["id"], name=str(p.get("name", p["id"])), urls=[str(p["zip"])], dest=z, sha256=str(p.get("sha256", "")),
@@ -803,6 +804,7 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         kids = [k for k in tmp.iterdir() if k.is_dir()]
         g_move(kids[0] if len(kids) == 1 else tmp, target, ops, fence)
         g_rmtree(tmp, ops, fence)
+        downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
 
 
 def step_test(job: Install, ops: Ops, fence: Fence, card_expected: bool) -> None:
@@ -1152,6 +1154,37 @@ def _adopt_if_proved(root: Path, ops: Ops | None = None) -> bool:
     return True
 
 
+KEEP_DIRS = ("output", "user", "input")   # the person's own work in VGAC's ComfyUI: kept, reported under "keeps"
+
+
+def _pinned_custom_nodes() -> set[str]:
+    """The custom_nodes entries that come with the pinned ComfyUI itself (its own examples): they go with ComfyUI, not kept."""
+    listing = tree_list() or {}
+    out: set[str] = set()
+    for f in listing.get("files") or []:
+        parts = str(f.get("path", "")).replace("\\", "/").split("/")
+        if len(parts) >= 2 and parts[0] == "custom_nodes":
+            out.add(parts[1])
+    return out
+
+
+def _user_work(root: Path) -> list[str]:
+    """What a removal keeps of the person's own: non-empty output, user and input folders, and custom nodes the ledger does not
+    list as VGAC's (the same rule as remove; empty folders are VGAC's scaffolding and go)."""
+    owned = {str(_real(Path(str(i.get("path", ""))))) for i in _ledger_items() if isinstance(i, dict) and i.get("kind") == "added" and i.get("path")}
+    out: list[str] = []
+    for base in (root, root / "ComfyUI"):
+        for name in KEEP_DIRS:
+            p = base / name
+            if p.is_dir() and any(f.is_file() for f in p.rglob("*")):
+                out.append(str(p))
+        cn = base / "custom_nodes"
+        if cn.is_dir():
+            pinned = _pinned_custom_nodes()
+            out.extend(str(n) for n in cn.iterdir() if str(_real(n)) not in owned and n.name not in pinned)
+    return out
+
+
 def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = None) -> dict[str, Any]:
     """Delete VGAC's own ComfyUI: only when its marker and the ledger both say VGAC made it, and only once none of its
     engines runs (the app stops the ones it started; any other is the person's to close). The files go first, then the
@@ -1185,17 +1218,41 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
         m.update({"made_by": MADE_BY, "steps": {}})  # if a locked file stops the removal half way, nothing says done
         save_marker(m, fence)
         kept = ""
+        keeps: list[str] = []   # the person's own work (output, user, input, custom nodes not in the ledger): never deleted here
+        owned_nodes = {str(_real(Path(str(i.get("path", ""))))) for i in _ledger_items()
+                       if isinstance(i, dict) and i.get("kind") == "added" and i.get("path")}
+
+        def sweep_one(item: Path) -> None:
+            if item.name in KEEP_DIRS and item.is_dir() and any(f.is_file() for f in item.rglob('*')):   # empty scaffolding is VGAC's
+                keeps.append(str(item))
+                return
+            if item.name == "custom_nodes" and item.is_dir():
+                pinned = _pinned_custom_nodes()
+                for node in list(item.iterdir()):
+                    if str(_real(node)) in owned_nodes or node.name in pinned:
+                        g_rmtree(node, ops, fence) if node.is_dir() else _retry(node, lambda n=node: guard(n, fence).unlink(), ops)
+                    else:
+                        keeps.append(str(node))
+                if not any(True for _ in item.iterdir()):
+                    _retry(item, lambda: guard(item, fence).rmdir(), ops)   # custom_nodes is emptied of VGAC's packs: it goes too
+                return
+            g_rmtree(item, ops, fence) if item.is_dir() else _retry(item, lambda c=item: guard(c, fence).unlink(), ops)
+
         for child in list(root.iterdir()):
             if child.name == MARKER:
                 continue
-            if child.name == "ComfyUI" and not also_models and (child / "models").is_dir():
+            if child.name == "ComfyUI" and child.is_dir():
+                # the ComfyUI folder is swept like the top level: its models are kept unless asked, its own work and custom nodes too
                 for sub in list(child.iterdir()):
-                    if sub.name != "models":
-                        (g_rmtree(sub, ops, fence) if sub.is_dir() else _retry(sub, lambda s=sub: guard(s, fence).unlink(), ops))
-                kept = str(child / "models")
+                    if sub.name == "models" and not also_models and sub.is_dir():
+                        kept = str(sub)
+                        continue
+                    sweep_one(sub)
+                if not any(True for _ in child.iterdir()):
+                    _retry(child, lambda c=child: guard(c, fence).rmdir(), ops)
                 continue
-            g_rmtree(child, ops, fence) if child.is_dir() else _retry(child, lambda c=child: guard(c, fence).unlink(), ops)
-        if not kept:
+            sweep_one(child)
+        if not kept and not keeps:
             _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
         # Only now that the files are gone: the settings that pointed at them.
         changes: dict[str, Any] = {"instances": {n: {"engine": None} for n in mine}} if mine else {}
@@ -1208,8 +1265,9 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
                 mpath = config.machine_path()
                 if mpath is not None:
                     config.update_machine({"backend": changes}, mpath)
-    return {"removed": True, "kept_models": kept, "engines_cleared": mine,
-            "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")}
+    return {"removed": True, "kept_models": kept, "keeps": keeps, "engines_cleared": mine,
+            "message": "VGAC's own ComfyUI was removed." + (f" Its models were kept in {kept}." if kept else "")
+            + (f" Kept: {len(keeps)} item(s) that VGAC did not make (output, user, input or custom nodes)." if keeps else "")}
 
 
 # --- the command line (the starter's Move and Remove call these; the backend need not be running) -------------------------
@@ -1267,7 +1325,8 @@ def check() -> dict[str, Any]:
     _require_own(root)
     _ensure_id(root, read_marker(root) or {})
     models = _models_dir(root)
-    return {"root": str(root), "keeps": [str(models)] if models.is_dir() else [], "venv_stale": _venv_stale(root)}
+    keeps = ([str(models)] if models.is_dir() else []) + _user_work(root)
+    return {"root": str(root), "keeps": keeps, "venv_stale": _venv_stale(root)}
 
 
 def _retarget_settings(old_root: str, root: Path, fence: Fence) -> int:

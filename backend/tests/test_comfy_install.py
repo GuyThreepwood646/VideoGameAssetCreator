@@ -650,6 +650,35 @@ def test_start_engines_leaves_a_busy_card_for_the_next_start(box):
 # --- remove --------------------------------------------------------------------------------------------------------------
 
 
+def test_a_node_pack_is_recorded_with_its_folder_id_when_added(box):
+    # A2: the install records each node pack it adds, with the folder's identity and the time, so removal can prove it is still VGAC's
+    install(box)
+    items = ci._ledger_items()
+    packs = [i for i in items if isinstance(i, dict) and str(i.get("what", "")).startswith("node pack")]
+    assert packs, "no node pack was recorded in the ledger"
+    for pack in packs:
+        assert pack.get("file_id") and pack.get("when") and Path(pack["path"]).is_dir()
+
+
+def test_remove_keeps_the_persons_own_work_and_custom_nodes_not_in_the_ledger(box):
+    # A1: output, user, input and custom nodes VGAC did not add are kept (and listed under "keeps"); its own node pack goes
+    install(box)
+    root = box["root"]
+    for rel in ("output/img.png", "user/settings.json", "input/in.png", "custom_nodes/mine/node.py"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("kept", encoding="utf-8")
+    (root / "custom_nodes" / "vgac-pack").mkdir(parents=True, exist_ok=True)
+    (root / "custom_nodes" / "vgac-pack" / "pack.py").write_text("ours", encoding="utf-8")
+    items = ci._ledger_items()
+    items.append({"what": "node pack", "path": str(root / "custom_nodes" / "vgac-pack"), "kind": "added", "bytes": 0, "when": "2026-11-18T00:00:00Z"})
+    ci._write_ledger(items)
+    r = ci.remove(False, box["ops"])
+    assert (root / "output" / "img.png").is_file() and (root / "user" / "settings.json").is_file()
+    assert (root / "input" / "in.png").is_file() and (root / "custom_nodes" / "mine" / "node.py").is_file()
+    assert not (root / "custom_nodes" / "vgac-pack").exists()
+    assert any(k.endswith("output") for k in r["keeps"]) and any(k.endswith("mine") for k in r["keeps"])
+
+
 def test_remove_keeps_models_unless_asked_and_clears_the_engines(box):
     install(box)
     root = box["root"]

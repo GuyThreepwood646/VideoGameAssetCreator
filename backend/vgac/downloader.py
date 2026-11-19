@@ -271,6 +271,16 @@ def ledger_path() -> Path:
     return project_dir() / "local" / "installed.json"
 
 
+def file_id(path: Path | str) -> str:
+    """The folder's or file's identity on this computer: volume serial and file index, the same form the starter reads
+    (SafeFs.FileId). "" when it cannot be read. A folder that is replaced by another with the same name has another id."""
+    try:
+        st = os.stat(path)
+        return f"{st.st_dev}:{st.st_ino >> 32}:{st.st_ino & 0xFFFFFFFF}"
+    except OSError:
+        return ""
+
+
 def record(what: str, path: Path, kind: str = "added", size: int | None = None) -> None:
     """Note that VGAC added (or linked) `path`. Writing is atomic; a damaged ledger starts again."""
     p = ledger_path()
@@ -286,7 +296,8 @@ def record(what: str, path: Path, kind: str = "added", size: int | None = None) 
                 size = path.stat().st_size if path.is_file() else 0
             except OSError:
                 size = 0
-        items.append({"what": what, "path": str(path), "kind": kind, "bytes": size, "when": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        items.append({"what": what, "path": str(path), "kind": kind, "bytes": size, "when": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                      "file_id": file_id(path)})
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = state_lock_mod.unique_tmp(p)
         tmp.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")

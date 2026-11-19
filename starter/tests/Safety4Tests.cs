@@ -460,7 +460,7 @@ public static partial class T
         var comfy = new BackendComfyInstall(delegate(string a, int ms, Func<bool> c) { return ComfyCli.Run(host, lay, root, a, ms, c); });
         ComfyState st = comfy.State(data);
         Check(st.Present && st.Problem == null, "the real check, after the real adopt of a renamed install, confirms it: " + st.Problem);
-        Check(st.Keeps.Count == 1 && st.Keeps[0].EndsWith("models"), "and reports what it keeps: " + string.Join(",", st.Keeps.ToArray()));
+        Check(st.Keeps.Count == 2 && st.Keeps.Exists(k => k.EndsWith("models")) && st.Keeps.Exists(k => k.EndsWith("output")), "and reports what it keeps (models, and the person's output with files in it): " + string.Join(",", st.Keeps.ToArray()));
         Check(File.ReadAllText(Path.Combine(root, "local", "installed.json")).Replace("\\\\", "\\").Contains(croot), "the ledger now names the folder the settings name");
         // a copied marker in somebody else's data folder is refused by the real command
         string root2 = Tmp("e2e2");
@@ -479,7 +479,7 @@ public static partial class T
         // the real retarget and remove, from here on the folder is VGAC's: retarget (nothing to change), then remove keeps the models
         Check(comfy.Retarget(Path.Combine(root, "local", "old data"), data) == null, "the real retarget answers ok");
         Check(comfy.Remove(croot) == null, "the real remove succeeds");
-        Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && !File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models, and removed the rest of the folder");
+        Check(File.Exists(Path.Combine(croot, "ComfyUI", "models", "m.safetensors")) && !File.Exists(Path.Combine(croot, "ComfyUI", "main.py")) && File.Exists(Path.Combine(croot, "output", "o.png")), "it kept the models and the person's output (A1), and removed the rest of VGAC's own files");
     }
 
 
