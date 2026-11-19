@@ -612,7 +612,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.use_model("qwen_lightning_lora")
     prompt = pose_ready_prompt(mouth, measure)
     # The person's LoRAs for the pose redraw only (pose_addons), checked on every card the redraw may use before the first try.
-    pose_loras = await edit_loras(sc, "pose_addons", params)
+    pose_loras = await edit_loras(sc, "pose_addons", params, card=_drawing_card(sc))
     tries: list[dict[str, Any]] = []
     for n in range(1 + POSE_GUARD_RETRIES):
         seed = random_seed()
@@ -856,7 +856,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     src = _source_image(sc, source)
     # The person's LoRAs for the side views (view_addons): checked on every card before the first job of this run. A
     # kept view keeps the record of the LoRAs it was drawn with; every view drawn here records the ones it was drawn with.
-    view_loras = await edit_loras(sc, "view_addons", params)
+    view_loras = await edit_loras(sc, "view_addons", params, card=_drawing_card(sc))
     stale = stale_kept_views(keep, [a["id"] for a in view_loras])
     if stale:
         keep = {v: info for v, info in (keep or {}).items() if v not in stale}
@@ -1174,6 +1174,14 @@ def _publish_views(sc: StageContext, results: dict[str, dict[str, Any]]) -> None
                    supplied_views=[v for v, r in results.items() if r.get("supplied")],
                    consistency_ok=not any(r.get("flagged") for r in results.values()))
 
+
+def _drawing_card(sc: StageContext) -> str | None:
+    """The card the turnaround pictures are drawn on (mesh._picture_cards: the concept card, else this job's own), so the
+    LoRA check asks that card. None when no card can draw."""
+    if getattr(sc, "settings", None) is None:  # a bare stage context (tests): the job's own card
+        return None
+    cards = mesh_stage()._picture_cards(sc)
+    return cards[0] if cards else None
 
 async def run(sc: StageContext, params: dict[str, Any]) -> None:
     views = with_second_quarter(list(params.get("views") or sc.category.get("views") or DEFAULT_VIEWS), _category(sc), params)

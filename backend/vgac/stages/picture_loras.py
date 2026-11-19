@@ -15,11 +15,32 @@ engine call, so the step runs exactly as it did before.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+import httpx
 
 from .. import reference
 from ..graphs.concept import lora_name
 from ..preflight import combo_choices
+
+# A card that is briefly busy or restarting gets one more question after this many seconds before the step gives up.
+LORA_RETRY_WAIT_S = 5.0
+ENGINE_NO_ANSWER = ("The graphics engine this step runs on did not answer, so your LoRAs cannot be checked. "
+                    "Start ComfyUI on that card and run the step again.")
+
+
+class LoraCheckBug(RuntimeError):
+    """A code fault inside the LoRA check (not an engine that did not answer): the step stops with the fault's own text,
+    and the face pass re-raises it instead of recording it as a skipped close-up."""
+
+
+NO_ANSWER = (ConnectionError, TimeoutError, httpx.TransportError)  # the engine did not answer: connection or timeout
+
+
+class LoraCheckFailed(RuntimeError):
+    """The job's own card did not answer the LoRA check, twice. The step records it (face_detail: the close-up is not
+    drawn and the prep shows the face_lora check) instead of carrying on as if the LoRA had been used."""
 
 
 def _must_list(info: dict[str, Any] | None, applied: list[dict[str, Any]], card: str | None) -> None:
@@ -35,23 +56,32 @@ def _must_list(info: dict[str, Any] | None, applied: list[dict[str, Any]], card:
                            "ComfyUI reads, restart ComfyUI, then run this step again.")
 
 
-async def _check_cards(sc: Any, applied: list[dict[str, Any]]) -> None:
+async def _check_cards(sc: Any, applied: list[dict[str, Any]], card: str | None = None) -> None:
     """The job's own card must answer and list the files. Every other card of the job is checked only if it answers:
     one that is off cannot take work, so the step never needs its file."""
-    home = getattr(getattr(sc, "ctx", None), "instance", None)
-    try:
-        info = await sc.client(home).object_info("LoraLoaderModelOnly")
-    except Exception as e:  # noqa: BLE001  (any failure to reach this card is the same plain stop)
-        raise RuntimeError("The graphics engine this step runs on did not answer, so your LoRAs cannot be checked. "
-                           "Start ComfyUI on that card and run the step again.") from e
+    home = card or getattr(getattr(sc, "ctx", None), "instance", None)
+    info = None
+    for attempt in range(2):
+        try:
+            info = await sc.client(home).object_info("LoraLoaderModelOnly")
+            break
+        except NO_ANSWER as e:  # the card did not answer (connection or timeout): retried once, then a plain stop
+            if attempt == 0:
+                await asyncio.sleep(LORA_RETRY_WAIT_S)
+            else:
+                raise LoraCheckFailed(ENGINE_NO_ANSWER) from e
+        except Exception as e:  # a code fault: its own text, never the card message
+            raise LoraCheckBug(f"The LoRA check could not run: {e}") from e
     _must_list(info, applied, home)
     for card in list((getattr(getattr(sc, "ctx", None), "clients", None) or {}).keys()):
         if card == home:
             continue
         try:
             info = await sc.client(card).object_info("LoraLoaderModelOnly")
-        except Exception:  # noqa: BLE001  (an engine that does not answer is not lent, so its file is not needed)
+        except NO_ANSWER:  # an engine that does not answer is not lent, so its file is not needed
             continue
+        except Exception as e:  # a code fault: its own text
+            raise LoraCheckBug(f"The LoRA check could not run: {e}") from e
         _must_list(info, applied, card)
 
 
@@ -61,8 +91,10 @@ def chosen_ids(params: dict[str, Any], param: str) -> list[str]:
     return [a["id"] for a in applied]
 
 
-async def edit_loras(sc: Any, param: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """The applied entries (reference.resolve_addons shape) for one picture-edit use, or [] when nothing is chosen."""
+async def edit_loras(sc: Any, param: str, params: dict[str, Any], card: str | None = None) -> list[dict[str, Any]]:
+    """The applied entries (reference.resolve_addons shape) for one picture-edit use, or [] when nothing is chosen.
+    `card`: the ComfyUI instance the picture is drawn on, when the job itself does not run on one (the clean-up runs on
+    the host, but its close-up is drawn on a card); the check asks that card, never the host."""
     choices = params.get(param) or None
     if not choices:
         sc.set_params(**{f"{param}_applied": {}})  # a record from an earlier run must not read as this one's
@@ -76,7 +108,7 @@ async def edit_loras(sc: Any, param: str, params: dict[str, Any]) -> list[dict[s
     sc.set_metrics(**{param: {"applied": applied, "ignored": res["ignored"], "unknown": res["unknown"]}})
     if not applied:
         return []
-    await _check_cards(sc, applied)
+    await _check_cards(sc, applied, card)
     for a in applied:
         sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])
     return applied

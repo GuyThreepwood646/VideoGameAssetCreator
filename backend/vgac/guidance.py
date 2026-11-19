@@ -942,6 +942,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                           else {"stage": "prep", "params": {"face_detail": True, "face_seed": None, "face_closeup_seed": None, "face_closeup_seed_2": None}}),
         "fix_label": lambda c: "Build the 3D model again" if _var(c, "reason") in ("eye_under_hair", "misplaced", "poor_fit") else "Paint the face again",
     },
+    # The person's face LoRA (face_addons) could not be checked on the card twice, so the close-up was not drawn with it
+    # (stages/face_detail.py face_lora_checks). A warning only: the model itself is fine.
+    "face_lora": {
+        "severity": "warn",
+        "ok": "Your face LoRA was used for the close-up.",
+        "fail": "Your face LoRA was not used: the graphics engine did not answer. Run the clean-up again to try again.",
+        "fix": lambda c: {"stage": "prep", "params": {"face_closeup": True}},
+        "fix_label": lambda c: "Run the clean-up again",
+    },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the
     # face's own measures moved.

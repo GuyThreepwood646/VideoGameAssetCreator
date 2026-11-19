@@ -442,3 +442,162 @@ async def test_combining_the_photos_gets_the_combine_choice_and_no_other(mine_se
     await compose.run(sc, {})
     assert [a["id"] for a in seen["loras"]] == [pid]  # the combine choice reaches the graph, the other uses' do not
     assert sc.version.params["edit_addons_applied"] == {pid: "normal"}
+
+
+# --- the face close-up's LoRA check: one retry, then a warning that says the LoRA was not used ------------------------
+
+
+class FlakyClient(FakeClient):
+    """Does not answer the first `fails` questions (a card busy or restarting), then answers like FakeClient."""
+
+    def __init__(self, listed: list[str], fails: int):
+        super().__init__(listed)
+        self.fails = fails
+
+    async def object_info(self, node_class: str) -> dict[str, Any]:
+        if self.fails > 0:
+            self.fails -= 1
+            self.asked += 1
+            raise ConnectionError("the engine did not answer")
+        return await super().object_info(node_class)
+
+
+@arun
+async def test_a_raise_then_success_still_uses_the_face_lora(mine_settings, tmp_path, monkeypatch):
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages import picture_loras
+    from vgac.stages.picture_loras import edit_loras
+
+    monkeypatch.setattr(picture_loras, "LORA_RETRY_WAIT_S", 0)
+    entry = own_lora(mine_settings, "faceskin.safetensors", "Face skin")
+    file_ = reference.addon(entry["id"])["file"]
+    client = FlakyClient([lora_name(file_)], fails=1)
+    sc = FakeSC(tmp_path, {"A": client}, params={"face_addons": {entry["id"]: "normal"}})
+    applied = await edit_loras(sc, "face_addons", sc.version.params)
+    assert [a["id"] for a in applied] == [entry["id"]]
+    assert client.asked == 2  # the first question failed, the retry answered
+    assert sc.metrics["face_addons"]["applied"] and sc.jobs == []
+
+
+@arun
+async def test_two_raises_give_the_face_lora_failure_and_the_warning(mine_settings, tmp_path, monkeypatch):
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages import picture_loras
+    from vgac.stages.face_detail import face_checks
+    from vgac.stages.picture_loras import LoraCheckFailed, edit_loras
+
+    monkeypatch.setattr(picture_loras, "LORA_RETRY_WAIT_S", 0)
+    entry = own_lora(mine_settings, "faceskin.safetensors", "Face skin")
+    file_ = reference.addon(entry["id"])["file"]
+    client = FlakyClient([lora_name(file_)], fails=2)
+    sc = FakeSC(tmp_path, {"A": client}, params={"face_addons": {entry["id"]: "normal"}})
+    with pytest.raises(LoraCheckFailed, match="did not answer"):
+        await edit_loras(sc, "face_addons", sc.version.params)
+    assert client.asked == 2 and sc.jobs == []
+    # the face pass records it on the close-up, and the prep shows the warning with the fix note
+    metrics = {"face_detail": {"ran": False, "skipped": "error", "closeup": {"used": False, "reason": "error", "face_lora_failed": True}}}
+    checks = [c for c in face_checks(metrics) if c["id"] == "face_lora"]
+    assert len(checks) == 1
+    assert checks[0]["ok"] is False and checks[0]["severity"] == "warn"
+    from vgac import guidance
+    described = guidance.describe_check(checks[0])
+    assert "Your face LoRA was not used: the graphics engine did not answer. Run the clean-up again to try again." in str(described)
+    assert "Run the clean-up again" in str(described)
+
+
+def test_no_face_lora_chosen_gives_no_check_and_no_engine_call(mine_settings, tmp_path):
+    import asyncio as _asyncio
+
+    from vgac.stages.face_detail import face_checks
+    from vgac.stages.picture_loras import edit_loras
+
+    client = FakeClient([])
+    sc = FakeSC(tmp_path, {"A": client}, params={})
+    assert _asyncio.run(edit_loras(sc, "face_addons", {})) == []
+    assert client.asked == 0 and sc.jobs == []
+    # no flag on the close-up, so no face_lora check (a close-up that drew normally, or a pass with no face LoRA)
+    assert [c for c in face_checks({"face_detail": {"ran": True, "closeup": {"used": True}}}) if c["id"] == "face_lora"] == []
+    assert [c for c in face_checks({}) if c["id"] == "face_lora"] == []
+
+
+@arun
+async def test_a_host_job_checks_the_card_its_close_up_is_drawn_on(mine_settings, tmp_path, monkeypatch):
+    """The clean-up runs on the host (no ComfyUI client of its own); its close-up is drawn on a card. The check must ask
+    that card: asking the host's name raised 'no ComfyUI client' and every close-up was then skipped."""
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages import picture_loras
+    from vgac.stages.picture_loras import LoraCheckBug, edit_loras
+
+    monkeypatch.setattr(picture_loras, "LORA_RETRY_WAIT_S", 0)
+    entry = own_lora(mine_settings, "faceskin.safetensors", "Face skin")
+    file_ = reference.addon(entry["id"])["file"]
+    client = FakeClient([lora_name(file_)])
+    sc = FakeSC(tmp_path, {"b": client}, params={"face_addons": {entry["id"]: "normal"}})
+    sc.ctx.instance = "host"  # the job's own instance has no client
+    applied = await edit_loras(sc, "face_addons", sc.version.params, card="b")
+    assert [a["id"] for a in applied] == [entry["id"]]
+    assert client.asked == 1 and sc.jobs == []
+    # without the card the host's name is asked: a code fault with its own text, never the card message
+    with pytest.raises(LoraCheckBug, match="could not run"):
+        await edit_loras(sc, "face_addons", sc.version.params)
+
+
+class BrokenClient(FakeClient):
+    """Raises the given exception from object_info (a code fault, not an engine that is down)."""
+
+    def __init__(self, error: Exception):
+        super().__init__([])
+        self.error = error
+
+    async def object_info(self, node_class: str) -> dict[str, Any]:
+        self.asked += 1
+        raise self.error
+
+
+@arun
+async def test_a_code_fault_fails_with_its_own_text_not_the_card_message(mine_settings, tmp_path, monkeypatch):
+    """A code fault (here: no client for the instance the job named) must not hide behind 'the engine did not answer'."""
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages import picture_loras
+    from vgac.stages.picture_loras import LoraCheckBug, LoraCheckFailed, edit_loras
+
+    monkeypatch.setattr(picture_loras, "LORA_RETRY_WAIT_S", 0)
+    entry = own_lora(mine_settings, "faceskin.safetensors", "Face skin")
+    file_ = reference.addon(entry["id"])["file"]
+    class NoClientSC(FakeSC):
+        def client(self, instance: str | None = None) -> FakeClient:  # the same answer as base.StageContext.client
+            name = instance or self.ctx.instance
+            if name not in self.ctx.clients:
+                raise RuntimeError(f"no ComfyUI client for instance {name!r}")
+            return self.ctx.clients[name]
+
+    sc = NoClientSC(tmp_path, {"b": FakeClient([lora_name(file_)])}, params={"face_addons": {entry["id"]: "normal"}})
+    sc.ctx.instance = "host"  # the job's own instance: no ComfyUI client (base.StageContext.client raises for it)
+    with pytest.raises(LoraCheckBug) as e:
+        await edit_loras(sc, "face_addons", sc.version.params)  # no card given: the host's name is asked
+    assert "no ComfyUI client for instance" in str(e.value)
+    assert not isinstance(e.value, LoraCheckFailed)
+    # a non-network error from the card's own answer is a fault too, never the card message
+    sc2 = FakeSC(tmp_path, {"b": BrokenClient(ValueError("bad json"))}, params={"face_addons": {entry["id"]: "normal"}})
+    with pytest.raises(LoraCheckBug, match="bad json"):
+        await edit_loras(sc2, "face_addons", sc2.version.params, card="b")
+
+
+@arun
+async def test_a_connection_error_is_the_card_message_and_a_fault_is_not(mine_settings, tmp_path, monkeypatch):
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+    from vgac.stages import picture_loras
+    from vgac.stages.picture_loras import LoraCheckFailed, edit_loras
+
+    monkeypatch.setattr(picture_loras, "LORA_RETRY_WAIT_S", 0)
+    entry = own_lora(mine_settings, "faceskin.safetensors", "Face skin")
+    file_ = reference.addon(entry["id"])["file"]
+    sc = FakeSC(tmp_path, {"b": BrokenClient(ConnectionError("refused"))}, params={"face_addons": {entry["id"]: "normal"}})
+    with pytest.raises(LoraCheckFailed, match="did not answer"):
+        await edit_loras(sc, "face_addons", sc.version.params, card="b")
+    assert sc.ctx.clients["b"].asked == 2  # the connection error was retried once
