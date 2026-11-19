@@ -13,6 +13,11 @@ Today these are the graphics card settings (Health page, "Graphics cards"):
                                                                     run (default: null, each step's usual card)
      "share_when_busy": true}                                      a card with nothing to do takes waiting work from a
                                                                     busy card that it can run (default: off)
+     "step_defaults": {"pc_mid|painted": {"mesh": {"upsample": 1536}}}   the person's saved settings for each step of
+                                                                    an automatic build, keyed "<platform id>|<look id>",
+                                                                    then step id, then setting name (default: none).
+                                                                    Written only through vgac/step_defaults.py, which
+                                                                    checks every value against the step's schema
 
 The file is read when the job queue starts and written on every change. A missing or unreadable file means the
 defaults. Writes go to a temporary file first and replace the old one, so a crash mid-write never leaves half a file.
@@ -37,7 +42,7 @@ _lock = threading.Lock()
 
 def defaults() -> dict[str, Any]:
     return {"disabled_instances": [], "allowed_kinds": {}, "free_after_job": {}, "stop_when_idle_minutes": {},
-            "keep_models_loaded": {}, "default_instance": None, "share_when_busy": False}
+            "keep_models_loaded": {}, "default_instance": None, "share_when_busy": False, "step_defaults": {}}
 
 
 def prefs_path(settings: Settings | None = None) -> Path:
@@ -66,6 +71,21 @@ def _normalise(out: dict[str, Any]) -> dict[str, Any]:
     d = out.get("default_instance")
     out["default_instance"] = str(d) if isinstance(d, str) and d else None
     out["share_when_busy"] = bool(out.get("share_when_busy", False))
+    out["step_defaults"] = _normalise_step_defaults(out.get("step_defaults"))
+    return out
+
+
+def _normalise_step_defaults(raw: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    """Keep only well-shaped entries: {"<platform>|<look>": {"<stage>": {"<param>": value}}}; empty ones are dropped."""
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, stages in raw.items():
+        if not isinstance(stages, dict) or "|" not in str(key):
+            continue
+        kept = {str(s): dict(p) for s, p in stages.items() if isinstance(p, dict) and p}
+        if kept:
+            out[str(key)] = kept
     return out
 
 
