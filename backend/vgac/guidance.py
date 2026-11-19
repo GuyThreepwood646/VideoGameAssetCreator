@@ -1208,6 +1208,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "turnaround", "params": {}},
         "fix_label": "Draw the side views again",
     },
+    # A left or right view (vgac/side_agree.py): the same figure height as the front and back, and the feet at the same level.
+    # UNTESTED ON A CARD: the limits were set on the processor (bakeoff/wp51a). The sentence is the check's own (vars words).
+    "side_agree": {
+        "severity": "warn",
+        "ok": lambda c: _var(c, "words") or "The side view is the same height as the front and back, and its feet are at the same level.",
+        "fail": lambda c: _var(c, "words") or "This side view does not match the front and back. Draw this view again.",
+        "fix": lambda c: {"stage": "turnaround", "params": {}},
+        "fix_label": "Draw the side views again",
+    },
     # The person's picture's pose for the 3D build (vgac/buildpose.py; step 1 readiness and step 2): arms close to the
     # body, feet together or fists. The fix runs step 2 with the guarded pose redraw; never offered for designs it
     # would break (vars.offer). Braces doubled: the words are filled as a template.
