@@ -25,6 +25,9 @@ public static partial class T
         K3BinPromiseIsKeptOrSaid();
         K4ReadOnlyTargetIsReplaced();
         K5LedgerRewriteOnlyUnderMovedNames();
+        M1PackWithoutFileIdIsRefused();
+        M2FlushHappensBeforeTheSwitch();
+        M3PerItemCatchCarriesOn();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -224,6 +227,62 @@ public static partial class T
         string first = Convert.ToString(((Dictionary<string, object>)led.Items[0])["path"]), second = Convert.ToString(((Dictionary<string, object>)led.Items[1])["path"]);
         Check(first.StartsWith(newRoot, StringComparison.OrdinalIgnoreCase), "K5: an entry of a copied item is rewritten to the new place: " + first);
         Check(second.StartsWith(oldRoot, StringComparison.OrdinalIgnoreCase), "K5: an entry outside the copied items keeps its path: " + second);
+    }
+
+    // M1 (A2): a node pack the ledger records without a file id is refused, not guessed at
+    static void M1PackWithoutFileIdIsRefused()
+    {
+        var s = Installed();
+        string pack = Path.Combine(s.Ext, "ComfyUI", "custom_nodes", "nofid");
+        Directory.CreateDirectory(pack); File.WriteAllText(Path.Combine(pack, "node.py"), "x");
+        s.Led.Items.Add(new Dictionary<string, object> { { "what", "node pack nofid" }, { "path", pack }, { "kind", "added" }, { "bytes", 0L }, { "when", "2026-11-18T00:00:00Z" } });
+        var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
+        Check(plan.NotRemoved.Exists(x => x.Contains(pack) && x.Contains("did not record")), "M1: a pack with no file id is listed as kept, with the reason");
+        Check(plan.Get("packs") == null || !plan.Get("packs").Items.Exists(i => i.Path == pack), "M1: that pack is not offered for removal");
+    }
+
+    // M2 (B4): the copied files are written to the disk before the settings name the new folder
+    static void M2FlushHappensBeforeTheSwitch()
+    {
+        var s = Movable(); string to = Path.Combine(Tmp("m2-target"), "m2");
+        var seen = new List<string>();
+        SafeFs.Hook = delegate(string what, string p) { if (what == "move") seen.Add(p); };
+        try { Mover(s, null).Start(to, new Progress()); }
+        finally { SafeFs.Hook = null; }
+        int lastFlush = seen.FindLastIndex(x => x.StartsWith("flushed:"));
+        int ledgerStep = seen.FindIndex(x => x.StartsWith("ledger:"));
+        Check(lastFlush >= 0 && seen.Exists(x => x.StartsWith("flushed:") && x.Contains("python")), "M2: the copied files were written to the disk");
+        Check(ledgerStep > lastFlush, "M2: every copied file is on the disk before the ledger and the settings switch to the new folder");
+    }
+
+    // A recycler that fails with a disk error for one path and removes the others
+    class DiskFaultRecycler : IRecycler
+    {
+        public string Bad;
+        public bool Send(string path)
+        {
+            if (string.Equals(path, Bad, StringComparison.OrdinalIgnoreCase)) throw new IOException("disk fault");
+            File.Delete(path);
+            return true;
+        }
+    }
+
+    // M3 (B5): one item that fails with a disk error is reported and the rest of the list still runs
+    static void M3PerItemCatchCarriesOn()
+    {
+        var s = Installed(); string dir = Tmp("m3");
+        string bad = Path.Combine(dir, "bad.bin"), good = Path.Combine(dir, "good.bin");
+        File.WriteAllText(bad, "bad"); File.WriteAllText(good, "good");
+        var plan = new RemovalPlan(); var g = new RemovalGroup { Id = "models", Title = "models", Sentence = "x" };
+        g.Items.Add(new RemovalItem { Id = "file:" + bad, GroupId = "models", Kind = "ledger-file", Path = bad, What = "bad", IsFile = true, Bytes = 3, Tag = "3" });
+        g.Items.Add(new RemovalItem { Id = "file:" + good, GroupId = "models", Kind = "ledger-file", Path = good, What = "good", IsFile = true, Bytes = 4, Tag = "4" });
+        plan.Groups.Add(g);
+        // the removal of "bad" fails with a disk error (raised by the bin call that removes it); "good" goes through
+        var faulty = new DiskFaultRecycler { Bad = bad };
+        RemovalResult res = RunShown(plan, new List<string> { "models" }, null, s.L, s.M, s.Led, s.Comfy, faulty, new SetupLog(dir), null, null);
+        Check(File.Exists(bad), "M3: the item that failed is still there");
+        Check(!File.Exists(good), "M3: the next item still ran after the failure");
+        Check(res.Skipped.Exists(x => x.Contains(bad) && x.Contains("disk fault")), "M3: the failed item is reported under Skipped with its reason");
     }
 
     // B3: a read-only file in the way is cleared and replaced; nothing is left behind

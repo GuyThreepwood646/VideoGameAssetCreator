@@ -81,6 +81,7 @@ namespace Vgac.Starter
                     if (h == (IntPtr)(-1)) return "could not open " + f + " to save it to the disk";
                     try { if (!FlushFileBuffers(h)) return "could not save " + f + " to the disk"; }
                     finally { CloseHandle(h); }
+                    Point("move", "flushed:" + f);   // the order of the steps is visible to the checks
                 }
                 return null;
             }
