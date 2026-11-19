@@ -723,8 +723,9 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     body = body or AutopilotIn()
     if body.fix and body.fix.get("stage") in STAGES:
         body.fix = {**body.fix, "params": _params(body.fix["stage"], body.fix.get("params"), a.category)}
+    # Left out (None): the settings stored by an earlier start stay. Sent (even {}): they are replaced.
     stage_params = None
-    if body.stage_params:
+    if body.stage_params is not None:
         unknown = [k for k in body.stage_params if k not in STAGES]
         if unknown:
             raise HTTPException(400, f"unknown stage {unknown[0]!r} in stage_params")
