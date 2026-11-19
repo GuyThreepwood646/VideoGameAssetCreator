@@ -192,7 +192,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                 "options": {"fbx": "FBX (Unity, Unreal, Godot)", "glb": "GLB (web, Godot, Blender)"}},
     "unity": {"simple": True, "help": {"meaning": "Also build and check a Unity prefab.", "why": "Confirms the asset works in an engine and gives you a ready prefab.", "technical": "Unity batch import"}},
     "clips_library": {"simple": True, "help": {"meaning": "Which free animation set to attach to a human-style skeleton.", "why": "Gives walk, run, jump and more without any animation work.", "technical": "CC0 clip library retargeted through Humanoid"},
-                      "options": {"ual1": "Standard human moves (46 animations)", "ual2": "Extra human moves (second library)", "none": "Only its own walk and idle"}},
+                      "options": {"ual1": "Standard human moves (42 animations)", "ual2": "Extra human moves (second library)", "none": "Only its own walk and idle"}},
     "sprites": {"simple": True, "help": {"meaning": "Also render 2D sprite sheets.", "why": "For 2D or top-down games that draw pictures instead of 3D models.", "technical": "8-direction sprite sheets with atlas"}},
     "sprite_directions": {"simple": False, "help": {"meaning": "How many directions to render.", "why": "8 covers top-down games; 4 is enough for side-scrollers.", "technical": "Sprite yaw count"}},
     "sprite_size": {"simple": False, "help": {"meaning": "Pixel size of one sprite frame.", "why": "Match your game's sprite scale.", "technical": "Sprite frame size"}},
