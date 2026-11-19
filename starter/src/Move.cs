@@ -113,6 +113,16 @@ namespace Vgac.Starter
             if (SafeFs.Inside(projectRoot, t)) bad.Add("The new folder cannot contain the project folder.");
             else if (SafeFs.Inside(t, projectRoot) && !SafeFs.Inside(t, Path.Combine(projectRoot, "local"))) bad.Add("Inside the project folder, only its local folder can hold the big files.");
             if (LinkInPath(t)) bad.Add("That folder is, or lies under, a link (a junction or a mapped folder). Choose a real folder.");
+            if (t.StartsWith("\\\\") || t.StartsWith("//")) bad.Add("A network folder cannot hold the big files. Choose a folder on this computer's own drive.");
+            else
+            {
+                try
+                {
+                    var di = new DriveInfo(Path.GetPathRoot(t));
+                    if (di.DriveType != DriveType.Fixed && di.DriveType != DriveType.Removable) bad.Add("That drive is not a fixed or removable drive on this computer. Choose another folder.");
+                }
+                catch (Exception) { bad.Add("That drive cannot be checked. Choose another folder."); }
+            }
             if (t.Length > 110) bad.Add("That folder's name is too long: ComfyUI's files have long names and Windows would stop at its limit. Choose a shorter path.");
             string shared = Proof.DataFolderProblem(t, null);
             if (shared != null && bad.Count == 0) bad.Add(shared);
@@ -327,10 +337,20 @@ namespace Vgac.Starter
             SafeFs.Point("move", "journal:" + j.State);
         }
 
-        void DeleteJournal()
+        // true when the record is gone (or was never there). A record that stays after the switch is reported, not ignored.
+        bool DeleteJournal()
         {
-            try { File.Delete(JournalPath(Root)); } catch (Exception) { }
+            try { if (File.Exists(JournalPath(Root))) File.Delete(JournalPath(Root)); }
+            catch (Exception) { if (File.Exists(JournalPath(Root))) return false; }
             SafeFs.Point("move", "journal-deleted");
+            return !File.Exists(JournalPath(Root));
+        }
+
+        // The settings already name the new folder: the switch has happened (used when the old folder can no longer be checked).
+        bool SettingsNameTo(MoveJournal j)
+        {
+            try { return string.Equals(Path.GetFullPath(DataNow()).TrimEnd('\\'), Path.GetFullPath(j.To).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
+            catch (Exception) { return false; }
         }
 
         MoveJournal Current() { return Load(Root, DataNow()); }
@@ -424,7 +444,12 @@ namespace Vgac.Starter
 
         string FromProblem(MoveJournal j)
         {
-            if (!Directory.Exists(j.From)) return "The old folder (" + j.From + ") is not there (renamed, unplugged or on another drive letter?). Nothing was checked or switched. Put it back where it was, then continue.";
+            if (!Directory.Exists(j.From))
+            {
+                // once the settings name the new folder the switch happened: the old folder is no longer needed to finish it
+                if (j.State == "switching" && SettingsNameTo(j)) return null;
+                return "The old folder (" + j.From + ") is not there (renamed, unplugged or on another drive letter?). Nothing was checked or switched. Put it back where it was, then continue.";
+            }
             var m = MachineFile.Load(Root);
             string sid = DataFolders.SettingsId(m);
             if (string.IsNullOrEmpty(sid) || DataFolders.ReadMarkerId(j.From) != sid) return "The old folder (" + j.From + ") does not carry this install's VGAC marker, so it is not the one that was copied. Nothing was checked or switched.";
@@ -550,7 +575,7 @@ namespace Vgac.Starter
             }
             if (note != null) log.Line("move: " + note);
             WriteRestartMarker(j, comfyLeftBehind);         // only now: everything that could still fail is behind us
-            DeleteJournal();
+            if (!DeleteJournal()) return "The files are switched to the new folder, but VGAC could not remove the move's record (local\\move.json). Restart VGAC; if it says a move is unfinished, open Maintenance and press Continue.";
             log.Line("move: switched to " + j.To + "; the old folder " + j.From + " is no longer used");
             return null;
         }
@@ -579,6 +604,13 @@ namespace Vgac.Starter
             SafeFs.Point("move", "restart-marker");
         }
 
+        // The old folder the record names, or null when it cannot be read.
+        public static string RawFrom(string root)
+        {
+            try { return Convert.ToString(Json.ParseObject(File.ReadAllText(JournalPath(root), Encoding.UTF8))["from"]); }
+            catch (Exception) { return null; }
+        }
+
         // The state word of the record as written, or null when it cannot be read (no judgement; never changes anything).
         public static string RawState(string root)
         {
@@ -600,6 +632,9 @@ namespace Vgac.Starter
                 if (why == null) return "There is no move to abandon.";
                 // A record that says "switching" means the settings may already name the new place. Forgetting it would open the start
                 // gate on a half-switched install, so it is kept (the window says to continue it instead).
+                if (MoveRules.RestartPending(Root)) return "VGAC has been moved to a new folder and has to be restarted first, so the record is kept. Restart VGAC.";
+                string rawFrom = RawFrom(Root);
+                if (rawFrom != null && !string.Equals(SafeFs.Norm(rawFrom), SafeFs.Norm(DataNow()), StringComparison.OrdinalIgnoreCase)) return "The settings already name another folder for the big files, so the record is kept. Use Move the big files to continue or check it.";
                 if (RawState(Root) == "switching")
                     return "The move has already started switching to the new folder, so its record is kept: forgetting it would start VGAC on a half-moved install. Use Move the big files to continue it.";
                 DeleteJournal();      // a record VGAC cannot judge: the person asked to discard it (the window says what that means)

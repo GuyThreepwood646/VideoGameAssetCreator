@@ -20,6 +20,7 @@ public static partial class T
         I2SwitchedRecordWithoutNamesCanFinish();
         J1UpdateCrashKeepsAStartableExe();
         J2CommittedCopyMustMatchGit();
+        K1NetworkFolderRefused();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -206,6 +207,14 @@ public static partial class T
             return 0;
         }
         bool pulled;
+    }
+
+    // A6: a network folder is refused as a home for the big files
+    static void K1NetworkFolderRefused()
+    {
+        string from = Tmp("k1-from"); string root = Tmp("k1-root");
+        var unc = MoveRules.Problems(from, "\\\\server\\share\\bigfiles", root, -1, 0, null, null);
+        Check(unc.Exists(x => x.Contains("network folder")), "K1: a UNC path is refused as a home for the big files: " + string.Join(" | ", unc.ToArray()));
     }
 
     // A3: the committed copy is checked against git before it replaces the running VGAC.exe

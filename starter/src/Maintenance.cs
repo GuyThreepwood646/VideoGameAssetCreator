@@ -177,6 +177,8 @@ namespace Vgac.Starter
             if (needsStop && !host.Quiesce(this, "fix")) return;
             Run(delegate
             {
+                string gate = MoveGate.Blocking(host.Lay.ProjectRoot);
+                if (gate != null) { Say(gate); return; }
                 foreach (CheckLine c in todo)
                 {
                     Say("Fixing: " + c.Text);
