@@ -268,6 +268,21 @@ def test_prefill_leaves_painter_empty_when_unsure(mine_settings, meta, keys, not
     assert out["label"] == "My style v2"
 
 
+@pytest.mark.parametrize("arch,family,note_part,absent_part", [
+    ("qwen-image-edit-2511/lora", "Qwen-Image-Edit", "for its own view and edit steps", "Qwen-Image, which"),
+    ("qwen_image_edit/lora", "Qwen-Image-Edit", "cannot be added there yet", "does not use"),
+    ("qwen-image/lora", "Qwen-Image", "Qwen-Image, which this app does not use", "Qwen-Image-Edit"),
+])
+def test_prefill_tells_qwen_edit_from_plain_qwen_image(mine_settings, arch, family, note_part, absent_part):
+    from vgac.user_addons import prefill
+
+    out = prefill({"modelspec.architecture": arch}, {LORA_KEY: {}}, "q.safetensors")
+    assert out["family"] == family
+    assert out["base_models"] == []
+    assert note_part in out["painter_note"]
+    assert absent_part not in out["painter_note"]
+
+
 def test_clay_name_is_not_read_as_anima(mine_settings):
     from vgac.user_addons import prefill
 

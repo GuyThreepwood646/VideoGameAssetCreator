@@ -195,12 +195,18 @@ NAME_FIELDS = ("modelspec.title", "name", "ss_output_name")
 TRIGGER_FIELDS = ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "trigger_word", "ss_trigger",
                   "activation_text", "instance_prompt")
 UNSURE = "We could not tell which model this was made for."
+QWEN_EDIT = "Qwen-Image-Edit"
+QWEN_EDIT_NOTE = ("It looks like it was made for Qwen-Image-Edit. This app already uses Qwen-Image-Edit for its own "
+                  "view and edit steps, with its own fixed LoRAs only, so your own LoRAs cannot be added there yet. "
+                  "It will probably not work with any of these models.")
 # Families this app has no painter for, by the words their metadata uses.
 OTHER_FAMILIES = (
     (re.compile(r"sdxl|stable-diffusion-xl|sd_xl|\bxl\b|pony|illustrious|noob"), "Stable Diffusion XL"),
     (re.compile(r"sd[-_ ]?1|stable-diffusion-v1|sd[-_ ]?v1|sd[-_ ]?15|sd 1\.5"), "Stable Diffusion 1.5"),
     (re.compile(r"sd[-_ ]?3|stable-diffusion-3"), "Stable Diffusion 3"),
     (re.compile(r"flux[-_. ]?1|flux[-_. ]?dev|flux[-_. ]?schnell"), "FLUX.1"),
+    # Qwen-Image-Edit first: the plain Qwen-Image pattern would catch it too.
+    (re.compile(r"qwen[-_ ]?image[-_ ]?edit"), QWEN_EDIT),
     (re.compile(r"qwen[-_ ]?image"), "Qwen-Image"),
     (re.compile(r"\bwan\b|wan[-_ ]?2"), "Wan (video)"),
     (re.compile(r"hunyuan"), "Hunyuan"),
@@ -311,7 +317,8 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
         for pattern, fam in OTHER_FAMILIES:
             if pattern.search(arch):
                 family = fam
-                note = f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models."
+                note = (QWEN_EDIT_NOTE if fam == QWEN_EDIT else
+                        f"It looks like it was made for {fam}, which this app does not use. It will probably not work with any of these models.")
                 break
     if not family:
         family = _family_from_keys(tensors)
