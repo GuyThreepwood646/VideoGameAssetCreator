@@ -210,6 +210,38 @@ def qwen_kind(text: str) -> str:
     if QWEN_RE.search(text):
         return QWEN_FAMILY
     return ""
+
+
+# What a LoRA was made for, when the file says so for sure. Training tools write ss_base_model_version "qwen_image" on
+# edit LoRAs too, so that key alone is not proof of plain Qwen-Image.
+MADE_FOR_EDIT = "qwen_image_edit"
+MADE_FOR_PLAIN = "qwen_image"
+PLAIN_FIELDS = ("modelspec.architecture", "modelspec.base_model", "base_model", "baseModel", "ss_base_model", "base_model_name",
+                "ss_sd_model_name")
+
+
+def edit_signal(text: str) -> bool:
+    """An Edit signal anywhere in the name or header: Qwen-Image-Edit, QwenEdit, qwen_edit, a 2509/2511 release
+    named with Edit, in any case. (Lower-case text.)"""
+    if QWEN_EDIT_RE.search(text):
+        return True
+    return ("qwen" in text or QWEN_RE.search(text) is not None) and "edit" in text
+
+
+def qwen_made_for(meta: dict[str, str], file_name: str) -> str:
+    """MADE_FOR_EDIT or MADE_FOR_PLAIN when the name or header says so for sure, else "" (the person must say).
+    An Edit signal wins over everything. Plain needs a plain signal in the name or in the model fields (not the
+    ss_base_model_version key alone), and no other family named in the header."""
+    arch = " ".join(str(meta.get(k, "")) for k in ARCH_FIELDS).lower()
+    names = " ".join([*(str(meta.get(k, "")) for k in NAME_FIELDS), file_name]).lower()
+    if edit_signal(arch + " " + names):
+        return MADE_FOR_EDIT
+    if any(pattern.search(arch) for pattern, _fam in OTHER_FAMILIES):
+        return ""
+    fields = " ".join(str(meta.get(k, "")) for k in PLAIN_FIELDS).lower()
+    if QWEN_RE.search(names) or QWEN_RE.search(fields):
+        return MADE_FOR_PLAIN
+    return ""
 # Shown on a LoRA made for plain Qwen-Image that is used for picture edits (made_for "qwen_image").
 QWEN_PLAIN_WARNING = ("This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. "
                       "It may only partly work, or change results in ways you do not expect. Try it at Subtle first.")
@@ -304,6 +336,7 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     note = ""
     family = ""
     warning = ""
+    made = ""  # MADE_FOR_EDIT or MADE_FOR_PLAIN when the file says so for sure (the Qwen branch below)
     zimage = re.search(r"z[-_. ]?image", both) is not None
     if zimage:
         family = "Z-Image"
@@ -326,14 +359,15 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     elif re.search(r"\banima\b", arch):
         family, picks = "Anima", ["anima"]
     else:
-        # Order: Qwen named in the metadata, then the other families named in the metadata, then Qwen named in the
-        # file name or the name fields. A file name never outweighs what the metadata says.
+        # The Qwen question first (qwen_made_for): an Edit signal wins; plain only when the file says so for sure.
+        # Otherwise the other families named in the header, and if none, the person is asked (made_for stays empty).
         other = next((fam for pattern, fam in OTHER_FAMILIES if pattern.search(arch)), "")
-        qwen = qwen_kind(arch) or ("" if other else qwen_kind(names))
-        if qwen:
-            family, picks = qwen, [reference.EDIT_MODEL]
-            if qwen == QWEN_FAMILY:
-                warning = QWEN_PLAIN_WARNING
+        made = qwen_made_for(meta, file_name)
+        if made == MADE_FOR_EDIT:
+            family, picks = QWEN_EDIT_FAMILY, [reference.EDIT_MODEL]
+        elif made == MADE_FOR_PLAIN:
+            family, picks = QWEN_FAMILY, [reference.EDIT_MODEL]
+            warning = QWEN_PLAIN_WARNING
         elif other:
             family = other
             note = f"It looks like it was made for {other}, which this app does not use. It will probably not work with any of these models."
@@ -346,7 +380,7 @@ def prefill(meta: dict[str, str], tensors: dict[str, Any], file_name: str) -> di
     picks = [p for p in picks if p in painters or p == reference.EDIT_MODEL]
     if not picks and not note:
         note = UNSURE
-    out.update(base_models=picks, family=family, painter_note=note, warning=warning)
+    out.update(base_models=picks, family=family, painter_note=note, warning=warning, made_for=made)
     return out
 
 
@@ -444,11 +478,11 @@ def public(a: dict[str, Any]) -> dict[str, Any]:
     from . import reference
 
     return {**reference.addon_public(a), "mine": True, "file_name": a.get("file_name") or "", "added_at": a.get("added_at") or "",
-            "warning": a.get("warning") or ""}
+            "warning": a.get("warning") or "", "made_for": a.get("made_for") or ""}
 
 
 def register(file_name: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal",
-             source: str = "") -> dict[str, Any]:
+             source: str = "", made_for_answer: str = "") -> dict[str, Any]:
     """Set up a file already in VGAC/mine/ as one of the person's add-ons. -> the public entry. AddonFileError (or
     ValueError for the form) when it cannot be."""
     from . import reference
@@ -468,11 +502,18 @@ def register(file_name: str, label: str, base_models: list[str], trigger: str = 
     bad = [m for m in models if m not in painters and m != edit]
     if bad:
         raise AddonFileError(f"Unknown model: {', '.join(bad)}.")
-    # What the header (and file name) says it was made for, read the same way the form's prefill reads it.
     fam = prefill(meta, tensors, path.name)["family"]
-    made_for = "qwen_image_edit" if fam == QWEN_EDIT_FAMILY else "qwen_image" if fam == QWEN_FAMILY else ""
-    if edit in models and fam and not made_for:
+    if edit in models and fam and fam not in (QWEN_EDIT_FAMILY, QWEN_FAMILY):
         raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
+    # The file decides when it says so for sure (an Edit signal, or a plain Qwen-Image signal); a person cannot overrule
+    # that. When the file cannot tell, the person's answer is stored, and there must be one.
+    detected = qwen_made_for(meta, path.name)
+    if edit in models and not detected:
+        if made_for_answer not in (MADE_FOR_EDIT, MADE_FOR_PLAIN):
+            raise AddonFileError("Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.")
+        made_for = made_for_answer
+    else:
+        made_for = detected
     if default_strength not in STRENGTHS:
         raise AddonFileError("The starting strength must be Subtle, Normal or Strong.")
     if len(trigger or "") > MAX_TRIGGER_CHARS * 2 or len(source or "") > MAX_SOURCE_CHARS * 2:
@@ -665,6 +706,8 @@ class MyAddonIn(BaseModel):
     trigger: str = Field(default="", max_length=MAX_TRIGGER_CHARS * 2)
     default_strength: str = "normal"
     source: str = Field(default="", max_length=MAX_SOURCE_CHARS * 2)
+    # The person's answer when the file cannot tell: MADE_FOR_EDIT or MADE_FOR_PLAIN (ignored when the file is sure).
+    made_for: str = Field(default="", max_length=40)
 
 
 @router.get("/api/my-addons")
@@ -675,7 +718,8 @@ def get_my_addons() -> dict[str, Any]:
 @router.post("/api/my-addons")
 def post_my_addon(body: MyAddonIn) -> dict[str, Any]:
     try:
-        return register(body.file_name, body.label, body.base_models, body.trigger, body.default_strength, body.source)
+        return register(body.file_name, body.label, body.base_models, body.trigger, body.default_strength, body.source,
+                        made_for_answer=body.made_for)
     except AddonFileError as e:
         raise _http(e)
 

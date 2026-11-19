@@ -74,6 +74,18 @@ export function isEditLora(x: unknown): boolean {
   return (x as { stage?: unknown } | null | undefined)?.stage === 'edit'
 }
 
+// What a picture-edit LoRA was made for (user_addons.MADE_FOR_EDIT / MADE_FOR_PLAIN). Plain also covers "not sure".
+export const MADE_FOR_EDIT = 'qwen_image_edit'
+export const MADE_FOR_PLAIN = 'qwen_image'
+export const PLAIN_WARNING =
+  'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
+
+// The "made for" the file itself settled, from the listing or the upload's prefill ("" when the file cannot tell).
+export function madeForOf(x: unknown): string {
+  const m = (x as { made_for?: unknown } | null | undefined)?.made_for
+  return m === MADE_FOR_EDIT || m === MADE_FOR_PLAIN ? m : ''
+}
+
 // A LoRA entry's warning, when the backend gives one (a LoRA made for plain Qwen-Image).
 export function warningOf(x: unknown): string {
   const w = (x as { warning?: unknown } | null | undefined)?.warning

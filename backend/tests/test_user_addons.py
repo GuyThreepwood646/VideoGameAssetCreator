@@ -479,3 +479,84 @@ def test_delete_endpoint_keeps_file(client, mine):
     assert (mine / "d.safetensors").is_file()
     assert client.get("/api/my-addons").json()["addons"] == []
     assert client.delete("/api/my-addons/clay_finish").status_code == 400
+
+
+# --- What a picture-edit LoRA was made for: the name or header decides; the person answers when they cannot tell -----
+
+EDIT_KEYS = ["diffusion_model.transformer_blocks.0.attn.add_k_proj.lora_A.weight",
+             "diffusion_model.transformer_blocks.0.attn.add_k_proj.lora_B.weight"]
+NEUTRAL_KEYS = ["lora_unet_block.lora_A.weight", "lora_unet_block.lora_B.weight"]
+TRAINER_BASE = {"ss_base_model_version": "qwen_image"}  # written by training tools on edit LoRAs too: not proof of plain
+
+
+def _prefill(mine: Path, name: str) -> dict[str, Any]:
+    from vgac import user_addons
+
+    meta, tensors = user_addons.read_header(mine / name)
+    return user_addons.prefill(meta, tensors, name)
+
+
+def test_an_edit_name_wins_over_a_qwen_image_header(mine):
+    from vgac import reference, user_addons
+
+    name = "Look_QwenEdit_2511.safetensors"
+    put_file(mine, name, safetensors_bytes(dict(TRAINER_BASE), keys=EDIT_KEYS))
+    out = _prefill(mine, name)
+    assert out["made_for"] == "qwen_image_edit" and out["family"] == "Qwen-Image-Edit" and out["warning"] == ""
+    e = user_addons.register(name, "Edit look", ["qwen_edit"])  # no answer needed: the file says so
+    assert e["warning"] == "" and reference.addon(e["id"])["made_for"] == "qwen_image_edit"
+
+
+def test_an_edit_word_in_the_name_with_a_qwen_image_header_is_an_edit(mine):
+    name = "Edit_2511_look.safetensors"
+    put_file(mine, name, safetensors_bytes(dict(TRAINER_BASE), keys=EDIT_KEYS))
+    assert _prefill(mine, name)["made_for"] == "qwen_image_edit"
+
+
+def test_no_signal_asks_and_a_plain_answer_gives_the_warning(mine):
+    from vgac import reference, user_addons
+    from vgac.user_addons import AddonFileError
+
+    name = "studio_look.safetensors"
+    put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
+    out = _prefill(mine, name)
+    assert out["made_for"] == "" and out["base_models"] == [] and out["warning"] == ""
+    with pytest.raises(AddonFileError, match="Choose what it was made for"):
+        user_addons.register(name, "Studio look", ["qwen_edit"])
+    e = user_addons.register(name, "Studio look", ["qwen_edit"], made_for_answer="qwen_image")
+    assert "Try it at Subtle first" in e["warning"] and reference.addon(e["id"])["made_for"] == "qwen_image"
+
+
+def test_no_signal_with_an_edit_answer_has_no_warning(mine):
+    from vgac import reference, user_addons
+
+    name = "studio_two.safetensors"
+    put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
+    e = user_addons.register(name, "Studio two", ["qwen_edit"], made_for_answer="qwen_image_edit")
+    assert e["warning"] == "" and reference.addon(e["id"])["made_for"] == "qwen_image_edit"
+
+
+def test_the_trainer_key_alone_is_not_proof_of_plain(mine):
+    name = "studio_three.safetensors"
+    put_file(mine, name, safetensors_bytes(dict(TRAINER_BASE), keys=NEUTRAL_KEYS))
+    assert _prefill(mine, name)["made_for"] == ""
+
+
+def test_a_sure_plain_file_stays_plain_whatever_the_form_says(mine):
+    from vgac import reference, user_addons
+
+    name = "qwen-image-style.safetensors"  # the name says plain Qwen-Image and no Edit anywhere
+    put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
+    assert _prefill(mine, name)["made_for"] == "qwen_image"
+    e = user_addons.register(name, "Plain look", ["qwen_edit"], made_for_answer="qwen_image_edit")
+    assert reference.addon(e["id"])["made_for"] == "qwen_image" and "Try it at Subtle first" in e["warning"]
+
+
+def test_the_route_takes_the_answer_and_says_when_it_is_missing(client, mine):
+    name = "studio_route.safetensors"
+    put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
+    r = client.post("/api/my-addons", json={"file_name": name, "label": "Route look", "base_models": ["qwen_edit"]})
+    assert r.status_code == 400 and "Choose what it was made for" in r.json()["detail"]
+    r = client.post("/api/my-addons", json={"file_name": name, "label": "Route look", "base_models": ["qwen_edit"],
+                                            "made_for": "qwen_image"})
+    assert r.status_code == 200 and r.json()["made_for"] == "qwen_image" and "Try it at Subtle first" in r.json()["warning"]
