@@ -314,7 +314,9 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 raise ValueError(f"{key} must be text")
             if len(value) > MAX_STRING_PARAM:
                 raise ValueError(f"{key} is too long (max {MAX_STRING_PARAM} characters)")
-        elif t in ("addons", "edit_addons"):
+        elif t == "edit_addons":
+            out[key] = clean_edit_choices(value, key)
+        elif t == "addons":
             # {add-on id: off | subtle | normal | strong}. Ids the registry does not know are kept here and reported
             # (not applied) by resolve_addons, so an add-on removed from addons.yaml never breaks an older version.
             opts = p.get("options") or list(ADDON_CHOICES)
@@ -327,10 +329,26 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 if not isinstance(choice, str) or choice.lower() not in opts:
                     raise ValueError(f"{key}: {aid} must be one of {opts}")
                 clean[aid] = choice.lower()
-            if t == "edit_addons" and sum(1 for c in clean.values() if c != "off") > MAX_EDIT_LORAS:
-                raise ValueError(f"{key}: at most {MAX_EDIT_LORAS} of your LoRAs can be used at once in one step")
             out[key] = clean
     return out
+
+
+def clean_edit_choices(value: Any, key: str = "edit_addons") -> dict[str, str]:
+    """One picture-edit use's LoRA choices ({id: off | subtle | normal | strong}), checked as the schema checks them:
+    a plain ValueError for anything else, and at most MAX_EDIT_LORAS LoRAs on at once."""
+    opts = list(ADDON_CHOICES)
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must map each LoRA to one of {opts}")
+    clean: dict[str, str] = {}
+    for aid, choice in value.items():
+        if not isinstance(aid, str) or not aid or len(aid) > 100:
+            raise ValueError(f"{key} has a LoRA id that is not text")
+        if not isinstance(choice, str) or choice.lower() not in opts:
+            raise ValueError(f"{key}: {aid} must be one of {opts}")
+        clean[aid] = choice.lower()
+    if sum(1 for c in clean.values() if c != "off") > MAX_EDIT_LORAS:
+        raise ValueError(f"{key}: at most {MAX_EDIT_LORAS} of your LoRAs can be used at once in one step")
+    return clean
 
 
 def _load_yaml(path) -> Any:

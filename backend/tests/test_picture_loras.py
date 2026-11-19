@@ -392,3 +392,53 @@ async def test_add_views_redraws_a_kept_view_drawn_with_other_loras_but_keeps_a_
     await t._add_views(sc, parent, None, {"add_views": [], "view_addons": {pid: "normal"}})
     assert drawn["views"] == ["front", "right"]  # both drawn with no LoRA before: redrawn with the choice now in force
     assert set(drawn["keep"]) == {"left"}  # the supplied picture stays kept
+
+
+def test_clean_edit_choices_checks_the_request_the_way_the_schema_does(mine_settings):
+    from vgac import reference
+
+    assert reference.clean_edit_choices({"mine_a": "Normal", "mine_b": "off"}) == {"mine_a": "normal", "mine_b": "off"}
+    with pytest.raises(ValueError, match="at most 2"):
+        reference.clean_edit_choices({"a": "normal", "b": "normal", "c": "subtle"})
+    with pytest.raises(ValueError, match="must be one of"):
+        reference.clean_edit_choices({"a": "max"})
+    with pytest.raises(ValueError, match="must map"):
+        reference.clean_edit_choices(["a"])
+
+
+@arun
+async def test_combining_the_photos_gets_the_combine_choice_and_no_other(mine_settings, tmp_path, monkeypatch):
+    """compose.run draws with the LoRAs in its own edit_addons and nothing from the other uses."""
+    from vgac import compose
+    from vgac.stages import concept
+
+    seen: dict[str, Any] = {}
+
+    def spy(names, prompt, seed, prefix, width=1024, height=1024, loras=None):
+        seen["loras"] = loras
+        return {}
+
+    async def no_cutout(sc, image):
+        return None
+
+    monkeypatch.setattr(compose, "compose_graph", spy)
+    monkeypatch.setattr(concept, "build_prompt", lambda sc, p: "a look")
+    monkeypatch.setattr(concept, "_cutout", no_cutout)
+    from PIL import Image
+
+    from vgac import reference
+    from vgac.graphs.concept import lora_name
+
+    pid = own_lora(mine_settings, "combine.safetensors", "Combine look")["id"]
+    sc = FakeSC(tmp_path, {"A": FakeClient([lora_name(reference.addon(pid)["file"])])})
+    Image.new("RGB", (8, 8)).save(tmp_path / "c1.png")
+    files = {"compose_1": tmp_path / "c1.png"}
+    sc.file = lambda key: files.get(key)  # type: ignore[assignment]
+    sc.register = lambda key, path: files.__setitem__(key, Path(path))  # type: ignore[assignment]
+    sc.progress = lambda *a, **k: None  # type: ignore[assignment]
+    sc.version.params.update({"compose_roles": [{"role": "character", "note": None}], "words": None,
+                              "edit_addons": {pid: "normal"}, "view_addons": {"mine_other": "strong"}})
+    sc.settings = SimpleNamespace()
+    await compose.run(sc, {})
+    assert [a["id"] for a in seen["loras"]] == [pid]  # the combine choice reaches the graph, the other uses' do not
+    assert sc.version.params["edit_addons_applied"] == {pid: "normal"}
