@@ -103,7 +103,7 @@ Face and hair passes skip (reason recorded) for non-humanoids, flat looks, when 
 | Setup check | `preflight.py` (`GET /api/setup`) |
 | Minimum versions of what the user installs (Python, Node, Blender, Unity, ComfyUI) | `data/minimum_versions.json`, read by `minimums.py` (the app's check) and `setup/Check-Setup.ps1`; newer always passes |
 
-Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and metrics pick; a version is kept when it has no failed check at the `stop_on` level (`block` default, `warn`, `never`), otherwise it pauses and offers the check's fix.
+Autopilot (`autopilot.py`): runs steps in order; step 1 makes two candidates and metrics pick; a version is kept when it has no failed check at the `stop_on` level (`block` default, `warn`, `never`), otherwise it pauses and offers the check's fix. The settings chosen before a build live in the state as `stage_params`: kept when a start leaves them out, replaced when a start sends them.
 
 The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VGAC/mine/` under `loras_dir`), pictures (`own_images.py`, `uploads.py`), 3D model (`model_import.py`), hairstyles (`my_hair.py`, `library/my_hair/`), moves (`moves.py`, `library/my_moves/`), items (`items.py`, `sockets.py`).
 

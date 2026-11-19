@@ -1390,6 +1390,13 @@ button.btn-lg {
   grid-template-columns: repeat(3, 1fr);
   gap: var(--s2) var(--s3);
 }
+/* The step settings sit in narrow places (the New asset form, the Make it card): as many columns as fit. */
+.step-settings .adjust-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.step-settings .adjust-grid > * {
+  min-width: 0;
+}
 .slider-row {
   display: flex;
   gap: var(--s2);

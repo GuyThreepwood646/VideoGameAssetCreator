@@ -9,6 +9,7 @@ import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } fro
 import { conceptCountLabel } from '../guide'
 import { attentionItems } from './finish'
 import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { mergeStepParams } from './stepSettings'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
 
@@ -176,7 +177,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   // "Yes, keep it" stays primary) and after a failure (Try again stays primary).
   const makeIt =
     apAvailable !== false && state !== 'running' && state !== 'stopped' && !isFinished(asset) ? (
-      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: { [stage]: firstParams } } : body)} />
+      <MakeItAction asset={asset} stages={stages} estimates={estimates} busy={busy} primary={state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage))} onStart={(body) => autopilotActions.start(firstParams ? { ...body, stage_params: mergeStepParams(body.stage_params, { [stage]: firstParams }) } : body)} />
     ) : null
   const secondary = (node: React.ReactNode) => (makeIt && state !== 'review' && state !== 'error' && !(state === 'selected' && laterFailed(asset, stage)) ? <span className="or-just">{node}</span> : node)
 
