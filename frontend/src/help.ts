@@ -345,7 +345,12 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   camera_angle: H('Camera angle for Pixal3D (degrees)', 'For Pixal3D only: how wide the camera\'s view is taken to be in the four pictures, in degrees. Empty uses the angle estimated from your front picture.', 'The estimate keeps the eyes open on the model; a narrow angle such as 20 can give closed eyelids but on some faces fits the painted face better. Try both and keep the better one.', 'Pixal3DMultiViewConditioning fov; empty wires MoGe-2\'s horizontal field of view of the framed front crop (MoGeGeometryToFOV)'),
   tex_steps: H('Colour detail', 'How carefully the colours are painted: more steps give a richer, more detailed texture.', '24 (the default) gives clearly more detail than 12 for a few seconds more; the overall tone is then shifted back towards your picture. Use 12 if a model comes out too busy.', 'TRELLIS.2 texture sampler steps'),
   upsample: H('Finer colour and shape (slower)', 'Builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.', 'It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.', 'TRELLIS.2 upsample resolution'),
-  remesh: H('Remesh (close holes)', 'Rebuild the surface so it is one closed shell.', 'Closed shells clean up and rig reliably.', 'remesh (watertight)'),
+  remesh: H(
+    'Remesh (close holes)',
+    'Rebuild the surface so it is one closed shell.',
+    'Characters and creatures: keep it on, it removes double walls. Plants: untested so far; thin leaves may come out thicker. Hard objects (props, vehicles): it can round crisp edges and thicken or lose thin parts, so turn it off if the edges matter. Buildings and scenery: off by default so doorways and arches stay open, but a building built with it off at a low triangle count can come out torn; the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.',
+    'remesh (watertight)',
+  ),
   silhouette_iou: H('Silhouette IoU (outline match)', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),
   iou: H('IoU (outline match)', 'How closely two outlines overlap, from 0 to 1.', 'Low match means the shapes disagree.', 'IoU (intersection over union)'),
   silhouette: H('Silhouette (outline)', 'The shape of the model seen as a flat shadow.', 'A good outline is what makes a character readable in a game.', 'silhouette'),

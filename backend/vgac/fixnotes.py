@@ -49,6 +49,7 @@ RETRY_NOTE = ("This builds the 3D model again with a new random draw, which can 
 EXTRA_FIXES: dict[str, dict[str, Any]] = {
     "manifold": {"fix": {"stage": "mesh", "params": {"seed": None}}, "label": "Build the 3D model again", "note": RETRY_NOTE},
     "watertight": {"fix": {"stage": "mesh", "params": {"seed": None}}, "label": "Build the 3D model again", "note": RETRY_NOTE},
+    "model_whole": {"fix": {"stage": "mesh", "params": {"seed": None}}, "label": "Build the 3D model again", "note": RETRY_NOTE},
     "degenerate_faces": {"fix": {"stage": "mesh", "params": {"seed": None}}, "label": "Build the 3D model again", "note": RETRY_NOTE},
     "uv_set": {"fix": {"stage": "mesh", "params": {"seed": None}}, "label": "Build the 3D model again", "note": RETRY_NOTE},
     "skin_not_metal": {"fix": {"stage": "prep", "params": {"pbr_fix": True}}, "label": "Make metal clearly metal",
