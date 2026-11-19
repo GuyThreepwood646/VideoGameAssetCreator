@@ -181,3 +181,12 @@ def test_the_stage_passes_the_asset_category_to_the_view_prompt(tmp_path):
         assert sc.graphs[0] == qwen_edit.angle_cutout_graph(
             "in.png", qwen_edit.view_prompt("left", "", category), 7, "vgac/a/turnaround/v/left_7",
             "vgac/a/turnaround/v/left", lora_strength=0.9, zero_negative=True), category
+
+
+def test_the_two_job_path_passes_the_asset_category_too(tmp_path):
+    for category in ("humanoid", "vehicle"):
+        sc = RecordingSC(tmp_path, {"cutout_in_graph": False, "zero_negative": False})
+        sc.asset = SimpleNamespace(category=category)
+        asyncio.run(turnaround._generate_view(sc, "in.png", "left", 7, 0.9, "", 0.0, 0.1))
+        assert sc.graphs[0] == qwen_edit.angle_graph(
+            "in.png", qwen_edit.view_prompt("left", "", category), 7, "vgac/a/turnaround/v/left_7", lora_strength=0.9), category
