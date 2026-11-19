@@ -91,7 +91,7 @@ def test_not_five_figures_uses_the_fixed_fallback(tmp_path):
     assert w["fallback"] is True and w["figures"] == 4
 
 
-def test_split_widens_every_figure_sideways_by_the_factor(tmp_path):
+def test_split_widens_front_and_back_only_and_leaves_the_sides_as_drawn(tmp_path):
     W, H = qwen_edit.SHEET_SIZE
     raw = Image.new("RGB", (W, H), (255, 255, 255))
     cut = _sheet(tmp_path, [0.4, 0.4, 0.4, 0.4, 0.4])
@@ -102,10 +102,14 @@ def test_split_widens_every_figure_sideways_by_the_factor(tmp_path):
     (tmp_path / "b").mkdir(exist_ok=True)
     wide = turnaround.split_sheet(tmp_path / "raw.png", cut, tmp_path / "b", widen=1.5)
     assert base is not None and wide is not None
+    assert turnaround.SHEET_WIDEN_VIEWS == ("front", "back")
     for view in turnaround.SHEET_ORDER:
         w0 = imaging.alpha_bbox(base[view]["cutout"])["width"]
         w1 = imaging.alpha_bbox(wide[view]["cutout"])["width"]
-        assert w1 / w0 == pytest.approx(1.5, rel=0.03)
         h0 = imaging.alpha_bbox(base[view]["cutout"])["height"]
         h1 = imaging.alpha_bbox(wide[view]["cutout"])["height"]
-        assert h1 == pytest.approx(h0, rel=0.01)  # sideways only
+        if view in ("front", "back"):
+            assert w1 / w0 == pytest.approx(1.5, rel=0.03)
+            assert h1 == pytest.approx(h0, rel=0.01)  # sideways only
+        else:
+            assert w1 == w0 and h1 == h0  # the sides and the quarter stay as drawn

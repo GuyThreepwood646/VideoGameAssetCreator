@@ -437,6 +437,9 @@ def sheet_figures(cutout: Path) -> list[tuple[int, int]]:
 SHEET_WIDEN_FALLBACK = 1.381
 SHEET_WIDEN_RANGE = (1.0, 1.6)
 SHEET_WIDEN_DISAGREE = 0.10  # front and back figures differing by more than this share of their mean: unreliable
+# Only the front and back figures are widened: the sides measured stouter than the standard side when widened on the
+# model (bakeoff/wp53, model builds of knight, goblin and hero); the quarter was not measured. Others stay as drawn.
+SHEET_WIDEN_VIEWS = ("front", "back")
 
 
 def _ratio(im_alpha: np.ndarray) -> float | None:
@@ -506,8 +509,9 @@ def split_sheet(raw: Path, cutout: Path, out_dir: Path, widen: float = 1.0) -> d
     for view, (x0, x1) in zip(SHEET_ORDER, figs):
         box = (max(0, x0 - 10), 0, min(rgb.width, x1 + 10), rgb.height)
         r_im, c_im = rgb.crop(box), rgba.crop(box)
-        if widen != 1.0:
-            w = max(1, round(r_im.width * widen))
+        f = widen if view in SHEET_WIDEN_VIEWS else 1.0
+        if f != 1.0:
+            w = max(1, round(r_im.width * f))
             r_im, c_im = r_im.resize((w, r_im.height), Image.LANCZOS), c_im.resize((w, c_im.height), Image.LANCZOS)
         r = out_dir / f"{view}_raw.png"
         c = out_dir / f"{view}.png"
