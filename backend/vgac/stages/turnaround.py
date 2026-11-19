@@ -430,6 +430,60 @@ def sheet_figures(cutout: Path) -> list[tuple[int, int]]:
     return figs
 
 
+# WP-53: the sheet LoRA draws every figure too narrow (measured on five characters, bakeoff/wp53/measure.json: 1.30 to
+# 1.44 times narrower than the step 1 picture; the standard route matches it within 1 percent). One factor per sheet:
+# the step 1 cut-out's width over height divided by the mean of the sheet's front and back figures, clamped to the
+# range below. When that measure is unreliable, the fixed fallback (the median of the five measured factors) is used.
+SHEET_WIDEN_FALLBACK = 1.381
+SHEET_WIDEN_RANGE = (1.0, 1.6)
+SHEET_WIDEN_DISAGREE = 0.10  # front and back figures differing by more than this share of their mean: unreliable
+
+
+def _ratio(im_alpha: np.ndarray) -> float | None:
+    """width over height of the alpha (> 127) in a boolean mask, or None when empty."""
+    ys, xs = np.where(im_alpha)
+    if not len(xs):
+        return None
+    return round(float(xs.max() - xs.min() + 1) / float(ys.max() - ys.min() + 1), 4)
+
+
+def figure_ratios(cutout: Path) -> list[float | None]:
+    """width over height of each figure in a sheet cut-out, in left-to-right order (sheet_figures)."""
+    with Image.open(cutout) as im:
+        a = np.asarray(im.convert("RGBA").getchannel("A")) > 127
+    return [_ratio(a[:, x0:x1]) for x0, x1 in sheet_figures(cutout)]
+
+
+def sheet_widen(step1_cut: Path | None, sheet_cut: Path) -> dict[str, Any]:
+    """The widening factor for one sheet (WP-53): {factor, fallback, reason, clamped, step1_ratio, front_ratio,
+    back_ratio, figures}. Front and back are SHEET_ORDER's first and third figures; they are read from the sheet
+    before any widening."""
+    figs = figure_ratios(sheet_cut)
+    front, back = (figs[0], figs[2]) if len(figs) == len(SHEET_ORDER) else (None, None)
+    r1 = None
+    if step1_cut is not None and Path(step1_cut).is_file():
+        with Image.open(step1_cut) as im:
+            r1 = _ratio(np.asarray(im.convert("RGBA").getchannel("A")) > 127)
+    reason = None
+    if r1 is None:
+        reason = "no step 1 cut-out"
+    elif len(figs) != len(SHEET_ORDER):
+        reason = f"{len(figs)} figures, not {len(SHEET_ORDER)}"
+    elif front is None or back is None:
+        reason = "front or back figure missing"
+    elif abs(front - back) / ((front + back) / 2) > SHEET_WIDEN_DISAGREE:
+        reason = "front and back figures disagree"
+    if reason is not None:
+        factor, fallback, clamped = SHEET_WIDEN_FALLBACK, True, False
+    else:
+        raw = r1 / ((front + back) / 2)
+        lo, hi = SHEET_WIDEN_RANGE
+        factor = min(max(raw, lo), hi)
+        fallback, clamped = False, factor != raw
+    return {"factor": round(factor, 4), "fallback": fallback, "reason": reason, "clamped": clamped,
+            "step1_ratio": r1, "front_ratio": front, "back_ratio": back, "figures": len(figs)}
+
+
 def _square(im: Image.Image, fill: tuple[int, ...]) -> Image.Image:
     side = max(im.width, im.height)
     bg = Image.new(im.mode, (side, side), fill)
@@ -437,9 +491,10 @@ def _square(im: Image.Image, fill: tuple[int, ...]) -> Image.Image:
     return bg.resize((VIEW_SIZE, VIEW_SIZE), Image.LANCZOS)
 
 
-def split_sheet(raw: Path, cutout: Path, out_dir: Path) -> dict[str, dict[str, Path]] | None:
+def split_sheet(raw: Path, cutout: Path, out_dir: Path, widen: float = 1.0) -> dict[str, dict[str, Path]] | None:
     """The sheet cut into one picture per view, in SHEET_ORDER: {view: {raw, cutout, white}}, each padded to a square
-    of VIEW_SIZE like a standard view. None when the sheet does not hold exactly five figures."""
+    of VIEW_SIZE like a standard view. widen stretches each figure sideways by that factor first (WP-53: the sheet
+    LoRA draws figures too narrow). None when the sheet does not hold exactly five figures."""
     figs = sheet_figures(cutout)
     if len(figs) != len(SHEET_ORDER):
         return None
@@ -450,10 +505,14 @@ def split_sheet(raw: Path, cutout: Path, out_dir: Path) -> dict[str, dict[str, P
     out: dict[str, dict[str, Path]] = {}
     for view, (x0, x1) in zip(SHEET_ORDER, figs):
         box = (max(0, x0 - 10), 0, min(rgb.width, x1 + 10), rgb.height)
+        r_im, c_im = rgb.crop(box), rgba.crop(box)
+        if widen != 1.0:
+            w = max(1, round(r_im.width * widen))
+            r_im, c_im = r_im.resize((w, r_im.height), Image.LANCZOS), c_im.resize((w, c_im.height), Image.LANCZOS)
         r = out_dir / f"{view}_raw.png"
         c = out_dir / f"{view}.png"
-        _square(rgb.crop(box), (255, 255, 255)).save(r)
-        _square(rgba.crop(box), (0, 0, 0, 0)).save(c)
+        _square(r_im, (255, 255, 255)).save(r)
+        _square(c_im, (0, 0, 0, 0)).save(c)
         out[view] = {"raw": r, "cutout": c, "white": white_composite(c, out_dir / f"{view}_white.png")}
     return out
 
@@ -703,9 +762,10 @@ async def _draw_sheet(sc: StageContext, source: Version | None, src: Path, seed:
     raw = await sc.download_image(entry, "save", sc.dir / "sheet_raw.png")
     res = await sc.cutout(raw, "sheet", base=0.55, span=0.05)
     sc.register("sheet", raw)
-    views = await asyncio.to_thread(split_sheet, Path(raw), Path(res["cutout"]), sc.dir)
+    widen = await asyncio.to_thread(sheet_widen, cut, Path(res["cutout"]))
+    views = await asyncio.to_thread(split_sheet, Path(raw), Path(res["cutout"]), sc.dir, widen["factor"])
     figs = len(await asyncio.to_thread(sheet_figures, Path(res["cutout"])))
-    sc.set_metrics(sheet={"seed": seed, "figures": figs, "split": views is not None})
+    sc.set_metrics(sheet={"seed": seed, "figures": figs, "split": views is not None, "widen": widen})
     return views
 
 
