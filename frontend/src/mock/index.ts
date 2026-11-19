@@ -322,7 +322,10 @@ function startJob(asset: Asset, version: Version, kind: string): Job {
         version.status = 'error'
         version.error = job.error
       } else {
+        // The picture-edit records of this run (adjust) survive the fabricated metrics.
+        const editRecords = Object.fromEntries(EDIT_KNOB_IDS.filter((k) => k in version.metrics).map((k) => [k, version.metrics[k]]))
         fabricate(asset, version)
+        Object.assign(version.metrics, editRecords)
         version.status = 'done'
         job.status = 'done'
         job.progress = 1
@@ -854,7 +857,34 @@ on('POST', '/api/versions/:vid/adjust', (m, body) => {
     for (const k of ['face_fresh', 'face_detail_seed', 'face_seed', 'face_closeup_seed', 'face_closeup_seed_2']) delete params[k]
     params.face_seed = Math.floor(Math.random() * 1e9)
   }
+  // The picture-edit LoRAs of each use: at most two per use (400 like the backend's validate_params), and a record of
+  // what each use applied and what it ignored (picture_loras.edit_loras).
+  for (const knob of EDIT_KNOB_IDS) {
+    const chosen = Object.entries((params[knob] as Record<string, string> | null | undefined) ?? {}).filter(([, c]) => c !== 'off')
+    if (chosen.length > EDIT_LORA_MAX) throw new HttpError(400, `${knob}: at most ${EDIT_LORA_MAX} of your LoRAs can be used at once in one step`)
+  }
   const v = newVersion(asset, version.stage, version.id, params)
+  for (const knob of EDIT_KNOB_IDS) {
+    const choices = (params[knob] as Record<string, string> | null | undefined) ?? {}
+    if (!Object.keys(choices).length) continue
+    const applied: { id: string; label: string; strength: string; value: number }[] = []
+    const ignored: { id: string; reason: string }[] = []
+    const unknown: string[] = []
+    for (const [id, c] of Object.entries(choices)) {
+      if (c === 'off') continue
+      const entry = myAddons.find((a) => a.id === id && (a.stage as string) === 'edit')
+      if (!entry) {
+        unknown.push(id)
+        continue
+      }
+      if (!mockAddonFiles.some((f) => f.file_name === entry.file_name)) {
+        ignored.push({ id, reason: 'its file is no longer in the LoRA folder' })
+        continue
+      }
+      applied.push({ id, label: entry.label, strength: c, value: MOCK_ADDON_STRENGTHS[c as StrengthName] })
+    }
+    v.metrics = { ...v.metrics, [knob]: { applied, ignored, unknown } }
+  }
   const job = startJob(asset, v, `${version.stage}.adjust`)
   return { job: clone(job), version: clone(v) }
 })
@@ -1247,10 +1277,19 @@ const MOCK_PAINTERS = [
 ]
 const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
 const MOCK_ADDON_FOLDER = 'D:\\ComfyUI\\models\\loras\\VGAC\\mine'
-const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill }[] = [
+// The backend's warning for a LoRA made for plain Qwen-Image (user_addons.QWEN_PLAIN_WARNING).
+const QWEN_PLAIN_WARNING = 'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
+const EDIT_MODEL_ID = 'qwen_edit'
+// The two test LoRAs the mock engine lists: one for picture edits, one made for plain Qwen-Image (warning shown).
+const mockAddonFiles: { file_name: string; bytes: number; prefill: AddonPrefill & { warning?: string } }[] = [
   { file_name: 'ink_wash_style.safetensors', bytes: 170_000_000, prefill: { label: 'Ink wash style', base_models: ['zbase'], trigger: 'ink wash painting', family: 'Z-Image', painter_note: '' } },
+  { file_name: 'qwen_edit_test.safetensors', bytes: 90_000_000, prefill: { label: 'Qwen edit test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image-Edit', painter_note: '', warning: '' } },
+  { file_name: 'qwen_plain_test.safetensors', bytes: 90_000_000, prefill: { label: 'Qwen plain test', base_models: [EDIT_MODEL_ID], trigger: '', family: 'Qwen-Image', painter_note: '', warning: QWEN_PLAIN_WARNING } },
 ]
-const myAddons: AddonEntry[] = []
+const myAddons: (AddonEntry & { warning?: string })[] = []
+// The four picture-edit uses, and the backend's limit of two LoRAs at once for one use (reference.MAX_EDIT_LORAS).
+const EDIT_KNOB_IDS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
+const EDIT_LORA_MAX = 2
 
 function mockPrefill(name: string): AddonPrefill {
   const lower = name.toLowerCase()
@@ -1265,7 +1304,22 @@ function mockPrefill(name: string): AddonPrefill {
   }
 }
 
-on('GET', '/api/my-addons', () => ({ addons: myAddons, folder: MOCK_ADDON_FOLDER, folder_exists: true, strengths: MOCK_ADDON_STRENGTHS, painters: MOCK_PAINTERS }))
+on('GET', '/api/my-addons', () => ({
+  addons: myAddons,
+  folder: MOCK_ADDON_FOLDER,
+  folder_exists: true,
+  strengths: MOCK_ADDON_STRENGTHS,
+  painters: MOCK_PAINTERS,
+  edit_models: [{ id: EDIT_MODEL_ID, label: 'Picture edits (Qwen-Image-Edit)' }],
+}))
+// Mock-only stand-in for deleting a file from the LoRA folder (the app never does this itself). A LoRA on your list
+// whose file is gone is not used by the next step, and the version says so.
+on('POST', '/api/mock/lora-folder/remove', (_m, body) => {
+  const i = mockAddonFiles.findIndex((f) => f.file_name === String(body.file_name ?? ''))
+  if (i < 0) throw new HttpError(404, 'That file is not in the LoRA folder.')
+  mockAddonFiles.splice(i, 1)
+  return { removed: String(body.file_name) }
+})
 on('GET', '/api/my-addons/unregistered', (): UnregisteredAddon[] =>
   mockAddonFiles.filter((f) => !myAddons.some((a) => a.file_name === f.file_name)).map((f) => ({ ...f })),
 )
@@ -1290,10 +1344,13 @@ on('POST', '/api/my-addons', (_m, body) => {
   if (!label) throw new HttpError(400, 'Give the LoRA a name.')
   const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
   if (!models.length) throw new HttpError(400, 'Choose at least one model the LoRA was made for.')
+  // Picture edits and the painters are never chosen together (backend user_addons.register).
+  const edit = models.includes(EDIT_MODEL_ID)
+  if (edit && models.length > 1) throw new HttpError(400, 'A LoRA is either for picture edits or for the painters, not both. Add it twice to use it both ways.')
   const strength = (['subtle', 'normal', 'strong'].includes(String(body.default_strength)) ? body.default_strength : 'normal') as StrengthName
   let id = 'mine_' + (label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'addon')
   for (let i = 2; myAddons.some((a) => a.id === id); i++) id = id.replace(/_\d+$/, '') + '_' + i
-  const entry: AddonEntry = {
+  const entry: AddonEntry & { warning?: string } = {
     id,
     label,
     help: {
@@ -1301,7 +1358,7 @@ on('POST', '/api/my-addons', (_m, body) => {
       why: 'You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.',
       technical: `LoRA VGAC/mine/${fileName}, model only, for ${models.join(', ')}`,
     },
-    stage: 'concept',
+    stage: (edit ? 'edit' : 'concept') as unknown as AddonEntry['stage'], // 'edit': picture-edit LoRAs (backend _normalise)
     base_models: models,
     strengths: { ...MOCK_ADDON_STRENGTHS },
     default_strength: strength,
@@ -1312,6 +1369,8 @@ on('POST', '/api/my-addons', (_m, body) => {
     mine: true,
     file_name: fileName,
     added_at: nowIso(),
+    // The warning is for a LoRA made for plain Qwen-Image that is used for picture edits (backend _normalise).
+    warning: edit ? file.prefill.warning ?? '' : '',
   }
   myAddons.push(entry)
   return entry

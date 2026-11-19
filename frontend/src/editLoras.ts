@@ -17,6 +17,9 @@ export const EDIT_KNOB_LABELS: Record<EditKnob, string> = {
 
 export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
 
+// A picture-edit step takes at most this many of your LoRAs at once (reference.MAX_EDIT_LORAS on the backend).
+export const EDIT_LORA_LIMIT = 2
+
 // The schema's knob type for these (api.ts AdjustParam does not list it yet, so the check is by text).
 export function isEditKnob(type: string): boolean {
   return type === 'edit_addons'
@@ -29,11 +32,25 @@ export type EditLora = { id: string; label: string; stage?: string; warning?: st
 export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 
 // What picture_loras.edit_loras records per use, in the version's metrics.
-type UseRecord = { applied?: { id: string; label?: string }[]; ignored?: { id?: string; reason?: string }[]; unknown?: unknown[] }
+type UseRecord = { applied?: { id: string; label?: string; strength?: string }[]; ignored?: { id?: string; reason?: string }[]; unknown?: unknown[] }
 
 // Your LoRAs for picture edits from the listing (the stage is set by the backend: "edit").
 export function editLoras(list: { addons: unknown[] } | null | undefined): EditLora[] {
   return (list?.addons ?? []).map((a) => a as EditLora).filter((a) => a.stage === 'edit')
+}
+
+// Plain sentences for the picture-edit LoRAs a version used, per use: "Side views: Ink style (Normal)." Empty when none.
+export function editLoraApplied(v: Version | null | undefined): string[] {
+  if (!v) return []
+  const out: string[] = []
+  for (const k of EDIT_KNOBS) {
+    const rec = v.metrics?.[k] as UseRecord | undefined
+    const applied = rec && Array.isArray(rec.applied) ? rec.applied : []
+    if (!applied.length) continue
+    const names = applied.map((a) => `${a.label ?? 'your LoRA'} (${a.strength ?? ''})`)
+    out.push(`${EDIT_KNOB_LABELS[k]}: ${names.join(', ')}.`)
+  }
+  return out
 }
 
 // Plain sentences for the LoRAs a version could not use, per use: a chosen LoRA the ComfyUI folder no longer has
@@ -50,6 +67,11 @@ export function editLoraNotes(v: Version | null | undefined): string[] {
     if (unknown.length) out.push(`${EDIT_KNOB_LABELS[k]}: a LoRA you chose is not on your list any more, so it was not used.`)
   }
   return out
+}
+
+// True for one of your LoRAs that is for picture edits (its stage from the listing is "edit").
+export function isEditLora(x: unknown): boolean {
+  return (x as { stage?: unknown } | null | undefined)?.stage === 'edit'
 }
 
 // A LoRA entry's warning, when the backend gives one (a LoRA made for plain Qwen-Image).

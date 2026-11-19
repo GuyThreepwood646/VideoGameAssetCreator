@@ -364,3 +364,31 @@ async def test_adjust_with_a_changed_view_choice_redraws_every_view(mine_setting
     sc.parent = None  # no kept views: adjust draws the views it lists, all of them
     await t.adjust(sc, {"views": ["front", "left", "back", "right", "quarter"], "view_addons": {"mine_x": "strong"}})
     assert drawn["views"] == ["front", "left", "back", "right", "quarter"] and not drawn["keep"]
+
+
+@arun
+async def test_add_views_redraws_a_kept_view_drawn_with_other_loras_but_keeps_a_supplied_one(mine_settings, tmp_path,
+                                                                                              monkeypatch):
+    """The add-views call site: a kept view whose record differs from the choice now in force moves from keep into the
+    views drawn; a supplied picture stays kept (it is the person's own and is never redrawn)."""
+    from vgac import library
+    from vgac.stages import turnaround as t
+
+    pid = own_lora(mine_settings, "view.safetensors", "View look")["id"]
+    drawn: dict[str, Any] = {}
+
+    async def spy(sc_, views, params, source, keep=None, **kw):
+        drawn.update(views=list(views), keep=dict(keep or {}))
+
+    monkeypatch.setattr(t, "_run_views", spy)
+    monkeypatch.setattr(t, "_copy_bald", lambda sc, parent: None)
+    monkeypatch.setattr(library, "version_file", lambda v, key, settings: None)
+    parent = SimpleNamespace(id="par00001", stage="turnaround", files={}, params={"views": ["front", "left", "right"]},
+                             metrics={"views": {"front": {"loras": []}, "left": {"supplied": True, "loras": []},
+                                                "right": {"loras": []}}})
+    sc = FakeSC(tmp_path, {"A": FakeClient([])})
+    sc.settings = SimpleNamespace()
+    # no targets of its own (every wanted view is there): only the stale rule can send a view to _run_views
+    await t._add_views(sc, parent, None, {"add_views": [], "view_addons": {pid: "normal"}})
+    assert drawn["views"] == ["front", "right"]  # both drawn with no LoRA before: redrawn with the choice now in force
+    assert set(drawn["keep"]) == {"left"}  # the supplied picture stays kept
