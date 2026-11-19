@@ -50,7 +50,8 @@ def draws(stubbed, monkeypatch):
     calls, glb, maps = stubbed
     state = {"log": [], "now": 0, "peak": 0, "lost": set(), "stop_on": None}
 
-    async def redraw(sc, instance, crop, seed, dest, prompt=fd.REDRAW_PROMPT, key="face_redraw", message="", reference=None, margin=1.0):
+    async def redraw(sc, instance, crop, seed, dest, prompt=fd.REDRAW_PROMPT, key="face_redraw", message="", reference=None, margin=1.0,
+                      loras=None):
         state["log"].append((key, seed, instance))
         state["now"] += 1
         state["peak"] = max(state["peak"], state["now"])

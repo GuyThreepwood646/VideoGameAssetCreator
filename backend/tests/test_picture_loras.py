@@ -159,6 +159,10 @@ async def test_no_choice_makes_no_engine_call_and_records_nothing_applied(mine_s
     sc = FakeSC(tmp_path, {"A": client})
     assert await edit_loras(sc, "view_addons", {}) == []
     assert client.asked == 0 and sc.jobs == []
+    assert "view_addons_applied" not in sc.version.params  # no record written when nothing is chosen (today's params)
+    # an earlier run's record is cleared, so it never reads as this run's
+    sc.version.params["view_addons_applied"] = {"mine_x": "normal"}
+    assert await edit_loras(sc, "view_addons", {}) == []
     assert sc.version.params["view_addons_applied"] == {}
 
 

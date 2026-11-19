@@ -97,7 +97,9 @@ async def edit_loras(sc: Any, param: str, params: dict[str, Any], card: str | No
     the host, but its close-up is drawn on a card); the check asks that card, never the host."""
     choices = params.get(param) or None
     if not choices:
-        sc.set_params(**{f"{param}_applied": {}})  # a record from an earlier run must not read as this one's
+        # a record from an earlier run must not read as this one's; nothing is written when there is none
+        if f"{param}_applied" in (getattr(getattr(sc, "version", None), "params", None) or {}):
+            sc.set_params(**{f"{param}_applied": {}})
         return []
     active = [aid for aid, c in choices.items() if str(c).lower() != "off"]
     if len(active) > reference.MAX_EDIT_LORAS:
