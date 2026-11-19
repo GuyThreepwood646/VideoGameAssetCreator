@@ -51,6 +51,8 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const look = versionLook(version)
   // A change described at this step edits the picture first; the model is built from the edited picture.
   const editedPicture = version.stage === 'mesh' && version.params?.picture_edit ? libraryUrl(version.files.edited_picture ?? version.files.edited_cutout) : null
+  // The model drawn grey with the texture off (stages/mesh.py measure_geometry): a texture can hide torn or shattered surfaces.
+  const greyViews = version.stage === 'mesh' ? libraryUrl(version.files.grey_sheet) : null
   return (
     <div className="mesh-view">
       {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
@@ -90,6 +92,15 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}
           </div>
         </div>
+        {greyViews && (
+          <div>
+            <div className="field-label">The shape without the texture</div>
+            <a href={greyViews} target="_blank" rel="noreferrer" className="tiling-thumb" title="Four views of the model in plain grey">
+              <img src={greyViews} alt="Four views of the model in plain grey with the texture off" />
+            </a>
+            <div className="small muted">A texture can hide a torn or broken surface, so look here for holes, shards and loose pieces.</div>
+          </div>
+        )}
         {editedPicture && (
           <div>
             <div className="field-label">

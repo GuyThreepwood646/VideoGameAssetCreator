@@ -95,6 +95,10 @@ def _facing_stop_reason(c: dict[str, Any]) -> str:
                                      limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit)
 
 
+MODEL_DAMAGE_STOP_REASON = (
+    "The 3D model looks damaged, like torn paper: it has folded edges, open edges or loose pieces beyond what this kind of "
+    "asset normally has. Look at the grey views under the model in step 3 (the texture is off there, so it cannot hide "
+    "anything). If it is torn, build the 3D model again; or press Resume to carry on as it is.")
 FACE_HELD_STOP_REASON = (
     "The face was left as it was, not painted from the picture, because the picture could not be lined up with the "
     "model's face well enough (fit {value} of 1, needs {limit}). The character may be left with a blurry or less "
@@ -127,6 +131,8 @@ def _pose_stop_reason(c: dict[str, Any]) -> str:
 # Entry: stage, check name, a test of the failed check, and the sentence (a format string over value and limit, or a
 # function of the check). The step 1 pose check asks once per picture; see ASK_ON_EXISTING.
 STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
+    # step 3 geometry (vgac/meshgeom.py): off for every route until the limits are calibrated on bad examples (BLOCK_ROUTES empty)
+    ("mesh", "model_whole", lambda c: (c.get("vars") or {}).get("stop") is True, MODEL_DAMAGE_STOP_REASON),
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
     ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, _facing_stop_reason),
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
