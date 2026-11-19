@@ -346,6 +346,31 @@ def body_tris(o):
     return sum(1 for t in o.data.loop_triangles if o.data.polygons[t.polygon_index].material_index == 0)
 
 
+def decimate_lod(lod, ratio):
+    """Collapse decimation to `ratio` of the triangles. The welded mesh of a building, a prop or a plant has edges that
+    three or more faces share (a wall meeting a roof along an edge, open shells), and the collapse stops almost at
+    once on them, so the LOD keeps its full count. Those edges are split first (the faces keep their places), the
+    decimation runs on the now manifold mesh, and the vertices that split apart are welded again. A manifold mesh (every
+    character) has no such edge: nothing is split and nothing is welded, so its LODs come out as before."""
+    bm = bmesh.new()
+    bm.from_mesh(lod.data)
+    bad = [e for e in bm.edges if len(e.link_faces) > 2]
+    if bad:
+        bmesh.ops.split_edges(bm, edges=bad)
+        bm.to_mesh(lod.data)
+    bm.free()
+    bpy.context.view_layer.objects.active = lod
+    mod = lod.modifiers.new("dec", "DECIMATE")
+    mod.ratio = ratio
+    bpy.ops.object.modifier_apply(modifier="dec")
+    if bad:
+        bm = bmesh.new()
+        bm.from_mesh(lod.data)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=0.00001)
+        bm.to_mesh(lod.data)
+        bm.free()
+
+
 # LODs by decimation (keeps UVs and vertex groups).
 lod_objs = [mesh]
 for i, ratio in enumerate(lods, start=1):
@@ -359,9 +384,7 @@ for i, ratio in enumerate(lods, start=1):
     if library_hair and hair_kind == "cards":
         decimate_body_keep_cards(lod, ratio, drop_cards=i >= 2)
     else:
-        mod = lod.modifiers.new("dec", "DECIMATE")
-        mod.ratio = ratio
-        bpy.ops.object.modifier_apply(modifier="dec")
+        decimate_lod(lod, ratio)
     lod.parent = mesh.parent
     report["lods"][f"LOD{i}"] = tri_count(lod)
     lod_objs.append(lod)
