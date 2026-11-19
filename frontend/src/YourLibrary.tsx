@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, hairApi, movesApi, type AddonEntry, type MyHairStyle, type MyMoveFile } from './api'
 import { useConfirm } from './components/Confirm'
+import { addonRemoveWords } from './help'
 import { ErrorText } from './components/ui'
 import { isEditLora, warningOf } from './editLoras'
 import { AddMyAddon, ChangeMyAddon } from './pipeline/AddMyAddon'
@@ -96,11 +97,10 @@ export default function YourLibrary() {
               ) : (
                 <li key={a.id}>
                   <strong>{a.label}</strong> <span className="muted">{from(a.source, a.licence)}</span>
-                  {isEditLora(a) && <div className="muted small">Used for picture edits (Qwen-Image-Edit).</div>}
-                  {warningOf(a) && <div className="addon-note small">{warningOf(a)}</div>}
+                  {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
                   {itemButtons('addon', a.id, a.label, () =>
                     void remove(
-                      { title: `Remove "${a.label}"?`, body: 'It is taken off your list. The file stays in the LoRA folder, so you can set it up again later. Characters already made are not changed.', label: 'Remove add-on' },
+                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
                       () => api.removeMyAddon(a.id),
                     ),
                   )}
@@ -127,9 +127,10 @@ export default function YourLibrary() {
                   <strong>{a.label}</strong> <span className="muted">{from(a.source, a.licence)}</span>
                   <div className="muted small">Used for picture edits (Qwen-Image-Edit).</div>
                   {warningOf(a) && <div className="addon-note small">{warningOf(a)}</div>}
+                  {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
                   {itemButtons('addon', a.id, a.label, () =>
                     void remove(
-                      { title: `Remove "${a.label}"?`, body: 'It is taken off your list. The file stays in the LoRA folder, so you can set it up again later. Characters already made are not changed.', label: 'Remove add-on' },
+                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
                       () => api.removeMyAddon(a.id),
                     ),
                   )}

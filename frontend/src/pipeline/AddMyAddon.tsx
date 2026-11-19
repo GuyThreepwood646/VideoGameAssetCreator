@@ -1,16 +1,19 @@
 // Your own add-ons (backend user_addons.py). Two ways to bring a file in, both ending in the same short form:
-//   1. "Choose a file": the .safetensors file is sent to this app's own backend on this computer, which keeps it in
-//      the app's add-on folder (VGAC/mine/ inside ComfyUI's loras folder).
+//   1. "Choose a file". In the desktop app the native picker gives the real path and the backend (addon_links.py) uses the file where it
+//      is (already in a folder ComfyUI reads), links it (same drive) or, only after "Copy", copies it. In a browser there is no real path:
+//      the .safetensors file is sent to this app's own backend on this computer, which keeps a copy in the app's add-on folder
+//      (VGAC/mine/ inside ComfyUI's loras folder).
 //   2. "It is already on this computer": open that folder, put the file in it, then "Look again".
 // The form is prefilled from the file's header; the painter is left empty when the file does not say.
 // This sits inside the Fine-tune <form>, so it uses no <form> of its own, every button is type="button", and Enter in
 // its text boxes never submits Fine-tune.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { api, STYLE_MODELS, type AddonEntry, type AddonPrefill, type MadeFor, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
+import { api, STYLE_MODELS, type AddonEntry, type AddonPlaced, type AddonPrefill, type MadeFor, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
 import { fmtBytes } from '../components/ImageDrop'
+import { hostPick, pickLoraPath } from '../desktop'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
-import { modelLabel, STRENGTH_LABELS } from '../help'
+import { ADDON_BROWSER_COPY, ADDON_CHOOSE_NOTE, ADDON_CHOOSE_TEXT, modelLabel, STRENGTH_LABELS } from '../help'
 import { EDIT_MODEL, EDIT_MODEL_LABEL, MADE_FOR_EDIT, MADE_FOR_PLAIN, madeForOf, PLAIN_WARNING } from '../editLoras'
 
 const MAX_ADDON_BYTES = 4 * 1024 * 1024 * 1024
@@ -67,7 +70,8 @@ const noEnter = (e: KeyboardEvent) => {
 
 // --- Adding one ------------------------------------------------------------------------------------------------
 
-type Picked = { fileName: string; bytes: number; prefill: AddonPrefill | null }
+// `how` is the plain sentence of what was done with the file (used where it is, linked, copied); `inPlace` is true for a file used where it is.
+type Picked = { fileName: string; bytes: number; prefill: AddonPrefill | null; inPlace?: boolean; how?: string }
 
 export function AddMyAddon({ painter, onAdded, onClose }: { painter: string; onAdded: (a: AddonEntry) => void; onClose: () => void }) {
   const mine = useMyAddons(true)
@@ -83,8 +87,7 @@ export function AddMyAddon({ painter, onAdded, onClose }: { painter: string; onA
         </button>
       </div>
       <p className="muted small">
-        A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You do not type a path: choose the file, and the app keeps a copy in its own LoRA folder and adds
-        it to the picture for you.
+        {ADDON_CHOOSE_TEXT[hostPick() ? 'desktop' : 'browser']}
       </p>
       <div className="addon-add-ways">
         <button type="button" className={way === 'file' ? 'primary' : ''} onClick={() => setWay('file')}>
@@ -94,7 +97,7 @@ export function AddMyAddon({ painter, onAdded, onClose }: { painter: string; onA
           It is already on this computer
         </button>
       </div>
-      {way === 'file' && <ChooseFile onPicked={setPicked} />}
+      {way === 'file' && (hostPick() ? <ChoosePath onPicked={setPicked} /> : <ChooseFile onPicked={setPicked} />)}
       {way === 'folder' && <FromFolder folder={mine?.folder ?? ''} onPicked={setPicked} />}
     </div>
   )
@@ -105,6 +108,56 @@ export function ChangeMyAddon({ entry, onSaved, onCancel }: { entry: AddonEntry;
   const mine = useMyAddons(true)
   return (
     <AddonForm editing={entry} picked={{ fileName: entry.file_name ?? '', bytes: 0, prefill: null }} painters={painterChoices(mine)} currentPainter="" onSaved={onSaved} onCancel={onCancel} />
+  )
+}
+
+// The desktop app: the native picker gives the real path. The app uses the file where it is, links it, or offers a labelled copy.
+function ChoosePath({ onPicked }: { onPicked: (p: Picked) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const [offer, setOffer] = useState<{ path: string; placed: AddonPlaced } | null>(null)
+  const take = (r: AddonPlaced) => onPicked({ fileName: r.file_name, bytes: r.bytes, prefill: r.prefill, inPlace: r.in_place, how: r.message })
+  const place = async (path: string, makeCopy: boolean) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await api.placeAddon(path, makeCopy)
+      if (r.route === 'copy_needed') setOffer({ path, placed: r })
+      else take(r)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const choose = async () => {
+    setError(null)
+    setOffer(null)
+    const path = await pickLoraPath()
+    if (path) await place(path, false)
+  }
+  return (
+    <div className="addon-add-step">
+      <button type="button" disabled={busy} onClick={() => void choose()}>
+        {busy ? 'Working...' : 'Choose a LoRA file'}
+      </button>
+      <div className="muted small">{ADDON_CHOOSE_NOTE}</div>
+      {offer && (
+        <div className="addon-note small" role="alert">
+          <div>{offer.placed.message}</div>
+          {offer.placed.can_copy === false && <div className="error small">There is not enough room in that folder for the copy.</div>}
+          <div className="row-gap">
+            <button type="button" className="primary" disabled={busy || offer.placed.can_copy === false} onClick={() => void place(offer.path, true)}>
+              {busy ? 'Copying...' : `Copy ${fmtBytes(offer.placed.bytes)}`}
+            </button>
+            <button type="button" disabled={busy} onClick={() => setOffer(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      <ErrorText error={error} />
+    </div>
   )
 }
 
@@ -126,7 +179,7 @@ function ChooseFile({ onPicked }: { onPicked: (p: Picked) => void }) {
     setProgress(0)
     try {
       const up = await api.uploadAddon(file, setProgress)
-      onPicked({ fileName: up.file_name, bytes: up.bytes, prefill: up.prefill })
+      onPicked({ fileName: up.file_name, bytes: up.bytes, prefill: up.prefill, how: ADDON_BROWSER_COPY })
     } catch (e) {
       setError(e)
     } finally {
@@ -139,10 +192,10 @@ function ChooseFile({ onPicked }: { onPicked: (p: Picked) => void }) {
       <input ref={input} type="file" accept=".safetensors" disabled={progress !== null} aria-label="Choose a LoRA file" onChange={(e) => choose(e.target.files?.[0])} />
       {progress !== null ? (
         <div className="muted small" role="status">
-          Copying the file into the app's LoRA folder... {Math.round(progress * 100)}%
+          Making a copy in the app's LoRA folder... {Math.round(progress * 100)}%
         </div>
       ) : (
-        <div className="muted small">The file is copied on this computer only. Nothing is sent to the internet.</div>
+        <div className="muted small">{ADDON_BROWSER_COPY} Nothing is sent to the internet.</div>
       )}
       <ErrorText error={error} />
     </div>
@@ -258,30 +311,12 @@ function AddonForm({
     setSaving(true)
     setError(null)
     try {
-      const body = {
-        file_name: picked.fileName,
-        label: label.trim(),
-        base_models: models,
-        trigger: trigger.trim(),
-        default_strength: strength,
-        source: source.trim(),
-        made_for: forEdits ? madeFor : '',
-      }
-      let entry: AddonEntry
-      if (editing) {
-        // The app has no "edit" call: take the old entry off the list (the file stays) and set it up again with the new values.
-        // If that fails, the old entry is put back so nothing is lost.
-        await api.removeMyAddon(editing.id)
-        try {
-          entry = await api.addMyAddon(body)
-        } catch (e) {
-          const restore = { file_name: picked.fileName, label: editing.label, base_models: editing.base_models, trigger: editing.trigger, default_strength: editing.default_strength, source: editing.source, made_for: madeForOf(editing) }
-          await api.addMyAddon(restore).catch(() => undefined)
-          throw e
-        }
-      } else {
-        entry = await api.addMyAddon(body)
-      }
+      // The picture-edit answer (made_for) goes with the change too, so a LoRA moved onto picture edits is asked the question.
+      const change = { label: label.trim(), base_models: models, trigger: trigger.trim(), default_strength: strength, source: source.trim(), made_for: forEdits ? madeFor : '' }
+      // Changing keeps the file as it is (removing and adding again would take away a link or copy the app made).
+      const entry = editing
+        ? await api.updateMyAddon(editing.id, change)
+        : await api.addMyAddon({ ...change, file_name: picked.fileName, in_place: picked.inPlace })
       await reloadMyAddons().catch(() => undefined)
       onSaved(entry)
     } catch (e) {
@@ -301,6 +336,7 @@ function AddonForm({
         <strong>{editing ? 'Change your LoRA' : 'Set up your LoRA'}</strong>
         <span className="muted small">{editing ? picked.fileName : `${picked.fileName} (${fmtBytes(picked.bytes)})`}</span>
       </div>
+      {(editing?.placement?.note || picked.how) && <div className="addon-note small">{editing?.placement?.note || picked.how}</div>}
 
       <label className="field">
         <span className="field-label">Name</span>
@@ -397,7 +433,7 @@ function AddonForm({
         <button type="button" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        {!saving && !editing && <span className="muted small">If you cancel, the file stays in the LoRA folder; Look again finds it.</span>}
+        {!saving && !editing && !picked.inPlace && <span className="muted small">If you cancel, the file stays in the LoRA folder; Look again finds it.</span>}
       </div>
     </div>
   )
