@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, own_images, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, own_images, people, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=lifespan)
 app.include_router(own_images.router)  # start from your own images (own_images.py)
+app.include_router(people.router)  # the people in a feature photo, for the suggested box (people.py)
 app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)

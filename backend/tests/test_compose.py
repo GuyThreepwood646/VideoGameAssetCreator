@@ -66,7 +66,8 @@ def test_feature_photos_make_one_first_picture_the_turnaround_builds_on(client, 
     v = client.get(f"/api/versions/{started['version']['id']}").json()
     assert v["status"] == "done" and v["params"]["source"] == "compose"
     assert {"compose_1", "compose_4", "compose_sheet", "image", "cutout"} <= set(v["files"])
-    assert v["metrics"]["compose"] == {"pictures": 4, "inputs": [["face"], ["body"], ["outfit", "other"]], "sheet": True}
+    assert v["metrics"]["compose"] == {"pictures": 4, "inputs": [["face"], ["body"], ["outfit", "other"]], "sheet": True,
+                                       "crops": [None, None, None, None], "whole_with_others": [False, False, False, False]}
     assert "green cloak" in v["params"]["prompt"] and "a tall ranger" in v["params"]["prompt"]
     drawn = [c for c in engine["comfy"] if c["message"].startswith("combining")]
     assert len(drawn) == 1 and "image3" in drawn[0]["graph"]["pos"]["inputs"]

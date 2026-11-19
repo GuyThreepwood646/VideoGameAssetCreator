@@ -30,7 +30,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from . import library, pipeline, uploads
+from . import library, people, pipeline, uploads
 from .config import get_settings
 from .db import Asset, Version, job_to_dict, version_to_dict
 from .graphs.qwen_edit import COMPOSE_MAX, compose_graph
@@ -54,10 +54,23 @@ SHEET_BG = (235, 235, 235)
 NO_CATEGORY = ("material", "environment", "foliage")
 
 
+class CropIn(BaseModel):
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    w: int = Field(gt=0)
+    h: int = Field(gt=0)
+
+
 class FeatureIn(BaseModel):
     role: str = "other"
     image: str = image_field(min_length=1)
     note: str | None = Field(default=None, max_length=200)
+    # The box round the person the form suggested or the person set (people.py), in the picture's own pixels. The picture
+    # is cut to it before anything is drawn. Absent: the whole photo.
+    crop: CropIn | None = None
+    # How many people the form found in the picture (0 when none or not looked for). With the whole photo and more than
+    # one, the version records that the other people may be on the character.
+    people_found: int = Field(default=0, ge=0, le=people.MAX_PEOPLE)
 
 
 def ordered(roles: list[dict[str, Any]]) -> list[int]:
@@ -155,7 +168,8 @@ async def run(sc, params: dict[str, Any]) -> None:
     sc.set_metrics(seed=seed, model="qwen_edit", source="compose", elapsed_seconds=entry.get("elapsed_seconds"),
                    prompt_id=entry.get("prompt_id"), prompt_final=prompt, models=list(sc.models_used.values()),
                    compose={"pictures": len(roles), "inputs": [[roles[i]["role"] for i in g] for g in plan],
-                            "sheet": any(len(g) > 1 for g in plan)})
+                            "sheet": any(len(g) > 1 for g in plan),
+                            "crops": [r.get("crop") for r in roles], "whole_with_others": [bool(r.get("whole_with_others")) for r in roles]})
     await concept._cutout(sc, image)
 
 
@@ -193,7 +207,18 @@ def check(category: str, features: list[FeatureIn]) -> Checked:
     for k, pic in enumerate(features, start=1):
         if pic.role not in FEATURE_ROLES:
             raise HTTPException(400, f"feature photo {k}: role must be one of {list(FEATURE_ROLES)}")
-        out.append(({"role": pic.role, "note": (pic.note or "").strip() or None}, decode_or_400(pic.image, f"{pic.role} picture")))
+        img = decode_or_400(pic.image, f"{pic.role} picture")
+        rec: dict[str, Any] = {"role": pic.role, "note": (pic.note or "").strip() or None, "cropped": False, "crop": None,
+                               "people_found": pic.people_found, "whole_with_others": False}
+        if pic.crop is not None:
+            box = people.clamp_box(pic.crop.model_dump(), *img.size)
+            if box is None:
+                raise HTTPException(400, f"feature photo {k}: the box is outside the picture or too small")
+            img = img.crop((box["x"], box["y"], box["x"] + box["w"], box["y"] + box["h"]))
+            rec.update(cropped=True, crop=[box["x"], box["y"], box["w"], box["h"]])
+        elif pic.people_found > 1:
+            rec["whole_with_others"] = True
+        out.append((rec, img))
     return out
 
 

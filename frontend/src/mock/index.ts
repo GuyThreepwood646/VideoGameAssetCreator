@@ -520,6 +520,30 @@ on('GET', '/api/projects/:pid/assets', (m) => {
   findProject(m.groups!.pid)
   return store.assets.filter((a) => a.project_id === m.groups!.pid)
 })
+// The people in a feature photo (backend vgac/people.py), made up for the mock. The picture's width (read from its PNG
+// header) picks the answer, so each state can be shown: 600 px wide = two people, 300 = none, 200 = the detector fails,
+// anything else = one person in the middle.
+function pngWidth(dataUrl: string): number {
+  const bin = atob((dataUrl.split(',')[1] ?? '').slice(0, 40))
+  const u32 = (i: number) => ((bin.charCodeAt(i) << 24) | (bin.charCodeAt(i + 1) << 16) | (bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3)) >>> 0
+  return u32(16)
+}
+on('POST', '/api/people', (_m, body) => {
+  const image = String(body.image ?? '')
+  const width = pngWidth(image)
+  const height = Math.round(width * 1.25)
+  if (width === 200) throw new HttpError(500, 'the person finder failed')
+  if (width === 300) return { status: 'none', picture: { width, height }, people: [], main: null, suggested: null }
+  const boxes = width === 600
+    ? [{ x: 40, y: 80, w: 200, h: 500 }, { x: 380, y: 120, w: 180, h: 420 }]
+    : [{ x: Math.round(width * 0.2), y: Math.round(height * 0.1), w: Math.round(width * 0.6), h: Math.round(height * 0.8) }]
+  const pad = (b: { x: number; y: number; w: number; h: number }) => {
+    const x = Math.max(0, Math.round(b.x - b.w * 0.1)); const y = Math.max(0, Math.round(b.y - b.h * 0.06))
+    return { x, y, w: Math.min(width - x, Math.round(b.w * 1.2)), h: Math.min(height - y, Math.round(b.h * 1.12)) }
+  }
+  const main = 0 // the first box is the larger and more central one in both mock pictures
+  return { status: 'ok', picture: { width, height }, people: boxes.map((b) => ({ box: b, score: 0.9 })), main, suggested: pad(boxes[main]) }
+})
 on('POST', '/api/projects/:pid/assets', (m, body) => {
   const p = findProject(m.groups!.pid)
   const name = String(body.name ?? '').trim()

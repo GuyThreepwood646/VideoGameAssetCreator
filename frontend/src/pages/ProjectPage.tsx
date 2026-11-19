@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
-import { usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
+import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
 import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
@@ -371,7 +371,16 @@ function CreateAssetForm({ project }: { project: Project }) {
         parts,
         ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
-        ...(features.length && !fromModel ? { features: features.map((f) => ({ role: f.role, image: f.picture!.dataUrl, ...(f.note.trim() ? { note: f.note.trim() } : {}) })) } : {}),
+        // A box round the main person cuts the photo first; the people found are recorded with it (no box = the whole photo).
+        ...(features.length && !fromModel
+          ? {
+              features: features.map((f) => {
+                const crop = featureCrop(f, category)
+                const found = foundPeople(f).length
+                return { role: f.role, image: f.picture!.dataUrl, ...(f.note.trim() ? { note: f.note.trim() } : {}), ...(crop ? { crop } : {}), ...(found ? { people_found: found } : {}) }
+              }),
+            }
+          : {}),
         ...(found?.items.length ? { items: itemChoice } : {}),
         ...(hairOffered && hairChoice === 'library' ? { hair: 'library' as const } : {}),
         ...(category === 'humanoid' && !faceMatters ? { face_matters: false } : {}),
