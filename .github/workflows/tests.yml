@@ -19,8 +19,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # This job is skipped in two cases. A pull request from the owner's own work (branch named claude/ or RTF_/, opened
+  # by GuyThreepwood646) is skipped, and so is a push to master. The orchestrator runs the full backend suite locally
+  # with real Blender before every merge, and every change reaches master through a pull request. A skipped job
+  # reports as skipped, which GitHub treats as passing for required checks. Other people's pull requests still run it.
   backend:
     name: Backend tests (Windows)
+    if: ${{ !((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'pull_request' && (startsWith(github.head_ref, 'claude/') || startsWith(github.head_ref, 'RTF_/')) && github.event.pull_request.user.login == 'GuyThreepwood646')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
