@@ -11,6 +11,7 @@ import { fmtBytes } from '../components/ImageDrop'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
 import { modelLabel, STRENGTH_LABELS } from '../help'
+import { EDIT_MODEL, EDIT_MODEL_LABEL, warningOf } from '../editLoras'
 
 const MAX_ADDON_BYTES = 4 * 1024 * 1024 * 1024
 const STEPS: StrengthName[] = ['subtle', 'normal', 'strong']
@@ -268,7 +269,11 @@ function AddonForm({
       setSaving(false)
     }
   }
-  const toggle = (id: string, on: boolean) => setModels((cur) => (on ? [...cur, id] : cur.filter((m) => m !== id)))
+  // A painter and picture edits are never chosen together: choosing one clears the other.
+  const toggle = (id: string, on: boolean) => setModels((cur) => (on ? [...cur.filter((m) => m !== EDIT_MODEL), id] : cur.filter((m) => m !== id)))
+  const forEdits = models.includes(EDIT_MODEL)
+  const toggleEdits = (on: boolean) => setModels(on ? [EDIT_MODEL] : [])
+  const warning = warningOf(pre) || warningOf(editing)
   return (
     <div className="addon-add addon-form">
       <div className="row-between">
@@ -297,6 +302,18 @@ function AddonForm({
             </label>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset className="field addon-edits">
+        <legend className="field-label">Or use it for picture edits</legend>
+        <span className="field-hint">The picture-edit model of this app (Refine, side views, pose redraw, face close-up). Your LoRA is only offered there, never in the concept painters.</span>
+        <div className="check-row">
+          <label className="check-item">
+            <input type="checkbox" checked={forEdits} onChange={(e) => toggleEdits(e.target.checked)} />
+            {EDIT_MODEL_LABEL}
+          </label>
+        </div>
+        {forEdits && warning && <div className="addon-note small">{warning}</div>}
       </fieldset>
 
       <label className="field">

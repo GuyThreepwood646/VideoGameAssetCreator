@@ -7,8 +7,10 @@ import { Disclosure, Field } from '../components/ui'
 import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobShown, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
+import { editLoras, EDIT_KNOB_LABELS, editLoraNotes, isEditKnob, type EditChoice, type EditKnob } from '../editLoras'
 import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
 import { useMyAddons, withMyAddons } from './AddMyAddon'
+import { EditLoras } from './EditLoras'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
 
@@ -74,7 +76,7 @@ export function FineTune({
       else if (Array.isArray(cur)) out[name] = [...new Set(cur.map((c) => (c === 'turn_left' || c === 'turn_right' ? 'turn' : String(c))))]
     }
     // Add-ons: only the choices this version made ({id: off | subtle | normal | strong}); the rest follow the recipe.
-    for (const p of visible) if (p.type === 'addons') out[p.name] = addonChoices(target.params?.[p.name])
+    for (const p of visible) if (p.type === 'addons' || isEditKnob(p.type)) out[p.name] = addonChoices(target.params?.[p.name])
     // A character gets Three-quarter (other side) whenever Three-quarter is drawn (turnaround with_second_quarter), so
     // the ticks show it unless this version left it out (second_quarter false).
     if (stage === 'turnaround' && asset.category === 'humanoid' && Array.isArray(out.views)) {
@@ -112,7 +114,14 @@ export function FineTune({
   const addonsParam = visible.find((p) => p.type === 'addons')
   const painter = String(values.model ?? target.params?.model ?? suggestion?.model ?? recipe?.concept.model ?? '')
   // The tested add-ons from the schema plus your own from the live list (GET /api/my-addons).
-  const myAddons = useMyAddons(stage === 'concept' && !!addonsParam)
+  const editParams = visible.filter((p) => isEditKnob(p.type))
+  const myAddons = useMyAddons((stage === 'concept' && !!addonsParam) || editParams.length > 0)
+  // Your LoRAs for the picture-edit uses (picture_loras.py): one choice per use, never shared between uses.
+  const setEditChoice = (knob: string, id: string, choice: EditChoice) => {
+    const next = { ...addonChoices(values[knob]), [id]: choice }
+    if (choice === 'off') delete next[id]
+    set(knob, next)
+  }
   const rowsFor = (chosen: Record<string, AddonChoice>) => (addonsParam ? addonRows(withMyAddons(addonsParam.catalog ?? [], myAddons), recipe, painter, chosen) : [])
   const rows = rowsFor(addonChoices(values[addonsParam?.name ?? 'addons']))
   const setAddon = (id: string, choice: AddonChoice) => {
@@ -182,6 +191,11 @@ export function FineTune({
       const ids = new Set(rows.map((r) => r.entry.id))
       params[addonsParam.name] = Object.fromEntries(Object.entries(addonChoices(params[addonsParam.name])).filter(([k]) => ids.has(k)))
     }
+    // Picture-edit LoRAs: only the ones on your list are sent (a removed one is left out, never sent to the engine).
+    if (myAddons) {
+      const ids = new Set(editLoras(myAddons).map((a) => a.id))
+      for (const p of editParams) if (p.name in params) params[p.name] = Object.fromEntries(Object.entries(addonChoices(params[p.name])).filter(([k]) => ids.has(k)))
+    }
     return params
   }
   const submit = (e: FormEvent) => {
@@ -206,13 +220,27 @@ export function FineTune({
   const budget = cat?.budgets?.[asset.platform_target]?.triangles ?? suggestion?.budgets.triangles ?? plat?.triangles_character ?? 20000
 
   const renderField = (p: AdjustParam, adv: boolean) => (
-    <div key={p.name} data-knob={p.name} className={'knob' + (flash === p.name ? ' knob-flash' : '') + (p.name === 'face_yaw' || p.type === 'addons' ? ' knob-wide' : '')}>
+    <div key={p.name} data-knob={p.name} className={'knob' + (flash === p.name ? ' knob-flash' : '') + (p.name === 'face_yaw' || p.type === 'addons' || isEditKnob(p.type) ? ' knob-wide' : '')}>
       {renderControl(p, adv)}
     </div>
   )
 
   const renderControl = (p: AdjustParam, adv: boolean) => {
     if (p.type === 'addons') return <AddonsList rows={rows} disabled={disabled} onChange={setAddon} notUsed={addonsNotUsed(target, p.catalog)} painter={stage === 'concept' ? painter : undefined} />
+    if (isEditKnob(p.type)) {
+      const knob = p.name as EditKnob
+      const label = EDIT_KNOB_LABELS[knob] ?? p.label
+      return (
+        <EditLoras
+          purpose={p.label || label}
+          entries={editLoras(myAddons)}
+          choices={addonChoices(values[p.name]) as Record<string, EditChoice>}
+          disabled={disabled}
+          notes={editLoraNotes(target).filter((n) => n.startsWith(label))}
+          onChange={(id, choice) => setEditChoice(p.name, id, choice)}
+        />
+      )
+    }
     if (hasSize && p.name === 'width') {
       const w = Number(values.width ?? 1024)
       const opts = SIZE_OPTIONS.filter((o) => (p.min === undefined || o >= p.min) && (p.max === undefined || o <= p.max))
@@ -501,6 +529,7 @@ function clamp(n: number, p: AdjustParam): number {
 }
 
 function defaultFor(p: AdjustParam): unknown {
+  if (isEditKnob(p.type)) return {}
   switch (p.type) {
     case 'number':
     case 'integer':
