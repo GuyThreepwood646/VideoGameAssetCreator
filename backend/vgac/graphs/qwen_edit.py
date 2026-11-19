@@ -11,6 +11,7 @@ from typing import Any
 
 from . import BS
 from .birefnet import cutout_graph
+from .concept import lora_name, prompt_with_triggers
 
 Q = "Qwen" + BS
 
@@ -42,8 +43,30 @@ def add_references(g: dict[str, Any], names: list[str]) -> None:
                 g[enc]["inputs"][f"image{i}"] = [f"sc{i}", 0]
 
 
+def add_personal_loras(g: dict[str, Any], loras: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Chain the person's LoRAs in front of the sampler: one LoraLoaderModelOnly each, fed by whatever the sampler's
+    model input (node "ms") reads now, so they come after Lightning and after any view LoRA. `ms` is pointed at the
+    last one. The triggers go on the positive prompt only; the negative stays empty.
+
+    `loras` are reference.resolve_addons(...)["applied"] entries for the edit stage: `file` (VGAC/mine/...), `value`
+    (the strength) and `trigger`. With no LoRAs the graph is returned unchanged, node for node."""
+    chained = [a for a in loras or [] if a.get("file")]
+    if not chained:
+        return g
+    prev = list(g["ms"]["inputs"]["model"])
+    for i, a in enumerate(chained, start=1):
+        nid = f"my{i}"
+        g[nid] = {"class_type": "LoraLoaderModelOnly",
+                  "inputs": {"model": prev, "lora_name": lora_name(a["file"]), "strength_model": float(a.get("value", 1.0))}}
+        prev = [nid, 0]
+    g["ms"]["inputs"]["model"] = prev
+    g["pos"]["inputs"]["prompt"] = prompt_with_triggers(g["pos"]["inputs"]["prompt"], chained)
+    return g
+
+
 def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9,
-                zero_negative: bool = False, references: list[str] | None = None) -> dict[str, Any]:
+                zero_negative: bool = False, references: list[str] | None = None,
+                loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """The view graph. zero_negative (UNTESTED ON A CARD, docs/SPEED-AUDIT.md O7): the negative is the positive with its
     values zeroed (ConditioningZeroOut) instead of a second pass of the picture through the 7B text encoder. The sampler
     here runs at cfg 1.0, and at cfg 1.0 ComfyUI 0.45.3 never evaluates the negative: comfy/samplers.py
@@ -57,7 +80,7 @@ def angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_stren
         g["negr"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["posr", 0]}}
     if references:
         add_references(g, references)
-    return g
+    return add_personal_loras(g, loras)
 
 
 def _angle_graph(image_name: str, prompt: str, seed: int, prefix: str, lora_strength: float = 0.9) -> dict[str, Any]:
@@ -94,8 +117,10 @@ CUT_NODE = "cut_save"
 
 
 def angle_cutout_graph(image_name: str, prompt: str, seed: int, prefix: str, cutout_prefix: str,
-                       lora_strength: float = 0.9, zero_negative: bool = False, references: list[str] | None = None) -> dict[str, Any]:
-    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength, zero_negative=zero_negative, references=references)
+                       lora_strength: float = 0.9, zero_negative: bool = False, references: list[str] | None = None,
+                       loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    g = angle_graph(image_name, prompt, seed, prefix, lora_strength=lora_strength, zero_negative=zero_negative,
+                    references=references, loras=loras)
     for key, node in cutout_graph("unused.png", cutout_prefix).items():
         if key == "img":
             continue  # the picture comes from the decoder
@@ -128,25 +153,27 @@ def camera_prompt(view: str, extra: str = "") -> str:
     return (p + " " + extra.strip()) if extra and extra.strip() else p
 
 
-def sheet_graph(image_name: str, seed: int, prefix: str, strength: float = 1.0) -> dict[str, Any]:
+def sheet_graph(image_name: str, seed: int, prefix: str, strength: float = 1.0,
+                loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """All five views in one picture with the character turnaround sheet LoRA (run_sheet in turn_ab.py): the input
     is kept near its own size (0.65 MP), the output is SHEET_SIZE."""
-    g = angle_graph(image_name, SHEET_PROMPT, seed, prefix, lora_strength=strength)
+    g = angle_graph(image_name, SHEET_PROMPT, seed, prefix, lora_strength=strength, loras=loras)
     g["l2"]["inputs"]["lora_name"] = SHEET_LORA
     g["lat"]["inputs"]["width"], g["lat"]["inputs"]["height"] = SHEET_SIZE
     g["sc"]["inputs"]["megapixels"] = 0.65
     return g
 
 
-def camera_graph(image_name: str, view: str, seed: int, prefix: str, strength: float = 1.0, extra: str = "") -> dict[str, Any]:
+def camera_graph(image_name: str, view: str, seed: int, prefix: str, strength: float = 1.0, extra: str = "",
+                 loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """One view with the camera-angle LoRA (run_cam in turn_ab.py), from the source composited on white."""
-    g = angle_graph(image_name, camera_prompt(view, extra), seed, prefix, lora_strength=strength)
+    g = angle_graph(image_name, camera_prompt(view, extra), seed, prefix, lora_strength=strength, loras=loras)
     g["l2"]["inputs"]["lora_name"] = CAMERA_LORA
     return g
 
 
 def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
-               reference_name: str | None = None) -> dict[str, Any]:
+               reference_name: str | None = None, loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Instruction edit of one image: the angle graph without the angles LoRA.
 
     EXPERIMENTAL, reference_name: a second picture wired into image2 of both TextEncodeQwenImageEditPlus nodes (the
@@ -163,20 +190,20 @@ def edit_graph(image_name: str, instruction: str, seed: int, prefix: str, width:
         g["sc2"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["img2", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}}
         g["pos"]["inputs"]["image2"] = ["sc2", 0]
         g["neg"]["inputs"]["image2"] = ["sc2", 0]
-    return g
+    return add_personal_loras(g, loras)
 
 
 COMPOSE_MAX = 3  # TextEncodeQwenImageEditPlus takes image1 to image3
 
 
 def compose_graph(image_names: list[str], prompt: str, seed: int, prefix: str, width: int = 1024,
-                  height: int = 1024) -> dict[str, Any]:
+                  height: int = 1024, loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """One new picture from up to three source pictures (feature photos, vgac/compose.py): the edit graph with each
     picture wired into image1..image3 of both TextEncodeQwenImageEditPlus nodes, so the prompt can name them as
     Picture 1 to Picture 3. The output size is the latent's, not the first picture's."""
     if not 1 <= len(image_names) <= COMPOSE_MAX:
         raise ValueError(f"compose takes 1 to {COMPOSE_MAX} pictures, got {len(image_names)}")
-    g = edit_graph(image_names[0], prompt, seed, prefix, width=width, height=height)
+    g = edit_graph(image_names[0], prompt, seed, prefix, width=width, height=height, loras=loras)
     for i, name in enumerate(image_names[1:], start=2):
         g[f"img{i}"] = {"class_type": "LoadImage", "inputs": {"image": name}}
         g[f"sc{i}"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": [f"img{i}", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}}

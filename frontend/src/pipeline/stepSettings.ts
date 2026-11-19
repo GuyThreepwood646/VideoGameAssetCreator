@@ -2,6 +2,7 @@
 // StepSettingsChoice): which steps show, what each setting starts at, and which values are sent.
 import type { AdjustParam, StageId, StageInfo } from '../api'
 import { knobShown } from '../help'
+import { isEditKnob } from '../editLoras'
 
 // What the autopilot start sends: only the settings that differ from their starting values, per step.
 export type StepParams = Partial<Record<StageId, Record<string, unknown>>>
@@ -15,6 +16,7 @@ export function stepsWithSettings(stages: StageInfo[], category: string, skips: 
 // The value a setting starts at for this kind of asset (the same rule as the Fine-tune form): a per-category default
 // wins, then the knob's own default, then a plain empty value for its type.
 export function defaultFor(p: AdjustParam): unknown {
+  if (isEditKnob(p.type)) return {}
   switch (p.type) {
     case 'number':
     case 'integer':
@@ -55,6 +57,22 @@ export function changedStepParams(steps: StageInfo[], category: string, edits: S
       const value = chosen[p.name]
       if (JSON.stringify(value ?? null) === JSON.stringify(startingValue(p, category) ?? null)) continue
       out[step.id as StageId] = { ...(out[step.id as StageId] ?? {}), [p.name]: value }
+    }
+  }
+  return out
+}
+
+// The settings of a step that are still at the person's saved default (shown in the form and not changed since), by
+// name. `applied` is what the backend says to use for this look and platform (saved values brought down to its limits).
+export function savedInUse(steps: StageInfo[], category: string, edits: StepParams, applied: StepParams): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const step of steps) {
+    const mine = applied[step.id as StageId]
+    if (!mine) continue
+    for (const p of shownSettings(step.adjust_schema ?? [], category)) {
+      if (!Object.prototype.hasOwnProperty.call(mine, p.name)) continue
+      const current = Object.prototype.hasOwnProperty.call(edits[step.id as StageId] ?? {}, p.name) ? edits[step.id as StageId]?.[p.name] : startingValue(p, category)
+      if (JSON.stringify(current ?? null) === JSON.stringify(mine[p.name] ?? null)) (out[step.id] ??= []).push(p.name)
     }
   }
   return out

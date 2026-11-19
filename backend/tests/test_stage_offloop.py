@@ -131,7 +131,7 @@ def _lineage(tmp_path):
 def _patch_turnaround(monkeypatch):
     monkeypatch.setattr(turnaround.library, "version_file", lambda v, key, settings: v.image if key == "image" else None)
 
-    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span):
+    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, loras=None):
         raw = _rgba(sc.dir / f"{view}_raw.png")
         cut = _rgba(sc.dir / f"{view}.png")
         white = imaging.white_composite(cut)

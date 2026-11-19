@@ -48,6 +48,13 @@ DELIGHT_OPTIONS = ("auto", "remove", "keep")
 # Recipes: an add-on's three strength steps, plus "off"; the prep shading choice (auto follows the recipe).
 STRENGTH_NAMES = ("subtle", "normal", "strong")
 ADDON_CHOICES = ("off",) + STRENGTH_NAMES
+# The one model id a personal LoRA made for Qwen-Image-Edit names. It has an entry in models.yaml (qwen_edit) but no
+# `concept` flag, so it is not a painter and is not offered in the concept step.
+EDIT_MODEL = "qwen_edit"
+# A picture-edit step takes at most this many of the person's LoRAs at once (docs/PLAN-qwen-edit-loras-2026-11-18.md).
+MAX_EDIT_LORAS = 2
+# The knobs that take the person's LoRAs for a picture-edit use; the schema read adds their catalogue (_schema).
+EDIT_ADDON_KNOBS = ("edit_addons", "view_addons", "pose_addons", "face_addons")
 SHADING_OPTIONS = ("auto", "smooth", "flat")
 # Step 3's builders (stages/mesh.py): TRELLIS.2 from one picture (the default), Pixal3D from four views.
 MESH_BUILDERS = ("trellis2", "pixal3d")
@@ -87,6 +94,13 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                categories=["humanoid", "prop_rigid"],
                options_by_category={"humanoid": ["standard", "sheet"], "prop_rigid": ["standard", "shadow_free"]}),
         _param("lora_strength", "number", 0.9, min=0.0, max=1.5, step=0.05),
+        # The person's own LoRAs for the views and the pose redraw (docs/PLAN-qwen-edit-loras-2026-11-18.md). A view
+        # LoRA can stop the views turning, so a changed choice redraws every view it applies to.
+        _param("view_addons", "edit_addons", None, label="Your LoRAs for the side views", options=list(ADDON_CHOICES),
+               description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; empty uses none"),
+        _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the pose redraw",
+               options=list(ADDON_CHOICES),
+               description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; empty uses none"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
         # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
@@ -161,6 +175,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="Automatic picks High where the platform's texture allows it and the picture has the detail, else Standard"),
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
+        # Your own LoRAs for the face close-up only (never the sharpening redraw): docs/PLAN-qwen-edit-loras-2026-11-18.md.
+        _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
+               options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; empty uses none"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
@@ -300,6 +317,8 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 raise ValueError(f"{key} must be text")
             if len(value) > MAX_STRING_PARAM:
                 raise ValueError(f"{key} is too long (max {MAX_STRING_PARAM} characters)")
+        elif t == "edit_addons":
+            out[key] = clean_edit_choices(value, key)
         elif t == "addons":
             # {add-on id: off | subtle | normal | strong}. Ids the registry does not know are kept here and reported
             # (not applied) by resolve_addons, so an add-on removed from addons.yaml never breaks an older version.
@@ -315,6 +334,24 @@ def validate_params(stage: str, params: dict[str, Any] | None, category: str | N
                 clean[aid] = choice.lower()
             out[key] = clean
     return out
+
+
+def clean_edit_choices(value: Any, key: str = "edit_addons") -> dict[str, str]:
+    """One picture-edit use's LoRA choices ({id: off | subtle | normal | strong}), checked as the schema checks them:
+    a plain ValueError for anything else, and at most MAX_EDIT_LORAS LoRAs on at once."""
+    opts = list(ADDON_CHOICES)
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must map each LoRA to one of {opts}")
+    clean: dict[str, str] = {}
+    for aid, choice in value.items():
+        if not isinstance(aid, str) or not aid or len(aid) > 100:
+            raise ValueError(f"{key} has a LoRA id that is not text")
+        if not isinstance(choice, str) or choice.lower() not in opts:
+            raise ValueError(f"{key}: {aid} must be one of {opts}")
+        clean[aid] = choice.lower()
+    if sum(1 for c in clean.values() if c != "off") > MAX_EDIT_LORAS:
+        raise ValueError(f"{key}: at most {MAX_EDIT_LORAS} of your LoRAs can be used at once in one step")
+    return clean
 
 
 def _load_yaml(path) -> Any:
@@ -433,6 +470,8 @@ def _schema(stage: str) -> list[dict[str, Any]]:
             entry = {**entry, "options": list(concept_models())}
         if stage == "concept" and entry["name"] == "addons":
             entry = {**entry, "catalog": [addon_public(a) for a in addons() if a.get("stage") == "concept"]}
+        if entry["name"] in EDIT_ADDON_KNOBS:
+            entry = {**entry, "catalog": [addon_public(a) for a in addons() if a.get("stage") == "edit"]}
         if stage == "mesh" and entry["name"] == "builder":
             from . import pixal3d
 
@@ -532,11 +571,11 @@ def _user_addons() -> dict[str, dict[str, Any]]:
 
 
 def _mine_file_present(a: dict[str, Any]) -> bool:
-    """Whether a user add-on's file is still in VGAC/mine/ (the only folder this checks)."""
+    """Whether a user add-on's file is still where it was kept (VGAC/mine/, or the one place a file used where it is was registered)."""
     from . import user_addons
 
     try:
-        return (user_addons.mine_dir() / str(a.get("file_name") or "")).is_file() and bool(a.get("file_name"))
+        return user_addons.addon_path(a).is_file() and bool(a.get("file_name"))
     except (OSError, ValueError):
         return False
 

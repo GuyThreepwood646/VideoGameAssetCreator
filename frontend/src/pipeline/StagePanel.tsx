@@ -13,6 +13,7 @@ import {
   type Asset,
   type AutopilotState,
   type Check,
+  type EditChoice,
   type Feedback,
   type FeedbackBody,
   type Job,
@@ -32,6 +33,9 @@ import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
 import { OwnPictures, ReferencePicture } from './OwnPictures'
+import { EditLoras } from './EditLoras'
+import { useMyAddons } from './AddMyAddon'
+import { editLoras, editLoraApplied, editLoraNotes } from '../editLoras'
 import { BriefCard } from './Brief'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { finishShown, GuidePanel, guideState } from './GuidePanel'
@@ -457,7 +461,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 suggestion={suggestion}
                 disabled={busy}
                 focus={toolFocus}
-                onRefine={(instruction, view, reference, params) => act(() => api.refine(active.id, { instruction, view, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}) }))}
+                onRefine={(instruction, view, reference, params, editAddons) => act(() => api.refine(active.id, { instruction, view, ...(params ? { params } : {}), ...(reference ? { reference_image: reference } : {}), ...(editAddons ? { edit_addons: editAddons } : {}) }))}
                 onAdjust={(params) => act(() => api.adjust(active.id, params))}
               />
             )}
@@ -473,6 +477,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                   )}
                 </div>
                 <MetricChips metrics={active.metrics} max={24} />
+                {/* Your own LoRAs this version used, per use (face close-up included), and any it could not use. */}
+                {[...editLoraApplied(active), ...editLoraNotes(active)].map((line) => (
+                  <div key={line} className="muted small edit-lora-line">
+                    {line}
+                  </div>
+                ))}
                 {checks && <ChecksList checks={checks} />}
                 <FilesRow version={active} />
                 <ParamsRow version={active} />
@@ -833,7 +843,7 @@ function ChangePanel({
   disabled: boolean
   focus: ToolFocus | null
   // A described change, with any changed Fine-tune settings sent in the same new version.
-  onRefine: (instruction: string, view?: string, reference?: string, params?: Record<string, unknown>) => void
+  onRefine: (instruction: string, view?: string, reference?: string, params?: Record<string, unknown>, editAddons?: Record<string, EditChoice>) => void
   onAdjust: (params: Record<string, unknown>) => void
 }) {
   const [text, setText] = useState('')
@@ -842,6 +852,11 @@ function ChangePanel({
   // Fine-tune settings changed but not sent yet: Make the change takes them along, and Apply and re-run takes the text.
   const [pending, setPending] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
   const [resetNonce, setResetNonce] = useState(0)
+  // Your LoRAs for this change (edit_addons, concept only): sent with this change alone, then cleared.
+  const [refineLoras, setRefineLoras] = useState<Record<string, EditChoice>>({})
+  const myLoras = useMyAddons(stage === 'concept')
+  const refineChoices = Object.fromEntries(Object.entries(refineLoras).filter(([id, c]) => c !== 'off' && editLoras(myLoras).some((e) => e.id === id)))
+  const editsToSend = stage === 'concept' && Object.keys(refineChoices).length ? refineChoices : undefined
   // The experimental reference picture only goes to the first picture of a character, creature or prop.
   const takesReference = stage === 'concept' && asset.category !== 'material'
   const panelRef = useRef<HTMLDivElement>(null)
@@ -860,16 +875,18 @@ function ChangePanel({
   // Apply and re-run: with text waiting in Describe the change, both go in one new version.
   const adjustOrBoth = (params: Record<string, unknown>) => {
     if (!ok) return onAdjust(params)
-    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, params)
+    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, params, editsToSend)
     setText('')
     setReference(null)
+    setRefineLoras({})
     setResetNonce((n) => n + 1)
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, pending?.params)
+    onRefine(text.trim(), view || undefined, takesReference && reference ? reference : undefined, pending?.params, editsToSend)
     setText('')
+    setRefineLoras({})
     if (pending) setResetNonce((n) => n + 1)
     setReference(null)
   }
@@ -909,6 +926,15 @@ function ChangePanel({
         </div>
         {takesReference && <ReferencePicture value={reference} onChange={setReference} disabled={disabled} />}
       </form>
+      {stage === 'concept' && (
+        <EditLoras
+          purpose="Your LoRAs for this change"
+          entries={editLoras(myLoras)}
+          choices={refineLoras}
+          disabled={disabled}
+          onChange={(id, choice) => setRefineLoras((cur) => ({ ...cur, [id]: choice }))}
+        />
+      )}
       <FineTune stage={stage} schema={schema} target={target} asset={asset} refData={refData} suggestion={suggestion} disabled={disabled} onSubmit={adjustOrBoth} focus={focus} describedChange={text} resetNonce={resetNonce} onPending={(params, names) => setPending(params ? { params, names } : null)} />
     </div>
   )

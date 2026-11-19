@@ -3,6 +3,7 @@ import { libraryUrl, TURNAROUND_VIEWS, type Check, type Version } from '../../ap
 import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { Disclosure, fmtNum, isCheckList, PlainChecks, TrafficDot } from '../../components/ui'
+import { editLoraApplied, editLoraNotes } from '../../editLoras'
 import { metricPlain } from '../../help'
 import { BodyMarksPanel } from './BodyMarks'
 
@@ -158,6 +159,11 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
         We look at your character from every side so the 3D model gets the back right.{locked ? '' : ' If a view looks wrong, tick it; you can redraw several views together.'}
         <Info term="term.turnaround" />
       </div>
+      {[...editLoraApplied(version), ...editLoraNotes(version)].map((line) => (
+        <div key={line} className="muted small edit-lora-line">
+          {line}
+        </div>
+      ))}
       <div className="viewer-toolbar">
         <button type="button" aria-pressed={!cutout} onClick={() => setCutout(false)}>
           Picture

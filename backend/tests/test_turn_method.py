@@ -156,12 +156,12 @@ def _world(tmp_path, monkeypatch, category: str, parent_params: dict | None = No
     calls: dict[str, list[str]] = {"standard": [], "sheet": [], "camera": []}
     monkeypatch.setattr(turnaround.library, "version_file", lambda v, key, settings: v.image if key == "image" else None)
 
-    async def fake_generate(sc_, src_name, view, seed, lora_strength, extra, base, span, name=None):
+    async def fake_generate(sc_, src_name, view, seed, lora_strength, extra, base, span, name=None, loras=None, **kw):
         calls["standard"].append(view)
         cut = _rgba(tmp_path / f"{view}.png")
         return {"raw": _rgba(tmp_path / f"{view}_raw.png"), "cutout": cut, "white": imaging.white_composite(cut), "stats": None}
 
-    async def fake_sheet(sc_, source, src, seed):
+    async def fake_sheet(sc_, source, src, seed, loras=None):
         calls["sheet"].append(str(seed))
         out = {}
         for v in qwen_edit.SHEET_ORDER:
@@ -173,7 +173,7 @@ def _world(tmp_path, monkeypatch, category: str, parent_params: dict | None = No
         cut = _rgba(tmp_path / "front.png")
         return {"raw": _rgba(tmp_path / "front_raw.png"), "cutout": cut, "white": imaging.white_composite(cut)}
 
-    async def fake_camera_view(sc_, src_name, view, seed, extra, base, span):
+    async def fake_camera_view(sc_, src_name, view, seed, extra, base, span, loras=None):
         calls["camera"].append(f"{view}:{extra}")
         cut = _rgba(tmp_path / f"cam_{view}.png")
         return {"raw": _rgba(tmp_path / f"cam_{view}_raw.png"), "cutout": cut, "white": imaging.white_composite(cut), "stats": None}

@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
+from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -170,6 +170,8 @@ class AssetIn(BaseModel):
     # then ONE picture combined from them (with `image` first when given); a human's first face picture is also kept
     # as the asset's own face close-up for the step 4 face pass.
     features: list[compose.FeatureIn] | None = Field(default=None, max_length=compose.PICTURES_MAX)
+    # The person's own LoRAs for combining the feature photos (compose.py): {id: off | subtle | normal | strong}.
+    edit_addons: dict[str, str] | None = None
 
 
 class AssetPatch(BaseModel):
@@ -201,6 +203,18 @@ class RefineIn(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     # The failed checks this redraw is meant to fix (fixes.compose made the instruction); stored as params.fix_for.
     fix_for: list[str] | None = Field(default=None, max_length=12)
+    # The person's own LoRAs for this refine only (picture_loras.py): {id: off | subtle | normal | strong}. Never inherited.
+    edit_addons: dict[str, str] | None = None
+
+
+def _edit_choices(value: Any) -> dict[str, str] | None:
+    """The person's LoRA choices for a picture-edit use, checked (reference.clean_edit_choices); 400 with the plain message."""
+    if value is None:
+        return None
+    try:
+        return reference.clean_edit_choices(value, "edit_addons")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class FixPlanIn(BaseModel):
@@ -567,6 +581,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     _check_concept_model("concept_model", body.concept_model)
     picture = own_images.decode_or_400(body.image) if body.image else None  # start from a picture: checked first
     features = compose.check(body.category, body.features or [])
+    edit_addons = _edit_choices(body.edit_addons)  # checked before anything is saved
     a = Asset(project_id=pid, name=body.name, category=body.category, style_preset=body.style_preset, platform_target=platform, prompt=body.prompt)
     a.concept_model = body.concept_model
     if body.face_matters is False:
@@ -585,7 +600,7 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     face_closeup = compose.keep_face_closeup(a, features)
     extra: dict[str, Any] = {"face_closeup": True} if face_closeup else {}
     if compose.needs_drawing(features, picture):
-        started = compose.start(db, a, features, picture)
+        started = compose.start(db, a, features, picture, edit_addons=edit_addons)
         db.refresh(a)
         return {**asset_to_dict(a), **extra, "compose": started}
     if picture is None:
@@ -740,6 +755,41 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
         raise HTTPException(400, str(e))
 
 
+class StepDefaultsIn(BaseModel):
+    # {step id: {setting: value}}: replaces the saved settings of each step named; an empty set clears that step.
+    stages: dict[str, dict[str, Any]]
+
+
+@app.get("/api/step-defaults")
+def get_step_defaults(platform: str, look: str, category: str | None = None) -> dict[str, Any]:
+    """The person's saved step settings for a platform and look: `saved` as stored, `applied` clamped to the look's
+    limits for `category`, and `notes` saying plainly what was brought down."""
+    try:
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/step-defaults")
+def put_step_defaults(platform: str, look: str, body: StepDefaultsIn, category: str | None = None) -> dict[str, Any]:
+    """Save settings for the steps named (400 with a plain message, nothing saved, if any value is refused)."""
+    try:
+        step_defaults.save(platform, look, body.stages)
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/step-defaults")
+def delete_step_defaults(platform: str, look: str, stage: str | None = None, category: str | None = None) -> dict[str, Any]:
+    """Forget the saved settings of one step (`stage`) or of every step for this platform and look."""
+    try:
+        step_defaults.clear(platform, look, stage)
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/assets/{aid}/autopilot")
 def get_autopilot(aid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
     return autopilot.get_state(_asset(db, aid))
@@ -855,7 +905,11 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     _check_mask(body.mask_png)
     reference_img = own_images.check_reference(parent, a, body.reference_image)  # experimental, 400 before anything is made
     rparams = _params(parent.stage, body.params, a.category)
-    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k not in ("reference_experimental", "fix_for")}
+    if body.edit_addons is not None or "edit_addons" in rparams:
+        # This refine's own LoRA choice: the request's, never the parent's (picture_loras.py).
+        rparams["edit_addons"] = _edit_choices(body.edit_addons if body.edit_addons is not None else rparams["edit_addons"])
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items()
+                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
     if body.fix_for and parent.stage != "concept":

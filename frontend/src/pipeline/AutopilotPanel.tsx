@@ -105,7 +105,7 @@ export function MakeItAction({ asset, stages, estimates, busy, primary, onStart 
         <Info term="term.stop_on" />
       </label>
       )}
-      <StepSettingsChoice category={asset.category} stages={stages} disabled={busy} onChange={setSteps} />
+      <StepSettingsChoice category={asset.category} platform={asset.platform_target} look={asset.style_preset} stages={stages} disabled={busy} onChange={setSteps} />
     </div>
   )
 }
