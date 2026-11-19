@@ -19,6 +19,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 # A sample value and limit per check that make it pass and fail (value, limit, passed).
 SAMPLES = {
     "triangle_budget": ((18000, 20000), (26000, 20000)),
+    "hy3d_raw_triangles": ((308546, 3000), (308546, 3000)),
     "manifold": ((0, 4), (200, 4)),
     "watertight": ((0, 4), (90, 4)),
     "degenerate_faces": ((0, 0), (3, 0)),

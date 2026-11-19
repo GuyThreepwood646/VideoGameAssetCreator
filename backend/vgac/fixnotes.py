@@ -57,6 +57,8 @@ EXTRA_FIXES: dict[str, dict[str, Any]] = {
 
 # No button. by_hand: the app has a way, named in the note. outside: nothing in the app fixes it. legacy: no longer made.
 NOTES: dict[str, tuple[str, str]] = {
+    # step 3 (Hunyuan3D note, always passes): the raw count is reduced later, so there is nothing to do here
+    "hy3d_raw_triangles": ("by_hand", "Nothing to do yet: Clean up reduces the Hunyuan3D count to the look's budget, and that result is checked."),
     # step 1 (picture) and step 2 (side views): used when no one-press fix is offered on this version
     "even_lighting": ("by_hand", "Redraw the picture in flat, even light from the first step (Refine), or accept it: uneven light is mostly baked into the colours."),
     "straight_on": ("by_hand", "Redraw the picture from the first step so the character is seen straight on from the front, with the camera level with the chest."),
