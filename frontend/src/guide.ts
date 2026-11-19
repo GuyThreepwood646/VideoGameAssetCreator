@@ -85,3 +85,28 @@ export function rememberAutopilotDefault(on: boolean) {
     // ignore
   }
 }
+
+// How many pictures step 1 (concept) draws: 2 by default, 1 when the person chose it on the empty step 1 card.
+// Autopilot always makes two candidates and does not read this.
+const CONCEPT_COUNT_KEY = 'vgac.conceptCount'
+
+export function conceptCountDefault(): number {
+  try {
+    return localStorage.getItem(CONCEPT_COUNT_KEY) === '1' ? 1 : 2
+  } catch {
+    return 2
+  }
+}
+
+export function rememberConceptCount(n: number) {
+  try {
+    localStorage.setItem(CONCEPT_COUNT_KEY, n === 1 ? '1' : '2')
+  } catch {
+    // ignore
+  }
+}
+
+// The start button's words for step 1: "Draw 2 pictures" or "Draw 1 picture".
+export function conceptCountLabel(n: number): string {
+  return n === 1 ? 'Draw 1 picture' : 'Draw 2 pictures'
+}
