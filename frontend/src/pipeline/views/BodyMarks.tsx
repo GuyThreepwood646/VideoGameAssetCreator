@@ -146,6 +146,7 @@ function MarkedPicture({ data, view, busy, onMove, onDrop, onOpen, large = false
   const down = (joint: string) => (ev: PointerEvent<SVGCircleElement>) => {
     if (busy) return
     ev.preventDefault()
+    ev.currentTarget.focus({ preventScroll: true })
     try {
       ;(ev.target as Element).setPointerCapture(ev.pointerId)
     } catch {
