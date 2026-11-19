@@ -16,6 +16,7 @@ public static partial class T
         G3NothingIsWrittenThroughALinkInAResumedTarget();
         G4ALibraryStepAsideThatWasCutOffIsPutBack();
         H1SharedStateLock();
+        I1DiscardKeepsASwitchedRecord();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -115,6 +116,27 @@ public static partial class T
     }
 
     // ---- G4 ------------------------------------------------------------------------------------------------------------------------------
+
+    // ---- I1: "Discard the record" never forgets a record that says the move has switched ------------------------------------------
+
+    static void I1DiscardKeepsASwitchedRecord()
+    {
+        // a record VGAC cannot judge (an unknown name) that says "switching": discarding it is refused and the record stays
+        var s = Movable();
+        string jp = MoveRunner.JournalPath(s.Root);
+        Directory.CreateDirectory(Path.GetDirectoryName(jp));
+        string json = "{\"from\":\"" + s.Data.Replace("\\", "\\\\") + "\",\"to\":\"" + Tmp("i1-to").Replace("\\", "\\\\") + "\",\"state\":\"switching\",\"done\":[],\"names\":[\"bogus\"]}";
+        File.WriteAllText(jp, json, Encoding.UTF8);
+        string said = Mover(s, null).Abandon();
+        Check(File.Exists(jp), "I1: a switching record that cannot be judged is not discarded: " + said);
+        Check(said != null && said.Contains("kept"), "I1: the answer says the record is kept: " + said);
+        Check(MoveGate.Blocking(s.Root) != null, "I1: a record with an unknown name keeps the start gate closed");
+
+        // the same unjudgeable record while "copying" is still discarded, as before
+        File.WriteAllText(jp, json.Replace("\"switching\"", "\"copying\""), Encoding.UTF8);
+        Mover(s, null).Abandon();
+        Check(!File.Exists(jp), "I1: a copying record that cannot be judged is still discarded");
+    }
 
     // ---- H1: the shared lock for machine.json and installed.json ------------------------------------------------------------------
 

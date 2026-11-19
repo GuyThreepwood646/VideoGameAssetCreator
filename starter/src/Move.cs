@@ -282,6 +282,9 @@ namespace Vgac.Starter
                 j = new MoveJournal();
                 j.From = Convert.ToString(d["from"]); j.To = Convert.ToString(d["to"]); j.State = Convert.ToString(d["state"]);
                 foreach (object o in (System.Collections.IEnumerable)d["done"]) j.Done.Add(Convert.ToString(o));
+                // the names and the recopy list are judged too: a record with an unknown name must block the gate, not pass as "no record"
+                object nm; if (d.TryGetValue("names", out nm) && nm is System.Collections.IEnumerable) foreach (object o in (System.Collections.IEnumerable)nm) j.Names.Add(Convert.ToString(o));
+                object rc; if (d.TryGetValue("recopy", out rc) && rc is System.Collections.IEnumerable) foreach (object o in (System.Collections.IEnumerable)rc) j.Recopy.Add(Convert.ToString(o));
             }
             catch (Exception) { return "it cannot be read"; }
             string why = Validate(j, currentData);
@@ -549,6 +552,17 @@ namespace Vgac.Starter
             SafeFs.Point("move", "restart-marker");
         }
 
+        // The state word of the record as written, or null when it cannot be read (no judgement; never changes anything).
+        public static string RawState(string root)
+        {
+            try
+            {
+                var d = Json.ParseObject(File.ReadAllText(JournalPath(root), Encoding.UTF8));
+                return Convert.ToString(d["state"]);
+            }
+            catch (Exception) { return null; }
+        }
+
         // Gives up a move that has not switched: only the journal is forgotten. What was copied stays where it is, and its folder is said.
         public string Abandon()
         {
@@ -557,6 +571,10 @@ namespace Vgac.Starter
             {
                 string why = JudgeProblem(Root, DataNow());
                 if (why == null) return "There is no move to abandon.";
+                // A record that says "switching" means the settings may already name the new place. Forgetting it would open the start
+                // gate on a half-switched install, so it is kept (the window says to continue it instead).
+                if (RawState(Root) == "switching")
+                    return "The move has already started switching to the new folder, so its record is kept: forgetting it would start VGAC on a half-moved install. Use Move the big files to continue it.";
                 DeleteJournal();      // a record VGAC cannot judge: the person asked to discard it (the window says what that means)
                 log.Line("move: an unreadable record was discarded (" + why + ")");
                 return "The record of a move (" + why + ") was discarded. Nothing else was changed. If a move had switched, check which folder is in use under Move the big files.";
