@@ -91,6 +91,7 @@ SAMPLES = {
     "pose_for_3d": ((30.0, 25.0), (10.0, 25.0)),  # buildpose: smallest upper-arm angle from the body, the line
     "pose_guard": (("kept", "kept"), ("changed", "kept")),  # the pose redraw kept the character or changed it
     "pose_held_build": ((0.7, [0.6, 1.3]), (0.4, [0.6, 1.3])),  # the build view kept the picture's arm reach
+    "side_agree": ((1.0, [0.9, 1.1]), (0.8, [0.9, 1.1])),  # step 2: a side view's figure height against the front and back
     "hair_off_eyes": ((0.05, 0.75), (0.9, 0.75)),
     "soft_light": ((0.55, 0.29), (0.15, 0.29)),
     "compose_match": ((0.5, 1.0), (1.6, 1.0)),
