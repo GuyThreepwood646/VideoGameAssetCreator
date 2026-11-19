@@ -116,7 +116,7 @@ The person's own parts: add-ons (`user_addons.py`, `library/my_addons.json`, `VG
 | `local/` | this PC's settings (`machine.json`, `.bak`) |
 | `backend/.venv/`, `node_modules/`, `frontend/dist/`, `desktop/dist/` | `setup/Check-Setup.ps1 -Install` and the build commands |
 | AI models, ComfyUI node packs, Blender, Unity | each user; `setup/Setup-Extras.ps1` with `setup/downloads.json` (licence confirmations are typed by the user) |
-| `data/animations/` (two CC0 clip packs, `clips_libraries`) | downloaded by the user |
+| `data/animations/` (two CC0 clip packs, Quaternius UAL 3.0, `clips_libraries`; the plain files are read, the `*_RM` root-motion copies are not, so travelling clips play in place) | downloaded by the user |
 | research, plans, audits, `STATUS.md`, `REVIEW.md`, `docs/*` except the six guides | owner's computer only |
 
 Licences: the app is GPL-3.0-or-later; the files copied into a person's Unity project (`unity-sandbox/Assets/Editor`, `VgacScripts`, `VgacShaders`) are MIT. Model licences: `data/models.yaml`.
