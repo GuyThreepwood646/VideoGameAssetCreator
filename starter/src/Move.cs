@@ -421,7 +421,13 @@ namespace Vgac.Starter
             var m = MachineFile.Load(Root);
             string sid = DataFolders.SettingsId(m);
             if (string.IsNullOrEmpty(sid) || DataFolders.ReadMarkerId(j.From) != sid) return "The old folder (" + j.From + ") does not carry this install's VGAC marker, so it is not the one that was copied. Nothing was checked or switched.";
-            if (j.Names.Count == 0) return "The record of this move does not say what was copied, so VGAC cannot tell whether the old folder is whole. Abandon it and move again.";
+            if (j.Names.Count == 0)
+            {
+                // Only a hand-edited record has no names. Once the settings already name the new folder the switch happened, and the old
+                // folder is no longer used, so there is nothing left to check: Continue may finish the switch. Otherwise nothing can be judged.
+                if (j.State == "switching" && string.Equals(Path.GetFullPath(DataNow()).TrimEnd('\\'), Path.GetFullPath(j.To).TrimEnd('\\'),StringComparison.OrdinalIgnoreCase)) return null;
+                return "The record of this move does not say what was copied, so VGAC cannot tell whether the old folder is whole. Abandon it and move again.";
+            }
             foreach (string n in j.Names)
                 if (!MoveRules.HasItem(j.From, n)) return "The old folder no longer holds " + n + ", which was there when the move began, so it is not whole. Nothing was checked or switched.";
             return null;

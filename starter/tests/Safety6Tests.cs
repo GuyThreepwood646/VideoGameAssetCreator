@@ -17,6 +17,7 @@ public static partial class T
         G4ALibraryStepAsideThatWasCutOffIsPutBack();
         H1SharedStateLock();
         I1DiscardKeepsASwitchedRecord();
+        I2SwitchedRecordWithoutNamesCanFinish();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -136,6 +137,19 @@ public static partial class T
         File.WriteAllText(jp, json.Replace("\"switching\"", "\"copying\""), Encoding.UTF8);
         Mover(s, null).Abandon();
         Check(!File.Exists(jp), "I1: a copying record that cannot be judged is still discarded");
+    }
+
+    // ---- I2: a switching record with no names does not dead-end once the settings name the new folder -------------------------
+
+    static void I2SwitchedRecordWithoutNamesCanFinish()
+    {
+        var s = Movable();
+        string jp = MoveRunner.JournalPath(s.Root);
+        Directory.CreateDirectory(Path.GetDirectoryName(jp));
+        string json = "{\"from\":\"" + Tmp("i2-from").Replace("\\", "\\\\") + "\",\"to\":\"" + s.Data.Replace("\\", "\\\\") + "\",\"state\":\"switching\",\"done\":[],\"names\":[]}";
+        File.WriteAllText(jp, json, Encoding.UTF8);
+        string said = Mover(s, null).Continue(new Progress());
+        Check(said == null || !said.Contains("does not say what was copied"), "I2: a switched record with no names is not a dead end: " + said);
     }
 
     // ---- H1: the shared lock for machine.json and installed.json ------------------------------------------------------------------
