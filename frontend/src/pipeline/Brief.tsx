@@ -4,13 +4,17 @@
 //     picture. Used by the left rail (AssetPage) and by the step 1 card below, so both behave the same.
 //   - BriefCard: the top of step 1. The description in full (editable), and the starting picture when the asset was
 //     started from one.
+//   - DescriptionReach: on steps 2 to 6, under the description: what it is used for, and a button for a new step 1 picture.
 //   - PromptSent: under a step 1 picture, the full prompt the painter was given for that version (the description
 //     plus what the app added: the look, the pose for 3D, hair, palette, parts, face), with a Copy button.
 import { useState } from 'react'
+import { useNavigate } from 'react-router'
 import { api, libraryUrl, versionsOf, type Asset, type Version } from '../api'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable } from '../components/PictureViewer'
 import { Disclosure } from '../components/ui'
+import { conceptCountDefault } from '../guide'
+import { DESCRIPTION_NOTE, DRAW_NEW_STEP_ONE_LABEL } from './descriptionNote'
 
 export function DescriptionEdit({
   asset,
@@ -121,6 +125,36 @@ export function DescriptionEdit({
         </button>
         <button type="button" className="small-btn" onClick={() => setEditing(false)}>
           Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// On steps 2 to 6, under the description: what the description is for, and a way to draw a new step 1 picture from it.
+// The button starts a step 1 version the same way the step 1 start button does, then opens step 1.
+export function DescriptionReach({ asset, onError }: { asset: Asset; onError: (e: unknown) => void }) {
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState(false)
+  // An asset started from the person's own picture or 3D model did not get its step 1 from the description.
+  if (startingPicture(asset)) return null
+  const draw = async () => {
+    setBusy(true)
+    try {
+      await api.runStage(asset.id, 'concept', { count: conceptCountDefault() })
+      navigate(`/assets/${asset.id}/concept`)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="col-tight description-reach">
+      <span className="muted small">{DESCRIPTION_NOTE}</span>
+      <div>
+        <button type="button" className="small-btn" disabled={busy} onClick={() => void draw()} title="Starts a new step 1 picture from the description above, then opens step 1">
+          {DRAW_NEW_STEP_ONE_LABEL}
         </button>
       </div>
     </div>
