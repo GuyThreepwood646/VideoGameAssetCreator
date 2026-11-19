@@ -368,13 +368,15 @@ namespace Vgac.Starter
                 using (var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
                     var rErr = System.Threading.Tasks.Task.Factory.StartNew<string>(delegate { try { return p.StandardError.ReadToEnd(); } catch (Exception) { return ""; } });
-                    var copy = System.Threading.Tasks.Task.Factory.StartNew(delegate { try { p.StandardOutput.BaseStream.CopyTo(fs); } catch (Exception) { } });
+                    var copy = System.Threading.Tasks.Task.Factory.StartNew(delegate { p.StandardOutput.BaseStream.CopyTo(fs); });
                     if (!p.WaitForExit(TimeoutMs))
                     {
                         try { if (!p.HasExited) p.Kill(); } catch (Exception) { }
                         return -1;
                     }
-                    copy.Wait(3000); rErr.Wait(3000);
+                    try { if (!copy.Wait(TimeoutMs)) return -1; }
+                    catch (AggregateException) { return -1; }   // the copy failed: the file is not whole
+                    rErr.Wait(3000);
                     fs.Flush();
                     return p.ExitCode;
                 }
@@ -433,6 +435,23 @@ namespace Vgac.Starter
             catch (Exception) { return null; }
         }
 
+        // The committed copy must be the file git holds: the same blob id as HEAD:VGAC.exe, a program, and not empty. Null when it is.
+        public static string HeadCopyProblem(string file, string root, string rel, IGit git)
+        {
+            try
+            {
+                if (!File.Exists(file) || new FileInfo(file).Length == 0) return "the committed copy is empty";
+                if (!RealHost.LooksLikeProgram(file)) return "the committed copy is not a program";
+                string want, got;
+                if (git.Run("rev-parse HEAD:" + rel, root, out want) != 0) return "git could not name the committed copy";
+                if (git.Run("hash-object -- \"" + file + "\"", root, out got) != 0) return "git could not check the committed copy";
+                if (!string.Equals((want ?? "").Trim(), (got ?? "").Trim(), StringComparison.OrdinalIgnoreCase) || (want ?? "").Trim().Length == 0)
+                    return "the committed copy does not match git's copy";
+                return null;
+            }
+            catch (Exception e) { return "the committed copy could not be checked (" + e.Message + ")"; }
+        }
+
         // The update run from the app: step aside, pull (fast-forward only, never a merge), put the name back if nothing came.
         public static UpdateResult Pull(string root, string exePath, IGit git)
         {
@@ -453,12 +472,19 @@ namespace Vgac.Starter
                 // git writes the committed copy first (under its own name); the running VGAC.exe is then replaced by it in one step,
                 // so VGAC.exe is never missing (ExeAside.Swap). git's pull cannot overwrite the running file, which is why it is swapped.
                 string rel = exePath.Substring(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace(Path.DirectorySeparatorChar, '/');
-                string headFile = Path.Combine(Path.GetDirectoryName(exePath), "VGAC.head.tmp");
+                string headFile = Path.Combine(Path.GetDirectoryName(exePath), "VGAC.head.exe");
                 try { File.Delete(headFile); } catch (Exception) { }
                 if (git.RunToFile("show HEAD:" + rel, root, headFile) != 0)
                 {
                     try { File.Delete(headFile); } catch (Exception) { }
                     r.Message = "VGAC could not prepare the update (the committed VGAC.exe could not be read). Nothing was changed.";
+                    return r;
+                }
+                string copyWhy = HeadCopyProblem(headFile, root, rel, git);
+                if (copyWhy != null)
+                {
+                    try { File.Delete(headFile); } catch (Exception) { }
+                    r.Message = "VGAC could not prepare the update (" + copyWhy + "). Nothing was changed.";
                     return r;
                 }
                 SafeFs.Point("update", "head-written");

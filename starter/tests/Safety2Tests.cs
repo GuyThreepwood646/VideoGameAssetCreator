@@ -11,7 +11,7 @@ using Vgac.Starter;
 
 public class ScriptedGit : IGit
 {
-    public int RunToFile(string a, string c, string f) { Calls.Add(a); File.WriteAllText(f, "committed"); return 0; }
+    public int RunToFile(string a, string c, string f) { Calls.Add(a); File.WriteAllText(f, "MZcommitted"); return 0; }
     public List<string> Calls = new List<string>();
     public int PullCode = 0; public string PullOutput = "";
     public string[] Heads = { "aaa\n", "aaa\n" };
@@ -19,6 +19,7 @@ public class ScriptedGit : IGit
     public int Run(string a, string c, out string o)
     {
         Calls.Add(a); o = "";
+        if (a.StartsWith("rev-parse HEAD:") || a.StartsWith("hash-object")) { o = "same"; return 0; }
         if (a.StartsWith("rev-parse HEAD")) { o = Heads[Math.Min(headCalls, Heads.Length - 1)]; headCalls++; return 0; }
         if (a.StartsWith("pull")) { o = PullOutput; return PullCode; }
         return 0;
@@ -191,6 +192,7 @@ Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemov
         public CheckoutWritesGit(string publishedExe) { published = publishedExe; }
         public int Run(string a, string c, out string o)
         {
+            if (a.StartsWith("rev-parse HEAD:") || a.StartsWith("hash-object")) { o = "same"; return 0; }
             o = a.StartsWith("rev-parse HEAD") ? "aaa\n" : "";
             if (a.StartsWith("checkout")) File.Copy(published, Path.Combine(c, "VGAC.exe"), true);
             return 0;
