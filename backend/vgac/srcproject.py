@@ -320,11 +320,19 @@ class Raster:
         m = self.mask
         n = face.interpolate(mesh["vnormals"], mesh["faces"], ras)
         n /= np.maximum(np.linalg.norm(n, axis=2, keepdims=True), 1e-12)
-        self.cos = np.where(m, -(n @ cam.basis[2]), 0.0)
+        if cam.is_ortho:
+            self.cos = np.where(m, -(n @ cam.basis[2]), 0.0)
+        else:
+            pos = face.interpolate(mesh["verts"], mesh["faces"], ras)
+            self.cos = np.where(m, cam.cos_to_camera(n, pos), 0.0)
         v, f = mesh["verts"], mesh["faces"]
         fn = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
         fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
-        self.fcos = np.where(m, -(fn[np.maximum(ras["tri"], 0)] @ cam.basis[2]), 0.0)
+        if cam.is_ortho:
+            self.fcos = np.where(m, -(fn[np.maximum(ras["tri"], 0)] @ cam.basis[2]), 0.0)
+        else:
+            fpos = face.interpolate(mesh["verts"], mesh["faces"], ras)
+            self.fcos = np.where(m, cam.cos_to_camera(fn[np.maximum(ras["tri"], 0)], fpos), 0.0)
         self.uv = face.interpolate(face.uv_pixels(mesh["uv"], 1), mesh["faces"], ras)
 
 
@@ -895,7 +903,7 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     sp, sd = cam.project(atlas.pos)
     xi = np.clip(sp[:, 0].astype(int), 0, size - 1)
     yi = np.clip(sp[:, 1].astype(int), 0, size - 1)
-    cosv = -(atlas.nrm @ cam.basis[2])
+    cosv = cam.cos_to_camera(atlas.nrm, atlas.pos)
     tol = 2.5 * (cam.scale / size) / np.maximum(np.abs(cosv), 0.15)
     inb = (sp[:, 0] >= 0) & (sp[:, 0] < size) & (sp[:, 1] >= 0) & (sp[:, 1] < size)
     visible = inb & (sd <= v.raster.z[yi, xi] + tol) & (v.raster.fcos[yi, xi] > 0.05)
@@ -1717,7 +1725,7 @@ def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarr
     sp, sd = cam.project(atlas.pos)
     xi = np.clip(sp[:, 0].astype(int), 0, S - 1)
     yi = np.clip(sp[:, 1].astype(int), 0, S - 1)
-    cosv = -(atlas.nrm @ cam.basis[2])
+    cosv = cam.cos_to_camera(atlas.nrm, atlas.pos)
     tol = 2.5 * (cam.scale / S) / np.maximum(np.abs(cosv), 0.15)
     inb = (sp[:, 0] >= 0) & (sp[:, 0] < S) & (sp[:, 1] >= 0) & (sp[:, 1] < S)
     z = zone["z"][yi, xi]

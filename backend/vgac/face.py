@@ -83,33 +83,86 @@ def find_head(verts: np.ndarray, head_share: float = 0.13) -> Head | None:
 
 @dataclass
 class Camera:
-    """Orthographic camera looking at `target` from `yaw_deg` around the up axis (0: from the front, +Z; positive
-    turns toward the character's left, +X). `scale` is the width and height of the picture in metres."""
+    """Camera looking at `target` from `yaw_deg` around the up axis (0: from the front, +Z; positive turns toward the
+    character's left, +X), and `tilt_deg` up from the horizon (positive looks down on the target). `scale` is the width
+    and height of the picture in metres at the target.
+
+    `lens_mm` None is an orthographic camera (every ray parallel, the default, and the only one the older code knew).
+    A focal length in millimetres (35 mm full-frame: 36 mm sensor width) makes it a pinhole: the camera stands back
+    from the target at the distance that frames `scale` there, and points divide by depth. With tilt 0 and no lens
+    every number is the same as before the tilt and lens were added."""
     target: np.ndarray
     yaw_deg: float
     scale: float
     size: int
+    tilt_deg: float = 0.0
+    lens_mm: float | None = None
+
+    @property
+    def is_ortho(self) -> bool:
+        return self.lens_mm is None
+
+    @property
+    def distance(self) -> float:
+        """Metres from the target to the eye (pinhole only; 0 for orthographic)."""
+        if self.lens_mm is None:
+            return 0.0
+        half_fov = math.atan(18.0 / self.lens_mm)
+        return (self.scale / 2.0) / math.tan(half_fov)
 
     @property
     def basis(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(right, up, forward) unit vectors; forward points from the eye into the scene."""
         a = math.radians(self.yaw_deg)
-        back = np.array([math.sin(a), 0.0, math.cos(a)])  # from the target toward the camera
-        right = np.array([math.cos(a), 0.0, -math.sin(a)])
-        up = np.array([0.0, 1.0, 0.0])
+        if self.tilt_deg == 0.0:
+            back = np.array([math.sin(a), 0.0, math.cos(a)])  # from the target toward the camera
+            right = np.array([math.cos(a), 0.0, -math.sin(a)])
+            up = np.array([0.0, 1.0, 0.0])
+            return right, up, -back
+        t = math.radians(self.tilt_deg)
+        back = np.array([math.sin(a) * math.cos(t), math.sin(t), math.cos(a) * math.cos(t)])
+        right = np.cross(np.array([0.0, 1.0, 0.0]), back)
+        right /= np.linalg.norm(right)
+        up = np.cross(back, right)
         return right, up, -back
+
+    def eye(self) -> np.ndarray:
+        """Where the camera stands (the target itself for an orthographic camera)."""
+        return self.target - self.basis[2] * self.distance
 
     def project(self, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Points (n,3) -> pixel coordinates (n,2) (x right, y down; pixel centres at +0.5) and depth (n,) (smaller
         is nearer)."""
         right, up, fwd = self.basis
-        d = p - self.target
         s = self.size / self.scale
-        x = (d @ right) * s + self.size / 2
-        y = -(d @ up) * s + self.size / 2
-        return np.stack([x, y], axis=1), d @ fwd
+        if self.lens_mm is None:
+            d = p - self.target
+            x = (d @ right) * s + self.size / 2
+            y = -(d @ up) * s + self.size / 2
+            return np.stack([x, y], axis=1), d @ fwd
+        d = p - self.eye()
+        depth = d @ fwd
+        k = self.distance * s / np.maximum(depth, 1e-9)  # pinhole: the target plane keeps the scale of the ortho picture
+        x = (d @ right) * k + self.size / 2
+        y = -(d @ up) * k + self.size / 2
+        return np.stack([x, y], axis=1), depth
+
+    def cos_to_camera(self, nrm: np.ndarray, pos: np.ndarray) -> np.ndarray:
+        """Cosine between surface normals (..., 3) and the direction from each surface point to the camera. For an
+        orthographic camera this is the one fixed direction (computed exactly as before)."""
+        if self.lens_mm is None:
+            return -(nrm @ self.basis[2])
+        to_cam = self.eye() - pos
+        to_cam = to_cam / np.maximum(np.linalg.norm(to_cam, axis=-1, keepdims=True), 1e-12)
+        return np.sum(nrm * to_cam, axis=-1)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"target": [round(float(v), 5) for v in self.target], "yaw_deg": self.yaw_deg, "scale": round(self.scale, 5), "size": self.size}
+        out: dict[str, Any] = {"target": [round(float(v), 5) for v in self.target], "yaw_deg": self.yaw_deg, "scale": round(self.scale, 5), "size": self.size}
+        if self.tilt_deg != 0.0:
+            out["tilt_deg"] = self.tilt_deg
+        if self.lens_mm is not None:
+            out["lens_mm"] = self.lens_mm
+        return out
 
 
 def head_camera(head: Head, yaw_deg: float = 0.0, size: int = 1024, margin: float = 1.6) -> Camera:
@@ -223,7 +276,8 @@ def render_view(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, b
     img[m] = sample(texture, t[m][:, 0], t[m][:, 1])
     n = interpolate(mesh["vnormals"], mesh["faces"], ras)
     n /= np.maximum(np.linalg.norm(n, axis=2, keepdims=True), 1e-12)
-    facing = np.where(m, -(n @ cam.basis[2]), 0.0)
+    pos = None if cam.is_ortho else interpolate(mesh["verts"], mesh["faces"], ras)
+    facing = np.where(m, cam.cos_to_camera(n, pos), 0.0)
     return {"image": img, "mask": m, "facing": facing, "raster": ras}
 
 
@@ -1164,7 +1218,7 @@ def project_back(mesh: dict[str, np.ndarray], texture: np.ndarray, cam: Camera, 
     z = view["z"]
     xi = np.clip(sp[:, 0].astype(int), 0, cam.size - 1)
     yi = np.clip(sp[:, 1].astype(int), 0, cam.size - 1)
-    cosv = -(nrm @ cam.basis[2])
+    cosv = cam.cos_to_camera(nrm, pos)
     px_m = cam.scale / cam.size
     tol = 2.0 * px_m / np.maximum(np.abs(cosv), 0.15)
     visible = sd <= z[yi, xi] + tol
