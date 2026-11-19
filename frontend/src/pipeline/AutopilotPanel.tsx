@@ -2,7 +2,7 @@
 // guide while the autopilot owns the asset, and the finishing moment card.
 import { Fragment, useContext, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { api, firstStaleStage, libraryUrl, selectedVersion, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
+import { api, firstStaleStage, libraryUrl, selectedVersion, stoppedVersions, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
@@ -11,6 +11,7 @@ import { autopilotLine, autopilotSecondsLeft, checkFix, checkFixNote, checkPasse
 import Viewer from '../Viewer'
 import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
+import { useConfirm } from '../components/Confirm'
 import { attentionItems, finishLineFix, finishLines, unityHowto } from './finish'
 import { UnityHandoff, unityImportOf } from './UnityHandoff'
 import { Deliverables, deliverableKeys } from './views/ExportView'
@@ -22,6 +23,8 @@ export type AutopilotActions = {
   resume: () => void
   // Go back: make this earlier step again and rebuild everything after it.
   resumeFrom: (stage: StageId) => void
+  // Delete the step's stopped versions, then make that step and every step after it again.
+  startAgain: (stage: StageId) => void
   fixAndContinue: (fix: FixRequest) => void
   continueAnyway: () => void
   dismiss: () => void
@@ -200,6 +203,7 @@ function LiveCloseup({ version }: { version: Version | undefined }) {
 
 // The card shown instead of "Your next step" while the autopilot runs, is paused or stopped.
 export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estimates, busy, actions, onOpenTool }: CardProps) {
+  const confirm = useConfirm()
   const apStage = autopilotStage(ap)
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const elsewhere = apStage && apStage !== stage ? (
@@ -288,7 +292,27 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
           <button type="button" className="link small" disabled={busy} onClick={actions.dismiss} title="Hide this card and steer by hand">
             Steer by hand instead
           </button>
+          {apStage && stoppedVersions(asset, apStage).length > 0 && (
+            <button
+              type="button"
+              className="link small"
+              disabled={busy || unwinding}
+              title="Deletes the stopped version of this step and makes it again from the start, then the rest follow"
+              onClick={async () => {
+                const ok = await confirm.ask({
+                  title: 'Delete and start again?',
+                  body: 'The stopped version of this step is deleted, with its files. This cannot be undone. The step is then made again from the start, and the steps after it follow.',
+                  confirmLabel: 'Delete and start again',
+                  danger: true,
+                })
+                if (ok) actions.startAgain(apStage)
+              }}
+            >
+              Delete and start again
+            </button>
+          )}
         </div>
+        {confirm.dialog}
       </section>
     )
   }
