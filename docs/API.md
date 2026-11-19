@@ -310,3 +310,11 @@ found (`_L` is the character's own left).
   views drawn again are found again; your moves on them are kept and marked `stale` until moved again or accepted.
 - `body_marks` is a warning. Autopilot stops on it only when `bodymarks.STOP_WHEN_UNSURE` is on or the version's
   params have `body_marks_stop: true` (both off now).
+
+## Additions (2026-11-19, saved step settings)
+
+The person's own settings for each step of an automatic build, kept per platform and look (`library/prefs.json`, field `step_defaults`, keyed `"<platform id>|<look id>"`, then step id, then setting name). The New asset form and Make it fill "Choose each step's settings" from them for an asset with the same platform and look, and nothing else.
+
+- GET /api/step-defaults?platform=&look=&category= -> `{platform, look, saved, applied, notes}`. `saved` is what is stored (`{step: {setting: value}}`); `applied` is the same brought down to the look's limits for `category` (the 3D step's triangle count above what the look and platform allow, its texture size above the look's own size), `notes` says plainly what was brought down. The stored value is kept, so it comes back into force where there is more room. Without `category` nothing is brought down. 400 for an unknown platform or look.
+- PUT /api/step-defaults?platform=&look=&category= body `{"stages": {step: {setting: value}}}` -> same answer as GET. Changes the saved settings of each step named one setting at a time: a value sets it, `null` removes it (a step with no settings left is dropped), settings not named are kept. Every value is checked against that step's settings like adjust params; 400 with a plain message, and nothing saved, for an unknown step or setting, a value out of range, not finite or of the wrong kind, or `seed`.
+- DELETE /api/step-defaults?platform=&look=&stage=&category= -> same answer. Forgets one step (`stage`) or, left out, every step for that platform and look.

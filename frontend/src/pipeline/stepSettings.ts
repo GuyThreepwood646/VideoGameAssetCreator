@@ -60,6 +60,22 @@ export function changedStepParams(steps: StageInfo[], category: string, edits: S
   return out
 }
 
+// The settings of a step that are still at the person's saved default (shown in the form and not changed since), by
+// name. `applied` is what the backend says to use for this look and platform (saved values brought down to its limits).
+export function savedInUse(steps: StageInfo[], category: string, edits: StepParams, applied: StepParams): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const step of steps) {
+    const mine = applied[step.id as StageId]
+    if (!mine) continue
+    for (const p of shownSettings(step.adjust_schema ?? [], category)) {
+      if (!Object.prototype.hasOwnProperty.call(mine, p.name)) continue
+      const current = Object.prototype.hasOwnProperty.call(edits[step.id as StageId] ?? {}, p.name) ? edits[step.id as StageId]?.[p.name] : startingValue(p, category)
+      if (JSON.stringify(current ?? null) === JSON.stringify(mine[p.name] ?? null)) (out[step.id] ??= []).push(p.name)
+    }
+  }
+  return out
+}
+
 // Two sets of step settings as one: the second one wins for a setting both name.
 export function mergeStepParams(...parts: (StepParams | undefined | null)[]): StepParams {
   const out: StepParams = {}

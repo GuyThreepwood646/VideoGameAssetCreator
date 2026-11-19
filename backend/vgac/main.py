@@ -31,7 +31,7 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
 from .pipeline import PipelineError
-from . import credits as credits_mod, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
+from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -736,6 +736,41 @@ async def start_autopilot(aid: str, body: AutopilotIn | None = None, db: Session
     try:
         return autopilot.start(a.id, until_stage=body.until_stage, stop_on=body.stop_on, fix=body.fix, from_stage=body.from_stage,
                                stage_params=stage_params)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class StepDefaultsIn(BaseModel):
+    # {step id: {setting: value}}: replaces the saved settings of each step named; an empty set clears that step.
+    stages: dict[str, dict[str, Any]]
+
+
+@app.get("/api/step-defaults")
+def get_step_defaults(platform: str, look: str, category: str | None = None) -> dict[str, Any]:
+    """The person's saved step settings for a platform and look: `saved` as stored, `applied` clamped to the look's
+    limits for `category`, and `notes` saying plainly what was brought down."""
+    try:
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/step-defaults")
+def put_step_defaults(platform: str, look: str, body: StepDefaultsIn, category: str | None = None) -> dict[str, Any]:
+    """Save settings for the steps named (400 with a plain message, nothing saved, if any value is refused)."""
+    try:
+        step_defaults.save(platform, look, body.stages)
+        return step_defaults.get(platform, look, category)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/step-defaults")
+def delete_step_defaults(platform: str, look: str, stage: str | None = None, category: str | None = None) -> dict[str, Any]:
+    """Forget the saved settings of one step (`stage`) or of every step for this platform and look."""
+    try:
+        step_defaults.clear(platform, look, stage)
+        return step_defaults.get(platform, look, category)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

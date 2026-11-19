@@ -1008,6 +1008,29 @@ on('POST', '/api/versions/:vid/judge', (m, body) => {
   }
   return version
 })
+// Saved step settings (demo: kept in memory, not checked against the schema).
+const stepDefaultsStore: Record<string, Record<string, Record<string, unknown>>> = {}
+const stepDefaultsAnswer = (query: URLSearchParams) => {
+  const platform = query.get('platform') ?? ''
+  const look = query.get('look') ?? ''
+  const saved = stepDefaultsStore[`${platform}|${look}`] ?? {}
+  return { platform, look, saved: clone(saved), applied: clone(saved), notes: [] as string[] }
+}
+on('GET', '/api/step-defaults', (_m, _b, query) => stepDefaultsAnswer(query))
+on('PUT', '/api/step-defaults', (_m, body, query) => {
+  const k = `${query.get('platform') ?? ''}|${query.get('look') ?? ''}`
+  const mine = { ...(stepDefaultsStore[k] ?? {}) }
+  for (const [stage, params] of Object.entries((body.stages ?? {}) as Record<string, Record<string, unknown>>)) {
+    if (Object.keys(params).length > 0) mine[stage] = params
+    else delete mine[stage]
+  }
+  stepDefaultsStore[k] = mine
+  return stepDefaultsAnswer(query)
+})
+on('DELETE', '/api/step-defaults', (_m, _b, query) => {
+  delete stepDefaultsStore[`${query.get('platform') ?? ''}|${query.get('look') ?? ''}`]
+  return stepDefaultsAnswer(query)
+})
 on('GET', '/api/recipe', (_m, _b, query) => {
   const style = query.get('style') ?? ''
   const category = query.get('category') ?? 'humanoid'
