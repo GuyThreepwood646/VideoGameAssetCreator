@@ -662,6 +662,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
     },
+    # Humanoid whose clip library is not on this PC (rig.library_missing_of). No button: the library has to come back first.
+    "library_missing": {
+        "severity": "warn",
+        "ok": "The shared animation library is on this PC.",
+        "fail": "The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.",
+    },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {
         "severity": "warn",

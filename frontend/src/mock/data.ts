@@ -1047,6 +1047,8 @@ function rigMoveMetrics(category: string, params: Record<string, unknown>, fail:
   // Add a move: a humanoid whose moves were changed lists the default set with the changes.
   if (category === 'humanoid' && (params.added_moves || params.removed_moves)) Object.assign(out, { clips: clipNamesFor(params), clips_source: 'library' })
   if (category === 'quadruped') Object.assign(out, { legs_moved: 4, legs_total: 4 })
+  // A humanoid whose shared clip library is not on this PC (mock: the failing humanoid seed).
+  if (category === 'humanoid' && fail) Object.assign(out, { library_missing: ['ual1'], library_skipped: 'clip library ual1 not found on disk', clips_source: 'procedural' })
   return out
 }
 
@@ -1058,6 +1060,10 @@ function rigMoveChecks(category: string, fail: boolean): MockCheck[] {
   const coverPct = `${Math.round(cover * 100)}%`
   const out: MockCheck[] = [
     chk('clips', true, SAMPLE_CLIPS, SAMPLE_CLIPS, { severity: 'warn', vars: { missing: [] }, help: `Animations: ${SAMPLE_CLIPS.join(', ')}.` }),
+    ...(category === 'humanoid' && fail
+      ? [chk('library_missing', false, 'ual1', 'found on this PC', { severity: 'warn', vars: { library: 'ual1' },
+          help: 'The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.' })]
+      : []),
     chk('hitbox_cover', !fail, cover, 0.85, {
       severity: 'warn',
       vars: { n: s.hitboxes, cover: coverPct },
