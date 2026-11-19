@@ -3861,6 +3861,44 @@ button.small-btn .resume-icon {
 .help-menu > summary::-webkit-details-marker {
   display: none;
 }
+/* The View menu: a text button in the top bar and a plain list of items under it (the status-pop card look). */
+.view-menu {
+  position: relative;
+}
+.view-menu-button {
+  height: var(--control-md);
+  padding: 0 var(--s2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.view-pop {
+  min-width: 180px;
+  gap: var(--s1);
+  padding: var(--s1);
+}
+.view-pop[hidden] {
+  display: none;
+}
+.view-item {
+  display: block;
+  width: 100%;
+  padding: var(--s2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.view-item:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.15));
+}
 .help-menu > summary {
   width: var(--control-md);
   height: var(--control-md);
@@ -4543,7 +4581,8 @@ button.preset-card:hover:not(:disabled) {
     position: relative;
   }
   .status-chip,
-  .help-menu {
+  .help-menu,
+  .view-menu {
     position: static;
   }
   .status-pop {
