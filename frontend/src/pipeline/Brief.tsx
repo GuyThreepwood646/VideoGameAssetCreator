@@ -136,6 +136,8 @@ export function DescriptionEdit({
 export function DescriptionReach({ asset, onError }: { asset: Asset; onError: (e: unknown) => void }) {
   const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
+  // An asset started from the person's own picture or 3D model did not get its step 1 from the description.
+  if (startingPicture(asset)) return null
   const draw = async () => {
     setBusy(true)
     try {
