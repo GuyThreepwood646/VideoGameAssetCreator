@@ -252,7 +252,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "part_legs": {"simple": False, "help": {"meaning": "Where the 3D build joined the legs together low down (a strand between the shoes), the legs are split so each moves on its own.",
                                             "why": "Joined legs drag each other along when the character walks and stretch the shoes. A tabard or cape between the legs is left whole.",
                                             "technical": "Spring-bone pass (springs.py): separates leg weights below the knee when the legs share vertices near the feet"}},
-    "head_sway": {"simple": False, "help": {"meaning": "Chooses which parts on the head may sway: only hair (and a headscarf, ribbon or veil named in the description), or everything that hangs.",
+    "head_sway": {"simple": False, "help": {"meaning": "Chooses which parts on the head may sway: only hair (and a headscarf, ribbon or veil named in the description), everything that hangs, or nothing on the head, so the head and hair stay still.",
                                             "why": "A hat brim, hood or helmet should move with the head, so Automatic only lets hair sway. Pick Everything that hangs to get the older behaviour.",
                                             "technical": "head_sway auto | hair | all; selects which head-attached meshes get spring-bone chains"}},
     "sprite_frames": {"simple": False, "help": {"meaning": "How many pictures each move gets in the 2D sprite sheet.",
@@ -667,6 +667,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The hand-made moves could not be put on this skeleton, so it uses the built-in moves. {reason}",
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
+    },
+    # Humanoid whose clip library is not on this PC (rig.library_missing_of). No button: the library has to come back first.
+    "library_missing": {
+        "severity": "warn",
+        "ok": "The shared animation library is on this PC.",
+        "fail": "The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.",
     },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {
