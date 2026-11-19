@@ -517,6 +517,7 @@ namespace Vgac.Starter
                 res = RemovalRunner.Run(removePlan, ticked, typedWord, host.Lay, MachineFile.Load(host.Lay.ProjectRoot), Ledger.Load(host.Lay.ProjectRoot), host.Comfy, new WindowsRecycler(), host.Log, delegate(string s) { Say(s); }, permanentFor);
             }, delegate
             {
+                if (res == null) { Say("The removal did not report a result. Look at the list again before you carry on."); return; }
                 if (res.RecycleFailed.Count > 0)
                 {
                     string list = string.Join("\r\n   ", res.RecycleFailed.ToArray());
