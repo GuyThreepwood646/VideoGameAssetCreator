@@ -32,6 +32,7 @@ import { useRefData, type RefData } from '../refdata'
 import { isAutopilotActive, type AutopilotActions } from './AutopilotPanel'
 import { freshParams, startOverState } from './startOver'
 import { savedInUse } from './stepSettings'
+import { HairRailLine, HairSettingPanel, useHairPanel } from './HairSetting'
 import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
@@ -110,6 +111,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const [firstParams, setFirstParams] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
   // "Start this step over": the settings form is open over a step that already has versions.
   const [overOpen, setOverOpen] = useState(false)
+  // The hair route of this character (humanoids only), shown in the form of the steps that use it.
+  const hair = useHairPanel(asset)
+  const [hairOpen, setHairOpen] = useState(false)
   // The saved defaults for this look and platform, for this step (WP-14). null until they are read.
   const [savedApplied, setSavedApplied] = useState<Record<string, unknown> | null>(null)
   const { ref } = useRefData()
@@ -369,6 +373,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const prevName = prev ? stagePlain(prev, ref?.stages.find((s) => s.id === prev) ?? null) : null
   const so = startOverState({ guide: state, autopilotActive: isAutopilotActive(autopilot), canRun, prevName })
   const startOverReason = so.kind === 'disabled' || so.kind === 'link' ? so.reason : versions.length === 0 ? 'The settings for the first build are below.' : null
+  // The newest version is done and not kept while an older one is kept: the one waiting for the person to judge.
+  const newResultWaiting = !!selected && !!active && active.id !== selected.id && active.status === 'done' && active.id === versions[versions.length - 1]?.id
   const startOverControl: ReactNode =
     so.kind === 'link' && prev ? (
       <Link className="small-btn" to={`/assets/${asset.id}/${prev}`}>
@@ -461,6 +467,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           {startOverControl}
         </div>
         {startOverReason && <div className="muted small start-over-reason">{startOverReason}</div>}
+        {/* A new result waiting while an older one is kept: said here, at the top of the step, not down with the versions. */}
+        {newResultWaiting && selected && (
+          <div className="new-result-note" role="status">
+            <strong>A new result is waiting.</strong> Version {versions.indexOf(selected) + 1} is still the one you kept. Look at the new one below, then keep it or keep the older one.
+          </div>
+        )}
         {stage === 'concept' && <BriefCard asset={asset} onSaved={onChanged} onError={onError} />}
         <OwnPictures asset={asset} stage={stage} active={active} canRun={canRun} busy={busy} act={act} onCreated={(id) => setActiveId(id)} />
         <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
@@ -488,6 +500,24 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
               <strong>{versions.length === 0 ? 'Settings for the first build.' : 'Settings for a new attempt.'}</strong> These start at the usual settings for your look and platform
               {savedNames.length ? `, with your saved defaults filled in (${savedNames.join(', ')})` : ''}. Change any of them before you build.
             </div>
+            {(stage === 'mesh' || stage === 'prep') && hair.panel && (
+              // The hair route (built with the 3D model, or a hairstyle from the library) sits with the settings it changes.
+              <div className="start-over-hair">
+                <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />
+                {hairOpen && (
+                  <HairSettingPanel
+                    asset={asset}
+                    panel={hair.panel}
+                    onClose={() => setHairOpen(false)}
+                    onSaved={(p) => {
+                      hair.setPanel(p)
+                      onChanged()
+                    }}
+                    onError={onError}
+                  />
+                )}
+              </div>
+            )}
             {stage === 'concept' && (
               <div className="concept-count">
                 <label>
@@ -586,11 +616,6 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 </button>
               )}
             </div>
-            {selected && active.id !== selected.id && active.status === 'done' && active.id === versions[versions.length - 1]?.id && (
-              <div className="new-result-note small" role="status">
-                A new result is waiting. Version {versions.indexOf(selected) + 1} is still the one you kept. Keep this one only if you prefer it.
-              </div>
-            )}
             {active.status === 'error' && (
               <div className="error-box">
                 <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
