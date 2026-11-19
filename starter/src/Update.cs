@@ -256,7 +256,10 @@ namespace Vgac.Starter
             done.Clear();
         }
 
-        public static void CleanupAtStart(string root)
+        // A copy stepped aside whose plain name is missing comes back only when git still tracks that file. A file the owner
+        // removed on purpose (a commit deleted it) is not tracked, so it stays deleted: the .old copy is kept beside it, untouched,
+        // and nothing is restored. When git cannot be asked (no git, or it fails), nothing is restored either: keeping the copy is safe.
+        public static void CleanupAtStart(string root, IGit git)
         {
             string bin = Path.Combine(root, "starter", "bin");
             if (!Directory.Exists(bin)) return;
@@ -265,11 +268,20 @@ namespace Vgac.Starter
                 try
                 {
                     string plain = old.Substring(0, old.Length - Suffix.Length);
-                    if (!File.Exists(plain)) File.Move(old, plain);       // cut off between the rename and the checkout: the file comes back
-                    else File.Delete(old);
+                    if (File.Exists(plain)) { File.Delete(old); continue; }   // the new copy is there: the stepped-aside one is a leftover
+                    if (IsTracked(root, plain, git)) File.Move(old, plain);    // cut off between the rename and the checkout: the file comes back
                 }
                 catch (Exception) { }
             }
+        }
+
+        // True only when git says the file is tracked (ls-files --error-unmatch exits 0 for a tracked path).
+        public static bool IsTracked(string root, string fullPath, IGit git)
+        {
+            if (git == null) return false;
+            string rel = fullPath.Substring(Path.GetFullPath(root).TrimEnd('\\').Length + 1).Replace('\\', '/');
+            string co;
+            return git.Run("ls-files --error-unmatch -- \"" + rel + "\"", root, out co) == 0;
         }
     }
 

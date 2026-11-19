@@ -56,7 +56,7 @@ namespace Vgac.Starter
             // half-unpacked tool folders: the two fixed names only, and only inside the folder that is VGAC's
             foreach (string half in new[] { Path.GetDirectoryName(l.UvExe) + ".new", l.NodeDir + ".new" })
                 if (dataOurs && Directory.Exists(half) && !SafeFs.IsLink(half)) { SafeFs.DeleteTree(half); notes.Add("A half-unpacked tool folder was removed."); }
-            BinAside.CleanupAtStart(l.ProjectRoot);
+            BinAside.CleanupAtStart(l.ProjectRoot, new RealGit());
             if (exePath != null)
             {
                 string exeDir = Path.GetDirectoryName(exePath);

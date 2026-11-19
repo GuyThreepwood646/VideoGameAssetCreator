@@ -115,14 +115,38 @@ public static partial class T
 
     // ---- G4 ------------------------------------------------------------------------------------------------------------------------------
 
+    // Answers `ls-files --error-unmatch` like git does: 0 for a listed path, 1 for any other.
+    class TrackGit : IGit
+    {
+        readonly string[] tracked;
+        public TrackGit(params string[] paths) { tracked = paths; }
+        public int Run(string args, string cwd, out string output)
+        {
+            output = "";
+            if (!args.StartsWith("ls-files")) return -1;
+            foreach (string t in tracked) if (args.Contains(t)) return 0;
+            return 1;
+        }
+    }
+
     static void G4ALibraryStepAsideThatWasCutOffIsPutBack()
     {
         string root = Tmp("g4"); string bin = Path.Combine(root, "starter", "bin"); Directory.CreateDirectory(bin);
         Put(Path.Combine(bin, "A.dll.old"), "the only copy of A");
         Put(Path.Combine(bin, "B.dll"), "B new"); Put(Path.Combine(bin, "B.dll.old"), "B old");
-        BinAside.CleanupAtStart(root);
-        Check(File.Exists(Path.Combine(bin, "A.dll")) && File.ReadAllText(Path.Combine(bin, "A.dll")) == "the only copy of A", "G4: a library whose plain name is missing gets its .old file back (the crash came between the rename and the checkout)");
+        BinAside.CleanupAtStart(root, new TrackGit("starter/bin/A.dll", "starter/bin/B.dll"));
+        Check(File.Exists(Path.Combine(bin, "A.dll")) && File.ReadAllText(Path.Combine(bin, "A.dll")) == "the only copy of A", "G4: a library whose plain name is missing gets its .old file back when git still tracks it (the crash came between the rename and the checkout)");
         Check(!File.Exists(Path.Combine(bin, "B.dll.old")) && File.ReadAllText(Path.Combine(bin, "B.dll")) == "B new", "G4: and a stepped-aside copy is deleted only when the plain name is there");
+        // G4b: a library the owner removed on purpose (git does not track it) is NOT restored; its .old copy is kept, not deleted
+        string rm = Tmp("g4b"); string rbin = Path.Combine(rm, "starter", "bin"); Directory.CreateDirectory(rbin);
+        Put(Path.Combine(rbin, "Gone.dll.old"), "removed on purpose");
+        BinAside.CleanupAtStart(rm, new TrackGit("starter/bin/A.dll"));
+        Check(!File.Exists(Path.Combine(rbin, "Gone.dll")) && File.Exists(Path.Combine(rbin, "Gone.dll.old")), "G4b: an untracked library is not brought back, and its copy is left alone");
+        // G4c: with no answer from git, nothing is restored either
+        string nm = Tmp("g4c"); string nbin = Path.Combine(nm, "starter", "bin"); Directory.CreateDirectory(nbin);
+        Put(Path.Combine(nbin, "Keep.dll.old"), "only copy");
+        BinAside.CleanupAtStart(nm, new NoGit());
+        Check(!File.Exists(Path.Combine(nbin, "Keep.dll")) && File.Exists(Path.Combine(nbin, "Keep.dll.old")), "G4c: without git's answer the copy is kept, not restored");
         // a crash inside BinAside is a crash point of the update harness
         var seen = new List<string>();
         SafeFs.Hook = delegate(string what, string p) { if (what == "aside") seen.Add(p); };
