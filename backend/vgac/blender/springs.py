@@ -313,6 +313,17 @@ def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="h
             "grid": grid, "seconds": round(time.time() - t0, 2), "body_cells": int(body.sum()), "part_count": int(len(ids))}
 
 
+def hold_head_still(parts):
+    """head_sway "none" (Nothing on the head sways): (kept, held). Every hair chain goes, built-in or from the library,
+    and so does every part hanging from a head bone (a hat's back, a hood, a headscarf); parts on the body or the
+    cloth below the head stay as they are. held: the parts taken out, so the report can say so."""
+    kept, held = [], []
+    for p in parts:
+        on_head = role_of(p.get("parent") or "") in HEAD_ROLES
+        (held if p.get("kind") == "Hair" or on_head else kept).append(p)
+    return kept, held
+
+
 def _dominant_bone(V, weights, sel, nbones):
     if weights is None or not np.any(sel):
         return None, {}
@@ -1225,6 +1236,7 @@ def main():  # pragma: no cover - runs inside Blender
     hair_mesh_path = _opt(argv, "--hair-mesh")
     hair_parts_path = _opt(argv, "--hair-parts")
     report = {"ok": False, "chains": [], "rejected": [], "reason": None}
+    head_still = "--head-still" in argv  # head_sway "none": nothing on the head or in the hair sways
 
     def finish():
         report["seconds"] = round(time.time() - t_start, 2)
@@ -1325,6 +1337,11 @@ def main():  # pragma: no cover - runs inside Blender
     report.update(height=found["height"], cell=found["cell"], find_seconds=found["seconds"],
                   rejected=[_public(r) for r in found["rejected"]], parts_seen=found["part_count"])
     parts = lib_parts + found["parts"]
+    if head_still:
+        parts, held = hold_head_still(parts)
+        report["head_still"] = {"held": len(held), "kinds": sorted({p.get("kind") for p in held})}
+        if held and not parts:
+            report["reason"] = "head_still"
     hb_doc = json.load(open(hb_path, encoding="utf-8")) if hb_path and os.path.isfile(hb_path) else None
     if pic_dir:
         try:
@@ -1333,7 +1350,7 @@ def main():  # pragma: no cover - runs inside Blender
         except Exception as e:  # noqa: BLE001
             report["picture_error"] = str(e)[:300]
     if not parts:
-        report["reason"] = "library_rests" if hair_obj is not None else "none_found"
+        report["reason"] = report["reason"] or ("library_rests" if hair_obj is not None else "none_found")
         report["ok"] = True
         finish()
         return
