@@ -463,6 +463,17 @@ def stage_defaults(stage: str) -> dict[str, Any]:
     return {p["name"]: p["default"] for p in STAGE_SCHEMAS[stage]}
 
 
+def inherited_params(stage: str, parent_params: dict[str, Any] | None) -> dict[str, Any]:
+    """The parent version's params that a refine or adjust child carries on. A concept's prompt_override is for the one
+    attempt it was given for, so a child of a concept does not carry it: the asset's description (the one the owner
+    edits) is used again, and a description edit reaches the next step 1 picture. Other stages keep theirs (material
+    refines build on the prompt they were given)."""
+    out = dict(parent_params or {})
+    if stage == "concept":
+        out.pop("prompt_override", None)
+    return out
+
+
 def budget(category_id: str, platform_id: str) -> dict[str, int]:
     """Triangle and texture budget for a category on a platform, falling back to the platform table."""
     c = category(category_id)
