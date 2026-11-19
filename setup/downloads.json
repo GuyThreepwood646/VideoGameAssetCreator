@@ -504,7 +504,7 @@
    "author": "Quaternius",
    "licence": "CC0 1.0",
    "page": "https://quaternius.itch.io/universal-animation-library",
-   "check_file": "AnimationLibrary_Unity_Standard.fbx"
+   "check_file": "UAL1_Standard.fbx"
   },
   "ual2": {
    "name": "Universal Animation Library 2 (Standard)",
