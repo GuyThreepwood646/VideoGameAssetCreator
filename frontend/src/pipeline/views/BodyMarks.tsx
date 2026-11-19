@@ -160,14 +160,20 @@ function MarkedPicture({ data, view, busy, onMove, onDrop, onOpen, large = false
     const p = toPicture(ev)
     if (p) setDrag({ ...drag, ...p })
   }
-  const up = () => {
+  const up = (ev: PointerEvent<SVGCircleElement>) => {
     if (!drag) return
     const d = drag
     setDrag(null)
     const m = marks[d.joint]
-    if (!m || m.x === null || m.y === null || Math.hypot(m.x - d.x, m.y - d.y) >= 0.5) onMove(view, d.joint, d.x, d.y)
+    if (!m || m.x === null || m.y === null || Math.hypot(m.x - d.x, m.y - d.y) >= 0.5) {
+      // A drag that moved the mark: let go of its focus, so the arrow keys change picture in the enlarged viewer
+      // instead of nudging the mark.
+      ev.currentTarget.blur()
+      onMove(view, d.joint, d.x, d.y)
+    }
   }
   const key = (joint: string) => (ev: KeyboardEvent<SVGCircleElement>) => {
+    if (drag) return // a drag in progress: its release saves the position, so no key acts on it mid-drag
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && marks[joint]?.source === 'you' && !busy) {
       ev.preventDefault()
       onDrop(view, joint)
