@@ -1297,7 +1297,7 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     sc.set_params(views=all_views)
 
 
-# EDIT_THE_VIEW (WP-42 card trial, 2026-11-19, Nutra Pak, "remove the people", five views): a typed change to ONE view is
+# EDIT_THE_VIEW, non-humanoids only (WP-42 card trial, 2026-11-19, Nutra Pak, "remove the people", five views): a typed change to ONE view is
 # made by editing that view's own picture with the picture editor, without the turn LoRA. Redrawing it from the concept
 # with the words added changed the design (a window lost on the back, the right side rebuilt) and a removal stayed weak;
 # the edit kept the view as it was and took the people out of every view (docs/research, sheet in the WP-42 notes).
@@ -1308,8 +1308,10 @@ PLAIN_REDRAW_WORDS = "Redraw this view"
 
 
 async def _edit_picture(sc: StageContext, parent: Version, targets: list[str], instruction: str) -> dict[str, Path] | None:
-    """{view: the parent's picture of it} when this refine changes one view with typed words, else None."""
+    """{view: the parent's picture of it} when this refine changes one view of a non-humanoid with typed words, else None."""
     words = (instruction or "").strip()
+    if _category(sc) == "humanoid":
+        return None  # the edit never ran on a person (pose_held, hair and bald copies): people still redraw from the concept
     if len(targets) != 1 or not words or words == PLAIN_REDRAW_WORDS or targets[0] in (parent.params.get("supplied_views") or []):
         return None
     p = library.version_file(parent, targets[0], sc.settings)

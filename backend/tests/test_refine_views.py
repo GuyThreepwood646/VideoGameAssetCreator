@@ -174,3 +174,18 @@ def test_one_view_with_words_is_edited_from_its_own_picture(tmp_path, monkeypatc
     assert refine("remove the people", views=["left", "back"])["edit"] is None  # several views stay alike: from the concept
     ta.params["supplied_views"] = ["left"]
     assert refine("remove the people", views=["left"])["edit"] is None  # the person's own picture is replaced, not edited
+
+
+def test_a_humanoid_single_view_change_still_redraws_from_the_concept(tmp_path, monkeypatch):
+    concept, ta, new, seeds = _parent_with_files(tmp_path, monkeypatch)
+    seen: list = []
+
+    async def fake_run_views(sc, views, params, source, keep=None, extra="", supplied=None, method=None, edit_views=None):
+        seen.append(edit_views)
+
+    monkeypatch.setattr(turnaround, "_run_views", fake_run_views)
+    for category, expected in (("humanoid", None), ("environment", {"left": tmp_path / "parent_left.png"})):
+        monkeypatch.setattr(turnaround, "_category", lambda sc, c=category: c)
+        sc = CopySC(tmp_path, new, FakeDB(concept, ta, new))
+        asyncio.run(turnaround.refine(sc, "remove the hat", None, None, {}, views=["left"]))
+        assert seen[-1] == expected, category
