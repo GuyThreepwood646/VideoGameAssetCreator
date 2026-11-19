@@ -49,6 +49,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import config, downloader, hardware_setup, setup_settings
+from . import state_lock as state_lock_mod
+from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
 
 log = logging.getLogger("vgac.comfy_install")
@@ -1069,7 +1071,7 @@ def _ledger_id(root: Path) -> str:
 def _write_ledger(items: list[Any]) -> None:
     p = downloader.ledger_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
+    tmp = state_lock_mod.unique_tmp(p)
     tmp.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")
     os.replace(tmp, p)
 
@@ -1077,7 +1079,7 @@ def _write_ledger(items: list[Any]) -> None:
 def _stamp_ledger_id(root: Path, install_id: str) -> None:
     """Put this install's id on its ledger entry (the entry that names `root`), so the entry can be found again if the folder is
     renamed or its drive letter changes."""
-    with downloader._ledger_lock:
+    with downloader._ledger_lock, state_lock(downloader.ledger_path().parent):   # shared with VGAC.exe (vgac/state_lock.py)
         items = _ledger_items()
         for i in items:
             if isinstance(i, dict) and i.get("kind") == "added" and _real(Path(str(i.get("path", "")))) == _real(root):

@@ -93,6 +93,53 @@ namespace Vgac.Starter
         }
     }
 
+    // The one named lock for the files VGAC rewrites in local/ (machine.json, installed.json). Held as a file, local/state.lock,
+    // created exclusively; the backend takes the same lock (backend/vgac/state_lock.py), so a read-modify-write is never
+    // overwritten by the other program. A lock left by a process that died is broken after StaleSeconds (a save takes milliseconds).
+    public static class StateLock
+    {
+        public const string FileName = "state.lock";
+        public const int StaleSeconds = 60;
+        public static int WaitMs = 10000;   // a variable so the tests can shorten the wait
+
+        public static void Hold(string localDir, Action body)
+        {
+            Directory.CreateDirectory(localDir);
+            string lockPath = Path.Combine(localDir, FileName);
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(WaitMs);
+            FileStream fs = null;
+            for (;;)
+            {
+                try { fs = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None); break; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                if (IsStale(lockPath)) { try { File.Delete(lockPath); } catch (Exception) { } }
+                if (DateTime.UtcNow >= deadline)
+                    throw new StarterError("Another VGAC window or process is saving its settings (local\\state.lock).",
+                        "Wait a moment and try again. Nothing was changed.");
+                System.Threading.Thread.Sleep(50);
+            }
+            try
+            {
+                byte[] who = Encoding.ASCII.GetBytes("starter " + System.Diagnostics.Process.GetCurrentProcess().Id + "\r\n");
+                fs.Write(who, 0, who.Length);
+                fs.Close(); fs = null;
+                body();
+            }
+            finally
+            {
+                if (fs != null) fs.Close();
+                try { File.Delete(lockPath); } catch (Exception) { }
+            }
+        }
+
+        static bool IsStale(string lockPath)
+        {
+            try { return (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath)).TotalSeconds > StaleSeconds; }
+            catch (Exception) { return false; }
+        }
+    }
+
     // local/machine.json: one file for this computer, shared with the backend ("backend" section) and the launcher
     // ("desktop" section). The starter owns only the "starter" section and keeps every other section as it found it.
     public class MachineFile
@@ -166,6 +213,11 @@ namespace Vgac.Starter
         // puts old values back.
         public void Save()
         {
+            StateLock.Hold(System.IO.Path.GetDirectoryName(Path), SaveUnlocked);
+        }
+
+        void SaveUnlocked()
+        {
             if (File.Exists(Path))
             {
                 try
@@ -176,7 +228,7 @@ namespace Vgac.Starter
                 catch (Exception) { /* unreadable now: what is in memory is written, as before */ }
             }
             changes.Clear();
-            SafeFs.WriteAtomic(Path, Json.Write(Data), Path + ".bak");
+            SafeFs.WriteAtomic(Path, Json.Write(Data), Path + ".bak", true);
         }
     }
 
@@ -308,6 +360,11 @@ namespace Vgac.Starter
 
         public void Save()
         {
+            StateLock.Hold(System.IO.Path.GetDirectoryName(Path), SaveUnlocked);
+        }
+
+        void SaveUnlocked()
+        {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
             if (File.Exists(Path))
             {
@@ -324,7 +381,7 @@ namespace Vgac.Starter
             ops.Clear();
             var root = new Dictionary<string, object>();
             root["items"] = Items;
-            SafeFs.WriteAtomic(Path, Json.Write(root), null);
+            SafeFs.WriteAtomic(Path, Json.Write(root), null, true);
         }
     }
 

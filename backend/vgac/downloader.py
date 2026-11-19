@@ -31,7 +31,9 @@ from pathlib import Path
 from typing import Any, Callable
 from . import __version__
 
+from . import state_lock as state_lock_mod
 from .config import PROJECT_DIR, get_settings
+from .state_lock import state_lock
 
 log = logging.getLogger("vgac.downloader")
 
@@ -272,7 +274,7 @@ def ledger_path() -> Path:
 def record(what: str, path: Path, kind: str = "added", size: int | None = None) -> None:
     """Note that VGAC added (or linked) `path`. Writing is atomic; a damaged ledger starts again."""
     p = ledger_path()
-    with _ledger_lock:
+    with _ledger_lock, state_lock(p.parent):   # the starter (VGAC.exe) writes this file too
         try:
             items = list(json.loads(p.read_text(encoding="utf-8-sig")).get("items", []))
         except (OSError, ValueError, AttributeError):
@@ -286,7 +288,7 @@ def record(what: str, path: Path, kind: str = "added", size: int | None = None) 
                 size = 0
         items.append({"what": what, "path": str(path), "kind": kind, "bytes": size, "when": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(p.name + ".tmp")
+        tmp = state_lock_mod.unique_tmp(p)
         tmp.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")
         os.replace(tmp, p)
 

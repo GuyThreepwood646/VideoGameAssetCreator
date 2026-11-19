@@ -15,6 +15,7 @@ public static partial class T
         G2AnOldFileThatWentAwayDoesNotMakeContinueLoop();
         G3NothingIsWrittenThroughALinkInAResumedTarget();
         G4ALibraryStepAsideThatWasCutOffIsPutBack();
+        H1SharedStateLock();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -114,6 +115,42 @@ public static partial class T
     }
 
     // ---- G4 ------------------------------------------------------------------------------------------------------------------------------
+
+    // ---- H1: the shared lock for machine.json and installed.json ------------------------------------------------------------------
+
+    static void H1SharedStateLock()
+    {
+        string dir = Tmp("h1");
+        bool ran = false;
+        StateLock.Hold(dir, delegate { ran = true; Check(File.Exists(Path.Combine(dir, StateLock.FileName)), "H1: the lock file is there while the body runs"); });
+        Check(ran && !File.Exists(Path.Combine(dir, StateLock.FileName)), "H1: the body runs once and the lock is released after it");
+
+        // a fresh lock held by someone else: the save waits, then refuses plainly, and changes nothing
+        string busy = Tmp("h1-busy"); Directory.CreateDirectory(busy);
+        File.WriteAllText(Path.Combine(busy, StateLock.FileName), "other");
+        int savedWait = StateLock.WaitMs; StateLock.WaitMs = 200;
+        bool refused = false; bool bodyRan = false;
+        try { StateLock.Hold(busy, delegate { bodyRan = true; }); }
+        catch (StarterError e) { refused = e.Message.Contains("saving its settings"); }
+        StateLock.WaitMs = savedWait;
+        Check(refused && !bodyRan, "H1: a held lock refuses the save after the wait, and nothing is written");
+        Check(File.Exists(Path.Combine(busy, StateLock.FileName)), "H1: the other holder's lock is not removed");
+
+        // a lock left by a process that died is broken after the stale time
+        string stale = Tmp("h1-stale"); Directory.CreateDirectory(stale);
+        string sf = Path.Combine(stale, StateLock.FileName);
+        File.WriteAllText(sf, "dead");
+        File.SetLastWriteTimeUtc(sf, DateTime.UtcNow.AddMinutes(-5));
+        bool staleRan = false;
+        StateLock.Hold(stale, delegate { staleRan = true; });
+        Check(staleRan, "H1: a lock older than the stale time is broken and the save goes on");
+
+        // unique temporary names: a write never uses the fixed name path + ".tmp"
+        string w = Path.Combine(Tmp("h1-tmp"), "installed.json");
+        SafeFs.WriteAtomic(w, "{}", null);
+        Check(File.Exists(w) && File.ReadAllText(w) == "{}", "H1: the atomic write lands");
+        Check(!File.Exists(w + ".tmp") && Directory.GetFiles(Path.GetDirectoryName(w)).Length == 1, "H1: no fixed .tmp name is left behind");
+    }
 
     // Answers `ls-files --error-unmatch` like git does: 0 for a listed path, 1 for any other.
     class TrackGit : IGit

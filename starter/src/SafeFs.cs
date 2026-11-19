@@ -29,10 +29,12 @@ namespace Vgac.Starter
 
         // Writes a file so that a crash leaves either the old one or the new one, never none: the new text goes to a temporary file
         // beside it, which then REPLACES the old (File.Replace; the old one kept as `backup` when asked).
-        public static void WriteAtomic(string path, string text, string backup)
+        // uniqueTemp: the temporary file gets a name no other writer uses (machine.json and installed.json, which the backend also
+        // writes under the shared lock). Other files keep the fixed name: a move's crash checks read the fixed name as its own.
+        public static void WriteAtomic(string path, string text, string backup, bool uniqueTemp = false)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            string tmp = path + ".tmp";
+            string tmp = uniqueTemp ? path + "." + Guid.NewGuid().ToString("N") + ".tmp" : path + ".tmp";
             File.WriteAllText(tmp, text, new UTF8Encoding(false));
             Point("save", path + " (written)");
             if (File.Exists(path))
