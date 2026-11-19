@@ -826,7 +826,22 @@ export type Health = {
   queue: Record<string, { paused: boolean; enabled?: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
 }
 
+// The person's saved step settings for one platform and look. `applied` is `saved` brought down to the look's limits
+// for the asset's category; `notes` says plainly what was brought down.
+export type StepDefaults = {
+  platform: string
+  look: string
+  saved: Partial<Record<StageId, Record<string, unknown>>>
+  applied: Partial<Record<StageId, Record<string, unknown>>>
+  notes: string[]
+}
+
 export const api = {
+  // Saved step settings (Choose each step's settings, "Save as my defaults")
+  getStepDefaults: (platform: string, look: string, category: string) => get<StepDefaults>('/api/step-defaults' + q({ platform, look, category })),
+  saveStepDefaults: (platform: string, look: string, category: string, stages: Partial<Record<StageId, Record<string, unknown>>>) =>
+    put<StepDefaults>('/api/step-defaults' + q({ platform, look, category }), { stages }),
+  clearStepDefaults: (platform: string, look: string, category: string) => del<StepDefaults>('/api/step-defaults' + q({ platform, look, category })),
   // Reference data
   health: () => get<Health>('/api/health'),
   gpus: () => get<Gpu[]>('/api/gpus'),

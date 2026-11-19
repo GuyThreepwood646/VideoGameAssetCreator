@@ -688,7 +688,7 @@ function CreateAssetForm({ project }: { project: Project }) {
           <span className="muted small block">Runs every step and only stops if something needs you.</span>
         </span>
       </label>
-      {autopilot && <StepSettingsChoice category={category} stages={ref?.stages ?? null} disabled={busy} onChange={setStepSettings} />}
+      {autopilot && <StepSettingsChoice category={category} platform={platform} look={style} stages={ref?.stages ?? null} disabled={busy} onChange={setStepSettings} />}
       <div className="row-gap form-footer">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {busy ? (fromModel && modelProgress !== null ? 'Sending your model...' : 'Creating...') : fromModel ? 'Create and read my model' : autopilot ? 'Create and make it' : 'Create asset'}

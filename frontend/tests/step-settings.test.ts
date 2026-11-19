@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { AdjustParam, StageInfo } from '../src/api'
-import { changedStepParams, mergeStepParams, stepsWithSettings, startingValue } from '../src/pipeline/stepSettings'
+import { changedStepParams, mergeStepParams, savedInUse, stepsWithSettings, startingValue } from '../src/pipeline/stepSettings'
 
 const knob = (name: string, extra: Partial<AdjustParam> = {}): AdjustParam => ({ name, type: 'integer', default: 1024, min: 0, max: 4096, ...extra }) as AdjustParam
 const stage = (id: string, schema: AdjustParam[]): StageInfo => ({ id, label: id, adjust_schema: schema, plain_name: id, plain_verb: 'Run', help: {}, estimate_seconds: 1 }) as unknown as StageInfo
@@ -69,4 +69,19 @@ test('merged step settings: the later set wins a setting both name', () => {
     mesh: { target_faces: 9 },
   })
   assert.deepEqual(mergeStepParams(undefined, null), {})
+})
+
+test('a saved default is marked while it is still in the form, and not once the person changes it', () => {
+  const steps = stepsWithSettings(STAGES, 'humanoid')
+  const applied = { mesh: { target_faces: 30000 }, rig: { target_faces: 900 } }
+  assert.deepEqual(savedInUse(steps, 'humanoid', applied, applied), { mesh: ['target_faces'], rig: ['target_faces'] })
+  assert.deepEqual(savedInUse(steps, 'humanoid', { ...applied, mesh: { target_faces: 20000 } }, applied), { rig: ['target_faces'] })
+  // a saved value equal to the usual one is still a saved default when nothing was edited
+  assert.deepEqual(savedInUse(steps, 'humanoid', {}, { mesh: { target_faces: 60000 } }), { mesh: ['target_faces'] })
+  assert.deepEqual(savedInUse(steps, 'humanoid', {}, {}), {})
+})
+
+test('saved defaults that differ from the usual are what an automatic build sends', () => {
+  const steps = stepsWithSettings(STAGES, 'humanoid')
+  assert.deepEqual(changedStepParams(steps, 'humanoid', { mesh: { target_faces: 30000 }, rig: { target_faces: 0 } }), { mesh: { target_faces: 30000 } })
 })
