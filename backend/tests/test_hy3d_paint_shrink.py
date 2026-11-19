@@ -111,3 +111,47 @@ def test_shrink_measures_the_paint_against_the_shipped_model(tmp_path, monkeypat
     asyncio.run(prep_mod.shrink_after_paint(FakeSC(), out, {}, 3000, size, "base", 60.0, "smooth", 2048, {}, "auto", False, False, True))
     assert seen["final"] == out
     assert seen["bake"] == out
+
+
+def _capture_shrink_args(tmp_path, monkeypatch, head_args):
+    import asyncio
+
+    from vgac.stages import prep as prep_mod
+
+    out = tmp_path / "prep.glb"
+    out.write_bytes(b"shipped")
+    captured = {}
+
+    async def fake_blender(script, args, log_name=None):
+        captured["args"] = list(args)
+        (tmp_path / "prep_report.json").write_text('{"triangles": 2900, "rebaked": false}')
+
+    class FakeSC:
+        dir = tmp_path
+        def progress(self, *a, **k): pass
+        async def blender(self, *a, **k): await fake_blender(*a, **k)
+        def register(self, *a, **k): pass
+        def set_metrics(self, **k): pass
+
+    monkeypatch.setattr(prep_mod, "texture_pass", lambda *a, **k: {"metrics": {}, "files": {}})
+    size = {"size_m": 1.8, "size_axis": "height"}
+    asyncio.run(prep_mod.shrink_after_paint(FakeSC(), out, {}, 3000, size, "base", 60.0, "smooth", 2048, {}, "auto", False, False,
+                                            True, head_args))
+    return captured["args"]
+
+
+def test_shrink_pass_carries_the_head_and_hand_protection(tmp_path, monkeypatch):
+    from vgac.headtris import HAND_GAIN, HEAD_GAIN, HEAD_SHARE
+
+    head_args = ["--protect-head", HEAD_SHARE, "--head-gain", HEAD_GAIN, "--hand-gain", HAND_GAIN]
+    args = _capture_shrink_args(tmp_path, monkeypatch, head_args)
+    assert args[args.index("--protect-head") + 1] == HEAD_SHARE
+    assert args[args.index("--head-gain") + 1] == HEAD_GAIN
+    assert args[args.index("--hand-gain") + 1] == HAND_GAIN
+    assert "--budget" in args and "--rebake" in args
+
+
+def test_shrink_pass_has_no_head_flags_when_the_head_is_not_weighted(tmp_path, monkeypatch):
+    args = _capture_shrink_args(tmp_path, monkeypatch, [])
+    assert "--protect-head" not in args
+    assert "--hand-gain" not in args

@@ -213,7 +213,7 @@ def placeholder_maps(out_dir: Path, tex: int, keep_normal: bool) -> dict[str, Pa
 
 async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Path], limit: int, size: dict[str, Any], pivot: str,
                              smooth: float, shading: str, tex: int, look: dict[str, Any], delight: str, pbr_fix: bool,
-                             light_after: bool, keep_normal: bool) -> dict[str, Path]:
+                             light_after: bool, keep_normal: bool, head_args: list[str] | None = None) -> dict[str, Path]:
     """The painted full-detail model is shrunk to the budget and the paint baked onto the shrunk model (the existing
     Blender prep: a copy of the painted model is the bake source, then the decimation and the rebake), then measured
     again on the shrunk model. The size and the pivot are as the first pass set them; no second turn (the yaw is already
@@ -225,7 +225,7 @@ async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Pat
                          encoding="utf-8")
     args = [full, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", "0", "--pivot", pivot,
             "--smooth-angle", smooth, "--shading", shading, "--budget", int(limit), "--maps", maps_json, "--tex", tex,
-            "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex), "--rebake", "auto"]
+            "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex), "--rebake", "auto", *(head_args or [])]
     sc.progress(0.8, "Shrinking the painted model")
     await sc.blender("prep.py", args, log_name="prep_shrink.log")
     report = json.loads((sc.dir / "prep_report.json").read_text())
@@ -419,8 +419,11 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
                                                  front_known=front_known)
         if paint_first and tri_limit["limit"] and int(report.get("triangles") or 0) > int(tri_limit["limit"]):
+            # the same head (and hands) protection as the budget pass of the normal path (only when the head is weighted)
+            head_args = (["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
+                         + (["--hand-gain", headtris.HAND_GAIN] if headtris.hands_on(params) else [])) if head["weighted"] else []
             current = await shrink_after_paint(sc, out, current, int(tri_limit["limit"]), size, pivot, smooth, shading["shading"], tex,
-                                               look, surface["delight"], surface["pbr_fix"], light_after, keep_normal)
+                                               look, surface["delight"], surface["pbr_fix"], light_after, keep_normal, head_args)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
             return await srcproject.run_again(sc, glb_, maps_, body_views)
