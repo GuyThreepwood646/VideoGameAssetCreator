@@ -363,6 +363,9 @@ namespace Vgac.Starter
                 string kind = S(d, "kind"), path = S(d, "path");
                 if (kind == "pip-note") { plan.Notes.Add("Python packages installed into a linked ComfyUI by " + S(d, "what") + " are not removed: " + S(d, "packages")); continue; }
                 if (kind != "added" || path.Length == 0) continue;
+                // B6: the ledger's path must be a plain absolute path, exactly as stored (no relative part, no other spelling of it)
+                if (!System.IO.Path.IsPathRooted(path) || !string.Equals(Path.GetFullPath(path).TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                { plan.NotRemoved.Add(path + ": the record of it is not a plain full path, so it is left alone"); continue; }
                 if (!File.Exists(path) && !Directory.Exists(path)) continue;
                 if (SafeFs.Norm(path) == SafeFs.Norm(comfy.Root(data)) || IsKnownAppPath(l, path)) continue;   // handled above
                 if (!SafeFs.PathHasNoLink(path)) { plan.NotRemoved.Add(path + ": it is, or is reached through, a link"); continue; }
@@ -382,6 +385,10 @@ namespace Vgac.Starter
                     // A2: a node pack is removed only while it is the very folder VGAC recorded: the same file id, and no file in it
                     // changed after VGAC added it. A ledger entry without an id (an earlier version) is kept, never guessed at.
                     string fid = S(d, "file_id"), when0 = S(d, "when");
+                    // B6: a node pack lives in the custom_nodes of a ComfyUI folder (its parent is named ComfyUI, or holds main.py)
+                    string comfyDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(path));
+                    if (comfyDir == null || !(string.Equals(System.IO.Path.GetFileName(comfyDir), "ComfyUI", StringComparison.OrdinalIgnoreCase) || File.Exists(System.IO.Path.Combine(comfyDir, "main.py"))))
+                    { plan.NotRemoved.Add(path + ": it is not inside a ComfyUI folder's custom_nodes, so it is left alone"); continue; }
                     if (fid.Length == 0) { plan.NotRemoved.Add(path + ": VGAC did not record which folder it added, so it is kept"); continue; }
                     if (SafeFs.FileId(path) != fid) { plan.NotRemoved.Add(path + ": it is not the folder VGAC added any more (its id changed)"); continue; }
                     if (PackChangedSince(path, when0)) { plan.NotRemoved.Add(path + ": a file in it changed after VGAC added it"); continue; }
