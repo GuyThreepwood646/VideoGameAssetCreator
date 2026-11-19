@@ -39,6 +39,7 @@ from ..comfy import ComfyClient, ComfyError
 from ..graphs.qwen_edit import compose_graph, edit_graph
 from ..jobs import JobCancelled
 from .base import StageContext, random_seed
+from .picture_loras import edit_loras
 
 CATEGORIES = ("humanoid",)
 TARGET_FRACTION = 0.125  # texels wanted across the face: an eighth of the texture's side (256 at 2048)
@@ -1324,19 +1325,19 @@ def image_instance(sc: StageContext) -> str | None:
 
 async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: Path, prompt: str = REDRAW_PROMPT,
                  key: str = "face_redraw", message: str = "Sharpening the painted face", reference: Path | None = None,
-                 margin: float = 1.0) -> Path:
+                 margin: float = 1.0, loras: list[dict[str, Any]] | None = None) -> Path:
     """Qwen-Image-Edit redraw of the crop (the sharpening redraw, or the close-up with CLOSEUP_PROMPT). Stop works: a
     cancelled job takes its own prompt off the card (removes it from the queue, or interrupts it when it is the one
-    running), never someone else's."""
+    running), never someone else's. `loras` is the person's face LoRAs (face_addons): given by the close-up only."""
     client: ComfyClient = sc.client(instance)
     if margin < 1.0:
         crop = await asyncio.to_thread(add_margin, crop, margin, Path(dest).with_name(Path(dest).stem + "_input.png"))
     name = await client.stage_input(crop, f"vgac_{sc.version.id[:8]}_{key}_head.png")
     if reference is not None:
         ref = await client.stage_input(reference, f"vgac_{sc.version.id[:8]}_{key}_guide.png")
-        graph = compose_graph([name, ref], prompt, seed, sc.prefix(key), 1024, 1024)
+        graph = compose_graph([name, ref], prompt, seed, sc.prefix(key), 1024, 1024, loras=loras)
     else:
-        graph = edit_graph(name, prompt, seed, sc.prefix(key), 1024, 1024)
+        graph = edit_graph(name, prompt, seed, sc.prefix(key), 1024, 1024, loras=loras)
     prompt_id = await client.queue_prompt(graph)
 
     def on_poll(elapsed: float) -> None:
@@ -1506,6 +1507,8 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         from ..jobs import is_engine_lost
 
         tries: list[dict[str, Any]] = []
+        # The person's face LoRAs (face_addons), for the close-up only: checked on every card the close-up may use first.
+        face_loras = await edit_loras(sc, "face_addons", params)
         home = await claim_card(sc, instance)
         lease, why = await borrow_card(sc, instance)
         if lease is not None and spare is not None:
@@ -1523,7 +1526,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             k = closeup_margin(found["face_width_px"], reference is not None, photo)
             closeup.setdefault("margins", {})["guided" if reference is not None else "plain"] = k
             cu = await redraw(sc, card, crop, seed_c, out_dir / name, prompt, job_key, retry_message(n, len(plan), message),
-                              reference=reference, margin=k)
+                              reference=reference, margin=k, loras=face_loras)
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), None, False))
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
                                             reference is not None)

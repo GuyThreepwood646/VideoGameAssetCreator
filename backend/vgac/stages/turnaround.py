@@ -25,6 +25,7 @@ from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_
 from ..imaging import alpha_bbox, colour_histogram, contact_sheet, histogram_distance, pair_overlap, pose_extents, white_composite
 from .base import StageContext, random_seed
 from .concept import stage_recipe
+from .picture_loras import edit_loras
 
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
 # The three-quarter view from the other side: drawn whenever the clean-up paints the texture from the views, because
@@ -346,21 +347,23 @@ def cutout_in_graph(sc: StageContext) -> bool:
 
 
 async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, lora_strength: float, extra: str, base: float, span: float,
-                         name: str | None = None, instance: str | None = None, references: list[str] | None = None) -> dict[str, Path]:
+                         name: str | None = None, instance: str | None = None, references: list[str] | None = None,
+                         loras: list[dict[str, Any]] | None = None) -> dict[str, Path]:
     """One drawn view. `name` (default the view) names its files: the bald pictures use bald_<view>. `instance`: the
-    card it is drawn and cut out on (default the job's own card); the graph is the same on every card."""
+    card it is drawn and cut out on (default the job's own card); the graph is the same on every card. `loras`: the
+    person's own LoRAs for the views (view_addons); the bald pictures pass none."""
     name = name or view
     on = {"instance": instance} if instance else {}
     if cutout_in_graph(sc):
         graph = angle_cutout_graph(src_name, view_prompt(view, extra, _category(sc)), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
-                                   lora_strength=lora_strength, zero_negative=zero_negative_on(sc), references=references)
+                                   lora_strength=lora_strength, zero_negative=zero_negative_on(sc), references=references, loras=loras)
         entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span, **on)
         raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
         await sc.download_image(entry, CUT_NODE, sc.dir / f"{name}.png", **on)
         res = await sc.finish_cutout(sc.dir / f"{name}.png")
         return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
     graph = angle_graph(src_name, view_prompt(view, extra, _category(sc)), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength,
-                        zero_negative=zero_negative_on(sc), references=references)
+                        zero_negative=zero_negative_on(sc), references=references, loras=loras)
     entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
     raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
     res = await sc.cutout(raw, name, base=base + span * 0.7, span=span * 0.3, **on)
@@ -518,8 +521,10 @@ def mesh_stage() -> Any:
     return mesh
 
 
-async def _pose_edit(sc: StageContext, white: Path, prompt: str, seed: int, n: int, w: int, h: int) -> dict[str, Any]:
-    """One pose redraw on the first picture card that works: {picture, cutout, card, entry}."""
+async def _pose_edit(sc: StageContext, white: Path, prompt: str, seed: int, n: int, w: int, h: int,
+                     loras: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """One pose redraw on the first picture card that works: {picture, cutout, card, entry}. `loras`: the person's own
+    LoRAs for the pose redraw (pose_addons), checked by the caller before this runs."""
     cards = mesh_stage()._picture_cards(sc)
     if not cards:
         raise RuntimeError("no graphics card can edit the picture")
@@ -529,7 +534,7 @@ async def _pose_edit(sc: StageContext, white: Path, prompt: str, seed: int, n: i
     for card in cards:
         try:
             src_name = await sc.stage_input(white, f"vgac_{sc.version.id[:8]}_pose_src.png", card)
-            entry = await sc.comfy(edit_graph(src_name, prompt, seed, sc.prefix("pose"), w, h), instance=card, poll=1.0,
+            entry = await sc.comfy(edit_graph(src_name, prompt, seed, sc.prefix("pose"), w, h, loras=loras), instance=card, poll=1.0,
                                    message="Posing the character for 3D" + (", second try" if n else ""), base=0.0, span=0.04)
             edited = await sc.download_image(entry, "save", sc.dir / f"{name}.png", card)
             cut = await sc.cutout(Path(edited), cut_name, instance=card, base=0.04, span=0.01)
@@ -554,6 +559,15 @@ def _feet_gap(cutout: Path) -> float | None:
         return None
 
 
+def _pose_choice_changed(sc: StageContext, params: dict[str, Any]) -> bool:
+    """True when the pose LoRA choice differs from the one the parent's pose picture was drawn with (a kept picture
+    must not be reported as drawn with a LoRA it did not use)."""
+    chosen = {a["id"]: a["strength"] if a["strength"] != "custom" else a["value"]
+              for a in reference.resolve_addons(reference.EDIT_MODEL, "edit", None, None, params.get("pose_addons") or None)["applied"]}
+    parent_params = (sc.parent.params if sc.parent is not None else None) or {}
+    return chosen != (parent_params.get("pose_addons_applied") or {})
+
+
 async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Path) -> Path | None:
     """The concept picture edited once into a wide A pose (files pose_ready_picture, pose_ready_cutout), guarded
     against changing the character; None when the param is off, the asset is not a humanoid, or the guard refused the
@@ -568,7 +582,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     if all(sc.file(k) for k in REFUSED_KEYS):
         return None  # Resume after a refusal: the views are drawn from the person's picture, as before
     kept = _pose_parent_files(sc, mouth)
-    if kept:
+    if kept and not _pose_choice_changed(sc, params):
         for k, p in kept.items():
             sc.register(k, sc.copy_in(p, p.name))
         sc.set_params(pose_ready=True, neutral_mouth=mouth)
@@ -593,10 +607,12 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.use_model("qwen_edit")
     sc.use_model("qwen_lightning_lora")
     prompt = pose_ready_prompt(mouth, measure)
+    # The person's LoRAs for the pose redraw only (pose_addons), checked on every card the redraw may use before the first try.
+    pose_loras = await edit_loras(sc, "pose_addons", params, mesh_stage()._picture_cards(sc) or None)
     tries: list[dict[str, Any]] = []
     for n in range(1 + POSE_GUARD_RETRIES):
         seed = random_seed()
-        made = await _pose_edit(sc, white, prompt, seed, n, w, h)
+        made = await _pose_edit(sc, white, prompt, seed, n, w, h, loras=pose_loras)
         if person is not None:
             g = await asyncio.to_thread(buildpose.guard, person, made["cutout"])
         else:
@@ -661,13 +677,14 @@ async def _concept_cutout(sc: StageContext, source: Version | None, src: Path) -
     return Path(res["cutout"])
 
 
-async def _draw_sheet(sc: StageContext, source: Version | None, src: Path, seed: int) -> dict[str, dict[str, Path]] | None:
+async def _draw_sheet(sc: StageContext, source: Version | None, src: Path, seed: int,
+                      loras: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Path]] | None:
     """One sheet job and its split; None (and metrics.sheet says why) when it does not split into five figures."""
     cut = await _concept_cutout(sc, source, src)
     inp = await asyncio.to_thread(sheet_input, cut, sc.dir / "sheet_input.png")
     name = await sc.stage_input(inp, f"vgac_{sc.version.id[:8]}_sheet_input.png")
     sc.progress(0.05, "drawing every side in one picture")
-    entry = await sc.comfy(sheet_graph(name, seed, sc.prefix(f"sheet_{seed}"), strength=METHOD_STRENGTH),
+    entry = await sc.comfy(sheet_graph(name, seed, sc.prefix(f"sheet_{seed}"), strength=METHOD_STRENGTH, loras=loras),
                            message="every side in one picture", base=0.05, span=0.5)
     raw = await sc.download_image(entry, "save", sc.dir / "sheet_raw.png")
     res = await sc.cutout(raw, "sheet", base=0.55, span=0.05)
@@ -687,8 +704,9 @@ async def _camera_source(sc: StageContext, source: Version | None, src: Path) ->
     return {"raw": raw, "cutout": c, "white": w}
 
 
-async def _camera_view(sc: StageContext, src_name: str, view: str, seed: int, extra: str, base: float, span: float) -> dict[str, Path]:
-    graph = camera_graph(src_name, view, seed, sc.prefix(f"{view}_{seed}"), strength=METHOD_STRENGTH, extra=extra)
+async def _camera_view(sc: StageContext, src_name: str, view: str, seed: int, extra: str, base: float, span: float,
+                       loras: list[dict[str, Any]] | None = None) -> dict[str, Path]:
+    graph = camera_graph(src_name, view, seed, sc.prefix(f"{view}_{seed}"), strength=METHOD_STRENGTH, extra=extra, loras=loras)
     entry = await sc.comfy(graph, message=f"view {view}", base=base, span=span * 0.7)
     raw = await sc.download_image(entry, "save", sc.dir / f"{view}_raw.png")
     res = await sc.cutout(raw, view, base=base + span * 0.7, span=span * 0.3)
@@ -824,6 +842,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     chosen_method = turn_method(_category(sc), params)
     method = method or chosen_method
     src = _source_image(sc, source)
+    # The person's LoRAs for the side views (view_addons): checked on every card before the first job of this run. A
+    # kept view keeps the record of the LoRAs it was drawn with; every view drawn here records the ones it was drawn with.
+    view_loras = await edit_loras(sc, "view_addons", params)
     posed = await _pose_ready_picture(sc, params, src)
     if posed is not None:
         src = posed  # every drawn view starts from the pose-ready picture; the concept stays as it is
@@ -858,7 +879,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         sheet_seed = int(base_seed) if base_seed else random_seed()
         sc.use_model("qwen_sheet_lora")
         used.add("sheet")
-        sheet = await _draw_sheet(sc, source, src, sheet_seed)
+        sheet = await _draw_sheet(sc, source, src, sheet_seed, loras=view_loras)
     elif method == "shadow_free" and any(method_draws("shadow_free", v) for v in drawn):
         sc.use_model("qwen_camera_lora")
         used.add("shadow_free")
@@ -905,7 +926,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         if cam is not None and method_draws("shadow_free", view):
             if view == "front":
                 return dict(cam["front"]), "shadow_free"
-            return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n), "shadow_free"
+            return await _camera_view(sc, cam["name"], view, seed, instruction, at, width / n, loras=view_loras), "shadow_free"
         sc.use_model("qwen_angles_lora")
         used.add("standard")
         refs = await side_references(card) if view == "back" and back_refs else []
@@ -921,13 +942,13 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         else:
             with_words.discard(view)
         if card is None:
-            return await _generate_view(sc, src_name, view, seed, lora_strength, extra_v, at, width / n,
+            return await _generate_view(sc, src_name, view, seed, lora_strength, extra_v, at, width / n, loras=view_loras,
                                         **({"references": refs} if refs else {})), "standard"
         if card not in src_names:
             # Its own copy of the start picture, so the job's card never reads a file while it is being copied.
             src_names[card] = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_concept_{card}.png", instance=card)
         return await _generate_view(sc, src_names[card], view, seed, lora_strength, extra_v, at, width / n,
-                                    instance=card, **({"references": refs} if refs else {})), "standard"
+                                    instance=card, loras=view_loras, **({"references": refs} if refs else {})), "standard"
 
     finished = [0]   # views done, for the progress bar when two cards draw at once
     # The back's hair check needs the front, left and right cut-outs. When the back finishes before they do (one card
@@ -997,6 +1018,9 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             info["seed"] = None if view in supplied or (drew == "shadow_free" and view == "front") else seed
             info["rerolls"] = attempts
             info["method"] = drew
+            # The person's own LoRAs this view was drawn with (none for a supplied picture or the shadow-free front,
+            # which is the concept's cut-out), so a kept view reports what it really had.
+            info["loras"] = [] if drew == "supplied" or (drew == "shadow_free" and view == "front") else [a["id"] for a in view_loras]
             if card or home:
                 info["card"] = card or home
             if view in supplied:
@@ -1242,6 +1266,8 @@ def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, 
         base.pop("bald_only", None)  # the marker belongs to the adjust that asked for it
     if "add_views" not in params:
         base.pop("add_views", None)  # likewise
+    for key in ("view_addons_applied", "pose_addons_applied"):
+        base.pop(key, None)  # the record of the parent's own run; this run writes its own (picture_loras.edit_loras)
     return {**base, **params}
 
 

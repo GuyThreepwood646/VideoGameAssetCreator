@@ -23,6 +23,7 @@ from typing import Any
 from .. import imaging, reference
 from ..graphs.concept import concept_graph, prompt_with_triggers, save_node
 from ..graphs.qwen_edit import edit_graph
+from .picture_loras import edit_loras
 from ..imaging import apply_mask
 from .base import StageContext, random_seed
 
@@ -577,7 +578,9 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
     ref_name = await sc.stage_input(ref, f"vgac_{sc.version.id[:8]}_refine_ref.png") if ref is not None else None
     if ref_name:
         sc.set_params(reference_experimental=True)
-    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name),
+    # The person's own LoRAs for this refine only: the request's choice (never the parent's, which the job does not carry).
+    loras = await edit_loras(sc, "edit_addons", params)
+    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
                            message="instruction edit" + (" with a reference picture" if ref_name else ""), base=0.05, span=0.6)
     edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
     if mask_png is not None:
