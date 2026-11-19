@@ -514,8 +514,8 @@ public static partial class T
         Check(!File.Exists(ExeAside.AsidePath(pexe)), "with no leftover");
     }
 
-    class NoGit : IGit { public int Run(string a, string c, out string o) { o = ""; return -1; } }
-    class SpyGit : IGit { public List<string> Calls = new List<string>(); public int Run(string a, string c, out string o) { Calls.Add(a); o = ""; return 0; } }
+    class NoGit : IGit { public int Run(string a, string c, out string o) { o = ""; return -1; }  public int RunToFile(string a, string c, string f) { return -1; } }
+    class SpyGit : IGit { public List<string> Calls = new List<string>(); public int Run(string a, string c, out string o) { Calls.Add(a); o = ""; return 0; }  public int RunToFile(string a, string c, string f) { return -1; } }
 
     static void UpdateAsksLikeQuit()
     {

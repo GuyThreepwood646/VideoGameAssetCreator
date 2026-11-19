@@ -343,6 +343,7 @@ public static partial class T
     // git stand-in whose checkout writes the file, as the real one does, and whose pull answers as told
     class WritingGit : IGit
     {
+    public int RunToFile(string a, string c, string f) { return -1; }
         readonly string published; public int PullCode; public string[] Heads = { "aaa\n", "aaa\n" }; int n;
         public WritingGit(string publishedExe, int pullCode) { published = publishedExe; PullCode = pullCode; }
         public int Run(string a, string c, out string o)

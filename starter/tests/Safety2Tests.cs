@@ -11,6 +11,7 @@ using Vgac.Starter;
 
 public class ScriptedGit : IGit
 {
+    public int RunToFile(string a, string c, string f) { Calls.Add(a); File.WriteAllText(f, "committed"); return 0; }
     public List<string> Calls = new List<string>();
     public int PullCode = 0; public string PullOutput = "";
     public string[] Heads = { "aaa\n", "aaa\n" };
@@ -185,6 +186,7 @@ Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemov
     // A stand-in for git whose "checkout -- VGAC.exe" writes the published file, as the real one does.
     class CheckoutWritesGit : IGit
     {
+    public int RunToFile(string a, string c, string f) { File.Copy(published, f, true); return 0; }
         readonly string published;
         public CheckoutWritesGit(string publishedExe) { published = publishedExe; }
         public int Run(string a, string c, out string o)

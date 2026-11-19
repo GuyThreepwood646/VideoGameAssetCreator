@@ -18,6 +18,7 @@ public static partial class T
         H1SharedStateLock();
         I1DiscardKeepsASwitchedRecord();
         I2SwitchedRecordWithoutNamesCanFinish();
+        J1UpdateCrashKeepsAStartableExe();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -188,9 +189,56 @@ public static partial class T
         Check(!File.Exists(w + ".tmp") && Directory.GetFiles(Path.GetDirectoryName(w)).Length == 1, "H1: no fixed .tmp name is left behind");
     }
 
+    // ---- J1: an update that is cut off at any point leaves a startable VGAC.exe -------------------------------------------------
+
+    // A stand-in for git: `show HEAD:VGAC.exe` writes the committed copy; the heads differ when `moved` (the pull brought something).
+    class CrashGit : IGit
+    {
+        public bool Moved;
+        public int RunToFile(string a, string c, string f) { File.WriteAllText(f, "HEAD-EXE"); return 0; }
+        public int Run(string a, string c, out string o)
+        {
+            o = "";
+            if (a.StartsWith("rev-parse HEAD")) { o = Moved && pulled ? "new\n" : "old\n"; return 0; }
+            if (a.StartsWith("pull")) { pulled = true; return 0; }
+            return 0;
+        }
+        bool pulled;
+    }
+
+    static void J1UpdateCrashKeepsAStartableExe()
+    {
+        string[] points = { "head-written", "exe-record", "exe-replaced", "pull-start", "pull-done" };
+        foreach (bool moved in new[] { false, true })
+        {
+            foreach (string point in points)
+            {
+                string root = Tmp("j1-" + point + (moved ? "-moved" : "-same"));
+                string exe = Path.Combine(root, "VGAC.exe");
+                File.WriteAllText(exe, "OLD-EXE");
+                var git = new CrashGit { Moved = moved };
+                SafeFs.Hook = delegate(string what, string p) { if (what == "update" && p == point) throw new InvalidOperationException("cut off at " + point); };
+                try { GitUpdate.Pull(root, exe, git); }
+                catch (InvalidOperationException) { }
+                finally { SafeFs.Hook = null; }
+                bool startable = File.Exists(exe) && new FileInfo(exe).Length > 0;
+                string now = startable ? File.ReadAllText(exe) : "";
+                Check(startable && (now == "OLD-EXE" || now == "HEAD-EXE"), "J1: cut off at '" + point + "' (moved " + moved + "): VGAC.exe is still there and startable (now " + now + ")");
+            }
+        }
+        // a whole update with nothing cut off: the committed copy is taken when the branch moved; the person's own build comes back when it did not
+        string r1 = Tmp("j1-whole-moved"); string e1 = Path.Combine(r1, "VGAC.exe"); File.WriteAllText(e1, "OLD-EXE");
+        var res1 = GitUpdate.Pull(r1, e1, new CrashGit { Moved = true });
+        Check(res1.Updated && File.ReadAllText(e1) == "HEAD-EXE", "J1: a whole update that moved the branch runs the new VGAC.exe");
+        string r2 = Tmp("j1-whole-same"); string e2 = Path.Combine(r2, "VGAC.exe"); File.WriteAllText(e2, "OWN-BUILD");
+        var res2 = GitUpdate.Pull(r2, e2, new CrashGit { Moved = false });
+        Check(!res2.Updated && File.ReadAllText(e2) == "OWN-BUILD", "J1: when nothing came, the person's own VGAC.exe is back exactly as it was");
+    }
+
     // Answers `ls-files --error-unmatch` like git does: 0 for a listed path, 1 for any other.
     class TrackGit : IGit
     {
+    public int RunToFile(string a, string c, string f) { return -1; }
         readonly string[] tracked;
         public TrackGit(params string[] paths) { tracked = paths; }
         public int Run(string args, string cwd, out string output)

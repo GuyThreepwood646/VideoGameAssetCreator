@@ -137,16 +137,45 @@ namespace Vgac.Starter
             catch (UnauthorizedAccessException e) { return "VGAC could not step aside to let the update in (" + e.Message + "). Nothing was changed."; }
         }
 
-        // The pull failed before it changed anything: the person's own file goes back under its name, byte for byte.
+        // The update's swap, without a moment with no VGAC.exe: the committed copy (`headFile`, written by git first) replaces
+        // VGAC.exe in one File.Replace call, and the running file becomes VGAC.old.exe (the backup). A crash before the call
+        // leaves the old file; during it, one of the two names is always there; after it, the committed copy is there.
+        public static string Swap(string exePath, string root, bool published, string headFile)
+        {
+            string aside = AsidePath(exePath);
+            string record = RecordPath(root);
+            try
+            {
+                if (File.Exists(aside))
+                {
+                    if (!IsOurLeftover(aside, root)) return "A file named " + AsideName + " is already there and VGAC did not make it. Move it away, then try again. Nothing was changed.";
+                    if (!WasPublished(root)) return AsideName + " is your own build of VGAC.exe from an earlier update, so it is not replaced. Move or rename it, then try again. Nothing was changed.";
+                    File.Delete(aside);
+                }
+                var d = new Dictionary<string, object>();
+                d["sha256"] = Hashing.Sha256File(exePath); d["path"] = aside; d["published"] = published; d["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                Directory.CreateDirectory(Path.GetDirectoryName(record));
+                SafeFs.WriteAtomic(record, Json.Write(d), null);
+                SafeFs.Point("update", "exe-record");
+                File.Replace(headFile, exePath, aside);
+                SafeFs.Point("update", "exe-replaced");
+                return null;
+            }
+            catch (IOException e) { return "VGAC could not prepare the update (" + e.Message + "). Nothing was changed."; }
+            catch (UnauthorizedAccessException e) { return "VGAC could not prepare the update (" + e.Message + "). Nothing was changed."; }
+        }
+
+        // The pull failed before it changed anything, or nothing came: the person's own file goes back under its name, byte for
+        // byte. File.Replace keeps a file under the name at every moment (the committed copy it replaces is thrown away).
         public static void RestoreOver(string exePath, string root)
         {
             string aside = AsidePath(exePath);
             try
             {
                 if (!File.Exists(aside) || !IsOurLeftover(aside, root)) return;
-                if (File.Exists(exePath)) File.Delete(exePath);
-                File.Move(aside, exePath);
-                File.Delete(RecordPath(root));
+                if (File.Exists(exePath)) File.Replace(aside, exePath, null);
+                else File.Move(aside, exePath);
+                try { File.Delete(RecordPath(root)); } catch (Exception) { }
                 ClearRestoreNote(root);
             }
             catch (Exception) { }
@@ -289,6 +318,8 @@ namespace Vgac.Starter
     {
         // Runs git with these arguments in `cwd`; returns the exit code (-1: git could not be started) and its output.
         int Run(string args, string cwd, out string output);
+        // Runs git and writes its standard output, as raw bytes, to `file` (for `git show HEAD:VGAC.exe`). Returns the exit code.
+        int RunToFile(string args, string cwd, string file);
     }
 
     public class RealGit : IGit
@@ -323,6 +354,32 @@ namespace Vgac.Starter
                 }
             }
             catch (System.ComponentModel.Win32Exception) { return -1; }
+        }
+
+        public int RunToFile(string args, string cwd, string file)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("git", args);
+                psi.WorkingDirectory = cwd; psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+                psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+                using (var p = Process.Start(psi))
+                using (var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    var rErr = System.Threading.Tasks.Task.Factory.StartNew<string>(delegate { try { return p.StandardError.ReadToEnd(); } catch (Exception) { return ""; } });
+                    var copy = System.Threading.Tasks.Task.Factory.StartNew(delegate { try { p.StandardOutput.BaseStream.CopyTo(fs); } catch (Exception) { } });
+                    if (!p.WaitForExit(TimeoutMs))
+                    {
+                        try { if (!p.HasExited) p.Kill(); } catch (Exception) { }
+                        return -1;
+                    }
+                    copy.Wait(3000); rErr.Wait(3000);
+                    fs.Flush();
+                    return p.ExitCode;
+                }
+            }
+            catch (Exception) { return -1; }
         }
     }
 
@@ -393,23 +450,28 @@ namespace Vgac.Starter
             if (exeInside)
             {
                 oldSha = Hashing.Sha256File(exePath);
-                string why = ExeAside.Aside(exePath, root, ExePublished(exePath, Path.Combine(root, "starter", "CHECKSUMS.txt")));
-                if (why != null) { r.Message = why; return r; }
-                // git sees the renamed file as deleted, and refuses a pull that would change a file with local changes:
-                // put the committed copy back under its name (a new file; the running one is the renamed one)
+                // git writes the committed copy first (under its own name); the running VGAC.exe is then replaced by it in one step,
+                // so VGAC.exe is never missing (ExeAside.Swap). git's pull cannot overwrite the running file, which is why it is swapped.
                 string rel = exePath.Substring(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace(Path.DirectorySeparatorChar, '/');
-                string co;
-                if (git.Run("checkout -- \"" + rel + "\"", root, out co) != 0)
+                string headFile = Path.Combine(Path.GetDirectoryName(exePath), "VGAC.head.tmp");
+                try { File.Delete(headFile); } catch (Exception) { }
+                if (git.RunToFile("show HEAD:" + rel, root, headFile) != 0)
                 {
-                    ExeAside.Restore(exePath, root);
-                    r.Message = "VGAC could not prepare the update (" + LastLines(co, 2) + "). Nothing was changed.";
+                    try { File.Delete(headFile); } catch (Exception) { }
+                    r.Message = "VGAC could not prepare the update (the committed VGAC.exe could not be read). Nothing was changed.";
                     return r;
                 }
+                SafeFs.Point("update", "head-written");
+                string why = ExeAside.Swap(exePath, root, ExePublished(exePath, Path.Combine(root, "starter", "CHECKSUMS.txt")), headFile);
+                try { File.Delete(headFile); } catch (Exception) { }
+                if (why != null) { r.Message = why; return r; }
             }
             var binsAside = new List<string>();
             string binWhy = BinAside.Aside(root, git, binsAside);
             if (binWhy != null) { if (exeInside) ExeAside.RestoreOver(exePath, root); r.Message = binWhy; return r; }
+            SafeFs.Point("update", "pull-start");
             int code = git.Run("pull --ff-only", root, out output);
+            SafeFs.Point("update", "pull-done");
             string after; git.Run("rev-parse HEAD", root, out after);
             bool exeBack = exeInside && File.Exists(exePath);
             bool headMoved = (before ?? "").Trim() != (after ?? "").Trim();

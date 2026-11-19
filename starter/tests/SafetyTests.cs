@@ -215,6 +215,7 @@ public static partial class T
 
     class FailCheckoutGit : IGit
     {
+    public int RunToFile(string a, string c, string f) { return -1; }
         public List<string> Calls = new List<string>();
         public int Run(string a, string c, out string o)
         {
