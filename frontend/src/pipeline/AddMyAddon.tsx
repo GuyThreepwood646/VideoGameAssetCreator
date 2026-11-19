@@ -6,11 +6,12 @@
 // This sits inside the Fine-tune <form>, so it uses no <form> of its own, every button is type="button", and Enter in
 // its text boxes never submits Fine-tune.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { api, STYLE_MODELS, type AddonEntry, type AddonPrefill, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
+import { api, STYLE_MODELS, type AddonEntry, type AddonPrefill, type MadeFor, type MyAddonsListing, type StrengthName, type UnregisteredAddon } from '../api'
 import { fmtBytes } from '../components/ImageDrop'
 import { Info } from '../components/Info'
 import { ErrorText } from '../components/ui'
 import { modelLabel, STRENGTH_LABELS } from '../help'
+import { EDIT_MODEL, EDIT_MODEL_LABEL, MADE_FOR_EDIT, MADE_FOR_PLAIN, madeForOf, PLAIN_WARNING } from '../editLoras'
 
 const MAX_ADDON_BYTES = 4 * 1024 * 1024 * 1024
 const STEPS: StrengthName[] = ['subtle', 'normal', 'strong']
@@ -236,7 +237,19 @@ function AddonForm({
   const [source, setSource] = useState(editing?.source ?? '')
   const [error, setError] = useState<unknown>(null)
   const [saving, setSaving] = useState(false)
-  const missing = !label.trim() ? 'Give the LoRA a name.' : models.length === 0 ? 'Choose at least one model.' : null
+  // Picture edits: the file settles what it was made for when it can; otherwise the person must choose (both options
+  // are locked when the file is sure, so a sure plain file can never be saved as an Edit one).
+  const forEdits = models.includes(EDIT_MODEL)
+  const detectedMadeFor = madeForOf(pre)
+  const madeForLocked = !!detectedMadeFor
+  const [madeFor, setMadeFor] = useState<MadeFor | ''>(detectedMadeFor || madeForOf(editing))
+  const missing = !label.trim()
+    ? 'Give the LoRA a name.'
+    : models.length === 0
+      ? 'Choose at least one model.'
+      : forEdits && !madeFor
+        ? 'Choose what it was made for.'
+        : null
   const save = async () => {
     if (missing) {
       setError(new Error(missing))
@@ -245,7 +258,15 @@ function AddonForm({
     setSaving(true)
     setError(null)
     try {
-      const body = { file_name: picked.fileName, label: label.trim(), base_models: models, trigger: trigger.trim(), default_strength: strength, source: source.trim() }
+      const body = {
+        file_name: picked.fileName,
+        label: label.trim(),
+        base_models: models,
+        trigger: trigger.trim(),
+        default_strength: strength,
+        source: source.trim(),
+        made_for: forEdits ? madeFor : '',
+      }
       let entry: AddonEntry
       if (editing) {
         // The app has no "edit" call: take the old entry off the list (the file stays) and set it up again with the new values.
@@ -254,7 +275,8 @@ function AddonForm({
         try {
           entry = await api.addMyAddon(body)
         } catch (e) {
-          await api.addMyAddon({ file_name: picked.fileName, label: editing.label, base_models: editing.base_models, trigger: editing.trigger, default_strength: editing.default_strength, source: editing.source }).catch(() => undefined)
+          const restore = { file_name: picked.fileName, label: editing.label, base_models: editing.base_models, trigger: editing.trigger, default_strength: editing.default_strength, source: editing.source, made_for: madeForOf(editing) }
+          await api.addMyAddon(restore).catch(() => undefined)
           throw e
         }
       } else {
@@ -268,7 +290,11 @@ function AddonForm({
       setSaving(false)
     }
   }
-  const toggle = (id: string, on: boolean) => setModels((cur) => (on ? [...cur, id] : cur.filter((m) => m !== id)))
+  // A painter and picture edits are never chosen together: choosing one clears the other.
+  const toggle = (id: string, on: boolean) => setModels((cur) => (on ? [...cur.filter((m) => m !== EDIT_MODEL), id] : cur.filter((m) => m !== id)))
+  const toggleEdits = (on: boolean) => setModels(on ? [EDIT_MODEL] : [])
+  // The warning follows what the LoRA was made for: a plain Qwen-Image file, or one the person calls plain or not sure.
+  const warning = forEdits && madeFor === MADE_FOR_PLAIN ? PLAIN_WARNING : ''
   return (
     <div className="addon-add addon-form">
       <div className="row-between">
@@ -298,6 +324,42 @@ function AddonForm({
           ))}
         </div>
       </fieldset>
+
+      <fieldset className="field addon-edits">
+        <legend className="field-label">Or use it for picture edits</legend>
+        <span className="field-hint">The picture-edit model of this app (Refine, side views, pose redraw, face close-up). Your LoRA is only offered there, never in the concept painters.</span>
+        <div className="check-row">
+          <label className="check-item">
+            <input type="checkbox" checked={forEdits} onChange={(e) => toggleEdits(e.target.checked)} />
+            {EDIT_MODEL_LABEL}
+          </label>
+        </div>
+        {forEdits && warning && <div className="addon-note small">{warning}</div>}
+      </fieldset>
+
+      {forEdits && (
+        <fieldset className="field addon-made-for">
+          <legend className="field-label">
+            What was it made for?
+            <Info term="term.made_for" />
+          </legend>
+          {madeForLocked ? (
+            <span className="field-hint">The file says what it was made for, so this is set and cannot be changed here.</span>
+          ) : (
+            <span className="field-hint">The file does not say. Choose one before you add it.</span>
+          )}
+          <div className="check-row">
+            <label className="check-item">
+              <input type="radio" name="made-for" checked={madeFor === MADE_FOR_EDIT} disabled={madeForLocked} onChange={() => setMadeFor(MADE_FOR_EDIT)} />
+              Qwen-Image-Edit
+            </label>
+            <label className="check-item">
+              <input type="radio" name="made-for" checked={madeFor === MADE_FOR_PLAIN} disabled={madeForLocked} onChange={() => setMadeFor(MADE_FOR_PLAIN)} />
+              Plain Qwen-Image, or not sure
+            </label>
+          </div>
+        </fieldset>
+      )}
 
       <label className="field">
         <span className="field-label">

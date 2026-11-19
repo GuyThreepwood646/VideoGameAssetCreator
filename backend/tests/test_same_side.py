@@ -80,7 +80,7 @@ def _run(tmp_path, monkeypatch, right_faces, views=("front", "left", "right")):
     draws: dict[str, int] = {}
     seq = list(right_faces)
 
-    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span):
+    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, loras=None):
         n = draws[view] = draws.get(view, 0) + 1
         later = view in ("right", "quarter2")
         facing_right = seq[min(n, len(seq)) - 1] if later else False

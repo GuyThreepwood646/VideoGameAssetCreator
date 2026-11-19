@@ -63,7 +63,7 @@ def engines(monkeypatch):
     monkeypatch.setattr(turnaround.library, "version_file", lambda v, key, settings: v.image if key == "image" else None)
     state = {"calls": [], "fail": {}}
 
-    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None):
+    async def fake_generate(sc, src_name, view, seed, lora_strength, extra, base, span, name=None, instance=None, loras=None, **kw):
         card = instance or "a"
         t0 = time.monotonic()
         await asyncio.sleep(DRAW_SECONDS)
