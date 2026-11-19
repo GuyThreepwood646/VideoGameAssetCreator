@@ -352,14 +352,14 @@ async def _generate_view(sc: StageContext, src_name: str, view: str, seed: int, 
     name = name or view
     on = {"instance": instance} if instance else {}
     if cutout_in_graph(sc):
-        graph = angle_cutout_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
+        graph = angle_cutout_graph(src_name, view_prompt(view, extra, _category(sc)), seed, sc.prefix(f"{name}_{seed}"), sc.prefix(name),
                                    lora_strength=lora_strength, zero_negative=zero_negative_on(sc), references=references)
         entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span, **on)
         raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)
         await sc.download_image(entry, CUT_NODE, sc.dir / f"{name}.png", **on)
         res = await sc.finish_cutout(sc.dir / f"{name}.png")
         return {"raw": raw, "cutout": res["cutout"], "white": res["white"], "stats": res.get("stats")}
-    graph = angle_graph(src_name, view_prompt(view, extra), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength,
+    graph = angle_graph(src_name, view_prompt(view, extra, _category(sc)), seed, sc.prefix(f"{name}_{seed}"), lora_strength=lora_strength,
                         zero_negative=zero_negative_on(sc), references=references)
     entry = await sc.comfy(graph, message=f"view {name}", base=base, span=span * 0.7, **on)
     raw = await sc.download_image(entry, "save", sc.dir / f"{name}_raw.png", **on)

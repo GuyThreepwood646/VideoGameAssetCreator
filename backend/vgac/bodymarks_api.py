@@ -4,7 +4,8 @@
                                           older version)
   PUT  /api/versions/{vid}/marks          {moves?: [{view, joint, x, y}], accept?: bool}: the person's moves (kept apart
                                           from the app's) and/or "these look right"
-  POST /api/versions/{vid}/marks/reset    {view?: str}: the app's marks back (on one picture, or all)
+  POST /api/versions/{vid}/marks/reset    {view?: str, joint?: str}: the app's marks back (one mark, one picture, or
+                                          all); one mark the app did not see comes off the picture
 
 Each answers the panel's state (MarksOut) and writes marks.json, metrics.body_marks and the body_marks check on the
 version itself: marks are a note on the pictures, not a new result, so no new version is made.
@@ -39,6 +40,7 @@ class MarksIn(BaseModel):
 
 class ResetIn(BaseModel):
     view: str | None = Field(default=None, max_length=16)
+    joint: str | None = Field(default=None, max_length=32)
 
 
 def _turnaround(db: Session, vid: str) -> Version:
@@ -144,8 +146,11 @@ def reset_marks(vid: str, body: ResetIn | None = None, db: Session = Depends(get
     v = _turnaround(db, vid)
     doc = load(db, v)
     view = body.view if body else None
+    joint = body.joint if body else None
     if view is not None and view not in (doc.get("views") or {}):
         raise HTTPException(400, f"there is no {view!r} picture with marks on this version")
-    bodymarks.reset(doc, view)
+    if joint is not None and (view is None or joint not in bodymarks.JOINTS):
+        raise HTTPException(400, "one mark is put back on one picture: give its view and a known mark")
+    bodymarks.reset(doc, view, joint)
     publish(db, v, doc)
     return out(v, doc)
