@@ -2,6 +2,7 @@
 // StepSettingsChoice): which steps show, what each setting starts at, and which values are sent.
 import type { AdjustParam, StageId, StageInfo } from '../api'
 import { knobShown } from '../help'
+import { isEditKnob } from '../editLoras'
 
 // What the autopilot start sends: only the settings that differ from their starting values, per step.
 export type StepParams = Partial<Record<StageId, Record<string, unknown>>>
@@ -15,6 +16,7 @@ export function stepsWithSettings(stages: StageInfo[], category: string, skips: 
 // The value a setting starts at for this kind of asset (the same rule as the Fine-tune form): a per-category default
 // wins, then the knob's own default, then a plain empty value for its type.
 export function defaultFor(p: AdjustParam): unknown {
+  if (isEditKnob(p.type)) return {}
   switch (p.type) {
     case 'number':
     case 'integer':

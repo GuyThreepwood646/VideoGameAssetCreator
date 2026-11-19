@@ -529,25 +529,6 @@ function clamp(n: number, p: AdjustParam): number {
   return n
 }
 
-function defaultFor(p: AdjustParam): unknown {
-  if (isEditKnob(p.type)) return {}
-  switch (p.type) {
-    case 'number':
-    case 'integer':
-      return p.min ?? 0
-    case 'boolean':
-      return false
-    case 'multiselect':
-      return []
-    case 'addons':
-      return {}
-    case 'select':
-      return p.options?.[0] ?? ''
-    default:
-      return ''
-  }
-}
-
 export function AdjustField({
   param: p,
   value,
