@@ -136,6 +136,20 @@ export function stageEstimate(stage: StageId, info?: StageInfo | null, estimates
   return stageEstimateSeconds(stage)
 }
 
+// Step 2 change: the words sent with a tick-box redraw when the person typed none (a plain redraw).
+export const PLAIN_VIEW_REDRAW = 'Redraw this view'
+
+// Step 2 change: about how long a redraw of `n` of the step's `total` views takes, from the step's usual time for all of them.
+export function redrawViewsSeconds(stageSeconds: number, n: number, total: number): number {
+  return (stageSeconds * Math.max(1, n)) / Math.max(1, total, n)
+}
+
+// The question before a change that redraws several views, or null for one view (no question).
+export function redrawViewsWarning(n: number, seconds: number, hasWords: boolean): string | null {
+  if (n < 2) return null
+  return `This redraws ${n} views, which takes ${fmtDuration(seconds)}. ${hasWords ? 'Every one of them gets your words. ' : 'With no words typed, each is drawn again the same way. '}The views you leave out are carried over unchanged, and this version stays.`
+}
+
 export function fmtDuration(seconds: number, prefix = 'about '): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'a moment'
   if (seconds < 45) return `${prefix}${Math.max(5, Math.round(seconds / 5) * 5)} seconds`

@@ -4,7 +4,7 @@ import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { Disclosure, fmtNum, isCheckList, PlainChecks, TrafficDot } from '../../components/ui'
 import { editLoraApplied, editLoraNotes } from '../../editLoras'
-import { metricPlain } from '../../help'
+import { metricPlain, PLAIN_VIEW_REDRAW } from '../../help'
 import { BodyMarksPanel } from './BodyMarks'
 
 type ViewMetrics = Record<string, unknown> & { passed?: boolean; checks?: Check[] }
@@ -123,7 +123,11 @@ function viewList(views: string[]): string {
 type Props = {
   version: Version
   // Redraw the ticked views together: one new version, every other view carried over unchanged.
-  onRedraw: (views: string[]) => void
+  // False when the person backed out at the warning for several views (the ticks stay).
+  onRedraw: (views: string[]) => Promise<boolean> | void
+  // The "what to change" words shared with the Describe the change box. Empty: a tick is a plain redraw.
+  words?: string
+  onWords?: (t: string) => void
   // A request is on its way: the Redraw button waits.
   busy?: boolean
   // Why this version cannot be redrawn from (it is not finished). The ticks are not offered then.
@@ -132,7 +136,16 @@ type Props = {
   originalFiles?: Record<string, string> | null
 }
 
-export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles }: Props) {
+// Which views this version redrew from the one before it, said in words ("Redrawn in this version: Left and Back. ...").
+export function redrawnLine(version: Version, views: string[]): string | null {
+  const done = ((version.params?.refined_views as string[] | undefined) ?? []).filter((v) => views.includes(v))
+  if (!done.length) return null
+  const rest = views.filter((v) => !done.includes(v))
+  const words = typeof version.params?.instruction === 'string' && version.params.instruction !== PLAIN_VIEW_REDRAW ? ` for "${version.params.instruction}"` : ''
+  return `Redrawn in this version${words}: ${viewList(done)}.${rest.length ? ` ${viewList(rest)} ${rest.length > 1 ? 'are' : 'is'} carried over unchanged.` : ''}`
+}
+
+export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, locked, originalFiles }: Props) {
   const [cutout, setCutout] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [open, setOpen] = useState<number | null>(null)
@@ -148,11 +161,12 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
   const flagged = views.filter((v) => perView[v]?.passed === false)
   const untickedFlagged = flagged.filter((v) => !ticked.includes(v))
   const own = ticked.filter((v) => perView[v]?.supplied === true)
-  const redraw = () => {
+  const redraw = async () => {
     if (!ticked.length || busy) return
-    onRedraw(ticked)
-    setPicked([])
+    const sent = await onRedraw(ticked)
+    if (sent !== false) setPicked([])
   }
+  const redrawn = redrawnLine(version, views)
   return (
     <div className="turnaround-view">
       <div className="view-intro muted small">
@@ -182,6 +196,11 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
           ) : null}
         </span>
       </div>
+      {redrawn && (
+        <div className="muted small redrawn-line" role="status">
+          {redrawn}
+        </div>
+      )}
       <PoseReadyRow version={version} originalFiles={originalFiles} cutout={cutout} />
       <div className="views-row">
         {views.map((view) => {
@@ -216,7 +235,7 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
               </div>
               {/* A view drawn another way than the version asked for: a sheet side redrawn, or a side the way cannot draw. */}
               {typeof m?.method === 'string' && m.method !== 'supplied' && m.method !== 'from_model' && m.method !== (version.params?.turn_method ?? 'standard') && (
-                <div className="muted small">Drawn the {m.method === 'standard' ? 'standard' : m.method === 'sheet' ? 'all-sides-in-one-picture' : 'shadow-free'} way.</div>
+                <div className="muted small">{m.method === 'edit' ? 'Changed by editing the earlier picture of this view.' : `Drawn the ${m.method === 'standard' ? 'standard' : m.method === 'sheet' ? 'all-sides-in-one-picture' : 'shadow-free'} way.`}</div>
               )}
               {checks && checks.length > 0 && <PlainChecks checks={checks} compact />}
               {numbers.length > 0 && (
@@ -261,6 +280,12 @@ export function TurnaroundView({ version, onRedraw, busy, locked, originalFiles 
               </>
             )}
           </div>
+          {onWords && (
+            <label className="redraw-words small">
+              <span>What to change (optional)</span>
+              <input type="text" value={words} maxLength={4000} onChange={(e) => onWords(e.target.value)} placeholder="Leave empty to draw the ticked views again the same way. Or say what to change, for example: remove the people" aria-label="What to change in the ticked views" />
+            </label>
+          )}
           <div className="redraw-actions">
             {untickedFlagged.length > 0 && (
               <button type="button" className="link small" onClick={() => setPicked((list) => [...new Set([...list, ...flagged])])}>

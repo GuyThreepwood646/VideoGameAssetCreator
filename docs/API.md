@@ -62,6 +62,13 @@ Running stages (all return {job, version})
   The parent is the selected version of the previous stage unless given. Concept has no parent.
 - POST /api/versions/{vid}/refine  body { "instruction": str, "view"?: str, "mask_png"?: base64, "params"?: {} }
   New version in the same stage with parent = vid, produced by the stage's refine engine.
+  On a turnaround version the body must name the views to redraw: `"views": [..]` (several, or all of the
+  version's views for "all views") or `"view": str` (one). With none named it is a 400 ("Choose which views to
+  change"); it never falls back to the front view. Every named view receives `instruction`; the views not named
+  are carried forward with the same files and seeds. The new version's `params.refined_views` lists what was redrawn.
+  A change with typed words to exactly one view of a non-humanoid asset edits that view's own earlier picture (no turn LoRA; the view's
+  `metrics.views.<view>.method` is `edit`); a plain redraw, several views or all views are drawn from the concept.
+  `views` on any other step is a 400.
 - POST /api/versions/{vid}/adjust  body { "params": {...} }
   New version in the same stage with parent = vid, produced by re-running the deterministic part with new params.
 - POST /api/versions/{vid}/select -> marks it selected for its stage (and unselects siblings).

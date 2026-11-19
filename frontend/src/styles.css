@@ -1656,6 +1656,15 @@ button.btn-lg {
   flex: 1 1 320px;
   min-width: 0;
 }
+.redraw-words {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  flex: 1 1 100%;
+}
+.redraw-words input {
+  width: 100%;
+}
 .redraw-own {
   margin-top: var(--s1);
   color: var(--warn);
