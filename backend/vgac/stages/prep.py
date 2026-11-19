@@ -188,6 +188,66 @@ def facing_colour(sc: StageContext) -> Any:
         return None
 
 
+def paints_full_first(mesh_v: Any, own_maps: dict[str, Path]) -> bool:
+    """A Hunyuan3D mesh (engine hy3d) has no texture of its own: it is painted from the pictures at full detail, then
+    shrunk to the budget with the paint baked onto the shrunk model (shrink_after_paint). Every other mesh is as before."""
+    return bool(mesh_v is not None and (mesh_v.params or {}).get("engine") == "hy3d" and not own_maps.get("base_color"))
+
+
+def placeholder_maps(out_dir: Path, tex: int, keep_normal: bool) -> dict[str, Path]:
+    """Neutral maps for a mesh with no texture of its own. They are not a colour of the model: the picture paint replaces
+    the grey wherever a picture sees the surface; metallic is 0, roughness 0.5, ao 1, and the normal map (when the look
+    keeps one) is flat."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    specs = {"base_color": (128, 128, 128), "metallic": (0, 0, 0), "roughness": (128, 128, 128), "ao": (255, 255, 255),
+             "normal": (128, 128, 255)}
+    files: dict[str, Path] = {}
+    for key, colour in specs.items():
+        if key == "normal" and not keep_normal:
+            continue
+        p = out_dir / f"{key}.png"
+        Image.new("RGB", (int(tex), int(tex)), colour).save(p)
+        files[key] = p
+    return files
+
+
+async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Path], limit: int, size: dict[str, Any], pivot: str,
+                             smooth: float, shading: str, tex: int, look: dict[str, Any], delight: str, pbr_fix: bool,
+                             light_after: bool, keep_normal: bool) -> dict[str, Path]:
+    """The painted full-detail model is shrunk to the budget and the paint baked onto the shrunk model (the existing
+    Blender prep: a copy of the painted model is the bake source, then the decimation and the rebake), then measured
+    again on the shrunk model. The size and the pivot are as the first pass set them; no second turn (the yaw is already
+    applied in the painted model)."""
+    full = sc.dir / "painted_full.glb"
+    shutil.copyfile(out, full)
+    maps_json = sc.dir / "paint_maps.json"
+    maps_json.write_text(json.dumps({k: str(p) for k, p in current.items() if k in TEXTURE_KEYS and (keep_normal or k != "normal")}),
+                         encoding="utf-8")
+    args = [full, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", "0", "--pivot", pivot,
+            "--smooth-angle", smooth, "--shading", shading, "--budget", int(limit), "--maps", maps_json, "--tex", tex,
+            "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex), "--rebake", "auto"]
+    sc.progress(0.8, "Shrinking the painted model")
+    await sc.blender("prep.py", args, log_name="prep_shrink.log")
+    report = json.loads((sc.dir / "prep_report.json").read_text())
+    if not report.get("rebaked"):
+        sc.set_metrics(shrink_rebaked=False, shrink_triangles=report.get("triangles"))
+        return current
+    maps = {k: Path(p) for k, p in (report.get("rebake_maps") or {}).items() if Path(p).is_file()}
+    for key, p in maps.items():
+        sc.register(key, p)
+    sc.set_metrics(triangles=report.get("triangles"), vertices=report.get("vertices"), decimated=bool(report.get("decimated")),
+                   triangles_before_budget=report.get("triangles_before_budget"), rebaked=True,
+                   rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
+                   shrink_rebaked=True, texture_size=tex)
+    sc.register("glb", out)
+    sc.register("report", sc.dir / "prep_report.json")
+    result = await asyncio.to_thread(texture_pass, out, full, maps, sc.dir, tex, delight, pbr_fix, True, look, light_after)
+    for key, p in result["files"].items():
+        sc.register(key, p)
+    sc.set_metrics(**result["metrics"])
+    return {**maps, **{k: Path(p) for k, p in result["files"].items() if k in TEXTURE_KEYS}}
+
+
 def own_mesh_glb(sc: Any) -> tuple[Any, Path | None]:
     """The mesh version this clean-up works on and its GLB. The walk is the prep's own lineage: its parent, or, for a
     clean-up made from an earlier clean-up, the mesh that one came from. A selected mesh elsewhere in the asset is
@@ -259,8 +319,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     out = sc.dir / "prep.glb"
     args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
                        "--pivot", pivot, "--smooth-angle", smooth, "--shading", shading["shading"]]
-    if tri_limit["limit"]:
-        args += ["--budget", int(tri_limit["limit"])]
+    budget_now = None if paints_full_first(mesh_v, own_texture_maps(mesh_v, ["base_color"], sc.settings)[0]) else tri_limit["limit"]
+    if budget_now:
+        args += ["--budget", int(budget_now)]
         if head["weighted"]:
             args += ["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
             if headtris.hands_on(params):
@@ -281,6 +342,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     repaired = await repair_normal(sc, mesh_v, src, mesh_maps, keep_normal)
     if repaired:
         src, mesh_maps["normal"] = repaired["glb"], repaired["normal"]
+    paint_first = paints_full_first(mesh_v, mesh_maps)
+    if paint_first:
+        # the paint goes on at the mesh's UV size, at full detail; the budget is applied after the paint (below)
+        mesh_maps = placeholder_maps(sc.dir / "placeholder", int((mesh_v.metrics or {}).get("unwrap_resolution") or 2048), keep_normal)
     tex = texture_size_of(mesh_maps, mesh_v.params if mesh_v else {}, sc.budget.get("texture"))
     if mesh_maps:
         maps_json = sc.dir / "bake_maps.json"
@@ -346,11 +411,14 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.set_metrics(**fl["metrics"])
             if fl["relayout"]:
                 sc.set_metrics(**await asyncio.to_thread(layout_measures, out, tex, "face layout"))
-        if srcproject.on(params, sc.asset.category, look):
+        if paint_first or srcproject.on(params, sc.asset.category, look):
             # the facing was decided (or chosen by hand): the front pictures are fitted on the front half only
             front_known = facing_.get("face_best_turn") is not None or facing_.get("facing_source") == "chosen"
             current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
                                                  front_known=front_known)
+        if paint_first and tri_limit["limit"] and int(report.get("triangles") or 0) > int(tri_limit["limit"]):
+            current = await shrink_after_paint(sc, out, current, int(tri_limit["limit"]), size, pivot, smooth, shading["shading"], tex,
+                                               look, surface["delight"], surface["pbr_fix"], light_after, keep_normal)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
             return await srcproject.run_again(sc, glb_, maps_, body_views)

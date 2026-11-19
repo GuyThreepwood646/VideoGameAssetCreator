@@ -13,7 +13,8 @@ HY3D_VIEWS = ("front", "left", "back", "right")
 
 
 def hy3d_graph(names: dict[str, str], prefix: str, steps: int = 20, cfg: float = 7.5, seed: int = 42,
-               ckpt: str = "3D Rendering" + BS + "Hunyuan3D-2mv.fp16.safetensors") -> dict[str, Any]:
+               ckpt: str = "3D Rendering" + BS + "Hunyuan3D-2mv.fp16.safetensors", unwrap_resolution: int | None = None,
+               unwrap_padding: int = 8) -> dict[str, Any]:
     g: dict[str, Any] = {
         "ck": {"class_type": "ImageOnlyCheckpointLoader", "inputs": {"ckpt_name": ckpt}},
         "ms": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["ck", 0], "shift": 1.0}},
@@ -25,6 +26,12 @@ def hy3d_graph(names: dict[str, str], prefix: str, steps: int = 20, cfg: float =
         "mesh": {"class_type": "VoxelToMesh", "inputs": {"voxel": ["dec", 0], "algorithm": "surface net", "threshold": 0.6}},
         "glb": {"class_type": "SaveGLB", "inputs": {"mesh": ["mesh", 0], "filename_prefix": prefix}},
     }
+    if unwrap_resolution:
+        # UV layout at full detail (the paint and the shrink come later, in prep): TRELLIS.2's own UnwrapMesh (pec),
+        # run on the raw mesh. Off by default, so the bakeoff parity graph is unchanged.
+        g["unwrap"] = {"class_type": "UnwrapMesh", "inputs": {"mesh": ["mesh", 0], "segmenter": "pec", "resolution": int(unwrap_resolution),
+                                                              "padding": int(unwrap_padding), "weld_distance": 0.0002}}
+        g["glb"]["inputs"]["mesh"] = ["unwrap", 0]
     for view, name in names.items():
         g["img_" + view] = {"class_type": "LoadImage", "inputs": {"image": name}}
         g["enc_" + view] = {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["ck", 1], "image": ["img_" + view, 0], "crop": "none"}}
