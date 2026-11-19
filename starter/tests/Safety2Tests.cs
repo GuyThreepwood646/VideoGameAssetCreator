@@ -83,7 +83,7 @@ public static partial class T
         string text = RemovalSummary.Text(plan, new List<string> { "work" }, s.L);
         Check(text.Contains("[deleted for good]") && text.Contains("[Recycle Bin]") && text.Contains("partly"), "the summary says which item goes which way");
         var rec = new FakeRecycler();
-        RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(!rec.Sent.Contains(proj.Path) && rec.Sent.Contains(db.Path), "and that is exactly what was done");
         Check(File.Exists(Path.Combine(outside, "precious.txt")) && !Directory.Exists(proj.Path), "the link was unlinked, its target kept");
     }
@@ -93,14 +93,14 @@ public static partial class T
         var s = Installed();
         var rec = new FakeRecycler(); rec.Refuse = true;
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        var first = RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+        var first = RunShown(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(first.RecycleFailed.Count >= 3, "several items were refused by the bin (" + first.RecycleFailed.Count + ")");
         string one = first.RecycleFailed.First(p => p.EndsWith("downloads"));
-        var second = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string> { one });
+        var second = RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string> { one });
         Check(!Directory.Exists(one), "the item the person agreed to is deleted for good");
         Check(Directory.Exists(s.L.PythonDir) && Directory.Exists(s.L.NodeDir) && second.RecycleFailed.Count == first.RecycleFailed.Count - 1, "every other item is still there and still waiting for its own answer");
         // the permission is for the exact path only
-        var third = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string> { Path.Combine(s.L.PythonDir, "..", "nothing") });
+        var third = RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string> { Path.Combine(s.L.PythonDir, "..", "nothing") });
         Check(Directory.Exists(s.L.PythonDir), "a path that is not an item's own path permits nothing");
     }
 
@@ -122,7 +122,7 @@ public static partial class T
         s.M = MachineFile.Load(s.Root);
         plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
 Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemoved.Any(n => n.Contains("My Games") && n.Contains("Saves") && n.Contains("nothing in it is removed")), "a library folder that also holds the person's own things is not touched at all, and the summary says so");
-        RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(File.Exists(Path.Combine(broad, "vgac.sqlite")) && Directory.Exists(Path.Combine(broad, "projects")) && File.Exists(Path.Combine(broad, "Saves", "slot1.sav")) && File.Exists(Path.Combine(broad, "notes.txt")), "so with the typed word nothing in it goes (not even the app's own files)");
         // a name the app does not make is refused at the moment of deleting too
         var item = new RemovalItem(); item.Kind = "work-library"; item.Path = Path.Combine(broad, "notes.txt"); item.GroupId = "work";
@@ -137,7 +137,7 @@ Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemov
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         int n = 0;
         SafeFs.Hook = delegate(string what, string p) { if (what == "delete" && p.Contains(".venv") && ++n == 30) throw new Boom("cut"); };
-        try { RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); } catch (Boom) { }
+        try { RunShown(plan, new List<string> { "tools" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); } catch (Boom) { }
         SafeFs.Hook = null;
         Check(RemovalRunner.InProgress(s.Root).Any(p => p.EndsWith(".venv")), "the cut-off folder is remembered together with which folder it was");
         var resumed = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);

@@ -21,6 +21,8 @@ namespace Vgac.Starter
         public long Bytes;
         public bool IsFile;
         public string Tag;         // the kind of app folder, or the size the ledger recorded
+        // A8: whether this item goes to the Recycle Bin, decided when the summary is shown. Null: never shown, so never removed.
+        public bool? BinShown;
     }
 
     public class RemovalGroup
@@ -568,14 +570,14 @@ namespace Vgac.Starter
             {
                 if (!ticked.Contains(g.Id) || g.Items.Count == 0) continue;
                 int bin = 0;
-                foreach (RemovalItem it in g.Items) if (RemovalRules.ItemUsesBin(g, it)) bin++;
+                foreach (RemovalItem it in g.Items) { it.BinShown = RemovalRules.ItemUsesBin(g, it); if (it.BinShown.Value) bin++; }
                 string way = bin == g.Items.Count ? "goes to the Recycle Bin." : (bin == 0 ? "is deleted for good and cannot be restored." : "partly goes to the Recycle Bin and partly is deleted for good (marked below).");
                 sb.AppendLine(g.Title + " (" + Size(g.Bytes) + "): " + way);
                 var byFolder = new Dictionary<string, long>(); var counts = new Dictionary<string, int>();
                 foreach (RemovalItem it in g.Items)
                 {
                     total += it.Bytes;
-                    string mark = bin != 0 && bin != g.Items.Count ? (RemovalRules.ItemUsesBin(g, it) ? "   [Recycle Bin]" : "   [deleted for good]") : "";
+                    string mark = bin != 0 && bin != g.Items.Count ? (it.BinShown == true ? "   [Recycle Bin]" : "   [deleted for good]") : "";
                     if (it.IsFile && g.Id == "models")
                     {
                         string dir = System.IO.Path.GetDirectoryName(it.Path);
@@ -716,6 +718,7 @@ namespace Vgac.Starter
                 if (g.Id == "settings") { settingsTicked = true; continue; }   // after everything else
                 foreach (RemovalItem it in g.Items)
                 {
+                    if (it.BinShown == null) { res.Skipped.Add(it.Path + ": not shown in the summary, so not removed"); log.Line("remove: not shown, not removed: " + it.Path); continue; }   // A8: only what was shown
                     if (keepPythonDir != null && it.Kind == "data-folder" && it.Tag == "python")
                     {
                         string k2 = it.Path + ": kept, because " + keepPythonDir + " (still installed). Tick VGAC's own ComfyUI as well to remove it.";
@@ -751,6 +754,7 @@ namespace Vgac.Starter
                 foreach (RemovalItem it in g.Items)
                 {
                     if (string.Equals(it.Path, ledgerFile, StringComparison.OrdinalIgnoreCase) || it.What == "remove.json") continue;   // very last
+                    if (it.BinShown == null) { res.Skipped.Add(it.Path + ": not shown in the summary, so not removed"); continue; }   // A8
                     string why = RemovalPlanner.Revalidate(it, l, comfy, ledger, machine);
                     if (why != null) { res.Skipped.Add(it.Path + ": " + why); continue; }
                     RemoveOne(g, it, recycler, permanentFor, res, log);
@@ -771,7 +775,9 @@ namespace Vgac.Starter
         static void RemoveOne(RemovalGroup g, RemovalItem it, IRecycler recycler, ICollection<string> permanentFor, RemovalResult res, SetupLog log)
         {
             if (!File.Exists(it.Path) && !Directory.Exists(it.Path)) return;
-            bool wantBin = RemovalRules.ItemUsesBin(g, it);   // the same answer the summary gave
+            // The answer the summary gave (A8). An item promised the bin that the bin no longer takes goes to RecycleFailed below, never
+            // to DeleteTree, unless the person chose deletion for good for that item.
+            bool wantBin = it.BinShown ?? RemovalRules.ItemUsesBin(g, it);
             if (wantBin)
             {
                 if (recycler != null && recycler.Send(it.Path) && !File.Exists(it.Path) && !Directory.Exists(it.Path))

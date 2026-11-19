@@ -45,11 +45,11 @@ public static partial class T
         var s = Installed();
         var rec = new FakeRecycler(); rec.Refuse = true;
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+        var res = RunShown(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
         Check(res.RecycleFailed.Count > 0 && !res.Complete, "when the bin does not take an item it is reported, not deleted for good");
         Check(Directory.Exists(s.L.PythonDir) && File.Exists(Path.Combine(s.L.PythonDir, "cpython-3.13", "python.exe")), "and the item is still there");
         Eq(res.Removed.Count, 1, "nothing went to the bin or was deleted by the starter (only ComfyUI, removed by its own installer, went)");
-        var again = RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string>(res.RecycleFailed));
+        var again = RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, new List<string>(res.RecycleFailed));
         Check(again.Complete && !Directory.Exists(s.L.PythonDir), "only after the person agrees (allowPermanent) is it deleted for good");
     }
 
@@ -64,7 +64,7 @@ public static partial class T
             string text = RemovalSummary.Text(plan, new List<string> { "tools" }, s.L);
             Check(text.Contains("deleted for good") && !text.Contains("goes to the Recycle Bin"), "on a drive that is not a fixed local one the summary says 'for good'");
             var rec = new FakeRecycler();
-            var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
+            var res = RunShown(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, rec, new SetupLog(s.Root), null, null);
             Eq(rec.Sent.Count, 0, "and the Recycle Bin is not tried");
             Check(res.Complete && !Directory.Exists(s.L.PythonDir), "the item is deleted, as the summary said");
         }
@@ -117,7 +117,7 @@ public static partial class T
         Check(plan.NotRemoved.Any(n => n.StartsWith(unity) && n.Contains("not shown to be a VGAC library")), "a library path without VGAC's database is refused, by content");
         Check(plan.Get("work").Items.All(i => i.Kind == "work-export"), "only exports are left in the work group");
         Eq(plan.Get("work").Items.Count, 1, "one export folder (the one with VGAC's manifest)");
-        var res = RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        var res = RunShown(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(!Directory.Exists(Path.Combine(unity, "VGAC", "Hero")), "the export VGAC wrote is removed");
         Check(File.Exists(Path.Combine(unity, "Scripts", "Player.cs")) && File.Exists(Path.Combine(unity, "Scene.unity")) && File.Exists(Path.Combine(unity, "VGAC", "Hero.meta")) && Directory.Exists(Path.Combine(unity, "VGAC")), "the game's own files, the Unity .meta and the folder the export sat in all stay");
         // dangerous places are refused outright
@@ -145,7 +145,7 @@ public static partial class T
         var s = Installed();
         s.Comfy.RemoveError = "VGAC's ComfyUI is still running on port 8288.";
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        var res = RemovalRunner.Run(plan, new List<string> { "comfy" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        var res = RunShown(plan, new List<string> { "comfy" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(res.Skipped.Any(x => x.Contains("still running")), "the backend's reason is shown");
         string c = Path.Combine(s.Data, "comfyui");
         Check(File.Exists(Path.Combine(c, "main.py")) && File.Exists(Path.Combine(c, "models", "mine.safetensors")) && File.Exists(Path.Combine(c, "output", "out.png")), "and the starter itself deleted nothing in it");

@@ -232,7 +232,7 @@ public static partial class T
         Check(st.State == DataState.NotOurs && st.Why.Contains("does not match"), "a marker with another id is not ours: " + st.Why);
         var plan = RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy);
         Check(!plan.Groups.SelectMany(g => g.Items).Any(i => i.Kind == "data-folder") && plan.NotRemoved.Any(n => n.Contains("Nothing in it is removed")), "Remove lists nothing in it and says why");
-        RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(Directory.Exists(s.L.PythonDir) && Directory.Exists(s.L.NodeDir), "so a removal run leaves it whole");
         var mv = Mover(s, null); string to = Path.Combine(Tmp("target"), "newbig");
         string said = mv.Start(to, new Progress());
@@ -262,7 +262,7 @@ public static partial class T
         Check(DataFolders.ReadMarkerId(copy) == DataFolders.SettingsId(s.M), "(the copy carries the same id)");
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         Check(plan.Groups.SelectMany(g => g.Items).Where(i => i.Kind == "data-folder").All(i => i.Path.StartsWith(s.Data)), "Remove looks only at the folder the settings point at");
-        RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "tools", "comfy" }, null, s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(!Directory.Exists(s.L.PythonDir) && Directory.Exists(Path.Combine(copy, "python")) && Directory.Exists(Path.Combine(copy, "tools", "uv")), "the copy is untouched");
         var s2 = Installed(); string copy2 = Path.Combine(Tmp("copied"), "copy2");
         SafeFs.CopyTree(s2.Data, copy2, null, new FsReport());
@@ -288,7 +288,7 @@ public static partial class T
         var s2 = Installed();
         Put(Path.Combine(s2.Data, "notes.txt"), "the person's notes"); Put(Path.Combine(s2.Data, "MyStuff", "a.txt"), "the person's stuff");
         var p2 = RemovalPlanner.Build(s2.L, s2.M, s2.Led, s2.Comfy);
-        RemovalRunner.Run(p2, new List<string> { "tools", "comfy" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, null);
+        RunShown(p2, new List<string> { "tools", "comfy" }, null, s2.L, s2.M, s2.Led, s2.Comfy, new FakeRecycler(), new SetupLog(s2.Root), null, null);
         Check(!Directory.Exists(s2.L.PythonDir) && !Directory.Exists(s2.L.NodeDir), "Remove took the fixed-name folders");
         Check(File.Exists(Path.Combine(s2.Data, "notes.txt")) && File.Exists(Path.Combine(s2.Data, "MyStuff", "a.txt")), "and left the person's file and folder");
         Check(Directory.Exists(s2.Data), "and the folder for the big files stays while the person's things are in it");
@@ -306,7 +306,7 @@ public static partial class T
         s.M = MachineFile.Load(s.Root);
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
         Check(plan.Get("work").Items.All(i => i.Kind != "work-library"), "a library folder holding a person's own 'projects' next to other files offers nothing");
-        RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "work" }, "REMOVE", s.L, s.M, s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(File.Exists(Path.Combine(lib, "projects", "mine", "a.txt")) && File.Exists(Path.Combine(lib, "vgac.sqlite")), "so nothing in it is removed, even with the typed word, and not for good either");
         // a dedicated library: only the app's own names at its top
         string lib2 = Path.Combine(Tmp("libs"), "library2");
@@ -315,7 +315,7 @@ public static partial class T
         LibraryFolders.Stamp(lib2, MachineFile.Load(s.Root));
         var plan2 = RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy);
         Check(plan2.Get("work").Items.Count(i => i.Kind == "work-library") == 3, "a dedicated library lists its own entries");
-        RemovalRunner.Run(plan2, new List<string> { "work" }, "REMOVE", s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan2, new List<string> { "work" }, "REMOVE", s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(!File.Exists(Path.Combine(lib2, "vgac.sqlite")) && !Directory.Exists(Path.Combine(lib2, "projects")) && Directory.Exists(lib2), "and removes them, but not the folder");
     }
 

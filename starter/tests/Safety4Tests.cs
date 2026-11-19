@@ -121,7 +121,7 @@ public static partial class T
         File.Delete(Path.Combine(lib, LibraryFolders.MarkerName));
         var plan = RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy);
         Check(plan.Get("work").Items.All(i => i.Kind != "work-library") && plan.NotRemoved.Any(n => n.Contains("library marker")), "a library with the app's names but no marker offers nothing, and says why");
-        RemovalRunner.Run(plan, new List<string> { "work" }, "REMOVE", s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "work" }, "REMOVE", s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         Check(File.Exists(Path.Combine(lib, "vgac.sqlite")), "so the database is still there after a removal run");
         // the person clicks adopt: it holds a real database and only the app's names
         Check(LibraryFolders.AdoptProblem(s.L, MachineFile.Load(s.Root)) == null, "(it can be adopted)");
@@ -145,7 +145,7 @@ public static partial class T
         Check(!File.Exists(Path.Combine(work, LibraryFolders.MarkerName)), "a folder that already holds things is not claimed at start");
         Check(LibraryFolders.AdoptProblem(l, MachineFile.Load(root)) != null, "and cannot be adopted");
         var pr = RemovalPlanner.Build(l, MachineFile.Load(root), Ledger.Load(root), new StandInComfy());
-        RemovalRunner.Run(pr, new List<string> { "work" }, "REMOVE", l, MachineFile.Load(root), Ledger.Load(root), new StandInComfy(), new FakeRecycler(), new SetupLog(root), null, null);
+        RunShown(pr, new List<string> { "work" }, "REMOVE", l, MachineFile.Load(root), Ledger.Load(root), new StandInComfy(), new FakeRecycler(), new SetupLog(root), null, null);
         Check(File.Exists(Path.Combine(work, "projects", "mine", "a.txt")), "the person's own projects survive the typed word");
 
         // a new or empty folder is claimed at start; a missing one is made
@@ -191,7 +191,7 @@ public static partial class T
         // Remove: the plan after a removal that kept the models lists nothing more to do
         var s4 = Installed();
         var plan = RemovalPlanner.Build(s4.L, s4.M, s4.Led, s4.Comfy);
-        RemovalRunner.Run(plan, new List<string> { "comfy" }, null, s4.L, MachineFile.Load(s4.Root), s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null, null);
+        RunShown(plan, new List<string> { "comfy" }, null, s4.L, MachineFile.Load(s4.Root), s4.Led, s4.Comfy, new FakeRecycler(), new SetupLog(s4.Root), null, null);
         Check(RemovalPlanner.Build(s4.L, MachineFile.Load(s4.Root), s4.Led, s4.Comfy).Get("comfy").Items.Count == 0, "what is left (the models and the install record) is not offered for removal again");
         Check(Directory.Exists(Path.Combine(s4.Data, "comfyui", "models")), "and the models are there");
     }
@@ -247,7 +247,7 @@ public static partial class T
     {
         var s = Installed();
         var plan = RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy);
-        RemovalRunner.Run(plan, new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(plan, new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         string log = File.ReadAllText(Path.Combine(s.Root, "runtime", "logs", "setup.log"));
         Check(log.Contains("remove:") && !log.Contains("to the Recycle Bin"), "the log never claims the Recycle Bin took something (Windows may have deleted it for good)");
     }
@@ -370,12 +370,12 @@ public static partial class T
         var r1 = Installed();
         r1.Comfy.RemoveError = "VGAC's ComfyUI is still running on port 8288.";
         var rp = RemovalPlanner.Build(r1.L, r1.M, r1.Led, r1.Comfy);
-        var rr = RemovalRunner.Run(rp, new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
+        var rr = RunShown(rp, new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
         Check(Directory.Exists(r1.L.Venv) && Directory.Exists(r1.L.PythonDir), "the app's Python (venv and its Python) stays when VGAC's own ComfyUI could not be removed");
         Check(rr.Skipped.Any(x => x.Contains("kept, because VGAC's own ComfyUI could not be removed")), "and the screen says why");
         Check(!Directory.Exists(r1.L.NodeDir) && !Directory.Exists(Path.Combine(r1.L.FrontendDir, "node_modules")), "the rest of the group was removed");
         r1.Comfy.RemoveError = null;
-        var rr2 = RemovalRunner.Run(RemovalPlanner.Build(r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy), new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
+        var rr2 = RunShown(RemovalPlanner.Build(r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy), new List<string> { "comfy", "tools" }, null, r1.L, MachineFile.Load(r1.Root), r1.Led, r1.Comfy, new FakeRecycler(), new SetupLog(r1.Root), null, null);
         Check(!Directory.Exists(r1.L.Venv) && !Directory.Exists(r1.L.PythonDir) && !File.Exists(Path.Combine(r1.Data, "comfyui", "main.py")), "a second run, once it works, removes everything");
 
         // N4 and N6: a command that hangs, prints garbage, exits non-zero without a result, or is stopped
@@ -600,13 +600,13 @@ public static partial class T
         r.Comfy.Problem = "The app's installer for ComfyUI did not finish within 1 minutes and was stopped.";
         var plan = RemovalPlanner.Build(r.L, r.M, r.Led, r.Comfy);
         Check(plan.Get("comfy").Items.Count == 0 && plan.ComfyUnconfirmed, "no ComfyUI item is planned when its installer did not confirm it");
-        var res = RemovalRunner.Run(plan, new List<string> { "tools" }, null, r.L, MachineFile.Load(r.Root), r.Led, r.Comfy, new FakeRecycler(), new SetupLog(r.Root), null, null);
+        var res = RunShown(plan, new List<string> { "tools" }, null, r.L, MachineFile.Load(r.Root), r.Led, r.Comfy, new FakeRecycler(), new SetupLog(r.Root), null, null);
         Check(Directory.Exists(r.L.Venv) && Directory.Exists(r.L.PythonDir) && res.Skipped.Any(x => x.Contains("installer did not confirm")), "the Python stays, and the screen says why");
         Check(!Directory.Exists(r.L.NodeDir), "the rest of the group goes");
         // after a completed removal that kept only the models, nothing is left to confirm and the Python may go
         var r2 = Installed();
-        RemovalRunner.Run(RemovalPlanner.Build(r2.L, r2.M, r2.Led, r2.Comfy), new List<string> { "comfy" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
-        RemovalRunner.Run(RemovalPlanner.Build(r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy), new List<string> { "tools" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
+        RunShown(RemovalPlanner.Build(r2.L, r2.M, r2.Led, r2.Comfy), new List<string> { "comfy" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
+        RunShown(RemovalPlanner.Build(r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy), new List<string> { "tools" }, null, r2.L, MachineFile.Load(r2.Root), r2.Led, r2.Comfy, new FakeRecycler(), new SetupLog(r2.Root), null, null);
         Check(!Directory.Exists(r2.L.Venv) && !Directory.Exists(r2.L.PythonDir), "a later removal of the rest, with only the kept models left in ComfyUI's folder, takes the Python too");
 
         // F4: the answer of `check` says when the environment is stale, and the starter keeps it

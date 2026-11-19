@@ -22,6 +22,7 @@ public static partial class T
         J2CommittedCopyMustMatchGit();
         K1NetworkFolderRefused();
         K2OldFolderLeftoversAreNamedNotDeleted();
+        K3BinPromiseIsKeptOrSaid();
     }
 
     static string StopMoveAt(InstallScene s, string to, string point)
@@ -44,7 +45,7 @@ public static partial class T
         string root = s.Root;
         // the rule, in code: nothing that changes things runs while the journal exists
         var plan = RemovalPlanner.Build(WindowLay(root), MachineFile.Load(root), Ledger.Load(root), s.Comfy);
-        var res = RemovalRunner.Run(plan, new List<string> { "tools", "comfy" }, null, WindowLay(root), MachineFile.Load(root), Ledger.Load(root), s.Comfy, new FakeRecycler(), new SetupLog(root), null, null);
+        var res = RunShown(plan, new List<string> { "tools", "comfy" }, null, WindowLay(root), MachineFile.Load(root), Ledger.Load(root), s.Comfy, new FakeRecycler(), new SetupLog(root), null, null);
         Check(res.Removed.Count == 0 && Directory.Exists(Path.Combine(s.Data, "python")) && Directory.Exists(Path.Combine(to, "python")), "G1: Remove refuses while a move is unfinished and removes nothing in either place");
         string fix = Repair.Fix("leftovers", WindowLay(root), new CaptureHost(), MachineFile.Load(root), Ledger.Load(root), new SetupLog(root), new Progress());
         Check(fix != null && fix.Contains("move"), "G1: Repair refuses while a move is unfinished: " + fix);
@@ -208,6 +209,28 @@ public static partial class T
             return 0;
         }
         bool pulled;
+    }
+
+    // A8: an item the summary promised to the Recycle Bin is never deleted outright when the bin refuses it
+    static void K3BinPromiseIsKeptOrSaid()
+    {
+        string dir = Tmp("k3"); Directory.CreateDirectory(dir);
+        string file = Path.Combine(dir, "model.bin"); File.WriteAllText(file, "kept");
+        var plan = new RemovalPlan();
+        var g = new RemovalGroup { Id = "models", Title = "models", Sentence = "x" };
+        var it = new RemovalItem { Id = "file:" + file, GroupId = "models", Kind = "ledger-file", Path = file, What = "model", IsFile = true, Bytes = 4, Tag = "4" };
+        g.Items.Add(it); plan.Groups.Add(g);
+        var refuses = new FakeRecycler { Refuse = true };
+        var res = RunShown(plan, new List<string> { "models" }, null, Layout.From(dir, new MachineFile()), new MachineFile(), new Ledger(), null, refuses, new SetupLog(dir), null, null);
+        Check(it.BinShown == true, "K3: the summary promised the Recycle Bin for this item");
+        Check(File.Exists(file) && res.RecycleFailed.Contains(file), "K3: the bin refused, so the file is listed as not removed and is still there: " + string.Join("|", res.Skipped.ToArray()));
+        // an item that was never shown is not removed at all
+        string file2 = Path.Combine(dir, "other.bin"); File.WriteAllText(file2, "kept");
+        var g2 = new RemovalGroup { Id = "models", Title = "models", Sentence = "x" };
+        g2.Items.Add(new RemovalItem { Id = "file:" + file2, GroupId = "models", Kind = "ledger-file", Path = file2, What = "other", IsFile = true, Bytes = 4, Tag = "4" });
+        var plan2 = new RemovalPlan(); plan2.Groups.Add(g2);
+        RemovalRunner.Run(plan2, new List<string> { "models" }, null, Layout.From(dir, new MachineFile()), new MachineFile(), new Ledger(), null, new FakeRecycler(), new SetupLog(dir), null, null);
+        Check(File.Exists(file2), "K3: an item that was not shown in the summary is not removed");
     }
 
     // A5: after the switch, what the move did not copy in the old folder is named and kept; "delete by hand" only when nothing is left

@@ -232,12 +232,12 @@ public static partial class T
         Eq(LibraryFolders.ReadMarkerId(lib), libId, "library marker: the old marker is whole after the crash");
         // Remove's journal and the update's record
         var s = Installed();
-        RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string>(), null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string>(), null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         string rj = RemovalRunner.JournalPath(s.Root); Put(rj, "{\"state\":\"removing\",\"groups\":[\"old\"],\"inprogress\":[]}");
         // (the remove journal's writer swallows exceptions, so the file is read at the moment of the "crash" instead)
         string snap = null;
         SafeFs.Hook = delegate(string what, string pth) { if (what == "save" && pth.EndsWith("remove.json (written)") && snap == null) snap = File.ReadAllText(rj); };
-        RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
+        RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null);
         SafeFs.Hook = null;
         Check(snap != null && snap.Contains("\"old\""), "remove journal: while the new text is written the old file is whole");
         string proj = Tmp("atomicexe"); string exe = Path.Combine(proj, "VGAC.exe"); File.Copy(PingExe, exe);
@@ -347,7 +347,7 @@ public static partial class T
             rec.Add(what + ":" + p);
             if (count++ == crashAt) throw new Boom("crash after " + p);
         };
-        try { RemovalRunner.Run(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
+        try { RunShown(RemovalPlanner.Build(s.L, s.M, s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
         catch (Boom) { }
         finally { SafeFs.Hook = null; }
         if (keep != null) keep(s);
@@ -370,7 +370,7 @@ public static partial class T
             runs++;
             // the next time: the plan is built again from what is on disk, and the same boxes ticked
             RemovalResult res = null;
-            try { res = RemovalRunner.Run(RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
+            try { res = RunShown(RemovalPlanner.Build(s.L, MachineFile.Load(s.Root), s.Led, s.Comfy), new List<string> { "comfy", "tools" }, null, s.L, MachineFile.Load(s.Root), s.Led, s.Comfy, new FakeRecycler(), new SetupLog(s.Root), null, null); }
             catch (Exception e) { Check(false, label + ": running Remove again failed: " + e.Message); continue; }
             Check(res.Complete && !Directory.Exists(s.L.Venv) && !Directory.Exists(s.L.PythonDir) && !Directory.Exists(s.L.NodeDir), label + ": the second run finishes what was ticked (" + string.Join(" | ", res.Skipped.ToArray()) + ")");
             // judged by contents: what must stay is whole
