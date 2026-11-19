@@ -67,7 +67,9 @@ GUARD_PART_DE = 10.0  # a body part's middle colour moved more than this (Lab, l
 # gloved hands moved 10.0, the caped hero's and the mage's gloves 41.1 and 29.6 (caught by the skin rule as well).
 GUARD_HAND_DE = 15.0
 GUARD_SKIN_BEFORE = 10.0  # hand within this of the face's skin: a bare hand
-GUARD_SKIN_AFTER = 15.0  # ... and beyond this after the redraw: gloves added
+# ... and beyond this after the redraw: gloves added. Card test of WP-09 (seed 11, 4 routes): a bare-handed sailor in a yellow
+# sleeve read 16.5 to 19.2 from skin (the cuff falls in the hand's disc), real gloves 29.6 to 41.5, so 15 refused a good redraw.
+GUARD_SKIN_AFTER = 22.0
 GUARD_PALETTE = 0.6  # colour histogram overlap under this: the colours changed
 GUARD_COLOUR_ADDED = 10.0  # a black-and-white picture whose redraw's colourful tenth is over this was coloured in
 GUARD_AREA = 0.92  # figure area over height squared shrank under this share: parts were removed (TheHeir 0.87)
