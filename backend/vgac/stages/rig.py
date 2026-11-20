@@ -404,6 +404,22 @@ async def carry(sc: StageContext, template: str, gpv: int, params: dict[str, Any
     return True
 
 
+# The refusal prefix rig_fix.py writes when a humanoid's named bones do not match its geometry (ROLE_FAULT there).
+ROLE_FAULT_PREFIX = "the bone roles do not match the skeleton's geometry: "
+
+
+def _role_fault(report: Path) -> str | None:
+    """The plain message when rig_fix refused the bone roles on geometry (the rig stops rather than move on with the
+    raw names), else None. Other refusals (no legs, upright and so on) keep the raw names as before."""
+    if not report.is_file():
+        return None
+    reason = str(((json.loads(report.read_text(encoding="utf-8")) or {}).get("bone_names") or {}).get("skipped_reason") or "")
+    if not reason.startswith(ROLE_FAULT_PREFIX):
+        return None
+    return ("The rig stopped: the skeleton's bones are named in a way that does not match its shape. "
+            + reason[len(ROLE_FAULT_PREFIX):] + ". Make the picture's arms and spine match and rig it again.")
+
+
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, rigid=True, reason="material category has no mesh")
@@ -476,6 +492,9 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
                                                        "left_is": names.get("left_is"), "reason": names.get("skipped_reason")}})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(rig_fix_error=str(e)[:500])
+    fault = _role_fault(sc.dir / "rig_fix.json")
+    if fault:
+        raise ValueError(fault)
     if not rig_glb.is_file():
         rig_glb = raw_glb
     cut = None

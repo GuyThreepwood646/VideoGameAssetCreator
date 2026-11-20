@@ -319,6 +319,10 @@ def find_roles(bones):
     if problems:
         out["reason"] = "; ".join(problems)
         return out
+    geometry = role_geometry_problems(bs, roles, chest, lat, height)
+    if geometry:
+        out["reason"] = ROLE_FAULT + "; ".join(geometry)
+        return out
     # Cross-check: the top of the head chain leans the same way as the toes (information only).
     tip = _flat(bs.pos[head[-1]] - bs.pos[head[0]])
     if float(np.linalg.norm(tip)) > 1e-4:
@@ -326,6 +330,40 @@ def find_roles(bones):
     out.update(ok=True, roles=roles, forward=[round(float(v), 4) for v in forward], left=[round(float(v), 4) for v in left],
                left_is=axis_label(left))
     return out
+
+
+# The reason prefix of a refusal the rig step stops on (stages/rig.py `_role_fault` reads it; keep the two in step).
+ROLE_FAULT = "the bone roles do not match the skeleton's geometry: "
+
+
+def role_geometry_problems(bs, roles, chest, lat, height):
+    """Checks that the named roles agree with the skeleton's geometry, beyond the upright and two-arm checks in find_roles:
+    the left and right upper arms and forearms match (each within 0.8 to 1.25 of the other), the two
+    shoulders are level, each sits beside the spine and below the top of the head, and the head chain starts above the
+    chest. -> plain problems, [] when all hold."""
+    z = lambda n: float(bs.pos[n][2])  # noqa: E731
+    problems = []
+    seg = {}
+    for side in ("Left", "Right"):
+        # upper arm (shoulder joint to elbow) and forearm (elbow to wrist); the clavicle segment is not an arm length
+        arm, fore, hand = (bs.pos[roles[side + n]] for n in ("Arm", "ForeArm", "Hand"))
+        seg[side] = [float(np.linalg.norm(fore - arm)), float(np.linalg.norm(hand - fore))]
+    for part, a, b in zip(("upper arm", "forearm"), seg["Left"], seg["Right"]):
+        if not 0.8 <= a / max(b, 1e-9) <= 1.25:
+            problems.append(f"the left and right {part} differ in length ({a:.3f} and {b:.3f} m)")
+    head_bones = [roles[n] for n in ("Neck", "Neck1", "Head", "HeadTop_End") if n in roles]
+    head_top = max(z(b) for b in head_bones)
+    for side in ("Left", "Right"):
+        sh = roles[side + "Shoulder"]
+        if z(sh) >= head_top - 0.02 * height:
+            problems.append(f"the {side.lower()} shoulder is not below the top of the head")
+        if abs(lat(sh)) < 0.03 * height:
+            problems.append(f"the {side.lower()} shoulder is not beside the spine")
+    if abs(z(roles["LeftShoulder"]) - z(roles["RightShoulder"])) > 0.08 * height:
+        problems.append("the two shoulders are not level")
+    if min(z(b) for b in head_bones) <= z(chest):
+        problems.append("the head does not start above the chest")
+    return problems
 
 
 def plan_names(bones, roles, prefix=PREFIX):
