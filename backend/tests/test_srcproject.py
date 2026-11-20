@@ -374,8 +374,7 @@ def test_with_the_facing_decided_the_front_pictures_are_fitted_on_the_front_half
     monkeypatch.setattr(srcproject, "fit_view", spy)
     mesh = model()
     srcproject.paint(mesh, soft_base(), picture(), source=picture(), size=256, mode="off")
-    assert 180.0 in asked["source"]                                  # not decided: the whole circle, as before
-    assert "picture" in asked                                        # the picture's turn comes from the pose search (WP-61)
+    assert "source" in asked and "picture" in asked                  # both turns come from the pose search (WP-61)
     srcproject.paint(mesh, soft_base(), picture(), source=picture(), size=256, mode="off", front_known=True, head_yaw=10.0)
     for n in ("source", "picture"):
         assert asked[n] and all(abs(srcproject._signed(y - 10.0)) <= srcproject.FRONT_HALF for y in asked[n])
