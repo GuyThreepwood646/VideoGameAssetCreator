@@ -1078,7 +1078,7 @@ function rigMoveChecks(category: string, fail: boolean): MockCheck[] {
     chk('clips', true, SAMPLE_CLIPS, SAMPLE_CLIPS, { severity: 'warn', vars: { missing: [] }, help: `Animations: ${SAMPLE_CLIPS.join(', ')}.` }),
     ...(category === 'humanoid' && fail
       ? [chk('library_missing', false, 'ual1', 'found on this PC', { severity: 'warn', vars: { library: 'ual1' },
-          help: 'The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.' })]
+          help: 'The shared animation library is not on this PC, so the extra library moves are not made and the character has only the built-in moves until it is back.' })]
       : []),
     chk('hitbox_cover', !fail, cover, 0.85, {
       severity: 'warn',
