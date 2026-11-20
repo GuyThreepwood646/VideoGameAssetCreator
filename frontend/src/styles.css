@@ -4650,3 +4650,29 @@ button.preset-card:hover:not(:disabled) {
     height: calc(100vh - 2 * var(--s3));
   }
 }
+
+/* Touch up (WP-22): the paint panel under the step 4 viewer. */
+.touch-up {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.declared-point-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.25rem 0;
+}
+
+.touch-up-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+.touch-up-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}

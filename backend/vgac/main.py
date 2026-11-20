@@ -23,13 +23,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, people, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, paintsave, people, pipeline, reference, shape
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
                  job_to_dict, project_to_dict, session_factory, version_to_dict, _iso, is_stopped)
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
+from . import item_suggest as _item_suggest  # noqa: E402
+from .jobs import FINISHED_HOOKS as _FINISHED_HOOKS  # noqa: E402
+
+if _item_suggest.after_rig not in _FINISHED_HOOKS:
+    _FINISHED_HOOKS.append(_item_suggest.after_rig)  # WP-69: a finished rig queues the suggested worn item once
 from .pipeline import PipelineError
 from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
 
@@ -61,6 +66,7 @@ app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=li
 app.include_router(own_images.router)  # start from your own images (own_images.py)
 app.include_router(people.router)  # the people in a feature photo, for the suggested box (people.py)
 app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
+app.include_router(__import__("vgac.parts_api", fromlist=["router"]).router)  # declared parts and where they are on a rig (parts_api.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
@@ -142,13 +148,19 @@ class ProjectPatch(BaseModel):
     unity_project_path: str | None = None
 
 
+class DeclaredPartIn(BaseModel):
+    """A part the character has (declared_parts.py): a name and what it is for."""
+    name: str = Field(max_length=200)
+    kind: str = Field(default="separate", max_length=20)
+
+
 class AssetIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     category: str
     style_preset: str
     platform_target: str | None = None
     prompt: str = ""
-    parts: list[str] | None = None
+    parts: list[DeclaredPartIn] | None = Field(default=None, max_length=32)
     concept_model: str | None = None
     # Start from a picture: the person's own concept picture (base64 or a data: URL); the description may stay empty.
     image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
@@ -178,7 +190,7 @@ class AssetPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     prompt: str | None = None
     category: str | None = None
-    parts: list[str] | None = None
+    parts: list[DeclaredPartIn] | None = Field(default=None, max_length=32)
     platform_target: str | None = None
     style_preset: str | None = None
     face_matters: bool | None = None
@@ -223,6 +235,26 @@ class FixPlanIn(BaseModel):
 
 class AdjustIn(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PaintIn(BaseModel):
+    # The base-colour picture as the panel drew it (PNG, glTF row order), and the edit mask (white where painted).
+    picture_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    mask_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    strokes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SmoothIn(BaseModel):
+    # Smooth the paint (WP-24): "light" or "strong" (paintsave.SMOOTH_STRENGTHS).
+    strength: Literal["light", "strong"]
+
+
+class ShapeIn(BaseModel):
+    # Separate a fused arm (WP-26, shape.py). Parameters only; the server checks them again (separate.check_params).
+    operation: Literal["separate"] = "separate"
+    side: Literal["L", "R", "both"] = "both"
+    gap: float = Field(default=0.006, ge=0.002, le=0.02)  # metres
+    start: float = Field(default=0.3, ge=0.15, le=0.6)  # share of the upper arm from the shoulder joint
 
 
 class JudgeIn(BaseModel):
@@ -320,6 +352,15 @@ def _validate_category(cid: str) -> None:
     try:
         reference.category(cid)
     except KeyError as e:
+        raise HTTPException(400, str(e))
+
+
+def _declared(items: list[DeclaredPartIn] | None, category: str | None) -> list[dict[str, str]]:
+    from . import declared_parts
+
+    try:
+        return declared_parts.normalize([p.model_dump() for p in items or []], category)
+    except declared_parts.PartError as e:
         raise HTTPException(400, str(e))
 
 
@@ -588,7 +629,8 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
         a.face_matters = False
     a.wears_armour = body.wears_armour
     a.body_is_metal = body.body_is_metal
-    a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
+    a.parts = _declared(body.parts, body.category) if body.parts is not None else [
+        {"name": str(n), "kind": "separate"} for n in (cat.get("parts_default") or [])]
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -682,7 +724,7 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
         _validate_category(body.category)
         a.category = body.category
     if body.parts is not None:
-        a.parts = body.parts
+        a.parts = _declared(body.parts, a.category)
     if body.platform_target is not None:
         _validate_platform(body.platform_target)
         a.platform_target = body.platform_target
@@ -896,6 +938,8 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     parent = _version(db, vid)
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
+    if (why := paintsave.refusal(parent)):
+        raise HTTPException(409, why)
     a = _asset(db, parent.asset_id)
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
@@ -925,10 +969,87 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
     parent = _version(db, vid)
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
+    if (why := paintsave.refusal(parent)):
+        raise HTTPException(409, why)
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
     v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/paint")
+def paint_version(vid: str, body: PaintIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Touch up save (WP-23): a new clean-up version made from this one, with the painted picture merged in. The
+    geometry, the other maps and the settings are this version's; the job pads the paint and writes the model."""
+    parent = _version(db, vid)
+    if parent.status != "done":
+        raise HTTPException(409, f"version is {parent.status}, not done")
+    if parent.stage != "prep":
+        raise HTTPException(400, "only the clean-up step (step 4) can be painted")
+    a = _asset(db, parent.asset_id)
+    if a.category == "material":
+        raise HTTPException(400, "a material has no 3D model to paint on")
+    try:
+        picture, mask, strokes = paintsave.decode_inputs(body.picture_png, body.mask_png, body.strokes)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", parent, inherited)
+    paintsave.write_inputs(library.version_dir(a, v, get_settings()), picture, mask, strokes)
+    job = pipeline.submit(db, a, v, "paint", {})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/smooth")
+def smooth_version(vid: str, body: SmoothIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Smooth the paint (WP-24): a new clean-up version from this painted one, with the paint smoothed inside its mask.
+    Only a painted clean-up can be smoothed; the job copies the parent's files and writes the new picture."""
+    parent = _version(db, vid)
+    if parent.status != "done":
+        raise HTTPException(409, f"version is {parent.status}, not done")
+    if parent.stage != "prep" or not paintsave.is_painted(parent):
+        raise HTTPException(400, "only a painted clean-up can be smoothed")
+    a = _asset(db, parent.asset_id)
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", parent, inherited)
+    job = pipeline.submit(db, a, v, "smooth", {"params": {"strength": body.strength}})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/shape/preview")
+def shape_preview(vid: str, body: ShapeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Where each arm's cut would start on this rig (shape.preview). Computes only: no job, no version."""
+    rig = _version(db, vid)
+    if rig.stage != "rig" or rig.status != "done":
+        raise HTTPException(400, "the shape tab works on a finished rig")
+    glb = library.version_file(rig, "glb", get_settings())
+    if glb is None:
+        raise HTTPException(400, "this rig has no model to measure")
+    try:
+        return shape.preview(glb, start=body.start, gap=body.gap)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/versions/{vid}/shape")
+def shape_version(vid: str, body: ShapeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Separate a fused arm (WP-26): a new clean-up version from the one this rig was made from. The job runs the
+    engine on the library's files; a refusal fails the job with the plain reasons and makes no model."""
+    rig = _version(db, vid)
+    if rig.stage != "rig" or rig.status != "done":
+        raise HTTPException(409, "the arm can be separated from a finished rig")
+    a = _asset(db, rig.asset_id)
+    try:
+        params = shape.parse(body.model_dump())
+        source = shape.rig_source(db, rig)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    if source.status != "done":
+        raise HTTPException(409, f"the clean-up is {source.status}, not done")
+    inherited = {k: val for k, val in reference.inherited_params(source.stage, source.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", source, inherited)
+    job = pipeline.submit(db, a, v, "shape", {"params": {**params, "rig_version_id": rig.id}})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 

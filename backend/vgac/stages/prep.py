@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -572,6 +572,15 @@ async def clear_skin_metal(sc: StageContext, glb: Path, maps: dict[str, Path]) -
         maps = {**maps, "metallic": Path(sm["files"]["metallic"])}
         sc.register("metallic", maps["metallic"])
         await asyncio.to_thread(imaging.glb_replace_images, glb, metallic=maps["metallic"])
+    # Creatures are not metal unless the description says so (vgac/creaturemetal.py); a no-op for every other category.
+    cm = await asyncio.to_thread(creaturemetal.clear, glb, maps, sc.asset.category, sc.asset.prompt, sc.dir / "creature")
+    for key in ("metallic", "roughness"):
+        if cm["files"].get(key) is not None:
+            maps = {**maps, key: Path(cm["files"][key])}
+            sc.register(key, maps[key])
+            await asyncio.to_thread(imaging.glb_replace_images, glb, **{key: maps[key]})
+    if creaturemetal.mode(sc.asset.category, sc.asset.prompt) is not None:
+        sm["metrics"].update(cm["metrics"])  # recorded for creatures only; other categories keep their record
     return maps, sm
 
 
@@ -1351,6 +1360,7 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
 
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
+    _refuse_painted(sc)
     parent = sc.parent
     merged = {**_hair_merge(_merge(parent.params if parent else {}, params), params), "instruction": instruction}
     await _prep(sc, merged)
@@ -1375,7 +1385,17 @@ def fresh_face(sc: StageContext, merged: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _refuse_painted(sc: StageContext) -> None:
+    """Adjust and Refine rebuild the clean-up from the mesh, which would drop the Touch up paint (WP-23)."""
+    from .. import paintsave
+
+    why = paintsave.refusal(sc.parent)
+    if why:
+        raise ValueError(why)
+
+
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
+    _refuse_painted(sc)
     parent = sc.parent
     merged = _merge(parent.params if parent else {}, params)
     if params.get(FACE_FRESH):

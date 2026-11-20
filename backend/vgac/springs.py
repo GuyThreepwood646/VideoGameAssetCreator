@@ -100,7 +100,8 @@ def head_options(params: dict[str, Any], description: str) -> dict[str, Any]:
 
 def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, hitboxes: Path | None,
                  hair_points: Path | None, metallic: Path | None, fps: int = 24,
-                 library_hair: tuple[str, Path, Path | None] | None = None, head: dict[str, Any] | None = None) -> list[Any]:
+                 library_hair: tuple[str, Path, Path | None] | None = None, head: dict[str, Any] | None = None,
+                 declared: Path | None = None) -> list[Any]:
     """springs.py's command line. library_hair (object name, hair_mesh.npz, hair_parts.json) only when the hair comes
     from the library: the hair object is left out of the hanging-part search and its hanging groups get chains."""
     args: list[Any] = [anim_glb, out_glb, "--report", work / "springs_report.json", "--doc", work / "springs.json",
@@ -114,6 +115,8 @@ def blender_args(anim_glb: Path, out_glb: Path, work: Path, clips: Path | None, 
             args += ["--headwear"]
         if head.get("head_still"):
             args += ["--head-still"]
+    if declared is not None and Path(declared).is_file():
+        args += ["--declared", declared]  # declared sway parts with a location (declared_parts.for_springs)
     if library_hair is not None:
         obj, mesh, parts = library_hair
         args += ["--hair-object", obj, "--hair-mesh", mesh]
@@ -190,6 +193,9 @@ def metrics(report: dict[str, Any] | None, on: bool, reason: str | None, seconds
            "into_hitbox_max_m": round(max(into), 4) if into else None,
            "swing_deg": swing, "seconds": seconds, "find_seconds": rep.get("find_seconds"), "bake_seconds": rep.get("bake_seconds"),
            "hair_points": rep.get("hair_points"), "error": (error or "")[:300] or None}
+    if rep.get("declared") is not None:
+        # declared sway parts: each point, whether a part already held it or a chain was added for it
+        out["declared"] = rep["declared"]
     if rep.get("hair_into_body"):
         # hair from the library: how deep the hair's surface went into the body in idle, walk and run (metres)
         out["hair_into_body"] = rep["hair_into_body"]

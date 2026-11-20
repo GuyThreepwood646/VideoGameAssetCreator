@@ -348,6 +348,19 @@ def is_engine_lost(err: BaseException) -> bool:
     return False
 
 
+def stalled_message(instance: str, step: str, limit: float | None, settings: Settings | None = None) -> str:
+    """The plain message for a step whose ComfyUI work made no result within its time limit. The app never restarts
+    ComfyUI itself: the person restarts the card's ComfyUI and runs the step again."""
+    if limit is None:
+        wait_text = "in the time allowed"
+    elif limit < 120:
+        wait_text = f"within {int(limit)} seconds"
+    else:
+        wait_text = f"within {int(-(-limit // 60))} minutes"
+    return (f"{gpu_name(instance, settings)} did not finish {step} {wait_text}. Its graphics engine may be hung. "
+            "The app has not restarted it. Restart ComfyUI for that card, then run this step again.")
+
+
 def engine_lost_message(instance: str, settings: Settings | None = None) -> str:
     inst = (settings or get_settings()).instances.get(instance)
     if inst is not None and inst.engine is None and inst.start_script is None:
@@ -466,6 +479,11 @@ class JobContext:
     def check_cancelled(self) -> None:
         if self.cancelled or self.rerouted:
             raise JobCancelled()
+
+
+# Called with (kind, version_id, asset_id) after a job of a step finished without error and was not put back to queued
+# (WP-69: a finished rig may queue the suggested worn item). Each hook is run in its own try: a failing hook is logged.
+FINISHED_HOOKS: list[Callable[[str, str | None, str | None], None]] = []
 
 
 def _publish_job(job: Job) -> None:
@@ -908,6 +926,12 @@ class InstanceWorker:
                         job.message = error.splitlines()[0][:200]
                     db.commit()
                     _publish_job(job)
+                    if error is None and not requeued and not rerouted and not is_judge:
+                        for hook in FINISHED_HOOKS:
+                            try:
+                                hook(job.kind, job.version_id, job.asset_id)
+                            except Exception:  # noqa: BLE001 - a hook never fails the job that finished
+                                log.warning("job hook failed for %s", job.kind, exc_info=True)
                     if job.version_id:
                         v = db.get(Version, job.version_id)
                         if v is not None:

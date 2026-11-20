@@ -55,7 +55,7 @@ def test_the_sentence_comes_last():
     assert CEL_FACE not in concept.build_prompt(_sc(MAGE), {"prompt_override": "a knight with the visor down"})
     # Separate parts still come before it.
     sc = _sc(KNIGHT)
-    sc.asset.parts = ["shield"]
+    sc.asset.parts = [{"name": "shield", "kind": "separate"}]
     assert concept.build_prompt(sc, {}).endswith("clearly separate pieces: shield. " + CEL_FACE)
 
 

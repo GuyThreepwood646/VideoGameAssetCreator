@@ -1152,7 +1152,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "budget": sc.budget,
         "recipe": sc.version.metrics.get("recipe"),
         "prompt": sc.asset.prompt,
-        "parts": sc.asset.parts,
+        "parts": [p["name"] for p in sc.asset.parts],
         "triangles_per_lod": (pack_report or {}).get("lods"),
         "lod_ratios": sc.version.params.get("lods"),
         "collider_vertices": (pack_report or {}).get("collider_verts"),
@@ -1470,7 +1470,8 @@ async def judge(sc: StageContext) -> None:
     if rig_v is not None:
         info_path = library.version_file(rig_v, "rig_info", sc.settings)
         if rig_v.metrics.get("rigid"):
-            checks += quality.rig_checks({"bones": report.get("bones", 0)}, rig_expected=False)
+            checks += quality.rig_checks({"bones": report.get("bones", 0)}, rig_expected=False,
+                                         moving_parts=rig_v.metrics.get("moving_parts"))
         elif info_path is not None:
             checks += quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
                                          group_per_vertex=rig_v.params.get("group_per_vertex"))

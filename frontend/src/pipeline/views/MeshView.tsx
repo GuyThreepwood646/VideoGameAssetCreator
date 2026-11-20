@@ -1,9 +1,18 @@
-import { creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
+import { useEffect, useId, useRef, useState } from 'react'
+import { useBlocker } from 'react-router'
+import { api, creditText, libraryUrl, type Asset, type LibraryHairMetrics, type ShapeLog, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
+import { usePaint } from '../../paint/usePaint'
+import { clearActiveEditor, setActiveEditor, useEditKeys, type KeyTarget } from '../../editHistory'
+import { confirmLeaveUnsavedPaint, setUnsavedPaint } from '../../unsavedPaint'
+import { paintSaveBody } from '../../paint/savePaint'
+import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
+import { SmoothPaint, TouchUp } from './TouchUp'
+import { ShapeLogNote } from './ShapeTab'
 import type { FixAction } from '../../help'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -53,9 +62,77 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const editedPicture = version.stage === 'mesh' && version.params?.picture_edit ? libraryUrl(version.files.edited_picture ?? version.files.edited_cutout) : null
   // The model drawn grey with the texture off (stages/mesh.py measure_geometry): a texture can hide torn or shattered surfaces.
   const greyViews = version.stage === 'mesh' ? libraryUrl(version.files.grey_sheet) : null
+  // Touch up (WP-22): step 4 only. The viewer reports its model; painting is on while the user has started it.
+  const [model, setModel] = useState<ViewerModel | null>(null)
+  const [painting, setPainting] = useState(false)
+  const paint = usePaint(model, look?.look ?? null)
+  const canPaint = version.stage === 'prep' && !!glb
+  const paintTool = painting && model ? paint.toolFor(model) : null
+  // Save (WP-23): the painted picture goes to the backend as a new clean-up version made from this one.
+  const [saving, setSaving] = useState(false)
+  const [saveNote, setSaveNote] = useState<string | null>(null)
+  const savePaint = async () => {
+    const layer = paint.saveLayer()
+    if (!layer) return
+    const body = paintSaveBody(layer)
+    if (!body) {
+      setSaveNote('Nothing is painted yet.')
+      return
+    }
+    setSaving(true)
+    setSaveNote(null)
+    try {
+      await api.paint(version.id, body)
+      paint.markSaved()
+      setSaveNote('Saved. The new version appears here when it is made. Keep it to carry the paint on to the rig and the export.')
+      onChanged?.()
+    } catch (e) {
+      setSaveNote(e instanceof Error ? e.message : 'Could not save the paint. Try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  // Undo and redo keys (WP-71): the paint is the editor in use once the person has used this panel.
+  const paintRef = useRef(paint)
+  useEffect(() => {
+    paintRef.current = paint
+  })
+  const keys = useRef<KeyTarget>({ undo: () => paintRef.current.undo(), redo: () => paintRef.current.redo() })
+  const activate = () => setActiveEditor(keys.current)
+  useEditKeys()
+  useEffect(() => () => clearActiveEditor(keys.current), [])
+  // Unsaved paint: a plain question before leaving this page, and the browser warns when the tab closes.
+  const owner = useId()
+  const unsaved = paint.dirty
+  useEffect(() => {
+    setUnsavedPaint(owner, unsaved)
+    return () => setUnsavedPaint(owner, false)
+  }, [owner, unsaved])
+  useEffect(() => {
+    if (!unsaved) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [unsaved])
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => unsaved && currentLocation.pathname !== nextLocation.pathname)
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return
+    if (confirmLeaveUnsavedPaint()) blocker.proceed()
+    else blocker.reset()
+  }, [blocker])
   return (
-    <div className="mesh-view">
-      {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+    <div className="mesh-view" onPointerDownCapture={activate} onFocusCapture={activate}>
+      {glb ? (
+        <Viewer url={glb} height={440} tool={paintTool} onToolExit={() => setPainting(false)} onModelLoaded={setModel} />
+      ) : (
+        <div className="placeholder-box">No 3D model in this version.</div>
+      )}
+      {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} onSave={savePaint} saving={saving} saveNote={saveNote} />}
+      {version.stage === 'prep' && version.metrics?.shape_log != null && <ShapeLogNote log={version.metrics.shape_log as ShapeLog} />}
+      {canPaint && version.metrics?.painted === true && <SmoothPaint versionId={version.id} smoothed={typeof version.metrics?.polished === 'string' ? version.metrics.polished : null} onDone={onChanged} />}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
         {libHairOn && libHair && (

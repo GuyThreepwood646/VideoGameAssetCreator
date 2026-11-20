@@ -27,6 +27,10 @@
 // with mipmaps and compressed (Version 21: the Point, no-mipmap and uncompressed settings went with the crisp looks;
 // an older backend's -vgacFilter, -vgacMipmaps and -vgacCompress are ignored). The report records textureFilter,
 // textureMipmaps, textureCompression and normalMap.
+// Version 22 (WP-19): the walk and run speeds come from the sidecar when the rig stage measured them from the planted feet
+// (speed_mps, in the rig's units per second, times the creature speed scale); the 1.4 and 3.5 defaults stay for a clip with no
+// stance. The attack's hit frame (hit_frame, hit_time from the peak limb speed) is carried into the report only; no animation
+// event is added, so the game decides whether to use it. The report records speedSource and attackHit.
 //
 // Sockets (Version 8): a rigged character's FBX carries attachment points, empties named Socket_Hand_R, Socket_Back
 // and so on, parented to their bones (backend/vgac/sockets.py). They arrive as plain child transforms under the bones
@@ -106,7 +110,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "21";
+    public const string Version = "22";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -143,6 +147,8 @@ public static class VgacImport
         public List<string> roles = new List<string>();       // "Attack=Rig|Sword_Attack" and so on
         public int moreMoves;
         public string idleUsed = "";                          // Version 20: "own" (the app's own idle from the model), "library" or "none"
+        public string speedSource = "";                       // Version 22: "planted_feet" or "default" for walk and run, with the values used
+        public string attackHit = "";                         // Version 22: the attack's hit time from the sidecar, when the rig stage measured it
         public string idleClip = "";                          // the clip that plays as Stand still
         public List<string> added = new List<string>();       // "SwordBlock:Trigger", "SitIdle:Bool": moves the person added
         public bool applyRootMotion;
@@ -601,6 +607,7 @@ public static class VgacImport
             // Clips: the shared library for a valid Humanoid, else the clips baked into the model FBX itself.
             List<AnimationClip> clipSet = null;
             HashSet<string> addedClips = null;  // moves the person added ("Add a move"), by clip name
+            Dictionary<string, SidecarClip> sidecarClips = null;  // Version 22: the rig stage's clip data (speeds, hit time)
             AnimationClip ownIdle = null;       // Version 20: the app's own idle (the clip from the character's own model), when it is Stand still
             var clipsSrc = a.clips;
             if (clipsSrc != null && File.Exists(clipsSrc) && avatar != null && avatar.isHuman && avatar.isValid)
@@ -624,6 +631,7 @@ public static class VgacImport
                 // Moves the person added are only in the model's own FBX: add those to the shared set.
                 var side = ReadClipInfo(a.clipInfo, report);
                 addedClips = AddedClips(side);
+                sidecarClips = side;
                 var ownIdleName = OwnIdleName(side);
                 var fromOwn = new HashSet<string>(addedClips, StringComparer.OrdinalIgnoreCase);
                 if (ownIdleName != null) fromOwn.Add(ownIdleName);
@@ -644,6 +652,7 @@ public static class VgacImport
                 var side = ReadClipInfo(a.clipInfo, report);
                 SetClipLoops(importer, report, side);
                 addedClips = AddedClips(side);
+                sidecarClips = side;
                 if (avatar != null && avatar.isHuman && avatar.isValid) FaceForward(fbxPath, new[] { importer }, report);
                 clipSet = LoadClips(fbxPath);
             }
@@ -661,7 +670,7 @@ public static class VgacImport
             }
             if (clipSet.Count > 0)
             {
-                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle);
+                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle, sidecarClips, fbxPath);
                 animator.runtimeAnimatorController = ctrl;
                 report.clipCount = clipSet.Count;
             }
@@ -1868,7 +1877,8 @@ public static class VgacImport
     }
 
     // anim_clips.json from the rig stage (procanim.py): the loop flag per clip, which the GLB and FBX do not carry.
-    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; public string source = ""; }
+    [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; public string source = "";
+        public float speed_mps = -1f; public string speed_method = ""; public int hit_frame = -1; public float hit_time = -1f; public string hit_end = ""; }
 
     static HashSet<string> AddedClips(Dictionary<string, SidecarClip> side) =>
         side == null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1880,6 +1890,25 @@ public static class VgacImport
     {
         if (side == null || !side.TryGetValue("idle", out var c)) return null;
         return string.Equals(c.source, "procedural", StringComparison.OrdinalIgnoreCase) ? c.name : null;
+    }
+
+    // Version 22: the measured speed of a walk or run clip from the sidecar (planted feet), or null when the rig stage had none.
+    // The clip must come from the character's own FBX (asset path == ownFbx), the one the sidecar measured.
+    static float? MeasuredSpeed(Dictionary<string, SidecarClip> side, string clip, AnimationClip playing, string ownFbx)
+    {
+        if (side == null || playing == null || ownFbx == null) return null;
+        if (AssetDatabase.GetAssetPath(playing) != ownFbx) return null;
+        if (!side.TryGetValue(clip, out var c)) return null;
+        if (!string.Equals(c.speed_method, "planted_feet", StringComparison.OrdinalIgnoreCase)) return null;
+        return c.speed_mps > 0f ? (float?)c.speed_mps : null;
+    }
+
+    static string SpeedText(AnimationClip clip, float? measured, string dflt)
+    {
+        if (clip == null) return "none";
+        return measured.HasValue
+            ? "planted_feet " + measured.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " (own clip " + clip.name + ")"
+            : "default " + dflt + " (" + (clip.name) + ", shared library or no measurement)";
     }
 
     [Serializable] class Sidecar { public int version; public string motion = ""; public List<SidecarClip> clips = new List<SidecarClip>(); }
@@ -2179,7 +2208,7 @@ public static class VgacImport
     }
 
     static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info,
-                                              HashSet<string> added = null, AnimationClip ownIdle = null)
+                                              HashSet<string> added = null, AnimationClip ownIdle = null, Dictionary<string, SidecarClip> side = null, string ownFbx = null)
     {
         AssetDatabase.DeleteAsset(path);
         var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
@@ -2228,8 +2257,16 @@ public static class VgacImport
         AnimatorState loco = null;
         var cycle = new List<(AnimationClip clip, float speed)>();
         if (idle) cycle.Add((idle, 0f));
-        if (walk) cycle.Add((walk, 1.4f * speedScale));
-        if (run) cycle.Add((run, 3.5f * speedScale));
+        // Version 22: the walk and run speeds measured from the planted feet by the rig stage; the defaults when a clip has none.
+        // A measured speed applies only to the clip that plays: the one that came from the character's own FBX (the
+        // sidecar measured that one). A shared-library walk or run keeps its default.
+        var walkMeasured = MeasuredSpeed(side, "walk", walk, ownFbx);
+        var runMeasured = MeasuredSpeed(side, "run", run, ownFbx);
+        if (walk) cycle.Add((walk, (walkMeasured ?? 1.4f) * speedScale));
+        if (run) cycle.Add((run, (runMeasured ?? 3.5f) * speedScale));
+        info.speedSource = "walk " + SpeedText(walk, walkMeasured, "1.4") + "; run " + SpeedText(run, runMeasured, "3.5");
+        if (side != null && side.TryGetValue("attack", out var atk) && atk.hit_frame >= 0)
+            info.attackHit = "frame " + atk.hit_frame + " at " + atk.hit_time.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " s (" + atk.hit_end + ")";
         if (cycle.Count >= 2)
         {
             ctrl.AddParameter("Speed", AnimatorControllerParameterType.Float);

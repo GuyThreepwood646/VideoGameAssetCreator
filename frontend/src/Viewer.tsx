@@ -21,6 +21,8 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { pointerRay, SurfacePicker, type SurfaceHit, type ViewerModel, type ViewerTool } from './viewerTool'
+import { buildRegionOverlay, disposeRegionOverlay, type RegionHighlight } from './regionOverlay'
 import { Info } from './components/Info'
 import { LightPicker } from './components/LightPicker'
 import { clipLabel, clipLoopsByName } from './help'
@@ -78,6 +80,16 @@ type Props = {
   clipRequest?: { name: string; n: number } | null
   // The asset's look (style_preset), for the default preview light; the asset page provides it otherwise.
   look?: string | null
+  // A pointer tool (viewerTool.ts) that takes the left pointer while set; Escape calls onToolExit so the owner can clear it.
+  tool?: ViewerTool | null
+  onToolExit?: () => void
+  // Called once a model is drawn, with its meshes and picker (paint uses them). Not called when the model is cleared.
+  onModelLoaded?: (model: ViewerModel) => void
+  // The stiff region to draw over the model (WP-69 preview). Null to clear.
+  highlight?: RegionHighlight | null
+  // Where the camera looks (the model's own space, with a radius to fit). Set when a tool needs a part of the model in view (the
+  // Shape tab's arm). Null leaves the camera as the model framed it.
+  focus?: { point: [number, number, number]; radius: number } | null
 }
 
 type SceneHandles = {
@@ -127,6 +139,20 @@ function setShading(root: THREE.Object3D, shading: Shading, originals: Map<THREE
     const mats = Array.isArray(orig) ? orig : [orig]
     for (const m of mats) if ('wireframe' in m) (m as THREE.MeshStandardMaterial).wireframe = shading === 'wireframe'
   })
+}
+
+// Looks at a point (the model's own space) from the front quarter, close enough that a radius around it fills the view.
+function focusCamera(h: SceneHandles, focus: { point: [number, number, number]; radius: number }, model: THREE.Object3D | null) {
+  h.frame.updateMatrixWorld(true)
+  const target = model ? model.localToWorld(new THREE.Vector3(...focus.point)) : new THREE.Vector3(...focus.point)
+  const dist = (Math.max(focus.radius, 0.02) / Math.sin((h.camera.fov * Math.PI) / 360)) * 1.3
+  const from = new THREE.Vector3(0.8, 0.3, 0.8).normalize().multiplyScalar(dist)
+  h.camera.position.copy(target).add(from)
+  h.camera.near = Math.max(0.001, dist / 1000)
+  h.camera.far = dist * 100
+  h.camera.updateProjectionMatrix()
+  h.controls.target.copy(target)
+  h.controls.update()
 }
 
 function frameModel(h: SceneHandles, model: THREE.Object3D) {
@@ -543,7 +569,16 @@ export function hitShapesOf(doc: HitboxDoc | null | undefined): HitShape[] {
   return doc.hitboxes.filter((h) => h && Array.isArray(h.center) && h.center.length >= 3)
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest }: Props) {
+// With a pointer tool active the left button belongs to the tool. Orbit keeps the right button (and the wheel and arrow keys),
+// and touch keeps its two-finger turn; a single finger belongs to the tool.
+function applyPointerOwnership(c: OrbitControls, move: boolean, toolOn: boolean) {
+  const none = -1 as THREE.MOUSE
+  c.mouseButtons.LEFT = toolOn ? none : move ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+  c.mouseButtons.RIGHT = move || toolOn ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN
+  c.touches.ONE = toolOn ? (-1 as THREE.TOUCH) : move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
+}
+
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight, focus }: Props) {
   // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
   const lookCtx = useContext(ViewerLookContext)
   const look = lookProp ?? lookCtx
@@ -578,6 +613,34 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const moveGroupRef = useRef<THREE.Group | null>(null)
   const clipInfoRef = useRef<ClipInfo[] | null | undefined>(clipInfo)
   clipInfoRef.current = clipInfo
+  // The pointer tool and its exit (read by the listeners, which are set up once). The picker hits the model's own meshes.
+  const toolRef = useRef<ViewerTool | null>(tool ?? null)
+  toolRef.current = tool ?? null
+  const toolExitRef = useRef(onToolExit)
+  toolExitRef.current = onToolExit
+  const pickerRef = useRef<SurfacePicker | null>(null)
+  const regionRef = useRef<THREE.Object3D | null>(null)
+  const onModelLoadedRef = useRef(onModelLoaded)
+  onModelLoadedRef.current = onModelLoaded
+  // The stiff region preview (regionOverlay.ts): drawn over the model it was grown on, removed when cleared.
+  useEffect(() => {
+    if (regionRef.current) {
+      disposeRegionOverlay(regionRef.current)
+      regionRef.current = null
+    }
+    if (!highlight || !highlight.mesh.parent) return
+    const o = buildRegionOverlay(highlight.mesh, highlight.triangles)
+    if (!o) return
+    highlight.mesh.parent.add(o)
+    regionRef.current = o
+  }, [highlight])
+  // The camera focus (the Shape tab's arm): applied now, and again whenever a model is framed (focusRef).
+  const focusRef = useRef(focus)
+  focusRef.current = focus
+  useEffect(() => {
+    const h = handlesRef.current
+    if (h && focus) focusCamera(h, focus, modelRef.current)
+  }, [focus])
 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
@@ -603,11 +666,14 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     const c = controlsRef.current
     if (!c) return
     const move = dragMode === 'move'
-    c.mouseButtons.LEFT = move ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
-    c.mouseButtons.RIGHT = move ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN
-    c.touches.ONE = move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
-    if (c.domElement) c.domElement.style.cursor = move ? 'move' : 'grab'
-  }, [dragMode])
+    applyPointerOwnership(c, move, !!tool)
+    if (c.domElement) c.domElement.style.cursor = tool ? (tool.cursor ?? 'crosshair') : move ? 'move' : 'grab'
+  }, [dragMode, tool])
+  // A tool that is replaced or removed gets its cancel() once, so nothing stays half done.
+  useEffect(() => {
+    if (!tool) return
+    return () => tool.cancel?.()
+  }, [tool])
   const showHitsRef = useRef(showHits)
   // Attachment points (Socket_* nodes in the file); off until asked for.
   const [showSockets, setShowSockets] = useState(false)
@@ -643,6 +709,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     controls.listenToKeyEvents(renderer.domElement)
     controlsRef.current = controls
     renderer.domElement.style.cursor = 'grab'
+    if (toolRef.current) applyPointerOwnership(controls, false, true)
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x50545c, 1.2)
     scene.add(hemi)
@@ -767,7 +834,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     }
     const onDouble = (e: MouseEvent) => {
       const model = modelRef.current
-      if (!model) return
+      if (!model || toolRef.current) return
       const rect = renderer.domElement.getBoundingClientRect()
       const at = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
       const caster = new THREE.Raycaster()
@@ -820,10 +887,54 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerleave', onLeave)
 
+    // Pointer tool (viewerTool.ts): while one is set it gets the left button; hits are taken in rest pose.
+    const toolCaster = new THREE.Raycaster()
+    let toolHeld = false
+    const hitUnder = (e: PointerEvent): SurfaceHit | null => {
+      const picker = pickerRef.current
+      return picker ? picker.pick(pointerRay(e, renderer.domElement, camera, toolCaster)) : null
+    }
+    const onToolDown = (e: PointerEvent) => {
+      const tool = toolRef.current
+      if (!tool || e.button !== 0) return
+      toolHeld = true
+      renderer.domElement.setPointerCapture(e.pointerId)
+      tool.down?.(hitUnder(e), e)
+    }
+    const onToolMove = (e: PointerEvent) => {
+      const tool = toolRef.current
+      if (!tool) return
+      if (toolHeld) tool.drag?.(hitUnder(e), e)
+      else if (tool.hover) tool.hover(hitUnder(e), e)
+    }
+    const onToolUp = (e: PointerEvent) => {
+      if (!toolHeld) return
+      toolHeld = false
+      if (renderer.domElement.hasPointerCapture(e.pointerId)) renderer.domElement.releasePointerCapture(e.pointerId)
+      toolRef.current?.up?.(hitUnder(e), e)
+    }
+    const onToolKey = (e: KeyboardEvent) => {
+      const tool = toolRef.current
+      if (!tool || e.key !== 'Escape') return
+      toolHeld = false
+      tool.cancel?.()
+      toolExitRef.current?.()
+    }
+    renderer.domElement.addEventListener('pointerdown', onToolDown)
+    renderer.domElement.addEventListener('pointermove', onToolMove)
+    renderer.domElement.addEventListener('pointerup', onToolUp)
+    renderer.domElement.addEventListener('pointercancel', onToolUp)
+    window.addEventListener('keydown', onToolKey)
+
     return () => {
       cancelAnimationFrame(raf)
       renderer.domElement.removeEventListener('pointermove', onMove)
       renderer.domElement.removeEventListener('pointerleave', onLeave)
+      renderer.domElement.removeEventListener('pointerdown', onToolDown)
+      renderer.domElement.removeEventListener('pointermove', onToolMove)
+      renderer.domElement.removeEventListener('pointerup', onToolUp)
+      renderer.domElement.removeEventListener('pointercancel', onToolUp)
+      window.removeEventListener('keydown', onToolKey)
       renderer.domElement.removeEventListener('dblclick', onDouble)
       renderer.domElement.removeEventListener('pointerdown', stopFocus)
       renderer.domElement.removeEventListener('wheel', stopFocus)
@@ -873,6 +984,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       h.frame.clear()
       removeSkeletonGroup(h)
       modelRef.current = null
+      pickerRef.current = null
       restRef.current = null
       setStatus('No file')
       return
@@ -900,7 +1012,20 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         modelRef.current = model
         hh.frame.add(model)
         frameModel(hh, model)
+        if (focusRef.current) focusCamera(hh, focusRef.current, model)
         setShading(model, shading, originalsRef.current)
+        // Pickable meshes are the file's own: hit boxes, sockets and attachments are added later and are left out.
+        const pickable: THREE.Mesh[] = []
+        model.traverse((o) => {
+          if ((o as THREE.Mesh).isMesh) pickable.push(o as THREE.Mesh)
+        })
+        pickerRef.current = new SurfacePicker(pickable)
+        onModelLoadedRef.current?.({
+          meshes: pickable,
+          renderer: hh.renderer,
+          picker: pickerRef.current,
+          texturedMaterial: (mesh) => originalsRef.current.get(mesh) ?? mesh.material,
+        })
 
         let tris = 0
         let skinned = false

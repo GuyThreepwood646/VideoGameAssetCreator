@@ -275,7 +275,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   category: H('Category', 'What kind of thing this is: a person, an animal, a prop.', 'It decides the pose, the skeleton and the size budget.', 'category'),
   style_preset: H('Style', 'The look: painted, cel shaded, low-poly and so on.', 'Picks the model and the wording added to every description.', 'style_preset'),
   platform: H('Platform', 'Where the game will run: phone, PC or showcase.', 'Sets how many triangles and how big a texture the model may have.', 'platform_target'),
-  parts: H('Parts', 'Pieces that must move or swap on their own, such as a weapon or a lid.', 'We ask the image model to draw these as clearly separate pieces; for now they stay joined to the rest of the 3D model.', 'parts'),
+  parts: H('Parts', 'Named pieces of the character that the app should know about, such as a weapon, a lid or a cape.', 'Step 1 adds one sentence to the drawing prompt asking for these as clearly separate pieces. Nothing checks that the picture shows them apart, and the 3D build still joins parts that touch in the picture. The Make it move step finds hanging parts by itself; a part declared as sway, with its point set on the rig, also gets spring bones where that search found nothing. Other parts are not moved.', 'Prompt sentence in stages/concept.py build_prompt; asset parts [{name, kind}]; per rig version parts.json, GET/PUT /api/versions/{id}/parts'),
   style_lock: H('Look and settings', 'The look every asset in this project shares (technical name: style lock).', 'Keeps a whole game looking like one game.', 'style_lock'),
   prompt_block: H('Style prompt (style words)', 'Words added in front of every description in this project.', 'This is how the style stays the same from asset to asset.', 'prompt_block'),
   palette: H('Palette', 'The handful of colours the project uses.', 'Shared colours make assets look like they belong together.', 'palette'),
@@ -1698,6 +1698,8 @@ export function examplePrompts(category: string): [string, string] {
 export function humanError(raw: string | null | undefined): string {
   const r = (raw ?? '').toLowerCase()
   if (!r) return 'Something went wrong in this step. Try again.'
+  // A refused separation (WP-26, shape.py): the engine's plain reasons, without the exception name the job adds.
+  if (raw && raw.startsWith('ShapeRefused: ')) return `${raw.slice('ShapeRefused: '.length).trim()} Try another arm, a wider gap or a different cut start.`
   if (r.includes('cancel')) return 'This run was cancelled.'
   if (r.includes('comfyerror') || r.includes('comfy') || r.includes('interrupted') || r.includes('out of vram') || r.includes('no images')) return 'The generator stopped; this usually fixes itself. Try again.'
   if (r.includes('blender') || r.includes('unity') || r.includes('bpy') || r.includes('remesh') || r.includes('decimat')) return 'The clean-up step failed on this model. Try again or change something.'

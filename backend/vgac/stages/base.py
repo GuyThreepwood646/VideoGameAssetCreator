@@ -14,11 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import library, reference
-from ..comfy import ComfyClient, ComfyError
+from ..comfy import ComfyClient, ComfyError, ComfyStalled, time_limit_for
 from ..db import Asset, Project, Version
 from ..graphs.birefnet import cutout_graph
 from ..imaging import alpha_bbox, white_composite
-from ..jobs import JobContext
+from ..jobs import JobContext, stalled_message
 from ..tools import run_blender, run_unity
 
 
@@ -183,8 +183,12 @@ class StageContext:
             self.ctx.progress(None, f"{message or 'running'} on instance {client.name}: {int(elapsed)} s")
             self.ctx.check_cancelled()
 
+        limit = time_limit_for(graph, self.settings.job_timeout_seconds)
         try:
-            return await client.run(graph, poll_seconds=poll, timeout=self.settings.job_timeout_seconds, on_poll=on_poll)
+            return await client.run(graph, poll_seconds=poll, timeout=limit, on_poll=on_poll)
+        except ComfyStalled as e:
+            step = message or "this step"
+            raise ComfyError(stalled_message(client.name, step, limit, self.settings)) from e
         finally:
             # The card's part is over; what follows (the pictures painted onto the model, saving) runs on this computer,
             # and the label said "on instance b" for ten minutes after the draws were done.

@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, headtris, library, limbjoins, quality
+from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -150,8 +150,14 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     if src is not None:
         sc.register("glb", sc.copy_in(src, "rig.glb"))
     link_textures(sc)
-    sc.set_metrics(rigid=True, bones=0, reason=reason)
-    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False)))
+    moving = _moving_parts(sc)
+    sc.set_metrics(rigid=True, bones=0, reason=reason, moving_parts=moving)
+    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)))
+
+
+def _moving_parts(sc: StageContext) -> list[str]:
+    """The names of the asset's declared parts that are to move (kind separate), for a rigid asset's bones check."""
+    return [p["name"] for p in (sc.asset.parts or []) if p.get("kind") == "separate"]
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:
@@ -170,6 +176,119 @@ def guard_budget(sc: StageContext, src: Path) -> None:
     problem = headtris.handoff_problem(mesh_v.params, (mesh_v.metrics or {}).get("triangles"), prep_tris, sc.budget.get("triangles"))
     if problem:
         raise ValueError(problem)
+
+
+def _ancestry(db: Any, v: Any) -> list[Any]:
+    """The version and its parents up the chain (a loop in the data ends the walk)."""
+    from ..db import Version
+
+    out: list[Any] = []
+    seen: set[str] = set()
+    cur = v
+    while cur is not None and cur.id not in seen:
+        out.append(cur)
+        seen.add(cur.id)
+        cur = db.get(Version, cur.parent_version_id) if cur.parent_version_id else None
+    return out
+
+
+# Settings that never change the rig's result, so two runs that differ only in them may share one rig: the random
+# seeds (any name ending in seed, see reuse_differences) and the bookkeeping the app writes beside the settings.
+REUSE_IGNORED = ("fresh_attempt", "_keep_when_done", "instruction", "view", "views", "fix_for", "edit_addons", "edit_addons_applied",
+                 "reference_experimental", "face_fresh")
+
+
+def reuse_differences(mine: dict[str, Any], theirs: dict[str, Any]) -> list[str]:
+    """The settings that differ between two rig versions and change the result (sorted names). Empty means a donor's
+    rig is the same rig. Seeds and REUSE_IGNORED are left out; an unset value and a missing one are the same."""
+    out = []
+    for k in sorted(set(mine) | set(theirs)):
+        if k in REUSE_IGNORED or k.endswith("seed"):
+            continue
+        if mine.get(k) is None and theirs.get(k) is None:
+            continue
+        if mine.get(k) != theirs.get(k):
+            out.append(k)
+    return out
+
+
+def _rig_candidates(sc: StageContext, root: Any, template: str, gpv: int) -> list[Any]:
+    """Finished rigs of this asset on the same geometry (the clean-up chain starts at `root`) with the same template and
+    per-vertex groups. The asset's selected rig first, then the newest."""
+    from sqlalchemy import select
+
+    from .. import paintsave
+    from ..db import Version
+
+    rigs = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.status == "done")
+                         .order_by(Version.created_at.desc())).all()
+    picked = []
+    for r in rigs:
+        if r.id == sc.version.id or (r.metrics or {}).get("rigid"):
+            continue
+        p = r.params or {}
+        if p.get("template_label") != template or int(p.get("group_per_vertex") or 4) != gpv:
+            continue
+        if library.version_file(r, "glb", sc.settings) is None:
+            continue
+        prep = next((v for v in _ancestry(sc.db, r) if v.stage == "prep"), None)
+        if prep is not None and paintsave.geometry_root(sc.db, prep).id == root.id:
+            picked.append(r)
+    return sorted(picked, key=lambda r: 0 if getattr(r, "selected", False) else 1)  # stable: newest first within each group
+
+
+def _embeds_picture(path: Path | str) -> bool:
+    """True when the GLB has a material and an embedded image, so the picture is inside the file."""
+    import struct
+
+    data = Path(path).read_bytes()
+    if data[:4] != b"glTF":
+        return False
+    gltf = json.loads(data[20:20 + struct.unpack_from("<I", data, 12)[0]])
+    return bool(gltf.get("materials")) and bool(gltf.get("images"))
+
+
+async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str, Any]) -> bool:
+    """WP-23 rig.retexture: a rig made from a painted clean-up (step 4) reuses a finished rig of the same geometry, its
+    skeleton, weights, hit boxes and moves, and takes the new picture. No SkinToken run, so it is taken only when the
+    person did not ask for a fresh attempt (Try again) and every setting that changes the result is the same as the
+    donor's. The first donor that qualifies is used. False otherwise; the caller then rigs as usual, and the reason is
+    kept in metrics.retexture_why."""
+    from .. import paintsave
+
+    painted = next((v for v in sc.iter_lineage(include_self=False) if v.stage == "prep"), None)
+    if not paintsave.is_painted(painted):
+        return False
+    if params.get(FRESH_ATTEMPT):
+        sc.set_metrics(retexture_why="a fresh attempt was asked for, so the rig is made again")
+        return False
+    root = paintsave.geometry_root(sc.db, painted)
+    mine = dict(sc.version.params or {})
+    why = "no finished rig of this model was found"
+    for donor in _rig_candidates(sc, root, template, gpv):
+        diff = reuse_differences(mine, donor.params or {})
+        if diff:
+            why = "the settings differ from " + "the earlier rig: " + ", ".join(diff)
+            continue
+        sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
+        if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
+            continue
+        picture = sc.lineage_file("base_color", ("prep",))
+        if picture is None:
+            raise FileNotFoundError("the painted clean-up has no picture")
+        for key in ("glb", "anim_glb", "anim_body"):
+            path = sc.file(key)
+            # A rig GLB that carries a material and picture of its own gets the new picture; the rig's own picture
+            # (the base_color file, linked below) is what the viewer and the export use for the rest.
+            if path is not None and Path(path).is_file() and _embeds_picture(path):
+                if not imaging.glb_replace_images(path, base_color=picture):
+                    raise ValueError(f"the new picture could not be written into the rig ({key})")
+        link_textures(sc)
+        sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture", retexture_why=None)
+        await judge(sc)
+        return True
+    sc.set_metrics(retexture_why=why)
+    return False
 
 
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
@@ -192,6 +311,9 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_params(**hp)
     if template is None:
         await _skip(sc, f"rig_engine {sc.category.get('rig_engine', 'none')}", src)
+        return
+    record_stiff_points(sc)
+    if await retexture(sc, template, gpv, params):
         return
     lib_hair = library_hair(sc)
     if lib_hair is not None:
@@ -243,10 +365,12 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         rig_glb = raw_glb
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
+        await _leg_skin(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
+        await _worn_region(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -254,6 +378,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     await _inspect(sc, rig_glb, bend_test)
     await fit_hitboxes(sc, rig_glb, hp)
     await _animate(sc, rig_glb, params)
+    await _skin_stretch(sc)
     await judge(sc)
 
 
@@ -341,6 +466,9 @@ _ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", 
                  "retarget_error", "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
                  "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs", "hair_bind")
 KEEP_MARKER = "_keep_when_done"
+# Sent by "Try again" on a rig (StagePanel): the person asked for a new rig, so a painted clean-up does not reuse one.
+# Never stored on the version (pipeline.run_stage keeps it out of the version's settings).
+FRESH_ATTEMPT = "fresh_attempt"
 
 
 def reuse_change(parent_params: dict[str, Any], params: dict[str, Any]) -> set[str] | None:
@@ -426,9 +554,7 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
     rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
     if rig_glb is None:
         return False
-    if refix:
-        sc.progress(0.08, "cleaning up the skin weights")
-        await _fix_weights_again(sc, rig_glb)
+    await _rig_base(sc, parent, rig_glb, params, refix=refix, moves="moves" in parts)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
         sc.set_params(**hp)
@@ -443,6 +569,31 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
 
         pipeline.select(sc.db, sc.version)
     return True
+
+
+async def _rig_base(sc: StageContext, parent: Any, rig_glb: Path, params: dict[str, Any], refix: bool, moves: bool) -> None:
+    """The rig GLB a reused version starts from, when the weight clean-up or the moves are due (WP-69 review): restore the
+    parent's pre-pass rig if the parent applied the stiff pass, run the clean-up if refix is due, then apply the current
+    stiff points. Nothing is due: the rig stays the parent's."""
+    if not (refix or moves):
+        return
+    await _moves_base(sc, parent, rig_glb, refix)
+    points = record_stiff_points(sc)
+    if points:
+        await _worn_region(sc, rig_glb, params, points)
+
+
+async def _moves_base(sc: StageContext, parent: Any, rig_glb: Path, refix: bool) -> None:
+    """Make the rig GLB a moves rerun starts from (WP-69 reuse). When the parent applied the stiff pass (its pre-pass
+    copy exists), the copy is restored first, so the pass is gone unless the current points apply it again. Then the
+    weight clean-up runs on that base when refix is due (it is not overwritten afterwards). In place."""
+    parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False)
+    pre = parent_dir / "rig_before_worn_region.glb"
+    if pre.is_file():
+        shutil.copy2(pre, rig_glb)
+    if refix:
+        sc.progress(0.08, "cleaning up the skin weights")
+        await _fix_weights_again(sc, rig_glb)
 
 
 async def refit(sc: StageContext, parent: Any, params: dict[str, Any]) -> bool:
@@ -899,6 +1050,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
     fade the weights onto it and bake the sway into every clip of anim.glb (in place; the file before is kept as
     springs/anim_plain.glb). Files: springs (springs.json), springs_found (what was taken as a hanging part, with the
     chains drawn on it), springs_report. metrics.springs says what sways or why nothing does. Never raises."""
+    from .. import declared_parts
     from .. import springs as springs_mod
 
     rep_path = sc.dir / "anim_anim.json"
@@ -927,10 +1079,16 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
         hb = sc.file("hitboxes")
         head = springs_mod.head_options(params, _description(sc))
         sc.set_params(head_sway=head["head_sway"])
+        # Declared sway parts with a location (declared_parts.py): the region round each point gets a chain even where
+        # the search finds none. Locations are in the rig GLB's frame; blender/springs.py converts them.
+        declared = declared_parts.for_springs(declared_parts.read_placed(sc.file("parts")))
+        declared_path = None
+        if declared:
+            declared_path = declared_parts.write_placed(work / "declared.json", declared)
         args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
                                         sc.lineage_file("metallic", ("prep", "mesh")),
                                         library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None,
-                                        head=head)
+                                        head=head, declared=declared_path)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
         family = ((lib or {}).get("metrics") or {}).get("family")  # library hair: the hairstyle's family words
@@ -989,6 +1147,117 @@ async def _joins(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> Non
                               "reason": rep.get("reason")})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(joins={"error": str(e)[:300]})
+
+
+async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Leg skin pass (blender/leg_skin.py, WP-18): smooths the noisy leg weights over four passes, keeps four
+    influences and normalised weights, in place. Setting leg_skin (default on) turns it off. The knee re-split is off in
+    the script (--half 0). metrics.leg_skin: {ok, meshes: [...]} or {reason}. Never raises."""
+    on = params.get("leg_skin", True) is not False
+    sc.set_params(leg_skin=on)
+    if not on:
+        return
+    out = sc.dir / "rig_leg_skin.glb"
+    report = sc.dir / "leg_skin.json"
+    try:
+        await sc.blender("leg_skin.py", [rig_glb, out, "--report", report], log_name="leg_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_leg_skin.glb")
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(leg_skin={"ok": True, "meshes": rep.get("meshes", [])})
+        else:
+            sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+# WP-69 stiff parts (blender/worn_region.py): a part the person placed as stiff moves with one spine bone. Its region
+# is grown from the point on the rest mesh; the seam and the bone are set in the script.
+
+
+# WP-69: the stiff points are a setting of the rig, not only a file. The points a run applies are recorded in its
+# params (STIFF_PARAM, canonical: [{name, locations}] in order, or nothing when there are none), so a donor rig whose
+# points differ is not reused (reuse_differences counts the key), and a moves-only rerun applies the current points.
+STIFF_PARAM = "stiff_points"
+
+
+def stiff_parts_path(sc: StageContext) -> Path | None:
+    """The parts file the stiff points come from: this version's own, else the rig this one was adjusted from, else the
+    asset's selected rig (a fresh rig from a painted clean-up has no parent rig)."""
+    own = sc.file("parts")
+    if own is not None:
+        return Path(own)
+    if sc.parent is not None and sc.parent.stage == "rig":
+        found = library.version_file(sc.parent, "parts", sc.settings)
+        if found is not None:
+            return Path(found)
+    from sqlalchemy import select
+
+    from ..db import Version
+
+    sel = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.selected.is_(True))).first()
+    if sel is not None and sel.id != sc.version.id:
+        found = library.version_file(sel, "parts", sc.settings)
+        if found is not None:
+            return Path(found)
+    return None
+
+
+def stiff_points_for(sc: StageContext) -> list[dict[str, Any]]:
+    """The stiff parts with points this run applies, canonical (see STIFF_PARAM)."""
+    rows = declared_parts.for_stiff(declared_parts.read_placed(stiff_parts_path(sc)))
+    return [{"name": r["name"], "locations": [[round(float(v), 4) for v in loc] for loc in r["locations"]]} for r in rows]
+
+
+def record_stiff_points(sc: StageContext) -> list[dict[str, Any]]:
+    """Set the run's STIFF_PARAM from the points it will apply (None when there are none) and return them."""
+    points = stiff_points_for(sc)
+    sc.set_params(**{STIFF_PARAM: points or None})
+    return points
+
+
+async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any], points: list[dict[str, Any]] | None = None) -> None:
+    """Stiff parts (blender/worn_region.py, WP-69): each placed stiff part moves with the spine bone nearest its region.
+    Applies `points` (the run's record, see record_stiff_points) or, when not given, the points stiff_points_for finds.
+    Does nothing when no stiff part is placed. metrics.worn_region: {ok, points, meshes} or {reason}. Never raises."""
+    if points is None:
+        points = stiff_points_for(sc)
+    if not points:
+        return
+    out = sc.dir / "rig_worn_region.glb"
+    report = sc.dir / "worn_region.json"
+    points_file = declared_parts.write_placed(sc.dir / "stiff_points.json", points)
+    args = [rig_glb, out, "--report", report, "--points", points_file]
+    try:
+        await sc.blender("worn_region.py", args, log_name="worn_region.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_worn_region.glb")
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(worn_region={"ok": True, "points": rep.get("points", []), "meshes": rep.get("meshes", [])})
+        else:
+            sc.set_metrics(worn_region={"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(worn_region={"error": str(e)[:300]})
+
+
+async def _skin_stretch(sc: StageContext) -> None:
+    """metrics.skin_stretch (blender/skin_stretch.py, WP-18): the share of edges over 1.3 times their rest length in
+    walk and run, per body region, measured on the animated GLB. Measure only: nothing is changed. Never raises."""
+    anim = sc.dir / "anim.glb"
+    if not anim.is_file():
+        return
+    out = sc.dir / "skin_stretch.json"
+    try:
+        await sc.blender("skin_stretch.py", [anim, out, "--clips", "walk,run"], log_name="skin_stretch.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        if out.is_file():
+            sc.set_metrics(skin_stretch=json.loads(out.read_text(encoding="utf-8")))
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(skin_stretch={"error": str(e)[:300]})
 
 
 async def _limb_joins(sc: StageContext, rig_glb: Path) -> None:
@@ -1279,7 +1548,8 @@ def link_textures(sc: StageContext) -> None:
 async def judge(sc: StageContext) -> None:
     info_path = sc.file("rig_info")
     if sc.version.metrics.get("rigid"):
-        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False)
+        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False,
+                                    moving_parts=sc.version.metrics.get("moving_parts"))
     elif info_path is not None:
         checks = quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
                                     group_per_vertex=sc.version.params.get("group_per_vertex"))

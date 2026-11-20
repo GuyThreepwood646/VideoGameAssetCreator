@@ -428,7 +428,7 @@ export default function AssetPage() {
           {hair.panel && <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />}
           {asset.parts.length > 0 && (
             <div className="muted small">
-              Moving parts: {asset.parts.join(', ')}
+              Moving parts: {asset.parts.map((p) => p.name).join(', ')}
               <Info term="term.parts" />
             </div>
           )}
@@ -447,7 +447,7 @@ export default function AssetPage() {
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
-                <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={`${stagePlain(s, help)} (technical name: ${s})`} aria-current={s === stage ? 'step' : undefined}>
+                <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={stagePlain(s, help)} aria-current={s === stage ? 'step' : undefined}>
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
                   <span className="rail-label">{stagePlain(s, help)}</span>

@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { libraryUrl, type Version } from '../../api'
+import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
 import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
+import { pointTool } from '../../declaredPoints'
+import type { ViewerModel } from '../../viewerTool'
+import { DeclaredPointsPanel, SuggestionBlock, useDeclaredPoints } from './DeclaredPoints'
+import { askLabel, canAsk, isRunning, pendingSuggestion, suggestionPoints } from '../../suggestion'
+import { useRef } from 'react'
+import { growStiffRegion, regionTriangles } from '../../stiffRegion'
+import type { RegionHighlight } from '../../regionOverlay'
+import * as THREE from 'three'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
 // metrics.hitboxes on the rig version (4.2).
@@ -95,10 +103,85 @@ export function RigView({ version }: { version: Version }) {
   const libMissing = Array.isArray(m.library_missing) && m.library_missing.length > 0
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
+  // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
+  const dp = useDeclaredPoints(version)
+  // The suggested worn item (WP-69 follow-up): asked for once a rig is done; shown as pending points until kept or dismissed.
+  const [sugg, setSugg] = useState<SuggestionAnswer | null>(null)
+  const suggestedFor = useRef<string | null>(null)
+  // Opening the page only reads the suggestion; it starts nothing. The button asks (askSuggestion).
+  useEffect(() => {
+    if (version.status !== 'done') return
+    let alive = true
+    api
+      .getSuggestion(version.id)
+      .then((a) => alive && setSugg(a))
+      .catch(() => alive && setSugg(null))
+    return () => {
+      alive = false
+    }
+  }, [version.id, version.status])
+  // While the suggestion is queued or running, read it again every few seconds.
+  useEffect(() => {
+    if (!isRunning(sugg)) return
+    const t = window.setTimeout(() => {
+      api
+        .getSuggestion(version.id)
+        .then((a) => setSugg(a))
+        .catch(() => undefined)
+    }, 4000)
+    return () => window.clearTimeout(t)
+  }, [sugg, version.id])
+  useEffect(() => {
+    const ps = pendingSuggestion(sugg)
+    if (!ps?.item || suggestedFor.current === `${version.id}:${ps.item}`) return
+    suggestedFor.current = `${version.id}:${ps.item}`
+    dp.setPendingPoints(ps.item, suggestionPoints(ps))
+  }, [sugg, version.id, dp])
+  async function keepSuggestion(s: ItemSuggestionState) {
+    if (!s.item) return
+    if (!dp.parts?.some((p) => p.name === s.item)) {
+      const declared = [...(dp.parts ?? []).map((p) => ({ name: p.name, kind: p.kind })), { name: s.item, kind: 'stiff' }]
+      await api.updateAsset(version.asset_id, { parts: declared })
+      await dp.reloadParts()
+    }
+    dp.keepStiffPoints(s.item)
+    setSugg(await api.markSuggestion(version.id, 'kept'))
+  }
+  async function askSuggestion() {
+    setSugg(await api.startSuggestion(version.id))
+  }
+  async function dismissSuggestion(s: ItemSuggestionState) {
+    if (s.item) dp.discardStiffPoints(s.item)
+    setSugg(await api.markSuggestion(version.id, 'dismissed'))
+  }
+  const { setPoint, addStiffPoint, pending } = dp
+  const [viewerModel, setViewerModel] = useState<ViewerModel | null>(null)
+  const [markName, setMarkName] = useState<string | null>(null)
+  // A stiff part takes one point per click and stays in placing mode; a sway part takes its one point and leaves it.
+  const markKind = dp.parts?.find((p) => p.name === markName)?.kind ?? null
+  const markTool = useMemo(
+    () =>
+      markName && viewerModel
+        ? pointTool((p) => {
+            if (markKind === 'stiff') addStiffPoint(markName, p)
+            else {
+              setPoint(markName, p)
+              setMarkName(null)
+            }
+          })
+        : null,
+    [markName, markKind, viewerModel, setPoint, addStiffPoint],
+  )
+  // The stiff regions (WP-69) grown from every stiff point, saved or still pending, drawn over the model before keeping.
+  const stiffPoints = useMemo(
+    () => [...(dp.parts ?? []).filter((p) => p.kind === 'stiff').flatMap((p) => p.locations ?? []), ...Object.values(pending).flat()],
+    [dp.parts, pending],
+  )
+  const regionHighlight = useMemo(() => growHighlight(viewerModel, stiffPoints), [viewerModel, stiffPoints])
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
-    <div className="rig-view">
+    <div className="rig-view" onPointerDownCapture={dp.activate} onFocusCapture={dp.activate}>
       <div className="view-intro muted small">
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
@@ -145,7 +228,9 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
-      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} highlight={regionHighlight} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} canAsk={canAsk(sugg)} askText={askLabel(sugg)} onAsk={askSuggestion} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
+      <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
       {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
@@ -199,4 +284,28 @@ export function RigView({ version }: { version: Version }) {
       )}
     </div>
   )
+}
+
+// The region the stiff points cover on the model: the union of each point's grown piece (stiffRegion.ts), as the
+// triangles to draw. Positions are the mesh's own rest coordinates, the same frame the points are stored in.
+function growHighlight(model: ViewerModel | null, points: number[][]): RegionHighlight | null {
+  if (!model || points.length === 0) return null
+  let mesh: THREE.Mesh | null = null
+  for (const m of model.meshes) {
+    const n = m.geometry?.getAttribute('position')?.count ?? 0
+    if (n && (!mesh || n > (mesh.geometry.getAttribute('position')?.count ?? 0))) mesh = m
+  }
+  if (!mesh) return null
+  const geo = mesh.geometry
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const flat = pos.array as Float32Array
+  const index: ArrayLike<number> = geo.index ? (geo.index.array as ArrayLike<number>) : Array.from({ length: pos.count }, (_, i) => i)
+  const mask = new Uint8Array(pos.count)
+  for (const p of points) {
+    if (p.length !== 3) continue
+    const m = growStiffRegion(flat, index, [p[0], p[1], p[2]])
+    for (let i = 0; i < mask.length; i++) if (m[i]) mask[i] = 1
+  }
+  const triangles = regionTriangles(index, mask)
+  return triangles.length ? { mesh, triangles } : null
 }

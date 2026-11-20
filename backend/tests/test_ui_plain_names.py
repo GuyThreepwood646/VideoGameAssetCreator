@@ -27,8 +27,6 @@ SKIP_FILES = {"api.ts"}
 ALLOWED: dict[tuple[str, str], str] = {
     ("GlossaryPage.tsx", "${STAGE_TEXT[s].plain} (${s})"):
         "plain name first, technical key second in brackets: the decided rule for technical names",
-    ("AssetPage.tsx", "(technical name: ${s})"):
-        "tooltip that leads with the plain name and gives the key as the technical name",
 }
 
 JSX_ONLY_KEY = re.compile(r">\s*" + KEYS + r"\s*<")
