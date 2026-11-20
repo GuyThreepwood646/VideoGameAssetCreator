@@ -144,6 +144,23 @@ export interface DeclaredPart {
 // A stiff part takes a list of points (locations); a sway part takes one (location).
 export type PlacedPart = { name: string; kind: string; location: number[] | null; locations?: number[][] }
 export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
+// The suggested worn item on a rig version (WP-69 follow-up, item_suggest.py): what the rig page reads. `state` is null
+// when nothing is to be shown; `installed` false means the finder is not set up (the page says nothing then).
+export type SuggestedItem = { type: string; label: string }
+export type ItemSuggestionState = {
+  state: 'queued' | 'running' | 'done' | 'failed' | 'dismissed' | 'kept' | 'none'
+  item?: string
+  label?: string
+  phrase?: string
+  vertices?: number
+  share?: number
+  large?: boolean
+  found?: boolean
+  points?: number[][]
+  reason?: string
+  job_id?: string
+}
+export type SuggestionAnswer = { version_id: string; installed: boolean; eligible: SuggestedItem[]; state: ItemSuggestionState | null }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
@@ -977,6 +994,9 @@ export const api = {
   // Declared parts on a rig version (WP-20): the asset's parts with this version's points; saving replaces them all.
   versionParts: (vid: string) => get<VersionParts>(`/api/versions/${vid}/parts`),
   saveVersionParts: (vid: string, parts: PlacedPart[]) => put<VersionParts>(`/api/versions/${vid}/parts`, { parts }),
+  getSuggestion: (vid: string) => get<SuggestionAnswer>(`/api/versions/${vid}/suggestion`),
+  startSuggestion: (vid: string) => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion`, {}),
+  markSuggestion: (vid: string, state: 'dismissed' | 'kept') => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion/${state}`, {}),
   // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
   turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.

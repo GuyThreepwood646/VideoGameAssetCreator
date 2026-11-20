@@ -8,6 +8,7 @@ modules record a skip.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import importlib
@@ -60,6 +61,12 @@ def _write_mask(sc: StageContext, mask_b64: str | None) -> Path | None:
 
 async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
     stage, op, is_material = parse_kind(kind)
+    if stage == "suggest":
+        # The suggested worn item (WP-69, item_suggest.py): Blender and the finder, one at a time on the host.
+        from .. import item_suggest
+
+        await asyncio.to_thread(item_suggest.run_job, ctx, payload)
+        return
     if payload.get("task") == "style_from_image":
         # A review-engine job with no version (POST /api/projects/{pid}/style-from-image).
         from . import style

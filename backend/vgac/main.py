@@ -30,6 +30,11 @@ from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Ve
                  job_to_dict, project_to_dict, session_factory, version_to_dict, _iso, is_stopped)
 from .events import bus
 from .jobs import HOST, JUDGE, JobQueue, active_queue, free_ram_gb, job_kind
+from . import item_suggest as _item_suggest  # noqa: E402
+from .jobs import FINISHED_HOOKS as _FINISHED_HOOKS  # noqa: E402
+
+if _item_suggest.after_rig not in _FINISHED_HOOKS:
+    _FINISHED_HOOKS.append(_item_suggest.after_rig)  # WP-69: a finished rig queues the suggested worn item once
 from .pipeline import PipelineError
 from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
 

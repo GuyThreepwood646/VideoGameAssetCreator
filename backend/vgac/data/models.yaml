@@ -63,3 +63,10 @@ companions:
   face_landmarker: {name: MediaPipe face landmarker (eyes and mouth, runtime/models), file: face_landmarker.task, licence: Apache-2.0, version: "1", used_by: [lip points]}
   pose_landmarker: {name: MediaPipe pose landmarker heavy (pose check, runtime/models), file: pose_landmarker_heavy.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
   hand_landmarker: {name: MediaPipe hand landmarker (pose check, runtime/models), file: hand_landmarker.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
+#
+# Finders: the models the suggested worn item finder runs (item_suggest.py, finder_worker.py), in its own Python
+# environment under local/finder (setup/Setup-ItemFinder.ps1). Not concept painters, not graph files and not credits;
+# the Health page and the setup script read them. Sizes are the Hugging Face file sizes at the time of writing.
+finders:
+  item_detector: {name: Grounding DINO tiny, source: "https://huggingface.co/IDEA-Research/grounding-dino-tiny", hf_id: IDEA-Research/grounding-dino-tiny, licence: Apache-2.0, version: "1.0", size_mb: 690, used_by: [item_suggest]}
+  item_segmenter: {name: SAM 2.1 hiera small, source: "https://huggingface.co/facebook/sam2.1-hiera-small", hf_id: facebook/sam2.1-hiera-small, licence: Apache-2.0, version: "2.1", size_mb: 185, used_by: [item_suggest]}
