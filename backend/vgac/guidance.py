@@ -717,7 +717,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "library_missing": {
         "severity": "warn",
         "ok": "The shared animation library is on this PC.",
-        "fail": "The shared animation library is not on this PC. This character has the built-in moves: stand still, walk, run, turn left, turn right, attack, get hit and die. The extra library moves (sprint, punch, jump, crouch, roll and interact) are not made until the library is back.",
+        "fail": "The shared animation library is not on this PC, so the extra library moves are not made and the character has only the built-in moves until it is back.",
     },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {

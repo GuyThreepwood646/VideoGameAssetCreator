@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
+import { joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 import { pointTool } from '../../declaredPoints'
@@ -201,10 +201,7 @@ export function RigView({ version }: { version: Version }) {
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>
-              The shared animation library is not on this PC. This character has the built-in moves: stand still, walk, run, turn left,
-              turn right, attack, get hit and die. The extra library moves (sprint, punch, jump, crouch, roll and interact) are not made
-              until the library is back. To fix it, open the Health page (the Setup needs attention link at the top) and read the Shared
-              animation library line. Then make the moves again on this step.
+              {libraryMissingLine()}
             </div>
           )}
           {namesFixed && (
