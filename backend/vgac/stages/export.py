@@ -1152,7 +1152,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "budget": sc.budget,
         "recipe": sc.version.metrics.get("recipe"),
         "prompt": sc.asset.prompt,
-        "parts": sc.asset.parts,
+        "parts": [p["name"] for p in sc.asset.parts],
         "triangles_per_lod": (pack_report or {}).get("lods"),
         "lod_ratios": sc.version.params.get("lods"),
         "collider_vertices": (pack_report or {}).get("collider_verts"),

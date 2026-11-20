@@ -428,7 +428,7 @@ export default function AssetPage() {
           {hair.panel && <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />}
           {asset.parts.length > 0 && (
             <div className="muted small">
-              Moving parts: {asset.parts.join(', ')}
+              Moving parts: {asset.parts.map((p) => p.name).join(', ')}
               <Info term="term.parts" />
             </div>
           )}
