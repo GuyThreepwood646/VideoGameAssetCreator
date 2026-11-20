@@ -102,6 +102,12 @@ export default function YourLibrary() {
                 <li key={a.id}>
                   <strong>{a.label}</strong> <span className="muted">{from(a.source, a.licence)}</span>
                   {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
+                  {itemButtons('addon', a.id, a.label, () =>
+                    void remove(
+                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
+                      () => api.removeMyAddon(a.id),
+                    ),
+                  )}
                   {editing?.kind === 'start' && editing.id === a.id ? (
                     <StartOnForm entry={a} onSaved={done} onCancel={() => setEditing(null)} />
                   ) : (
@@ -111,12 +117,6 @@ export default function YourLibrary() {
                         Choose where it starts on
                       </button>
                     </div>
-                  )}
-                  {itemButtons('addon', a.id, a.label, () =>
-                    void remove(
-                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
-                      () => api.removeMyAddon(a.id),
-                    ),
                   )}
                 </li>
               ),
@@ -142,6 +142,12 @@ export default function YourLibrary() {
                   <div className="muted small">Used for picture edits (Qwen-Image-Edit).</div>
                   {warningOf(a) && <div className="addon-note small">{warningOf(a)}</div>}
                   {a.placement?.note && <div className={a.placement.file_missing || a.placement.source_missing ? 'error small' : 'muted small'}>{a.placement.note}</div>}
+                  {itemButtons('addon', a.id, a.label, () =>
+                    void remove(
+                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
+                      () => api.removeMyAddon(a.id),
+                    ),
+                  )}
                   {editing?.kind === 'start' && editing.id === a.id ? (
                     <StartOnForm entry={a} onSaved={done} onCancel={() => setEditing(null)} />
                   ) : (
@@ -151,12 +157,6 @@ export default function YourLibrary() {
                         Choose where it starts on
                       </button>
                     </div>
-                  )}
-                  {itemButtons('addon', a.id, a.label, () =>
-                    void remove(
-                      { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
-                      () => api.removeMyAddon(a.id),
-                    ),
                   )}
                 </li>
               ),

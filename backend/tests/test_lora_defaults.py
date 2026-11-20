@@ -241,4 +241,4 @@ def test_the_limit_refusal_names_the_loras_and_uses_the_apps_category_name(mine_
     user_addons.set_start_on(b, ["humanoid"], ["view_addons"])
     with pytest.raises(user_addons.AddonFileError) as e:
         user_addons.set_start_on(c, ["humanoid"], ["view_addons"])
-    assert str(e.value).startswith("Name 0 and Name 1 already start on for Humanoid assets in the side views.")
+    assert str(e.value).startswith("Name 0 and Name 1 are already on by default for characters in the side views.")

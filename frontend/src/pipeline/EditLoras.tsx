@@ -3,7 +3,7 @@
 // on the ones that start on for this kind of asset (System, Your library); and the notes the version records for LoRAs it
 // could not use.
 import { Info } from '../components/Info'
-import { EDIT_LORA_LIMIT, LIMIT_REACHED, onForThisRun, type EditChoice, type EditLora, warningOf } from '../editLoras'
+import { EDIT_LORA_LIMIT, LIMIT_REACHED, onForThisRun, STRENGTH_WORDS, type EditChoice, type EditLora, warningOf } from '../editLoras'
 import { STRENGTH_LABELS } from '../help'
 
 const STEPS: Exclude<EditChoice, 'off'>[] = ['subtle', 'normal', 'strong']
@@ -49,6 +49,7 @@ export function EditLoras({
         <div className="small edit-lora-summary" role="status">
           {onForThisRun(entries, choices, byDefault, kindWords)}
           {full ? <div className="edit-lora-limit">{LIMIT_REACHED}</div> : <span className="muted"> {EDIT_LORA_LIMIT} at a time is the most for one step.</span>}
+          <div className="muted">{STRENGTH_WORDS}</div>
         </div>
       )}
       {entries.map((e) => {
@@ -92,7 +93,11 @@ export function EditLoras({
               </span>
             </div>
             {blocked && <div className="muted small">{LIMIT_REACHED}</div>}
-            {startsOn[e.id] && <div className="muted small">Starts on for {kindWords} (set in System, Your library).</div>}
+            {startsOn[e.id] && (
+              <div className="muted small">
+                On by default for {kindWords}{on ? '' : ', switched off for this run'} (set in System, Your library).
+              </div>
+            )}
             {warningOf(e) && <div className="addon-note small">{warningOf(e)}</div>}
           </div>
         )

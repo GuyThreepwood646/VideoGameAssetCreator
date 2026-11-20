@@ -4714,3 +4714,11 @@ button.preset-card:hover:not(:disabled) {
   margin-top: var(--s1);
   font-weight: 600;
 }
+/* An off LoRA's strengths and a LoRA that cannot be switched on stay readable (secondary text, not faded). */
+.edit-loras .segmented > .seg:disabled {
+  opacity: 1;
+  color: var(--muted);
+}
+.edit-loras .switch:disabled {
+  opacity: 0.85;
+}

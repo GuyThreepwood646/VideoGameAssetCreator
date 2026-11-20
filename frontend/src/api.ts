@@ -309,6 +309,8 @@ export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_eng
 export type Category = {
   id: string
   label: string
+  // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
+  noun?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string

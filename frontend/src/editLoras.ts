@@ -110,6 +110,9 @@ export function onForThisRun(entries: EditLora[], choices: Record<string, EditCh
   return on.length ? `On for this run: ${on.join(', ')}.` : 'None of your LoRAs are on for this run.'
 }
 
+// What the three strengths change, in one line under each step's LoRA list.
+export const STRENGTH_WORDS = "Subtle, Normal and Strong set how strongly the LoRA's look is applied: Subtle is a light touch, Strong the most."
+
 // The sentence when a step already has as many of your LoRAs on as it takes.
 export const LIMIT_REACHED = `${EDIT_LORA_LIMIT} are on, the most one step takes. Turn one off to switch another on.`
 

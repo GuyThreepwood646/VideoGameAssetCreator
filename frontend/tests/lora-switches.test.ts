@@ -71,13 +71,16 @@ test('the step says in plain words which LoRAs are on for this run, and which st
   assert.equal(onForThisRun([ink, soft], {}), 'None of your LoRAs are on for this run.')
   // A LoRA on because of its default says so; one chosen on this asset does not.
   assert.equal(
-    onForThisRun([ink, soft], { mine_ink: 'subtle', mine_soft: 'strong' }, ['mine_ink'], 'Humanoid assets'),
-    'On for this run: Ink look (Subtle, on by default for Humanoid assets), Soft light (Strong).',
+    onForThisRun([ink, soft], { mine_ink: 'subtle', mine_soft: 'strong' }, ['mine_ink'], 'characters'),
+    'On for this run: Ink look (Subtle, on by default for characters), Soft light (Strong).',
   )
-  const html = renderToStaticMarkup(createElement(EditLoras, { purpose: 'Side views', entries: [ink, soft], choices: { mine_ink: 'subtle' }, startsOn: { mine_ink: 'subtle' }, byDefault: ['mine_ink'], kindWords: 'Humanoid assets', onChange: () => {} }))
-  assert.ok(html.includes('On for this run: Ink look (Subtle, on by default for Humanoid assets).'))
-  assert.ok(html.includes('Starts on for Humanoid assets (set in System, Your library).'))
-  assert.equal(html.split('Starts on for').length - 1, 1) // only the one that starts on says so
+  const html = renderToStaticMarkup(createElement(EditLoras, { purpose: 'Side views', entries: [ink, soft], choices: { mine_ink: 'subtle' }, startsOn: { mine_ink: 'subtle' }, byDefault: ['mine_ink'], kindWords: 'characters', onChange: () => {} }))
+  assert.ok(html.includes('On for this run: Ink look (Subtle, on by default for characters).'))
+  assert.ok(html.includes('On by default for characters (set in System, Your library).'))
+  assert.ok(html.includes('Subtle, Normal and Strong set how strongly'))
+  const off = renderToStaticMarkup(createElement(EditLoras, { purpose: 'Side views', entries: [ink], choices: {}, startsOn: { mine_ink: 'subtle' }, kindWords: 'characters', onChange: () => {} }))
+  assert.ok(off.includes('On by default for characters, switched off for this run (set in System, Your library).'))
+  assert.equal(html.split('On by default for characters (set').length - 1, 1) // only the one that starts on says so
   assert.ok(!/mine_|_addons/.test(html.replace(/data-[a-z-]+="[^"]*"/g, '')), 'no internal names on screen')
 })
 

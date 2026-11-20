@@ -160,7 +160,8 @@ export function FineTune({
   const loraKnobs = ownEdit.length ? shown.filter((p) => isEditKnob(p.type)) : []
   const advanced = shown.filter((p) => !simple.includes(p) && !loraKnobs.includes(p))
   // The kind of asset in the words the app shows everywhere (the category's label).
-  const kindWords = `${refData?.categories.find((c) => c.id === asset.category)?.label ?? 'this kind of'} assets`
+  const cat0 = refData?.categories.find((c) => c.id === asset.category)
+  const kindWords = cat0?.noun ? `${cat0.noun}s` : 'this kind of asset'
   // The LoRAs of a setting that are on because of their default: all the defaults when the version has no such setting
   // yet, else the ones the version records (lora_defaults.fill), while they are still as the version has them.
   const byDefault = (knob: string): string[] => {
@@ -481,7 +482,6 @@ export function FineTune({
       )}
       {loraKnobs.length > 0 && (
         <div className="your-loras" data-your-loras>
-          <div className="field-label">Your LoRAs for this step</div>
           <div className="adjust-grid">{loraKnobs.map((p) => renderField(p, false))}</div>
         </div>
       )}

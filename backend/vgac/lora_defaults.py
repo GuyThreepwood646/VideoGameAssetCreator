@@ -111,14 +111,18 @@ def clean_start_on(a: dict[str, Any], categories: Any, uses: Any) -> dict[str, l
                 others = [o for o in reference.addons() if o.get("mine") and o["id"] != a["id"] and starts_on(o, u, c)]
                 if len(others) >= reference.MAX_EDIT_LORAS:
                     names = " and ".join(o.get("label") or "another LoRA" for o in others)
-                    raise ValueError(f"{names} already start on for {category_label(c)} assets in {USE_LABELS[u]}. One step takes at most "
+                    raise ValueError(f"{names} are already on by default for {category_plural(c)} in {USE_LABELS[u]}. One step takes at most "
                                      f"{reference.MAX_EDIT_LORAS} of your LoRAs; turn one of them off there first.")
     return {"categories": cats, "uses": us}
 
 
-def category_label(cid: str) -> str:
+def category_plural(cid: str) -> str:
+    """The app's plain word for a kind of asset, in the plural ("characters", "props"): reference.CATEGORY_NOUNS."""
+    noun = reference.CATEGORY_NOUNS.get(cid)
+    if noun:
+        return noun + "s"
     try:
-        return str(reference.category(cid).get("label") or cid)  # the name the app shows everywhere
+        return str(reference.category(cid).get("label") or cid)
     except KeyError:
         return cid
 
