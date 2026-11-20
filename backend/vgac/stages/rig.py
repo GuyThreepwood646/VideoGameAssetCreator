@@ -554,18 +554,14 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
     rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
     if rig_glb is None:
         return False
-    if refix:
-        sc.progress(0.08, "cleaning up the skin weights")
-        await _fix_weights_again(sc, rig_glb)
     if "moves" in parts:
-        # Stiff parts placed on the parent (WP-69): start from the parent's weights before its stiff pass, then apply
-        # the points again, so a changed point is not added on top of the old one.
+        # WP-69: the parent's rig may carry its stiff pass. The base is its pre-pass rig, with the weight clean-up run on
+        # it when refix is due, and the points applied after; so removing points takes the pass out, and the clean-up
+        # is not thrown away by a copy after it.
+        await _moves_base(sc, parent, rig_glb, refix)
+    if "moves" in parts:
         points = record_stiff_points(sc)
         if points:
-            parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False)
-            pre = parent_dir / "rig_before_worn_region.glb"
-            if pre.is_file():
-                shutil.copy2(pre, rig_glb)
             await _worn_region(sc, rig_glb, params, points)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
@@ -581,6 +577,19 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
 
         pipeline.select(sc.db, sc.version)
     return True
+
+
+async def _moves_base(sc: StageContext, parent: Any, rig_glb: Path, refix: bool) -> None:
+    """Make the rig GLB a moves rerun starts from (WP-69 reuse). When the parent applied the stiff pass (its pre-pass
+    copy exists), the copy is restored first, so the pass is gone unless the current points apply it again. Then the
+    weight clean-up runs on that base when refix is due (it is not overwritten afterwards). In place."""
+    parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False)
+    pre = parent_dir / "rig_before_worn_region.glb"
+    if pre.is_file():
+        shutil.copy2(pre, rig_glb)
+    if refix:
+        sc.progress(0.08, "cleaning up the skin weights")
+        await _fix_weights_again(sc, rig_glb)
 
 
 async def refit(sc: StageContext, parent: Any, params: dict[str, Any]) -> bool:

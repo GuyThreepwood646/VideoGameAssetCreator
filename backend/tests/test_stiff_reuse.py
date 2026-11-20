@@ -68,3 +68,49 @@ def test_record_sets_the_setting_and_clears_it_when_there_are_no_points(tmp_path
     monkeypatch.setattr(rig, "stiff_parts_path", lambda s: None)
     assert rig.record_stiff_points(sc) == []
     assert sc.params_set == {"stiff_points": None}
+
+
+# --- the moves rerun's base (rig._moves_base, WP-69 review) -----------------------------------------------------
+
+import asyncio  # noqa: E402
+
+
+
+def _base_case(tmp_path, monkeypatch, pre_text):
+    """A parent rig dir holding rig_before_worn_region.glb (the pre-pass copy), and this version's rig GLB holding the
+    pass (as the copied parent file does). Returns (sc, parent, rig_glb)."""
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    if pre_text is not None:
+        (parent_dir / "rig_before_worn_region.glb").write_text(pre_text, encoding="utf-8")
+    rig_glb = tmp_path / "child" / "rig.glb"
+    rig_glb.parent.mkdir()
+    rig_glb.write_text("PASSED", encoding="utf-8")
+    monkeypatch.setattr(rig.library, "version_dir", lambda asset, version, settings=None, create=True: parent_dir)
+    sc = SimpleNamespace(asset=SimpleNamespace(id="a1"), settings=None, progress=lambda *a, **k: None)
+    return sc, SimpleNamespace(id="p"), rig_glb
+
+
+def test_removing_the_last_point_gives_the_pre_pass_weights(tmp_path, monkeypatch):
+    # The parent applied the pass; the person removed every point, so no points are applied on the rerun.
+    sc, parent, rig_glb = _base_case(tmp_path, monkeypatch, pre_text="PRE")
+    asyncio.run(rig._moves_base(sc, parent, rig_glb, refix=False))
+    assert rig_glb.read_text(encoding="utf-8") == "PRE"
+
+
+def test_a_parent_without_the_pass_keeps_its_rig(tmp_path, monkeypatch):
+    sc, parent, rig_glb = _base_case(tmp_path, monkeypatch, pre_text=None)
+    asyncio.run(rig._moves_base(sc, parent, rig_glb, refix=False))
+    assert rig_glb.read_text(encoding="utf-8") == "PASSED"
+
+
+def test_refix_plus_moves_keeps_the_refix_result(tmp_path, monkeypatch):
+    # The clean-up runs on the pre-pass base; the copy does not overwrite it afterwards.
+    sc, parent, rig_glb = _base_case(tmp_path, monkeypatch, pre_text="PRE")
+
+    async def fake_fix(sc_, path):
+        path.write_text(path.read_text(encoding="utf-8") + "+FIX", encoding="utf-8")
+
+    monkeypatch.setattr(rig, "_fix_weights_again", fake_fix)
+    asyncio.run(rig._moves_base(sc, parent, rig_glb, refix=True))
+    assert rig_glb.read_text(encoding="utf-8") == "PRE+FIX"
