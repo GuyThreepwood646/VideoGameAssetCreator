@@ -101,6 +101,9 @@ class Asset(Base):
     # description either way. asset_to_dict shows the answer in force.
     wears_armour: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     body_is_metal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # "Show on the project tile" (the asset card's tick box): False keeps this asset's picture off the project's cover on
+    # the Projects page. None (never changed) shows it.
+    show_on_project: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="assets")
@@ -281,7 +284,7 @@ def init_db() -> None:
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
                                                                                           "held_item_json": "TEXT", "equipment_json": "TEXT", "hair_json": "TEXT", "face_matters": "BOOLEAN",
-                                                                                          "wears_armour": "BOOLEAN", "body_is_metal": "BOOLEAN"},
+                                                                                          "wears_armour": "BOOLEAN", "body_is_metal": "BOOLEAN", "show_on_project": "BOOLEAN"},
                   "job": {"result_json": "TEXT"}}
 
 
@@ -440,6 +443,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
         "equipment": a.equipment,
         "hair": a.hair,
         "face_matters": a.face_matters is not False,
+        "show_on_project": a.show_on_project is not False,
         # The answer in force (the person's tick, else what the description says); wears_armour_set / body_is_metal_set
         # say whether the person has answered, so the card can tell "you said" from "the app read your description".
         "wears_armour": a.armour_in_force,
