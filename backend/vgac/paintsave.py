@@ -46,7 +46,8 @@ REFUSAL = ("This step has your painted changes. Adjust and Refine would rebuild 
 
 
 def is_painted(v: Version | None) -> bool:
-    return bool(v is not None and isinstance(v.metrics, dict) and v.metrics.get("painted"))
+    m = getattr(v, "metrics", None)
+    return bool(isinstance(m, dict) and m.get("painted"))
 
 
 def refusal(parent: Version | None) -> str | None:
