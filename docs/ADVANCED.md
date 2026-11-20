@@ -65,7 +65,7 @@ values out of the older tracked files. The previous copy is kept as `machine.jso
 | `blender_exe` | Blender 5.0 or newer (tested with 5.2.3) |
 | `unity_exe`, `unity_project` | The Unity Editor and the sandbox project used to build prefabs (default `unity-sandbox`) |
 | `comfy_input_dir` | ComfyUI's shared input folder (both engines read pictures from it) |
-| `loras_dir` | ComfyUI's `loras` folder. Your own add-ons go in its `VGAC/mine/` folder |
+| `lora_folders` | The LoRA folders you linked on the setup page. ComfyUI reads them where they are; nothing is copied |
 | `clips_libraries` | Paths to the animation packs (`ual1`, `ual2`) |
 | `min_free_ram_gb` | Hold jobs while free RAM is below this. Default 24; lower it on a PC with less than 64 GB |
 | `job_timeout_seconds` | How long one ComfyUI job may run before it fails |

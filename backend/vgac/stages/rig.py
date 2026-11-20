@@ -291,6 +291,81 @@ async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str,
     return False
 
 
+# WP-27: a shaped clean-up keeps the rig it was shaped on. The Shape tab's job stores the cut model on that rig's
+# skeleton, with the weights the engine derived again round the cut, as this file of the new clean-up.
+CARRY_FILE = "shape_rig"
+
+
+def carry_donor(sc: StageContext, template: str, gpv: int, params: dict[str, Any]) -> tuple[Any, Any, Path | None, str | None]:
+    """(donor rig, shaped clean-up, carried model, None) when this rig can be carried over from the rig the clean-up was
+    shaped on, else (None, None, None, why) with why None when the clean-up is not shaped at all."""
+    from .. import paintsave
+    from ..db import Version
+
+    prep = next((v for v in sc.iter_lineage(include_self=False) if v.stage == "prep"), None)
+    if prep is None:
+        return None, None, None, None
+    shaped = paintsave.geometry_root(sc.db, prep)
+    if not paintsave.is_shaped(shaped):
+        return None, None, None, None
+    if params.get(FRESH_ATTEMPT):
+        return None, None, None, "Try again was asked for"
+    log = (shaped.metrics or {}).get("shape_log") or {}
+    donor = sc.db.get(Version, str(log.get("rig_version") or ""))
+    carried = library.version_file(shaped, CARRY_FILE, sc.settings)
+    if donor is None or donor.status != "done" or library.version_file(donor, "glb", sc.settings) is None:
+        return None, None, None, "the rig the arm was separated on is gone"
+    if carried is None:
+        return None, None, None, "the separated model has no weights to keep"
+    if (donor.metrics or {}).get("hair_bind") or library_hair(sc) is not None:
+        return None, None, None, "hair from the library is bound to the body"
+    dp = donor.params or {}
+    if dp.get("template_label") != template or int(dp.get("group_per_vertex") or 4) != gpv:
+        return None, None, None, "a different rig template was chosen"
+    diff = reuse_differences(dict(sc.version.params or {}), dp)
+    if diff:
+        sc.set_metrics(carry_settings_changed=diff)  # the setting names, for checks; the page shows the plain line
+        return None, None, None, "the rig settings were changed since that rig"
+    return donor, prep, Path(carried), None
+
+
+async def carry(sc: StageContext, template: str, gpv: int, params: dict[str, Any], bend_test: bool = True) -> bool:
+    """WP-27 rig.carry: a rig made from a shaped clean-up (the Shape tab's separated arm) carries over the rig the arm was
+    separated on, without running SkinToken: the skeleton and every weight away from the cut are the donor's, the cut
+    model with the weights derived again round the cut is the clean-up's CARRY_FILE. Only what the cut changes is made
+    again: the rig renders, the joined-limb check, hit boxes, moves and the skin-stretch measure. False (with
+    metrics.carry_why) when it does not apply; the caller then rigs as usual."""
+    donor, prep, carried, why = carry_donor(sc, template, gpv, params)
+    if donor is None:
+        if why:
+            sc.set_metrics(carry_why=why)
+        return False
+    sc.progress(0.05, "the arm was separated on an earlier rig: carrying its skeleton and weights over")
+    rig_glb = _reuse_parent(sc, donor, skip=_CARRY_REDONE_FILES, skip_metrics=_CARRY_REDONE_METRICS)
+    if rig_glb is None:
+        sc.set_metrics(carry_why="the earlier rig has no model")
+        return False
+    shutil.copyfile(carried, rig_glb)
+    from .. import paintsave
+
+    if paintsave.is_painted(prep):  # painted after the shape: the rig takes the new picture, as rig.retexture does
+        picture = sc.lineage_file("base_color", ("prep",))
+        if picture is not None and _embeds_picture(rig_glb):
+            imaging.glb_replace_images(rig_glb, base_color=picture)
+    link_textures(sc)
+    sc.set_metrics(carried_of=donor.id, carry_from=prep.id, rig_method="carry", carry_why=None, rigid=False, refit_of=None)
+    await _limb_joins(sc, rig_glb)
+    await _inspect(sc, rig_glb, bend_test)
+    hp = hitbox_params(sc.platform, params)
+    if sc.asset.category in HITBOX_CATEGORIES:
+        sc.set_params(**hp)
+    await fit_hitboxes(sc, rig_glb, hp)
+    await _animate(sc, rig_glb, params)
+    await _skin_stretch(sc)
+    await judge(sc)
+    return True
+
+
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, rigid=True, reason="material category has no mesh")
@@ -314,6 +389,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         return
     record_stiff_points(sc)
     if await retexture(sc, template, gpv, params):
+        return
+    if await carry(sc, template, gpv, params, bend_test):
         return
     lib_hair = library_hair(sc)
     if lib_hair is not None:
@@ -465,6 +542,11 @@ ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_st
 _ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", "clips_source", "library_skipped", "library_missing",
                  "retarget_error", "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
                  "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs", "hair_bind")
+# What a carried rig makes again because the cut changed it: the rig's renders, hit boxes, moves and the measures
+# taken on them. Everything else (skeleton, fingers, palm-down, stiff parts, weights away from the cut) is the donor's.
+_CARRY_REDONE_FILES = HITBOX_FILES + ANIM_FILES + ("rig_info", "bones", "bend_strip", "skin_stretch")
+_CARRY_REDONE_METRICS = _ANIM_METRICS + ("limb_joins", "skin_stretch", "hitboxes", "hitbox_error", "bent", "retextured_of",
+                                         "retexture_from", "retexture_why", "rig_method")
 KEEP_MARKER = "_keep_when_done"
 # Sent by "Try again" on a rig (StagePanel): the person asked for a new rig, so a painted clean-up does not reuse one.
 # Never stored on the version (pipeline.run_stage keeps it out of the version's settings).

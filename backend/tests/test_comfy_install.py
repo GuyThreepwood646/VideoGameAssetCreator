@@ -231,7 +231,7 @@ def test_full_install_c(box):
     assert Path(a.engine.python) == ci.venv_python(root) and Path(a.engine.comfy_dir) == root
     assert a.engine.extra_model_paths is None
     assert a.gpu == "RTX 3060" and s.stage_instances["mesh"] == "a"
-    assert s.comfy_input_dir == root / "input" and s.loras_dir == root / "ComfyUI" / "models" / "loras"
+    assert s.comfy_input_dir == root / "input" and s.lora_folders == []
     # every program got its paths as separate arguments, the data folder's spaces and letters untouched
     assert any(str(root / ".venv") == c[2] for c in box["runner"].calls if c[1:2] == ["venv"])
     assert all(str(box["theirs"]) not in " ".join(c) for c in box["runner"].calls)
@@ -814,7 +814,6 @@ def _link_b(box, extra: Path) -> None:
     for n in ("a", "b"):
         data["backend"]["instances"][n]["engine"].update({"extra_args": ["--their-flag"], "input_dir": str(box["theirs"] / "input"),
                                                           "output_dir": str(box["theirs"] / "output")})
-    data["backend"]["loras_dir"] = str(box["theirs"] / "ComfyUI" / "models" / "loras")
     box["machine"].write_text(json.dumps(data), encoding="utf-8")
     config.reset_settings()
 
@@ -840,7 +839,7 @@ def test_f3_b_then_c_drops_everything_of_their_comfyui(box):
         assert set(e) == {"comfy_dir", "python", "main", "port", "listen", "cuda_device", "user_dir", "output_dir", "extra_args"}, e
         assert e["extra_args"] == [] and Path(e["comfy_dir"]) == box["root"]
     s = config.load_settings(create_library=False)
-    assert all(str(box["theirs"]) not in str(v) for v in (s.loras_dir, s.comfy_input_dir))
+    assert all(str(box["theirs"]) not in str(v) for v in (s.comfy_input_dir,))
     assert all(i.engine.extra_model_paths is None and i.engine.input_dir is None for i in s.instances.values())
     assert all(Path(i.engine.output_dir).is_relative_to(box["root"]) for i in s.instances.values())
 
@@ -946,7 +945,7 @@ def test_f7_remove_stops_its_own_engine_then_deletes_then_clears_settings(box):
     r = ci.remove(True, box["ops"], sup)
     assert sorted(sup.stopped) == ["a", "b"] and not box["root"].exists()
     s = config.load_settings(create_library=False)
-    assert s.instances["a"].engine is None and s.comfy_input_dir is None and s.loras_dir is None
+    assert s.instances["a"].engine is None and s.comfy_input_dir is None
     assert set(r["engines_cleared"]) == {"a", "b"}
 
 
@@ -956,7 +955,7 @@ def test_f7_remove_under_choice_a_leaves_their_models_and_no_setting_points_at_i
     ci.remove(True, box["ops"])
     assert not box["root"].exists() and (models / "checkpoints" / "mine.safetensors").is_file()
     s = config.load_settings(create_library=False)
-    assert s.comfy_input_dir is None and s.loras_dir is None
+    assert s.comfy_input_dir is None
     assert all(i.engine is None for i in s.instances.values())
     assert "shared-models.yaml" not in box["machine"].read_text(encoding="utf-8")
 
@@ -1320,7 +1319,7 @@ def test_cli_retarget_points_the_settings_into_the_moved_install(box, capsys):
     a = s.instances["a"]
     assert Path(a.engine.comfy_dir) == nroot and Path(a.engine.python) == nroot / ".venv" / "Scripts" / "python.exe"
     assert Path(a.engine.user_dir) == nroot / "user" / "a" and Path(a.engine.output_dir) == nroot / "output" / "a"
-    assert s.comfy_input_dir == nroot / "input" and s.loras_dir == nroot / "ComfyUI" / "models" / "loras"
+    assert s.comfy_input_dir == nroot / "input"
     assert str(old) not in box["machine"].read_text(encoding="utf-8").replace("\\\\", "\\")
     code, out = _cli(["retarget", str(old), str(new)], capsys, box)  # again: nothing left to change
     assert code == 0 and out["changed"] == 0

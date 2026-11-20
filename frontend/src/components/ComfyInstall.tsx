@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type ComfyCopy, type ComfyInstallOffer, type ComfyInstallStatus } from '../api'
 import { fmtSize } from '../packsText'
+import LoraFolders from './LoraFolders'
 
 const POLL_MS = 1000
 
@@ -181,6 +182,10 @@ export default function ComfyInstall({ shareFrom, onChanged }: { shareFrom: Comf
         </div>
       )}
       {answer && <div className={answer.ok ? 'setup-ok small' : 'error small'}>{answer.text}</div>}
+      <div className="setup-extras">
+        <div className="field-label">Add your LoRA folders (optional)</div>
+        <LoraFolders onChanged={onChanged} />
+      </div>
     </div>
   )
 }

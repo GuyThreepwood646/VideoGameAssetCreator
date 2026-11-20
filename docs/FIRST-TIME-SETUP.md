@@ -85,7 +85,7 @@ means the person does it, and the helper only reports on it.
 | 4 | RAM | The job queue holds work while free RAM is below `min_free_ram_gb` (24 in `backend/config.yaml`) | n/a | n/a | n/a | By hand (lower the number for a smaller PC) |
 
 Also needed on a PC that is not the author's: this PC's values in `local/machine.json` (untracked): each engine's
-ComfyUI folder and card, `blender_exe`, `unity_exe`, `comfy_input_dir`, `loras_dir`, and ComfyUI Desktop's path for
+ComfyUI folder and card, `blender_exe`, `unity_exe`, `comfy_input_dir`, and ComfyUI Desktop's path for
 the launcher (docs/ADVANCED.md, "Settings files"). Section "What is still needed before other people can install this"
 says what a later round does about that. Until then, write that file by hand; `setup\Check-Setup.ps1` says which
 Blender and Unity it found.
@@ -293,7 +293,7 @@ What stays manual, what a later round of the helper could automate, and what it 
 Settings files: the helper never edits `backend/config.yaml` or `desktop/config.json`. When the project folder path
 differs, `-Install` writes `backend/config.proposed.yaml` and `desktop/config.proposed.json` beside them. Paths it
 does not propose and you must set by hand: the ComfyUI paths in the two start scripts, `desktopExe` in
-`desktop/config.json`, `comfy_input_dir`, `loras_dir` and the Blender path.
+`desktop/config.json`, `comfy_input_dir` and the Blender path.
 
 After setup, start the app (desktop shortcut or `backend/run.ps1`) and open "Is everything ready?" in the app for the
 deeper check of ComfyUI node packs and models.

@@ -1,12 +1,15 @@
 """Blender helper for test_separate.py (not a test module): a box torso with a left arm grown into its side.
 
-Run: blender -b --python blender_fused_arm.py -- <out_dir> [--wall | --forearm]
+Run: blender -b --python blender_fused_arm.py -- <out_dir> [--wall | --forearm] [--palm] [--stray]
 Writes <out_dir>/step4.glb (the model alone, textured) and <out_dir>/rig.glb (the same model on a Mixamo-named
 skeleton, its left arm weighted to the arm bones from 2 cm inside the arm, the rest to the spine). With --wall the
 weight boundary lies on the torso's flat side wall instead, which puts the cut plane in that wall: the script must
 refuse that cut. With --forearm the arm's weights begin at the elbow (the upper arm is weighted to the spine), as on
 the low-poly dwarf: the weight line is not an upper-arm join and the script must leave the model unchanged. The torso and arm boxes overlap by 1 cm and are made one closed surface by a voxel rebuild, as the 3D
-builder would fuse them.
+builder would fuse them. With --palm the rig's hand points sit 5 cm forward of the step 4 model's (a pass after the
+rig, like palm-down, baked a new rest pose): the rig's points must be found by face corners, and the rigged copy of the
+result must sit in the rig's rest pose. With --stray the back of the torso below the arm carries a third arm weight (hair
+or a robe the 3D build skinned to the arm): it is not the arm's own surface, so the cut must take that weight off.
 """
 import os
 import sys
@@ -88,8 +91,15 @@ for v in me.vertices:
         groups["LeftForeArm" if x > edge_x and z < 1.33 else "Spine"].add([v.index], 1.0, "REPLACE")
     elif x > edge_x and z < 1.66:
         groups["LeftArm" if z > 1.33 else "LeftForeArm"].add([v.index], 1.0, "REPLACE")
+    elif "--stray" in args and v.co.y > 0.09 and 0.0 < x < 0.12 and z < 1.3:
+        groups["Spine"].add([v.index], 0.65, "REPLACE")
+        groups["LeftForeArm"].add([v.index], 0.35, "REPLACE")
     else:
         groups["Spine"].add([v.index], 1.0, "REPLACE")
+if "--palm" in args:
+    for v in me.vertices:
+        if v.co.x > 0.14 and v.co.z < 1.08:
+            v.co.y -= 0.05
 ob.parent = rig
 ob.modifiers.new("Armature", "ARMATURE").object = rig
 bpy.ops.object.select_all(action="DESELECT")
