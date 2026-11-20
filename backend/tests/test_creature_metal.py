@@ -23,6 +23,29 @@ def test_a_metal_look_word_keeps_the_builders_metal():
     assert creaturemetal.mode("quadruped", "a robot wolf") == "keep"
 
 
+def test_colour_words_for_fur_feathers_scales_and_breeds_are_not_metal():
+    for category, description in (("quadruped", "golden retriever"), ("quadruped", "silver fox"),
+                                  ("quadruped", "silverback gorilla"), ("quadruped", "a wolf with copper-coloured fur"),
+                                  ("winged", "a hawk with golden feathers"), ("quadruped", "a cat, silver tabby"),
+                                  ("serpent", "a snake with silver scales"), ("winged", "a bird with bronze plumage"),
+                                  ("quadruped", "a dog with a golden coat")):
+        assert creaturemetal.mode(category, description) == "clear", description
+
+
+def test_colour_words_that_are_a_metal_stay_metal():
+    assert creaturemetal.mode("winged", "a golden dragon") == "keep"
+    assert creaturemetal.mode("winged", "a bronze dragon") == "keep"
+    assert creaturemetal.mode("multileg", "a silver beetle") == "keep"
+    assert creaturemetal.mode("winged", "a copper-plated dragon") == "keep"  # plated always counts
+
+
+def test_words_that_always_count_keep_metal_whatever_the_colour_context():
+    assert creaturemetal.mode("winged", "gilded dragon") == "keep"
+    assert creaturemetal.mode("multileg", "iridescent beetle") == "keep"
+    assert creaturemetal.mode("winged", "a metal-feathered hawk") == "keep"
+    assert creaturemetal.mode("serpent", "a dragon with iron scales") == "keep"
+
+
 def test_a_shine_word_clears_metal_and_no_metal_word_clears_it():
     assert creaturemetal.mode("multileg", "glossy black beetle") == "shine"
     assert creaturemetal.mode("multileg", "a wet frog") == "shine"

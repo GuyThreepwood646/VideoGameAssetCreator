@@ -1,4 +1,4 @@
-"""The four-view crop check is warn-only and records today's crop spread (vgac/cropcheck.py, WP-65 step 3)."""
+"""The four-view crop spread is recorded as numbers only (vgac/cropcheck.py, WP-65 step 3): no warning, no check."""
 import numpy as np
 from PIL import Image
 
@@ -14,27 +14,27 @@ def _cutout(path, w, h):
     return path
 
 
-def test_equal_extents_do_not_warn(tmp_path):
+def test_equal_extents_spread_is_zero(tmp_path):
     paths = {v: _cutout(tmp_path / f"{v}.png", 200, 300) for v in ("front", "left", "back", "right")}
     r = cropcheck.spread_check(paths)
-    assert r["spread"] == 0.0 and r["warn"] is False
-    assert r["note"] == "warn only: the crop is not switched"
+    assert r["spread"] == 0.0 and r["above_threshold"] is False
+    assert r["note"].startswith("recorded only")
 
 
-def test_one_view_much_larger_warns(tmp_path):
+def test_one_view_much_larger_is_recorded_as_above_threshold(tmp_path):
     paths = {"front": _cutout(tmp_path / "f.png", 100, 100), "left": _cutout(tmp_path / "l.png", 100, 100),
              "back": _cutout(tmp_path / "b.png", 100, 100), "right": _cutout(tmp_path / "r.png", 150, 100)}
     r = cropcheck.spread_check(paths)
     assert r["extents"] == {"front": 100, "left": 100, "back": 100, "right": 150}
-    assert abs(r["spread"] - 0.5) < 1e-3 and r["warn"] is True
+    assert abs(r["spread"] - 0.5) < 1e-3 and r["above_threshold"] is True
 
 
 def test_a_view_with_no_subject_is_left_out_of_the_spread(tmp_path):
     paths = {"front": _cutout(tmp_path / "f.png", 100, 100), "left": _cutout(tmp_path / "l.png", 0, 0)}
     r = cropcheck.spread_check(paths)
-    assert r["extents"]["left"] == 0 and r["spread"] == 0.0 and r["warn"] is False
+    assert r["extents"]["left"] == 0 and r["spread"] == 0.0 and r["above_threshold"] is False
 
 
 def test_no_subject_at_all_is_reported_not_raised(tmp_path):
     r = cropcheck.spread_check({"front": _cutout(tmp_path / "f.png", 0, 0)})
-    assert r["spread"] is None and r["warn"] is False
+    assert r["spread"] is None and r["above_threshold"] is False

@@ -29,17 +29,33 @@ CREATURE_CATEGORIES = ("quadruped", "winged", "multileg", "serpent")
 SHINE_ROUGH_CAP = 0.35  # shine words: roughness above this is lowered to it (the builder's creatures sit at 0.64 to 0.86)
 METAL_LIMIT = 0.5  # the measure: texels over this count as metal (as in skinmetal)
 
-# Metal-look words beyond skinmetal's metal_body and armour lists: a creature described with one of these keeps its metal.
-METAL_LOOK = re.compile(r"\b(metallic|metal|chrome|chromed|mechanical|mechanised|mechanized|clockwork|steel|iron|bronze|plated|"
-                        r"armou?red|armou?r|gilded|golden|gold|silver|copper|brass|burnished|iridescent)\b", re.I)
+# Words that always say the creature has metal (or armour): a creature described with one of these keeps its metal.
+METAL_LOOK = re.compile(r"\b(metallic|metal|chrome|chromed|steel|iron|plated|armou?red|armou?r|mechanical|mechanised|mechanized|"
+                        r"clockwork|burnished|iridescent|gilded|plate|chain ?mail|mail|cuirass|breastplate|gauntlets?|greaves|"
+                        r"pauldrons?|bracers?|vambraces?)\b", re.I)
+# Colour words that are metal only when they are not a colour of fur, feathers, scales or a breed ("golden retriever",
+# "silver fox", "copper-coloured fur", "golden feathers" are colours; "a golden dragon" is gold).
+COLOUR_METAL = re.compile(r"\b(golden|gold|silver|copper|bronze|brass)\b", re.I)
+COLOUR_CONTEXT = re.compile(r"\b(fur|furred|hair|haired|coat|coated|feathers?|feathered|plumage|mane|wool|woolly|fleece|scales?|scaled|"
+                            r"pelt|hide|fox|retriever|silverback|tabby|colou?red|hued|dyed|colou?r|breed)\b", re.I)
 SHINE = re.compile(r"\b(shiny|glossy|wet|slick|polished|lacquered|glassy)\b", re.I)
+
+
+def says_metal(description: str | None) -> bool:
+    """Whether a creature's description says it is metal: a metal word, or a colour word that is not a colour of fur,
+    feathers, scales or a breed. skinmetal.metal_body (robots, golems) counts too."""
+    if not description:
+        return False
+    if skinmetal.metal_body(description) or METAL_LOOK.search(description):
+        return True
+    return bool(COLOUR_METAL.search(description) and not COLOUR_CONTEXT.search(description))
 
 
 def mode(category: str | None, description: str | None) -> str | None:
     """'keep', 'shine' or 'clear' for a creature; None when the category is not a creature (the rule does not apply)."""
     if category not in CREATURE_CATEGORIES:
         return None
-    if skinmetal.metal_body(description) or skinmetal.armoured(description) or (description and METAL_LOOK.search(description)):
+    if says_metal(description):
         return "keep"
     if description and SHINE.search(description):
         return "shine"
