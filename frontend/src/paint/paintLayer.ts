@@ -9,7 +9,17 @@ export const UNDO_STROKES = 64
 export const UNDO_BYTES = 256 * 1024 * 1024
 
 export type Rect = { x: number; y: number; w: number; h: number }
-type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array }
+// What the stroke was set to, for the stroke log saved with the picture (WP-23). Sizes are in centimetres on the model.
+export type StrokeRecord = {
+  mode: 'paint' | 'erase'
+  rgb: [number, number, number]
+  size_cm: number
+  edge: number
+  strength: number
+  only_clicked_part: boolean
+  mirror: boolean
+}
+type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: StrokeRecord | null }
 
 export class PaintLayer {
   readonly width: number
@@ -20,6 +30,7 @@ export class PaintLayer {
   readonly texture: THREE.DataTexture
   private start: Uint8Array | null = null
   private mask: Float32Array | null = null
+  private pendingStroke: StrokeRecord | null = null
   private strokeRect: Rect | null = null
   private pendingRect: Rect | null = null
   private undoStack: Entry[] = []
@@ -74,8 +85,9 @@ export class PaintLayer {
     return this.start && this.mask ? { start: this.start, mask: this.mask } : null
   }
 
-  beginStroke(): void {
+  beginStroke(stroke: StrokeRecord | null = null): void {
     if (this.start) this.endStroke()
+    this.pendingStroke = stroke
     this.start = this.pixels.slice()
     this.mask = new Float32Array(this.width * this.height)
     this.strokeRect = null
@@ -96,14 +108,16 @@ export class PaintLayer {
   endStroke(): boolean {
     const start = this.start
     const rect = this.strokeRect
+    const stroke = this.pendingStroke
     this.start = null
     this.mask = null
     this.strokeRect = null
+    this.pendingStroke = null
     if (!start || !rect) return false
     const before = crop(start, this.width, rect)
     const after = crop(this.pixels, this.width, rect)
     if (equalBytes(before, after)) return false
-    this.push(this.undoStack, { rect, before, after })
+    this.push(this.undoStack, { rect, before, after, stroke })
     this.redoStack = []
     this.enforceLimits()
     return true
@@ -116,7 +130,7 @@ export class PaintLayer {
     const before = this.pixels.slice()
     const after = this.original.slice()
     if (!equalBytes(before, after)) {
-      this.push(this.undoStack, { rect, before, after })
+      this.push(this.undoStack, { rect, before, after, stroke: null })
       this.redoStack = []
       this.enforceLimits()
       this.pendingRect = unite(this.pendingRect, rect)
@@ -144,6 +158,24 @@ export class PaintLayer {
     this.undoStack.push(e)
     this.pendingRect = unite(this.pendingRect, e.rect)
     return e.rect
+  }
+
+  // The strokes still in the undo history, in the order they were made (the log saved with the picture). Undo and redo
+  // move them with their picture, so the log always matches the pixels.
+  get strokeLog(): StrokeRecord[] {
+    return this.undoStack.map((e) => e.stroke).filter((s): s is StrokeRecord => s !== null)
+  }
+
+  // One byte per texel: 1 where the picture differs from the one the model came with, else 0. This is the edit mask.
+  changedMask(): Uint8Array {
+    const out = new Uint8Array(this.width * this.height)
+    const a = this.pixels
+    const b = this.original
+    for (let i = 0; i < out.length; i++) {
+      const k = i * 4
+      if (a[k] !== b[k] || a[k + 1] !== b[k + 1] || a[k + 2] !== b[k + 2] || a[k + 3] !== b[k + 3]) out[i] = 1
+    }
+    return out
   }
 
   // Takes the rectangle changed since the last upload and sends it to the GPU. With no renderer (or no rectangle) the

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ViewerModel, ViewerTool } from '../viewerTool'
 import { checkPaint, DEFAULT_PAINT, PaintSession, type PaintSettings, type PaintWarning } from './paintSession'
+import type { PaintLayer } from './paintLayer'
 
 export type PaintState = {
   settings: PaintSettings
@@ -20,6 +21,9 @@ export type PaintState = {
   canRedo: boolean
   undoCount: number
   notice: string | null
+  // The layer a save sends, or null when the model has parts with pictures of their own (not saveable yet).
+  saveLayer: () => PaintLayer | null
+  saveable: boolean
 }
 
 type Active = { model: ViewerModel; session: PaintSession; tool: ViewerTool }
@@ -77,5 +81,7 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
     canRedo: active?.session.canRedo ?? false,
     undoCount: active?.session.undoCount ?? 0,
     notice,
+    saveLayer: () => active?.session.saveableLayer() ?? null,
+    saveable: !!active && active.session.layers.length === 1,
   }
 }
