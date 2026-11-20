@@ -1671,14 +1671,35 @@ def death_settle(P, ground_z, lift=None):
         ik_chain(P, ch, Vector(target), pole, end_orient=None, max_bend=150.0, Mw=Mw)
         hand = ch["end_bone"]
         if kind_ == "arm" and hand and byname[hand].children:
-            # Lay the hand flat on the ground: its direction (wrist to knuckles) turned level.
+            # WP-78: lay the palm flat. The middle finger's base is made level (fingers along the ground), then the
+            # across-knuckle line is levelled by rolling about it, so the palm faces up and no finger tip hangs
+            # below the hand.
             Mw = fk(P)
-            kn = max(byname[hand].children, key=lambda c: (head[c.name] - head[hand]).length).name
-            d = Mw[kn].translation - Mw[hand].translation
-            flat = Vector((d.x, d.y, 0.0))
-            if flat.length > 1e-6:
-                r = d.rotation_difference(flat.normalized() * d.length)
-                set_world_orient(P, hand, r @ orient(Mw, hand), Mw)
+            base = {}
+            for c in byname[hand].children:
+                for key in ("Middle1", "Index1", "Pinky1"):
+                    if c.name.endswith(key):
+                        base[key] = Mw[c.name].translation
+            if len(base) == 3:
+                wrist = Mw[hand].translation
+                f = base["Middle1"] - wrist
+                flat_f = Vector((f.x, f.y, 0.0))
+                if flat_f.length > 1e-6:
+                    r1 = f.rotation_difference(flat_f.normalized() * f.length)
+                    set_world_orient(P, hand, r1 @ orient(Mw, hand), Mw)
+                    Mw = fk(P)
+                    base = {k: Mw[next(c.name for c in byname[hand].children if c.name.endswith(k))].translation
+                            for k in ("Middle1", "Index1", "Pinky1")}
+                    wrist = Mw[hand].translation
+                    f = base["Middle1"] - wrist
+                    across = base["Index1"] - base["Pinky1"]
+                    nrm = f.cross(across)
+                    if nrm.length > 1e-6:
+                        nrm.normalize()
+                        if nrm.z < 0:
+                            nrm = -nrm
+                        r2 = nrm.rotation_difference(Vector((0.0, 0.0, 1.0)))
+                        set_world_orient(P, hand, r2 @ orient(Mw, hand), Mw)
     return {n: before.get(n, Quaternion()).inverted() @ q for n, q in P.rot.items()
             if n not in before or before[n].rotation_difference(q).angle > 1e-6}
 
@@ -1691,43 +1712,127 @@ def apply_fix(P, fix, w):
 
 
 _death = {}
+TORSO_BONES = ("Hips", "Spine", "Spine1", "Spine2", "Neck", "Head")
+
+
+def torso_lowest(P):
+    """Lowest mesh z of the vertices mostly weighted to the torso and head (hands, arms and legs left out)."""
+    if not _vertex_bone:
+        for o in meshes:
+            names = {g.index: g.name for g in o.vertex_groups}
+            _vertex_bone[o.name] = [names.get(max(v.groups, key=lambda g: g.weight).group) if v.groups else None for v in o.data.vertices]
+    apply_pose(P)
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    z = None
+    for o in meshes:
+        ev = o.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ev.matrix_world
+        vb = _vertex_bone.get(o.name, [])
+        for i, v in enumerate(me.vertices):
+            b = vb[i] if i < len(vb) else None
+            if b and b.split(":")[-1] in TORSO_BONES:
+                vz = (mw @ v.co).z
+                z = vz if z is None or vz < z else z
+        ev.to_mesh_clear()
+    return z if z is not None else lo.z
+
+
+def limb_lowest_parts(P, parts):
+    """{key: lowest mesh z of the vertices whose main bone is in parts[key]} for a pose."""
+    if not _vertex_bone:
+        for o in meshes:
+            names = {g.index: g.name for g in o.vertex_groups}
+            _vertex_bone[o.name] = [names.get(max(v.groups, key=lambda g: g.weight).group) if v.groups else None for v in o.data.vertices]
+    apply_pose(P)
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = {}
+    for o in meshes:
+        ev = o.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ev.matrix_world
+        vb = _vertex_bone.get(o.name, [])
+        for i, v in enumerate(me.vertices):
+            b = vb[i] if i < len(vb) else None
+            if not b:
+                continue
+            for key, names in parts.items():
+                if b in names:
+                    vz = (mw @ v.co).z
+                    out[key] = min(out.get(key, vz), vz)
+        ev.to_mesh_clear()
+    return out
+
+
+def arm_parts():
+    """{end bone: every bone from the arm's root down (upper arm, sleeve, forearm, hand)} for each arm chain."""
+    out = {}
+    for a in arm_info:
+        ch = a.get("ik")
+        if not ch:
+            continue
+        s_ = set()
+        stack = [byname[ch["a"]]]
+        while stack:
+            b = stack.pop()
+            s_.add(b.name)
+            stack.extend(b.children)
+        out[ch["end_bone"] or ch["m"]] = s_
+    return out
 
 
 def clip_death(P, t):
     if not _death:
-        def final(Q):
-            _death_pose(Q, 1.0, 0.0)
+        def final(Q, drop=0.0):
+            _death_pose(Q, 1.0, drop)
+            hands_pose(Q, 0.0)  # the resting hand is part of the death pose, so the limbs settle against it (WP-78)
             finish_serpent(Q)
 
         drop = ground_fix(final)
         fix = {}
         if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
-            # The ground is where the body lies before the limbs settle; the limbs are aimed at it, then the
-            # whole pose is put back on the ground (nothing below it) with the settled limbs.
-            g = _rest_low[0] - drop
+            # WP-78: the torso comes down onto the ground first (head, neck, spine, hips), so the arms are aimed from
+            # shoulders that are near the ground rather than from a body held up by its straight arms. The limbs then
+            # settle as before, and the whole pose is put back on the ground.
+            if _rest_low[0] is None:
+                _rest_low[0] = lowest_z(Pose())
+            P0 = Pose()
+            final(P0)
+            drop_t = _rest_low[0] - torso_lowest(P0)
+            g = _rest_low[0]
             lift = {}
-            for _ in range(3):
+            for _ in range(5):
                 Q = Pose()
-                final(Q)
+                final(Q, drop_t)
                 fix = death_settle(Q, g, lift)
-                # Measure where each settled limb's mesh really touches (a hand or a boot is thicker than its
-                # joint) and aim again so the mesh, not the joint, rests on the ground.
                 R = Pose()
-                final(R)
+                final(R, drop_t)
                 apply_fix(R, fix, 1.0)
                 lows = limb_lowest(R)
+                # WP-78: an arm's sleeve or upper arm may go under the ground too; the arm is lifted locally for it.
+                lows.update(limb_lowest_parts(R, arm_parts()))
                 Mw = fk(R)
                 done = True
                 for end_bone, z in lows.items():
-                    joint_h = Mw[end_bone].translation.z - g
-                    lift[end_bone] = max(0.0, joint_h - (z - g))
-                    if abs(z - g) > 0.004 * height:
+                    # WP-78: a hand or sleeve may hover above the ground, so it never holds the torso up. Only a point
+                    # that goes under the ground is lifted, locally (its target moves up); the body is not moved for it.
+                    dev = z - g
+                    if dev < -0.004 * height:
+                        lift[end_bone] = lift.get(end_bone, 0.0) + (-dev)
                         done = False
                 if done:
                     break
-            drop = ground_fix(lambda R, f=fix: (final(R), apply_fix(R, f, 1.0)))
+            # The body is put on the ground by its torso, pelvis and head only, never by an arm, sleeve or hand.
+            R = Pose()
+            final(R, drop_t)
+            apply_fix(R, fix, 1.0)
+            extra = _rest_low[0] - torso_lowest(R)
+            drop = drop_t + extra
         _death.update(drop=drop, fix=fix)
     _death_pose(P, t, _death["drop"])
+    hands_pose(P, 0.0)
     apply_fix(P, _death["fix"], gait.envelope(t, [(0.45, 0), (0.9, 1)]))
 
 
@@ -1810,7 +1915,7 @@ def _with_hands(fn, clip):
     return run
 
 
-CLIP_FNS = {k: _with_hands(v, k) for k, v in CLIP_FNS.items()}
+CLIP_FNS = {k: (v if k == "death" else _with_hands(v, k)) for k, v in CLIP_FNS.items()}  # death sets its own hand (WP-78)
 
 
 # ---- ground fix for death ------------------------------------------------------------------------------------
