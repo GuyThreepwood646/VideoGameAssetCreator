@@ -11,7 +11,7 @@ import { confirmLeaveUnsavedPaint, setUnsavedPaint } from '../../unsavedPaint'
 import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
-import { TouchUp } from './TouchUp'
+import { SmoothPaint, TouchUp } from './TouchUp'
 import type { FixAction } from '../../help'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -130,6 +130,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
         <div className="placeholder-box">No 3D model in this version.</div>
       )}
       {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} onSave={savePaint} saving={saving} saveNote={saveNote} />}
+      {canPaint && version.metrics?.painted === true && <SmoothPaint versionId={version.id} smoothed={typeof version.metrics?.polished === 'string' ? version.metrics.polished : null} onDone={onChanged} />}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
         {libHairOn && libHair && (
