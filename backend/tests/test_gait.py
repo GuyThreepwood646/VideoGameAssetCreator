@@ -277,3 +277,18 @@ def test_stance_targets_honour_a_clearance_floor_but_not_above_the_rest_spacing(
 def test_knee_out_is_a_small_positive_bias_and_the_clearances_are_small_shares_of_height():
     assert 0.0 < gait.STANCE_KNEE_OUT <= 0.5
     assert 0.0 < gait.STANCE_THIGH_CLEAR < gait.STANCE_KNEE_CLEAR < 0.1
+
+
+def test_collarbone_lift_starts_past_60_reaches_25_at_120_and_is_capped():
+    assert gait.clavicle_lift_deg(0.0) == 0.0
+    assert gait.clavicle_lift_deg(60.0) == 0.0
+    assert gait.clavicle_lift_deg(90.0) == pytest.approx(12.5)
+    assert gait.clavicle_lift_deg(120.0) == pytest.approx(25.0)
+    assert gait.clavicle_lift_deg(180.0) == gait.CLAVICLE_LIFT_MAX_DEG
+
+
+def test_collarbone_lift_counts_only_past_the_rest_arm_angle():
+    # An A-posed model (rest under 60 degrees) gets the whole lift; a T-posed one was built with part of it.
+    assert gait.clavicle_lift_deg(120.0, rest_deg=21.0) == pytest.approx(25.0)
+    assert gait.clavicle_lift_deg(120.0, rest_deg=99.5) == pytest.approx(25.0 - 39.5 * 25.0 / 60.0)
+    assert gait.clavicle_lift_deg(30.0, rest_deg=99.5) == 0.0  # never pushed down
