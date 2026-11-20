@@ -96,12 +96,17 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
             </label>
           </div>
           <div className="touch-up-row">
-            <button type="button" className="btn" disabled={!paint.canUndo} onClick={paint.undo}>
+            <button type="button" className="btn" disabled={!paint.canUndo} onClick={paint.undo} title={paint.undoLabel ? `Undo: ${paint.undoLabel} (Ctrl+Z)` : 'Nothing to undo'}>
               Undo{paint.undoCount ? ` (${paint.undoCount})` : ''}
             </button>
-            <button type="button" className="btn" disabled={!paint.canRedo} onClick={paint.redo}>
+            <button type="button" className="btn" disabled={!paint.canRedo} onClick={paint.redo} title={paint.redoLabel ? `Redo: ${paint.redoLabel} (Ctrl+Y)` : 'Nothing to redo'}>
               Redo
             </button>
+            {(paint.undoLabel || paint.redoLabel) && (
+              <span className="small muted">
+                {paint.undoLabel ? `Undo: ${paint.undoLabel}.` : ''} {paint.redoLabel ? `Redo: ${paint.redoLabel}.` : ''}
+              </span>
+            )}
             <button type="button" className="btn" onClick={paint.resetAll}>
               Back to the original picture
             </button>

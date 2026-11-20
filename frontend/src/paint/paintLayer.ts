@@ -19,7 +19,14 @@ export type StrokeRecord = {
   only_clicked_part: boolean
   mirror: boolean
 }
-type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: StrokeRecord | null }
+type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: StrokeRecord | null; label: string }
+
+// The step name shown on Undo and Redo: what the step was.
+function stepLabel(stroke: StrokeRecord | null): string {
+  if (!stroke) return "back to the model's own picture"
+  if (stroke.mode === "erase") return "an eraser stroke"
+  return stroke.mirror ? "a mirrored brush stroke" : "a brush stroke"
+}
 
 export class PaintLayer {
   readonly width: number
@@ -36,6 +43,8 @@ export class PaintLayer {
   private undoStack: Entry[] = []
   private redoStack: Entry[] = []
   private undoBytes = 0
+  // Counts the new steps made (not undo or redo): with the stack sizes, it tells whether the picture is the saved one.
+  private edits = 0
 
   constructor(width: number, height: number, pixels: Uint8Array) {
     if (pixels.length !== width * height * 4) throw new Error('picture size does not match its pixels')
@@ -75,6 +84,15 @@ export class PaintLayer {
   }
   get undoBytesUsed(): number {
     return this.undoBytes
+  }
+  get undoLabel(): string | null {
+    return this.undoStack[this.undoStack.length - 1]?.label ?? null
+  }
+  get redoLabel(): string | null {
+    return this.redoStack[this.redoStack.length - 1]?.label ?? null
+  }
+  get editMark(): string {
+    return `${this.edits}:${this.undoStack.length}`
   }
   get inStroke(): boolean {
     return this.start !== null
@@ -117,7 +135,7 @@ export class PaintLayer {
     const before = crop(start, this.width, rect)
     const after = crop(this.pixels, this.width, rect)
     if (equalBytes(before, after)) return false
-    this.push(this.undoStack, { rect, before, after, stroke })
+    this.push(this.undoStack, { rect, before, after, stroke, label: stepLabel(stroke) })
     this.redoStack = []
     this.enforceLimits()
     return true
@@ -130,7 +148,7 @@ export class PaintLayer {
     const before = this.pixels.slice()
     const after = this.original.slice()
     if (!equalBytes(before, after)) {
-      this.push(this.undoStack, { rect, before, after, stroke: null })
+      this.push(this.undoStack, { rect, before, after, stroke: null, label: stepLabel(null) })
       this.redoStack = []
       this.enforceLimits()
       this.pendingRect = unite(this.pendingRect, rect)
@@ -204,6 +222,7 @@ export class PaintLayer {
 
   private push(stack: Entry[], e: Entry): void {
     stack.push(e)
+    this.edits++
     this.undoBytes += e.before.byteLength + e.after.byteLength
   }
 

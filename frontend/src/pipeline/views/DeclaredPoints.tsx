@@ -1,9 +1,14 @@
 // Hanging parts (WP-20 step 5): the sway parts the person declared for this character, each with the point where it hangs.
 // Place point, then click the model: the viewer's pointer tool hands the spot to the rig. Saving writes this version's
 // parts.json; it does not redo the rig, so the points are read the next time the rig is made.
+// Undo and redo (WP-71): every saved change of a point (placing, removing) is a step; each one puts the earlier or later
+// list back through the same PUT. Points still pending (not kept) are not saved, so they are not steps.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type PlacedPart, type Version } from '../../api'
 import { markable, MAX_STIFF_POINTS, withPoint, withStiffPoint, withoutStiffPoint, withoutStiffPoints, type Point } from '../../declaredPoints'
+import { useEditHistory, type EditHistory } from '../../editHistory'
+import { UndoRedoButtons } from '../../components/UndoRedo'
+import { savePointsStep } from './pointsHistory'
 
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -25,6 +30,9 @@ export type DeclaredPointsState = {
   discardStiffPoints: (name: string) => void
   removeLastStiffPoint: (name: string) => void
   clearStiffPoints: (name: string) => void
+  // Undo and redo (WP-71) for the saved points, and the call that marks the panel as the editor in use.
+  history: EditHistory
+  activate: () => void
 }
 
 export function useDeclaredPoints(version: Version): DeclaredPointsState {
@@ -37,11 +45,13 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
   }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { history, activate } = useEditHistory()
 
   useEffect(() => {
     let alive = true
     setParts(null)
     setError(null)
+    history.clear()
     api
       .versionParts(version.id)
       .then((d) => alive && setParts(d.parts))
@@ -49,31 +59,40 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
     return () => {
       alive = false
     }
-  }, [version.id, setParts])
+  }, [version.id, setParts, history])
+
+  // Saves a whole list through the existing parts PUT; the server's answer is the list kept.
+  const persist = useCallback((next: PlacedPart[]) => api.saveVersionParts(version.id, next).then((d) => d.parts), [version.id])
+
+  // One saved change, as one step named for the person. The local copy changes at once; if the save fails, the copy
+  // goes back to what was saved before and the error shows, and no step is made.
+  const change = useCallback(
+    async (label: string, next: PlacedPart[]) => {
+      const before = partsRef.current
+      setParts(next)
+      setBusy(true)
+      setError(null)
+      try {
+        await savePointsStep({ history, label, before: before ?? [], next, save: persist, show: setParts })
+      } catch (e) {
+        setParts(before)
+        setError(msg(e))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [history, persist, setParts],
+  )
 
   const setPoint = useCallback(
     (name: string, point: Point | null) => {
       const cur = partsRef.current
-      if (cur) save(withPoint(cur, name, point))
+      if (!cur) return
+      void change(point ? `place a point on the ${name}` : `remove the point on the ${name}`, withPoint(cur, name, point))
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version.id],
+    [change],
   )
 
-  // Saves the whole list. The local copy changes at once; the server's answer replaces it when it comes.
-  const save = useCallback(
-    (next: PlacedPart[]) => {
-      setParts(next)
-      setBusy(true)
-      setError(null)
-      api
-        .saveVersionParts(version.id, next)
-        .then((d) => setParts(d.parts))
-        .catch((e) => setError(msg(e)))
-        .finally(() => setBusy(false))
-    },
-    [version.id, setParts],
-  )
   const [pending, setPending] = useState<Record<string, Point[]>>({})
   const addStiffPoint = useCallback((name: string, point: Point) => {
     const saved = partsRef.current?.find((p) => p.name === name)?.locations?.length ?? 0
@@ -92,9 +111,9 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
       let next = cur
       for (const p of add) next = withStiffPoint(next, name, p)
       setPending((m) => ({ ...m, [name]: [] }))
-      save(next)
+      void change(add.length === 1 ? `place a point on the ${name}` : `place ${add.length} points on the ${name}`, next)
     },
-    [pending, save],
+    [pending, change],
   )
   const removeLastStiffPoint = useCallback(
     (name: string) => {
@@ -104,27 +123,30 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
       }
       const cur = partsRef.current
       const n = cur?.find((p) => p.name === name)?.locations?.length ?? 0
-      if (cur && n > 0) save(withoutStiffPoint(cur, name, n - 1))
+      if (cur && n > 0) void change(`remove the last point on the ${name}`, withoutStiffPoint(cur, name, n - 1))
     },
-    [pending, save],
+    [pending, change],
   )
   const clearStiffPoints = useCallback(
     (name: string) => {
       const cur = partsRef.current
       setPending((m) => ({ ...m, [name]: [] }))
-      if (cur) save(withoutStiffPoints(cur, name))
+      if (cur) void change(`remove the region on the ${name}`, withoutStiffPoints(cur, name))
     },
-    [save],
+    [change],
   )
 
-  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints }
+  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints, history, activate }
 }
 
 export function DeclaredPointsPanel({ dp, done, markName, onMark }: { dp: DeclaredPointsState; done: boolean; markName: string | null; onMark: (name: string | null) => void }) {
   if (dp.sway.length === 0) return null
   return (
     <div className="declared-points" data-testid="declared-points">
-      <div className="field-label">Hanging and stiff parts</div>
+      <div className="row-between">
+        <div className="field-label">Hanging and stiff parts</div>
+        <UndoRedoButtons history={dp.history} />
+      </div>
       <div className="small muted">
         A hanging part (sway) gets a spring chain where it hangs: place one point, for example the top of a cape's hem. A stiff part
         (for example a backpack or a quiver on the back) moves with the body and does not bend: place one or more points on it, and
@@ -181,7 +203,7 @@ export function DeclaredPointsPanel({ dp, done, markName, onMark }: { dp: Declar
       })}
       {markName && <div className="small">Click the model on the {markName}. The grown region shows on the model before you keep it. Press Escape to stop.</div>}
       <div className="small muted">Saving does not redo the rig. Make the rig again to use the points.</div>
-      {dp.error && <div className="warn-text">{dp.error}</div>}
+      {dp.error || dp.history.lastError ? <div className="warn-text">{msg(dp.error ?? dp.history.lastError)}</div> : null}
     </div>
   )
 }
