@@ -14,7 +14,8 @@ import bpy
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
-from mathutils import Vector
+import gait  # noqa: E402  (pure maths next to this script)
+from mathutils import Matrix, Vector
 
 argv = _common.after_double_dash()
 src, out_dir = os.path.abspath(argv[0]), os.path.abspath(argv[1])
@@ -114,12 +115,40 @@ if arms:
             and "extra_" not in pb.name.lower()]  # Extra_ bones (forearm twist) turn with their parent, not as forearms
     if not bent:
         bent = [pb.name for pb in list(arm.pose.bones)[1:6]]
+    # A Mixamo collarbone is not bent by the angle: it lifts as the raised arm asks (gait.clavicle_lift_deg, WP-75).
+    clav = {s: [arm.pose.bones.get("mixamorig:" + s + n) for n in ("Shoulder", "Arm", "ForeArm")] for s in ("Left", "Right")}
+    clav = {s: c for s, c in clav.items() if all(c) and c[0].parent is not None}
+    bent = [n for n in bent if n not in {c[0].name for c in clav.values()}]
     info["bent"] = bent
+
+    def lift_collarbones():
+        Wm = arm.matrix_world
+        for sh, ua, fa in clav.values():
+            bpy.context.view_layer.update()
+            w3 = Wm.to_3x3().normalized()
+            chest = w3 @ (sh.parent.matrix @ sh.parent.bone.matrix_local.inverted()).to_3x3().normalized() @ w3.inverted()
+            rest_raise = gait.angle_from_down(tuple(w3 @ (fa.bone.head_local - ua.bone.head_local)))
+            lift = gait.clavicle_lift_deg(gait.angle_from_down(tuple(chest.inverted() @ (Wm @ fa.head - Wm @ ua.head))), rest_raise)
+            d = chest.inverted() @ (Wm @ ua.head - Wm @ sh.head)
+            d.z = 0.0
+            if lift <= 1e-3 or d.length < 1e-9:
+                continue
+            keep = ua.matrix.copy()
+            axis = Wm.to_3x3().inverted() @ (chest @ d.cross(Vector((0, 0, 1))).normalized())
+            R = Matrix.Translation(sh.head) @ Matrix.Rotation(math.radians(lift), 4, axis.normalized()) @ Matrix.Translation(-sh.head)
+            sh.matrix = R @ sh.matrix
+            bpy.context.view_layer.update()
+            ua.matrix = keep  # the upper arm keeps its direction
+            bpy.context.view_layer.update()
+
     for angle in angles:
+        for sh, _ua, _fa in clav.values():
+            sh.matrix_basis = Matrix.Identity(4)
         for pb in arm.pose.bones:
             if pb.name in bent:
                 pb.rotation_mode = "XYZ"
                 pb.rotation_euler = (math.radians(angle), 0, 0)
+        lift_collarbones()
         bpy.ops.object.mode_set(mode="OBJECT")
         key = f"bend_{int(angle)}"
         scene.render.filepath = os.path.join(out_dir, key + ".png")

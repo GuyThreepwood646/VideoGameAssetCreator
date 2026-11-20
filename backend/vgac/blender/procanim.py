@@ -39,6 +39,7 @@ clips_arg = _common.opt("--clips", None)
 SIZE = gait.factor(_common.opt("--size", None), gait.MOVE_SIZE)
 SPEED = gait.factor(_common.opt("--speed", None), gait.MOVE_SPEED)
 ARM_POSE = gait.arm_pose_choice(_common.opt("--arm-pose", None))  # close, relaxed (default) or open
+NEUTRAL_POSE = _common.flag("--neutral-pose")  # D9: add the one-frame neutral pose clip (humanoids only)
 
 _common.open_glb(src)
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -251,6 +252,11 @@ if not serpent_req:
         if cands[side]:
             reach, chain, leaf = max(cands[side])
             wing_info.append({"side": "left" if side else "right", "left": side, "leaf": leaf, "bones": chain, "reach": reach})
+# Wings come in pairs. On a two-legged body a lone candidate is an arm that reaches out sideways (WP-17 follow-up: the
+# boy's right arm, rest 102 degrees, was taken as a wing, so the wing moves folded that arm alone and it crossed the
+# body). Dropped here, before the wing bones are used to find the spine and arms.
+if gait.kind_for_legs(len(leg_info)) == "biped" and len(wing_info) < 2:
+    wing_info = []
 wing_bone_set = {n for w in wing_info for n in w["bones"]}
 wings_found = len(wing_info) >= 2
 
@@ -315,6 +321,8 @@ if motion == "none":
     clips = []
 missing = [c for c in clips if not gait.clip_supported(c, motion, len(leg_info), wings_found, len(spine))]
 clips = [c for c in clips if c not in missing]
+if NEUTRAL_POSE and arm_info:  # arm_info is only built for a biped (humanoid), so other characters never get it
+    clips = clips + [gait.NEUTRAL_CLIP]
 
 report = {"kind": kind, "motion": motion, "requested_motion": motion_arg, "forward": list(forward), "forward_reason": forward_reason,
           "lateral": list(lateral), "height": height, "length": length, "span": span,
@@ -1145,7 +1153,7 @@ def _walk_like(P, t, run):
             sgn = -1.0 if a["left"] else 1.0
             s = sgn * math.cos(2 * math.pi * t)
             if run:
-                P.r(a["upper"], a["swing_axis"], A * (8 + 38 * s))
+                P.r(a["upper"], a["swing_axis"], A * (gait.RUN_ARM_SWING_BIAS_DEG + gait.RUN_ARM_SWING_DEG * s))
                 if a["fore"]:
                     P.r(a["fore"], a["swing_axis"], A * (82 + 12 * s))
             else:
@@ -1523,7 +1531,12 @@ def clip_land(P, t):
     tail_lift(P, 10 * A * brake)
 
 
-CLIP_FNS = {"idle": clip_idle, "walk": clip_walk, "run": clip_run, "slither": clip_slither, "turn_left": clip_turn_left,
+def clip_neutral(P, t):
+    """D9 one-frame neutral pose: the idle arm angle with the Arm pose offset (gait.arm_hold_deg), nothing else moved."""
+    arms_relax(P, "idle")
+
+
+CLIP_FNS = {gait.NEUTRAL_CLIP: clip_neutral, "idle": clip_idle, "walk": clip_walk, "run": clip_run, "slither": clip_slither, "turn_left": clip_turn_left,
             "turn_right": clip_turn_right, "attack": clip_attack, "hit": clip_hit, "death": clip_death, "flap": clip_flap,
             "glide": clip_glide, "takeoff": clip_takeoff, "land": clip_land}
 
@@ -1603,17 +1616,45 @@ def ground_fix(pose_fn):
     return _rest_low[0] - lowest_z(P)
 
 
+# ---- collarbone share (WP-75) ----------------------------------------------------------------------------------
+# An arm with a collarbone (Shoulder bone before the upper arm) lifts it by gait.clavicle_lift_deg of the upper arm's
+# raise in the chest's frame; the upper arm turns back by the same amount, so the arm points where the clip put it.
+_CLAV = []
+for _a in arm_info:
+    if len(_a["bones"]) >= 4 and _a["upper"] == _a["bones"][1] and byname[_a["bones"][0]].parent is not None:
+        _sh = _a["bones"][0]
+        _elbow = head[_a["fore"]] if _a["fore"] else head[_a["leaf"]]
+        _d = head[_a["upper"]] - head[_sh]
+        _CLAV.append({"sh": _sh, "up": _a["upper"], "chest": byname[_sh].parent.name, "arm": _elbow - head[_a["upper"]],
+                      "rest": _a["rest_deg"],
+                      "axis": unit(Vector((_d.x, _d.y, 0)).cross(up), forward)})  # +deg lifts the outer end
+
+
+def collarbone_share(P):
+    if not _CLAV:
+        return
+    Mw = fk(P)
+    for c in _CLAV:
+        chest = (Mw[c["chest"]] @ REST_W_INV[c["chest"]]).to_3x3()
+        arm_dir = (Mw[c["up"]] @ REST_W_INV[c["up"]]).to_3x3() @ c["arm"]
+        lift = gait.clavicle_lift_deg(gait.angle_from_down(tuple(chest.inverted() @ arm_dir), tuple(up)), c["rest"])
+        if lift > 1e-3:
+            P.r(c["sh"], c["axis"], lift)
+            P.rot[c["up"]] = Quaternion(local_axis(c["up"], c["axis"]), math.radians(-lift)) @ P.rot.get(c["up"], Quaternion())
+
+
 # ---- actions and NLA -----------------------------------------------------------------------------------------
 table = gait.clip_table(clips, motion, fps, SPEED)
 poses = {}
 for row in table:
     fn = CLIP_FNS[row["name"]]
-    n = row["motion_frames"]
+    n = max(1, row["motion_frames"])  # the neutral pose has no motion frames
     frames = []
     for f in range(row["frame_end"] + 1):
         P = Pose()
         fn(P, min(1.0, f / n))
         finish_serpent(P)
+        collarbone_share(P)
         frames.append(P)
     poses[row["name"]] = frames
 # ---- clip data for the game (WP-19): locomotion speed from the planted feet, attack hit time from peak limb speed.

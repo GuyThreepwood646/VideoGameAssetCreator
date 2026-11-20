@@ -214,3 +214,47 @@ def test_procanim_walk_on_a_102_degree_rest_arm_measures_under_40_degrees(tmp_pa
     for side, m in measured.items():
         print(f"walk upper arm ({side}) mean {m['mean_deg']} deg, min {m['min_deg']}, max {m['max_deg']}")
         assert m["mean_deg"] < 40.0
+
+
+# ---- the run target is the cycle mean, and the neutral pose clip (WP-17 follow-ups) -------------------------------------
+
+
+@pytest.mark.parametrize("choice", ["close", "relaxed", "open"])
+def test_the_run_cycle_averages_its_target(choice):
+    """The run swings the upper arm about its hold (gait.RUN_ARM_SWING_*); the hold is solved so the cycle's mean
+    lands on the run target. Close is held at the 10-degree floor, where its target mean is still reached within 1."""
+    hold = gait.arm_hold_deg("run", choice)
+    target = gait.arm_target_deg("run", choice)
+    assert gait.run_arm_mean_deg(hold) == pytest.approx(target, abs=1.0)
+    assert hold >= gait.ARM_MIN_DEG
+
+
+def test_the_run_swing_range_is_kept():
+    """The solve moves the hold, not the swing: the swing constants stay as they were (bias 8, amplitude 38 degrees),
+    and the hold it finds is the one whose cycle mean is the target."""
+    assert (gait.RUN_ARM_SWING_BIAS_DEG, gait.RUN_ARM_SWING_DEG) == (8.0, 38.0)
+    hold = gait.arm_hold_deg("run")
+    assert gait.run_hold_for_mean(gait.ARM_TARGET_DEG["run"]) == pytest.approx(hold, abs=1e-6)
+    lo = gait.swung_arm_angle(hold, gait.RUN_ARM_SWING_BIAS_DEG - gait.RUN_ARM_SWING_DEG)
+    hi = gait.swung_arm_angle(hold, gait.RUN_ARM_SWING_BIAS_DEG + gait.RUN_ARM_SWING_DEG)
+    assert hi - lo > 10.0
+
+
+def test_the_neutral_pose_clip_is_one_key_and_not_looping():
+    assert gait.clip_frames(gait.NEUTRAL_CLIP, "biped", 24) == (0, 0)
+    rows = {r["name"]: r for r in gait.clip_table(["idle", gait.NEUTRAL_CLIP], "biped", 24)}
+    neutral = rows[gait.NEUTRAL_CLIP]
+    assert neutral["loop"] is False and neutral["frame_start"] == 0 and neutral["frame_end"] == 0
+    assert neutral["frames"] == 1 and neutral["motion_frames"] == 0
+    assert rows["idle"]["loop"] is True
+
+
+def test_the_neutral_pose_setting_is_off_by_default_and_humanoid_only():
+    p = next(p for p in reference.STAGE_SCHEMAS["rig"] if p["name"] == "neutral_pose")
+    assert p["type"] == "boolean" and p["default"] is False and p["categories"] == ["humanoid"]
+
+
+def test_a_lone_wing_candidate_on_a_biped_is_not_a_wing():
+    """The boy's right arm (rest 102 degrees) was taken as the only wing, so its wing moves folded that arm alone."""
+    src = (ROOT / "backend" / "vgac" / "blender" / "procanim.py").read_text(encoding="utf-8")
+    assert 'if gait.kind_for_legs(len(leg_info)) == "biped" and len(wing_info) < 2:' in src

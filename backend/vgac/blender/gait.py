@@ -34,6 +34,8 @@ CLIP_ALIASES = {
 }
 # Cyclic clips carry the loop flag (G32); everything else plays once. Death holds its last frame.
 LOOPING = frozenset({"idle", "walk", "run", "slither", "flap", "glide"})
+# D9: a one-frame still pose, the idle arm angle with the Arm pose offset (procanim --neutral-pose; humanoids only).
+NEUTRAL_CLIP = "neutral_pose"
 
 # Plan 3.7 table: the clips each motion makes when the caller names none.
 DEFAULT_CLIPS = {
@@ -285,7 +287,10 @@ def clip_seconds(name: str, motion: str, speed: float = 1.0) -> float:
 
 
 def clip_frames(name: str, motion: str, fps: int, speed: float = 1.0) -> tuple[int, int]:
-    """(motion_frames, total_frames). Keys run 0..total; the death clip adds DEATH_HOLD seconds of held pose."""
+    """(motion_frames, total_frames). Keys run 0..total; the death clip adds DEATH_HOLD seconds of held pose. The
+    neutral pose is one key (0, 0)."""
+    if name == NEUTRAL_CLIP:
+        return 0, 0
     n = max(4, int(round(clip_seconds(name, motion, speed) * fps)))
     total = n + (int(round(DEATH_HOLD * fps)) if name == "death" else 0)
     return n, total
@@ -932,6 +937,8 @@ ARM_POSE_DEFAULT = "relaxed"
 ARM_POSE_SHIFT_DEG = {"close": -8.0, "relaxed": 0.0, "open": 10.0}
 ARM_MIN_DEG = 10.0         # an arm never comes closer than this to straight down, whatever the setting
 WALK_ARM_SWING_DEG = 20.0  # the walk's forward and back swing of the upper arm about the arm's swing axis
+RUN_ARM_SWING_BIAS_DEG = 8.0   # the run's upper arm swings this far forward of the hold on average ...
+RUN_ARM_SWING_DEG = 38.0       # ... and this far either way over the cycle (procanim's run arms use both)
 
 
 def arm_pose_choice(value) -> str:
@@ -973,12 +980,40 @@ def hip_clear_min_deg(shoulder_out: float, arm_len: float, hip_half: float) -> f
     return math.degrees(math.asin(min(1.0, (hip_half - shoulder_out) / arm_len)))
 
 
+def run_arm_mean_deg(hold: float, samples: int = 256) -> float:
+    """Mean angle from straight down of the upper arm over one run cycle held at hold: the run swings it
+    RUN_ARM_SWING_BIAS_DEG + RUN_ARM_SWING_DEG * cos(phase) about the swing axis (swung_arm_angle)."""
+    total = 0.0
+    for i in range(samples):
+        total += swung_arm_angle(hold, RUN_ARM_SWING_BIAS_DEG + RUN_ARM_SWING_DEG * math.cos(2 * math.pi * i / samples))
+    return total / samples
+
+
+def run_hold_for_mean(target: float) -> float:
+    """The hold whose run cycle averages target degrees from straight down. The swing adds about 7 degrees on
+    average, so the hold sits below the target. Bisection: run_arm_mean_deg rises with the hold."""
+    lo, hi = 0.0, 90.0
+    if run_arm_mean_deg(lo) >= target:
+        return lo
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if run_arm_mean_deg(mid) < target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 def arm_hold_deg(clip: str, choice: str | None = None, shoulder_out: float | None = None,
                  arm_len: float | None = None, hip_half: float | None = None, extra: float = 0.0) -> float:
     """The angle from straight down an upper arm is held at in a clip: the clip's target (with the arm_pose setting and
     an optional extra, such as the idle breath) clamped to at least ARM_MIN_DEG and, when the skeleton's widths are
-    given, to the angle that keeps the hand outside the hips."""
-    hold = max(ARM_MIN_DEG, arm_target_deg(clip, choice) + extra)
+    given, to the angle that keeps the hand outside the hips. The run target is the mean over its cycle, so its hold
+    is solved from the swing (run_hold_for_mean)."""
+    base = arm_target_deg(clip, choice)
+    if clip == "run":
+        base = run_hold_for_mean(base)
+    hold = max(ARM_MIN_DEG, base + extra)
     if shoulder_out is not None and arm_len is not None and hip_half is not None:
         hold = max(hold, hip_clear_min_deg(shoulder_out, arm_len, hip_half))
     return hold
@@ -996,6 +1031,27 @@ def swung_arm_angle(hold_deg: float, swing_deg: float) -> float:
     lateral axis: cos(angle) = cos(hold) * cos(swing)."""
     c = math.cos(math.radians(hold_deg)) * math.cos(math.radians(swing_deg))
     return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+# ---- collarbone share (WP-75): a raised arm lifts the collarbone too ----------------------------------------------
+# A real shoulder lifts the collarbone as the arm goes past about 60 degrees from straight down (about 25 degrees by
+# 120). Turning only the upper arm caves the shoulder top in. The built-in clips, the retarget (on top of the
+# library's own collarbone turn) and the bend check add this lift; the upper arm turns back by the same amount, so the
+# arm still points where the clip put it.
+CLAVICLE_LIFT_START_DEG = 60.0   # no lift up to this raise (measured in the chest's frame) ...
+CLAVICLE_LIFT_PER_DEG = 25.0 / 60.0  # ... then this many degrees of lift per degree of raise ...
+CLAVICLE_LIFT_MAX_DEG = 30.0     # ... up to this
+
+
+def _clavicle_curve(raise_deg: float) -> float:
+    return min(CLAVICLE_LIFT_MAX_DEG, max(0.0, raise_deg - CLAVICLE_LIFT_START_DEG) * CLAVICLE_LIFT_PER_DEG)
+
+
+def clavicle_lift_deg(raise_deg: float, rest_deg: float = 0.0) -> float:
+    """Degrees the collarbone lifts (its outer end up) for an upper arm raise_deg from the chest's own down direction.
+    rest_deg is the arm's angle in the rest mesh: a model made with its arms already raised (a T-pose) was built with
+    that lift in it, so only the lift beyond the rest's counts, and never below none."""
+    return max(0.0, _clavicle_curve(raise_deg) - _clavicle_curve(rest_deg))
 
 
 def walk_arm_mean_deg(clip: str = "walk", choice: str | None = None, samples: int = 256) -> float:

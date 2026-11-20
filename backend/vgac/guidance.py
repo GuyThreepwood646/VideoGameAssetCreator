@@ -260,6 +260,9 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                           "why": "Close tucks the arms in toward the body, Open holds them a little further out. Relaxed suits most characters. The character itself is not changed, only how it moves.",
                                           "technical": "arm_pose close | relaxed | open; the built-in idle, walk, run and turn drop each upper arm to a target from straight down (Relaxed 24, 23, 35 and 22 degrees; Close 8 less, Open 10 more), never closer than 10 degrees or into the hips"},
                  "options": {"close": "Close", "relaxed": "Relaxed", "open": "Open"}},
+    "neutral_pose": {"simple": True, "help": {"meaning": "Adds one still frame of the arms at rest, named neutral_pose.",
+                                              "why": "A pose to hold or blend from, at the same arm angle as the stand still (the Arm pose setting applies). Off unless wanted.",
+                                              "technical": "neutral_pose adds procanim --neutral-pose: one key holding the idle arm angle (gait.arm_hold_deg, idle), exported as a clip named neutral_pose; humanoids only"}},
     "sprite_frames": {"simple": False, "help": {"meaning": "How many pictures each move gets in the 2D sprite sheet.",
                                                 "why": "More frames look smoother but make a bigger sheet; 8 is a good start for a walk or an attack.",
                                                 "technical": "Frames per clip rendered into sprite_sheet and sprite_atlas (1 to 64)"}},
@@ -717,7 +720,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "library_missing": {
         "severity": "warn",
         "ok": "The shared animation library is on this PC.",
-        "fail": "The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.",
+        "fail": "The shared animation library is not on this PC, so the extra library moves are not made and the character has only the built-in moves until it is back.",
     },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {
