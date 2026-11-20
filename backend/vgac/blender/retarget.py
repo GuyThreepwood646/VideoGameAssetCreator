@@ -383,6 +383,36 @@ def fk(orient, hips):
     return pos
 
 
+def collarbone_share(orient, hips):
+    """WP-75: lift each collarbone by gait.clavicle_lift_deg of its upper arm's raise in the chest's frame, on top of
+    the library's own collarbone turn. Orientations are world-absolute, so the arm keeps the direction the clip gives
+    it; only its root rises with the collarbone's outer end."""
+    pos = fk(orient, hips)
+    z = Vector((0, 0, 1))
+    for side in ("Left", "Right"):
+        if not all(T.has(side + s) for s in ("Shoulder", "Arm", "ForeArm")):
+            continue
+        sh, ua, fa = (T.name_of[side + s] for s in ("Shoulder", "Arm", "ForeArm"))
+        par = tgt.data.bones[sh].parent
+        if par is None or par.name not in orient:
+            continue
+        chest = orient[par.name] @ (T.G @ t_rest_q[par.name]).inverted()  # the chest's turn from rest
+        d = chest.inverted() @ (pos[ua] - pos[sh])
+        d_rest = T.G @ (t_rest_h[ua] - t_rest_h[sh])
+        # The library's own lift counts toward the limit: the total stays within CLAVICLE_LIFT_MAX_DEG of rest.
+        own = gait.angle_from_down(tuple(d)) - gait.angle_from_down(tuple(d_rest))
+        rest_raise = gait.angle_from_down(tuple(T.G @ (t_rest_h[fa] - t_rest_h[ua])))
+        lift = min(gait.clavicle_lift_deg(gait.angle_from_down(tuple(chest.inverted() @ (pos[fa] - pos[ua]))), rest_raise),
+                   max(0.0, gait.CLAVICLE_LIFT_MAX_DEG - own))
+        if lift <= 1e-3:
+            continue
+        d.z = 0.0
+        if d.length < 1e-9:
+            continue
+        orient[sh] = Quaternion(chest @ d.cross(z).normalized(), math.radians(lift)) @ orient[sh]
+    return orient
+
+
 def short_pos(pos, s):
     return pos[T.name_of[s]]
 
@@ -582,6 +612,7 @@ def retarget_clip(name, arm, act, loop):
         f = start + (end - start) * i / n
         qs, ps = sample_source(arm, act, f)
         orient, hips = target_frame(qs, ps)
+        orient = collarbone_share(orient, hips)
         base.append({"qs": qs, "ps": ps, "orient": orient, "hips": hips})
     lift = [0.0] * len(base)
     act_out = None
