@@ -114,7 +114,7 @@ export function onForThisRun(entries: EditLora[], choices: Record<string, EditCh
 export const STRENGTH_WORDS = "Subtle, Normal and Strong set how strongly the LoRA's look is applied: Subtle is a light touch, Strong the most."
 
 // The sentence when a step already has as many of your LoRAs on as it takes.
-export const LIMIT_REACHED = `${EDIT_LORA_LIMIT} are on, the most one step takes. Turn one off to switch another on.`
+export const LIMIT_REACHED = `A step can have at most ${EDIT_LORA_LIMIT} of your LoRAs on. Turn one off to switch another on.`
 
 // The kinds of assets a LoRA starts on for, in the words the app uses for them.
 function kinds(ids: string[], labels: Map<string, string>): string {

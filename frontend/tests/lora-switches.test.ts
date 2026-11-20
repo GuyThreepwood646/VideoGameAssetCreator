@@ -61,7 +61,7 @@ test('with two on, a third cannot be switched on, the step says why, and the two
   assert.equal(switchOf(btns, 'Third').title, LIMIT_REACHED)
   assert.equal(switchOf(btns, 'Ink look').disabled, false)
   const html = renderToStaticMarkup(createElement(EditLoras, { purpose: 'Side views', entries: [ink, soft, third], choices: { mine_ink: 'normal', mine_soft: 'strong' }, onChange: () => {} }))
-  assert.ok(html.includes('2 are on, the most one step takes. Turn one off to switch another on.'))
+  assert.ok(html.includes('A step can have at most 2 of your LoRAs on. Turn one off to switch another on.'))
   const free = renderToStaticMarkup(createElement(EditLoras, { purpose: 'Side views', entries: [ink, soft, third], choices: { mine_ink: 'normal' }, onChange: () => {} }))
   assert.ok(!free.includes(LIMIT_REACHED))
 })
