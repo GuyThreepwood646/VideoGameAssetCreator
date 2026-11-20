@@ -21,6 +21,23 @@ def test_humanoid_pose_block_matches_bakeoff_text():
     assert block.endswith("nothing held in the hands.")
 
 
+def test_humanoid_pose_block_carries_the_proven_a_pose_wording():
+    # WP-10: the step 1 humanoid wording reuses the 45 degree arm and thigh-gap words proven in buildpose.A_POSE.
+    from vgac import buildpose
+    block = " ".join(reference.category("humanoid")["pose_block"].split())
+    for phrase in ("at about 45 degrees", "with empty space between each arm and the body from the armpit to the hand",
+                   "the feet about a third of the body's height apart", "empty space between the legs from the crotch down"):
+        assert phrase in block and phrase in buildpose.A_POSE, phrase
+
+
+def test_quadruped_pose_block_head_tail_and_leg_gaps():
+    # WP-10: head in line with the spine and turned away, tail clear of the legs, visible gaps between the legs.
+    block = " ".join(reference.category("quadruped")["pose_block"].split())
+    for phrase in ("head in line with the spine and turned slightly away from the viewer",
+                   "The tail hangs clear of the legs", "clear gap of empty space between every pair of legs"):
+        assert phrase in block, phrase
+
+
 def test_styles_and_platforms():
     styles = reference.styles()
     assert {s["id"] for s in styles} == {"painted", "cel", "retro64", "lowpoly_flat", "realistic_pbr", "clay"}
