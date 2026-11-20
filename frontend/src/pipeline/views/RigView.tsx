@@ -201,8 +201,10 @@ export function RigView({ version }: { version: Version }) {
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>
-              The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.
-              To get it back, open the Health page (the Setup needs attention link at the top) and read the Shared animation library line. Then make the moves again on this step.
+              The shared animation library is not on this PC. This character has the built-in moves: stand still, walk, run, turn left,
+              turn right, attack, get hit and die. The extra library moves (sprint, punch, jump, crouch, roll and interact) are not made
+              until the library is back. To fix it, open the Health page (the Setup needs attention link at the top) and read the Shared
+              animation library line. Then make the moves again on this step.
             </div>
           )}
           {namesFixed && (
@@ -242,8 +244,8 @@ export function RigView({ version }: { version: Version }) {
       <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} canAsk={canAsk(sugg)} askText={askLabel(sugg)} onAsk={askSuggestion} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
-      {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
-      {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
+      {rigError && <div className="muted small">The bones picture could not be shown. Make the moves again on this step.</div>}
+      {hitFile.error && version.files.hitboxes && <div className="muted small">The hit boxes could not be shown. Make the moves again on this step.</div>}
       <div className="rig-side">
         <div>
           <div className="field-label">

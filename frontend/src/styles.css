@@ -4680,10 +4680,10 @@ button.preset-card:hover:not(:disabled) {
   align-items: center;
   gap: 0.35rem;
 }
-/* Save as a new version when it is not available: the primary colour goes, so it reads as off. */
+/* Save as a new version when it is not available: it takes the same look as the disabled Undo and Redo beside it. */
 .touch-up .btn.primary:disabled {
   background: var(--btn-bg);
-  color: var(--muted);
+  color: var(--text);
   border-color: var(--border-control);
-  opacity: 1;
+  font-weight: 400;
 }
