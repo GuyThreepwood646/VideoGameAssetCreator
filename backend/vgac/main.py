@@ -36,7 +36,7 @@ from .jobs import FINISHED_HOOKS as _FINISHED_HOOKS  # noqa: E402
 if _item_suggest.after_rig not in _FINISHED_HOOKS:
     _FINISHED_HOOKS.append(_item_suggest.after_rig)  # WP-69: a finished rig queues the suggested worn item once
 from .pipeline import PipelineError
-from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons
+from . import credits as credits_mod, step_defaults, hairlib, items, my_hair, comfy_find, comfy_install, hardware_setup, models_setup, setup_settings, tools_setup, user_addons, lora_folders
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vgac")
@@ -68,6 +68,7 @@ app.include_router(people.router)  # the people in a feature photo, for the sugg
 app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
 app.include_router(__import__("vgac.parts_api", fromlist=["router"]).router)  # declared parts and where they are on a rig (parts_api.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
+app.include_router(lora_folders.router)  # the person's LoRA folders (lora_folders.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
 app.include_router(__import__("vgac.model_import", fromlist=["router"]).router)  # your own 3D model on step 3 (model_import.py)

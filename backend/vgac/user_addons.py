@@ -1,33 +1,20 @@
-"""Your own add-ons: LoRA files the person brings in, next to the tested ones in data/addons.yaml.
+"""Your own add-ons: LoRA files the person already has on this computer, used where they are.
 
 The built-in list stays in data/addons.yaml (tracked in git). The person's own entries live in the library folder
 (<library_path>/my_addons.json) and reference.addons() / reference.addon() merge them in, so the concept catalog,
 resolve_addons, addon_record and the style lock all see them. Every user entry has `mine: true`, an id that starts
 with "mine_", and is dropped when its id matches a built-in one: a user entry never shadows a built-in add-on.
 
-The files: one folder the app owns, VGAC/mine/ under ComfyUI's loras folder (settings.loras_dir). A user entry's
-`file` is always "VGAC/mine/<name>.safetensors". PRIVACY: this folder is the only part of ComfyUI's model folders the
-app ever lists or reads. Nothing here walks up from it, lists a sibling or follows a name with a folder in it.
-
-Two ways in, both ending in the same short form (POST /api/my-addons):
-  - upload: POST /api/my-addons/upload?name=<file name> with the raw file as the body. It is streamed to a hidden
-    part file in VGAC/mine/ (never held in memory), checked as a safetensors LoRA as it arrives (8-byte header
-    length, JSON header, tensor offsets, LoRA tensor names), and renamed into place only when complete. An existing
-    file is never overwritten.
-  - already on this computer: POST /api/my-addons/open-folder opens VGAC/mine/ in the file explorer, and
-    GET /api/my-addons/unregistered lists the files there that are not set up yet.
-  - on this computer, in the desktop app (addon_links.py): POST /api/my-addons/place with the real path the native picker
-    returned. A file already in a folder ComfyUI reads for LoRAs is registered where it is; one on the same drive as
-    VGAC/mine/ is hard-linked there; anything else needs the person to say Copy (never a junction or a symlink, and
-    ComfyUI's settings are never changed). The file is accepted only when ComfyUI lists it. What the app made (a link or a
-    copy) is recorded in <library_path>/my_addons_made.json and copied into the entry as `placement`; removing the LoRA
-    takes away only that, never an original and never a file the app did not make.
-The form is prefilled from the file's header metadata (prefill()): a title, the painter when the metadata names it,
-and trigger words. Tensor data is never read.
+The files stay where they are. The person links LoRA folders (lora_folders.py) and ComfyUI reads them from there (the app
+writes each folder into its model folders file). A LoRA is added by choosing one of the files listed in those folders
+(GET /api/my-addons/available). Nothing is copied, linked or moved, and removing a LoRA from the list never deletes the file.
+A file is kept only when ComfyUI's own LoRA list names it under the same name (ComfyUI must have been started after its folder
+was added). The form is prefilled from the file's header metadata (prefill()). Tensor data is never read.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -38,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .config import get_settings
@@ -47,17 +34,13 @@ router = APIRouter()
 
 REGISTRY_FILE = "my_addons.json"
 MADE_FILE = "my_addons_made.json"
-MINE_PARTS = ("VGAC", "mine")
-MINE_PREFIX = "VGAC/mine/"
 ID_PREFIX = "mine_"
 EXT = ".safetensors"
-MAX_FILE_BYTES = 4 * 1024 ** 3  # generous: LoRAs are usually 10 MB to 1 GB
 MAX_HEADER_BYTES = 100_000_000  # the safetensors format's own limit on the JSON header
 MAX_NAME_CHARS = 120
 MAX_LABEL_CHARS = 80
 MAX_TRIGGER_CHARS = 300
 MAX_SOURCE_CHARS = 500
-WRITE_CHUNK = 4 * 1024 * 1024
 # The three words used everywhere, at the strengths a downloaded add-on is usually made for.
 STRENGTHS = {"subtle": 0.6, "normal": 0.8, "strong": 1.0}
 LICENCE_MINE = "Your own file: not checked by the app. You are responsible for being allowed to use it in your game."
@@ -82,99 +65,6 @@ class AddonFileError(ValueError):
 
 def registry_path() -> Path:
     return Path(get_settings().library_path) / REGISTRY_FILE
-
-
-def made_path() -> Path:
-    return Path(get_settings().library_path) / MADE_FILE
-
-
-def _read_made() -> dict[str, dict[str, Any]]:
-    try:
-        d = json.loads(made_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return {k: v for k, v in d.items() if isinstance(v, dict)} if isinstance(d, dict) else {}
-
-
-def made_record(key: str) -> dict[str, Any] | None:
-    """What the app made for a file: {mode: in_place|link|copy, source, path, size, file}, or None for a file it did not make.
-    Keys: "mine:<name>" for a file in VGAC/mine/, "place:<listed name>" for a file used where it is."""
-    return _read_made().get(key)
-
-
-def record_made(key: str, rec: dict[str, Any]) -> None:
-    with _lock:
-        d = _read_made()
-        d[key] = rec
-        _write_json(made_path(), d)
-
-
-def forget_made(key: str) -> None:
-    with _lock:
-        d = _read_made()
-        if d.pop(key, None) is not None:
-            _write_json(made_path(), d)
-
-
-def _write_json(p: Path, data: Any) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + f".{uuid.uuid4().hex[:8]}.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
-
-
-def mine_dir(create: bool = False) -> Path:
-    """VGAC/mine/ under ComfyUI's loras folder: the one folder of the model folders the app may list."""
-    root = get_settings().loras_dir
-    if root is None:
-        raise AddonFileError("ComfyUI's LoRA folder is not set up yet (loras_dir in this machine's settings, "
-                             "local/machine.json), so your own add-ons cannot be kept.", status=409)
-    d = Path(root).joinpath(*MINE_PARTS)
-    if create:
-        d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def file_value(name: str) -> str:
-    """The `file` of a user add-on: a path under ComfyUI's loras folder, forward slashes."""
-    return MINE_PREFIX + name
-
-
-# --- File names --------------------------------------------------------------------------------------------------
-
-
-def safe_name(raw: str | None) -> str:
-    """The file name to save as, or AddonFileError. Refuses folder parts and other path tricks outright (it never
-    quietly strips them), and anything that is not a .safetensors file. Odd characters become underscores."""
-    name = str(raw or "").strip()
-    if not name:
-        raise AddonFileError("The file has no name.")
-    if any(c in name for c in "/\\:") or ".." in name or "\x00" in name:
-        raise AddonFileError("The file name must be a plain file name, without folders.")
-    if not name.lower().endswith(EXT):
-        raise AddonFileError("LoRAs must be .safetensors files. Other kinds of model file are not accepted.")
-    stem = name[: -len(EXT)]
-    stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", stem).strip(" .")
-    stem = re.sub(r"_+", "_", stem)
-    if not stem or stem.startswith("."):
-        raise AddonFileError("The file name must start with a letter or a number.")
-    if stem.split(".")[0].lower() in WINDOWS_RESERVED:
-        stem = "addon_" + stem
-    if len(stem) + len(EXT) > MAX_NAME_CHARS:
-        stem = stem[: MAX_NAME_CHARS - len(EXT)].rstrip(" .")
-    return stem + EXT
-
-
-def _existing_file(name: str) -> Path:
-    """A file already in VGAC/mine/ by its plain name (no folders), or AddonFileError."""
-    if not name or name != Path(name).name or any(c in name for c in "/\\:") or ".." in name:
-        raise AddonFileError("The file name must be a plain file name, without folders.")
-    if not name.lower().endswith(EXT):
-        raise AddonFileError("LoRAs must be .safetensors files.")
-    p = mine_dir() / name
-    if not p.is_file():
-        raise AddonFileError("That file is not in the LoRA folder.", status=404)
-    return p
 
 
 # --- The safetensors header ---------------------------------------------------------------------------------------
@@ -220,7 +110,7 @@ def parse_header(raw: bytes) -> tuple[dict[str, str], dict[str, dict[str, Any]],
 
 
 def read_header(path: Path) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
-    """Read and check only the header of a file in VGAC/mine/ (never the tensor data)."""
+    """Read and check only the header of a file (never the tensor data)."""
     size = path.stat().st_size
     with open(path, "rb") as f:
         n = header_length(f.read(8))
@@ -445,64 +335,6 @@ def _read_raw() -> list[dict[str, Any]]:
     return [a for a in items or [] if isinstance(a, dict)]
 
 
-def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
-    """A stored entry in the shape reference.py reads, or None when it is not a usable user entry."""
-    aid = a.get("id")
-    f = a.get("file")
-    if not isinstance(aid, str) or not aid.startswith(ID_PREFIX) or not isinstance(f, str):
-        return None
-    from . import reference
-
-    pl = a.get("placement") if isinstance(a.get("placement"), dict) else None
-    if pl and pl.get("mode") == "in_place" and isinstance(pl.get("path"), str) and pl["path"]:
-        # Used where it is: `file` is the name ComfyUI lists it under (relative to one of its LoRA folders).
-        if not f or ".." in f.replace("\\", "/").split("/") or f.startswith(("/", "\\")) or ":" in f:
-            return None
-        name = f.replace("\\", "/").rsplit("/", 1)[-1]
-    else:
-        pl = pl if pl and pl.get("mode") in ("link", "copy") else None
-        if not f.startswith(MINE_PREFIX):
-            return None
-        name = f[len(MINE_PREFIX):]
-        if not name or "/" in name or "\\" in name or ".." in name:
-            return None
-    strength = a.get("default_strength") if a.get("default_strength") in STRENGTHS else "normal"
-    models = [m for m in a.get("base_models") or [] if isinstance(m, str)]
-    labels = ", ".join(models)
-    label = _clean_line(a.get("label"), MAX_LABEL_CHARS) or _label_from_name(name)
-    edit = models == [reference.EDIT_MODEL]
-    made_for = a.get("made_for") if a.get("made_for") in ("qwen_image", "qwen_image_edit") else ""
-    return {
-        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models,
-        "stage": "edit" if edit else "concept",
-        "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
-        "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
-        "made_for": made_for, "warning": QWEN_PLAIN_WARNING if edit and made_for == "qwen_image" else "",
-        "mine": True, "added_at": a.get("added_at") or "",
-        "placement": {k: pl[k] for k in ("mode", "source", "path", "size") if k in pl} if pl else None,
-        "help": {"meaning": f"Your own LoRA, from the file {name}.",
-                 "why": "You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.",
-                 "technical": f"LoRA {f}, model only, for {labels or 'no model'}"},
-    }
-
-
-def entries() -> list[dict[str, Any]]:
-    """The person's own add-ons, normalised (cached until my_addons.json changes). reference.py merges these after
-    the built-in list and drops any whose id is a built-in one."""
-    p = registry_path()
-    try:
-        st = p.stat()
-        key = (str(p), st.st_mtime_ns, st.st_size)
-    except OSError:
-        key = (str(p), None, None)
-    if _cache["key"] != key:
-        items = [n for n in (_normalise(a) for a in _read_raw()) if n is not None]
-        seen: set[str] = set()
-        _cache["items"] = [a for a in items if not (a["id"] in seen or seen.add(a["id"]))]
-        _cache["key"] = key
-    return [dict(a) for a in _cache["items"]]
-
-
 def _write_raw(items: list[dict[str, Any]]) -> None:
     p = registry_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -538,31 +370,6 @@ def public(a: dict[str, Any]) -> dict[str, Any]:
             "warning": a.get("warning") or "", "made_for": a.get("made_for") or "", "placement": placement_view(a)}
 
 
-def addon_path(a: dict[str, Any]) -> Path:
-    """Where the file of one of the person's add-ons is: where it was registered, or in VGAC/mine/."""
-    pl = a.get("placement") or {}
-    if pl.get("mode") == "in_place":
-        return Path(pl["path"])
-    return mine_dir() / str(a.get("file_name") or "")
-
-
-def placement_view(a: dict[str, Any]) -> dict[str, Any]:
-    """How the file is kept, for the list: {mode ("" for a file put in the app's folder by hand), note, source, source_missing,
-    file_missing}. The note is plain words (guidance.addon_placement_note) and says so when the file or its original is gone."""
-    from . import guidance
-
-    pl = a.get("placement") or {}
-    mode = str(pl.get("mode") or "")
-    try:
-        file_missing = not addon_path(a).is_file()
-    except (OSError, ValueError, AddonFileError):
-        file_missing = True
-    source = str(pl.get("source") or "")
-    source_missing = mode == "link" and bool(source) and not Path(source).exists()
-    return {"mode": mode, "source": source, "source_missing": source_missing, "file_missing": file_missing,
-            "note": guidance.addon_placement_note(mode, source_missing=source_missing, file_missing=file_missing, has_source=bool(source))}
-
-
 def _check_form(label: str, base_models: list[str], trigger: str, default_strength: str, source: str) -> tuple[str, list[str]]:
     """The checks of the short form -> (cleaned label, models). AddonFileError when something is wrong."""
     from . import reference
@@ -585,54 +392,6 @@ def _check_form(label: str, base_models: list[str], trigger: str, default_streng
     if len(trigger or "") > MAX_TRIGGER_CHARS * 2 or len(source or "") > MAX_SOURCE_CHARS * 2:
         raise AddonFileError("That text is too long.")
     return label, models
-
-
-def register(file_name: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal",
-             source: str = "", in_place: bool = False, made_for_answer: str = "") -> dict[str, Any]:
-    """Set up a file already in VGAC/mine/ (or, with `in_place`, one addon_links.place_addon registered where it is) as one of
-    the person's add-ons. -> the public entry. AddonFileError (or ValueError for the form) when it cannot be."""
-    from . import reference
-
-    if in_place:
-        rec = made_record("place:" + file_name)
-        if not rec or rec.get("mode") != "in_place" or not rec.get("path"):
-            raise AddonFileError("That file was not chosen on this computer. Choose it again.", status=404)
-        path, fv = Path(rec["path"]), str(rec["file"])
-        if not path.is_file():
-            raise AddonFileError("That file is no longer where you chose it.", status=404)
-    else:
-        path = _existing_file(file_name)
-        fv = file_value(path.name)
-        rec = made_record("mine:" + path.name)
-    meta, tensors = read_header(path)  # still a valid LoRA (it may have changed since it was uploaded)
-    label, models = _check_form(label, base_models, trigger, default_strength, source)
-    edit = reference.EDIT_MODEL
-    fam = prefill(meta, tensors, path.name)["family"]
-    if edit in models and fam and fam not in (QWEN_EDIT_FAMILY, QWEN_FAMILY):
-        raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
-    # The file decides when it says so for sure (an Edit signal, or a plain Qwen-Image signal); a person cannot overrule
-    # that. When the file cannot tell, the person's answer is stored, and there must be one.
-    detected = qwen_made_for(meta, path.name)
-    if edit in models and not detected:
-        if made_for_answer not in (MADE_FOR_EDIT, MADE_FOR_PLAIN):
-            raise AddonFileError("Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.")
-        made_for = made_for_answer
-    else:
-        made_for = detected
-    with _lock:
-        items = _read_raw()
-        if any(a.get("file") == fv for a in items):
-            raise AddonFileError("This file is already set up as one of your LoRAs.", status=409)
-        taken = {str(a.get("id")) for a in items} | _builtin_ids()
-        entry = {"id": _new_id(label, taken), "label": label, "file": fv, "base_models": models,
-                 "trigger": _clean_line(trigger, MAX_TRIGGER_CHARS), "default_strength": default_strength,
-                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True, "made_for": made_for,
-                 "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-        if rec:
-            entry["placement"] = {k: rec[k] for k in ("mode", "source", "path", "size") if k in rec}
-        items.append(entry)
-        _write_raw(items)
-    return public(_normalise(entry) or entry)
 
 
 def _update_made_for(aid: str, answer: str) -> str:
@@ -686,37 +445,200 @@ def update(aid: str, label: str, base_models: list[str], trigger: str = "", defa
     return public(done or a)
 
 
-def _take_away(a: dict[str, Any]) -> tuple[bool, str]:
-    """Remove the file the app made for this entry. -> (removed, why not). Only a link or a copy the app made, and only while it
-    still is what the app made: never an original, a file used where it is, or a file the app has no record of."""
-    pl = a.get("placement") or {}
-    mode = pl.get("mode")
-    if mode not in ("link", "copy"):
-        return False, ""
-    name = str(a.get("file") or "")[len(MINE_PREFIX):]
+def _launch_explorer(folder: Path) -> dict[str, Any]:
+    """Open the folder and bring its window to the front (vgac/folders.py). -> {"front": bool | None}."""
+    from . import folders
+
+    return folders.open_in_explorer(folder)
+
+
+# --- Where the files are (a LoRA stays in the person's LoRA folder; nothing is copied, linked or moved) ------------------------
+
+
+def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
+    """A stored entry in the shape reference.py reads, or None when it is not a usable user entry. An entry without the place
+    it was chosen from (made before the LoRA folders) is not listed; its file is left where it is."""
+    aid = a.get("id")
+    f = a.get("file")
+    if not isinstance(aid, str) or not aid.startswith(ID_PREFIX) or not isinstance(f, str):
+        return None
+    from . import reference
+
+    pl = a.get("placement") if isinstance(a.get("placement"), dict) else None
+    if not pl or pl.get("mode") != "in_place" or not isinstance(pl.get("path"), str) or not pl["path"]:
+        return None
+    # `file` is the name ComfyUI lists it under (relative to one of its LoRA folders).
+    if not f or ".." in f.replace("\\", "/").split("/") or f.startswith(("/", "\\")) or ":" in f:
+        return None
+    name = f.replace("\\", "/").rsplit("/", 1)[-1]
+    strength = a.get("default_strength") if a.get("default_strength") in STRENGTHS else "normal"
+    models = [m for m in a.get("base_models") or [] if isinstance(m, str)]
+    labels = ", ".join(models)
+    label = _clean_line(a.get("label"), MAX_LABEL_CHARS) or _label_from_name(name)
+    edit = models == [reference.EDIT_MODEL]
+    made_for = a.get("made_for") if a.get("made_for") in ("qwen_image", "qwen_image_edit") else ""
+    return {
+        "id": aid, "label": label, "file": f, "file_name": name, "base_models": models,
+        "stage": "edit" if edit else "concept",
+        "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
+        "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
+        "made_for": made_for, "warning": QWEN_PLAIN_WARNING if edit and made_for == "qwen_image" else "",
+        "mine": True, "added_at": a.get("added_at") or "",
+        "placement": {"mode": "in_place", "path": pl["path"], "size": pl.get("size")},
+        "help": {"meaning": f"Your own LoRA, from the file {name}.",
+                 "why": "You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.",
+                 "technical": f"LoRA {f}, model only, for {labels or 'no model'}"},
+    }
+
+
+def entries() -> list[dict[str, Any]]:
+    """The person's own add-ons, normalised (cached until my_addons.json changes). reference.py merges these after
+    the built-in list and drops any whose id is a built-in one."""
+    p = registry_path()
     try:
-        mine = _existing_file(name)
-    except AddonFileError:
-        return False, ""
-    try:
-        if mode == "link":
-            src = str(pl.get("source") or "")
-            if not src or not Path(src).exists():
-                return False, "The original is gone, so this link is now the only copy of the file. It was kept in the LoRA folder."
-            if not os.path.samefile(mine, src):
-                return False, "The file in the LoRA folder is no longer the link the app made, so it was kept."
-        elif pl.get("size") is not None and mine.stat().st_size != pl.get("size"):
-            return False, "The file in the LoRA folder is no longer the copy the app made, so it was kept."
-        mine.unlink()
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
     except OSError:
-        return False, "The file could not be removed, so it was kept in the LoRA folder."
-    forget_made("mine:" + name)
-    return True, ""
+        key = (str(p), None, None)
+    if _cache["key"] != key:
+        items = [n for n in (_normalise(a) for a in _read_raw()) if n is not None]
+        seen: set[str] = set()
+        _cache["items"] = [a for a in items if not (a["id"] in seen or seen.add(a["id"]))]
+        _cache["key"] = key
+    return [dict(a) for a in _cache["items"]]
+
+
+def addon_path(a: dict[str, Any]) -> Path:
+    """Where the file of one of the person's add-ons is: the place the person chose it from (one of their LoRA folders)."""
+    return Path(str((a.get("placement") or {}).get("path") or ""))
+
+
+def placement_view(a: dict[str, Any]) -> dict[str, Any]:
+    """How the file is kept, for the list: {mode, source, source_missing, file_missing, note}. The note is plain words
+    (guidance.addon_placement_note) and says so when the file is gone."""
+    from . import guidance
+
+    try:
+        file_missing = not addon_path(a).is_file()
+    except (OSError, ValueError):
+        file_missing = True
+    mode = str((a.get("placement") or {}).get("mode") or "")
+    return {"mode": mode, "source": str(addon_path(a)), "source_missing": False, "file_missing": file_missing,
+            "note": guidance.addon_placement_note(mode, file_missing=file_missing)}
+
+
+def _same_place(a: dict[str, Any], path: Path) -> bool:
+    return os.path.normcase(str((a.get("placement") or {}).get("path") or "")) == os.path.normcase(str(path))
+
+
+def _saved_file(name: str, folder: str) -> Path:
+    """The file `name` (as ComfyUI lists it, relative to its folder) in one of the person's saved LoRA folders. With `folder`
+    given, only in that folder. AddonFileError when it is not there."""
+    from . import lora_folders
+
+    want = os.path.normcase(os.path.normpath(folder)) if folder else ""
+    for f in lora_folders.lora_files():
+        if f["name"] != name:
+            continue
+        if want and os.path.normcase(os.path.normpath(f["folder"])) != want:
+            continue
+        return Path(f["path"])
+    raise AddonFileError("That file is not in one of your LoRA folders. Add its folder under LoRA folders first.", status=404)
+
+
+# --- Engine list ---------------------------------------------------------------------------------------------------------
+
+
+def _engine_choices() -> list[str] | None:
+    """The LoRA file names the concept step's ComfyUI lists now, or None when it cannot be asked."""
+    from .comfy import ComfyClient
+    from .preflight import combo_choices
+
+    s = get_settings()
+    name = (s.stage_instances or {}).get("concept") or next(iter(s.instances), "")
+    inst = s.instances.get(name)
+    if inst is None:
+        return None
+
+    async def ask() -> list[str] | None:
+        client = ComfyClient(inst.url, name=name)
+        try:
+            got = combo_choices(await client.object_info("LoraLoaderModelOnly"), "lora_name")
+        finally:
+            await client.aclose()
+        return [str(c) for c in got if isinstance(c, str)] if got is not None else None
+
+    try:
+        return asyncio.run(ask())
+    except Exception:  # noqa: BLE001  (not running, not answering: the caller says so plainly)
+        return None
+
+
+def _listed(choices: list[str], wanted: str) -> str | None:
+    w = wanted.replace("\\", "/").casefold()
+    for c in choices:
+        if c.replace("\\", "/").casefold() == w:
+            return c
+    return None
+
+
+def _engine_must_list(wanted: list[str]) -> str:
+    """The name ComfyUI lists the file under, from `wanted`; AddonFileError when it does not, or cannot be asked."""
+    from . import guidance
+
+    choices = _engine_choices()
+    if choices is None:
+        raise AddonFileError(guidance.ADDON_ENGINE_SILENT, status=409)
+    for w in wanted:
+        got = _listed(choices, w)
+        if got is not None:
+            return got
+    raise AddonFileError(guidance.ADDON_NOT_LISTED, status=409)
+
+
+# --- Set up, list, remove ----------------------------------------------------------------------------------------------------
+
+
+def register(file_name: str, folder: str, label: str, base_models: list[str], trigger: str = "", default_strength: str = "normal",
+             source: str = "", made_for_answer: str = "") -> dict[str, Any]:
+    """Set up one LoRA file in one of the person's LoRA folders as one of their add-ons, used where it is. -> the public entry.
+    AddonFileError (or ValueError for the form) when it cannot be."""
+    from . import reference
+
+    path = _saved_file(str(file_name or ""), str(folder or ""))
+    fv = _engine_must_list([str(file_name).replace("\\", "/")]).replace("\\", "/")  # ComfyUI must list it under this name
+    meta, tensors = read_header(path)  # a damaged file or a whole model is refused before anything is set up
+    label, models = _check_form(label, base_models, trigger, default_strength, source)
+    edit = reference.EDIT_MODEL
+    fam = prefill(meta, tensors, path.name)["family"]
+    if edit in models and fam and fam not in (QWEN_EDIT_FAMILY, QWEN_FAMILY):
+        raise AddonFileError(f"This LoRA was made for {fam}, which picture edits cannot use.")
+    # The file decides when it says so for sure (an Edit signal, or a plain Qwen-Image signal); a person cannot overrule
+    # that. When the file cannot tell, the person's answer is stored, and there must be one.
+    detected = qwen_made_for(meta, path.name)
+    if edit in models and not detected:
+        if made_for_answer not in (MADE_FOR_EDIT, MADE_FOR_PLAIN):
+            raise AddonFileError("Choose what it was made for: Qwen-Image-Edit, or plain Qwen-Image / not sure.")
+        made_for = made_for_answer
+    else:
+        made_for = detected
+    with _lock:
+        items = _read_raw()
+        if any(a.get("file") == fv or _same_place(a, path) for a in items):
+            raise AddonFileError("This file is already set up as one of your LoRAs.", status=409)
+        taken = {str(a.get("id")) for a in items} | _builtin_ids()
+        entry = {"id": _new_id(label, taken), "label": label, "file": fv, "base_models": models,
+                 "trigger": _clean_line(trigger, MAX_TRIGGER_CHARS), "default_strength": default_strength,
+                 "source": _clean_line(source, MAX_SOURCE_CHARS), "mine": True, "made_for": made_for,
+                 "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "placement": {"mode": "in_place", "path": str(path), "size": path.stat().st_size}}
+        items.append(entry)
+        _write_raw(items)
+    return public(_normalise(entry) or entry)
 
 
 def remove(aid: str) -> dict[str, Any]:
-    """Take one of the person's add-ons off the list, and take away what the app made for it (a link or a copy it made; never an
-    original, never a file used where it is, never a file put in VGAC/mine/ by hand)."""
+    """Take one of the person's add-ons off the list. The file is never touched: it stays in its LoRA folder."""
     if aid in _builtin_ids():
         raise AddonFileError("Tested LoRAs come with the app and cannot be removed.")
     with _lock:
@@ -726,41 +648,32 @@ def remove(aid: str) -> dict[str, Any]:
             raise AddonFileError("That LoRA is not on your list.", status=404)
         gone = next(a for a in items if a.get("id") == aid)
         _write_raw(keep)
-    norm = _normalise(gone) or {"file": gone.get("file"), "placement": gone.get("placement")}
-    removed, why = _take_away(norm)
-    mode = str((norm.get("placement") or {}).get("mode") or "")
-    if mode == "in_place":
-        forget_made("place:" + str(gone.get("file") or ""))
     name = str(gone.get("file") or "").replace("\\", "/").rsplit("/", 1)[-1]
-    return {"removed": aid, "file_name": name, "file_kept": not removed, "file_removed": removed, "mode": mode, "message": why}
+    return {"removed": aid, "file_name": name, "file_kept": True, "file_removed": False, "mode": "in_place",
+            "message": "Removed from your list. The file was not touched: it is still in its LoRA folder."}
 
 
 def listing() -> dict[str, Any]:
-    from . import reference
+    from . import lora_folders, reference
 
     builtin = _builtin_ids()
-    folder = mine_dir() if get_settings().loras_dir is not None else None
-    return {"addons": [public(a) for a in entries() if a["id"] not in builtin], "folder": str(folder or ""),
-            "folder_exists": bool(folder and folder.is_dir()), "strengths": dict(STRENGTHS),
+    return {"addons": [public(a) for a in entries() if a["id"] not in builtin],
+            "folders": [lora_folders.check(f) for f in lora_folders.saved_folders()], "strengths": dict(STRENGTHS),
             "painters": [{"id": m, "label": reference.model_label(m)} for m in reference.concept_models()],
             "edit_models": [{"id": reference.EDIT_MODEL, "label": "Picture edits (Qwen-Image-Edit)"}]}
 
 
-def unregistered() -> list[dict[str, Any]]:
-    """Files in VGAC/mine/ (that folder only) that are not set up yet, each with its prefill or a plain error."""
-    if get_settings().loras_dir is None:
-        return []
-    d = mine_dir()
-    if not d.is_dir():
-        return []
-    registered = {a["file"] for a in entries()}
+def available() -> list[dict[str, Any]]:
+    """LoRA files in the person's LoRA folders that are not set up yet, each with its prefill or a plain error."""
+    from . import lora_folders
+
+    registered = {os.path.normcase(str(addon_path(a))) for a in entries()}
     out = []
-    for p in sorted(d.iterdir(), key=lambda x: x.name.lower()):
-        if p.name.startswith(".") or not p.name.lower().endswith(EXT) or not p.is_file():
+    for f in lora_folders.lora_files():
+        p = Path(f["path"])
+        if os.path.normcase(str(p)) in registered:
             continue
-        if file_value(p.name) in registered:
-            continue
-        item: dict[str, Any] = {"file_name": p.name, "bytes": p.stat().st_size}
+        item: dict[str, Any] = {"folder": f["folder"], "file_name": f["name"], "path": f["path"], "bytes": f["bytes"]}
         try:
             meta, tensors = read_header(p)
             item["prefill"] = prefill(meta, tensors, p.name)
@@ -772,114 +685,6 @@ def unregistered() -> list[dict[str, Any]]:
     return out
 
 
-def open_folder() -> dict[str, Any]:
-    """Open VGAC/mine/ in the file explorer (made first if it is missing)."""
-    d = mine_dir(create=True)
-    shown = _launch_explorer(d)
-    return {"opened": True, "folder": str(d), **(shown or {})}
-
-
-def _launch_explorer(folder: Path) -> dict[str, Any]:
-    """Open the folder and bring its window to the front (vgac/folders.py). -> {"front": bool | None}."""
-    from . import folders
-
-    return folders.open_in_explorer(folder)
-
-
-# --- Upload (streamed) -------------------------------------------------------------------------------------------
-
-
-class _Checker:
-    """Checks a safetensors stream as it arrives: header length, then the JSON header, then the total size."""
-
-    def __init__(self, cap: int):
-        self.cap = cap
-        self.head = bytearray()
-        self.header_len: int | None = None
-        self.expected: int | None = None
-        self.meta: dict[str, str] = {}
-        self.tensors: dict[str, Any] = {}
-        self.total = 0
-
-    def feed(self, chunk: bytes) -> None:
-        self.total += len(chunk)
-        if self.total > self.cap:
-            raise AddonFileError(too_large_message(self.cap), status=413)
-        if self.expected is not None:
-            if self.total > self.expected:
-                raise AddonFileError("This is not a valid safetensors file (it has extra bytes at the end).")
-            return
-        self.head.extend(chunk)
-        if self.header_len is None and len(self.head) >= 8:
-            self.header_len = header_length(bytes(self.head[:8]))
-        if self.header_len is not None and len(self.head) >= 8 + self.header_len:
-            self.meta, self.tensors, data_len = parse_header(bytes(self.head[8:8 + self.header_len]))
-            self.expected = 8 + self.header_len + data_len
-            if self.expected > self.cap:
-                raise AddonFileError(too_large_message(self.cap), status=413)
-            if self.total > self.expected:
-                raise AddonFileError("This is not a valid safetensors file (it has extra bytes at the end).")
-            self.head = bytearray()
-
-    def finish(self) -> None:
-        if self.expected is None:
-            if self.header_len is None:
-                raise AddonFileError("This file is too short to be a safetensors file.")
-            raise AddonFileError("This is not a valid safetensors file (it is cut short).")
-        if self.total != self.expected:
-            raise AddonFileError("The file arrived incomplete or is cut short. Try choosing it again.")
-
-
-def too_large_message(cap: int) -> str:
-    return f"This file is larger than {cap / 1024 ** 3:.0f} GB. LoRAs are much smaller; this may not be a LoRA."
-
-
-async def save_upload(request: Request, raw_name: str) -> dict[str, Any]:
-    """Stream the request body into VGAC/mine/<name>: checked as it arrives, renamed into place only when complete
-    and valid, never over an existing file. -> {file_name, bytes, prefill}."""
-    import asyncio
-
-    name = safe_name(raw_name)
-    cap = MAX_FILE_BYTES
-    declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > cap:
-        raise AddonFileError(too_large_message(cap), status=413)
-    d = mine_dir(create=True)
-    final = d / name
-    if final.exists():
-        raise AddonFileError("A file with this name is already in the LoRA folder. Use \"Look again\" to set it up, "
-                             "or rename your file and choose it again.", status=409)
-    part = d / f".upload-{uuid.uuid4().hex}.part"
-    check = _Checker(cap)
-    buf = bytearray()
-    try:
-        with open(part, "xb") as f:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                check.feed(chunk)
-                buf.extend(chunk)
-                if len(buf) >= WRITE_CHUNK:
-                    data, buf = bytes(buf), bytearray()
-                    await asyncio.to_thread(f.write, data)
-            check.finish()
-            if buf:
-                await asyncio.to_thread(f.write, bytes(buf))
-        if final.exists():
-            raise AddonFileError("A file with this name arrived in the LoRA folder meanwhile. Choose it again with another name.", status=409)
-        os.rename(part, final)  # never replaces: refuses when the name is taken
-        record_made("mine:" + name, {"mode": "copy", "source": "", "size": check.total})
-    except FileExistsError:
-        raise AddonFileError("A file with this name is already in the LoRA folder.", status=409)
-    finally:
-        if part.exists():
-            try:
-                part.unlink()
-            except OSError:
-                pass
-    return {"file_name": name, "bytes": check.total, "prefill": prefill(check.meta, check.tensors, name)}
-
-
 # --- API -----------------------------------------------------------------------------------------------------------
 
 
@@ -888,21 +693,16 @@ def _http(e: AddonFileError) -> HTTPException:
 
 
 class MyAddonIn(BaseModel):
-    file_name: str = Field(max_length=MAX_NAME_CHARS + 20)
+    # The file as ComfyUI lists it (relative to its LoRA folder, forward slashes), and that folder (as the list gives it).
+    file_name: str = Field(max_length=MAX_NAME_CHARS + 200)
+    folder: str = Field(default="", max_length=1000)
     label: str = Field(max_length=MAX_LABEL_CHARS * 2)
     base_models: list[str] = Field(default_factory=list, max_length=20)
     trigger: str = Field(default="", max_length=MAX_TRIGGER_CHARS * 2)
     default_strength: str = "normal"
     source: str = Field(default="", max_length=MAX_SOURCE_CHARS * 2)
-    # True for a file addon_links.place_addon registered where it is (file_name is then the name ComfyUI lists it under).
-    in_place: bool = False
     # The person's answer when the file cannot tell: MADE_FOR_EDIT or MADE_FOR_PLAIN (ignored when the file is sure).
     made_for: str = Field(default="", max_length=40)
-
-
-class PlaceIn(BaseModel):
-    path: str = Field(max_length=1000)
-    make_copy: bool = False  # the person said Copy to the offer made for a file on another drive
 
 
 class MyAddonChange(BaseModel):
@@ -922,8 +722,8 @@ def get_my_addons() -> dict[str, Any]:
 @router.post("/api/my-addons")
 def post_my_addon(body: MyAddonIn) -> dict[str, Any]:
     try:
-        return register(body.file_name, body.label, body.base_models, body.trigger, body.default_strength, body.source,
-                        body.in_place, made_for_answer=body.made_for)
+        return register(body.file_name, body.folder, body.label, body.base_models, body.trigger, body.default_strength, body.source,
+                        made_for_answer=body.made_for)
     except AddonFileError as e:
         raise _http(e)
 
@@ -937,16 +737,6 @@ def put_my_addon(aid: str, body: MyAddonChange) -> dict[str, Any]:
         raise _http(e)
 
 
-@router.post("/api/my-addons/place")
-def post_place(body: PlaceIn) -> dict[str, Any]:
-    from . import addon_links
-
-    try:
-        return addon_links.place_addon(body.path, copy=body.make_copy)
-    except AddonFileError as e:
-        raise _http(e)
-
-
 @router.delete("/api/my-addons/{aid}")
 def delete_my_addon(aid: str) -> dict[str, Any]:
     try:
@@ -955,22 +745,6 @@ def delete_my_addon(aid: str) -> dict[str, Any]:
         raise _http(e)
 
 
-@router.get("/api/my-addons/unregistered")
-def get_unregistered() -> list[dict[str, Any]]:
-    return unregistered()
-
-
-@router.post("/api/my-addons/open-folder")
-def post_open_folder() -> dict[str, Any]:
-    try:
-        return open_folder()
-    except OSError as e:
-        raise HTTPException(500, f"The folder could not be opened: {e.strerror or e}")
-
-
-@router.post("/api/my-addons/upload")
-async def post_upload(request: Request, name: str = Query(..., max_length=400)) -> dict[str, Any]:
-    try:
-        return await save_upload(request, name)
-    except AddonFileError as e:
-        raise _http(e)
+@router.get("/api/my-addons/available")
+def get_available() -> list[dict[str, Any]]:
+    return available()

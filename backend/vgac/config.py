@@ -121,9 +121,9 @@ class Settings(BaseModel):
     unity_exe: Path | None = None
     unity_project: Path | None = None
     comfy_input_dir: Path | None = None
-    # ComfyUI's loras folder. The app only ever lists or writes its own VGAC/mine/ inside it (user_addons.py).
-    # Unset: the person's own add-ons are not available until it is set.
-    loras_dir: Path | None = None
+    # The person's LoRA folders (lora_folders.py): each one is written into the app's model folders file as a `loras`
+    # entry, and ComfyUI reads the LoRAs in place. Saved as given; the app never copies or links them.
+    lora_folders: list[Path] = Field(default_factory=list)
     clips_libraries: dict[str, Path] = Field(default_factory=dict)
     min_free_ram_gb: float = Field(default=24, ge=0)
     # How many clean-ups (and other long host jobs) run at once on this computer. 1: one at a time, as measured safe.
@@ -189,8 +189,7 @@ def resolve_paths(settings: Settings, project_dir: Path = PROJECT_DIR) -> Settin
     """Make every path setting absolute: relative ones are relative to the project folder (an engine's python is
     relative to its comfy_dir). Changes `settings` in place and returns it."""
     s = settings
-    for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir",
-                "loras_dir"):
+    for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir"):
         setattr(s, key, _resolve(getattr(s, key), project_dir))
     s.clips_libraries = {k: _resolve(v, project_dir) for k, v in s.clips_libraries.items()}  # type: ignore[misc]
     for inst in s.instances.values():
@@ -301,7 +300,7 @@ def path_problems(settings: Settings) -> list[str]:
         p = getattr(settings, key)
         if p is not None and not Path(p).is_file():
             out.append(f"{key} is set to {p}, which does not exist.")
-    for key in ("unity_project", "comfy_input_dir", "loras_dir"):
+    for key in ("unity_project", "comfy_input_dir"):
         p = getattr(settings, key)
         if p is not None and not Path(p).is_dir():
             out.append(f"{key} is set to {p}, which does not exist.")

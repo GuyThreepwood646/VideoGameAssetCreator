@@ -250,7 +250,7 @@ def _same_drive(a: Path, b: Path) -> bool:
 def link_file(source: Path, target: Path) -> bool:
     """Hard-link `source` at `target` (same drive; no copy, no space, no administrator rights). -> True when a new link was made,
     False when `target` already is the very same file. DownloadError when another file is in the way or the drive differs. Shared by
-    the model panel and the person's own LoRAs (user_addons / addon_links)."""
+    the model panel and the person's own LoRA list (user_addons)."""
     if target.exists():
         try:
             same = os.path.samefile(target, source)

@@ -1,42 +1,42 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { LORA_FILES, pickLoraPath } from '../src/desktop'
-import { addonRemoveWords, ADDON_BROWSER_COPY, ADDON_CHOOSE_TEXT } from '../src/help'
+import { addonRemoveWords, ADDON_CHOOSE_TEXT } from '../src/help'
 
-test('the desktop bridge call asks the native picker for a LoRA file and returns the real path', async () => {
-  const calls: Array<[string, string | undefined]> = []
-  const host = { pickFile: async (title: string, filter?: string) => (calls.push([title, filter]), 'D:\\Downloads\\ink.safetensors') }
-  assert.equal(await pickLoraPath(host), 'D:\\Downloads\\ink.safetensors')
-  assert.deepEqual(calls, [['Choose your LoRA file', LORA_FILES]])
-  assert.ok(LORA_FILES.includes('*.safetensors'))
-})
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-test('a cancelled picker gives null and a browser (no bridge) gives undefined', async () => {
-  assert.equal(await pickLoraPath({ pickFile: async () => null }), null)
-  assert.equal(await pickLoraPath(null), undefined)
-})
-
-test('removal wording says what really happens to the file, by how it is kept', () => {
+test('removal wording says the file is not touched and stays in its LoRA folder', () => {
   assert.ok(addonRemoveWords('in_place').includes('not touched'))
-  assert.ok(addonRemoveWords('link').includes('link to your file is removed'))
-  assert.ok(addonRemoveWords('copy').includes('copy the app made is deleted'))
-  assert.ok(addonRemoveWords('link').includes('original file is not touched'))
-  assert.ok(addonRemoveWords('copy').includes('original file is not touched'))
-  assert.ok(addonRemoveWords('').includes('stays in the LoRA folder'))
+  assert.ok(addonRemoveWords('in_place').includes('stays in its LoRA folder'))
+  assert.ok(addonRemoveWords('').includes('stays where it is'))
 })
 
-test('the browser path says copy and the desktop path says where it is, linked, or copied after asking', () => {
-  assert.ok(ADDON_BROWSER_COPY.startsWith('A copy'))
-  assert.ok(ADDON_CHOOSE_TEXT.browser.includes('makes a copy'))
-  const d = ADDON_CHOOSE_TEXT.desktop
-  assert.ok(d.includes('where it is') && d.includes('links it') && d.includes('asked before a copy'))
+test('the choose text says the LoRA is used where it is and nothing is copied', () => {
+  for (const text of [ADDON_CHOOSE_TEXT.desktop, ADDON_CHOOSE_TEXT.browser]) {
+    assert.ok(text.includes('LoRA folders'))
+    assert.ok(text.includes('stays where it is') && text.includes('nothing is copied'))
+    assert.ok(!/copy of|makes a copy|copied only|Copy\b/.test(text))
+  }
 })
 
-test('the add form uses the picker only when the bridge exists and offers Copy or Cancel for a file on another drive', () => {
-  const src = readFileSync(new URL('../src/pipeline/AddMyAddon.tsx', import.meta.url), 'utf8')
-  assert.ok(src.includes('hostPick() ? <ChoosePath'))
-  assert.ok(src.includes("route === 'copy_needed'"))
-  assert.ok(src.includes('Copy ${fmtBytes') && src.includes('Cancel'))
+test('the add form lists the LoRA files in the linked folders and never copies, links or uploads one', () => {
+  const src = read('../src/pipeline/AddMyAddon.tsx')
+  assert.ok(src.includes('api.availableAddons()'))
+  assert.ok(src.includes("how: `Used where it is, in ${f.folder}."))
+  for (const gone of ['pickLoraPath', 'placeAddon', 'uploadAddon', 'copy_needed', 'unregisteredAddons', 'openAddonFolder', 'hostPick']) {
+    assert.ok(!src.includes(gone), `AddMyAddon still uses ${gone}`)
+  }
+  assert.ok(!/symlink|junction|hard link|copyFile|copy_needed/i.test(src))
+})
+
+test('the LoRA folder list adds and removes folders and asks the folder picker only in the desktop app', () => {
+  const src = read('../src/components/LoraFolders.tsx')
+  assert.ok(src.includes('api.addLoraFolder(p)') && src.includes('api.removeLoraFolder(f.path)'))
+  assert.ok(src.includes('host.pickFolder(') && src.includes('if (!host) return'))
   assert.ok(!/symlink|junction/i.test(src))
+})
+
+test('the setup page and the ComfyUI install step both offer the LoRA folders', () => {
+  assert.ok(read('../src/SetupCheck.tsx').includes('<LoraFolders'))
+  assert.ok(read('../src/components/ComfyInstall.tsx').includes('Add your LoRA folders (optional)'))
 })

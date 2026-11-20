@@ -25,15 +25,8 @@ def test_pick_window_prefers_the_new_window_then_one_already_open():
     assert folders.pick_window({2: "Downloads"}, F, before=set()) is None
 
 
-def test_open_folder_endpoints_pass_the_front_result_on(settings, monkeypatch, tmp_path):
-    from fastapi.testclient import TestClient
-
+def test_open_folder_passes_the_front_result_on(monkeypatch):
     from vgac import user_addons
-    from vgac.main import app
 
-    monkeypatch.setattr(settings, "loras_dir", tmp_path / "loras")  # never this PC's own ComfyUI folder
     monkeypatch.setattr(folders, "open_in_explorer", lambda p: {"front": False})
-    with TestClient(app) as c:
-        r = c.post("/api/my-addons/open-folder")
-        assert r.status_code == 200 and r.json()["front"] is False and r.json()["opened"] is True
     assert user_addons._launch_explorer(Path(".")) == {"front": False}

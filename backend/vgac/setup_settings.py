@@ -256,8 +256,6 @@ def _specs() -> dict[str, Spec]:
              "characters in the old one are not moved.", "folder", "next_start", v_library),
         Spec("export_path", "Hand-off folder", "Where finished files are copied. Default: next to the library.", "folder",
              "now", v_writable_folder("the hand-off folder")),
-        Spec("loras_dir", "ComfyUI add-on folder", "ComfyUI's loras folder; your own add-ons are kept in a VGAC/mine "
-             "folder inside it.", "folder", "now", v_writable_folder("ComfyUI's loras folder")),
         Spec("comfy_input_dir", "ComfyUI input folder", "The folder both ComfyUI engines read pictures from.", "folder",
              "next_start", v_writable_folder("ComfyUI's input folder")),
     ]
