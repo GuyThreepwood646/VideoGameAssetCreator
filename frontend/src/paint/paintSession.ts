@@ -203,6 +203,19 @@ export class PaintSession {
   get undoCount(): number {
     return this.layers.reduce((n, l) => n + l.undoCount, 0)
   }
+  // The step names for the next undo and the next redo (the layer that would change), or null.
+  get undoLabel(): string | null {
+    const l = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((x) => x.canUndo)
+    return l?.undoLabel ?? null
+  }
+  get redoLabel(): string | null {
+    const l = this.lastLayer?.canRedo ? this.lastLayer : this.layers.find((x) => x.canRedo)
+    return l?.redoLabel ?? null
+  }
+  // Changes with every new step, undo or redo; equal to the mark taken when the picture was saved means nothing is unsaved.
+  get editMark(): string {
+    return this.layers.map((l) => l.editMark).join("|")
+  }
   get undoBytes(): number {
     return this.layers.reduce((n, l) => n + l.undoBytesUsed, 0)
   }

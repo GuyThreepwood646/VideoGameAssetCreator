@@ -646,3 +646,17 @@ def test_a_knee_is_guessed_when_its_own_row_shows_one_shape_and_the_three_quarte
     assert quarter["knee_L"]["guessed"] and quarter["knee_R"]["sure"]
     views["back"]["knees_apart"] = {"knee_L": True, "knee_R": False}
     assert _doc(views)["rule"]["views"]["back"]["knee_R"]["guessed"]
+
+
+def test_put_accepted_sets_and_clears_the_flag_and_keeps_the_marks(api):
+    """Undo and redo of "These look right": the flag goes back and forth; the marks are not touched."""
+    client, ids, _ = api
+    vid = ids[("humanoid", "done")]
+    client.put(f"/api/versions/{vid}/marks", json={"moves": [{"view": "front", "joint": "knee_L", "x": 600, "y": 700}]})
+    r = client.put(f"/api/versions/{vid}/marks/accepted", json={"accepted": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["accepted"] is True and r.json()["marks"]["front"]["knee_L"]["x"] == 600.0
+    r = client.put(f"/api/versions/{vid}/marks/accepted", json={"accepted": False})
+    assert r.json()["accepted"] is False and r.json()["marks"]["front"]["knee_L"] == {"x": 600.0, "y": 700.0, "source": "you", "sure": True, "guessed": False, "stale": False, "seen": True}
+    assert client.put(f"/api/versions/{vid}/marks/accepted", json={"accepted": "yes please"}).status_code == 422
+    assert client.put(f"/api/versions/nope/marks/accepted", json={"accepted": True}).status_code == 404

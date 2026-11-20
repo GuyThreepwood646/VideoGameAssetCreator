@@ -130,7 +130,7 @@ export function RigView({ version }: { version: Version }) {
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
-    <div className="rig-view">
+    <div className="rig-view" onPointerDownCapture={dp.activate} onFocusCapture={dp.activate}>
       <div className="view-intro muted small">
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />

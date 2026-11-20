@@ -5,6 +5,8 @@ import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { Disclosure, ErrorText, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
+import { useEditHistory } from '../editHistory'
+import { UndoRedoButtons } from '../components/UndoRedo'
 import Viewer, { type ViewerAttachment } from '../Viewer'
 
 // "Add an item" on a finished character (docs/CHARACTER-PARTS-RESEARCH.md 6.2, backend vgac/items.py): pick or make
@@ -104,29 +106,54 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
   const replaceAtt = (a: Attachment) =>
     setData((d) => (d ? { ...d, needs_update: true, saved: false, equipment: { ...d.equipment, attachments: d.equipment.attachments.map((x) => (x.id === a.id ? a : x)) } } : d))
 
-  const press = async (body: NudgeBody) => {
+  // Undo and redo: every change to where an item sits is saved as before; a step keeps the whole record from before and
+  // after it, so a socket change that reset the nudges comes back whole.
+  const { history, activate } = useEditHistory()
+  const restoreAtt = async (target: Attachment) => {
+    const r = await itemsApi.restore(asset.id, target.id, target)
+    setData(r.panel)
+  }
+  const press = async (body: NudgeBody, what: string) => {
     if (!att) return
+    const before = att
+    const shown = shiftRef.current ? ' (big step)' : ''
     try {
       const r = await itemsApi.nudge(asset.id, att.id, { ...body, big: shiftRef.current })
       replaceAtt(r.attachment)
+      const label = body.reset
+        ? `start the ${att.label} again`
+        : body.slide !== undefined && body.slide !== 0
+          ? `slide the ${att.label}`
+          : body.scale_steps
+            ? `make the ${att.label} ${body.scale_steps < 0 ? 'smaller' : 'bigger'}`
+            : `nudge the ${att.label} ${what}${shown}`
+      const after = r.attachment
+      history.record({ label, key: body.reset ? undefined : `nudge:${att.id}`, undo: () => restoreAtt(before), redo: () => restoreAtt(after) })
     } catch (e) {
       setError(e)
     }
   }
   const place = async (socket: string) => {
     if (!att) return
+    const before = att
     try {
       const r = await itemsApi.update(asset.id, att.id, { socket })
       setData(r.panel)
+      const words = placeLabel(socket)
+      const after = r.attachment
+      history.record({ label: `move the ${att.label} ${words.charAt(0).toLowerCase()}${words.slice(1)}`, undo: () => restoreAtt(before), redo: () => restoreAtt(after) })
     } catch (e) {
       setError(e)
     }
   }
   const stow = async (socket: string) => {
     if (!att) return
+    const before = att
     try {
       const r = await itemsApi.update(asset.id, att.id, { stow_socket: socket })
       replaceAtt(r.attachment)
+      const after = r.attachment
+      history.record({ label: `change where the ${att.label} is put away`, undo: () => restoreAtt(before), redo: () => restoreAtt(after) })
     } catch (e) {
       setError(e)
     }
@@ -194,16 +221,19 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
   const noGrip = item?.status === 'done' && item.grip && item.grip.found === false
 
   return (
-    <section className="card items-panel" aria-label="Add an item">
+    <section className="card items-panel" aria-label="Add an item" onPointerDownCapture={activate} onFocusCapture={activate}>
       {confirm.dialog}
       <div className="row-between">
         <h2 className="card-title">
           Items on {asset.name}
           <Info term="term.items" />
         </h2>
-        <PanelClose onClose={onClose} />
+        <span className="row-gap">
+          <UndoRedoButtons history={history} />
+          <PanelClose onClose={onClose} />
+        </span>
       </div>
-      <ErrorText error={error} />
+      <ErrorText error={error ?? history.lastError} />
       {!data ? (
         <p className="muted small">Loading...</p>
       ) : (
@@ -307,7 +337,7 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                       {MOVE_PAD.map((label, i) => {
                         const m = MOVES.find((x) => x.label === label)
                         return m ? (
-                          <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move })}>
+                          <button key={m.label} type="button" title={m.title} onClick={() => press({ move: m.move }, m.label.toLowerCase())}>
                             {m.label}
                           </button>
                         ) : (
@@ -319,26 +349,26 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                   <div className="items-nudges" role="group" aria-label="Turn">
                     <span className="muted small nudge-title">Turn</span>
                     {TURNS.map((t) => (
-                      <button key={t.label} type="button" title={t.title} onClick={() => press({ turn: t.turn })}>
+                      <button key={t.label} type="button" title={t.title} onClick={() => press({ turn: t.turn }, t.label.toLowerCase())}>
                         {t.label}
                       </button>
                     ))}
                   </div>
                   <div className="items-nudges" role="group" aria-label="Size and grip">
                     <span className="muted small nudge-title">Size and grip</span>
-                    <button type="button" title="Slide the item so the hand sits closer to its tip or head" onClick={() => press({ slide: 1 })}>
+                    <button type="button" title="Slide the item so the hand sits closer to its tip or head" onClick={() => press({ slide: 1 }, 'closer to its tip')}>
                       Hold it nearer the tip
                     </button>
-                    <button type="button" title="Slide the item so the hand sits closer to its end" onClick={() => press({ slide: -1 })}>
+                    <button type="button" title="Slide the item so the hand sits closer to its end" onClick={() => press({ slide: -1 }, 'closer to its end')}>
                       Hold it nearer the end
                     </button>
-                    <button type="button" onClick={() => press({ scale_steps: -1 })}>
+                    <button type="button" onClick={() => press({ scale_steps: -1 }, 'smaller')}>
                       Smaller
                     </button>
-                    <button type="button" onClick={() => press({ scale_steps: 1 })}>
+                    <button type="button" onClick={() => press({ scale_steps: 1 }, 'bigger')}>
                       Bigger
                     </button>
-                    <button type="button" onClick={() => press({ reset: true })}>
+                    <button type="button" onClick={() => press({ reset: true }, 'again')}>
                       Start again
                     </button>
                   </div>
@@ -364,9 +394,12 @@ export function ItemsPanel({ asset, onClose }: { asset: Asset; onClose: () => vo
                 </div>
                 <Disclosure label="Advanced">
                   <AdvancedNumbers att={att} onSave={async (body) => {
+                    const before = att
                     try {
                       const r = await itemsApi.update(asset.id, att.id, body)
                       replaceAtt(r.attachment)
+                      const after = r.attachment
+                      history.record({ label: `set the exact numbers of the ${att.label}`, undo: () => restoreAtt(before), redo: () => restoreAtt(after) })
                     } catch (e) {
                       setError(e)
                     }
