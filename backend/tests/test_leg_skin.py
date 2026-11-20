@@ -149,3 +149,15 @@ def test_leg_skin_blender_keeps_weights_normalised(tmp_path):
         assert m["max_influences_after"] <= 4
         assert m["row_sum_error"] < 1e-5
     assert out.is_file()
+
+
+def test_smoothing_guards_keep_dominant_bone_and_limit_change():
+    # Vertex 1 sits between a strong leg vertex (0) and a hips vertex (2): smoothing would hand it to the hips bone.
+    edges = np.array([[0, 1], [1, 2]])
+    W = np.array([[0.9, 0.1], [0.6, 0.4], [0.0, 1.0]])
+    zone = np.array([True, True, False])
+    W_guard, _ = ls.smooth_zone(W, edges, zone, passes=4, alpha=0.5, keep_dominant=True, max_change=0.0)
+    assert np.argmax(W_guard[1]) == np.argmax(W[1])
+    # With a tight change limit a row that moves a lot keeps its original weights.
+    W_lim, _ = ls.smooth_zone(W, edges, zone, passes=4, alpha=0.5, keep_dominant=False, max_change=0.01)
+    assert np.allclose(W_lim[1], W[1])

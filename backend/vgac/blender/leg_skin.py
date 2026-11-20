@@ -1,7 +1,7 @@
 """Blender headless: leg and hip skin pass on a rigged GLB (WP-18), run after rig_fix and the joins.
 
 Run: blender -b --python leg_skin.py -- <rig.glb> <out.glb> --report <json> [--passes 4] [--alpha 0.5]
-     [--band 0.03] [--half 0]
+     [--band 0.03] [--half 0] [--no-keep-dominant] [--max-change 0.2]
 
 Three changes, all on the skin weights of the leg zone only (vertices with at least LEG_MASS_MIN of their weight on
 thigh, calf, foot or toe bones). Bone lengths, the rest mesh and the animation are not touched.
@@ -22,6 +22,7 @@ import numpy as np
 
 LEG_MASS_MIN = 0.05  # share of a vertex's weight on leg bones from which it is in the leg zone
 MAX_INFLUENCES = 4
+MAX_CHANGE = 0.2  # a smoothed row whose weights moved by more than this (sum of absolute changes) keeps its own
 
 
 def leg_group_kind(name):
@@ -62,12 +63,15 @@ def neighbour_sums(W, edges):
     return acc, deg
 
 
-def smooth_zone(W, edges, zone, passes=2, alpha=0.5):
+def smooth_zone(W, edges, zone, passes=4, alpha=0.5, keep_dominant=True, max_change=MAX_CHANGE):
     """Smooth the weights of the zone vertices whose neighbours are all in the zone. Returns (new W, changed count).
-    Rows are kept normalised where they were."""
+    Rows are kept normalised where they were. With keep_dominant (default) a vertex whose strongest bone would change
+    keeps its original weights: on a dwarf's cloak hem, smoothing handed hem vertices to a leg bone's neighbours and
+    the hem tore into spikes at the knee (WP-18 review, frame 8 of the run clip)."""
     W = np.array(W, dtype=float, copy=True)
     if not np.any(zone) or not len(edges):
         return W, 0
+    orig = W.copy()
     V = W.shape[0]
     # A vertex is smoothable when every neighbour is in the zone.
     bad = np.zeros(V, dtype=bool)
@@ -84,6 +88,15 @@ def smooth_zone(W, edges, zone, passes=2, alpha=0.5):
         avg = acc[ok] / deg[ok, None]
         W[ok] = (1.0 - alpha) * W[ok] + alpha * avg
         changed |= ok
+    if keep_dominant:
+        moved = changed & (np.argmax(W, axis=1) != np.argmax(orig, axis=1))
+        W[moved] = orig[moved]
+        changed &= ~moved
+    if max_change > 0:
+        # Rows whose weights moved by more than max_change (sum of absolute changes) keep their original weights.
+        far = changed & (np.abs(W - orig).sum(axis=1) > max_change)
+        W[far] = orig[far]
+        changed &= ~far
     return W, int(changed.sum())
 
 
@@ -142,14 +155,16 @@ def max_influences(W):
     return int((np.asarray(W) > 1e-6).sum(axis=1).max()) if np.size(W) else 0
 
 
-def run_numpy(W, edges, z, names, knee_z, height, passes=4, alpha=0.5, band=0.03, half=0.0):
+def run_numpy(W, edges, z, names, knee_z, height, passes=4, alpha=0.5, band=0.03, half=0.0, keep_dominant=True,
+              max_change=MAX_CHANGE):
     """The whole pass on arrays. names: one bone name per column. Returns (W, report dict)."""
     kinds = [leg_group_kind(n) for n in names]
     leg_cols = [i for i, k in enumerate(kinds) if k]
     zone = leg_zone(W, leg_cols)
     report = {"zone_vertices": int(zone.sum()), "max_influences_before": max_influences(W), "passes": passes,
               "alpha": alpha, "band": band, "half": half}
-    W1, smoothed = smooth_zone(W, edges, zone, passes=passes, alpha=alpha)
+    W1, smoothed = smooth_zone(W, edges, zone, passes=passes, alpha=alpha, keep_dominant=keep_dominant,
+                               max_change=max_change)
     report["smoothed_vertices"] = smoothed
     thigh_cols, calf_cols = [], []
     for side in ("left", "right"):
@@ -189,6 +204,8 @@ def main():  # pragma: no cover - runs inside Blender
     alpha = float(_common.opt("--alpha", "0.5"))
     band = float(_common.opt("--band", "0.03"))
     half = float(_common.opt("--half", "0"))
+    keep_dom = not _common.flag("--no-keep-dominant")
+    max_change = float(_common.opt("--max-change", str(MAX_CHANGE)))
     _common.open_glb(src)
     scene = bpy.context.scene
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
@@ -216,7 +233,8 @@ def main():  # pragma: no cover - runs inside Blender
                     if k and k[0] == "calf" and k[1] == side and n in bone_world:
                         zk = float(bone_world[n].z)
                         knee_z = zk if knee_z is None else (knee_z + zk) / 2
-            W2, rep = run_numpy(W, edges, co[:, 2], vg_names, knee_z, height, passes=passes, alpha=alpha, band=band, half=half)
+            W2, rep = run_numpy(W, edges, co[:, 2], vg_names, knee_z, height, passes=passes, alpha=alpha, band=band, half=half,
+                                 keep_dominant=keep_dom, max_change=max_change)
             for gi, g in enumerate(o.vertex_groups):
                 g.remove([v.index for v in o.data.vertices])
             for gi, g in enumerate(o.vertex_groups):
