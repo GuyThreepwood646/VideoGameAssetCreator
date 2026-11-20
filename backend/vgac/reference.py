@@ -234,6 +234,8 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # How far the arms hang from the sides in the built-in walk, idle and turn moves (blender/gait.py ARM_POSE_SHIFT_DEG).
         _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose",
                description="How far the arms hang from the sides in the walk, the stand still and the turns. Close tucks them in, Relaxed is the usual pose, Open holds them a little further out. The character's body and skin are not changed"),
+        _param("neutral_pose", "boolean", False, categories=["humanoid"], label="Neutral pose clip",
+               description="Adds one still frame, named neutral_pose, that holds the stand-still arm angle (with the Arm pose setting). Off by default. The rest pose and the skin are not changed"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),

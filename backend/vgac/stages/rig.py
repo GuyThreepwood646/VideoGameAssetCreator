@@ -534,7 +534,7 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
 MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs",
-                "idle_source", "head_sway", "arm_pose")
+                "idle_source", "head_sway", "arm_pose", "neutral_pose")
 # anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
 # keys are never present, so listing them changes nothing there.
 ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
@@ -808,6 +808,8 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         args += ["--speed", str(params["move_speed"])]
     arm_pose = gait_arm_pose(params)
     args += ["--arm-pose", arm_pose]
+    if params.get("neutral_pose"):  # D9: one still frame of the stand-still arm angle (procanim ignores it off a humanoid)
+        args += ["--neutral-pose"]
     sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params),
                   idle_source=params["idle_source"], arm_pose=arm_pose)
     try:
