@@ -1616,6 +1616,33 @@ def ground_fix(pose_fn):
     return _rest_low[0] - lowest_z(P)
 
 
+# ---- collarbone share (WP-75) ----------------------------------------------------------------------------------
+# An arm with a collarbone (Shoulder bone before the upper arm) lifts it by gait.clavicle_lift_deg of the upper arm's
+# raise in the chest's frame; the upper arm turns back by the same amount, so the arm points where the clip put it.
+_CLAV = []
+for _a in arm_info:
+    if len(_a["bones"]) >= 4 and _a["upper"] == _a["bones"][1] and byname[_a["bones"][0]].parent is not None:
+        _sh = _a["bones"][0]
+        _elbow = head[_a["fore"]] if _a["fore"] else head[_a["leaf"]]
+        _d = head[_a["upper"]] - head[_sh]
+        _CLAV.append({"sh": _sh, "up": _a["upper"], "chest": byname[_sh].parent.name, "arm": _elbow - head[_a["upper"]],
+                      "rest": _a["rest_deg"],
+                      "axis": unit(Vector((_d.x, _d.y, 0)).cross(up), forward)})  # +deg lifts the outer end
+
+
+def collarbone_share(P):
+    if not _CLAV:
+        return
+    Mw = fk(P)
+    for c in _CLAV:
+        chest = (Mw[c["chest"]] @ REST_W_INV[c["chest"]]).to_3x3()
+        arm_dir = (Mw[c["up"]] @ REST_W_INV[c["up"]]).to_3x3() @ c["arm"]
+        lift = gait.clavicle_lift_deg(gait.angle_from_down(tuple(chest.inverted() @ arm_dir), tuple(up)), c["rest"])
+        if lift > 1e-3:
+            P.r(c["sh"], c["axis"], lift)
+            P.rot[c["up"]] = Quaternion(local_axis(c["up"], c["axis"]), math.radians(-lift)) @ P.rot.get(c["up"], Quaternion())
+
+
 # ---- actions and NLA -----------------------------------------------------------------------------------------
 table = gait.clip_table(clips, motion, fps, SPEED)
 poses = {}
@@ -1627,6 +1654,7 @@ for row in table:
         P = Pose()
         fn(P, min(1.0, f / n))
         finish_serpent(P)
+        collarbone_share(P)
         frames.append(P)
     poses[row["name"]] = frames
 # ---- clip data for the game (WP-19): locomotion speed from the planted feet, attack hit time from peak limb speed.

@@ -443,6 +443,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
         await _leg_skin(sc, rig_glb, params)
+        await _shoulder_skin(sc, rig_glb)
         await _limb_joins(sc, rig_glb)
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
@@ -1255,6 +1256,26 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
             sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
+    """Shoulder skin pass (blender/shoulder_skin.py, WP-75): collarbone weight on skin standing high above the
+    collarbone (a hood, a tall collar, hair on the shoulder) goes to the chest, so the collarbone lift in the moves does
+    not swing it in toward the neck. In place, only when something changed; the rig before it is kept as
+    rig_before_shoulder_skin.glb. metrics.shoulder_skin: {ok, changed, sides} or {reason}. Never raises."""
+    out = sc.dir / "rig_shoulder_skin.glb"
+    report = sc.dir / "shoulder_skin.json"
+    try:
+        await sc.blender("shoulder_skin.py", [rig_glb, out, "--report", report], log_name="shoulder_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_shoulder_skin.glb")
+            shutil.move(str(out), str(rig_glb))
+        sc.set_metrics(shoulder_skin={"ok": bool(rep.get("ok")), "changed": int(rep.get("changed") or 0),
+                                      "sides": rep.get("sides") or {}} if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(shoulder_skin={"error": str(e)[:300]})
 
 
 # WP-69 stiff parts (blender/worn_region.py): a part the person placed as stiff moves with one spine bone. Its region
