@@ -388,7 +388,7 @@ export function FineTune({
       const v = values[p.name]
       const now = auto.now?.(target)
       return (
-        <Field label={paramPlain(p.name, p.label)} term={`param.${p.name}`} hint={<>{p.hint ?? p.help?.meaning ?? p.description}{now ? <span className="size-now"> {now}</span> : null} <span className="muted">(<span className="mono muted">{p.name}</span>)</span></>}>
+        <Field label={paramPlain(p.name, p.label)} term={`param.${p.name}`} hint={<>{p.hint ?? p.help?.meaning ?? p.description}{now ? <span className="size-now"> {now}</span> : null}</>}>
           <select value={v === true ? 'on' : v === false ? 'off' : ''} disabled={disabled} onChange={(e) => set(p.name, e.target.value === 'on' ? true : e.target.value === 'off' ? false : null)}>
             <option value="">{auto.label}</option>
             <option value="on">On</option>
@@ -554,17 +554,11 @@ export function AdjustField({
   const label = labelText ?? paramPlain(p.name, p.label)
   const term = termOverride ?? `param.${p.name}`
   const hint = hintText ?? p.hint ?? p.help?.meaning ?? p.description
-  const tech = <span className="mono muted">{p.name}</span>
+  // The internal setting name is not shown here; it stays in the developer details (the Details disclosure).
   const hintNode = (
     <>
       {blockedReason ? <span className="knob-blocked">{blockedReason} </span> : null}
-      {hint ? (
-        <>
-          {hint} <span className="muted">({tech})</span>
-        </>
-      ) : (
-        tech
-      )}
+      {hint}
     </>
   )
   switch (p.type) {
