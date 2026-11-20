@@ -1377,6 +1377,12 @@ def _death_pose(P, t, drop):
     P.move(up * (drop * fall + settle * height * fall * 0.3))
 
 
+def _reach_at_elbow(ch, deg):
+    """Distance from shoulder to wrist when the elbow is `deg` degrees (interior angle) for this arm chain."""
+    l1, l2 = ch["l1"], ch["l2"]
+    return math.sqrt(max(0.0, l1 * l1 + l2 * l2 - 2 * l1 * l2 * math.cos(math.radians(deg))))
+
+
 def death_settle(P, ground_z, lift=None):
     """Lay every limb of a final death pose on the ground: for each arm and leg chain, aim its end (wrist,
     ankle, paw) at ground height below where it is (gait.ground_target), arms pushed out beside the body, then
@@ -1402,6 +1408,12 @@ def death_settle(P, ground_z, lift=None):
             out_dir = P.root_q @ (lateral if limb["left"] else -lateral)
             r = lift.get(ch["end_bone"] or ch["m"], 0.022 * height)
             target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=0.35 * L)
+            # WP-77: the wrist target may not be farther from the shoulder than an arm at a 170 degree elbow, so the
+            # settled arm never straightens past 170 degrees (a target out of reach straightens it).
+            tv = Vector(target) - ha
+            d170 = _reach_at_elbow(ch, 170.0)
+            if tv.length > d170:
+                target = tuple(ha + tv * (d170 / tv.length))
             # The elbow bends along the ground toward the feet, never down into it.
             pole = hm + (-(P.root_q @ up) * 0.8 + out_dir * 0.2) * L
         else:
