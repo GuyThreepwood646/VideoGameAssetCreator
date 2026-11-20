@@ -1446,6 +1446,9 @@ export const itemsApi = {
   update: (aid: string, attId: string, body: { socket?: string; stow_socket?: string; position?: number[]; rotation_deg?: number[]; scale?: number; keep_place?: boolean; dismiss_notice?: boolean }) =>
     put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`, body),
   nudge: (aid: string, attId: string, body: NudgeBody) => post<{ attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/nudge`, body),
+  // Put back a whole earlier record (undo and redo in the item editor).
+  restore: (aid: string, attId: string, attachment: Attachment) =>
+    put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}/record`, { attachment }),
   remove: (aid: string, attId: string) => del<{ removed: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`),
   apply: (aid: string) => post<RunResult>(`/api/assets/${aid}/items/apply`),
   fit: (aid: string, attId: string) => post<RunResult & { attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/fit`),

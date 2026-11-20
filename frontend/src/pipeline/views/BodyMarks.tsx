@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 import { api, libraryUrl, type BodyMarks as Marks, type Mark, type MarkView } from '../../api'
 import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
+import { useEditHistory } from '../../editHistory'
+import { UndoRedoButtons } from '../../components/UndoRedo'
+import { restorePlan, snapshotMarks, type MarkSnapshot } from './marksHistory'
 
 // Mark the body (step 2): the app's marks on the front picture and one other picture (a three-quarter, side or back
 // view), each draggable; all six open enlarged. The marks are a note on this version's pictures (marks.json): moving one,
@@ -308,8 +311,60 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
     },
     [],
   )
-  const onMove = useCallback((view: MarkView, joint: string, x: number, y: number) => run(api.moveMarks(versionId, [{ view, joint, x, y }])), [run, versionId])
-  const onDrop = useCallback((view: MarkView, joint: string) => run(api.resetMarks(versionId, view, joint)), [run, versionId])
+  // Undo and redo: each change is saved as before, then a step remembers the marks from before and after it.
+  const { history, activate } = useEditHistory()
+  const dataRef = useRef<Marks | null>(null)
+  const show = useCallback((d: Marks) => {
+    dataRef.current = d
+    setData(d)
+  }, [])
+  useEffect(() => {
+    dataRef.current = data
+  }, [data])
+  // Puts the marks back to a snapshot with the existing PUT (moves) and reset calls: only what differs is sent.
+  const putBack = useCallback(
+    async (target: MarkSnapshot) => {
+      const cur = dataRef.current
+      if (!cur) return
+      const plan = restorePlan(snapshotMarks(cur), target)
+      if (plan.moves.length) show(await api.moveMarks(versionId, plan.moves))
+      for (const r of plan.resets) show(await api.resetMarks(versionId, r.view, r.joint))
+    },
+    [show, versionId],
+  )
+  const change = useCallback(
+    async (label: string, key: string | undefined, p: Promise<Marks>) => {
+      const cur = dataRef.current
+      const before = cur ? snapshotMarks(cur) : null
+      setBusy(true)
+      setError(null)
+      try {
+        const next = await p
+        show(next)
+        if (before) {
+          const after = snapshotMarks(next)
+          history.record({ label, key, undo: () => putBack(before), redo: () => putBack(after) })
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [history, putBack, show],
+  )
+  const nameOf = (joint: string) => dataRef.current?.names[joint] ?? joint
+  const onMove = useCallback(
+    (view: MarkView, joint: string, x: number, y: number) =>
+      void change(`move the ${nameOf(joint)}`, `move:${view}:${joint}`, api.moveMarks(versionId, [{ view, joint, x, y }])),
+    [change, versionId],
+  )
+  const onDrop = useCallback(
+    (view: MarkView, joint: string) => void change(`remove the ${nameOf(joint)}`, undefined, api.resetMarks(versionId, view, joint)),
+    [change, versionId],
+  )
+  const putBackAll = () => void change("put back the app's marks", undefined, api.resetMarks(versionId))
+  const historyError = history.lastError ? (history.lastError instanceof Error ? history.lastError.message : String(history.lastError)) : null
 
   if (hidden) return null
   const asks = data?.to_check ?? []
@@ -337,13 +392,13 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
       }))
     : []
   return (
-    <section className={'body-marks' + (data ? ` body-marks-${data.state}` : '')} aria-busy={busy || !data}>
+    <section className={'body-marks' + (data ? ` body-marks-${data.state}` : '')} aria-busy={busy || !data} onPointerDownCapture={activate} onFocusCapture={activate}>
       <div className="view-intro view-intro-flush muted small">
         <strong>Mark the body</strong> <Info term="term.body_marks" /> Where the joints are on each picture. Left and right are always the person's own, so on the back their left is on your left.
         {locked ? '' : ' Drag a mark to move it.'}
       </div>
       {!data && !error && <div className="muted small">Finding the marks...</div>}
-      {error && <div className="body-marks-error small">The marks could not be shown: {error}</div>}
+      {(error || historyError) && <div className="body-marks-error small">The marks could not be shown: {error ?? historyError}</div>}
       {data && (
         <>
           <div className="body-marks-state small" aria-live="polite">
@@ -392,13 +447,14 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
           )}
           {!locked && (
             <div className="body-marks-actions">
+              <UndoRedoButtons history={history} />
               {data.state === 'check' && (
                 <button type="button" disabled={busy} onClick={() => run(api.acceptMarks(versionId))}>
                   These look right
                 </button>
               )}
               {(yours || data.accepted) && (
-                <button type="button" className="link" disabled={busy} onClick={() => run(api.resetMarks(versionId))}>
+                <button type="button" className="link" disabled={busy} onClick={putBackAll}>
                   Put back the app's marks
                 </button>
               )}
