@@ -87,3 +87,17 @@ def test_the_rig_step_stops_only_on_the_role_fault(tmp_path):
     msg = rig._role_fault(report)
     assert msg and msg.startswith("The rig stopped") and "the two shoulders are not level" in msg
     assert rig.ROLE_FAULT_PREFIX == rf.ROLE_FAULT              # the two copies of the prefix stay in step
+
+
+def test_a_chain_shifted_onto_the_spine_line_is_refused():
+    """A shifted chain: the left clavicle (named Head in the raw rig) sits on the spine line instead of beside it, so the
+    shoulder would be the spine's own bone. The check must refuse it, not pass it because the arm counts match."""
+    bones = humanoid()
+    for b in bones:
+        if b["name"] in ("Head", "LeftShoulder", "LeftArm", "LeftForeArm"):
+            x, y, z = b["head"]
+            b["head"] = (0.01 if b["name"] == "Head" else x, y, z)
+    res = _roles(bones)
+    assert not res["ok"]
+    assert res["reason"].startswith(rf.ROLE_FAULT)
+    assert "left shoulder is not beside the spine" in res["reason"]
