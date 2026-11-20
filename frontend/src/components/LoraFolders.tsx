@@ -22,7 +22,7 @@ function cardNotes(notes: LoraRestartNote[]) {
   )
 }
 
-// Every open copy of this panel (the setup page and the install step) reloads when one of them changes the list.
+// Every open copy of this panel (the setup page and the install step) takes the new list and answer when one of them changes it.
 const CHANGED = 'vgac-lora-folders-changed'
 
 export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
@@ -42,9 +42,17 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
           setNotes(d.restart)
         })
         .catch((e: unknown) => setError(e))
+    // A change made in another copy carries its answer ("Added..." or "Removed...") and notes, so every copy says the same.
+    const changed = (e: Event) => {
+      const r = (e as CustomEvent<LoraFoldersState | undefined>).detail
+      if (!r) return void reload()
+      setData(r)
+      setMessage(r.message ?? '')
+      setNotes(r.restart)
+    }
     void reload()
-    window.addEventListener(CHANGED, reload)
-    return () => window.removeEventListener(CHANGED, reload)
+    window.addEventListener(CHANGED, changed)
+    return () => window.removeEventListener(CHANGED, changed)
   }, [])
 
   // One change (add or remove): the new list, the plain answer, and the restart notes for it. False when it was refused.
@@ -57,7 +65,7 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
       setData(r)
       setMessage(r.message ?? '')
       setNotes(r.restart)
-      window.dispatchEvent(new Event(CHANGED))
+      window.dispatchEvent(new CustomEvent(CHANGED, { detail: r }))
       onChanged?.()
       return true
     } catch (e) {
