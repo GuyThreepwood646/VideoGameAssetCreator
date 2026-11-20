@@ -1,6 +1,5 @@
 // The Shape tab's settings and geometry helpers (WP-26). Pure functions: the tab keeps the state, the backend does the
 // cut. Ranges match backend/vgac/separate.py (GAP_RANGE, START_RANGE) and main.py ShapeIn.
-import * as THREE from 'three'
 import type { ShapeArm, ShapeBody } from '../../api'
 
 export type ShapeSide = 'L' | 'R' | 'both'
@@ -66,41 +65,25 @@ export function distanceToSegment(p: { x: number; y: number; z: number }, a: num
   return Math.hypot(q[0], q[1], q[2])
 }
 
-// The triangles of one mesh inside the band where the cut starts: the centroid within the band's half width of the
-// plane through cut_start (normal = the upper arm's axis) and within radius_m of it. Returns vertex indices, three per
-// triangle, as RegionHighlight takes them. Uses the mesh's world matrix, so the band sits where the model is drawn.
-export function bandVertices(mesh: THREE.Mesh, arm: ShapeArm): Uint32Array {
-  const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined
-  if (!pos) return new Uint32Array(0)
-  mesh.updateWorldMatrix(true, false)
-  const index = mesh.geometry.getIndex()
-  const triCount = index ? index.count / 3 : pos.count / 3
-  const v = new THREE.Vector3()
-  const cut = new THREE.Vector3(...arm.cut_start)
-  const axis = new THREE.Vector3(...arm.axis).normalize()
-  const at = (i: number) => v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld)
-  const out: number[] = []
-  const c = new THREE.Vector3()
-  for (let t = 0; t < triCount; t++) {
-    const ia = index ? index.getX(t * 3) : t * 3
-    const ib = index ? index.getX(t * 3 + 1) : t * 3 + 1
-    const ic = index ? index.getX(t * 3 + 2) : t * 3 + 2
-    const a = at(ia).clone()
-    const b = at(ib).clone()
-    const cc = at(ic).clone()
-    c.copy(a).add(b).add(cc).multiplyScalar(1 / 3)
-    const offPlane = Math.abs(c.clone().sub(cut).dot(axis))
-    if (offPlane <= arm.half_band_m && c.distanceTo(cut) <= arm.radius_m) out.push(ia, ib, ic)
+// The cut-start marker for one arm: a ring in the plane the cut starts in (normal = the upper arm's axis, centred on the
+// cut start). It is wider than the arm's own radius and thick enough to read at the tab's size on a whole character.
+export function cutRing(arm: ShapeArm): { center: [number, number, number]; normal: [number, number, number]; inner: number; outer: number } {
+  const outer = Math.max(arm.radius_m * 1.6, 0.11)
+  return {
+    center: [arm.cut_start[0], arm.cut_start[1], arm.cut_start[2]],
+    normal: [arm.axis[0], arm.axis[1], arm.axis[2]],
+    inner: outer * 0.7,
+    outer,
   }
-  return new Uint32Array(out)
 }
 
-// The mesh that carries most of the band, with its triangles (the viewer's highlight takes one mesh).
-export function bandHighlight(meshes: THREE.Mesh[], arm: ShapeArm): { mesh: THREE.Mesh; triangles: Uint32Array } | null {
-  let best: { mesh: THREE.Mesh; triangles: Uint32Array } | null = null
-  for (const mesh of meshes) {
-    const triangles = bandVertices(mesh, arm)
-    if (triangles.length && (!best || triangles.length > best.triangles.length)) best = { mesh, triangles }
-  }
-  return best
+// Where the camera looks when the tab opens: the chosen arm's cut start, or the midpoint of both when both arms are
+// chosen, with a radius that keeps the marks in view. Model space (the caller converts to the world).
+export function focusCentre(arms: Partial<Record<'L' | 'R', ShapeArm>>, side: ShapeSide): { point: [number, number, number]; radius: number } | null {
+  const sides = side === 'both' ? (['L', 'R'] as const) : ([side] as const)
+  const starts = sides.map((s) => arms[s]?.cut_start).filter((p): p is number[] => !!p)
+  if (!starts.length) return null
+  const mid = [0, 1, 2].map((k) => starts.reduce((a, p) => a + p[k], 0) / starts.length) as [number, number, number]
+  const spread = Math.max(...starts.map((p) => Math.hypot(p[0] - mid[0], p[1] - mid[1], p[2] - mid[2])))
+  return { point: mid, radius: spread + 0.2 }
 }

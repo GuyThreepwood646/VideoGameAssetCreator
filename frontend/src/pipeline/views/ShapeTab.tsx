@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import * as THREE from 'three'
 import { api, libraryUrl, type ShapeLog, type ShapePreview, type Version } from '../../api'
 import { useEditHistory } from '../../editHistory'
 import Viewer from '../../Viewer'
-import type { RegionHighlight } from '../../regionOverlay'
 import type { ViewerModel, ViewerTool } from '../../viewerTool'
 import {
   DEFAULT_SHAPE,
@@ -10,8 +10,9 @@ import {
   SIDE_CHOICES,
   START_PERCENT,
   armWords,
-  bandHighlight,
   clampShape,
+  cutRing,
+  focusCentre,
   gapWords,
   nearestArm,
   shapeBody,
@@ -20,11 +21,43 @@ import {
 } from './shapeModel'
 
 // The Shape tab (WP-26): on a finished rig, separate a fused arm from the body. The page sends parameters only. The
-// preview computes where each cut starts and shades that band; it writes nothing. Apply runs the job, which makes a new
-// clean-up version. The source version is never changed. Undo and redo cover the settings (the WP-71 shared history);
-// applying is undone by choosing the earlier version.
+// preview computes where each cut starts; the tab draws a ring in the cut's plane on each chosen upper arm, on top of
+// the model, and looks at the arm when it opens. Apply runs the job, which makes a new clean-up version. The source
+// version is never changed. Undo and redo cover the settings (the WP-71 shared history); applying is undone by
+// choosing the earlier version.
 
 const DEBOUNCE_MS = 350
+// The app's accent colour (styles.css --accent): a light blue that reads on the skin, the cloth and the leather.
+const CUT_COLOUR = 0x6ea4e8
+
+// The rings for the chosen arms, on the model's first mesh (model space, which the glTF file's own mesh uses). They
+// draw over the model (no depth test), so a cut start is never hidden by the body. Returns the clean-up.
+function addCutRings(model: ViewerModel, preview: ShapePreview, side: ShapeSettings['side']): () => void {
+  const host = model.meshes[0]
+  if (!host) return () => {}
+  const sides = side === 'both' ? (['L', 'R'] as const) : ([side] as const)
+  const added: THREE.Mesh[] = []
+  for (const s of sides) {
+    const arm = preview.arms[s]
+    if (!arm) continue
+    const r = cutRing(arm)
+    const geo = new THREE.RingGeometry(r.inner, r.outer, 48)
+    const mat = new THREE.MeshBasicMaterial({ color: CUT_COLOUR, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
+    const ring = new THREE.Mesh(geo, mat)
+    ring.position.set(...r.center)
+    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...r.normal).normalize())
+    ring.renderOrder = 999
+    host.add(ring)
+    added.push(ring)
+  }
+  return () => {
+    for (const ring of added) {
+      host.remove(ring)
+      ring.geometry.dispose()
+      ;(ring.material as THREE.Material).dispose()
+    }
+  }
+}
 
 export function ShapeTab({ version, onChanged }: { version: Version; onChanged?: () => void }) {
   const glb = libraryUrl(version.files.glb)
@@ -33,9 +66,21 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
   const [model, setModel] = useState<ViewerModel | null>(null)
   const [preview, setPreview] = useState<ShapePreview | null>(null)
   const [previewNote, setPreviewNote] = useState<string | null>(null)
+  const [focus, setFocus] = useState<{ point: [number, number, number]; radius: number } | null>(null)
   const [picking, setPicking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+
+  // The camera opens on the chosen arm (or both shoulders) once, when both the drawn model and the first preview exist.
+  const focusedRef = useRef(false)
+  useEffect(() => {
+    if (focusedRef.current || !model || !preview) return
+    const c = focusCentre(preview.arms, settings.side)
+    if (c) {
+      setFocus(c)
+      focusedRef.current = true
+    }
+  }, [model, preview, settings.side])
 
   // Settings change through one place, so each change is one undoable step. Repeated slider moves on one setting merge.
   const change = (next: Partial<ShapeSettings>, label: string, key: string) => {
@@ -46,7 +91,7 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
     history.record({ label, key, undo: () => setSettings(before), redo: () => setSettings(after) })
   }
 
-  // Preview: the cut's start on each arm, after the settings settle. Computes only.
+  // Preview: where each cut starts, after the settings settle. Computes only.
   const body = shapeBody(settings)
   const bodyKey = JSON.stringify(body)
   useEffect(() => {
@@ -56,10 +101,9 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
       api
         .shapePreview(version.id, JSON.parse(bodyKey))
         .then((p) => {
-          if (live.current) {
-            setPreview(p)
-            setPreviewNote(null)
-          }
+          if (!live.current) return
+          setPreview(p)
+          setPreviewNote(null)
         })
         .catch((e: unknown) => {
           if (live.current) setPreviewNote(e instanceof Error ? e.message : 'The preview could not be made.')
@@ -71,18 +115,10 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
     }
   }, [version.id, bodyKey, glb])
 
-  // The band shaded on the model: the arm the settings name (both arms when both are chosen; the larger band is drawn).
-  const highlight: RegionHighlight | null = useMemo(() => {
-    if (!model || !preview) return null
-    const sides = settings.side === 'both' ? (['L', 'R'] as const) : ([settings.side] as const)
-    let best: RegionHighlight | null = null
-    for (const s of sides) {
-      const arm = preview.arms[s]
-      if (!arm) continue
-      const h = bandHighlight(model.meshes, arm)
-      if (h && (!best || h.triangles.length > best.triangles.length)) best = h
-    }
-    return best
+  // The rings follow the preview and the chosen arm (and so undo and redo).
+  useEffect(() => {
+    if (!model || !preview) return
+    return addCutRings(model, preview, settings.side)
   }, [model, preview, settings.side])
 
   // Picking an arm on the model: the click chooses the side nearest the arm's shoulder-to-elbow line. The tool reads the
@@ -131,7 +167,7 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
       <div className="shape-tab-operation">
         <strong>Separate a fused arm</strong>
       </div>
-      <Viewer url={glb} height={320} tool={tool} onToolExit={() => setPicking(false)} onModelLoaded={setModel} highlight={highlight} />
+      <Viewer url={glb} height={320} tool={tool} onToolExit={() => setPicking(false)} onModelLoaded={setModel} focus={focus} />
       <div className="shape-tab-arm">
         <div className="field-label">Which arm</div>
         <div className="row">
@@ -144,8 +180,9 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
             {picking ? 'Click the arm on the model' : 'Pick the arm on the model'}
           </button>
         </div>
+        <p className="field-hint">The ring marks where the cut starts on each chosen upper arm.</p>
       </div>
-      <label className="shape-tab-slider">
+      <label className="field shape-tab-slider">
         <span className="field-label">Gap between the two pieces: {gapWords(settings.gapMm)}</span>
         <input
           type="range"
@@ -155,9 +192,9 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
           value={settings.gapMm}
           onChange={(e) => change({ gapMm: Number(e.target.value) }, `set the gap to ${e.target.value} mm`, 'gap')}
         />
-        <span className="muted">A wider gap leaves a visible seam between the arm and the body.</span>
+        <span className="field-hint">A wider gap leaves a visible seam between the arm and the body.</span>
       </label>
-      <label className="shape-tab-slider">
+      <label className="field shape-tab-slider">
         <span className="field-label">Where the cut starts: {startWords(settings.startPercent)}</span>
         <input
           type="range"
@@ -167,7 +204,7 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
           value={settings.startPercent}
           onChange={(e) => change({ startPercent: Number(e.target.value) }, `set the cut start to ${e.target.value} percent`, 'start')}
         />
-        <span className="muted">A lower start keeps more of the shoulder whole.</span>
+        <span className="field-hint">A lower start keeps more of the shoulder whole.</span>
       </label>
       <div className="row shape-tab-history">
         <button type="button" disabled={!history.canUndo} onClick={() => void history.undo()} title={history.undoLabel ? `Undo: ${history.undoLabel}` : 'Nothing to undo'}>
@@ -184,7 +221,7 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
           <p key={m}>{m}</p>
         ))}
         <p className="muted">
-          The shaded band shows where the cut starts. The engine follows the weight line inside the fused strip, so the real cut sits near the band, not exactly on it.
+          The ring shows where the cut starts. The engine follows the weight line inside the fused strip, so the real cut sits near the ring, not exactly on it.
         </p>
       </div>
       <div className="row">

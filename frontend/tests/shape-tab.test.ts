@@ -1,12 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as THREE from 'three'
 import { EditHistory } from '../src/editHistory'
 import {
   DEFAULT_SHAPE,
   armWords,
-  bandHighlight,
   clampShape,
+  cutRing,
+  focusCentre,
   nearestArm,
   shapeBody,
   startWords,
@@ -46,30 +46,24 @@ test('a click picks the arm whose shoulder-to-elbow line is nearest', () => {
   assert.equal(nearestArm({ x: 0, y: 0, z: 0 }, {}), null)
 })
 
-test('the band shades only the triangles that sit in the cut plane band near its start', () => {
-  // Two triangles: one on the cut plane (x = 0.29), one far down the arm (x = 0.45).
-  const pos = new Float32Array([
-    0.29, 1.39, -0.02, 0.29, 1.41, -0.02, 0.29, 1.4, 0.03, // near the plane
-    0.45, 1.39, -0.02, 0.45, 1.41, -0.02, 0.45, 1.4, 0.03, // far away
-  ])
-  const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-  const mesh = new THREE.Mesh(geo)
-  const h = bandHighlight([mesh], arm)
-  assert.ok(h, 'a band is found')
-  assert.deepEqual(Array.from(h.triangles), [0, 1, 2])
-  assert.equal(bandHighlight([mesh], { ...arm, cut_start: [5, 5, 5] }), null)
+test('the ring sits in the cut plane at the cut start, sized to the arm', () => {
+  const r = cutRing(arm)
+  assert.deepEqual(r.center, [0.29, 1.4, 0])
+  assert.deepEqual(r.normal, [1, 0, 0])
+  assert.ok(r.outer >= arm.radius_m && r.outer >= 0.11)
+  assert.ok(r.inner < r.outer && r.inner > 0)
 })
 
-test('the band highlight is a mesh-world check, so a moved mesh is measured where it is drawn', () => {
-  const pos = new Float32Array([0, 0, 0, 0, 0.02, 0, 0, 0, 0.02])
-  const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-  const mesh = new THREE.Mesh(geo)
-  mesh.position.set(0.29, 1.4, 0)
-  mesh.updateMatrixWorld(true)
-  const h = bandHighlight([mesh], { ...arm, cut_start: [0.29, 1.4, 0], radius_m: 0.05 })
-  assert.ok(h)
+test('the camera opens on the chosen arm, or on both cut starts when both arms are chosen', () => {
+  const arms = { L: { ...arm }, R: { ...arm, cut_start: [-0.29, 1.4, 0], shoulder: [-0.2, 1.4, 0], elbow: [-0.5, 1.4, 0] } }
+  const one = focusCentre(arms, 'L')
+  assert.ok(one)
+  assert.deepEqual(one.point, [0.29, 1.4, 0])
+  const both = focusCentre(arms, 'both')
+  assert.ok(both)
+  assert.ok(Math.abs(both.point[0]) < 1e-9)
+  assert.ok(both.radius > one.radius - 0.2)
+  assert.equal(focusCentre({}, 'both'), null)
 })
 
 test('applying the settings is one undoable step per change, and a slider run merges into one', async () => {
