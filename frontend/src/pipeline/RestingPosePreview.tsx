@@ -7,7 +7,18 @@ import { api, type PosePreviewState } from '../api'
 
 const POLL_MS = 1500
 
-export function RestingPosePreview({ versionId, settings }: { versionId: string; settings: Record<string, unknown> }) {
+const HAND_WORDS: Record<string, string> = { open: 'Open', relaxed: 'Relaxed', fist: 'Loose fist' }
+
+// What the picture shows, in plain words: the hand shape and the finger curl it was made with (the picture's own settings
+// when one is shown, else the form's). On a one-lump hand it says that only the wrist moves.
+function previewCaption(settings: Record<string, unknown> | undefined, noFingers: boolean): string {
+  const hand = HAND_WORDS[String(settings?.hand_pose ?? 'relaxed')] ?? String(settings?.hand_pose ?? '')
+  const curl = settings?.finger_curl === undefined ? '1' : String(settings.finger_curl)
+  const base = `Hand shape: ${hand}, finger curl ${curl}.`
+  return noFingers ? `${base} This character's hands have no finger bones, so only the wrist moves.` : base
+}
+
+export function RestingPosePreview({ versionId, settings, noFingers = false }: { versionId: string; settings: Record<string, unknown>; noFingers?: boolean }) {
   const [state, setState] = useState<PosePreviewState>({ state: 'none' })
   const [stamp, setStamp] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -80,6 +91,9 @@ export function RestingPosePreview({ versionId, settings }: { versionId: string;
       </div>
       {state.state === 'failed' && <div className="error small">The preview did not work: {state.reason ?? 'unknown reason'}.</div>}
       {error && <div className="error small">{error}</div>}
+      {shown && (
+        <div className="muted small resting-preview-caption">{previewCaption(state.settings ?? settings, noFingers)}</div>
+      )}
       {shown && (
         <img
           className="resting-preview-picture"

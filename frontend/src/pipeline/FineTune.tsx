@@ -144,6 +144,8 @@ export function FineTune({
   // WP-76: a rig whose hands are one lump (no finger bones) relaxes only the wrist; the rig step records the finger count per hand.
   const handFingers = target.metrics?.hand_fingers
   const restingNoFingers = Array.isArray(handFingers) && handFingers.length > 0 && handFingers.every((n) => n === 0)
+  // The change line names the value before and after (a select shows its plain label).
+  const changeText = (p: AdjustParam, v: unknown): string => (v === undefined || v === null || v === '' ? 'none' : p.type === 'select' ? optionLabel(p, v) : String(v))
   const schemaHasFlag = visible.some((p) => p.simple !== undefined)
   // The concept step always shows its add-ons section (it says when nothing is tested and offers your own).
   const shown = visible.filter(
@@ -452,13 +454,14 @@ export function FineTune({
       {simpleShown.some((p) => p.group === 'Resting pose') && (
         <fieldset className="resting-group">
           <legend>Resting pose</legend>
-          <div className="adjust-grid">{simpleShown.filter((p) => p.group === 'Resting pose').map((p) => renderField(p, false))}</div>
           {stage === 'rig' && restingNoFingers && (
             <div className="muted small">This character&apos;s hands have no fingers to bend, so only the wrist relaxes. The hand shape and finger curl set how far the wrist bends.</div>
           )}
+          <div className="adjust-grid">{simpleShown.filter((p) => p.group === 'Resting pose').map((p) => renderField(p, false))}</div>
           {stage === 'rig' && (
             <RestingPosePreview
               versionId={target.id}
+              noFingers={restingNoFingers}
               settings={Object.fromEntries(['arm_pose', 'hand_pose', 'finger_curl'].filter((k) => k in values).map((k) => [k, values[k]]))}
             />
           )}
@@ -487,7 +490,7 @@ export function FineTune({
         <button type="button" disabled={!changed.length} onClick={() => setValues(initial)}>
           Reset
         </button>
-        <span className="muted small">{withText && changed.length ? 'Your described change goes with it. ' : ''}{changed.length ? `${changed.length} changed: ${changed.map((p) => paramPlain(p.name, p.label)).join(', ')}` : submitLabel ? 'the usual settings for your look and platform' : 'no changes yet'}</span>
+        <span className="muted small">{withText && changed.length ? 'Your described change goes with it. ' : ''}{changed.length ? `${changed.length} changed: ${changed.map((p) => `${paramPlain(p.name, p.label)}: ${changeText(p, initial[p.name])} to ${changeText(p, values[p.name])}`).join(', ')}` : submitLabel ? 'the usual settings for your look and platform' : 'no changes yet'}</span>
       </div>
     </form>
   )

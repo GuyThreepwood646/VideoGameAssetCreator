@@ -240,7 +240,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("finger_curl", "number", 1.0, min=0, max=1.5, step=0.1, label="Finger curl", group="Resting pose", categories=["humanoid"],
                description="How far the chosen hand shape curls the fingers: 0 leaves them straight, 1 is the shape as designed, 1.5 curls more"),
         _param("neutral_pose", "boolean", False, categories=["humanoid"], label="Neutral pose clip",
-               description="Adds one still frame, named neutral_pose, that holds the stand-still arm angle (with the Arm pose setting). Off by default. The rest pose and the skin are not changed"),
+               description="Adds one still frame, a clip named Neutral pose, that holds the stand-still arm angle (with the Arm pose setting). Off by default. The rest pose and the skin are not changed"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
