@@ -50,10 +50,16 @@ def is_painted(v: Version | None) -> bool:
     return bool(isinstance(m, dict) and m.get("painted"))
 
 
+SHAPE_REFUSAL = ("This step has your separated arm. Adjust and Refine would rebuild the clean-up from the 3D model and lose "
+                 "the cut. Separate the arm again from the rig to change the cut.")
+
+
 def refusal(parent: Version | None) -> str | None:
     """The plain reason Adjust or Refine is refused on `parent`, or None when they may run."""
     if parent is not None and parent.stage == "prep" and is_painted(parent):
         return REFUSAL
+    if parent is not None and parent.stage == "prep" and (parent.metrics or {}).get("shaped"):
+        return SHAPE_REFUSAL
     return None
 
 

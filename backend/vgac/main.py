@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, paintsave, people, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, paintsave, people, pipeline, reference, shape
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -242,6 +242,14 @@ class PaintIn(BaseModel):
 class SmoothIn(BaseModel):
     # Smooth the paint (WP-24): "light" or "strong" (paintsave.SMOOTH_STRENGTHS).
     strength: Literal["light", "strong"]
+
+
+class ShapeIn(BaseModel):
+    # Separate a fused arm (WP-26, shape.py). Parameters only; the server checks them again (separate.check_params).
+    operation: Literal["separate"] = "separate"
+    side: Literal["L", "R", "both"] = "both"
+    gap: float = Field(default=0.006, ge=0.002, le=0.02)  # metres
+    start: float = Field(default=0.3, ge=0.15, le=0.6)  # share of the upper arm from the shoulder joint
 
 
 class JudgeIn(BaseModel):
@@ -1001,6 +1009,42 @@ def smooth_version(vid: str, body: SmoothIn, db: Session = Depends(get_session))
     inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
     v = pipeline.new_version(db, a, "prep", parent, inherited)
     job = pipeline.submit(db, a, v, "smooth", {"params": {"strength": body.strength}})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/shape/preview")
+def shape_preview(vid: str, body: ShapeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Where each arm's cut would start on this rig (shape.preview). Computes only: no job, no version."""
+    rig = _version(db, vid)
+    if rig.stage != "rig" or rig.status != "done":
+        raise HTTPException(400, "the shape tab works on a finished rig")
+    glb = library.version_file(rig, "glb", get_settings())
+    if glb is None:
+        raise HTTPException(400, "this rig has no model to measure")
+    try:
+        return shape.preview(glb, start=body.start, gap=body.gap)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/versions/{vid}/shape")
+def shape_version(vid: str, body: ShapeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Separate a fused arm (WP-26): a new clean-up version from the one this rig was made from. The job runs the
+    engine on the library's files; a refusal fails the job with the plain reasons and makes no model."""
+    rig = _version(db, vid)
+    if rig.stage != "rig" or rig.status != "done":
+        raise HTTPException(409, "the arm can be separated from a finished rig")
+    a = _asset(db, rig.asset_id)
+    try:
+        params = shape.parse(body.model_dump())
+        source = shape.rig_source(db, rig)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    if source.status != "done":
+        raise HTTPException(409, f"the clean-up is {source.status}, not done")
+    inherited = {k: val for k, val in reference.inherited_params(source.stage, source.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", source, inherited)
+    job = pipeline.submit(db, a, v, "shape", {"params": {**params, "rig_version_id": rig.id}})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 

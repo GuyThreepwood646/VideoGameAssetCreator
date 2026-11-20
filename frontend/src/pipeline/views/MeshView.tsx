@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useBlocker } from 'react-router'
-import { api, creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
+import { api, creditText, libraryUrl, type Asset, type LibraryHairMetrics, type ShapeLog, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
@@ -12,6 +12,7 @@ import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
 import { SmoothPaint, TouchUp } from './TouchUp'
+import { ShapeLogNote } from './ShapeTab'
 import type { FixAction } from '../../help'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -130,6 +131,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
         <div className="placeholder-box">No 3D model in this version.</div>
       )}
       {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} onSave={savePaint} saving={saving} saveNote={saveNote} />}
+      {version.stage === 'prep' && version.metrics?.shape_log != null && <ShapeLogNote log={version.metrics.shape_log as ShapeLog} />}
       {canPaint && version.metrics?.painted === true && <SmoothPaint versionId={version.id} smoothed={typeof version.metrics?.polished === 'string' ? version.metrics.polished : null} onDone={onChanged} />}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
