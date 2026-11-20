@@ -1,5 +1,7 @@
 // Touch up (WP-22, saving WP-23): paint on the model's colour picture in step 4. Save makes a new clean-up version with
 // the paint; until then the paint stays in this page.
+import { useState } from 'react'
+import { api } from '../../api'
 import { BRUSH_MAX, BRUSH_MIN, type PaintMode, type PaintSettings } from '../../paint/paintSession'
 import type { PaintState } from '../../paint/usePaint'
 
@@ -116,6 +118,58 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
           {paint.notice && <div className="small muted">{paint.notice}</div>}
         </>
       )}
+    </div>
+  )
+}
+
+// Smooth the paint (WP-24): on a painted clean-up, a new version with the paint smoothed inside its own mask. The
+// backend refuses it for any other version; Adjust, Refine and Try again stay refused on the painted version.
+const SMOOTH_CHOICES: { id: 'light' | 'strong'; label: string; hint: string }[] = [
+  { id: 'light', label: 'Light', hint: 'takes off the speckle and the hardest brush edges' },
+  { id: 'strong', label: 'Strong', hint: 'softer again: three passes' },
+]
+
+export function SmoothPaint({ versionId, smoothed, onDone }: { versionId: string; smoothed: string | null; onDone?: () => void }) {
+  const [strength, setStrength] = useState<'light' | 'strong'>('light')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const run = async () => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await api.smooth(versionId, { strength })
+      setNote('Saved. The smoothed version appears here when it is made. Keep it to carry the paint on to the rig and the export.')
+      onDone?.()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Could not smooth the paint. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const chosen = SMOOTH_CHOICES.find((c) => c.id === strength)
+  return (
+    <div className="touch-up" data-testid="smooth-paint">
+      <div className="field-label">Smooth the paint</div>
+      <div className="small muted">
+        Softens the hard brush edges and the speckle inside the painted area only. Colours outside it, and the edges of real colour changes, stay as they are. Saves as a new version.
+        {smoothed ? ` This version is already smoothed (${smoothed}).` : ''}
+      </div>
+      <div className="touch-up-row">
+        <span className="segmented" role="radiogroup" aria-label="How much to smooth">
+          {SMOOTH_CHOICES.map((c) => (
+            <button key={c.id} type="button" role="radio" aria-checked={strength === c.id} className={strength === c.id ? 'active' : ''} onClick={() => setStrength(c.id)}>
+              {c.label}
+            </button>
+          ))}
+        </span>
+        <span className="small muted">{chosen?.hint}</span>
+      </div>
+      <div className="touch-up-row">
+        <button type="button" className="btn primary" disabled={busy} onClick={run}>
+          {busy ? 'Smoothing the paint' : 'Smooth the paint'}
+        </button>
+        {note && <span className="small muted">{note}</span>}
+      </div>
     </div>
   )
 }

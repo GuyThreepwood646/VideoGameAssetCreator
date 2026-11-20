@@ -487,3 +487,150 @@ def test_retexture_of_a_rig_without_an_embedded_picture_uses_the_sidecar(version
     monkeypatch.setattr(rig, "link_textures", lambda s: link.__setitem__("done", True))
     assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
     assert link["done"] and new_rig.metrics["rig_method"] == "retexture"
+
+
+# --- Smooth the paint (WP-24) ---------------------------------------------------------------------------------------
+
+
+def _two_islands():
+    """Labels: island 1 on the left half, island 2 on the right half, with a 2 texel gap of no island between them."""
+    labels = np.zeros((SIZE, SIZE), np.int32)
+    labels[:, :30] = 1
+    labels[:, 34:] = 2
+    return labels
+
+
+def test_smooth_softens_speckle_inside_the_mask_only():
+    rng = np.random.default_rng(5)
+    labels = np.ones((SIZE, SIZE), np.int32)
+    parent = np.zeros((SIZE, SIZE, 4), np.uint8)
+    parent[..., :3] = 120
+    parent[..., 3] = 255
+    noise = rng.integers(-40, 40, (SIZE, SIZE, 3))
+    parent[..., :3] = np.clip(parent[..., :3].astype(int) + noise, 0, 255).astype(np.uint8)
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[20:44, 20:44] = True
+    out, counts = paintsave.smooth_picture(parent, edit, labels, "strong", SIZE)
+    before = parent[edit][..., :3].astype(float).std()
+    after = out[edit][..., :3].astype(float).std()
+    assert after < before
+    assert counts["polished_texels"] > 0
+    assert np.array_equal(out[~edit & (labels == 0)], parent[~edit & (labels == 0)])
+
+
+def test_smooth_keeps_a_real_colour_edge():
+    labels = np.ones((SIZE, SIZE), np.int32)
+    parent = np.zeros((SIZE, SIZE, 4), np.uint8)
+    parent[:, :32, :3] = [200, 40, 40]
+    parent[:, 32:, :3] = [20, 20, 220]
+    parent[..., 3] = 255
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[:, 26:38] = True
+    out, _ = paintsave.smooth_picture(parent, edit, labels, "strong", SIZE)
+    # Far from the edge the colours do not move, and the edge is not blurred into a ramp.
+    assert (out[10, 2, :3] == [200, 40, 40]).all()
+    assert (out[10, 60, :3] == [20, 20, 220]).all()
+    assert int(np.abs(out[10, 31, :3].astype(int) - out[10, 32, :3].astype(int)).sum()) > 200
+
+
+def test_smooth_never_mixes_colour_across_an_island_border():
+    labels = _two_islands()
+    parent = np.zeros((SIZE, SIZE, 4), np.uint8)
+    parent[..., 3] = 255
+    parent[:, :30, :3] = [200, 0, 0]
+    parent[:, 34:, :3] = [0, 0, 200]
+    rng = np.random.default_rng(9)
+    parent[..., 0] = np.where(labels == 1, np.clip(200 + rng.integers(-30, 30, (SIZE, SIZE)), 0, 255), parent[..., 0])
+    parent[..., 2] = np.where(labels == 2, np.clip(200 + rng.integers(-30, 30, (SIZE, SIZE)), 0, 255), parent[..., 2])
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[:, 24:40] = True  # straddles both islands and the gap
+    for strength in ("light", "strong"):
+        out, _ = paintsave.smooth_picture(parent, edit, labels, strength, SIZE)
+        assert (out[labels == 1][..., 2] == 0).all()
+        assert (out[labels == 2][..., 0] == 0).all()
+        assert (out[labels == 1][..., 0] > 100).all() and (out[labels == 2][..., 2] > 100).all()
+
+
+def test_smooth_is_byte_identical_outside_the_mask_except_the_padding():
+    labels = np.ones((SIZE, SIZE), np.int32)
+    labels[:4, :] = 0
+    labels[:, :4] = 0
+    rng = np.random.default_rng(11)
+    parent = rng.integers(0, 255, (SIZE, SIZE, 4), dtype=np.uint8)
+    parent[..., 3] = 255
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[30:34, 30:34] = True
+    out, counts = paintsave.smooth_picture(parent, edit, labels, "strong", SIZE)
+    island = labels > 0
+    # Island texels outside the mask are exactly the parent's.
+    assert np.array_equal(out[island & ~edit], parent[island & ~edit])
+    # Changed texels are all painted island texels or gutter texels within the padding reach of a painted texel.
+    changed = (out != parent).any(axis=-1)
+    reach = _grow(edit, paintsave._pad_px(SIZE))
+    assert not (changed & ~edit & island).any()
+    assert not (changed & ~reach).any()
+    assert counts["polished_texels"] == int((changed & edit & island).sum())
+
+
+def test_smooth_with_no_painted_island_texel_changes_nothing():
+    labels = np.zeros((SIZE, SIZE), np.int32)
+    labels[:, :32] = 1
+    parent = _picture()
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[:, 40:] = True  # painted only where no island lies
+    out, counts = paintsave.smooth_picture(parent, edit, labels, "light", SIZE)
+    assert np.array_equal(out, parent)
+    assert counts["polished_texels"] == 0
+
+
+def test_smooth_rejects_an_unknown_strength():
+    with pytest.raises(ValueError, match="light or strong"):
+        paintsave.smooth_picture(_picture(), np.ones((SIZE, SIZE), bool), np.ones((SIZE, SIZE), np.int32), "medium", SIZE)
+
+
+def test_smooth_step_scales_with_the_texture():
+    assert paintsave.smooth_step(1024) == 1
+    assert paintsave.smooth_step(4096) == 4
+    assert paintsave.smooth_step(256) == 1
+
+
+def test_smooth_job_makes_a_new_painted_version(version_files, tmp_path):
+    base = np.zeros((SIZE, SIZE, 4), np.uint8)
+    rng = np.random.default_rng(2)
+    base[..., :3] = np.clip(120 + rng.integers(-50, 50, (SIZE, SIZE, 3)), 0, 255)
+    base[..., 3] = 255
+    parent = _parent_on_disk(tmp_path, base)
+    island = _island(tmp_path)
+    edit = np.zeros((SIZE, SIZE), bool)
+    rows, cols = np.where(island)
+    edit[rows[:200], cols[:200]] = True
+    Image.fromarray((edit * 255).astype(np.uint8), "L").save(parent.folder / "paint_mask.png")
+    strokes = parent.folder / "paint_strokes.json"
+    strokes.write_text('[{"mode": "paint"}]', encoding="utf-8")
+    parent.files.update({"paint_mask": str(parent.folder / "paint_mask.png"), "paint_strokes": str(strokes)})
+    parent.metrics.update(painted=True, painted_of="base", geometry_of="base")
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    asyncio.run(paintsave.smooth(sc, {"strength": "strong"}))
+
+    assert child.metrics["painted"] is True and child.metrics["polished"] == "strong"
+    assert child.metrics["geometry_of"] == "base" and child.metrics["painted_of"] == "parent"
+    assert child.params["polish_strength"] == "strong"
+    assert Path(child.files["paint_mask"]).is_file() and Path(child.files["paint_strokes"]).is_file()
+    new_base = np.array(Image.open(child.files["base_color"]).convert("RGBA"))
+    assert np.array_equal(new_base[island & ~edit], base[island & ~edit])
+    assert not np.array_equal(new_base[edit], base[edit])
+    assert (_base_colour(Path(child.files["glb"]))[..., :3][edit] == new_base[..., :3][edit]).all()
+    assert parent.metrics.get("polished") is None
+    assert paintsave.refusal(child) == paintsave.REFUSAL
+
+
+def test_smooth_refuses_an_unpainted_parent(version_files, tmp_path):
+    base = _picture()
+    parent = _parent_on_disk(tmp_path, base)
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    with pytest.raises(ValueError, match="only a painted clean-up"):
+        asyncio.run(paintsave.smooth(sc, {"strength": "light"}))
