@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { libraryUrl, type Version } from '../../api'
+import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
 import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
@@ -7,7 +7,9 @@ import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 import { pointTool } from '../../declaredPoints'
 import type { ViewerModel } from '../../viewerTool'
-import { DeclaredPointsPanel, useDeclaredPoints } from './DeclaredPoints'
+import { DeclaredPointsPanel, SuggestionBlock, useDeclaredPoints } from './DeclaredPoints'
+import { isRunning, pendingSuggestion, shouldStart, suggestionPoints } from '../../suggestion'
+import { useRef } from 'react'
 import { growStiffRegion, regionTriangles } from '../../stiffRegion'
 import type { RegionHighlight } from '../../regionOverlay'
 import * as THREE from 'three'
@@ -103,6 +105,51 @@ export function RigView({ version }: { version: Version }) {
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
   const dp = useDeclaredPoints(version)
+  // The suggested worn item (WP-69 follow-up): asked for once a rig is done; shown as pending points until kept or dismissed.
+  const [sugg, setSugg] = useState<SuggestionAnswer | null>(null)
+  const suggestedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (version.status !== 'done') return
+    let alive = true
+    let timer: number | undefined
+    const load = async () => {
+      try {
+        let a = await api.getSuggestion(version.id)
+        if (!alive) return
+        if (shouldStart(a)) a = await api.startSuggestion(version.id)
+        if (!alive) return
+        setSugg(a)
+        if (isRunning(a)) timer = window.setTimeout(load, 4000)
+      } catch {
+        if (alive) setSugg(null)
+      }
+    }
+    void load()
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [version.id, version.status])
+  useEffect(() => {
+    const ps = pendingSuggestion(sugg)
+    if (!ps?.item || suggestedFor.current === `${version.id}:${ps.item}`) return
+    suggestedFor.current = `${version.id}:${ps.item}`
+    dp.setPendingPoints(ps.item, suggestionPoints(ps))
+  }, [sugg, version.id, dp])
+  async function keepSuggestion(s: ItemSuggestionState) {
+    if (!s.item) return
+    if (!dp.parts?.some((p) => p.name === s.item)) {
+      const declared = [...(dp.parts ?? []).map((p) => ({ name: p.name, kind: p.kind })), { name: s.item, kind: 'stiff' }]
+      await api.updateAsset(version.asset_id, { parts: declared })
+      await dp.reloadParts()
+    }
+    dp.keepStiffPoints(s.item)
+    setSugg(await api.markSuggestion(version.id, 'kept'))
+  }
+  async function dismissSuggestion(s: ItemSuggestionState) {
+    if (s.item) dp.discardStiffPoints(s.item)
+    setSugg(await api.markSuggestion(version.id, 'dismissed'))
+  }
   const { setPoint, addStiffPoint, pending } = dp
   const [viewerModel, setViewerModel] = useState<ViewerModel | null>(null)
   const [markName, setMarkName] = useState<string | null>(null)
@@ -178,6 +225,7 @@ export function RigView({ version }: { version: Version }) {
         </div>
       )}
       {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} highlight={regionHighlight} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}

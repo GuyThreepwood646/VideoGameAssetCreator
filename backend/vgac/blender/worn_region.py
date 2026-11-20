@@ -23,6 +23,7 @@ import numpy as np
 MAX_INFLUENCES = 4
 RADIUS = 0.8  # safety net: a region never reaches further than this from its point, in metres
 SEED_SIZE = 4000  # safety net: a region never has more vertices than this
+MIN_PIECE_TIDY = 12  # tidy: pieces smaller than this are dropped
 HOLE_ROUNDS = 3  # rounds of hole filling after the growth (see fill_holes)
 CREASE_DOT = 0.87  # seam duplicates join only when their normals agree within about 30 degrees
 SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
@@ -43,7 +44,7 @@ def _adjacency(V, edges):
     return adj
 
 
-def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
+def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE, allowed=None):
     """The region grown from the vertex nearest the point (WP-69 stage 3). Growth crosses mesh edges and seam
     duplicates (same position, normals within about 30 degrees), and stops at a concave edge: where the next face lies
     behind this one (a valley, such as where a backpack meets the back), so convex ridges such as a box's own edges are
@@ -88,6 +89,8 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
                 if a0 < b0 and np.dot(vn[a0], vn[b0]) > CREASE_DOT:
                     adj[a0].append(b0)
                     adj[b0].append(a0)
+    if allowed is not None and not allowed[start]:
+        return mask
     mask[start] = True
     stack = [start]
     count = 1
@@ -96,11 +99,27 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
         for w in adj[u]:
             if count >= limit:
                 break
-            if not mask[w] and dist[w] <= radius:
+            if not mask[w] and dist[w] <= radius and (allowed is None or allowed[w]):
                 mask[w] = True
                 count += 1
                 stack.append(w)
     return mask
+
+
+def tidy_region(co, faces, allowed, min_piece=MIN_PIECE_TIDY):
+    """Keep the pieces of `allowed` that grow together under the growth rule (WP-69 tidy): each allowed vertex is a
+    seed in turn, each piece is grown within `allowed`, and pieces under min_piece vertices are dropped. A bool mask."""
+    allowed = np.asarray(allowed, dtype=bool)
+    out = np.zeros(len(allowed), dtype=bool)
+    done = np.zeros(len(allowed), dtype=bool)
+    for seed in np.where(allowed)[0]:
+        if done[seed]:
+            continue
+        piece = grow_region(co, faces, co[seed], radius=np.inf, limit=SEED_SIZE, allowed=allowed)
+        done |= piece
+        if piece.sum() >= min_piece:
+            out |= piece
+    return out
 
 
 def fill_holes(region, edges, rounds=HOLE_ROUNDS):

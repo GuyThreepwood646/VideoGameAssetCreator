@@ -115,6 +115,9 @@ class Settings(BaseModel):
     library_path: Path
     export_path: Path | None = None
     blender_exe: Path | None = None
+    # The suggested worn item finder (item_suggest.py): its own Python and its model cache. None uses local/finder.
+    finder_python: Path | None = None
+    finder_models: Path | None = None
     unity_exe: Path | None = None
     unity_project: Path | None = None
     comfy_input_dir: Path | None = None
@@ -186,7 +189,7 @@ def resolve_paths(settings: Settings, project_dir: Path = PROJECT_DIR) -> Settin
     """Make every path setting absolute: relative ones are relative to the project folder (an engine's python is
     relative to its comfy_dir). Changes `settings` in place and returns it."""
     s = settings
-    for key in ("library_path", "export_path", "blender_exe", "unity_exe", "unity_project", "comfy_input_dir",
+    for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir",
                 "loras_dir"):
         setattr(s, key, _resolve(getattr(s, key), project_dir))
     s.clips_libraries = {k: _resolve(v, project_dir) for k, v in s.clips_libraries.items()}  # type: ignore[misc]

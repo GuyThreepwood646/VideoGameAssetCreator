@@ -12,6 +12,7 @@ Only rig versions take placed parts: the rig step reads parts.json when it runs 
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -74,3 +75,55 @@ def put_parts(vid: str, body: PartsIn, db: Session = Depends(get_session)) -> di
     db.refresh(v)
     bus.publish_threadsafe({"type": "version", "version": version_to_dict(v)})  # plain def endpoints run in a worker thread
     return _answer(v, a)
+
+
+# --- Suggested worn items (item_suggest.py, WP-69 follow-up) --------------------------------------------------------
+# A suggestion is offered only for a humanoid with a kept back-worn item on a finished rig, and only when the finder's
+# models are installed (otherwise the answer says installed false and the page says nothing). Dismiss and keep stop
+# further suggestions for that rig version. Keeping saves the stiff part through the parts endpoint above.
+
+
+def _suggest_answer(v: Version, a: Asset) -> dict[str, Any]:
+    from . import item_suggest
+
+    settings = get_settings()
+    version_dir = library.version_dir(a, v, settings, create=False)
+    return {
+        "version_id": v.id,
+        "installed": item_suggest.installed(settings),
+        "eligible": item_suggest.eligible(a, v),
+        "state": item_suggest.public(item_suggest.read_state(version_dir)),
+    }
+
+
+@router.get("/api/versions/{vid}/suggestion")
+def get_suggestion(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    v, a = _version(db, vid)
+    return _suggest_answer(v, a)
+
+
+@router.post("/api/versions/{vid}/suggestion")
+def start_suggestion(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    from . import item_suggest
+
+    v, a = _version(db, vid)
+    settings = get_settings()
+    if not item_suggest.eligible(a, v) or not item_suggest.installed(settings):
+        return _suggest_answer(v, a)
+    rig_glb = library.version_file(v, "glb", settings)
+    if rig_glb is None:
+        raise HTTPException(409, "this rig has no model file")
+    version_dir = library.version_dir(a, v, settings)
+    item_suggest.start(settings, a, v, version_dir, Path(rig_glb))
+    return _suggest_answer(v, a)
+
+
+@router.post("/api/versions/{vid}/suggestion/{state}")
+def mark_suggestion(vid: str, state: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    from . import item_suggest
+
+    if state not in ("dismissed", "kept"):
+        raise HTTPException(400, "a suggestion is dismissed or kept")
+    v, a = _version(db, vid)
+    item_suggest.set_state(library.version_dir(a, v, get_settings(), create=False), state)
+    return _suggest_answer(v, a)

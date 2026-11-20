@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type PlacedPart, type Version } from '../../api'
 import { markable, MAX_STIFF_POINTS, withPoint, withStiffPoint, withoutStiffPoint, withoutStiffPoints, type Point } from '../../declaredPoints'
 import { useEditHistory, type EditHistory } from '../../editHistory'
+import { suggestionLine, suggestionNote } from '../../suggestion'
+import type { ItemSuggestionState } from '../../api'
 import { UndoRedoButtons } from '../../components/UndoRedo'
 import { savePointsStep } from './pointsHistory'
 
@@ -25,6 +27,9 @@ export type DeclaredPointsState = {
   // Keep saves the pending points with the saved ones; Discard drops them; Remove last and Remove region act on the
   // saved points (and take a pending point first).
   pending: Record<string, Point[]>
+  // Sets a part's pending points (a suggestion the person has not kept yet) and reloads the declared parts.
+  setPendingPoints: (name: string, points: Point[]) => void
+  reloadParts: () => Promise<void>
   addStiffPoint: (name: string, point: Point) => void
   keepStiffPoints: (name: string) => void
   discardStiffPoints: (name: string) => void
@@ -136,7 +141,10 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
     [change],
   )
 
-  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints, history, activate }
+  const setPendingPoints = useCallback((name: string, points: Point[]) => setPending((m) => ({ ...m, [name]: points.map((p) => [p[0], p[1], p[2]] as Point) })), [])
+  const reloadParts = useCallback(() => api.versionParts(version.id).then((d) => setParts(d.parts)).catch((e) => setError(msg(e))), [version.id, setParts])
+
+  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints, history, activate, setPendingPoints, reloadParts }
 }
 
 export function DeclaredPointsPanel({ dp, done, markName, onMark }: { dp: DeclaredPointsState; done: boolean; markName: string | null; onMark: (name: string | null) => void }) {
@@ -204,6 +212,46 @@ export function DeclaredPointsPanel({ dp, done, markName, onMark }: { dp: Declar
       {markName && <div className="small">Click the model on the {markName}. The grown region shows on the model before you keep it. Press Escape to stop.</div>}
       <div className="small muted">Saving does not redo the rig. Make the rig again to use the points.</div>
       {dp.error || dp.history.lastError ? <div className="warn-text">{msg(dp.error ?? dp.history.lastError)}</div> : null}
+    </div>
+  )
+}
+
+// The suggested worn item (WP-69 follow-up): the finder's proposal, shown as pending points on the model before anything
+// is kept. Keep declares the part if the character does not have it yet, saves the points as a stiff part (undoable),
+// and marks the suggestion kept. Dismiss drops the pending points and marks the suggestion dismissed (never offered again
+// for this rig version). The pending region is drawn by the rig page's preview, like any other pending point.
+export function SuggestionBlock({
+  suggestion,
+  running,
+  done,
+  busy,
+  onKeep,
+  onDismiss,
+}: {
+  suggestion: ItemSuggestionState | null
+  running: boolean
+  done: boolean
+  busy: boolean
+  onKeep: (s: ItemSuggestionState) => void
+  onDismiss: (s: ItemSuggestionState) => void
+}) {
+  if (running) return <div className="small muted">Looking for the item named in the description, from six views.</div>
+  const pending = suggestion && suggestion.state === 'done' && suggestion.found ? suggestion : null
+  if (!pending) return null
+  const note = suggestionNote(pending)
+  return (
+    <div className="declared-points item-suggestion" data-testid="item-suggestion">
+      <div className="field-label">Suggested region</div>
+      <div className="small">{suggestionLine(pending)}</div>
+      {note && <div className="warn-text small">{note}</div>}
+      <div className="declared-point-row">
+        <button type="button" className="btn" disabled={!done || busy} onClick={() => onKeep(pending)}>
+          Keep
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => onDismiss(pending)}>
+          Dismiss
+        </button>
+      </div>
     </div>
   )
 }
