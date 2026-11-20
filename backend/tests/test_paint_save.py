@@ -588,10 +588,11 @@ def test_smooth_rejects_an_unknown_strength():
         paintsave.smooth_picture(_picture(), np.ones((SIZE, SIZE), bool), np.ones((SIZE, SIZE), np.int32), "medium", SIZE)
 
 
-def test_smooth_step_scales_with_the_texture():
-    assert paintsave.smooth_step(1024) == 1
-    assert paintsave.smooth_step(4096) == 4
-    assert paintsave.smooth_step(256) == 1
+def test_smooth_passes_scale_with_the_texture():
+    assert paintsave.smooth_passes("light", 1024) == 2
+    assert paintsave.smooth_passes("strong", 1024) == 5
+    assert paintsave.smooth_passes("light", 4096) == 8
+    assert paintsave.smooth_passes("strong", 256) == 5
 
 
 def test_smooth_job_makes_a_new_painted_version(version_files, tmp_path):

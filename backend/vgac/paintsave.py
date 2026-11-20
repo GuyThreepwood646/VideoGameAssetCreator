@@ -231,35 +231,34 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
 # the paint mask keep the parent's colour exactly; the edge padding is re-run only where a smoothed texel changed.
 #
 # Strength is the number of filter passes and the colour difference (0 to 1) past which the filter stops mixing.
-# The reach of one pass scales with the texture size: `step` texels per neighbour step, step = size // 1024 (at least 1),
-# so a 4096 picture gets the same look on the surface as a 1024 one.
+# Every pass samples each neighbour texel (no striding, so no grid pattern). The number of passes grows with the
+# texture size: passes_per_1024 * max(1, size // 1024), so a 4096 picture gets about the same reach on the surface
+# as a 1024 one.
 
 SMOOTH_STRENGTHS = {
-    "light": {"passes": 1, "colour_sigma": 0.10},
-    "strong": {"passes": 3, "colour_sigma": 0.18},
+    "light": {"passes_per_1024": 2, "colour_sigma": 0.15},
+    "strong": {"passes_per_1024": 5, "colour_sigma": 0.22},
 }
-SMOOTH_RADIUS = 2  # neighbour steps each side per pass (a 5 by 5 footprint)
-SMOOTH_SPACE_SIGMA = 1.5  # in neighbour steps
+SMOOTH_RADIUS = 2  # neighbour texels each side per pass (a 5 by 5 footprint)
+SMOOTH_SPACE_SIGMA = 1.5  # in texels
 SMOOTH_REFUSAL = "Smooth needs a painted clean-up with a paint mask. Paint the picture and save first."
 
 
-def smooth_step(size: int) -> int:
-    return max(1, int(size) // 1024)
+def smooth_passes(strength: str, size: int) -> int:
+    return int(SMOOTH_STRENGTHS[strength]["passes_per_1024"]) * max(1, int(size) // 1024)
 
 
-def smooth_colour(colour: np.ndarray, target: np.ndarray, labels: np.ndarray, strength: str, step: int) -> np.ndarray:
-    """Bilateral smoothing of `colour` (H, W, C float 0..1) at the `target` texels only. A neighbour is used only when
-    its label equals the texel's own and is on an island (labels > 0). Returns a new array; untargeted texels are equal
-    to the input."""
-    cfg = SMOOTH_STRENGTHS[strength]
-    passes = int(cfg["passes"])
-    sigma_r = float(cfg["colour_sigma"])
+def smooth_colour(colour: np.ndarray, target: np.ndarray, labels: np.ndarray, strength: str, passes: int) -> np.ndarray:
+    """Bilateral smoothing of `colour` (H, W, C float 0..1) at the `target` texels only, `passes` times. A neighbour is
+    used only when its label equals the texel's own and is on an island (labels > 0). Returns a new array; untargeted
+    texels are equal to the input."""
+    sigma_r = float(SMOOTH_STRENGTHS[strength]["colour_sigma"])
     out = np.array(colour, dtype=np.float32, copy=True)
-    if not target.any():
+    if not target.any() or passes < 1:
         return out
     H, W = target.shape
     rows, cols = np.where(target)
-    margin = passes * SMOOTH_RADIUS * step + 1
+    margin = passes * SMOOTH_RADIUS + 1
     y0, y1 = max(0, int(rows.min()) - margin), min(H, int(rows.max()) + 1 + margin)
     x0, x1 = max(0, int(cols.min()) - margin), min(W, int(cols.max()) + 1 + margin)
     cur = out[y0:y1, x0:x1].copy()
@@ -271,9 +270,8 @@ def smooth_colour(colour: np.ndarray, target: np.ndarray, labels: np.ndarray, st
         num = np.zeros_like(cur)
         den = np.zeros(lab.shape, dtype=np.float32)
         for ky, kx in offsets:
-            dy, dx = ky * step, kx * step
-            nb = imaging._shift(cur, dy, dx, 0.0)
-            nl = imaging._shift(lab, dy, dx, 0)
+            nb = imaging._shift(cur, ky, kx, 0.0)
+            nl = imaging._shift(lab, ky, kx, 0)
             diff2 = ((nb - cur) ** 2).sum(axis=-1)
             w = space[(ky, kx)] * np.exp(-diff2 / (2.0 * sigma_r ** 2)) * ((nl == lab) & (lab > 0))
             num += w[..., None] * nb
@@ -298,7 +296,7 @@ def smooth_picture(parent_px: np.ndarray, edit: np.ndarray, labels: np.ndarray, 
     if not target.any():
         return out, {"polished_texels": 0, "padding_texels": 0}
     colour = parent_px[..., :3].astype(np.float32) / 255.0
-    smoothed = smooth_colour(colour, target, labels, strength, smooth_step(size))
+    smoothed = smooth_colour(colour, target, labels, strength, smooth_passes(strength, size))
     new_rgb = np.clip(np.round(smoothed * 255.0), 0, 255).astype(np.uint8)
     out[..., :3] = np.where(target[..., None], new_rgb, parent_px[..., :3])
     changed = (out != parent_px).any(axis=-1)
