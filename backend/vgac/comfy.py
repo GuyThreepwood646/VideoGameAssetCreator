@@ -101,6 +101,26 @@ class ComfyError(RuntimeError):
 log = logging.getLogger(__name__)
 
 
+# A background cut-out (BiRefNet on one picture) takes under 2 s on the 10 GB card. On 2026-11-20 card B stopped on a
+# cut-out request after many Qwen edit rounds (the log shows "Model BiRefNet prepared" and no result; /interrupt did
+# not clear it). A cut-out with no result after this long is treated as hung, whatever the job time limit says.
+CUTOUT_TIME_LIMIT_SECONDS = 300.0
+CUTOUT_NODES = frozenset({"LoadBackgroundRemovalModel", "RemoveBackground"})
+
+
+class ComfyStalled(ComfyError):
+    """A prompt ran past its time limit with no result. The engine may be hung. Nothing here restarts ComfyUI."""
+
+
+def time_limit_for(graph: dict[str, Any], default: float | None) -> float | None:
+    """The time limit for one prompt: a cut-out graph gets at most CUTOUT_TIME_LIMIT_SECONDS, any other graph keeps
+    the default (the job time limit)."""
+    classes = {node.get("class_type") for node in graph.values() if isinstance(node, dict)}
+    if classes & CUTOUT_NODES:
+        return CUTOUT_TIME_LIMIT_SECONDS if default is None else min(default, CUTOUT_TIME_LIMIT_SECONDS)
+    return default
+
+
 class ComfyClient:
     """One long-lived httpx.AsyncClient per instance (created on first use, closed by aclose(), which JobQueue.stop
     calls), so the once-a-second /history polls reuse a connection. Each request passes its own timeout."""
@@ -337,6 +357,9 @@ class ComfyClient:
                     on_poll: Callable[[float], None] | None) -> dict[str, Any]:
         t0 = time.monotonic()
         last_answer = t0
+        # The time limit counts from when the prompt leaves ComfyUI's pending queue, so a prompt waiting behind another
+        # client's long job on a shared card is not taken for a hung one.
+        started: float | None = None if timeout is not None else t0
         while True:
             try:
                 hist = await self.history(prompt_id)
@@ -359,9 +382,23 @@ class ComfyClient:
             elapsed = time.monotonic() - t0
             if on_poll:
                 on_poll(elapsed)
-            if timeout is not None and elapsed > timeout:
-                raise ComfyError(f"prompt {prompt_id} timed out after {timeout}s")
+            if started is None:
+                started = await self._started_at(prompt_id)
+            if timeout is not None and started is not None and time.monotonic() - started > timeout:
+                raise ComfyStalled(f"prompt {prompt_id} timed out after {timeout}s")
             await asyncio.sleep(POLL_FAST_SECONDS if elapsed < POLL_FAST_FOR else min(poll_seconds, POLL_SLOW_MAX))
+
+    async def _started_at(self, prompt_id: str) -> float | None:
+        """None while the prompt still waits in ComfyUI's pending queue, else now. A failed queue read counts as
+        started, so the limit still applies when the engine stops answering."""
+        try:
+            q = await self.queue_state()
+            pending = q.get("queue_pending") or []
+            if any(isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id for item in pending):
+                return None
+        except Exception:
+            pass
+        return time.monotonic()
 
     async def run(self, graph: dict[str, Any], poll_seconds: float = 1.0, timeout: float | None = None,
                   on_poll: Callable[[float], None] | None = None) -> dict[str, Any]:

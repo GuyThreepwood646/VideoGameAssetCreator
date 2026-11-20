@@ -196,6 +196,7 @@ class AssetPatch(BaseModel):
     face_matters: bool | None = None
     wears_armour: bool | None = None
     body_is_metal: bool | None = None
+    show_on_project: bool | None = None
 
 
 class RunIn(BaseModel):
@@ -526,9 +527,10 @@ def suggest_(category: str = "humanoid", style: str = "painted", platform: str =
 @app.get("/api/projects")
 def list_projects(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
     """Every project, newest first, with a summary for the Projects page: asset_count, up to four cover
-    pictures (the kept concept of the newest assets) and last_activity (newest asset or version)."""
+    pictures (the kept concept of the newest assets whose "Show on the project tile" is on) and last_activity (newest
+    asset or version)."""
     projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
-    assets = db.execute(select(Asset.id, Asset.project_id, Asset.created_at).order_by(Asset.created_at.desc())).all()
+    assets = db.execute(select(Asset.id, Asset.project_id, Asset.created_at, Asset.show_on_project).order_by(Asset.created_at.desc())).all()
     covers: dict[str, str] = {}
     for v in db.scalars(select(Version).where(Version.stage == "concept", Version.selected == True)).all():  # noqa: E712
         pic = v.files.get("cutout") or v.files.get("image")
@@ -544,7 +546,7 @@ def list_projects(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
         times = [t for r in rows for t in (r.created_at, latest.get(r.id)) if t is not None]
         d = project_to_dict(p)
         d["asset_count"] = len(rows)
-        d["covers"] = [covers[r.id] for r in rows if r.id in covers][:4]
+        d["covers"] = [covers[r.id] for r in rows if r.id in covers and r.show_on_project is not False][:4]
         d["last_activity"] = _iso(max(times)) if times else d["created_at"]
         out.append(d)
     return out
@@ -737,6 +739,8 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
         a.wears_armour = body.wears_armour
     if body.body_is_metal is not None:
         a.body_is_metal = body.body_is_metal
+    if body.show_on_project is not None:
+        a.show_on_project = body.show_on_project
     db.commit()
     db.refresh(a)
     return asset_to_dict(a)

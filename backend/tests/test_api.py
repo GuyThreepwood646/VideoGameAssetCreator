@@ -119,6 +119,14 @@ def test_project_list_summary(client, fake_execute):
     v = client.get(f"/api/versions/{r['version']['id']}").json()
     assert row["asset_count"] == 1 and row["covers"] == [v["files"]["cutout"]]
     assert row["last_activity"] >= p["created_at"]
+    # "Show on the project tile" off: the asset still counts, its picture leaves the cover; on again brings it back
+    assert client.get(f"/api/assets/{a['id']}").json()["show_on_project"] is True
+    assert client.put(f"/api/assets/{a['id']}", json={"show_on_project": False}).json()["show_on_project"] is False
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == p["id"])
+    assert row["asset_count"] == 1 and row["covers"] == []
+    client.put(f"/api/assets/{a['id']}", json={"show_on_project": True})
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == p["id"])
+    assert row["covers"] == [v["files"]["cutout"]]
 
 
 def _project_asset(client, category="humanoid"):
