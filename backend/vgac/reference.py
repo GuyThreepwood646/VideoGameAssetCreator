@@ -554,8 +554,8 @@ def style_presets() -> list[dict[str, Any]]:
 #
 # The registry is the only list of add-ons: the tested ones in data/addons.yaml, then the person's own from
 # <library_path>/my_addons.json (user_addons.entries(), each `mine: true`). A user entry whose id is a built-in one is
-# dropped, so it never shadows a built-in add-on. Nothing in the app lists a models folder except user_addons.py,
-# which lists only its own VGAC/mine/ folder. An add-on applies only when the chosen model is in its base_models.
+# dropped, so it never shadows a built-in add-on. Nothing in the app lists a models folder except lora_folders.py,
+# which lists only the LoRA folders the person linked. An add-on applies only when the chosen model is in its base_models.
 
 
 def _user_addons() -> dict[str, dict[str, Any]]:
@@ -571,7 +571,7 @@ def _user_addons() -> dict[str, dict[str, Any]]:
 
 
 def _mine_file_present(a: dict[str, Any]) -> bool:
-    """Whether a user add-on's file is still where it was kept (VGAC/mine/, or the one place a file used where it is was registered)."""
+    """Whether a user add-on's file is still where the person chose it (one of their LoRA folders)."""
     from . import user_addons
 
     try:

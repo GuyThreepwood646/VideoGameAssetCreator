@@ -49,11 +49,3 @@ export function hostPick(): HostBridge | null {
   return b && typeof b.pickFile === 'function' ? b : null
 }
 
-// The LoRA file chooser of the desktop app: the real path of the chosen file, null when the person cancelled, and undefined in a normal
-// browser (which has no real path: the file is then sent to the app, a copy).
-export const LORA_FILES = 'LoRA files|*.safetensors'
-export async function pickLoraPath(host: Pick<HostBridge, 'pickFile'> | null = hostPick()): Promise<string | null | undefined> {
-  if (!host) return undefined
-  const p = await host.pickFile('Choose your LoRA file', LORA_FILES)
-  return p || null
-}

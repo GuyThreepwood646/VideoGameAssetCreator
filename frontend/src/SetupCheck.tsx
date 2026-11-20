@@ -7,6 +7,7 @@ import { Info, Term } from './components/Info'
 import PackInstall from './components/PackInstall'
 import ComfyPanel from './components/ComfyPanel'
 import HardwarePanel from './components/HardwarePanel'
+import LoraFolders from './components/LoraFolders'
 import ModelFileChoice from './components/ModelFileChoice'
 import ModelsPanel from './components/ModelsPanel'
 import ToolPanel from './components/ToolPanel'
@@ -284,6 +285,12 @@ export default function SetupCheck() {
             </button>
           )}
           {comfyOpen && <ComfyPanel onChanged={() => void reload(true)} onClose={() => setComfyOpen(false)} />}
+        </div>
+      )}
+      {report && (
+        <div className="setup-extras">
+          <div className="field-label">LoRA folders</div>
+          <LoraFolders onChanged={() => void reload(true)} />
         </div>
       )}
       {report && (

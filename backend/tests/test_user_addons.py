@@ -1,5 +1,5 @@
-"""Your own add-ons (user_addons.py): the user registry merged into reference.py, the streamed upload and its checks,
-the header-based prefill, the folder listing, and the add-on reaching the concept graph."""
+"""Your own add-ons (user_addons.py): the user registry merged into reference.py, a LoRA chosen from one of the person's LoRA
+folders and used where it is, the header-based prefill, and the add-on reaching the concept graph."""
 
 from __future__ import annotations
 
@@ -36,9 +36,11 @@ def safetensors_bytes(meta: dict[str, str] | None = None, keys: list[str] | None
 def mine_settings(settings_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from vgac import config, db, reference
 
-    cfg = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
-    cfg["loras_dir"] = str(tmp_path / "loras")
-    settings_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    loras = tmp_path / "loras"
+    loras.mkdir(exist_ok=True)
+    machine = tmp_path / "machine.json"
+    machine.write_text(json.dumps({"backend": {"lora_folders": [str(loras)]}}), encoding="utf-8")
+    monkeypatch.setenv("VGAC_MACHINE", str(machine))
     monkeypatch.setenv("VGAC_CONFIG", str(settings_path))
     config.reset_settings()
     db.reset_engine()
@@ -57,10 +59,24 @@ def client(mine_settings):
 
 
 @pytest.fixture
-def mine(mine_settings) -> Path:
+def mine(mine_settings, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The person's one LoRA folder (saved in machine.json). ComfyUI's list is faked: every LoRA under the saved folders."""
+    from vgac import config, user_addons
+
+    folder = Path(config.get_settings().lora_folders[0])
+
+    def fake_choices():
+        return [p.relative_to(folder).as_posix() for p in folder.rglob("*.safetensors")]
+
+    monkeypatch.setattr(user_addons, "_engine_choices", fake_choices)
+    return folder
+
+
+def register(file_name, label, base_models, **kw):
+    """The add-on set up from a LoRA in one of the saved folders (folder not named: the one file is found by its name)."""
     from vgac import user_addons
 
-    return user_addons.mine_dir(create=True)
+    return user_addons.register(file_name, "", label, base_models, **kw)
 
 
 def put_file(mine: Path, name: str, data: bytes | None = None) -> Path:
@@ -76,15 +92,15 @@ def test_user_addon_merges_into_registry(mine):
     from vgac import reference, user_addons
 
     put_file(mine, "my_look.safetensors")
-    e = user_addons.register("my_look.safetensors", "My look", ["zbase"], trigger="mylook style", default_strength="strong")
+    e = register("my_look.safetensors", "My look", ["zbase"], trigger="mylook style", default_strength="strong")
     assert e["id"].startswith("mine_") and e["mine"] is True
     ids = [a["id"] for a in reference.addons()]
     assert e["id"] in ids and "clay_finish" in ids
     a = reference.addon(e["id"])
-    assert a["file"] == "VGAC/mine/my_look.safetensors"
+    assert a["file"] == "my_look.safetensors"
     assert a["strengths"] == {"subtle": 0.6, "normal": 0.8, "strong": 1.0}
     rec = reference.addon_record(e["id"])
-    assert rec["mine"] is True and rec["file"] == "VGAC/mine/my_look.safetensors" and "responsible" in rec["licence"]
+    assert rec["mine"] is True and rec["file"] == "my_look.safetensors" and "responsible" in rec["licence"]
     # in the concept catalog of the stage schema
     concept = next(s for s in reference.stages() if s["id"] == "concept")
     catalog = next(p for p in concept["adjust_schema"] if p["name"] == "addons")["catalog"]
@@ -97,14 +113,14 @@ def test_user_entry_never_shadows_builtin(mine_settings):
     builtin = reference.addon("clay_finish")
     # a hand-edited registry that tries to reuse a built-in id, or a non-"mine_" id
     user_addons.registry_path().write_text(json.dumps({"addons": [
-        {"id": "clay_finish", "label": "Fake", "file": "VGAC/mine/x.safetensors", "base_models": ["zturbo"]},
-        {"id": "mine_clay_finish", "label": "Mine", "file": "VGAC/mine/y.safetensors", "base_models": ["zturbo"]},
-        {"id": "mine_escape", "label": "Escape", "file": "VGAC/mine/../../other.safetensors", "base_models": ["zturbo"]},
-        {"id": "mine_elsewhere", "label": "Elsewhere", "file": "other/thing.safetensors", "base_models": ["zturbo"]},
+        {"id": "clay_finish", "label": "Fake", "file": "x.safetensors", "base_models": ["zturbo"]},
+        {"id": "mine_clay_finish", "label": "Mine", "file": "y.safetensors", "placement": {"mode": "in_place", "path": "F:/loras/y.safetensors"}, "base_models": ["zturbo"]},
+        {"id": "mine_escape", "label": "Escape", "file": "../../other.safetensors", "placement": {"mode": "in_place", "path": "F:/loras/other.safetensors"}, "base_models": ["zturbo"]},
+        {"id": "mine_elsewhere", "label": "Elsewhere", "file": "other/thing.safetensors", "placement": {"mode": "in_place", "path": "F:/loras/thing.safetensors"}, "base_models": ["zturbo"]},
     ]}), encoding="utf-8")
     assert reference.addon("clay_finish") is builtin
     assert reference.addon("mine_clay_finish")["label"] == "Mine"
-    assert reference.addon("mine_escape") is None and reference.addon("mine_elsewhere") is None
+    assert reference.addon("mine_escape") is None and reference.addon("mine_elsewhere")["file_name"] == "thing.safetensors"
     assert [a["id"] for a in reference.addons()].count("clay_finish") == 1
 
 
@@ -113,14 +129,14 @@ def test_new_id_avoids_builtin_and_taken(mine, monkeypatch):
 
     put_file(mine, "a.safetensors")
     put_file(mine, "b.safetensors")
-    first = user_addons.register("a.safetensors", "Clay finish", ["zturbo"])
-    second = user_addons.register("b.safetensors", "Clay finish", ["zturbo"])
+    first = register("a.safetensors", "Clay finish", ["zturbo"])
+    second = register("b.safetensors", "Clay finish", ["zturbo"])
     assert first["id"] == "mine_clay_finish" and second["id"] == "mine_clay_finish_2"
     assert reference.addon("clay_finish")["file"].startswith("VGAC/zit_")
 
 
 def test_register_checks_the_form(mine):
-    from vgac.user_addons import AddonFileError, register
+    from vgac.user_addons import AddonFileError
 
     put_file(mine, "a.safetensors")
     with pytest.raises(AddonFileError, match="at least one model"):
@@ -131,7 +147,7 @@ def test_register_checks_the_form(mine):
         register("a.safetensors", "  ", ["zturbo"])
     with pytest.raises(AddonFileError, match="Subtle"):
         register("a.safetensors", "A", ["zturbo"], default_strength="max")
-    with pytest.raises(AddonFileError, match="without folders"):
+    with pytest.raises(AddonFileError, match="LoRA folders"):
         register("../a.safetensors", "A", ["zturbo"])
     with pytest.raises(AddonFileError) as e:
         register("missing.safetensors", "A", ["zturbo"])
@@ -146,7 +162,7 @@ def test_register_picture_edit_lora_is_edit_stage_and_kept_out_of_concept(mine):
     from vgac import reference, user_addons
 
     put_file(mine, "edit.safetensors", safetensors_bytes({"modelspec.architecture": "qwen-image-edit-2511/lora"}))
-    e = user_addons.register("edit.safetensors", "Edit look", [reference.EDIT_MODEL])
+    e = register("edit.safetensors", "Edit look", [reference.EDIT_MODEL])
     assert e["base_models"] == ["qwen_edit"] and e["warning"] == "" and e["stage"] == "edit"
     a = reference.addon(e["id"])
     assert a["stage"] == "edit" and a["made_for"] == "qwen_image_edit"
@@ -164,18 +180,18 @@ def test_register_plain_qwen_warns_and_made_for_comes_from_header(mine):
 
     plain = safetensors_bytes({"modelspec.architecture": "qwen-image/lora"})
     put_file(mine, "plain.safetensors", plain)
-    e = user_addons.register("plain.safetensors", "Plain", [reference.EDIT_MODEL])
+    e = register("plain.safetensors", "Plain", [reference.EDIT_MODEL])
     assert "Try it at Subtle first" in e["warning"]
     assert user_addons.listing()["addons"][0]["warning"] == e["warning"]
     assert reference.addon(e["id"])["made_for"] == "qwen_image"
     # the form says painter, but the header says plain Qwen-Image: made_for still comes from the header, no edit warning
     put_file(mine, "plain2.safetensors", plain)
-    p = user_addons.register("plain2.safetensors", "Plain two", ["zturbo"])
+    p = register("plain2.safetensors", "Plain two", ["zturbo"])
     assert reference.addon(p["id"])["made_for"] == "qwen_image" and p["warning"] == ""
 
 
 def test_register_refuses_mixing_and_other_families_for_edits(mine):
-    from vgac.user_addons import AddonFileError, register
+    from vgac.user_addons import AddonFileError
 
     put_file(mine, "x.safetensors", safetensors_bytes({"modelspec.architecture": "qwen-image-edit/lora"}))
     with pytest.raises(AddonFileError, match="either for picture edits or for the painters"):
@@ -192,10 +208,10 @@ def test_resolve_applies_user_addon_only_for_its_painters(mine):
     from vgac import reference, user_addons
 
     put_file(mine, "mine1.safetensors")
-    e = user_addons.register("mine1.safetensors", "Mine one", ["zbase"], trigger="minestyle")
+    e = register("mine1.safetensors", "Mine one", ["zbase"], trigger="minestyle")
     on = reference.resolve_addons("zbase", "concept", [], None, {e["id"]: "normal"})
     assert [a["id"] for a in on["applied"]] == [e["id"]]
-    assert on["applied"][0]["value"] == 0.8 and on["applied"][0]["file"] == "VGAC/mine/mine1.safetensors"
+    assert on["applied"][0]["value"] == 0.8 and on["applied"][0]["file"] == "mine1.safetensors"
     off = reference.resolve_addons("zturbo", "concept", [], None, {e["id"]: "normal"})
     assert off["applied"] == [] and off["ignored"][0]["id"] == e["id"]
     # through the project style lock too
@@ -208,7 +224,7 @@ def test_user_addon_with_missing_file_is_never_sent(mine):
     from vgac import reference, user_addons
 
     p = put_file(mine, "vanish.safetensors")
-    e = user_addons.register("vanish.safetensors", "Vanish", ["zturbo"])
+    e = register("vanish.safetensors", "Vanish", ["zturbo"])
     p.unlink()
     r = reference.resolve_addons("zturbo", "concept", [], None, {e["id"]: "normal"})
     assert r["applied"] == []
@@ -220,12 +236,12 @@ def test_concept_graph_gets_loader_with_user_file(mine):
     from vgac.graphs.concept import concept_graph
 
     put_file(mine, "mine2.safetensors")
-    e = user_addons.register("mine2.safetensors", "Mine two", ["zbase", "zturbo"], trigger="minetwo")
+    e = register("mine2.safetensors", "Mine two", ["zbase", "zturbo"], trigger="minetwo")
     applied = reference.resolve_addons("zbase", "concept", [], None, {e["id"]: "subtle"})["applied"]
     g = concept_graph("zbase", "a knight", 1, "x/concept", addons=applied)
     loaders = [n for n in g.values() if n["class_type"] == "LoraLoaderModelOnly"]
     assert len(loaders) == 1
-    assert loaders[0]["inputs"]["lora_name"] == "VGAC\\mine\\mine2.safetensors"
+    assert loaders[0]["inputs"]["lora_name"] == "mine2.safetensors"
     assert loaders[0]["inputs"]["strength_model"] == 0.6
     assert any("minetwo" in str(n["inputs"].get("text", "")) for n in g.values())
 
@@ -234,7 +250,7 @@ def test_removed_user_addon_reads_as_unknown(mine):
     from vgac import reference, user_addons
 
     p = put_file(mine, "gone.safetensors")
-    e = user_addons.register("gone.safetensors", "Gone", ["zturbo"])
+    e = register("gone.safetensors", "Gone", ["zturbo"])
     out = user_addons.remove(e["id"])
     assert out["file_kept"] is True and p.is_file()
     assert reference.addon(e["id"]) is None
@@ -369,106 +385,7 @@ def test_clay_name_is_not_read_as_anima(mine_settings):
 # --- Upload ----------------------------------------------------------------------------------------------------------
 
 
-def test_upload_saves_into_mine_and_prefills(client, mine):
-    meta = {"ss_base_model_version": "zimage", "name": "foo_deturbo", "modelspec.trigger_phrase": "foostyle"}
-    data = safetensors_bytes(meta)
-    r = client.post("/api/my-addons/upload", params={"name": "Foo Style!.safetensors"}, content=data)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["file_name"] == "Foo Style_.safetensors" and body["bytes"] == len(data)
-    assert body["prefill"]["base_models"] == ["zturbo"] and body["prefill"]["trigger"] == "foostyle"
-    assert (mine / "Foo Style_.safetensors").read_bytes() == data
-    assert not [p for p in mine.iterdir() if p.name.endswith(".part")]
-    # then the short form
-    r = client.post("/api/my-addons", json={"file_name": body["file_name"], "label": "Foo", "base_models": ["zturbo"],
-                                             "trigger": "foostyle", "default_strength": "subtle", "source": "https://example.com/foo"})
-    assert r.status_code == 200, r.text
-    listed = client.get("/api/my-addons").json()
-    assert [a["label"] for a in listed["addons"]] == ["Foo"]
-    assert listed["addons"][0]["source"] == "https://example.com/foo" and listed["addons"][0]["default_strength"] == "subtle"
-    assert {p["id"] for p in listed["painters"]} >= {"zturbo", "zbase"}
-
-
-def test_upload_refuses_duplicate_name(client, mine):
-    put_file(mine, "taken.safetensors", b"original")
-    r = client.post("/api/my-addons/upload", params={"name": "taken.safetensors"}, content=safetensors_bytes())
-    assert r.status_code == 409
-    assert (mine / "taken.safetensors").read_bytes() == b"original"
-
-
-@pytest.mark.parametrize("name", ["../evil.safetensors", "..\\evil.safetensors", "C:evil.safetensors", "sub/evil.safetensors",
-                                  "evil.ckpt", ".safetensors", "evil.safetensors.exe"])
-def test_upload_refuses_path_tricks_and_other_files(client, mine, name):
-    r = client.post("/api/my-addons/upload", params={"name": name}, content=safetensors_bytes())
-    assert r.status_code == 400, name
-    assert list(mine.iterdir()) == []
-    assert not (mine.parent / "evil.safetensors").exists()
-
-
-@pytest.mark.parametrize("data", [
-    b"",
-    b"short",
-    b"\xff" * 64,  # header length far too big
-    struct.pack("<Q", 20) + b"{not json at all!!!}",
-    safetensors_bytes(keys=["model.diffusion_model.w"]),  # a whole model, not a LoRA
-    safetensors_bytes(extra=b"trailing"),  # extra bytes after the data
-    safetensors_bytes()[:-10],  # cut short
-])
-def test_upload_refuses_bad_files(client, mine, data):
-    r = client.post("/api/my-addons/upload", params={"name": "bad.safetensors"}, content=data)
-    assert r.status_code == 400, r.text
-    assert list(mine.iterdir()) == []
-
-
-def test_upload_refuses_too_large(client, mine, monkeypatch):
-    from vgac import user_addons
-
-    monkeypatch.setattr(user_addons, "MAX_FILE_BYTES", 100)
-    r = client.post("/api/my-addons/upload", params={"name": "big.safetensors"}, content=safetensors_bytes())
-    assert r.status_code == 413
-    assert list(mine.iterdir()) == []
-
-
-def test_upload_refuses_foreign_origin(client, mine):
-    r = client.post("/api/my-addons/upload", params={"name": "x.safetensors"}, content=safetensors_bytes(),
-                    headers={"origin": "http://evil.example"})
-    assert r.status_code == 403
-    assert list(mine.iterdir()) == []
-
-
-# --- Already on this computer: the one folder ---------------------------------------------------------------------
-
-
-def test_unregistered_lists_only_mine_folder(client, mine):
-    from vgac import user_addons
-
-    put_file(mine, "a.safetensors", safetensors_bytes({"modelspec.title": "Alpha"}))
-    put_file(mine, "broken.safetensors", b"nope")
-    put_file(mine, "notes.txt", b"hello")
-    put_file(mine, ".upload-123.part", b"partial")
-    put_file(mine.parent, "sibling.safetensors")  # VGAC/, outside mine: never listed
-    user_addons.register("a.safetensors", "Alpha", ["zturbo"])
-    put_file(mine, "b.safetensors", safetensors_bytes({"modelspec.title": "Beta"}))
-    items = client.get("/api/my-addons/unregistered").json()
-    names = [i["file_name"] for i in items]
-    assert names == ["b.safetensors", "broken.safetensors"]
-    assert items[0]["prefill"]["label"] == "Beta"
-    assert "error" in items[1]
-
-
-def test_unregistered_empty_without_folder(client, mine_settings):
-    assert client.get("/api/my-addons/unregistered").json() == []
-
-
-def test_open_folder_opens_only_mine(client, mine_settings, monkeypatch):
-    from vgac import user_addons
-
-    opened: list[Path] = []
-    monkeypatch.setattr(user_addons, "_launch_explorer", lambda p: opened.append(p))
-    r = client.post("/api/my-addons/open-folder")
-    assert r.status_code == 200
-    assert opened == [user_addons.mine_dir()] and opened[0].is_dir()
-    assert opened[0].parts[-2:] == ("VGAC", "mine")
+# --- Taking a LoRA off the list: the file stays where it is
 
 
 def test_delete_endpoint_keeps_file(client, mine):
@@ -503,7 +420,7 @@ def test_an_edit_name_wins_over_a_qwen_image_header(mine):
     put_file(mine, name, safetensors_bytes(dict(TRAINER_BASE), keys=EDIT_KEYS))
     out = _prefill(mine, name)
     assert out["made_for"] == "qwen_image_edit" and out["family"] == "Qwen-Image-Edit" and out["warning"] == ""
-    e = user_addons.register(name, "Edit look", ["qwen_edit"])  # no answer needed: the file says so
+    e = register(name, "Edit look", ["qwen_edit"])  # no answer needed: the file says so
     assert e["warning"] == "" and reference.addon(e["id"])["made_for"] == "qwen_image_edit"
 
 
@@ -522,8 +439,8 @@ def test_no_signal_asks_and_a_plain_answer_gives_the_warning(mine):
     out = _prefill(mine, name)
     assert out["made_for"] == "" and out["base_models"] == [] and out["warning"] == ""
     with pytest.raises(AddonFileError, match="Choose what it was made for"):
-        user_addons.register(name, "Studio look", ["qwen_edit"])
-    e = user_addons.register(name, "Studio look", ["qwen_edit"], made_for_answer="qwen_image")
+        register(name, "Studio look", ["qwen_edit"])
+    e = register(name, "Studio look", ["qwen_edit"], made_for_answer="qwen_image")
     assert "Try it at Subtle first" in e["warning"] and reference.addon(e["id"])["made_for"] == "qwen_image"
 
 
@@ -532,7 +449,7 @@ def test_no_signal_with_an_edit_answer_has_no_warning(mine):
 
     name = "studio_two.safetensors"
     put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
-    e = user_addons.register(name, "Studio two", ["qwen_edit"], made_for_answer="qwen_image_edit")
+    e = register(name, "Studio two", ["qwen_edit"], made_for_answer="qwen_image_edit")
     assert e["warning"] == "" and reference.addon(e["id"])["made_for"] == "qwen_image_edit"
 
 
@@ -548,7 +465,7 @@ def test_a_sure_plain_file_stays_plain_whatever_the_form_says(mine):
     name = "qwen-image-style.safetensors"  # the name says plain Qwen-Image and no Edit anywhere
     put_file(mine, name, safetensors_bytes({}, keys=NEUTRAL_KEYS))
     assert _prefill(mine, name)["made_for"] == "qwen_image"
-    e = user_addons.register(name, "Plain look", ["qwen_edit"], made_for_answer="qwen_image_edit")
+    e = register(name, "Plain look", ["qwen_edit"], made_for_answer="qwen_image_edit")
     assert reference.addon(e["id"])["made_for"] == "qwen_image" and "Try it at Subtle first" in e["warning"]
 
 

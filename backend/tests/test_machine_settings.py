@@ -63,7 +63,7 @@ def test_defaults_alone_relative_paths_are_project_relative(defaults: Path, tmp_
     assert s.unity_project == config.PROJECT_DIR / "unity-sandbox"
     assert s.instances["b"].output_dir == config.PROJECT_DIR / "runtime" / "comfy-b-output"
     assert s.clips_libraries["ual1"] == config.PROJECT_DIR / "data/animations/ual1/x.fbx"
-    assert s.blender_exe is None and s.loras_dir is None and s.instances["a"].engine is None
+    assert s.blender_exe is None and s.lora_folders == [] and s.instances["a"].engine is None
 
 
 def test_machine_file_is_laid_over_the_defaults(defaults: Path, tmp_path: Path):
@@ -112,12 +112,11 @@ def test_missing_machine_file_is_fine_and_broken_ones_are_plain_errors(defaults:
 
 
 def test_paths_that_do_not_exist_are_reported_not_fatal(defaults: Path, tmp_path: Path):
-    m = _machine(tmp_path, {"backend": {"blender_exe": str(tmp_path / "nope.exe"), "loras_dir": str(tmp_path / "nl"),
+    m = _machine(tmp_path, {"backend": {"blender_exe": str(tmp_path / "nope.exe"),
                                         "instances": {"b": {"engine": {"comfy_dir": str(tmp_path / "nc")}}}}})
     s = load_settings(defaults, machine=m, create_library=False)
     problems = config.path_problems(s)
     assert any("blender_exe" in p and "does not exist" in p for p in problems)
-    assert any("loras_dir" in p for p in problems)
     assert any("instances.b.engine.comfy_dir" in p for p in problems)
 
 
@@ -212,7 +211,6 @@ def _old_files(tmp_path: Path) -> tuple[Path, Path, Path]:
         "blender_exe": "D:/Tools/blender/blender.exe",
         "unity_project": project.replace("\\", "/") + "/unity-sandbox",
         "comfy_input_dir": "D:/Comfy/input",
-        "loras_dir": "D:/Comfy/models/loras",
         "clips_libraries": {"ual1": project.replace("\\", "/") + "/data/animations/ual1/x.fbx"},
         "min_free_ram_gb": 24,
     }
@@ -299,7 +297,7 @@ def test_tracked_defaults_hold_no_machine_values():
     """backend/config.yaml must stay true on any machine: no drive paths, no card names, no tool paths."""
     text = config.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
     raw = yaml.safe_load(text)
-    for key in ("blender_exe", "unity_exe", "comfy_input_dir", "loras_dir"):
+    for key in ("blender_exe", "unity_exe", "comfy_input_dir"):
         assert key not in raw
     for inst in raw["instances"].values():
         assert not {"gpu", "discover", "engine", "start_script", "process_match"} & set(inst)

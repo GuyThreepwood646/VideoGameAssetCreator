@@ -229,11 +229,11 @@ def test_folders_must_exist_and_be_writable(bare):
     f = tmp / "a.txt"
     f.write_text("x", encoding="utf-8")
     with pytest.raises(SettingError, match="is a file"):
-        set_setting("loras_dir", str(f))
+        set_setting("export_path", str(f))
     ok = tmp / "loras"
     ok.mkdir()
-    assert set_setting("loras_dir", str(ok))["applies"] == "now"
-    assert str(config.get_settings().loras_dir) == str(ok)
+    assert set_setting("export_path", str(ok))["applies"] == "now"
+    assert str(config.get_settings().export_path) == str(ok)
     proj = tmp / "unity"
     proj.mkdir()
     with pytest.raises(SettingError, match="not a Unity project"):
