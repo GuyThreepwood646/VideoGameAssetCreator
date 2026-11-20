@@ -153,7 +153,7 @@ def _unused_add_camera(side, centre, reach, axis):
 from bpy_extras.object_utils import world_to_camera_view  # noqa: E402
 
 FULL = 1024
-REGION = 0.26  # the picture's width as a share of the full frame
+REGION = 0.16  # the picture's width as a share of the full frame (the hand fills the cell)
 W_arm = arm.matrix_world
 _bb = [W_arm @ b.head_local for b in arm.data.bones]
 _lo = Vector((min(p.x for p in _bb), min(p.y for p in _bb), min(p.z for p in _bb)))

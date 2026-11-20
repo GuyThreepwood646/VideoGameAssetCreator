@@ -633,8 +633,13 @@ HAND_SHAPES = {  # (proximal, middle, distal, wrist) at full amount; the hand_po
     "relaxed": (12.0, 16.0, 10.0, 6.0),
     "fist": (50.0, 65.0, 35.0, 8.0),
 }
-GRIP_SHAPE = (50.0, 60.0, 35.0, 12.0)  # attack: a closed grip, blended in over the strike
+GRIP_SHAPE = (90.0, 100.0, 60.0, 12.0)  # attack: a closed grip, blended in over the strike (each finger stops short of the palm, see _grip_caps)
+TIP_FLOOR = 0.02  # a fingertip stays at least this share of the hand's length in front of the palm plane (knuckle line)
+SEG_FLOOR = 0.12  # neighbouring fingers stay at least this share of the hand's length apart (closest points of their joints)
 FINGER_SCALE = {"Thumb": 0.6, "Index": 0.75, "Middle": 0.9, "Ring": 1.0, "Pinky": 1.1}  # gentle, rising to the little finger
+# A ceiling on a finger's first joint in the grip (degrees), none set: Unity's little finger falls short of the rig in the
+# grip (bakeoff/wp76: about 9 degrees on the boy), a ceiling did not close that gap, so the grip keeps the rig's full curl.
+GRIP_PROXIMAL_CEILING = {}
 _hands_cache = None
 
 
@@ -701,32 +706,163 @@ def _hand_rig():
                 continue
             ax = d.cross(n)
             finger_axes[f] = ax.normalized() if ax.length > 0.2 * d.length else axis
+        km = sum(knuckles, Vector()) / len(knuckles)
         _hands_cache.append({"hand": hand, "fingers": fingers, "axis": axis, "finger_axes": finger_axes,
-                             "turned_back": turned_back})
+                             "turned_back": turned_back, "palm": (km, n, (km - wrist).length), "left": a["left"],
+                             "knuckles": [f"{base}Hand{f}1" for f in ("Index", "Middle", "Ring", "Pinky")], "thumb": f"{base}HandThumb1"})
     return _hands_cache
 
 
-def hands_curl(P, shape, amount):
-    """Curl every humanoid hand by shape (proximal, middle, distal, wrist degrees) times amount."""
+def _finger_turns(f, g, base, amount):
+    """The three joint turns (degrees) of finger f at grip blend g: the hand shape scaled by amount and the finger factor,
+    with the grip ceiling on the first joint."""
+    fp = tuple(b + (G - b) * g for b, G in zip(base[:3], GRIP_SHAPE[:3]))
+    k = amount * FINGER_SCALE[f]
+    first = k * fp[0]
+    if f in GRIP_PROXIMAL_CEILING:
+        first = min(first, GRIP_PROXIMAL_CEILING[f])
+    return first, k * fp[1], k * fp[2]
+
+
+def _apply_hand(P, h, grip_by_finger, wrist_grip):
+    """One hand's pose at the given grip blends (per finger, and for the wrist), the same turns as hands_curl."""
+    base = HAND_SHAPES[HAND_POSE]
+    amount = FINGER_CURL
+    w = base[3] + (GRIP_SHAPE[3] - base[3]) * wrist_grip
+    P.r(h["hand"], h["axis"], amount * w)
+    for f, bs in h["fingers"].items():
+        g = grip_by_finger.get(f, 0.0)
+        fa = h["finger_axes"][f]
+        t0, t1, t2 = _finger_turns(f, g, base, amount)
+        P.r(bs[0], fa, t0)
+        P.r(bs[1], fa, t1)
+        P.r(bs[2], fa, t2)
+
+
+def _tips_and_heads(h, grip_by_finger, wrist_grip):
+    """Each finger's joint points (MCP, PIP, DIP, tip) and the palm (knuckle mean, palm normal, hand length), all with
+    the pose's own forward kinematics (fk), so the palm turns with the wrist as it does in the moves."""
+    P = Pose()
+    _apply_hand(P, h, grip_by_finger, wrist_grip)
+    Mw = fk(P)
+    out = {}
+    for f, bs in h["fingers"].items():
+        tail = Mw[bs[2]] @ Vector((0, byname[bs[2]].length, 0))
+        out[f] = [Mw[bs[0]].translation.copy(), Mw[bs[1]].translation.copy(), Mw[bs[2]].translation.copy(), tail]
+    wrist = Mw[h["hand"]].translation.copy()
+    knuck = [Mw[k].translation.copy() for k in h["knuckles"] if k in Mw]
+    km = sum(knuck, Vector()) / max(len(knuck), 1)
+    fdir = (km - wrist).normalized()
+    thumb = Mw[h["thumb"]].translation.copy() - wrist
+    t = (thumb - fdir * thumb.dot(fdir)).normalized()
+    n = fdir.cross(t).normalized()
+    if not h["left"]:
+        n = -n
+    return out, (km, n, (km - wrist).length)
+
+
+def _grip_caps(h):
+    """Per finger, the largest grip blend (0 to 3) that keeps its tip TIP_FLOOR in front of the palm, and every
+    neighbouring pair SEG_FLOOR apart at every step of the grip from open to the cap, measured on the pose's own forward
+    kinematics (the same turns the moves use). Cached on the hand."""
+    if "caps" in h:
+        return h["caps"]
+    order = list(h["fingers"].keys())
+    steps = [i * 0.02 for i in range(151)]
+    grips = [i * 0.05 for i in range(21)]
+    caps = {}
+    for f in order:
+        best = 0.0
+        for g in steps:
+            pts, (km, n, hl) = _tips_and_heads(h, {f: g}, 1.0)  # the wrist at its full grip, the most it reaches
+            if (pts[f][3] - km).dot(n) / hl < TIP_FLOOR:
+                break
+            best = g
+        caps[f] = best
+
+    def check(caps_):
+        """(worst tip lift, worst pair gap, the pair) over the grip from open to 1 with each finger held to its cap."""
+        worst_tip, worst_gap, pair = None, None, None
+        for gs in grips:
+            fg = {f: min(gs, caps_[f]) for f in order}
+            pts, (km, n, hl) = _tips_and_heads(h, fg, gs)
+            for f in order:
+                lift = (pts[f][3] - km).dot(n) / hl
+                worst_tip = lift if worst_tip is None else min(worst_tip, lift)
+            for i in range(len(order) - 1):
+                a, b = order[i], order[i + 1]
+                pa = [(pts[a][k], pts[a][k + 1]) for k in range(3)]
+                pb = [(pts[b][k], pts[b][k + 1]) for k in range(3)]
+                d = min(_seg_dist(p0, p1, q0, q1) for (p0, p1) in pa for (q0, q1) in pb) / hl
+                if worst_gap is None or d < worst_gap:
+                    worst_gap, pair = d, (a, b)
+        return worst_tip, worst_gap, pair
+
+    for _ in range(400):
+        _, gap, pair = check(caps)
+        if gap is None or gap >= SEG_FLOOR:
+            break
+        a, b = pair
+        bigger = a if caps[a] >= caps[b] else b
+        caps[bigger] = max(0.0, caps[bigger] - 0.02)
+    h["caps"] = caps
+    return caps
+
+
+def _seg_dist(p0, p1, q0, q1):
+    """Closest distance between segments p0p1 and q0q1."""
+    d1 = p1 - p0
+    d2 = q1 - q0
+    r = p0 - q0
+    a = d1.dot(d1)
+    e = d2.dot(d2)
+    f = d2.dot(r)
+    eps = 1e-12
+    if a <= eps and e <= eps:
+        return (p0 - q0).length
+    if a <= eps:
+        s_, t_ = 0.0, max(0.0, min(1.0, f / e))
+    else:
+        c = d1.dot(r)
+        if e <= eps:
+            s_, t_ = max(0.0, min(1.0, -c / a)), 0.0
+        else:
+            b_ = d1.dot(d2)
+            den = a * e - b_ * b_
+            s_ = max(0.0, min(1.0, (b_ * f - c * e) / den)) if den > eps else 0.0
+            t_ = (b_ * s_ + f) / e
+            if t_ < 0.0:
+                t_, s_ = 0.0, max(0.0, min(1.0, -c / a))
+            elif t_ > 1.0:
+                t_, s_ = 1.0, max(0.0, min(1.0, (b_ - c) / a))
+    return ((p0 + d1 * s_) - (q0 + d2 * t_)).length
+
+
+def hands_curl(P, shape, amount, grip=0.0):
+    """Curl every humanoid hand: the wrist by shape, each finger by its own angles scaled by amount. grip (0 to 1)
+    blends the fingers toward the closed grip, but no finger goes past its cap (_grip_caps)."""
     if amount <= 0:
         return
     p, m, d, w = shape
+    base = HAND_SHAPES[HAND_POSE]
     for h in _hand_rig():
         ax = h["axis"]
         P.r(h["hand"], ax, amount * w)
+        caps = _grip_caps(h) if (grip > 0 and h["fingers"]) else {}  # a one-lump hand has no fingers to cap
         for f, bs in h["fingers"].items():
-            k = amount * FINGER_SCALE[f]
+            g = min(grip, caps.get(f, 0.0))
             fa = h["finger_axes"][f]
-            P.r(bs[0], fa, k * p)
-            P.r(bs[1], fa, k * m)
-            P.r(bs[2], fa, k * d)
+            t0, t1, t2 = _finger_turns(f, g, base, amount)
+            P.r(bs[0], fa, t0)
+            P.r(bs[1], fa, t1)
+            P.r(bs[2], fa, t2)
 
 
 def hands_pose(P, grip=0.0):
     """The resting hand (hand_pose setting, scaled by finger_curl), blended toward a closed grip by grip (0 to 1)."""
     base = HAND_SHAPES[HAND_POSE]
     shape = tuple(b + (g - b) * grip for b, g in zip(base, GRIP_SHAPE))
-    hands_curl(P, shape, FINGER_CURL)
+    hands_curl(P, shape, FINGER_CURL, grip)
 
 
 def wing_pose(P, w, flap_deg, sweep_deg=0.0, fold=0.0, lag_curve=None):
@@ -1865,7 +2001,7 @@ def idle_feet_report():
 
 
 report["idle_feet"] = idle_feet_report()
-report["hands"] = [{"hand": h["hand"], "fingers": sorted(h["fingers"]), "turned_back": h.get("turned_back", []), "axis": [round(c, 4) for c in h["axis"]]} for h in _hand_rig()]  # WP-76
+report["hands"] = [{"hand": h["hand"], "fingers": sorted(h["fingers"]), "turned_back": h.get("turned_back", []), "axis": [round(c, 4) for c in h["axis"]], "grip_caps": {f: round(v, 2) for f, v in _grip_caps(h).items()} if h["fingers"] else {}} for h in _hand_rig()]  # WP-76
 if report["idle_feet"]:
     report["idle_feet"]["plant_error_max"] = _plant_error[0]
 if _stance:
