@@ -22,6 +22,9 @@ function cardNotes(notes: LoraRestartNote[]) {
   )
 }
 
+// Every open copy of this panel (the setup page and the install step) reloads when one of them changes the list.
+const CHANGED = 'vgac-lora-folders-changed'
+
 export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
   const [data, setData] = useState<LoraFoldersState | null>(null)
   const [path, setPath] = useState('')
@@ -31,13 +34,17 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
   const [notes, setNotes] = useState<LoraRestartNote[]>([])
 
   useEffect(() => {
-    api
-      .loraFolders()
-      .then((d) => {
-        setData(d)
-        setNotes(d.restart)
-      })
-      .catch((e: unknown) => setError(e))
+    const reload = () =>
+      api
+        .loraFolders()
+        .then((d) => {
+          setData(d)
+          setNotes(d.restart)
+        })
+        .catch((e: unknown) => setError(e))
+    void reload()
+    window.addEventListener(CHANGED, reload)
+    return () => window.removeEventListener(CHANGED, reload)
   }, [])
 
   // One change (add or remove): the new list, the plain answer, and the restart notes for it. False when it was refused.
@@ -50,6 +57,7 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
       setData(r)
       setMessage(r.message ?? '')
       setNotes(r.restart)
+      window.dispatchEvent(new Event(CHANGED))
       onChanged?.()
       return true
     } catch (e) {
@@ -120,12 +128,11 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
           {busy ? 'Working...' : 'Add folder'}
         </button>
       </div>
-      {message ? (
-        <div className="setup-ok small" role="status">
-          {message}
+      {/* The top note: what happened, then what to do. The same line on every copy of this panel. */}
+      {(message || data?.note) && (
+        <div className="small" role="status">
+          {message || data?.note}
         </div>
-      ) : (
-        data?.note && <div className="small">{data.note}</div>
       )}
       {cardNotes(notes)}
       <ErrorText error={error} />
