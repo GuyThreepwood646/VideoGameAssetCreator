@@ -92,7 +92,7 @@ def _suggest_answer(v: Version, a: Asset) -> dict[str, Any]:
         "version_id": v.id,
         "installed": item_suggest.installed(settings),
         "eligible": item_suggest.eligible(a, v),
-        "state": item_suggest.public(item_suggest.read_state(version_dir)),
+        "state": item_suggest.public(item_suggest.current_state(version_dir)),
     }
 
 
@@ -104,17 +104,14 @@ def get_suggestion(vid: str, db: Session = Depends(get_session)) -> dict[str, An
 
 @router.post("/api/versions/{vid}/suggestion")
 def start_suggestion(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """The "Suggest" button: queues the suggestion job (one at a time on the host). Nothing is queued when the finder
+    is not installed or the item is not eligible; a live or answered suggestion is returned as it stands."""
     from . import item_suggest
 
     v, a = _version(db, vid)
     settings = get_settings()
-    if not item_suggest.eligible(a, v) or not item_suggest.installed(settings):
-        return _suggest_answer(v, a)
-    rig_glb = library.version_file(v, "glb", settings)
-    if rig_glb is None:
-        raise HTTPException(409, "this rig has no model file")
     version_dir = library.version_dir(a, v, settings)
-    item_suggest.start(settings, a, v, version_dir, Path(rig_glb))
+    item_suggest.request(settings, a, v, version_dir)
     return _suggest_answer(v, a)
 
 

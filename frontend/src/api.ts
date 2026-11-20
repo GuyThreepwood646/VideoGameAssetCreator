@@ -148,7 +148,7 @@ export type VersionParts = { version_id: string; category: string; parts: Placed
 // when nothing is to be shown; `installed` false means the finder is not set up (the page says nothing then).
 export type SuggestedItem = { type: string; label: string }
 export type ItemSuggestionState = {
-  state: 'running' | 'done' | 'failed' | 'dismissed' | 'kept' | 'none'
+  state: 'queued' | 'running' | 'done' | 'failed' | 'dismissed' | 'kept' | 'none'
   item?: string
   label?: string
   phrase?: string
@@ -158,6 +158,7 @@ export type ItemSuggestionState = {
   found?: boolean
   points?: number[][]
   reason?: string
+  job_id?: string
 }
 export type SuggestionAnswer = { version_id: string; installed: boolean; eligible: SuggestedItem[]; state: ItemSuggestionState | null }
 

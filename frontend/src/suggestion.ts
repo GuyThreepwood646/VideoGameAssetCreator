@@ -4,15 +4,22 @@
 import type { ItemSuggestionState, SuggestionAnswer } from './api'
 import type { Point } from './declaredPoints'
 
-// Whether the page should ask the server to start a suggestion: a back-worn item is kept, the finder is installed,
-// and no suggestion exists yet for this rig version (a dismissed or kept one is never run again).
-export function shouldStart(a: SuggestionAnswer | null): boolean {
-  return !!a && a.installed && a.eligible.length > 0 && a.state === null
+// Whether the "Suggest" button is offered: the finder is installed, a back-worn item is kept, and no suggestion is
+// queued, running, done, kept or dismissed. A failed one can be asked for again. Opening the page never asks by itself.
+export function canAsk(a: SuggestionAnswer | null): boolean {
+  if (!a || !a.installed || a.eligible.length === 0) return false
+  return a.state === null || a.state.state === 'failed'
 }
 
-// True while the server is still making the suggestion (the page asks again after a short wait).
+// True while the suggestion is queued or being made (the page asks again after a short wait).
 export function isRunning(a: SuggestionAnswer | null): boolean {
-  return !!a && a.state?.state === 'running'
+  return !!a && (a.state?.state === 'queued' || a.state?.state === 'running')
+}
+
+// The button's words, naming the item.
+export function askLabel(a: SuggestionAnswer | null): string {
+  const label = a?.eligible[0]?.label || 'item'
+  return a?.state?.state === 'failed' ? `Try again: suggest the ${label}` : `Suggest the ${label}`
 }
 
 // The suggestion to show as pending: found, not yet kept or dismissed, with points.

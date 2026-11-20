@@ -8,7 +8,7 @@ import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, 
 import { pointTool } from '../../declaredPoints'
 import type { ViewerModel } from '../../viewerTool'
 import { DeclaredPointsPanel, SuggestionBlock, useDeclaredPoints } from './DeclaredPoints'
-import { isRunning, pendingSuggestion, shouldStart, suggestionPoints } from '../../suggestion'
+import { askLabel, canAsk, isRunning, pendingSuggestion, suggestionPoints } from '../../suggestion'
 import { useRef } from 'react'
 import { growStiffRegion, regionTriangles } from '../../stiffRegion'
 import type { RegionHighlight } from '../../regionOverlay'
@@ -108,28 +108,29 @@ export function RigView({ version }: { version: Version }) {
   // The suggested worn item (WP-69 follow-up): asked for once a rig is done; shown as pending points until kept or dismissed.
   const [sugg, setSugg] = useState<SuggestionAnswer | null>(null)
   const suggestedFor = useRef<string | null>(null)
+  // Opening the page only reads the suggestion; it starts nothing. The button asks (askSuggestion).
   useEffect(() => {
     if (version.status !== 'done') return
     let alive = true
-    let timer: number | undefined
-    const load = async () => {
-      try {
-        let a = await api.getSuggestion(version.id)
-        if (!alive) return
-        if (shouldStart(a)) a = await api.startSuggestion(version.id)
-        if (!alive) return
-        setSugg(a)
-        if (isRunning(a)) timer = window.setTimeout(load, 4000)
-      } catch {
-        if (alive) setSugg(null)
-      }
-    }
-    void load()
+    api
+      .getSuggestion(version.id)
+      .then((a) => alive && setSugg(a))
+      .catch(() => alive && setSugg(null))
     return () => {
       alive = false
-      window.clearTimeout(timer)
     }
   }, [version.id, version.status])
+  // While the suggestion is queued or running, read it again every few seconds.
+  useEffect(() => {
+    if (!isRunning(sugg)) return
+    const t = window.setTimeout(() => {
+      api
+        .getSuggestion(version.id)
+        .then((a) => setSugg(a))
+        .catch(() => undefined)
+    }, 4000)
+    return () => window.clearTimeout(t)
+  }, [sugg, version.id])
   useEffect(() => {
     const ps = pendingSuggestion(sugg)
     if (!ps?.item || suggestedFor.current === `${version.id}:${ps.item}`) return
@@ -145,6 +146,9 @@ export function RigView({ version }: { version: Version }) {
     }
     dp.keepStiffPoints(s.item)
     setSugg(await api.markSuggestion(version.id, 'kept'))
+  }
+  async function askSuggestion() {
+    setSugg(await api.startSuggestion(version.id))
   }
   async function dismissSuggestion(s: ItemSuggestionState) {
     if (s.item) dp.discardStiffPoints(s.item)
@@ -225,7 +229,7 @@ export function RigView({ version }: { version: Version }) {
         </div>
       )}
       {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} highlight={regionHighlight} /> : <div className="placeholder-box">No 3D model in this version.</div>}
-      <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
+      <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} canAsk={canAsk(sugg)} askText={askLabel(sugg)} onAsk={askSuggestion} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}

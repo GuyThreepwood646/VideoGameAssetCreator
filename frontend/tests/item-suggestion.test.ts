@@ -1,21 +1,31 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isRunning, pendingSuggestion, shouldStart, suggestionLine, suggestionNote, suggestionPoints, type SuggestionAnswer } from '../src/suggestion'
+import { askLabel, canAsk, isRunning, pendingSuggestion, suggestionLine, suggestionNote, suggestionPoints, type SuggestionAnswer } from '../src/suggestion'
 
 const base: SuggestionAnswer = { version_id: 'v1', installed: true, eligible: [{ type: 'backpack', label: 'backpack' }], state: null }
 
-test('a suggestion is asked for only when a back item is kept, the finder is installed and none exists yet', () => {
-  assert.equal(shouldStart(base), true)
-  assert.equal(shouldStart({ ...base, installed: false }), false, 'not installed: nothing is offered')
-  assert.equal(shouldStart({ ...base, eligible: [] }), false, 'no kept back item: nothing is offered')
-  assert.equal(shouldStart({ ...base, state: { state: 'dismissed', item: 'backpack' } }), false, 'dismissed is never run again')
-  assert.equal(shouldStart({ ...base, state: { state: 'kept', item: 'backpack' } }), false)
-  assert.equal(shouldStart(null), false)
+test('the button is offered only when the finder is installed and a back item is kept, and no suggestion is live or answered', () => {
+  assert.equal(canAsk(base), true)
+  assert.equal(canAsk({ ...base, installed: false }), false, 'not installed: nothing is offered')
+  assert.equal(canAsk({ ...base, eligible: [] }), false, 'no kept back item: nothing is offered')
+  assert.equal(canAsk({ ...base, state: { state: 'dismissed', item: 'backpack' } }), false, 'dismissed is never asked again')
+  assert.equal(canAsk({ ...base, state: { state: 'kept', item: 'backpack' } }), false)
+  assert.equal(canAsk({ ...base, state: { state: 'done', item: 'backpack', found: true } }), false)
+  assert.equal(canAsk({ ...base, state: { state: 'queued', item: 'backpack' } }), false, 'queued is not asked again')
+  assert.equal(canAsk({ ...base, state: { state: 'failed', item: 'backpack', reason: 'x' } }), true, 'a failed one can be retried')
+  assert.equal(canAsk(null), false)
 })
 
-test('the page keeps asking while the suggestion is running', () => {
+test('the page keeps reading while the suggestion is queued or running', () => {
+  assert.equal(isRunning({ ...base, state: { state: 'queued', item: 'backpack' } }), true)
   assert.equal(isRunning({ ...base, state: { state: 'running', item: 'backpack' } }), true)
   assert.equal(isRunning({ ...base, state: { state: 'done', item: 'backpack' } }), false)
+  assert.equal(isRunning({ ...base, state: { state: 'failed', item: 'backpack' } }), false)
+})
+
+test('the button names the item and says try again after a failure', () => {
+  assert.equal(askLabel(base), 'Suggest the backpack')
+  assert.equal(askLabel({ ...base, state: { state: 'failed', item: 'backpack' } }), 'Try again: suggest the backpack')
 })
 
 test('only a found, not yet kept or dismissed suggestion is shown as pending', () => {

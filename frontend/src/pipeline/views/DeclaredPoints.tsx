@@ -225,6 +225,9 @@ export function SuggestionBlock({
   running,
   done,
   busy,
+  canAsk,
+  askText,
+  onAsk,
   onKeep,
   onDismiss,
 }: {
@@ -232,12 +235,27 @@ export function SuggestionBlock({
   running: boolean
   done: boolean
   busy: boolean
+  canAsk: boolean
+  askText: string
+  onAsk: () => void
   onKeep: (s: ItemSuggestionState) => void
   onDismiss: (s: ItemSuggestionState) => void
 }) {
-  if (running) return <div className="small muted">Looking for the item named in the description, from six views.</div>
+  if (running) {
+    return <div className="small muted item-suggestion" data-testid="item-suggestion">Looking for the item named in the description, from six views. It runs in the job queue.</div>
+  }
   const pending = suggestion && suggestion.state === 'done' && suggestion.found ? suggestion : null
-  if (!pending) return null
+  if (!pending) {
+    if (!canAsk) return null
+    return (
+      <div className="declared-points item-suggestion" data-testid="item-suggestion">
+        {suggestion?.state === 'failed' && <div className="warn-text small">The last suggestion did not finish: {suggestion.reason || 'try again'}</div>}
+        <button type="button" className="btn" disabled={!done || busy} onClick={onAsk}>
+          {askText}
+        </button>
+      </div>
+    )
+  }
   const note = suggestionNote(pending)
   return (
     <div className="declared-points item-suggestion" data-testid="item-suggestion">
