@@ -139,6 +139,11 @@ export interface DeclaredPart {
   kind: 'separate' | 'sway' | string
 }
 
+// A declared part on one version (WP-20): GET/PUT /api/versions/{vid}/parts. A location is three metres in the rig GLB's
+// rest pose (y up), or null when no point is set.
+export type PlacedPart = { name: string; kind: string; location: number[] | null }
+export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
+
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
 export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine' | 'upscale'; instruction?: string }
@@ -957,6 +962,9 @@ export const api = {
   // Your own 3D model on step 3 (backend vgac/model_import.py): GLB, glTF, FBX, OBJ or a zip with its pictures.
   uploadModel: (aid: string, file: File, onProgress?: (fraction: number) => void) => uploadModelFile(aid, file, onProgress),
   // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
+  // Declared parts on a rig version (WP-20): the asset's parts with this version's points; saving replaces them all.
+  versionParts: (vid: string) => get<VersionParts>(`/api/versions/${vid}/parts`),
+  saveVersionParts: (vid: string, parts: PlacedPart[]) => put<VersionParts>(`/api/versions/${vid}/parts`, { parts }),
   turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.
   getFaceCloseup: (aid: string) => get<FaceCloseup>(`/api/assets/${aid}/face-closeup`),
