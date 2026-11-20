@@ -144,6 +144,23 @@ export interface DeclaredPart {
 // A stiff part takes a list of points (locations); a sway part takes one (location).
 export type PlacedPart = { name: string; kind: string; location: number[] | null; locations?: number[][] }
 export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
+// The suggested worn item on a rig version (WP-69 follow-up, item_suggest.py): what the rig page reads. `state` is null
+// when nothing is to be shown; `installed` false means the finder is not set up (the page says nothing then).
+export type SuggestedItem = { type: string; label: string }
+export type ItemSuggestionState = {
+  state: 'queued' | 'running' | 'done' | 'failed' | 'dismissed' | 'kept' | 'none'
+  item?: string
+  label?: string
+  phrase?: string
+  vertices?: number
+  share?: number
+  large?: boolean
+  found?: boolean
+  points?: number[][]
+  reason?: string
+  job_id?: string
+}
+export type SuggestionAnswer = { version_id: string; installed: boolean; eligible: SuggestedItem[]; state: ItemSuggestionState | null }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
@@ -768,6 +785,18 @@ export type RefineBody = { instruction: string; view?: string; views?: string[];
 export type FixPlan = { instruction: string | null; used: string[]; snippets: string[]; dropped: { check: string; reason: string; text: string }[]; words: number; max_changes: number }
 export type DeleteResult = { ok: boolean; deleted: string }
 export type RunResult = { job: Job; version: Version }
+// The Shape tab (WP-26): the parameters sent to the server, the preview's cut start per arm, and the log a separated
+// version carries (metrics.shape_log).
+export type ShapeBody = { operation: 'separate'; side: 'L' | 'R' | 'both'; gap: number; start: number }
+export type ShapeArm = { shoulder: number[]; elbow: number[]; upper_arm_m: number; cut_start: number[]; axis: number[]; half_band_m: number; radius_m: number }
+export type ShapePreview = { arms: Partial<Record<'L' | 'R', ShapeArm>>; messages: string[] }
+export type ShapeLog = {
+  operation: string
+  parameters: { side: string; gap: number; start: number }
+  rig_version: string
+  engine: { ok: boolean; changed: boolean; cuts: number; skipped: string[]; open_edges: number | null; bad_edges: number | null; pieces: number | null; new_crossings: number | null; caps_placed: number }
+  messages: string[]
+}
 // A feature photo given with a new asset (backend vgac/compose.py): what the person's own picture is of.
 export type FeatureRole = 'face' | 'body' | 'outfit' | 'other'
 export type FeaturePhoto = { role: FeatureRole; image: string; note?: string; crop?: PersonBox; people_found?: number }
@@ -965,6 +994,9 @@ export const api = {
   // Declared parts on a rig version (WP-20): the asset's parts with this version's points; saving replaces them all.
   versionParts: (vid: string) => get<VersionParts>(`/api/versions/${vid}/parts`),
   saveVersionParts: (vid: string, parts: PlacedPart[]) => put<VersionParts>(`/api/versions/${vid}/parts`, { parts }),
+  getSuggestion: (vid: string) => get<SuggestionAnswer>(`/api/versions/${vid}/suggestion`),
+  startSuggestion: (vid: string) => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion`, {}),
+  markSuggestion: (vid: string, state: 'dismissed' | 'kept') => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion/${state}`, {}),
   // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
   turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.
@@ -1011,6 +1043,9 @@ export const api = {
   paint: (vid: string, body: { picture_png: string; mask_png: string; strokes: Record<string, unknown>[] }) => post<RunResult>(`/api/versions/${vid}/paint`, body),
   // Smooth the paint (WP-24): a new clean-up version with the painted picture smoothed inside its mask.
   smooth: (vid: string, body: { strength: 'light' | 'strong' }) => post<RunResult>(`/api/versions/${vid}/smooth`, body),
+  // Separate a fused arm (WP-26): the preview computes where each cut starts (no job, no version); the apply is a job.
+  shapePreview: (vid: string, body: ShapeBody) => post<ShapePreview>(`/api/versions/${vid}/shape/preview`, body),
+  shape: (vid: string, body: ShapeBody) => post<RunResult>(`/api/versions/${vid}/shape`, body),
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
   // Removes a version that failed, was stopped or was rejected, with its files (409 for any other).

@@ -8,6 +8,7 @@ modules record a skip.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import importlib
@@ -60,6 +61,12 @@ def _write_mask(sc: StageContext, mask_b64: str | None) -> Path | None:
 
 async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
     stage, op, is_material = parse_kind(kind)
+    if stage == "suggest":
+        # The suggested worn item (WP-69, item_suggest.py): Blender and the finder, one at a time on the host.
+        from .. import item_suggest
+
+        await asyncio.to_thread(item_suggest.run_job, ctx, payload)
+        return
     if payload.get("task") == "style_from_image":
         # A review-engine job with no version (POST /api/projects/{pid}/style-from-image).
         from . import style
@@ -98,6 +105,13 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             from .. import paintsave
 
             await paintsave.smooth(sc, params)
+        elif op == "shape":
+            # Separate a fused arm (WP-26): a new clean-up version from the one the rig was made from (shape.py).
+            if stage != "prep":
+                raise ValueError(f"the {stage} step cannot be shaped")
+            from .. import shape
+
+            await shape.run(sc, params)
         elif op == "upload":
             # The person's own picture, already written into the version folder by the API (uploads.py).
             upload = getattr(mod, "upload", None)

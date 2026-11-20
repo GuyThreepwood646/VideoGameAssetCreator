@@ -468,6 +468,11 @@ class JobContext:
             raise JobCancelled()
 
 
+# Called with (kind, version_id, asset_id) after a job of a step finished without error and was not put back to queued
+# (WP-69: a finished rig may queue the suggested worn item). Each hook is run in its own try: a failing hook is logged.
+FINISHED_HOOKS: list[Callable[[str, str | None, str | None], None]] = []
+
+
 def _publish_job(job: Job) -> None:
     bus.publish_threadsafe({"type": "job", "job": job_to_dict(job)})
 
@@ -908,6 +913,12 @@ class InstanceWorker:
                         job.message = error.splitlines()[0][:200]
                     db.commit()
                     _publish_job(job)
+                    if error is None and not requeued and not rerouted and not is_judge:
+                        for hook in FINISHED_HOOKS:
+                            try:
+                                hook(job.kind, job.version_id, job.asset_id)
+                            except Exception:  # noqa: BLE001 - a hook never fails the job that finished
+                                log.warning("job hook failed for %s", job.kind, exc_info=True)
                     if job.version_id:
                         v = db.get(Version, job.version_id)
                         if v is not None:
