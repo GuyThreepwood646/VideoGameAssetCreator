@@ -113,6 +113,8 @@ CAP_NORMAL_SHARE = 0.5  # how much of a cap's own facing is kept in its shading 
 MIRROR_REACH = 0.1  # m: the surface a cap mirrors from lies within the cap's size plus this of its middle
 MIRROR_SWING = 0.08  # the most the mirrored detail moves a cap pixel off the blended ring colour (of 1)
 MIRROR_LAND = 0.03  # m: a mirrored point further than this from that surface keeps the blended ring colour
+RECOLOUR_UV_TOL = 1e-4  # texture distance within which a face of the rig is a cap triangle of caps.json
+RECOLOUR_FOUND_SHARE = 0.9  # share of a cap's triangles that must be found for it to be coloured again
 CAP_PAD_PX = 2  # pixels a cap's colour is grown past its edge in the picture
 ARM_SURFACE_SHARE = 0.1  # away from a cut, the arm's own surface is where its arm share is over this
 LEAK_SHARE = 0.4  # an arm's own surface reaching more than this share of the model has leaked into the body
@@ -1955,6 +1957,97 @@ def raster_cover(tris_px, w, h):
     return np.concatenate(rows), np.concatenate(cols), np.concatenate(tid), np.vstack(bary)
 
 
+def ring_plane(ring_pts, beside_pts):
+    """A cap's cut plane found again from the finished model (WP-75 recolour): the best-fit plane through the cap's
+    ring points, and which side of it the cap's own surface lies on (the mean of the surface points beside the ring).
+    -> (point, unit normal, sign +1 or -1)."""
+    R = np.asarray(ring_pts, dtype=float).reshape(-1, 3)
+    pc = R.mean(axis=0)
+    pn = np.linalg.svd(R - pc)[2][-1] if len(R) >= 3 else np.array([0.0, 0.0, 1.0])
+    pn = pn / max(np.linalg.norm(pn), 1e-12)
+    side = (np.asarray(beside_pts, dtype=float).reshape(-1, 3) - pc) @ pn
+    return pc, pn, (1 if side.mean() >= 0 else -1) if len(side) else 1
+
+
+def match_faces(face_uv_centres, cap_uv_tris, tol=RECOLOUR_UV_TOL):
+    """Which faces are a cap's, found by their texture triangles (caps.json): every face whose texture centre lies
+    within `tol` of a cap triangle's centre (a dome can give several faces the same texture triangle, so one centre
+    may match more than one face). -> (sorted face indices, how many of the cap's triangles found a face)."""
+    F = np.asarray(face_uv_centres, dtype=float).reshape(-1, 2)
+    T = np.asarray(cap_uv_tris, dtype=float).reshape(-1, 3, 2).mean(axis=1)
+    faces, found = np.zeros(len(F), dtype=bool), 0
+    for s_ in range(0, len(T), 512):
+        d = np.linalg.norm(T[s_:s_ + 512, None, :] - F[None, :, :], axis=2) <= tol
+        faces |= d.any(axis=0)
+        found += int(d.any(axis=1).sum())
+    return np.where(faces)[0].tolist(), found
+
+
+def recolour_main():  # pragma: no cover - runs inside Blender
+    """WP-75: colour a separated rig's caps again from a new picture (a repainted clean-up), the way the cut coloured
+    them (_colour_caps). The caps are found by their texture triangles in caps.json; nothing else of the picture
+    changes. Run: blender -b --python separate.py -- --recolour <rig.glb> <caps.json> <picture.png> <out.png>
+    --report <json>"""
+    import bmesh
+    import bpy
+    from mathutils import Vector
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _common
+
+    argv = [a for a in _common.after_double_dash() if a != "--recolour"]
+    rig, caps_path, picture, out_png = (os.path.abspath(p) for p in argv[:4])
+    report_path = _common.opt("--report", None)
+    report = {"ok": False, "caps": []}
+    _common.open_glb(rig)
+    mo = max((o for o in bpy.context.scene.objects if o.type == "MESH"), key=lambda o: len(o.data.vertices), default=None)
+    caps = json.load(open(caps_path, encoding="utf-8")).get("caps", [])
+    if mo is None or not mo.data.uv_layers or not caps:
+        report["reason"] = "no_mesh" if mo is None else ("no_uv" if not mo.data.uv_layers else "no_caps")
+        return _finish(report, report_path)
+    bm = bmesh.new()
+    bm.from_mesh(mo.data)
+    bm.transform(mo.matrix_world)
+    # the export split points along texture seams (every cap's edge is one); join them so a cap meets its ring again
+    # (texture points are kept per face corner)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
+    bm.faces.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    centres = np.array([np.mean([l[uvl].uv[:] for l in f.loops], axis=0) for f in bm.faces])
+    island_faces, island_uvs, kept = [], [], []
+    for cap in caps:
+        tris = cap.get("uv_tris") or []
+        idx, found = match_faces(centres, tris)
+        rec = {"side": cap.get("side"), "of": cap.get("of"), "triangles": len(tris), "found": found}
+        report["caps"].append(rec)
+        if not tris or found < RECOLOUR_FOUND_SHARE * len(tris):
+            rec["reason"] = "not_found"
+            continue
+        fs = [bm.faces[i] for i in idx]
+        island_faces.append(fs)
+        island_uvs.append(np.array([[l[uvl].uv[:] for l in f.loops] for f in fs]))
+        kept.append(rec)
+    capset = {f for fs in island_faces for f in fs}
+    planes = []
+    for fs in island_faces:
+        ring = {v for f in fs for v in f.verts if any(g not in capset for g in v.link_faces)}
+        beside = [g.calc_center_median()[:] for v in ring for g in v.link_faces if g not in capset]
+        pc, pn, sign = ring_plane([v.co[:] for v in ring], beside)
+        planes.append((Vector(pc), Vector(pn), sign))
+    img = bpy.data.images.load(picture)
+    img.colorspace_settings.name = "sRGB"
+    images, rings = _colour_caps(bm, island_faces, island_uvs, planes, capset, [(img, False)]) if island_faces else ({}, [])
+    for rec, rr in zip(kept, rings):
+        rec.update(rr)
+    img.file_format = "PNG"
+    img.save(filepath=out_png)
+    report.update(ok=bool(island_faces), recoloured=len(island_faces), images=images)
+    if not island_faces:
+        report["reason"] = "caps_not_found"
+    _finish(report, report_path)
+
+
 def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     """Texture space for the caps in the atlas's free space (uvfit.place_islands, every existing piece stays put), at
     the surface's own texel density (smaller if the free space is short), and their colour from the surface round
@@ -2014,10 +2107,30 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         new_uv.append(moved)
     out["cap_islands"] = [{"side": sd, "of": of, "triangles": len(fs), "uv_tris": np.round(muv, 6).tolist()}
                           for (fs, _, sd, of), muv in zip(islands, new_uv)]
+    imgs = _material_images(mo)
+    out["images"], ring_report = _colour_caps(bm, [isl[0] for isl in islands], new_uv, planes, capset, imgs)
+    for isl, rr in zip(out["cap_islands"], ring_report):
+        isl.update(rr)
+    out["placed"] = len(placed)
+    out["_normals"] = _cap_normals([isl[0] for isl in islands], capset)
+    return out
+
+
+def _colour_caps(bm, island_faces, island_uvs, planes, capset, imgs):  # pragma: no cover
+    """WP-27's cap colouring, for the caps' islands already placed in texture space (`island_uvs`: each island's
+    texture triangles, in face order): each ring point's colour is read just inside the surface triangles beside it,
+    from texels the surface really covers; each cap pixel blends the ring colours nearest it by inverse distance, and
+    the surface's own detail is mirrored across the ring within MIRROR_SWING. Normal maps get a flat normal. `planes`:
+    each island's (cut point, cut normal, which side of it the island faces), for the mirror. Writes into `imgs`
+    ((image, is_normal) pairs) in place. -> ({image name: report}, [per island ring report]). Used by _cap_uvs and by
+    the recolour run (recolour_main), so a repainted picture gets its caps coloured the same way."""
+    uvl = bm.loops.layers.uv.active
+    surf = [f for f in bm.faces if f not in capset]
+    uv_t = np.array([[l[uvl].uv[:] for l in f.loops] for f in surf])
     # each island's ring: its edge points, their position, where to read the surface colour beside each, and where
     # the point sits on the cap
     rings = []
-    for fs, _, _, _ in islands:
+    for fs in island_faces:
         reads_of = {}
         for f in fs:
             for v in f.verts:
@@ -2040,9 +2153,8 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         rv = sorted(reads_of, key=lambda v: tuple(v.co))
         rings.append((np.array([v.co[:] for v in rv]).reshape(-1, 3), [reads_of[v] for v in rv],
                       np.array([cap_uv[v] for v in rv]).reshape(-1, 2)))
-    mirrors = [_mirror_source(bm, fs, capset, surf, uvl, *pl) for (fs, _, _, _), pl in zip(islands, planes)]
-    imgs = _material_images(mo)
-    out["images"] = {}
+    mirrors = [_mirror_source(bm, fs, capset, surf, uvl, *pl) for fs, pl in zip(island_faces, planes)]
+    images = {}
     cover = {}
     mirror_uv = {}
     ring_report = [{"ring_points": len(r[1])} for r in rings]
@@ -2061,7 +2173,7 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
             cover[(w, h)] = m
         covered = cover[(w, h)]
         filled = 0
-        for n_isl, ((fs, _, _, _), muv, (r_xyz, r_reads, r_cap_uv)) in enumerate(zip(islands, new_uv, rings)):
+        for n_isl, (fs, muv, (r_xyz, r_reads, r_cap_uv)) in enumerate(zip(island_faces, island_uvs, rings)):
             rows, cols, tid, bary = raster_cover(np.stack([muv[..., 0] * w, muv[..., 1] * h], axis=-1), w, h)
             if not len(rows) or not len(r_xyz):
                 continue
@@ -2097,12 +2209,8 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
             img.pack()
         except RuntimeError:
             pass
-        out["images"][img.name] = {"normal": is_normal, "pixels_filled": int(filled), "size": [w, h]}
-    for isl, rr in zip(out["cap_islands"], ring_report):
-        isl.update(rr)
-    out["placed"] = len(placed)
-    out["_normals"] = _cap_normals([isl[0] for isl in islands], capset)
-    return out
+        images[img.name] = {"normal": is_normal, "pixels_filled": int(filled), "size": [w, h]}
+    return images, ring_report
 
 
 def _cap_normals(island_faces, capset):  # pragma: no cover
@@ -2204,4 +2312,7 @@ def _material_images(mo):  # pragma: no cover
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    if "--recolour" in sys.argv:
+        recolour_main()
+    else:
+        main()
