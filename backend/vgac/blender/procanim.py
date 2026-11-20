@@ -1616,6 +1616,44 @@ for row in table:
         finish_serpent(P)
         frames.append(P)
     poses[row["name"]] = frames
+# ---- clip data for the game (WP-19): locomotion speed from the planted feet, attack hit time from peak limb speed.
+# Read from the posed frames themselves, so they follow the motion that is exported. Speed is None where the clip has
+# no stance (in-place flat clips): the importer keeps its own default for those. Written into each clip row.
+def _ends_positions(frames, bones):
+    """{bone: [(x, y, z) per frame]} for the bones' head positions in world space."""
+    out = {b: [] for b in bones}
+    for P in frames:
+        Mw = fk(P)
+        for b in bones:
+            t = Mw[b].translation
+            out[b].append((t.x, t.y, t.z))
+    return out
+
+
+def _character_height():
+    Mw = fk(Pose())
+    zs = [m.translation.z for m in Mw.values()]
+    return max(zs) - min(zs)
+
+
+_foot_bones = [(leg_chain(li)["end_bone"] or leg_chain(li)["m"]) for li in leg_info if leg_chain(li)]
+_hand_bones = []
+for _a in arm_info:
+    if _a.get("fore") and byname[_a["fore"]].children:
+        _hand_bones.append(byname[_a["fore"]].children[0].name)
+for row in table:
+    if row["name"] in ("walk", "run") and _foot_bones:
+        feet = _ends_positions(poses[row["name"]], _foot_bones)
+        res = gait.planted_speed([feet[b] for b in _foot_bones], fps, _character_height())
+        row.update(gait.speed_row_fields(res))  # speed_mps only when measured; the importer keeps its default otherwise
+    elif row["name"] in ("walk", "run"):
+        row.update(gait.speed_row_fields({"speed": None, "method": "fallback", "planted_share": 0.0, "reason": "no legs"}))
+    if row["name"] == "attack" and (_hand_bones or _foot_bones):
+        ends = _ends_positions(poses[row["name"]], _hand_bones + _foot_bones)
+        hit = gait.peak_speed_frame(ends, fps)
+        report.setdefault("hit_probe", {})[row["name"]] = {b: [round(math.dist(ends[b][i - 1], ends[b][i + 1]) * fps / 2.0, 3) for i in range(1, len(ends[b]) - 1)] for b in ends}
+        if hit["frame"] >= 0:
+            row["hit_frame"], row["hit_time"], row["hit_speed_mps"], row["hit_end"] = hit["frame"], hit["time"], hit["speed"], hit["end"]
 keyed = set()
 for frames in poses.values():
     for P in frames:

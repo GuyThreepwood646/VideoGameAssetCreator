@@ -138,7 +138,7 @@ def test_change_moves_stores_the_choice_per_character_and_asset_moves_reports_it
 # ---- the importer ------------------------------------------------------------------------------------------------------
 
 def test_the_importer_takes_the_own_idle_from_the_sidecar_and_makes_it_the_locomotion_idle():
-    assert 'Version = "21"' in IMPORTER
+    assert 'Version = "22"' in IMPORTER
     assert "public string source" in IMPORTER
     # the rule: the sidecar's idle row made by the app ("procedural") is the character's own idle
     assert 'string.Equals(c.source, "procedural", StringComparison.OrdinalIgnoreCase) ? c.name : null' in IMPORTER
