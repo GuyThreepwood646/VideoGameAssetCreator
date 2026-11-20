@@ -123,7 +123,14 @@ export function StepSettingsChoice({ category, platform, look, stages, disabled 
                   Your saved default: {inUse[stage].map((n) => paramPlain(n, schema.find((p) => p.name === n)?.label)).join(', ')}.
                 </p>
               )}
-              {simple.length > 0 && <div className="adjust-grid">{simple.map(field)}</div>}
+              {simple.some((p) => !p.group) && <div className="adjust-grid">{simple.filter((p) => !p.group).map(field)}</div>}
+              {/* WP-76: the resting pose settings of the rig step, grouped under one heading. */}
+              {simple.some((p) => p.group === 'Resting pose') && (
+                <fieldset className="resting-group">
+                  <legend>Resting pose</legend>
+                  <div className="adjust-grid">{simple.filter((p) => p.group === 'Resting pose').map(field)}</div>
+                </fieldset>
+              )}
               {more.length > 0 && (
                 <Disclosure label="More settings">
                   <div className="adjust-grid">{more.map(field)}</div>

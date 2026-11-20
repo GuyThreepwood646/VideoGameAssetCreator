@@ -61,6 +61,12 @@ def _write_mask(sc: StageContext, mask_b64: str | None) -> Path | None:
 
 async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
     stage, op, is_material = parse_kind(kind)
+    if kind == "rig.pose_preview":
+        # The Resting pose preview (WP-76, pose_preview.py): procanim and the hand close-ups on the host, one at a time.
+        from .. import pose_preview
+
+        await asyncio.to_thread(pose_preview.run_job, ctx, payload)
+        return
     if stage == "suggest":
         # The suggested worn item (WP-69, item_suggest.py): Blender and the finder, one at a time on the host.
         from .. import item_suggest

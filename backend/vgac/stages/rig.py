@@ -594,7 +594,7 @@ def only_hitbox_change(parent_params: dict[str, Any], params: dict[str, Any]) ->
 # The knobs that only change the moves: with nothing else changed, the skeleton is reused and only the moves are
 # made again (procanim, retarget, the strip), as the hit-box re-fit does for hit boxes.
 MOVES_PARAMS = ("added_moves", "removed_moves", "moves", "clips_source", "move_size", "move_speed", "motion", "springs",
-                "idle_source", "head_sway", "arm_pose", "neutral_pose")
+                "idle_source", "head_sway", "arm_pose", "neutral_pose", "hand_pose", "finger_curl")
 # anim_body and hair_bind exist only when the hair comes from the library (hair_bind below); with today's hair the
 # keys are never present, so listing them changes nothing there.
 ANIM_FILES = ("anim_glb", "anim_clips", "anim_report", "anim_retarget", "anim_strip", "springs", "springs_found", "springs_report",
@@ -843,6 +843,20 @@ def gait_arm_pose(params: dict[str, Any]) -> str:
     return gait.arm_pose_choice(params.get("arm_pose"))
 
 
+def gait_hand_pose(params: dict[str, Any]) -> str:
+    """The hand_pose setting (open, relaxed or fist; relaxed when empty). Unknown values raise ValueError (WP-76)."""
+    from ..blender import gait
+
+    return gait.hand_pose_choice(params.get("hand_pose"))
+
+
+def gait_finger_curl(params: dict[str, Any]) -> float:
+    """The finger_curl setting (0 to 1.5; 1 when empty). Out-of-range values raise ValueError (WP-76)."""
+    from ..blender import gait
+
+    return gait.finger_curl_amount(params.get("finger_curl"))
+
+
 async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | None = None) -> None:
     """The moves: procedural clips per category (motion and moves: G30, G31), then for humanoids the hand-made CC0
     library clips retargeted onto the skeleton (retarget.py; clips_source auto or library), which replace the
@@ -868,10 +882,12 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         args += ["--speed", str(params["move_speed"])]
     arm_pose = gait_arm_pose(params)
     args += ["--arm-pose", arm_pose]
+    hand_pose, finger_curl = gait_hand_pose(params), gait_finger_curl(params)
+    args += ["--hand-pose", hand_pose, "--finger-curl", f"{finger_curl:g}"]  # WP-76: the resting hand in every built-in clip
     if params.get("neutral_pose"):  # D9: one still frame of the stand-still arm angle (procanim ignores it off a humanoid)
         args += ["--neutral-pose"]
     sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params),
-                  idle_source=params["idle_source"], arm_pose=arm_pose)
+                  idle_source=params["idle_source"], arm_pose=arm_pose, hand_pose=hand_pose, finger_curl=finger_curl)
     try:
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
@@ -885,7 +901,8 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
             sc.set_metrics(anim_kind=rep.get("kind"), motion=rep.get("motion"), clips=rep.get("clips"),
                            missing_clips=rep.get("missing_clips"), legs_moved=rep.get("legs_moved"),
                            legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"),
-                           clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []))
+                           clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []),
+                           hand_fingers=[len(h.get("fingers") or []) for h in (rep.get("hands") or [])])  # WP-76: finger chains per hand (0 = one-lump)
         await _retarget(sc, anim_glb, params, chosen_moves)
         await _after_moves(sc, anim_glb, params)
     except Exception as e:
