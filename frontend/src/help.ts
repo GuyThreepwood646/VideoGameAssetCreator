@@ -1698,6 +1698,8 @@ export function examplePrompts(category: string): [string, string] {
 export function humanError(raw: string | null | undefined): string {
   const r = (raw ?? '').toLowerCase()
   if (!r) return 'Something went wrong in this step. Try again.'
+  // A refused separation (WP-26, shape.py): the engine's plain reasons, without the exception name the job adds.
+  if (raw && raw.startsWith('ShapeRefused: ')) return `${raw.slice('ShapeRefused: '.length).trim()} Try another arm, a wider gap or a different cut start.`
   if (r.includes('cancel')) return 'This run was cancelled.'
   if (r.includes('comfyerror') || r.includes('comfy') || r.includes('interrupted') || r.includes('out of vram') || r.includes('no images')) return 'The generator stopped; this usually fixes itself. Try again.'
   if (r.includes('blender') || r.includes('unity') || r.includes('bpy') || r.includes('remesh') || r.includes('decimat')) return 'The clean-up step failed on this model. Try again or change something.'

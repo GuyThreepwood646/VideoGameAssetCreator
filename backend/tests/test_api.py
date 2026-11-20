@@ -797,3 +797,12 @@ def test_painted_save_refuses_bad_input_and_other_steps(client, fake_execute):
     assert client.post(f"/api/versions/{pid}/paint", json={"picture_png": "bm90IGEgcGljdHVyZQ==", "mask_png": body["mask_png"]}).status_code == 400
     assert client.post(f"/api/versions/{pid}/paint", json={"picture_png": body["picture_png"], "mask_png": body["mask_png"], "strokes": "x"}).status_code == 422
     assert client.post("/api/versions/nope/paint", json=body).status_code == 404
+
+
+def test_shape_routes_refuse_bad_parameters_before_any_work(client):
+    """The server checks the parameters first: a bad side, gap or start is a 422, whatever version the URL names."""
+    assert client.post("/api/versions/none/shape", json={"side": "front"}).status_code == 422
+    assert client.post("/api/versions/none/shape", json={"side": "L", "gap": 0.05}).status_code == 422
+    assert client.post("/api/versions/none/shape/preview", json={"start": 0.9}).status_code == 422
+    assert client.post("/api/versions/none/shape", json={"operation": "delete"}).status_code == 422
+

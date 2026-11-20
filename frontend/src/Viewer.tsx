@@ -87,6 +87,9 @@ type Props = {
   onModelLoaded?: (model: ViewerModel) => void
   // The stiff region to draw over the model (WP-69 preview). Null to clear.
   highlight?: RegionHighlight | null
+  // Where the camera looks (the model's own space, with a radius to fit). Set when a tool needs a part of the model in view (the
+  // Shape tab's arm). Null leaves the camera as the model framed it.
+  focus?: { point: [number, number, number]; radius: number } | null
 }
 
 type SceneHandles = {
@@ -136,6 +139,20 @@ function setShading(root: THREE.Object3D, shading: Shading, originals: Map<THREE
     const mats = Array.isArray(orig) ? orig : [orig]
     for (const m of mats) if ('wireframe' in m) (m as THREE.MeshStandardMaterial).wireframe = shading === 'wireframe'
   })
+}
+
+// Looks at a point (the model's own space) from the front quarter, close enough that a radius around it fills the view.
+function focusCamera(h: SceneHandles, focus: { point: [number, number, number]; radius: number }, model: THREE.Object3D | null) {
+  h.frame.updateMatrixWorld(true)
+  const target = model ? model.localToWorld(new THREE.Vector3(...focus.point)) : new THREE.Vector3(...focus.point)
+  const dist = (Math.max(focus.radius, 0.02) / Math.sin((h.camera.fov * Math.PI) / 360)) * 1.3
+  const from = new THREE.Vector3(0.8, 0.3, 0.8).normalize().multiplyScalar(dist)
+  h.camera.position.copy(target).add(from)
+  h.camera.near = Math.max(0.001, dist / 1000)
+  h.camera.far = dist * 100
+  h.camera.updateProjectionMatrix()
+  h.controls.target.copy(target)
+  h.controls.update()
 }
 
 function frameModel(h: SceneHandles, model: THREE.Object3D) {
@@ -561,7 +578,7 @@ function applyPointerOwnership(c: OrbitControls, move: boolean, toolOn: boolean)
   c.touches.ONE = toolOn ? (-1 as THREE.TOUCH) : move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight }: Props) {
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight, focus }: Props) {
   // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
   const lookCtx = useContext(ViewerLookContext)
   const look = lookProp ?? lookCtx
@@ -617,6 +634,13 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
     highlight.mesh.parent.add(o)
     regionRef.current = o
   }, [highlight])
+  // The camera focus (the Shape tab's arm): applied now, and again whenever a model is framed (focusRef).
+  const focusRef = useRef(focus)
+  focusRef.current = focus
+  useEffect(() => {
+    const h = handlesRef.current
+    if (h && focus) focusCamera(h, focus, modelRef.current)
+  }, [focus])
 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
@@ -988,6 +1012,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         modelRef.current = model
         hh.frame.add(model)
         frameModel(hh, model)
+        if (focusRef.current) focusCamera(hh, focusRef.current, model)
         setShading(model, shading, originalsRef.current)
         // Pickable meshes are the file's own: hit boxes, sockets and attachments are added later and are left out.
         const pickable: THREE.Mesh[] = []

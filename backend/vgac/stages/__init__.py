@@ -98,6 +98,20 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             from .. import paintsave
 
             await paintsave.paint(sc, params)
+        elif op == "smooth":
+            # Smooth the paint (WP-24): a new clean-up version with the painted picture smoothed inside its mask.
+            if stage != "prep":
+                raise ValueError(f"the {stage} step cannot be smoothed")
+            from .. import paintsave
+
+            await paintsave.smooth(sc, params)
+        elif op == "shape":
+            # Separate a fused arm (WP-26): a new clean-up version from the one the rig was made from (shape.py).
+            if stage != "prep":
+                raise ValueError(f"the {stage} step cannot be shaped")
+            from .. import shape
+
+            await shape.run(sc, params)
         elif op == "upload":
             # The person's own picture, already written into the version folder by the API (uploads.py).
             upload = getattr(mod, "upload", None)
