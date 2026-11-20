@@ -75,3 +75,36 @@ def test_the_stalled_message_for_a_short_limit_uses_seconds(monkeypatch):
     msg = jobs.stalled_message("a", "running", 45.0)
     assert "within 45 seconds" in msg
     assert "RTX 3060" in msg
+
+
+def test_time_waiting_in_the_pending_queue_does_not_count(monkeypatch):
+    """A cut-out queued behind another client's long job on a shared card is not hung: the limit starts when the
+    prompt leaves ComfyUI's pending queue."""
+    client = comfy.ComfyClient("http://127.0.0.1:9", "b")
+    queue_reads = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/queue":
+            queue_reads["n"] += 1
+            pending = [[1, "p1", {}, {}, []]] if queue_reads["n"] <= 20 else []
+            return httpx.Response(200, json={"queue_running": [[0, "other", {}, {}, []]], "queue_pending": pending})
+        return httpx.Response(200, json={})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9")
+    monkeypatch.setattr(client, "_client", lambda: http)
+    monkeypatch.setattr(client, "_client_at", lambda url: http)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        try:
+            await client.wait("p1", poll_seconds=0.01, timeout=0.2)
+        except comfy.ComfyStalled:
+            return queue_reads["n"], loop.time() - t0
+        finally:
+            await http.aclose()
+        raise AssertionError("expected a stall")
+
+    reads, _ = asyncio.run(run())
+    # it kept waiting through every pending read, then the limit ran from the first read that found it running
+    assert reads == 21
