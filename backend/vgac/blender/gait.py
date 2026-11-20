@@ -950,6 +950,35 @@ def arm_pose_choice(value) -> str:
     return value
 
 
+# ---- resting pose: the hand shape and one finger-curl amount (WP-76; procanim --hand-pose, --finger-curl) -------------
+HAND_POSE_CHOICES = ("open", "relaxed", "fist")
+HAND_POSE_DEFAULT = "relaxed"
+FINGER_CURL_DEFAULT = 1.0
+FINGER_CURL_MAX = 1.5  # the amount multiplies the hand shape; 0 is no curl, 1 is the shape as designed
+
+
+def hand_pose_choice(value) -> str:
+    """The hand_pose setting as one of HAND_POSE_CHOICES: None or empty is the default; anything else raises."""
+    if value is None or value == "":
+        return HAND_POSE_DEFAULT
+    if value not in HAND_POSE_CHOICES:
+        raise ValueError(f"hand_pose must be one of {list(HAND_POSE_CHOICES)}")
+    return value
+
+
+def finger_curl_amount(value) -> float:
+    """The finger_curl setting as a number from 0 to FINGER_CURL_MAX: None or empty is the default; anything else raises."""
+    if value is None or value == "":
+        return FINGER_CURL_DEFAULT
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("finger_curl must be a number from 0 to 1.5") from None
+    if not (0.0 <= x <= FINGER_CURL_MAX):
+        raise ValueError(f"finger_curl must be from 0 to {FINGER_CURL_MAX}")
+    return x
+
+
 def angle_from_down(v, up=(0.0, 0.0, 1.0)) -> float:
     """Degrees between direction v and straight down (the opposite of up). 0 hangs down, 180 points straight up."""
     n = v_len(v)

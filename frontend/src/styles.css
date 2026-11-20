@@ -4722,3 +4722,23 @@ button.preset-card:hover:not(:disabled) {
 .edit-loras .switch:disabled {
   opacity: 0.85;
 }
+/* Resting pose group on the rig step (WP-76): the three settings and the hand preview under them. */
+.resting-group {
+  border: 1px solid var(--border, #c9c9c9);
+  border-radius: 6px;
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+.resting-group > legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.resting-preview {
+  margin-top: 0.5rem;
+}
+.resting-preview-picture {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border, #c9c9c9);
+}
