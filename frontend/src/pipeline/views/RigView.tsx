@@ -5,6 +5,9 @@ import { Disclosure } from '../../components/ui'
 import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
+import { pointTool } from '../../declaredPoints'
+import type { ViewerModel } from '../../viewerTool'
+import { DeclaredPointsPanel, useDeclaredPoints } from './DeclaredPoints'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
 // metrics.hitboxes on the rig version (4.2).
@@ -95,6 +98,15 @@ export function RigView({ version }: { version: Version }) {
   const libMissing = Array.isArray(m.library_missing) && m.library_missing.length > 0
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
+  // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
+  const dp = useDeclaredPoints(version)
+  const { setPoint } = dp
+  const [viewerModel, setViewerModel] = useState<ViewerModel | null>(null)
+  const [markName, setMarkName] = useState<string | null>(null)
+  const markTool = useMemo(
+    () => (markName && viewerModel ? pointTool((p) => { setPoint(markName, p); setMarkName(null) }) : null),
+    [markName, viewerModel, setPoint],
+  )
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
@@ -145,7 +157,8 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
-      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
       {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
