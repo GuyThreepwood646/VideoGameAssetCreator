@@ -89,3 +89,11 @@ test('applying the settings is one undoable step per change, and a slider run me
   await hist.redo()
   assert.equal(settings.gapMm, 12)
 })
+
+test('a refused separation shows the engine reasons in plain words, not the exception name', async () => {
+  const { humanError } = await import('../src/help')
+  const text = humanError('ShapeRefused: The left arm was not changed: its skin weights start on the forearm. Nothing was changed: the model stays as it was.')
+  assert.ok(text.startsWith('The left arm was not changed'), text)
+  assert.ok(!text.includes('ShapeRefused'), text)
+  assert.ok(text.includes('Try another arm'), text)
+})
