@@ -5,8 +5,10 @@ start (`start`, a share of the upper arm from the shoulder joint). The rig's ski
 step 4 model is cut, capped and checked in Blender, and the result is a new GLB and a report. The caller (WP-26's
 Shape tab job) makes the new step 4 version from it; nothing here touches the library.
 
-Report keys the caller reads: ok (no new open edges, edges with three or more faces, pieces or crossing triangles),
-check, input.check, sides.{L,R}.caps[*] (ok, reason, holes, cap_triangles, new_armpit_m), uv (placed, scale).
+Report keys the caller reads: changed (a new model was written; false means keep the one you have, and `messages`
+says why), ok (no new open edges, edges with three or more faces, pieces or crossing triangles), check, input.check,
+sides.{L,R}.caps[*] (ok, reason, holes, cap_triangles, new_armpit_m), sides.{L,R}.stretch (edges near the cut stretched
+in a 90 degree raise of that arm, before and after), uv (placed, scale), messages (plain lines for the person).
 """
 
 from __future__ import annotations
@@ -23,6 +25,13 @@ GAP_RANGE = (0.002, 0.02)  # m
 START_RANGE = (0.15, 0.6)  # share of the upper arm
 DEFAULT_GAP = 0.006
 DEFAULT_START = 0.3
+STILL_STRETCHED = 0.025  # share of the edges near a cut still stretched in the raise worth telling the person about
+SIDE_NAME = {"L": "left", "R": "right"}
+REFUSED = {  # why an arm was left as it was, in the person's words
+    "not_upper_arm": "its skin weights start on the forearm, so it is not an upper arm grown into the body",
+    "stretch_rose": "cutting it made raising the arm stretch the model more, not less",
+    "no_arm_bones": "the rig has no bones for that arm",
+}
 
 
 def check_params(side: str = "both", gap: float = DEFAULT_GAP, start: float = DEFAULT_START) -> dict[str, Any]:
@@ -59,14 +68,49 @@ def separate(settings: Settings, step4_glb: Path, rig_glb: Path, out_glb: Path, 
         raise ToolError("the separation wrote no report (see separate.log)")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["params"] = p
+    if report.get("changed") and not report.get("ok"):  # never hand back a model less whole than the one given
+        report["changed"] = False
+        report["reason"] = report.get("reason") or "worse"
+        out_glb.unlink(missing_ok=True)
+        if rigged_out:
+            Path(rigged_out).unlink(missing_ok=True)
+    report["messages"] = messages(report)
     return report
+
+
+def messages(report: dict[str, Any]) -> list[str]:
+    """Plain lines for the person: what was separated, what was left and why, and what still stretches."""
+    lines: list[str] = []
+    if report.get("reason") == "worse":
+        return ["The model was not changed: the cut left it less whole than before."]
+    for side, sd in sorted(report.get("sides", {}).items()):
+        name = SIDE_NAME.get(side, side)
+        caps = sd.get("caps", [])
+        if any(c.get("ok") for c in caps) and report.get("changed"):
+            st = sd.get("stretch", {})
+            near, after = st.get("near_edges_after", 0), st.get("stretched_after", 0)
+            if near and after / near > STILL_STRETCHED:
+                lines.append(f"The {name} arm is separate, but parts near it still move with the arm; fixing their "
+                             "weights comes next.")
+            else:
+                lines.append(f"The {name} arm is separate.")
+            continue
+        why = sd.get("reason") or next((c.get("reason") for c in caps if c.get("reason") in REFUSED), None)
+        if why in REFUSED:
+            lines.append(f"The {name} arm was not changed: {REFUSED[why]}.")
+        elif caps:
+            lines.append(f"The {name} arm was not changed: the cut could not be closed cleanly there.")
+        else:
+            lines.append(f"The {name} arm was not changed: its weights show no join to the body.")
+    return lines
 
 
 def summary(report: dict[str, Any]) -> dict[str, Any]:
     """The few numbers a person or a check reads: whole, cut pieces made and skipped, and the measures."""
     caps = [c for s in report.get("sides", {}).values() for c in s.get("caps", [])]
     ck = report.get("check", {})
-    return {"ok": bool(report.get("ok")), "cuts": sum(1 for c in caps if c.get("ok")),
+    return {"ok": bool(report.get("ok")), "changed": bool(report.get("changed")),
+            "cuts": sum(1 for c in caps if c.get("ok")),
             "skipped": [c.get("reason") for c in caps if not c.get("ok")],
             "open_edges": ck.get("open_edges"), "bad_edges": ck.get("bad_edges"), "pieces": ck.get("shells"),
             "new_crossings": ck.get("new_crossings"), "caps_placed": report.get("uv", {}).get("placed", 0)}

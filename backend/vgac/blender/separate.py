@@ -25,6 +25,10 @@ evidence is in bakeoff/wp25 (local). Steps, per arm:
    density, smaller if short of room), coloured from the surface along their edge; normal maps get a flat normal.
 8. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
    not cross before. `ok` is false when any of them got worse.
+9. The raise. Each arm is raised 90 degrees out to the side, before and after, and the edges near its cut stretched
+   past STRETCH_RATIO are counted. An arm whose count rose is put back as it was (reason `stretch_rose`).
+Refused, with the model unchanged: a weight-line piece that starts past the upper arm (`not_upper_arm`: the low-poly
+dwarf, whose arm weights begin on the forearm). When no cut is left the script writes no model (`changed` false).
 No booleans and no remesh: the rest of the surface keeps its points, triangles and texture coordinates. Not handled:
 hair that carries arm weight (a weights fault, WP-27), and arms whose weight line never leaves the shoulder (the
 low-poly dwarf). Runs are repeatable: every set is walked in an order fixed by position.
@@ -51,6 +55,10 @@ RELEASE_RAMP = 0.15  # share of the upper arm past `start` over which the lettin
 RELEASE_NEAR = 0.06  # m: within this of the cut a point's side is its side of the plane, further out its arm share
 SLAB_MARGIN = 0.0005  # m kept between a pushed point and the cap
 CAP_SPACING_MIN = 0.02  # m: the least spacing of a cap's inner points (twice the cut's edge length otherwise)
+NOT_UPPER_ARM = 0.35  # a weight-line piece starting this far past `start` (in upper-arm lengths) is not an upper-arm join
+RAISE_DEG = 90.0  # the test raise: the upper arm swung out to the side, about the front axis at the shoulder joint
+STRETCH_RATIO = 1.6  # an edge longer than this times its rest length in the raise is stretched
+STRETCH_NEAR = 0.08  # m: edges with a point this close to the side's cut count as near the cut
 
 
 def arm_share(weights, groups, arm_names):
@@ -125,6 +133,30 @@ def seg_distance(P, A, B):
     return np.sqrt(((P[:, None, :] - Q) ** 2).sum(axis=2)).min(axis=1)
 
 
+def raise_arm(P, share, pivot, axis, deg=RAISE_DEG):
+    """Linear blend skinning of one pose: every bone of the arm turned by `deg` about `axis` through `pivot`, the rest
+    still. A point moves by its arm share of the turn."""
+    k = np.asarray(axis, float) / np.linalg.norm(axis)
+    a = math.radians(deg)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    Rm = np.eye(3) + math.sin(a) * K + (1 - math.cos(a)) * K @ K
+    Q = P - pivot
+    return P + np.asarray(share, float)[:, None] * (Q @ Rm.T - Q)
+
+
+def raise_stretch(P, edges, share, pivot, axis, near, ratio=STRETCH_RATIO):
+    """Edges with a point flagged `near` -> (how many, how many stretched past `ratio` in the raise)."""
+    E = np.asarray(edges, int).reshape(-1, 2)
+    E = E[np.asarray(near, bool)[E].any(axis=1)]
+    if not len(E):
+        return 0, 0
+    Q = raise_arm(P, share, pivot, axis)
+    rest = np.linalg.norm(P[E[:, 0]] - P[E[:, 1]], axis=1)
+    now = np.linalg.norm(Q[E[:, 0]] - Q[E[:, 1]], axis=1)
+    ok = rest > 1e-6
+    return int(len(E)), int((now[ok] > ratio * rest[ok]).sum())
+
+
 def cap_grid(loops, spacing):
     """Inner points for a flat cap: a staggered grid at `spacing` inside the first loop (the outline) and outside the
     others (holes), at least half a spacing from every loop edge. loops: list of (n, 2) closed polylines."""
@@ -151,7 +183,8 @@ def cap_grid(loops, spacing):
     return G[seg_distance(G, A, B) > spacing / 2]
 
 
-def main():  # pragma: no cover - runs inside Blender
+def main(skip=None):  # pragma: no cover - runs inside Blender
+    """skip: sides already put back by an earlier pass (their report parts), when a cut made the raise worse."""
     import bmesh
     import bpy
     from mathutils import Vector
@@ -169,7 +202,7 @@ def main():  # pragma: no cover - runs inside Blender
     gap = float(_common.opt("--gap", "0.006"))
     start = float(_common.opt("--start", "0.3"))
     rigged_out = _common.opt("--rigged-out", None)
-    report = {"ok": False, "sides": {}, "reason": None}
+    report = {"ok": False, "changed": False, "sides": {}, "reason": None}
 
     # --- the step 4 model and the rig that labels it
     _common.open_glb(src)
@@ -233,7 +266,28 @@ def main():  # pragma: no cover - runs inside Blender
         return found
 
     ash = bm.verts.layers.float.new("arm_share")
+    bm.verts.index_update()
+    bm.edges.ensure_lookup_table()
+    before = (np.array([v.co[:] for v in bm.verts]), np.array([[e.verts[0].index, e.verts[1].index] for e in bm.edges]),
+              [dict(v[dl].items()) for v in bm.verts])
+
+    def raised(side_name, arm_names, P, E, weights, cap_pts):
+        """(near-cut edges, stretched) with this side's arm raised."""
+        kdc = KDTree(len(cap_pts))
+        for i, c in enumerate(cap_pts):
+            kdc.insert(c, i)
+        kdc.balance()
+        near = np.array([kdc.find(Vector(p_))[2] < STRETCH_NEAR for p_ in P])
+        bone = arm_obj.data.bones.get("mixamorig:" + side_name + "Arm") or arm_obj.data.bones.get(side_name + "Arm")
+        mw = arm_obj.matrix_world
+        head, tail = mw @ bone.head_local, mw @ bone.tail_local
+        axis = (0.0, -1.0, 0.0) if tail.x > head.x else (0.0, 1.0, 0.0)  # out and up, the character facing -Y
+        return raise_stretch(P, E, arm_share(weights, groups, arm_names), np.array(head[:]), axis, near)
+
     for side in sides:
+        if skip and side in skip:  # an earlier run found this side's cut made the raise worse: left as it was
+            report["sides"][side] = skip[side]
+            continue
         rep = report["sides"].setdefault(side, {})
         chain = joints("Left" if side == "L" else "Right")
         if chain is None:
@@ -263,6 +317,12 @@ def main():  # pragma: no cover - runs inside Blender
         rep["weight_line_m"] = round(sum(pc["length"] for pc in pieces), 4)
         caps = []
         for pc in pieces:
+            # a piece starting past the upper arm is not a join of the upper arm into the body (the dwarf's forearm)
+            t_min = float(chain_param(pc["points"], chain)[0].min())
+            if t_min > start + NOT_UPPER_ARM:
+                caps.append({"ok": False, "reason": "not_upper_arm", "t_min": round(t_min, 3),
+                             "weight_line_m": round(pc["length"], 4)})
+                continue
             # 2. a flat cut: the plane that best fits the weight line, applied only to the fused band round it
             pts = pc["points"]
             c = pts.mean(axis=0)
@@ -301,9 +361,33 @@ def main():  # pragma: no cover - runs inside Blender
             info.update(plane_flatness_m=round(flat, 4), band_m=round(reach, 4), plane_pieces=len(comps),
                         weight_line_m=round(pc["length"], 4))
             caps.append(info)
+        # 9. the raise, before and after, near this side's new cut
+        cap_pts = sorted({v.co.copy().freeze() for cp in caps for f in cp.get("faces", []) if f and f.is_valid
+                          for v in f.verts}, key=tuple)
+        if cap_pts:
+            bm.verts.index_update()
+            bm.edges.ensure_lookup_table()
+            P1 = np.array([v.co[:] for v in bm.verts])
+            E1 = np.array([[e.verts[0].index, e.verts[1].index] for e in bm.edges])
+            name = "Left" if side == "L" else "Right"
+            nb, sb = raised(name, arm_names, *before, cap_pts)
+            na, sa = raised(name, arm_names, P1, E1, [dict(v[dl].items()) for v in bm.verts], cap_pts)
+            rep["stretch"] = {"raise_deg": RAISE_DEG, "near_edges_before": nb, "stretched_before": sb,
+                              "near_edges_after": na, "stretched_after": sa}
+            if sa > sb:  # the cut made the raise worse: start again from the files with this side left as it was
+                rep["caps"] = [{**{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")},
+                                **({"ok": False, "reason": "stretch_rose"} if cp.get("ok") else {})} for cp in caps]
+                bm.free()
+                return main(skip={**(skip or {}), side: rep})
         rep["caps"] = [{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")} for cp in caps]
         rep.setdefault("_caps", caps)
 
+    if not any(cp.get("ok") for sd in report["sides"].values() for cp in sd.get("caps", [])):
+        report["changed"] = False  # nothing cut: no model is written, the caller keeps the one it has
+        report["reason"] = report["reason"] or "nothing_cut"
+        bm.free()
+        return _finish(report, report_path)
+    report["changed"] = True
     bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     report["check"] = _check(bm)

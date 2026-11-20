@@ -1,10 +1,11 @@
 """Blender helper for test_separate.py (not a test module): a box torso with a left arm grown into its side.
 
-Run: blender -b --python blender_fused_arm.py -- <out_dir> [--wall]
+Run: blender -b --python blender_fused_arm.py -- <out_dir> [--wall | --forearm]
 Writes <out_dir>/step4.glb (the model alone, textured) and <out_dir>/rig.glb (the same model on a Mixamo-named
 skeleton, its left arm weighted to the arm bones from 2 cm inside the arm, the rest to the spine). With --wall the
 weight boundary lies on the torso's flat side wall instead, which puts the cut plane in that wall: the script must
-refuse that cut. The torso and arm boxes overlap by 1 cm and are made one closed surface by a voxel rebuild, as the 3D
+refuse that cut. With --forearm the arm's weights begin at the elbow (the upper arm is weighted to the spine), as on
+the low-poly dwarf: the weight line is not an upper-arm join and the script must leave the model unchanged. The torso and arm boxes overlap by 1 cm and are made one closed surface by a voxel rebuild, as the 3D
 builder would fuse them.
 """
 import os
@@ -83,7 +84,9 @@ bpy.ops.object.mode_set(mode="OBJECT")
 groups = {n: ob.vertex_groups.new(name="mixamorig:" + n) for n in ("Spine", "LeftArm", "LeftForeArm")}
 for v in me.vertices:
     x, z = v.co.x, v.co.z
-    if x > edge_x and z < 1.66:
+    if "--forearm" in args:
+        groups["LeftForeArm" if x > edge_x and z < 1.33 else "Spine"].add([v.index], 1.0, "REPLACE")
+    elif x > edge_x and z < 1.66:
         groups["LeftArm" if z > 1.33 else "LeftForeArm"].add([v.index], 1.0, "REPLACE")
     else:
         groups["Spine"].add([v.index], 1.0, "REPLACE")
