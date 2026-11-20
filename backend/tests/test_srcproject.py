@@ -191,15 +191,25 @@ def test_agreement_gate_keeps_a_feature_out_of_the_wrong_place(monkeypatch: pyte
     assert r["metrics"]["srcproject_views"]["picture"]["gates"]["removed_by_agreement"] > 0.0
 
 
-def test_an_ambiguous_turn_takes_the_hint_and_says_so() -> None:
-    """A flat model colour gives nothing to tell a front from a back by (the quad's outline is the same both ways): the
-    turn is refused as ambiguous, and taken from the hint when there is one."""
+def test_an_ambiguous_turn_is_settled_by_the_turn_the_picture_is_expected_at() -> None:
+    """A flat model colour gives nothing to tell a front from a back by (the quad's outline is the same both ways). The
+    model is built with the step 1 picture at its front, so the tie goes to the pose nearest turn 0, and the record says
+    so (WP-61 option a)."""
     mesh, flat = model(), np.full((T, T, 3), 0.5)
-    refused = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[0.0, 180.0])
-    assert not refused["applied"] and "ambiguous" in refused["reason"]
-    r = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[0.0, 180.0], yaw_hint=lambda: 0.0)
-    assert r["metrics"]["srcproject_views"]["picture"].get("turn_source") == "texfidelity"
-    assert r["metrics"]["srcproject_picture_is_front_view"] if "srcproject_picture_is_front_view" in r["metrics"] else True
+    r = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[0.0, 180.0])
+    rec = r["metrics"]["srcproject_views"]["picture"]["pose_search"]
+    assert rec["prior"]["decision"] in ("kept", "tie-break") and srcproject._angdiff(rec["turn"], 0.0) <= srcproject.PRIOR_DEG
+    assert "ambiguous" not in str(r["metrics"]["srcproject_views"]["picture"].get("refused"))
+
+
+def test_a_pick_far_from_the_expected_turn_is_overridden_only_when_a_near_pose_scores_as_well() -> None:
+    """Searched only at the back, the picture's best pose is 180 degrees from its expected turn; a pose near the front
+    scores as well on the flat model, so it is taken and recorded as an override."""
+    mesh, flat = model(), np.full((T, T, 3), 0.5)
+    r = srcproject.paint(mesh, flat, picture(), mode="off", size=SIZE, picture_yaws=[180.0])
+    rec = r["metrics"]["srcproject_views"]["picture"]["pose_search"]["prior"]
+    assert rec["decision"] == "override" and srcproject._angdiff(rec["picked"][0], 0.0) <= srcproject.PRIOR_DEG
+    assert rec["gap"] <= 2 * srcproject.D2_MARGIN
 
 
 def test_cos_weight_shape() -> None:
