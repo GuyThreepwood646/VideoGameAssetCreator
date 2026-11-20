@@ -155,7 +155,6 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
           <div className="small muted">
             {data.added.length > 0 && <div>Added: {data.added.map((a) => a.name).join(', ')}</div>}
             {data.removed.length > 0 && <div>Taken off: {data.removed.join(', ')}</div>}
-            <div className="mono">added_moves, removed_moves in the rig version's settings</div>
           </div>
         </Disclosure>
       )}
