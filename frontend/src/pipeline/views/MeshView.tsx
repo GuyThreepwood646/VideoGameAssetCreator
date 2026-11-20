@@ -1,8 +1,10 @@
+import { useMemo, useState } from 'react'
 import { creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
+import { spotProbe, type SurfaceHit } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
 import type { FixAction } from '../../help'
 
@@ -53,9 +55,32 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const editedPicture = version.stage === 'mesh' && version.params?.picture_edit ? libraryUrl(version.files.edited_picture ?? version.files.edited_cutout) : null
   // The model drawn grey with the texture off (stages/mesh.py measure_geometry): a texture can hide torn or shattered surfaces.
   const greyViews = version.stage === 'mesh' ? libraryUrl(version.files.grey_sheet) : null
+  // Point at a spot (WP-21): step 4 only. The probe reports the spot the pointer lands on, in rest pose.
+  const [pointing, setPointing] = useState(false)
+  // The last click: the spot it found, or null when the pointer was off the model.
+  const [clicked, setClicked] = useState<{ hit: SurfaceHit | null } | null>(null)
+  const probe = useMemo(() => spotProbe((hit) => setClicked({ hit })), [])
+  const canPoint = version.stage === 'prep' && !!glb
   return (
     <div className="mesh-view">
-      {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? <Viewer url={glb} height={440} tool={canPoint && pointing ? probe : null} onToolExit={() => setPointing(false)} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {canPoint && (
+        <div className="spot-probe">
+          <button type="button" className="btn" aria-pressed={pointing} onClick={() => setPointing((p) => !p)}>
+            {pointing ? 'Stop pointing' : 'Point at a spot'}
+          </button>
+          {pointing && <span className="small muted"> Click the model. Right-drag still turns it. Press Escape to stop.</span>}
+          {clicked && pointing && (
+            <div className="small" data-testid="spot-readout">
+              {clicked.hit
+                ? `Spot ${clicked.hit.point.x.toFixed(3)}, ${clicked.hit.point.y.toFixed(3)}, ${clicked.hit.point.z.toFixed(3)} m. Triangle ${clicked.hit.face.toLocaleString('en-US')}.` +
+                  (clicked.hit.uv ? ` Texture position ${clicked.hit.uv.x.toFixed(3)} across, ${clicked.hit.uv.y.toFixed(3)} up.` : ' No texture position: this mesh has no UVs.') +
+                  ` Facing ${clicked.hit.normal.x.toFixed(2)}, ${clicked.hit.normal.y.toFixed(2)}, ${clicked.hit.normal.z.toFixed(2)}.`
+                : 'No spot there: the pointer was off the model.'}
+            </div>
+          )}
+        </div>
+      )}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
         {libHairOn && libHair && (
