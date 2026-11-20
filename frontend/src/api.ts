@@ -136,12 +136,13 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
 export interface DeclaredPart {
   name: string
-  kind: 'separate' | 'sway' | string
+  kind: 'separate' | 'sway' | 'stiff' | string
 }
 
 // A declared part on one version (WP-20): GET/PUT /api/versions/{vid}/parts. A location is three metres in the rig GLB's
 // rest pose (y up), or null when no point is set.
-export type PlacedPart = { name: string; kind: string; location: number[] | null }
+// A stiff part takes a list of points (locations); a sway part takes one (location).
+export type PlacedPart = { name: string; kind: string; location: number[] | null; locations?: number[][] }
 export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
@@ -974,6 +975,8 @@ export const api = {
   getMarks: (vid: string) => get<BodyMarks>(`/api/versions/${vid}/marks`),
   moveMarks: (vid: string, moves: MarkMove[]) => put<BodyMarks>(`/api/versions/${vid}/marks`, { moves }),
   acceptMarks: (vid: string) => put<BodyMarks>(`/api/versions/${vid}/marks`, { accept: true }),
+  // Undo and redo of "These look right": sets the flag as it was.
+  setMarksAccepted: (vid: string, accepted: boolean) => put<BodyMarks>(`/api/versions/${vid}/marks/accepted`, { accepted }),
   resetMarks: (vid: string, view?: MarkView, joint?: string) =>
     post<BodyMarks>(`/api/versions/${vid}/marks/reset`, view ? (joint ? { view, joint } : { view }) : {}),
   paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
@@ -1450,6 +1453,9 @@ export const itemsApi = {
   update: (aid: string, attId: string, body: { socket?: string; stow_socket?: string; position?: number[]; rotation_deg?: number[]; scale?: number; keep_place?: boolean; dismiss_notice?: boolean }) =>
     put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`, body),
   nudge: (aid: string, attId: string, body: NudgeBody) => post<{ attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/nudge`, body),
+  // Put back a whole earlier record (undo and redo in the item editor).
+  restore: (aid: string, attId: string, attachment: Attachment) =>
+    put<{ attachment: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}/record`, { attachment }),
   remove: (aid: string, attId: string) => del<{ removed: Attachment; panel: ItemsPanel }>(`/api/assets/${aid}/attachments/${attId}`),
   apply: (aid: string) => post<RunResult>(`/api/assets/${aid}/items/apply`),
   fit: (aid: string, attId: string) => post<RunResult & { attachment: Attachment }>(`/api/assets/${aid}/attachments/${attId}/fit`),

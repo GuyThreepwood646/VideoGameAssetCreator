@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { useBlocker } from 'react-router'
 import { api, creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
 import { usePaint } from '../../paint/usePaint'
+import { clearActiveEditor, setActiveEditor, useEditKeys, type KeyTarget } from '../../editHistory'
+import { confirmLeaveUnsavedPaint, setUnsavedPaint } from '../../unsavedPaint'
 import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
@@ -79,6 +82,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
     setSaveNote(null)
     try {
       await api.paint(version.id, body)
+      paint.markSaved()
       setSaveNote('Saved. The new version appears here when it is made. Keep it to carry the paint on to the rig and the export.')
       onChanged?.()
     } catch (e) {
@@ -87,8 +91,39 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
       setSaving(false)
     }
   }
+  // Undo and redo keys (WP-71): the paint is the editor in use once the person has used this panel.
+  const paintRef = useRef(paint)
+  useEffect(() => {
+    paintRef.current = paint
+  })
+  const keys = useRef<KeyTarget>({ undo: () => paintRef.current.undo(), redo: () => paintRef.current.redo() })
+  const activate = () => setActiveEditor(keys.current)
+  useEditKeys()
+  useEffect(() => () => clearActiveEditor(keys.current), [])
+  // Unsaved paint: a plain question before leaving this page, and the browser warns when the tab closes.
+  const owner = useId()
+  const unsaved = paint.dirty
+  useEffect(() => {
+    setUnsavedPaint(owner, unsaved)
+    return () => setUnsavedPaint(owner, false)
+  }, [owner, unsaved])
+  useEffect(() => {
+    if (!unsaved) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [unsaved])
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => unsaved && currentLocation.pathname !== nextLocation.pathname)
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return
+    if (confirmLeaveUnsavedPaint()) blocker.proceed()
+    else blocker.reset()
+  }, [blocker])
   return (
-    <div className="mesh-view">
+    <div className="mesh-view" onPointerDownCapture={activate} onFocusCapture={activate}>
       {glb ? (
         <Viewer url={glb} height={440} tool={paintTool} onToolExit={() => setPainting(false)} onModelLoaded={setModel} />
       ) : (

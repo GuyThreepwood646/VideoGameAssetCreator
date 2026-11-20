@@ -566,6 +566,12 @@ def accept(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+def set_accepted(doc: dict[str, Any], on: bool) -> dict[str, Any]:
+    """Undo and redo of "These look right": the flag on or off, as it was (no moves change)."""
+    doc["accepted"] = {"at": _now()} if on else None
+    return doc
+
+
 def reset(doc: dict[str, Any], view: str | None = None, joint: str | None = None) -> dict[str, Any]:
     """Back to the app's marks: the person's moves dropped (one mark, one picture, or all), and any "these look right".
     Dropping one mark the app did not see takes it off the picture again, ready to be placed."""

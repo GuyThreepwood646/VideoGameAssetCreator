@@ -303,3 +303,31 @@ def test_autopilot_builds_items_after_the_character_then_rebuilds_its_export(cli
     items.after_autopilot(quiver_id)  # both made: the character's export is rebuilt once
     assert submitted == [("export", "adjust")]
     assert client.get(f"/api/assets/{a['id']}").json()["equipment"]["build"]["status"] == "equipping"
+
+
+def test_restore_puts_back_a_whole_earlier_record(client):
+    """Undo in the item editor: a socket change that reset the nudges comes back whole, and a record that is not this
+    attachment or has a bad place is refused."""
+    p = _project(client)
+    a = client.post(f"/api/projects/{p['id']}/assets", json={"name": "Hero", "category": "humanoid", "style_preset": "painted",
+                                                             "prompt": "a hero in a red coat"}).json()
+    att = client.post(f"/api/assets/{a['id']}/items", json={"description": "a round wooden shield", "build": False}).json()["attachment"]
+    aid, tid = a["id"], att["id"]
+    client.post(f"/api/assets/{aid}/attachments/{tid}/nudge", json={"move": [0, 1, 0]})
+    before = client.get(f"/api/assets/{aid}/items").json()["equipment"]["attachments"][0]
+    moved = client.put(f"/api/assets/{aid}/attachments/{tid}", json={"socket": "Socket_Back"}).json()["attachment"]
+    assert moved["position"] == [0.0, 0.0, 0.0] and moved["socket"] == "Socket_Back"
+    r = client.put(f"/api/assets/{aid}/attachments/{tid}/record", json={"attachment": before})
+    assert r.status_code == 200
+    back = r.json()["attachment"]
+    assert back["socket"] == before["socket"] and back["position"] == before["position"] and back["scale"] == before["scale"]
+    assert np.linalg.norm(back["position"]) == pytest.approx(0.01)
+    other = dict(before, id="someone-else")
+    assert client.put(f"/api/assets/{aid}/attachments/{tid}/record", json={"attachment": other}).status_code == 400
+    bad_socket = dict(before, socket="Socket_Tail")
+    assert client.put(f"/api/assets/{aid}/attachments/{tid}/record", json={"attachment": bad_socket}).status_code == 400
+    far = dict(before, position=[5.0, 0.0, 0.0])
+    assert client.put(f"/api/assets/{aid}/attachments/{tid}/record", json={"attachment": far}).status_code == 400
+    short = dict(before, rotation=[0.0, 0.0, 1.0])
+    assert client.put(f"/api/assets/{aid}/attachments/{tid}/record", json={"attachment": short}).status_code == 400
+    assert client.put(f"/api/assets/{aid}/attachments/nope/record", json={"attachment": before}).status_code == 404
