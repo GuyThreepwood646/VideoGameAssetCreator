@@ -146,7 +146,7 @@ def side_agree_on(sc: StageContext) -> bool:
     return SIDE_AGREE if chosen is None else bool(chosen)
 # Views drawn from opposite sides of the figure. The later-drawn one of a pair is checked against the earlier one
 # (same_side): mirror images of each other when right, the same way round when one was drawn from the wrong side.
-# Only left and right also take the mirror_iou limit, as before.
+# Only left and right also take the mirror_iou limit, as before, and only when the category is symmetric (symmetric_on).
 PARTNER = {"left": "right", "right": "left", "quarter": SECOND_QUARTER, SECOND_QUARTER: "quarter"}
 MIRROR_PAIRS = ("left", "right")
 # same_side fails when the as-drawn overlap beats the mirrored one by more than this. Not zero: a subject that looks the
@@ -205,6 +205,17 @@ def turn_method(category: str | None, params: dict[str, Any]) -> str:
 
 def _category(sc: StageContext) -> str | None:
     return getattr(getattr(sc, "asset", None), "category", None)
+
+
+def symmetric_on(sc: StageContext) -> bool:
+    """Whether the asset's category is meant to be mirror-symmetric (data/categories symmetric). Unknown: yes, as before."""
+    cid = _category(sc)
+    if not cid:
+        return True
+    try:
+        return bool(reference.category(cid).get("symmetric", True))
+    except KeyError:
+        return True
 
 
 def method_draws(method: str, view: str) -> bool:
@@ -287,11 +298,13 @@ def pose_check(view: str, ext: dict[str, float], ref: dict[str, float]) -> dict[
 
 def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, hist_front, hist_view, mirror: float | None,
                 as_drawn: float | None = None, pose: tuple[dict[str, float], dict[str, float]] | None = None,
-                hair: dict[str, Any] | None = None) -> dict[str, Any]:
+                hair: dict[str, Any] | None = None, symmetric: bool = True) -> dict[str, Any]:
     """The checks of one view. mirror and as_drawn are its outline's overlap with its partner view's (mirrored, and as
     drawn; imaging.pair_overlap), given when the partner exists: left and right take the mirror_iou limit, and every
     pair takes same_side when as_drawn is given. pose is (the view's pose_extents, the picture's) for a front or back view
-    of a humanoid; it adds pose_held. hair is hair_sides.compare's answer for a back view; it adds hair_matches_sides."""
+    of a humanoid; it adds pose_held. hair is hair_sides.compare's answer for a back view; it adds hair_matches_sides.
+    symmetric: the category is meant to be mirror-symmetric (data/categories symmetric). Only then do left and right take
+    the mirror_iou limit; a lidded chest or a one-sided vehicle is not its own mirror image, so the limit would fail it."""
     checks: list[dict[str, Any]] = []
     checks.append({"id": "coverage", "ok": stats["coverage"] >= LIMITS["min_coverage"], "value": stats["coverage"], "limit": LIMITS["min_coverage"]})
     out: dict[str, Any] = {"bbox": stats}
@@ -306,7 +319,7 @@ def view_checks(view: str, stats: dict[str, Any], front: dict[str, Any] | None, 
         d = histogram_distance(hist_front, hist_view)
         out["hist_dist"] = round(d, 4)
         checks.append({"id": "hist_dist", "ok": d <= LIMITS["hist_distance"], "value": round(d, 4), "limit": LIMITS["hist_distance"]})
-    if mirror is not None and view in MIRROR_PAIRS:
+    if mirror is not None and view in MIRROR_PAIRS and symmetric:
         out["mirror_iou"] = round(mirror, 4)
         checks.append({"id": "mirror_iou", "ok": mirror >= LIMITS["mirror_iou"], "value": round(mirror, 4), "limit": LIMITS["mirror_iou"]})
     if mirror is not None and as_drawn is not None:
@@ -1111,7 +1124,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                         hair = {"measured": False, "why": why}
             check_args[view] = (view, stats, front_stats, hist_cache["front"] if front_cutout else None, hist_cache[view], mirror,
                                 as_drawn, pose)
-            info = view_checks(*check_args[view], hair)
+            info = view_checks(*check_args[view], hair, symmetric=symmetric_on(sc))
             if view in with_refs and drew == "standard":
                 info["references"] = ["left", "right"]
             if view in with_words and drew == "standard":
@@ -1127,7 +1140,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
             if view in supplied:
                 info["supplied"] = True
             results[view] = info
-            if other in results and mirror is not None and view in MIRROR_PAIRS:
+            if other in results and mirror is not None and view in MIRROR_PAIRS and symmetric_on(sc):
                 results[other]["mirror_iou"] = round(mirror, 4)
             if view in supplied or info["passed"] or not auto_reroll or attempts >= MAX_REROLLS:
                 info["flagged"] = not info["passed"]
@@ -1157,7 +1170,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         else:
             hair, why = None, "pictures"
         info = results["back"]
-        info.update(view_checks(*check_args["back"], hair if hair is not None else {"measured": False, "why": why}))
+        info.update(view_checks(*check_args["back"], hair if hair is not None else {"measured": False, "why": why},
+                                symmetric=symmetric_on(sc)))
         if info["passed"] or not auto_reroll or info.get("rerolls", 0) >= MAX_REROLLS:
             info["flagged"] = not info["passed"]
             _publish_views(sc, results)

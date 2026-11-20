@@ -70,9 +70,15 @@ METAL_BODY = re.compile(r"\b(robot|robotic|android|cyborg|golem|automaton|mech|c
                         r"made (entirely )?of (metal|steel|iron|bronze|gold|silver|copper|brass))\b", re.I)
 
 
+# "a cardboard robot costume", "a boy in a robot costume": the robot is a costume made of cardboard or cloth, not metal.
+COSTUME_ROBOT = re.compile(r"\b(cardboard|costume|pretend|fake)\b[^.,;]{0,40}?\brobot\w*|\brobot\w*\s+costume", re.I)
+
+
 def metal_body(description: str | None) -> bool:
-    """Whether the description makes the character itself metal."""
-    return bool(description and METAL_BODY.search(description))
+    """Whether the description makes the character itself metal (a costume or cardboard robot does not)."""
+    if not description:
+        return False
+    return bool(METAL_BODY.search(COSTUME_ROBOT.sub(" ", description)))
 
 
 def armoured(description: str | None) -> bool:

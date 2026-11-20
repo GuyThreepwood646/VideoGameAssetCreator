@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
+import { usePaint } from '../../paint/usePaint'
+import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
+import { TouchUp } from './TouchUp'
 import type { FixAction } from '../../help'
 
 const TEXTURE_KEYS = ['base_color', 'normal', 'orm', 'metallic_roughness', 'occlusion', 'ao', 'roughness', 'metallic', 'emissive']
@@ -53,9 +57,20 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const editedPicture = version.stage === 'mesh' && version.params?.picture_edit ? libraryUrl(version.files.edited_picture ?? version.files.edited_cutout) : null
   // The model drawn grey with the texture off (stages/mesh.py measure_geometry): a texture can hide torn or shattered surfaces.
   const greyViews = version.stage === 'mesh' ? libraryUrl(version.files.grey_sheet) : null
+  // Touch up (WP-22): step 4 only. The viewer reports its model; painting is on while the user has started it.
+  const [model, setModel] = useState<ViewerModel | null>(null)
+  const [painting, setPainting] = useState(false)
+  const paint = usePaint(model, look?.look ?? null)
+  const canPaint = version.stage === 'prep' && !!glb
+  const paintTool = painting && model ? paint.toolFor(model) : null
   return (
     <div className="mesh-view">
-      {glb ? <Viewer url={glb} height={440} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? (
+        <Viewer url={glb} height={440} tool={paintTool} onToolExit={() => setPainting(false)} onModelLoaded={setModel} />
+      ) : (
+        <div className="placeholder-box">No 3D model in this version.</div>
+      )}
+      {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} />}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
         {libHairOn && libHair && (

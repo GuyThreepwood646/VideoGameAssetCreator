@@ -40,11 +40,12 @@ library_clips:
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
-  The character stands in a relaxed A-pose, both arms straight and angled about thirty degrees out from
-  the body with a clear gap between each arm and the torso, hands open with the backs of the hands turned toward
-  the camera and all five fingers straight, long and slightly spread apart with clear gaps between them and the
-  thumb out to the side, feet shoulder-width apart,
-  facing the camera directly. The whole figure from the top of the head to the soles of the feet fits
+  The character stands in a relaxed A-pose, both arms straight and held out from the body at about 45 degrees,
+  halfway between hanging down and straight out to the sides, with empty space between each arm and the body
+  from the armpit to the hand; the legs apart with the feet about a third of the body's height apart and empty
+  space between the legs from the crotch down; standing upright with both feet flat on the ground. Hands open
+  with the backs of the hands turned toward the camera and all five fingers straight, long and spread apart with
+  clear gaps between them, thumb out to the side, facing the camera directly. The whole figure from the top of the head to the soles of the feet fits
   inside the middle four fifths of the image height, with empty background above the head and below
   the feet, centred in frame. Plain flat light grey background. Soft even studio lighting from the
   front with no hard shadows. No text, no logos, no background scenery, no floor shadow, no motion
