@@ -91,7 +91,8 @@ def test_messages_say_what_was_separated_what_was_left_and_why():
         "L": {"caps": [{"ok": True}], "stretch": {"near_edges_after": 1000, "stretched_after": 69}},
         "R": {"caps": [{"ok": True}], "stretch": {"near_edges_after": 1000, "stretched_after": 10}}}}
     assert wrap.messages(sep) == [
-        "The left arm is separate, but parts near it still move with the arm; fixing their weights comes next.",
+        "The left arm is separate, but the skin near the cut still stretches when the arm is raised (7 percent of it). "
+        "The next rig keeps these weights; Try again on the rig step makes them from scratch.",
         "The right arm is separate."]
     left = {"changed": False, "ok": False, "sides": {
         "L": {"caps": [{"ok": False, "reason": "not_upper_arm"}]},
@@ -171,3 +172,150 @@ def test_arm_weights_starting_on_the_forearm_are_refused_and_the_model_is_left_a
     assert rep["changed"] is False and not (tmp_path / "f.glb").exists()
     assert wrap.messages(rep) == ["The left arm was not changed: its skin weights start on the forearm, so it is not "
                                   "an upper arm grown into the body."]
+
+
+# --- WP-27: labels by face corners, weights derived again, cap colour ----------------------------------------------
+
+
+def test_corner_map_names_the_rig_point_even_where_a_later_pass_moved_it():
+    s_pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0.0]])
+    r_pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0.3], [1, 0, 0]])  # point 3 moved; a seam copy of 1
+    s_c = [0, 1, 2, 1, 3, 2]
+    r_c = [0, 4, 2, 1, 3, 2]
+    rig_of, off = sp.corner_map(s_c, s_pos, r_c, r_pos)
+    assert rig_of[3] == 3 and off[3].tolist() == pytest.approx([0, 0, 0.3])
+    assert (np.abs(off[:3]) < 1e-12).all()
+    assert sp.corner_map(s_c[:3], s_pos, r_c, r_pos) is None  # different face corners
+    assert sp.corner_map(s_c, s_pos, r_c, r_pos + 1.0) is None  # nothing lines up
+
+
+def test_flood_keeps_to_allowed_points():
+    nbrs = [[1], [0, 2], [1, 3], [2]]
+    assert sp.flood([0], nbrs, np.array([True, True, False, True])).tolist() == [True, True, False, False]
+    assert not sp.flood([2], nbrs, np.array([True, True, False, True])).any()
+
+
+def test_keep_side_drops_the_other_sides_bones_past_the_ramp():
+    is_arm = np.array([False, True])  # group 0 the spine, group 1 the arm
+    W = [{0: 0.5, 1: 0.5}, {0: 0.5, 1: 0.5}, {0: 0.5, 1: 0.5}, {1: 1.0}, {0: 0.5, 1: 0.5}]
+    in_arm = np.array([True, False, True, False, False])
+    t = np.array([1.0, 1.0, 0.3 + sp.RELEASE_RAMP / 2, 1.0, 0.2])
+    out, changed, need = sp.keep_side(W, is_arm, in_arm, t, 0.3)
+    assert out[0] == {1: pytest.approx(1.0)}  # on the arm: only the arm
+    assert out[1] == {0: pytest.approx(1.0)}  # off the arm (hair, robe): no arm weight
+    assert out[2] == {0: pytest.approx(0.25), 1: pytest.approx(0.75)}  # half way up the ramp: half the change
+    assert need == {3} and 3 not in changed  # nothing of its side left: filled from its neighbours
+    assert out[4] == W[4] and 4 not in changed  # the shoulder (before `start`) keeps its blend
+
+
+def test_fill_and_smooth_never_cross_the_cut():
+    nbrs = [[1], [0, 2], [1, 3], [2]]
+    cls = np.array([True, True, False, False])  # points 0-1 the arm, 2-3 the body
+    W, left = sp.fill_from_neighbours([{1: 1.0}, {}, {}, {0: 1.0}], {1, 2}, nbrs, cls)
+    assert left == 0 and W[1] == {1: pytest.approx(1.0)} and W[2] == {0: pytest.approx(1.0)}
+    S, held = sp.smooth_weights([{1: 1.0}, {1: 0.6, 2: 0.4}, {0: 1.0}, {0: 1.0}], [0, 1, 2], nbrs, cls, passes=3)
+    assert set(S[0]) | set(S[1]) == {1, 2} and set(S[2]) == {0}  # no body bone on the arm side, nor arm on the body
+    assert held == 0
+    # the volume limit: a point that would move further than the limit keeps its weights
+    S2, held2 = sp.smooth_weights([{1: 1.0}, {2: 1.0}, {0: 1.0}, {0: 1.0}], [1], nbrs, cls, passes=4, limit=0.1)
+    assert held2 == 1 and S2[1] == {2: 1.0}
+
+
+def test_top_influences_keep_the_largest_four_summing_to_one():
+    d = sp.top_influences({0: 0.4, 1: 0.3, 2: 0.2, 3: 0.08, 4: 0.02})
+    assert set(d) == {0, 1, 2, 3} and sum(d.values()) == pytest.approx(1.0)
+    assert sp.top_influences({}) == {}
+
+
+def test_barycentric_and_closest_on_segments():
+    a, b, c = np.array([0, 0, 0.0]), np.array([1, 0, 0.0]), np.array([0, 1, 0.0])
+    assert sp.barycentric([0.25, 0.25, 0.5], a, b, c).tolist() == pytest.approx([0.5, 0.25, 0.25])
+    P = np.array([[0.5, 1.0, 0], [2.0, 0.0, 0]])
+    C = sp.closest_on_segments(P, np.array([[0, 0, 0.0]]), np.array([[1, 0, 0.0]]))
+    assert np.allclose(C, [[0.5, 0, 0], [1, 0, 0]])
+
+
+def test_cap_colour_reads_only_covered_texels_and_follows_the_ring():
+    px = np.zeros((8, 8, 3), np.float32)
+    px[:, :4] = (1.0, 0.0, 0.0)  # a red island on the left half; the right half is empty atlas (black)
+    covered = np.zeros((8, 8), bool)
+    covered[:, :4] = True
+    assert sp.sample_covered(px, covered, (0.49, 0.5)).tolist() == pytest.approx([1, 0, 0])  # at the island's border
+    got = sp.sample_many(px, covered, np.array([[0.1, 0.1], [0.55, 0.5]]))
+    assert np.allclose(got, [[1, 0, 0], [1, 0, 0]])
+    ring = np.array([[0, 0, 0.0], [1, 0, 0.0]])
+    col = np.array([[1.0, 0, 0], [0, 0, 1.0]])
+    out = sp.idw_colour(np.array([[0, 0, 0.0], [0.5, 0, 0], [1, 0, 0]]), ring, col)
+    assert out[0].tolist() == pytest.approx([1, 0, 0], abs=1e-6) and out[2].tolist() == pytest.approx([0, 0, 1], abs=1e-6)
+    assert out[1].tolist() == pytest.approx([0.5, 0, 0.5])  # half way: half of each, not one flat average of a patch
+
+
+def test_cap_normals_never_face_away_from_the_cap():
+    own = np.array([0, 0, 1.0])
+    n = sp.facing_normals(np.array([[0, 0, 2.0], [1, 0, 0.0], [0, 0, -1.0]]), own)
+    assert np.allclose(np.linalg.norm(n, axis=1), 1)
+    assert np.allclose(n[0], own)  # already facing: only made unit length
+    assert (n @ own >= sp.CAP_LEAST_FACING - 1e-6).all()  # side-on and backward ones turned toward the cap's facing
+
+
+def test_dilate_fill_grows_the_cap_colour_by_its_padding_only():
+    px = np.zeros((9, 9, 3), np.float32)
+    mask = np.zeros((9, 9), bool)
+    mask[4, 4] = True
+    px[4, 4] = (0.2, 0.4, 0.6)
+    grown = sp.dilate_fill(px, mask, 2)
+    assert grown.sum() == 25 and (px[2:7, 2:7] == px[4, 4]).all()
+    assert (px[0] == 0).all() and (px[:, 8] == 0).all()
+
+
+def test_wrapper_writes_the_cap_list_and_drops_it_with_a_refused_model(tmp_path, monkeypatch):
+    for f in ("step4.glb", "rig.glb"):
+        (tmp_path / f).write_bytes(b"x")
+    island = {"side": "L", "of": "arm", "triangles": 1, "uv_tris": [[[0, 0], [1, 0], [0, 1]]], "ring_colour_diff": 0.5}
+    state = {"ok": True}
+
+    def fake_blender(settings, script, args, log_path=None, timeout=None):
+        Path(args[2]).write_bytes(b"glb")
+        report = {"changed": True, "ok": state["ok"], "sides": {"L": {"caps": [{"ok": True}]}},
+                  "uv": {"placed": 1, "cap_islands": [dict(island)]}}
+        Path(args[args.index("--report") + 1]).write_text(json.dumps(report), encoding="utf-8")
+
+    monkeypatch.setattr(wrap, "run_blender", fake_blender)
+    out = tmp_path / "o" / "out.glb"
+    rep = wrap.separate(None, tmp_path / "step4.glb", tmp_path / "rig.glb", out)  # type: ignore[arg-type]
+    caps = json.loads((out.parent / wrap.CAPS_FILE).read_text(encoding="utf-8"))
+    assert caps["format"] == wrap.CAPS_FORMAT and caps["caps"][0]["uv_tris"] == island["uv_tris"]
+    assert "uv_tris" not in rep["uv"]["cap_islands"][0] and rep["uv"]["cap_islands"][0]["ring_colour_diff"] == 0.5
+    state["ok"] = False
+    rep = wrap.separate(None, tmp_path / "step4.glb", tmp_path / "rig.glb", out)  # type: ignore[arg-type]
+    assert rep["changed"] is False and not (out.parent / wrap.CAPS_FILE).exists() and not out.exists()
+
+
+@pytest.mark.skipif(not BLENDER.is_file(), reason="needs Blender (VGAC_TEST_BLENDER)")
+def test_weights_off_the_arm_are_taken_off_and_the_rigged_copy_sits_in_the_rig_rest_pose(tmp_path):
+    _fused(tmp_path, "--palm", "--stray")
+    report = tmp_path / "s.json"
+    subprocess.run([str(BLENDER), "-b", "-t", "2", "--python", str(SCRIPT), "--", str(tmp_path / "step4.glb"),
+                    str(tmp_path / "rig.glb"), str(tmp_path / "s.glb"), "--report", str(report), "--side", "L",
+                    "--rigged-out", str(tmp_path / "s_rig.glb")], check=True, capture_output=True, timeout=600)
+    rep = json.loads(report.read_text(encoding="utf-8"))
+    assert rep["changed"] and rep["ok"]
+    assert rep["input"]["labels"] == "corners" and rep["input"]["rest_moved_points"] > 0
+    assert rep["rest_offset_points"] > 0  # the rigged copy's hand points moved into the rig's rest pose
+    w = rep["sides"]["L"]["weights"]
+    assert w["arm_surface_points"] > 0 and "reason" not in w
+    assert w["arm_weight_off_arm_before"] > 0 and w["arm_weight_off_arm_after"] == 0
+    st = rep["sides"]["L"]["stretch"]
+    assert st["stretched_all_after"] <= st["stretched_all_before"]
+    isl = rep["uv"]["cap_islands"]
+    assert len(isl) == 2 and {i["of"] for i in isl} == {"arm", "body"}
+    assert all(i["ring_colour_diff"] < 2.0 for i in isl)  # the fixture's surface is one colour
+    import trimesh
+
+    rig_pts = trimesh.load(tmp_path / "rig.glb", force="scene").dump()[0].vertices
+    out_pts = trimesh.load(tmp_path / "s_rig.glb", force="scene").dump()[0].vertices
+
+    def hand(P):  # well below the cut, at the hand
+        return P[(P[:, 0] > 0.15) & (P[:, 1] < 1.06)]  # glTF is y up: y is height
+
+    assert len(hand(out_pts)) and hand(out_pts)[:, 2].mean() == pytest.approx(hand(rig_pts)[:, 2].mean(), abs=0.005)

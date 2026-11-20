@@ -3,12 +3,15 @@
 Run: blender -b --python separate.py -- <step4.glb> <labels_rig.glb> <out.glb> --report <json>
          [--side L|R|both] [--gap 0.006] [--start 0.3] [--rigged-out <rig_out.glb>] [--debug]
 
-WP-25, proved on the stored blacksmith (upper arms grown into the torso) and mage (sleeves grown into the robe); the
-evidence is in bakeoff/wp25 (local). Steps, per arm:
+WP-25, proved on the stored blacksmith (upper arms grown into the torso) and mage (sleeves grown into the robe); WP-27
+added the weights, the cap colour and the rest pose (evidence in bakeoff/wp25 and bakeoff/wp27, local). Steps, per arm:
+0. Labels. Each step 4 point takes the skin weights of its rig point, found by face corners (the rig keeps the step 4
+   model's triangles in order; passes after the rig such as palm-down moved some points, so the nearest point can be
+   the wrong one), or the nearest rig point when the corners do not line up.
 1. The weight line. Each point's arm share is the summed skin weight of that side's upper arm bone and every bone below
-   it (finger bones the app added included), copied from the nearest rig point and smoothed. Where the build fused the
-   arm to the body the share falls from 1 to 0 across the fused strip; the line where it crosses one half, beyond
-   `start` (a share of the upper arm from the shoulder joint, so the shoulder stays whole), is found per triangle.
+   it (finger bones the app added included), smoothed. Where the build fused the arm to the body the share falls from
+   1 to 0 across the fused strip; the line where it crosses one half, beyond `start` (a share of the upper arm from the
+   shoulder joint, so the shoulder stays whole), is found per triangle.
 2. A flat cut. The plane that best fits each weight-line piece cuts the triangles within BAND of it. A cut along the
    weight line itself is not flat, and its two caps crossed each other and the surface on every real model tried.
 3. The true section. Every other place the plane crosses the surface inside the cut's outline (a robe's inner layer, an
@@ -21,17 +24,29 @@ evidence is in bakeoff/wp25 (local). Steps, per arm:
 5. Weights. Each side of the fused strip lets go of the other side's weights (fading in past `start`).
 6. Caps. One constrained Delaunay triangulation of the outline with inner points gives both caps, parallel copies a
    gap apart, joined at the new armpit edge; inner points blend the weights of the nearest edge points.
-7. Texture. Caps get texture space of their own (uvfit.place_islands in the atlas's free space, at the surface's texel
-   density, smaller if short of room), coloured from the surface along their edge; normal maps get a flat normal.
-8. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
+7. Weights again (WP-27, _rederive). The arm's own surface is flooded from the arm side of its cuts; on it only the
+   arm's bones stay, everywhere else past the shoulder this arm's bones go (hair or robe the build skinned to the arm),
+   points left with nothing are filled from their own side, and each side is smoothed on its own with a volume limit.
+8. The raise. Each arm is raised 90 degrees out to the side, before and after, and the edges near its cut (and over the
+   whole model) stretched past STRETCH_RATIO are counted. An arm whose near-cut count rose is put back as it was
+   (reason `stretch_rose`).
+9. Texture. Caps get texture space of their own (uvfit.place_islands in the atlas's free space, at the surface's texel
+   density, smaller if short of room). Their colour comes from the surface round their ring: each ring point's colour
+   is read just inside the surface triangles beside it (only texels the surface covers), cap pixels blend those by
+   inverse distance, and the surface's own detail is mirrored across the ring within a small swing. Every picture of
+   the material is filled so; normal maps get a flat normal. Cap corners get shading normals blended from the surface
+   round the ring (and half the cap's own facing, never more than 60 degrees off it), so a cap does not shade as a
+   separate flat block. Nothing else in any picture
+   changes. The report lists each cap's texture triangles (the paint tools find the caps there) and its colour match.
+10. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
    not cross before. `ok` is false when any of them got worse.
-9. The raise. Each arm is raised 90 degrees out to the side, before and after, and the edges near its cut stretched
-   past STRETCH_RATIO are counted. An arm whose count rose is put back as it was (reason `stretch_rose`).
+11. The rigged copy (--rigged-out) is put in the rig's rest pose: each point moves by the offset of the nearest place on
+   the input surface between the step 4 model and its rig (palm-down hands), so rig.carry can use it as the new rig.
 Refused, with the model unchanged: a weight-line piece that starts past the upper arm (`not_upper_arm`: the low-poly
 dwarf, whose arm weights begin on the forearm). When no cut is left the script writes no model (`changed` false).
 No booleans and no remesh: the rest of the surface keeps its points, triangles and texture coordinates. Not handled:
-hair that carries arm weight (a weights fault, WP-27), and arms whose weight line never leaves the shoulder (the
-low-poly dwarf). Runs are repeatable: every set is walked in an order fixed by position.
+arms whose weight line never leaves the shoulder (the low-poly dwarf). Runs are repeatable: every set is walked in an
+order fixed by position.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
 """
@@ -59,6 +74,22 @@ NOT_UPPER_ARM = 0.35  # a weight-line piece starting this far past `start` (in u
 RAISE_DEG = 90.0  # the test raise: the upper arm swung out to the side, about the front axis at the shoulder joint
 STRETCH_RATIO = 1.6  # an edge longer than this times its rest length in the raise is stretched
 STRETCH_NEAR = 0.08  # m: edges with a point this close to the side's cut count as near the cut
+CORNER_TOL = 1e-4  # m: a step 4 face corner and the rig's are the same point when this close
+CORNER_SHARE = 0.5  # the corners line up when at least this share of them are the same point
+WEIGHT_PASSES = 2  # neighbour averaging passes over the points whose weights were re-derived (each side on its own)
+WEIGHT_RINGS = 2  # rings round the re-derived points that are smoothed with them
+WEIGHT_LIMIT = 0.3  # the volume limit: a point's weights may move at most this far in the smoothing
+RING_INSET = 0.35  # an edge point's colour is read this far from it toward the middle of each surface triangle beside it
+SAMPLE_RADIUS_PX = 2  # texels round that read point averaged (only those the surface covers)
+IDW_NEAREST = 12  # a cap pixel blends the colours of this many nearest edge points
+CAP_LEAST_FACING = 0.5  # a cap's shading normal stays within 60 degrees of the way the cap faces
+CAP_NORMAL_SHARE = 0.5  # how much of a cap's own facing is kept in its shading normals (the rest from its ring)
+MIRROR_REACH = 0.1  # m: the surface a cap mirrors from lies within the cap's size plus this of its middle
+MIRROR_SWING = 0.08  # the most the mirrored detail moves a cap pixel off the blended ring colour (of 1)
+MIRROR_LAND = 0.03  # m: a mirrored point further than this from that surface keeps the blended ring colour
+CAP_PAD_PX = 2  # pixels a cap's colour is grown past its edge in the picture
+ARM_SURFACE_SHARE = 0.1  # away from a cut, the arm's own surface is where its arm share is over this
+LEAK_SHARE = 0.4  # an arm's own surface reaching more than this share of the model has leaked into the body
 
 
 def arm_share(weights, groups, arm_names):
@@ -133,6 +164,21 @@ def seg_distance(P, A, B):
     return np.sqrt(((P[:, None, :] - Q) ** 2).sum(axis=2)).min(axis=1)
 
 
+def closest_on_segments(P, A, B, chunk=2048):
+    """For 3D points P (n, 3), the nearest point on any of the segments A[i]-B[i] (m, 3) -> (n, 3)."""
+    P, A, B = (np.asarray(x, dtype=float) for x in (P, A, B))
+    AB = B - A
+    L2 = np.maximum((AB ** 2).sum(axis=1), 1e-18)
+    out = np.empty_like(P)
+    for s in range(0, len(P), chunk):
+        Q = P[s:s + chunk]
+        t = np.clip(((Q[:, None, :] - A[None]) * AB[None]).sum(axis=2) / L2[None], 0, 1)
+        C = A[None] + t[..., None] * AB[None]
+        k = np.argmin(((Q[:, None, :] - C) ** 2).sum(axis=2), axis=1)
+        out[s:s + chunk] = C[np.arange(len(Q)), k]
+    return out
+
+
 def raise_arm(P, share, pivot, axis, deg=RAISE_DEG):
     """Linear blend skinning of one pose: every bone of the arm turned by `deg` about `axis` through `pivot`, the rest
     still. A point moves by its arm share of the turn."""
@@ -155,6 +201,133 @@ def raise_stretch(P, edges, share, pivot, axis, near, ratio=STRETCH_RATIO):
     now = np.linalg.norm(Q[E[:, 0]] - Q[E[:, 1]], axis=1)
     ok = rest > 1e-6
     return int(len(E)), int((now[ok] > ratio * rest[ok]).sum())
+
+
+def corner_map(s_corners, s_pos, r_corners, r_pos, tol=CORNER_TOL, min_share=CORNER_SHARE):
+    """Which rig point each step 4 point is, from the two meshes' face corners in the same order (the rig is made from
+    the step 4 model and keeps its triangles; passes after the rig such as palm-down move some points, so position alone
+    can name the wrong point). s_corners, r_corners: the point index of every face corner, flattened in face order.
+    -> (rig index per step 4 point (-1 where no corner names one), rig rest position minus step 4 position (n, 3)), or
+    None when the corners do not line up (different counts, or fewer than min_share of them in the same place)."""
+    s_corners, r_corners = np.asarray(s_corners, int), np.asarray(r_corners, int)
+    s_pos, r_pos = np.asarray(s_pos, float), np.asarray(r_pos, float)
+    if s_corners.shape != r_corners.shape or not len(s_corners):
+        return None
+    d = np.linalg.norm(s_pos[s_corners] - r_pos[r_corners], axis=1)
+    if float((d < tol).mean()) < min_share:
+        return None
+    rig_of = np.full(len(s_pos), -1, dtype=int)
+    rig_of[s_corners] = r_corners
+    off = np.zeros_like(s_pos)
+    ok = rig_of >= 0
+    off[ok] = r_pos[rig_of[ok]] - s_pos[ok]
+    return rig_of, off
+
+
+def flood(seeds, nbrs, allowed):
+    """Points reached from `seeds` stepping only onto points where `allowed` is true -> (n,) bool."""
+    reached = np.zeros(len(nbrs), dtype=bool)
+    stack = [int(s) for s in seeds if allowed[s]]
+    reached[stack] = True
+    while stack:
+        i = stack.pop()
+        for j in nbrs[i]:
+            if not reached[j] and allowed[j]:
+                reached[j] = True
+                stack.append(j)
+    return reached
+
+
+def keep_side(weights, is_arm, in_arm, t, start, ramp=RELEASE_RAMP):
+    """Each point past `start` keeps only its own side's bones: on the arm's own surface (`in_arm`) the arm's bones,
+    elsewhere every other bone. The change fades in over `ramp` past `start` so the shoulder keeps its blend.
+    -> (new weights, indices changed, indices left with nothing of their side (to fill from neighbours))."""
+    out = [dict(d) for d in weights]
+    changed, need = set(), set()
+    for i, d in enumerate(weights):
+        if t[i] <= start or not d:
+            continue
+        tot = sum(d.values())
+        mine = {g: w for g, w in d.items() if bool(is_arm[g]) == bool(in_arm[i])}
+        if len(mine) == len(d) or tot <= 1e-9:
+            continue
+        kt = sum(mine.values())
+        s = min(1.0, max(0.0, (t[i] - start) / ramp))
+        if kt <= 1e-6:
+            if s >= 1.0:
+                need.add(i)
+            continue
+        out[i] = {g: (1 - s) * d.get(g, 0.0) / tot + s * mine.get(g, 0.0) / kt for g in set(d) | set(mine)}
+        out[i] = {g: w for g, w in out[i].items() if w > 1e-6}
+        changed.add(i)
+    return out, changed, need
+
+
+def fill_from_neighbours(weights, need, nbrs, cls, max_iter=200):
+    """Points in `need` take the mean weights of their neighbours of the same class (`cls`) that have weights, ring by
+    ring inward. -> (weights, how many were left unfilled (they keep what they had))."""
+    out = [dict(d) for d in weights]
+    todo = set(need)
+    for _ in range(max_iter):
+        if not todo:
+            break
+        done = {}
+        for i in sorted(todo):
+            src = [j for j in nbrs[i] if j not in todo and cls[j] == cls[i] and out[j]]
+            if not src:
+                continue
+            acc = {}
+            for j in src:
+                for g, w in out[j].items():
+                    acc[g] = acc.get(g, 0.0) + w / len(src)
+            done[i] = acc
+        if not done:
+            break
+        for i, acc in done.items():
+            out[i] = acc
+        todo -= set(done)
+    return out, len(todo)
+
+
+def smooth_weights(weights, idx, nbrs, cls, passes=WEIGHT_PASSES, limit=WEIGHT_LIMIT):
+    """Neighbour averaging of the weights of points `idx` over neighbours of the same class only (so the two sides of a
+    cut never blend), `passes` times. The volume limit: a point whose weights would move by more than `limit` (half the
+    summed absolute change) from where they started keeps them as they were.
+    -> (weights, how many points the limit held)."""
+    out = [dict(d) for d in weights]
+    idx = sorted(set(idx))
+    start_w = {i: dict(weights[i]) for i in idx}
+    for _ in range(passes):
+        new = {}
+        for i in idx:
+            src = [j for j in nbrs[i] if cls[j] == cls[i]]
+            if not src:
+                continue
+            ti = sum(out[i].values()) or 1.0
+            acc = {g: 0.5 * w / ti for g, w in out[i].items()}
+            for j in src:
+                tj = sum(out[j].values()) or 1.0
+                for g, w in out[j].items():
+                    acc[g] = acc.get(g, 0.0) + 0.5 * w / tj / len(src)
+            new[i] = acc
+        for i, acc in new.items():
+            out[i] = acc
+    held = 0
+    for i in idx:
+        a, b = start_w[i], out[i]
+        ta, tb = sum(a.values()) or 1.0, sum(b.values()) or 1.0
+        move = 0.5 * sum(abs(a.get(g, 0.0) / ta - b.get(g, 0.0) / tb) for g in set(a) | set(b))
+        if move > limit:
+            out[i] = a
+            held += 1
+    return out, held
+
+
+def top_influences(d, k=4):
+    """The k largest weights of a point, summing to one."""
+    items = sorted(((w, g) for g, w in d.items() if w > 1e-6), reverse=True)[:k]
+    tot = sum(w for w, _ in items)
+    return {g: w / tot for w, g in items} if tot > 1e-9 else {}
 
 
 def cap_grid(loops, spacing):
@@ -218,8 +391,24 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     me = mo.data
     me.transform(mo.matrix_world)
     mo.matrix_world.identity()
+    # which rig point each step 4 point is: by face corners when the two meshes line up (WP-27), else the nearest point
+    rmw = rig_mesh.matrix_world
+    corr = None
+    if [p.loop_total for p in me.polygons] == [p.loop_total for p in rig_mesh.data.polygons]:
+        corr = corner_map([lp.vertex_index for lp in me.loops], [v.co[:] for v in me.vertices],
+                          [lp.vertex_index for lp in rig_mesh.data.loops],
+                          [(rmw @ v.co)[:] for v in rig_mesh.data.vertices])
     bm = bmesh.new()
     bm.from_mesh(me)
+    rest_off = bm.verts.layers.float_vector.new("rest_off")
+    rig_ix = bm.verts.layers.int.new("rig_ix")
+    bm.verts.ensure_lookup_table()
+    for v in bm.verts:
+        if corr is not None and corr[0][v.index] >= 0:
+            v[rig_ix] = int(corr[0][v.index])
+            v[rest_off] = Vector(corr[1][v.index])
+        else:
+            v[rig_ix] = -1
     n_in = len(bm.verts)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
     bm.verts.ensure_lookup_table()
@@ -231,8 +420,8 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     in_cross = [bm.faces[i].calc_center_median().copy() for i in chk0["crossing_faces"]]
     bm.verts.ensure_lookup_table()
 
-    # labels: nearest rig point, weights copied into a deform layer (interpolated by the cuts below)
-    rmw = rig_mesh.matrix_world
+    # labels: the rig point by face corners (else the nearest), weights copied into a deform layer (interpolated by the
+    # cuts below)
     kd = KDTree(len(rig_mesh.data.vertices))
     for v in rig_mesh.data.vertices:
         kd.insert(rmw @ v.co, v.index)
@@ -245,11 +434,17 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     for v in bm.verts:
         _, j, d = kd.find(v.co)
         far += d > 1e-4
+        if v[rig_ix] >= 0:
+            j = v[rig_ix]
         dv = v[dl]
         for ge in rig_mesh.data.vertices[j].groups:
             if ge.weight > 0:
                 dv[ge.group] = ge.weight
     report["input"]["points_off_rig"] = int(far)
+    report["input"]["labels"] = "corners" if corr is not None else "nearest"
+    report["input"]["rest_moved_points"] = int((np.linalg.norm(corr[1], axis=1) > 1e-4).sum()) if corr is not None else 0
+    # the input surface with each corner's rest offset, so any point of the result can be put in the rig's rest pose
+    rest_src = _rest_source(bm, rest_off) if corr is not None else None
 
     def joints(prefix):
         b = arm_obj.data.bones
@@ -282,7 +477,11 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         mw = arm_obj.matrix_world
         head, tail = mw @ bone.head_local, mw @ bone.tail_local
         axis = (0.0, -1.0, 0.0) if tail.x > head.x else (0.0, 1.0, 0.0)  # out and up, the character facing -Y
-        return raise_stretch(P, E, arm_share(weights, groups, arm_names), np.array(head[:]), axis, near)
+        share = arm_share(weights, groups, arm_names)
+        n_near, s_near = raise_stretch(P, E, share, np.array(head[:]), axis, near)
+        # the whole model too: hair or robe that took arm weight stretches far from the cut
+        n_all, s_all = raise_stretch(P, E, share, np.array(head[:]), axis, np.ones(len(P), dtype=bool))
+        return n_near, s_near, n_all, s_all
 
     for side in sides:
         if skip and side in skip:  # an earlier run found this side's cut made the raise worse: left as it was
@@ -361,8 +560,11 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
             info.update(plane_flatness_m=round(flat, 4), band_m=round(reach, 4), plane_pieces=len(comps),
                         weight_line_m=round(pc["length"], 4))
             caps.append(info)
+        # weights derived again round the cut and off the arm's own surface (WP-27)
+        if any(cp.get("ok") for cp in caps):
+            rep["weights"] = _rederive(bm, dl, groups, arm_names, chain, caps, start)
         # 9. the raise, before and after, near this side's new cut
-        cap_pts = sorted({v.co.copy().freeze() for cp in caps for f in cp.get("faces", []) if f and f.is_valid
+        cap_pts =sorted({v.co.copy().freeze() for cp in caps for f in cp.get("faces", []) if f and f.is_valid
                           for v in f.verts}, key=tuple)
         if cap_pts:
             bm.verts.index_update()
@@ -370,15 +572,18 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
             P1 = np.array([v.co[:] for v in bm.verts])
             E1 = np.array([[e.verts[0].index, e.verts[1].index] for e in bm.edges])
             name = "Left" if side == "L" else "Right"
-            nb, sb = raised(name, arm_names, *before, cap_pts)
-            na, sa = raised(name, arm_names, P1, E1, [dict(v[dl].items()) for v in bm.verts], cap_pts)
+            nb, sb, ab, wb = raised(name, arm_names, *before, cap_pts)
+            na, sa, aa, wa = raised(name, arm_names, P1, E1, [dict(v[dl].items()) for v in bm.verts], cap_pts)
             rep["stretch"] = {"raise_deg": RAISE_DEG, "near_edges_before": nb, "stretched_before": sb,
-                              "near_edges_after": na, "stretched_after": sa}
+                              "near_edges_after": na, "stretched_after": sa,
+                              "edges_before": ab, "stretched_all_before": wb, "edges_after": aa, "stretched_all_after": wa}
             if sa > sb:  # the cut made the raise worse: start again from the files with this side left as it was
                 rep["caps"] = [{**{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")},
                                 **({"ok": False, "reason": "stretch_rose"} if cp.get("ok") else {})} for cp in caps]
                 bm.free()
                 return main(skip={**(skip or {}), side: rep})
+        for cp in caps:
+            cp["_side"] = side
         rep["caps"] = [{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")} for cp in caps]
         rep.setdefault("_caps", caps)
 
@@ -422,12 +627,22 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         _debug_colours(bm, me, report, xf)
     all_caps = [cp for s in report["sides"].values() for cp in s.pop("_caps", [])]
     report["uv"] = _cap_uvs(bm, me, mo, all_caps)
+    cap_normals = report["uv"].pop("_normals", {})
+    bm.faces.index_update()
+    cap_normals = {f.index: ns for f, ns in cap_normals.items() if f.is_valid}
     for cp in all_caps:
         cp.pop("_plane", None)
         cp.pop("faces", None)
         cp.pop("edge_verts", None)
     bm.to_mesh(me)
     me.update()
+    if cap_normals:  # the caps' blended shading normals; every other corner keeps the normal it has
+        corner = [tuple(c.vector) for c in me.corner_normals]
+        for pi, ns in cap_normals.items():
+            for li, n in zip(me.polygons[pi].loop_indices, ns):
+                corner[li] = n
+        me.normals_split_custom_set(corner)
+        report["uv"]["cap_normals"] = len(cap_normals)
     bm.free()
 
     # step 4 output: the mesh alone
@@ -437,6 +652,14 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     groups_saved = [g.name for g in mo.vertex_groups]
     if rigged_out:
         rm = rig_mesh
+        # the rigged copy sits in the rig's rest pose (palm-down and other passes baked after the rig moved some points)
+        rest = None
+        if rest_src is not None:
+            P_now = np.array([v.co[:] for v in me.vertices])
+            rest = rest_offsets(P_now, rest_src)
+            report["rest_offset_points"] = int((np.linalg.norm(rest, axis=1) > 1e-4).sum())
+            for v, o in zip(me.vertices, rest):
+                v.co += Vector(o)
         mod = mo.modifiers.new("Armature", "ARMATURE")
         mod.object = arm_obj
         mo.parent = arm_obj
@@ -449,6 +672,9 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         mo.modifiers.remove(mod)
         mo.parent = None
         mo.matrix_world.identity()
+        if rest is not None:
+            for v, o in zip(me.vertices, rest):
+                v.co -= Vector(o)
         del rm
     mo.vertex_groups.clear()
     bpy.ops.object.select_all(action="DESELECT")
@@ -638,6 +864,9 @@ def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=
     if why:
         info["cap_fill"] = why
     info["_uv2d"] = uv2d
+    info["_arm_copies"] = [v for v in arm_side.values() if v not in ends]
+    info["_body_copies"] = [v for v in body_side.values() if v not in ends]
+    info["_ends"] = list(ends)
     faces = [f for f in faces if f is not None]
     info["cap_triangles"] = len(faces)
     info["faces"] = faces
@@ -927,6 +1156,127 @@ def _release(bm, arm_side, body_side, dl, groups, arm_names, ends, pc, pn, tv, s
     return out
 
 
+def _rederive(bm, dl, groups, arm_names, chain, caps, start):  # pragma: no cover
+    """WP-27: the weights of a cut arm, derived again. The arm's own surface is every point reached from the arm side of
+    its cuts without crossing a cut (near a cut a point's side is its side of the plane), the shoulder (t below `start`)
+    or a cut's end. On it only the arm's bones stay; everywhere else this arm's bones go (hair or robe that took arm
+    weight from the 3D build's fusing). Points left with nothing of their side take their neighbours' weights. Then
+    each side is smoothed on its own (the volume limit holds any point that would move too far). The cut's ends are on
+    neither surface and keep their blend. Blending both sides round the ends as well made the raise stretch more on the
+    WP-25 cases (mage left 32 against 28 without), so it is not done. Four influences, summing to one."""
+    from mathutils import Vector
+    from mathutils.kdtree import KDTree
+
+    cut = [cp for cp in caps if cp.get("ok") and cp.get("_arm_copies")]
+    if not cut:
+        return {}
+    bm.verts.index_update()
+    bm.verts.ensure_lookup_table()
+    n = len(bm.verts)
+    P = np.array([v.co[:] for v in bm.verts])
+    t, _ = chain_param(P, chain)
+    nbrs = [[e.other_vert(v).index for e in v.link_edges] for v in bm.verts]
+    is_arm = np.array([g in arm_names for g in groups], dtype=bool)
+    ends = sorted({v.index for cp in cut for v in cp["_ends"] if v.is_valid})
+    pts, planes = [], []
+    for k, cp in enumerate(cut):
+        for v in cp["_arm_copies"] + cp["_body_copies"]:
+            if v.is_valid:
+                pts.append(v.co.copy())
+                planes.append(k)
+    kd = KDTree(len(pts))
+    for i, c in enumerate(pts):
+        kd.insert(c, i)
+    kd.balance()
+    side = np.zeros(n)
+    near = np.zeros(n, dtype=bool)
+    for v in bm.verts:
+        _, j, d = kd.find(v.co)
+        pc, pn = cut[planes[j]]["_plane"]
+        side[v.index] = (v.co - pc).dot(pn)
+        near[v.index] = d < RELEASE_NEAR
+    W0 = [dict(v[dl].items()) for v in bm.verts]
+    share0 = arm_share(W0, groups, arm_names)
+    # near a cut a point's side is its side of the plane; further out the arm's surface ends where its weights do
+    allowed = (t > start) & np.where(near, side > 0, share0 > ARM_SURFACE_SHARE)
+    allowed[ends] = False
+    seeds = [v.index for cp in cut for v in cp["_arm_copies"] if v.is_valid]
+    seeds += [v.index for cp in cut for f in cp.get("faces", []) if f.is_valid for v in f.verts
+              if (v.co - cp["_plane"][0]).dot(cp["_plane"][1]) > 0]
+    in_arm = flood(sorted(set(seeds)), nbrs, allowed)
+    rep = {"arm_surface_points": int(in_arm.sum())}
+    if in_arm.sum() > LEAK_SHARE * n:  # the arm's surface ran into the body: leave the weights as the cut made them
+        rep["reason"] = "arm_surface_leaked"
+        return rep
+    W, share_before = W0, share0
+    W, changed, need = keep_side(W, is_arm, in_arm, t, start)
+    W, unfilled = fill_from_neighbours(W, need, nbrs, in_arm)
+    region = set(changed) | set(need)
+    for _ in range(WEIGHT_RINGS):
+        region |= {j for i in region for j in nbrs[i] if t[j] > start}
+    W, held = smooth_weights(W, region, nbrs, in_arm)
+    for v in bm.verts:
+        d = v[dl]
+        new = top_influences(W[v.index])
+        if not new:
+            continue
+        for g in list(d.keys()):
+            del d[g]
+        for g, w in new.items():
+            d[g] = w
+    share_after = arm_share([dict(v[dl].items()) for v in bm.verts], groups, arm_names)
+    off_arm = ~in_arm & (t > start + RELEASE_RAMP)
+    rep.update(released=len(changed), filled=len(need) - unfilled, unfilled=unfilled, smoothed=len(region),
+               held_by_limit=held,
+               arm_weight_off_arm_before=int((share_before[off_arm] > 0.02).sum()),
+               arm_weight_off_arm_after=int((share_after[off_arm] > 0.02).sum()))
+    return rep
+
+
+def barycentric(p, a, b, c):
+    """Barycentric weights (3,) of point p's projection on triangle abc."""
+    p, a, b, c = (np.asarray(x, float) for x in (p, a, b, c))
+    v0, v1, v2 = b - a, c - a, p - a
+    d00, d01, d11 = v0 @ v0, v0 @ v1, v1 @ v1
+    d20, d21 = v2 @ v0, v2 @ v1
+    den = d00 * d11 - d01 * d01
+    if abs(den) < 1e-18:
+        return np.array([1.0, 0.0, 0.0])
+    v = (d11 * d20 - d01 * d21) / den
+    w = (d00 * d21 - d01 * d20) / den
+    bc = np.clip(np.array([1.0 - v - w, v, w]), 0.0, 1.0)
+    return bc / bc.sum()
+
+
+def _rest_source(bm, rest_off):  # pragma: no cover
+    """(BVH tree of the input triangles, their corner points (n, 3, 3), their corner rest offsets (n, 3, 3))."""
+    from mathutils.bvhtree import BVHTree
+
+    bm.verts.index_update()
+    tris = [[v.index for v in f.verts] for f in bm.faces]
+    co = [v.co.copy() for v in bm.verts]
+    off = np.array([v[rest_off][:] for v in bm.verts])
+    P = np.array([c[:] for c in co])
+    T = np.array(tris)
+    return BVHTree.FromPolygons(co, tris, all_triangles=True), P[T], off[T]
+
+
+def rest_offsets(points, rest_src):  # pragma: no cover
+    """Each point's offset into the rig's rest pose: that of the nearest place on the input surface."""
+    tree, corners, offs = rest_src
+    out = np.zeros((len(points), 3))
+    from mathutils import Vector
+
+    for i, p in enumerate(points):
+        hit = tree.find_nearest(Vector(p))
+        if hit[2] is None:
+            continue
+        k = hit[2]
+        bc = barycentric(hit[0][:], *corners[k])
+        out[i] = bc @ offs[k]
+    return out
+
+
 def _check(bm):  # pragma: no cover
     import bmesh
     from mathutils.bvhtree import BVHTree
@@ -1002,6 +1352,97 @@ def texel_density(uv_tris, xyz_tris):
     return float(np.median(np.sqrt(ua[ok] / xa[ok]))) if ok.any() else 0.0
 
 
+def sample_covered(px, covered, uv, radius=SAMPLE_RADIUS_PX):
+    """The mean colour of the texels round texture point uv (0..1, v up) that the surface covers (`covered`, (h, w)
+    bool, row 0 at v 0), so a read at an island's border never takes the empty atlas beside it. With none in reach, the
+    texel under the point."""
+    h, w = covered.shape
+    xi, yi = int(math.floor(float(uv[0]) * w)), int(math.floor(float(uv[1]) * h))
+    for r in (radius, 2 * radius, 4 * radius):
+        y0, y1, x0, x1 = max(0, yi - r), min(h, yi + r + 1), max(0, xi - r), min(w, xi + r + 1)
+        if y1 <= y0 or x1 <= x0:
+            continue
+        m = covered[y0:y1, x0:x1]
+        if m.any():
+            return px[y0:y1, x0:x1][m].mean(axis=0)
+    return px[min(h - 1, max(0, yi)), min(w - 1, max(0, xi))]
+
+
+def sample_many(px, covered, uvs):
+    """The texel under each texture point (n, 2), or where that texel is not on the surface, sample_covered's read."""
+    h, w = covered.shape
+    xi = np.clip(np.floor(uvs[:, 0] * w).astype(int), 0, w - 1)
+    yi = np.clip(np.floor(uvs[:, 1] * h).astype(int), 0, h - 1)
+    out = px[yi, xi].astype(np.float64)
+    for k in np.nonzero(~covered[yi, xi])[0]:
+        out[k] = sample_covered(px, covered, uvs[k], radius=1)
+    return out
+
+
+def facing_normals(n, own, least=CAP_LEAST_FACING):
+    """Unit normals (n, 3) turned toward `own` (the cap's facing) until they face it by at least `least` (a cosine), so
+    a blend from a ring whose surface faces away never shades the cap from behind."""
+    n = np.asarray(n, float)
+    own = np.asarray(own, float)
+    out = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    for a in np.linspace(0.1, 1.0, 10):
+        low = out @ own < least - 1e-9
+        if not low.any():
+            break
+        m = (1 - a) * n[low] / np.maximum(np.linalg.norm(n[low], axis=1, keepdims=True), 1e-9) + a * own
+        out[low] = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-9)
+    return out
+
+
+def idw_colour(pts, ring_xyz, ring_col, k=IDW_NEAREST, power=2.0, chunk=4096):
+    """Colours for points (n, 3) blended from the ring's colours by inverse distance over the k nearest ring points."""
+    pts, ring_xyz, ring_col = (np.asarray(x, float) for x in (pts, ring_xyz, ring_col))
+    k = min(k, len(ring_xyz))
+    out = np.empty((len(pts), ring_col.shape[1]))
+    for s in range(0, len(pts), chunk):
+        d = np.linalg.norm(pts[s:s + chunk, None, :] - ring_xyz[None, :, :], axis=2)
+        nn = np.argpartition(d, k - 1, axis=1)[:, :k]
+        dn = np.take_along_axis(d, nn, axis=1)
+        wt = 1.0 / np.maximum(dn, 1e-5) ** power
+        wt /= wt.sum(axis=1, keepdims=True)
+        out[s:s + chunk] = (wt[..., None] * ring_col[nn]).sum(axis=1)
+    return out
+
+
+def dilate_fill(px, mask, rings):
+    """Grow the pixels of `mask` outward by `rings` pixels, each new pixel the mean of its filled 8-neighbours, so
+    texture filtering at a cap's edge does not pull in the atlas round it. px (h, w, c) in place -> the grown mask."""
+    H, W = mask.shape
+    ys_, xs_ = np.nonzero(mask)
+    if not len(ys_):
+        return mask.copy()
+    y0, y1 = max(0, ys_.min() - rings - 1), min(H, ys_.max() + rings + 2)
+    x0, x1 = max(0, xs_.min() - rings - 1), min(W, xs_.max() + rings + 2)
+    full = px
+    px = full[y0:y1, x0:x1]  # a view: writes land in the picture
+    done = mask[y0:y1, x0:x1].copy()
+    h, w = done.shape
+    for _ in range(int(rings)):
+        acc = np.zeros(px.shape, dtype=np.float64)
+        cnt = np.zeros((h, w))
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if not dy and not dx:
+                    continue
+                # neighbour at (y + dy, x + dx) seen from (y, x)
+                ys, yd = (slice(dy, h), slice(0, h - dy)) if dy >= 0 else (slice(0, h + dy), slice(-dy, h))
+                xs, xd = (slice(dx, w), slice(0, w - dx)) if dx >= 0 else (slice(0, w + dx), slice(-dx, w))
+                m = done[ys, xs]
+                acc[yd, xd] += np.where(m[..., None], px[ys, xs], 0.0)
+                cnt[yd, xd] += m
+        new = (cnt > 0) & ~done
+        px[new] = (acc[new] / cnt[new][:, None]).astype(px.dtype)
+        done |= new
+    out = mask.copy()
+    out[y0:y1, x0:x1] |= done
+    return out
+
+
 def raster_cover(tris_px, w, h):
     """Pixels whose centre lies in any triangle (n, 3, 2) in pixel units (x right, y down) -> (rows, cols, tri,
     barycentric (k, 3))."""
@@ -1028,16 +1469,21 @@ def raster_cover(tris_px, w, h):
 
 def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     """Texture space for the caps in the atlas's free space (uvfit.place_islands, every existing piece stays put), at
-    the surface's own texel density (smaller if the free space is short), and their colour from the surface along
-    their edge: each cap pixel takes the mean colour of the three nearest edge points of its cap, sampled where the
-    surface meets the cap. Normal maps get a flat normal there."""
+    the surface's own texel density (smaller if the free space is short), and their colour from the surface round
+    their edge (WP-27): each edge point's colour is read just inside the surface triangles beside it, from texels the
+    surface really covers (never the empty atlas round an island), and each cap pixel blends the colours of the edge
+    points nearest it by inverse distance, so a cap follows its ring where the ring changes colour. Every picture of
+    the material is filled the same way; normal maps get a flat normal. Cap corners get blended shading normals
+    (_cap_normals). The report lists each cap's texture triangles (so the paint tools can find the caps) and how far
+    its colour at the ring is from the surface beside it."""
     import uvfit
 
     uvl = bm.loops.layers.uv.active
     if uvl is None or not caps:
         return {"placed": 0, "reason": "no_uv" if uvl is None else "no_caps"}
     capset = set()
-    islands = []  # (faces, {vert: (u, v) metres})
+    islands = []  # (faces, {vert: (u, v) metres}, side, "arm" or "body")
+    planes = []  # each island's cut plane and which side of it the island faces
     for cp in caps:
         fs = [f for f in cp.get("faces", []) if f.is_valid]
         if not fs or "_plane" not in cp:
@@ -1047,8 +1493,11 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         for sign in (1, -1):
             side = [f for f in fs if ((f.calc_center_median() - pc).dot(pn) > 0) == (sign > 0)]
             if side:
-                islands.append((side, uv2d))
+                islands.append((side, uv2d, cp.get("_side"), "arm" if sign > 0 else "body"))
+                planes.append((pc, pn, sign))
         capset.update(fs)
+    for f in capset:
+        f.smooth = True  # shaded by the normals blended from its ring (_cap_normals), not as one flat plane
     surf = [f for f in bm.faces if f not in capset]
     uv_t = np.array([[l[uvl].uv[:] for l in f.loops] for f in surf])
     xyz_t = np.array([[l.vert.co[:] for l in f.loops] for f in surf])
@@ -1057,7 +1506,7 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     scale, placed = 1.0, None
     while scale >= 0.2:
         isl_tris = []
-        for fs, uv2d in islands:
+        for fs, uv2d, _, _ in islands:
             isl_tris.append(np.array([[np.array(uv2d.get(l.vert, (0.0, 0.0))) * k * scale for l in f.loops]
                                       for f in fs]))
         placed = uvfit.place_islands(uv_t, isl_tris, res=1024, pad_cells=2)
@@ -1069,15 +1518,47 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         return out
     out["scale"] = round(scale, 3)
     new_uv = []
-    for (fs, _), tris, pl in zip(islands, isl_tris, placed):
+    for (fs, _, _, _), tris, pl in zip(islands, isl_tris, placed):
         moved = uvfit.apply_placement(tris, pl)
         for f, tuv in zip(fs, moved):
             for l, uv in zip(f.loops, tuv):
                 l[uvl].uv = (float(uv[0]), float(uv[1]))
         new_uv.append(moved)
-    # colour: every image the material uses
+    out["cap_islands"] = [{"side": sd, "of": of, "triangles": len(fs), "uv_tris": np.round(muv, 6).tolist()}
+                          for (fs, _, sd, of), muv in zip(islands, new_uv)]
+    # each island's ring: its edge points, their position, where to read the surface colour beside each, and where
+    # the point sits on the cap
+    rings = []
+    for fs, _, _, _ in islands:
+        reads_of = {}
+        for f in fs:
+            for v in f.verts:
+                if v in reads_of:
+                    continue
+                reads = []
+                for l in v.link_loops:
+                    if l.face in capset:
+                        continue
+                    cen = np.mean([x[uvl].uv[:] for x in l.face.loops], axis=0)
+                    uv = np.array(l[uvl].uv[:])
+                    reads.append(uv + RING_INSET * (cen - uv))
+                if reads:
+                    reads_of[v] = reads
+        cap_uv = {}
+        for f in fs:
+            for l in f.loops:
+                if l.vert in reads_of:
+                    cap_uv[l.vert] = l[uvl].uv[:]
+        rv = sorted(reads_of, key=lambda v: tuple(v.co))
+        rings.append((np.array([v.co[:] for v in rv]).reshape(-1, 3), [reads_of[v] for v in rv],
+                      np.array([cap_uv[v] for v in rv]).reshape(-1, 2)))
+    mirrors = [_mirror_source(bm, fs, capset, surf, uvl, *pl) for (fs, _, _, _), pl in zip(islands, planes)]
     imgs = _material_images(mo)
     out["images"] = {}
+    cover = {}
+    mirror_uv = {}
+    ring_report = [{"ring_points": len(r[1])} for r in rings]
+    base_name = next((im.name for im, nrm in imgs if "base" in im.name.lower()), imgs[0][0].name if imgs else None)
     for img, is_normal in imgs:
         w, h = img.size
         if not w or not h:
@@ -1085,49 +1566,42 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         px = np.empty(w * h * img.channels, dtype=np.float32)
         img.pixels.foreach_get(px)
         px = px.reshape(h, w, img.channels)  # row 0 = v 0 (bottom)
+        if (w, h) not in cover:
+            r_, c_, _, _ = raster_cover(np.stack([uv_t[..., 0] * w, uv_t[..., 1] * h], axis=-1), w, h)
+            m = np.zeros((h, w), bool)
+            m[r_, c_] = True
+            cover[(w, h)] = m
+        covered = cover[(w, h)]
         filled = 0
-        for (fs, _), muv in zip(islands, new_uv):
-            # edge points of this cap: vertices with a surface face, their surface UV and colour
-            edge = {}
-            for f in fs:
-                for v in f.verts:
-                    if v in edge:
-                        continue
-                    for l in v.link_loops:
-                        if l.face not in capset:
-                            edge[v] = l[uvl].uv.copy()
-                            break
-            if not edge:
+        for n_isl, ((fs, _, _, _), muv, (r_xyz, r_reads, r_cap_uv)) in enumerate(zip(islands, new_uv, rings)):
+            rows, cols, tid, bary = raster_cover(np.stack([muv[..., 0] * w, muv[..., 1] * h], axis=-1), w, h)
+            if not len(rows) or not len(r_xyz):
                 continue
-            ev = list(edge)
-            e_xyz = np.array([v.co[:] for v in ev])
-            e_uv = np.array([edge[v][:] for v in ev])
-            e_col = px[np.clip((e_uv[:, 1] * h).astype(int), 0, h - 1), np.clip((e_uv[:, 0] * w).astype(int), 0, w - 1)]
-            tris_px = np.stack([muv[..., 0] * w, muv[..., 1] * h], axis=-1)
-            rows, cols, tid, bary = raster_cover(tris_px, w, h)
-            if not len(rows):
-                continue
-            # grow by two pixels so filtering does not pull in the neighbouring atlas colour
-            P3 = np.array([[l.vert.co[:] for l in f.loops] for f in fs])
-            pts = (bary[:, :, None] * P3[tid]).sum(axis=1)
             mask = np.zeros((h, w), bool)
             mask[rows, cols] = True
-            grown = uvfit.grow(mask, 2) & ~mask
-            gr, gc = np.nonzero(grown)
             if is_normal:
-                col = np.tile(np.array([0.5, 0.5, 1.0, 1.0][:img.channels], dtype=np.float32), (len(rows), 1))
-                gcol = np.tile(col[:1], (len(gr), 1))
+                px[rows, cols] = np.array([0.5, 0.5, 1.0, 1.0][:img.channels], dtype=np.float32)
             else:
-                d = np.linalg.norm(pts[:, None, :] - e_xyz[None, :, :], axis=2)
-                nn3 = np.argsort(d, axis=1)[:, :3]
-                col = e_col[nn3].mean(axis=1)
-                # grown pixels copy the nearest filled pixel
-                fr, fc = rows, cols
-                j = np.argmin((gr[:, None] - fr[None, :]) ** 2 + (gc[:, None] - fc[None, :]) ** 2, axis=1) if len(gr) else []
-                gcol = col[j] if len(gr) else np.zeros((0, img.channels))
-            px[rows, cols] = col
-            if len(gr):
-                px[gr, gc] = gcol
+                ring_col = np.array([np.mean([sample_covered(px, covered, uv) for uv in reads], axis=0)
+                                     for reads in r_reads])
+                P3 = np.array([[l.vert.co[:] for l in f.loops] for f in fs])
+                pts = (bary[:, :, None] * P3[tid]).sum(axis=1)
+                col = idw_colour(pts, r_xyz, ring_col)
+                if (n_isl, w, h) not in mirror_uv:
+                    mirror_uv[(n_isl, w, h)] = _mirror_uvs(pts, mirrors[n_isl])
+                muv_s, ok = mirror_uv[(n_isl, w, h)]
+                if ok.any():  # the surface's own detail, mirrored across the cut onto the cap, within a small swing
+                    col[ok] += np.clip(sample_many(px, covered, muv_s[ok]) - col[ok], -MIRROR_SWING, MIRROR_SWING)
+                    ring_report[n_isl]["mirrored_share"] = round(float(ok.mean()), 3)
+                px[rows, cols] = col
+            dilate_fill(px, mask, CAP_PAD_PX)
+            if not is_normal and img.name == base_name:
+                # the cap's colour at each edge point (the picture as it will be read there) against the surface's
+                got = np.array([px[min(h - 1, int(v_ * h)), min(w - 1, int(u_ * w))] for u_, v_ in r_cap_uv])
+                c3 = ring_col[:, :3]
+                ring_report[n_isl].update(
+                    ring_colour_diff=round(float(np.abs(got[:, :3] - c3).mean() * 255), 2),
+                    ring_colour_spread=round(float(np.abs(c3 - c3.mean(axis=0)).mean() * 255), 2))
             filled += len(rows)
         img.pixels.foreach_set(px.ravel())
         img.update()
@@ -1136,8 +1610,88 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         except RuntimeError:
             pass
         out["images"][img.name] = {"normal": is_normal, "pixels_filled": int(filled), "size": [w, h]}
+    for isl, rr in zip(out["cap_islands"], ring_report):
+        isl.update(rr)
     out["placed"] = len(placed)
+    out["_normals"] = _cap_normals([isl[0] for isl in islands], capset)
     return out
+
+
+def _cap_normals(island_faces, capset):  # pragma: no cover
+    """Shading normals for each cap corner: the surface normals round the cap's ring blended by inverse distance, plus
+    CAP_NORMAL_SHARE of the cap's own facing, so a cap shades as a continuation of the surface round it rather than as
+    one flat plane facing elsewhere (a flat cap read as a hard-edged block under light even with the right colour).
+    -> {face: [normal per corner]}."""
+    out = {}
+    for fs in island_faces:
+        ring, ring_n = [], []
+        for v in {v for f in fs for v in f.verts}:
+            nb = [g for g in v.link_faces if g not in capset]
+            if nb:
+                n = sum((g.normal * g.calc_area() for g in nb), type(v.co)((0.0, 0.0, 0.0)))
+                if n.length > 1e-12:
+                    ring.append(v.co[:])
+                    ring_n.append(n.normalized()[:])
+        own = sum((f.normal * f.calc_area() for f in fs), type(fs[0].normal)((0.0, 0.0, 0.0)))
+        own = np.array(own.normalized()[:]) if own.length > 1e-12 else np.zeros(3)
+        if not ring:
+            continue
+        pts = np.array([lp.vert.co[:] for f in fs for lp in f.loops])
+        nb = facing_normals(idw_colour(pts, np.array(ring), np.array(ring_n)) + CAP_NORMAL_SHARE * own, own)
+        k = 0
+        for f in fs:
+            out[f] = [tuple(nb[k + i]) for i in range(len(f.loops))]
+            k += len(f.loops)
+    return out
+
+
+def _mirror_source(bm, fs, capset, surf, uvl, pc, pn, sign):  # pragma: no cover
+    """What a cap's colour is mirrored from: its ring as segments, and the surface on its own side of the cut near it
+    (a BVH over those triangles with their texture points)."""
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+
+    fset = set(fs)
+    seg = [e for f in fs for e in f.edges if sum(1 for g in e.link_faces if g in fset) == 1]
+    if not seg:
+        return None
+    A = np.array([e.verts[0].co[:] for e in seg])
+    B = np.array([e.verts[1].co[:] for e in seg])
+    cv = np.array([v.co[:] for f in fs for v in f.verts])
+    cen = cv.mean(axis=0)
+    reach = float(np.linalg.norm(cv - cen, axis=1).max()) + MIRROR_REACH
+    near = [f for f in surf if sign * (f.calc_center_median() - pc).dot(pn) > 0
+            and (f.calc_center_median() - Vector(cen)).length < reach]
+    if not near:
+        return None
+    co = [v.co.copy() for f in near for v in f.verts]
+    polys = [(3 * i, 3 * i + 1, 3 * i + 2) for i in range(len(near))]
+    tree = BVHTree.FromPolygons(co, polys, all_triangles=True)
+    xyz = np.array([[v.co[:] for v in f.verts] for f in near])
+    uv = np.array([[l[uvl].uv[:] for l in f.loops] for f in near])
+    return A, B, tree, xyz, uv
+
+
+def _mirror_uvs(pts, src):  # pragma: no cover
+    """For each cap point, the texture point of the surface where its mirror image across the nearest place on the
+    ring lands, and whether it landed on the surface (within MIRROR_LAND of it)."""
+    from mathutils import Vector
+
+    n = len(pts)
+    if src is None or not n:
+        return np.zeros((n, 2)), np.zeros(n, dtype=bool)
+    A, B, tree, xyz, uv = src
+    R = closest_on_segments(pts, A, B)
+    M = 2 * R - pts
+    out, ok = np.zeros((n, 2)), np.zeros(n, dtype=bool)
+    for i, m in enumerate(M):
+        hit = tree.find_nearest(Vector(m))
+        if hit[2] is None or hit[3] > MIRROR_LAND:
+            continue
+        bc = barycentric(hit[0][:], *xyz[hit[2]])
+        out[i] = bc @ uv[hit[2]]
+        ok[i] = True
+    return out, ok
 
 
 def _material_images(mo):  # pragma: no cover

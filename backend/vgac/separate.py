@@ -7,8 +7,11 @@ Shape tab job) makes the new step 4 version from it; nothing here touches the li
 
 Report keys the caller reads: changed (a new model was written; false means keep the one you have, and `messages`
 says why), ok (no new open edges, edges with three or more faces, pieces or crossing triangles), check, input.check,
-sides.{L,R}.caps[*] (ok, reason, holes, cap_triangles, new_armpit_m), sides.{L,R}.stretch (edges near the cut stretched
-in a 90 degree raise of that arm, before and after), uv (placed, scale), messages (plain lines for the person).
+sides.{L,R}.caps[*] (ok, reason, holes, cap_triangles, new_armpit_m), sides.{L,R}.stretch (edges near the cut, and over
+the whole model, stretched in a 90 degree raise of that arm, before and after), sides.{L,R}.weights (the weights derived
+again round the cut, WP-27), uv (placed, scale, cap_islands with each cap's colour match at its ring), messages (plain
+lines for the person). Beside the model: caps.json (CAPS_FILE: each cap's texture triangles, so the paint tools can
+find the caps) and, with rigged_out, the cut model on the rig's skeleton in the rig's rest pose (rig.carry's input).
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ GAP_RANGE = (0.002, 0.02)  # m
 START_RANGE = (0.15, 0.6)  # share of the upper arm
 DEFAULT_GAP = 0.006
 DEFAULT_START = 0.3
+CAPS_FILE = "caps.json"  # written beside the separated model: each cap's texture triangles, side and colour match
+CAPS_FORMAT = 1
 STILL_STRETCHED = 0.025  # share of the edges near a cut still stretched in the raise worth telling the person about
 SIDE_NAME = {"L": "left", "R": "right"}
 REFUSED = {  # why an arm was left as it was, in the person's words
@@ -68,12 +73,22 @@ def separate(settings: Settings, step4_glb: Path, rig_glb: Path, out_glb: Path, 
         raise ToolError("the separation wrote no report (see separate.log)")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["params"] = p
+    # the caps' texture triangles go to caps.json beside the model (the paint tools find the caps there); the report
+    # keeps each cap's few numbers
+    islands = (report.get("uv") or {}).get("cap_islands") or []
+    caps_path = out_glb.parent / CAPS_FILE
+    caps_path.unlink(missing_ok=True)
+    if islands and report.get("changed"):
+        caps_path.write_text(json.dumps({"format": CAPS_FORMAT, "caps": islands}), encoding="utf-8")
+    for isl in islands:
+        isl.pop("uv_tris", None)
     if report.get("changed") and not report.get("ok"):  # never hand back a model less whole than the one given
         report["changed"] = False
         report["reason"] = report.get("reason") or "worse"
         out_glb.unlink(missing_ok=True)
         if rigged_out:
             Path(rigged_out).unlink(missing_ok=True)
+        caps_path.unlink(missing_ok=True)
     report["messages"] = messages(report)
     return report
 
@@ -90,8 +105,10 @@ def messages(report: dict[str, Any]) -> list[str]:
             st = sd.get("stretch", {})
             near, after = st.get("near_edges_after", 0), st.get("stretched_after", 0)
             if near and after / near > STILL_STRETCHED:
-                lines.append(f"The {name} arm is separate, but parts near it still move with the arm; fixing their "
-                             "weights comes next.")
+                share = round(100 * after / near)
+                lines.append(f"The {name} arm is separate, but the skin near the cut still stretches when the arm is "
+                             f"raised ({share} percent of it). The next rig keeps these weights; Try again on the rig "
+                             "step makes them from scratch.")
             else:
                 lines.append(f"The {name} arm is separate.")
             continue
