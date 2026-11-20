@@ -134,12 +134,19 @@ export class EditHistory {
   }
 }
 
+// Anything with an undo and a redo can be the editor the keys act on: a history, or the paint session's own undo.
+export type KeyTarget = { undo: () => unknown; redo: () => unknown }
+
 // The editor the keys act on: the one most recently used on the page.
-let active: EditHistory | null = null
-export function setActiveEditor(h: EditHistory | null) {
+let active: KeyTarget | null = null
+export function setActiveEditor(h: KeyTarget | null) {
   active = h
 }
-export function activeEditor(): EditHistory | null {
+// Clears the active editor when it is this one (on unmount).
+export function clearActiveEditor(h: KeyTarget) {
+  if (active === h) active = null
+}
+export function activeEditor(): KeyTarget | null {
   return active
 }
 
@@ -175,6 +182,14 @@ function removeKeys() {
 
 // The editor's history for a React panel. Re-renders when steps change. Mark the editor active with
 // `activate` on pointer down or focus inside its panel.
+// The keys, for an editor that keeps its own undo (the paint session): they act on whichever editor was used last.
+export function useEditKeys() {
+  useEffect(() => {
+    installKeys()
+    return () => removeKeys()
+  }, [])
+}
+
 export function useEditHistory() {
   const [hist] = useState(() => new EditHistory())
   const [, bump] = useState(0)

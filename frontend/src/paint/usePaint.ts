@@ -20,13 +20,20 @@ export type PaintState = {
   canUndo: boolean
   canRedo: boolean
   undoCount: number
+  // The names of the next undo and redo steps (for the buttons and the keys), or null.
+  undoLabel: string | null
+  redoLabel: string | null
+  // True while the picture differs from the last saved one (or from the model's own when nothing was saved).
+  dirty: boolean
+  // Called after a save: the picture as it is now counts as saved.
+  markSaved: () => void
   notice: string | null
   // The layer a save sends, or null when the model has parts with pictures of their own (not saveable yet).
   saveLayer: () => PaintLayer | null
   saveable: boolean
 }
 
-type Active = { model: ViewerModel; session: PaintSession; tool: ViewerTool }
+type Active = { model: ViewerModel; session: PaintSession; tool: ViewerTool; baseline: string }
 
 export function usePaint(model: ViewerModel | null, look: string | null): PaintState {
   const [settings, setSettingsState] = useState<PaintSettings>(DEFAULT_PAINT)
@@ -52,7 +59,7 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
       renderer: () => model.renderer,
       notice: (text) => setNotice(text),
     })
-    setActive({ model, session, tool })
+    setActive({ model, session, tool, baseline: session.editMark })
   }
 
   return {
@@ -80,6 +87,10 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
     canUndo: active?.session.canUndo ?? false,
     canRedo: active?.session.canRedo ?? false,
     undoCount: active?.session.undoCount ?? 0,
+    undoLabel: active?.session.undoLabel ?? null,
+    redoLabel: active?.session.redoLabel ?? null,
+    dirty: !!active && active.session.editMark !== active.baseline,
+    markSaved: () => setActive((a) => (a ? { ...a, baseline: a.session.editMark } : a)),
     notice,
     saveLayer: () => active?.session.saveableLayer() ?? null,
     saveable: !!active && active.session.layers.length === 1,

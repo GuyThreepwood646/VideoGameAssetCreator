@@ -5,6 +5,7 @@ import { StatusBadge, TrafficDot } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
 import { useState } from 'react'
 import { firstFailing, looksGood } from '../help'
+import { confirmLeaveUnsavedPaint } from '../unsavedPaint'
 
 export function CandidateStrip({
   versions,
@@ -27,7 +28,11 @@ export function CandidateStrip({
   const done = versions.filter((v) => v.status === 'done')
   // In compare mode a click picks a version to compare (two at most) instead of opening it.
   const click = (id: string) => {
-    if (!compare) return onPick(id)
+    if (!compare) {
+      // Unsaved paint on the model in use: ask before changing version (WP-71).
+      if (!confirmLeaveUnsavedPaint()) return
+      return onPick(id)
+    }
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p.slice(-1), id]))
   }
   const a = versions.find((v) => v.id === picked[0])
