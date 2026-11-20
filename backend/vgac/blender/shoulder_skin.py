@@ -1,4 +1,4 @@
-"""Blender headless: shoulder skin pass on a rigged GLB (WP-75), run after the leg skin pass.
+"""Blender headless: shoulder skin pass on a rigged GLB (WP-75), run after the arm separation in the rig step.
 
 Run: blender -b --python shoulder_skin.py -- <rig.glb> <out.glb> --report <json>
 
@@ -7,8 +7,10 @@ its inner end, so skin it owns that stands high above it (a hood, a tall collar,
 in toward the neck like a lever and leaves a peak over the shoulder. This pass hands that skin to the collarbone's
 parent (the chest), which does not lift: on each side, collarbone weight on a vertex whose height above the
 collarbone's line (its head to the upper arm's head) is more than FADE_FROM of the shoulder width (upper-arm joint to
-upper-arm joint) fades to none at FADE_TO. Nothing else changes: other bones' weights, vertices under FADE_FROM, the
-rest mesh, the bones. Rows stay normalised. Only a Mixamo-named skeleton with both Shoulder and Arm bones is touched.
+upper-arm joint) fades to none at FADE_TO. Skin far below the line (the side of the chest under the armpit, where a
+separated arm's body side keeps much collarbone weight, WP-75 part B) is handed over the same way, from BELOW_FROM
+under the line to none at BELOW_TO, so the lift does not fold it. Nothing else changes: other bones' weights, vertices
+between the two bands, the rest mesh, the bones. Rows stay normalised. Only a Mixamo-named skeleton with both Shoulder and Arm bones is touched.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
 """
@@ -20,11 +22,18 @@ import numpy as np
 
 FADE_FROM = 0.28  # share of the shoulder width above the collarbone line where the collarbone's weight starts to fade
 FADE_TO = 0.40    # ... and where it is gone (measured: human shoulder tops reach about 0.27, the goblin's hood 0.39)
+BELOW_FROM = 0.08  # the same below the line: the side of the chest under the armpit (WP-75 part B: a separated arm's
+BELOW_TO = 0.18    # body side kept up to 0.84 collarbone there, and the lift folded it into itself)
 
 
-def keep_share(height_w, fade_from=FADE_FROM, fade_to=FADE_TO):
-    """Share of the collarbone's weight a vertex keeps, from its height above the collarbone line in shoulder widths."""
-    return np.clip((fade_to - np.asarray(height_w, dtype=float)) / (fade_to - fade_from), 0.0, 1.0)
+def keep_share(height_w, fade_from=FADE_FROM, fade_to=FADE_TO, below_from=BELOW_FROM, below_to=BELOW_TO):
+    """Share of the collarbone's weight a vertex keeps, from its height above the collarbone line in shoulder widths
+    (negative below it): all of it between below_from under the line and fade_from over it, none past below_to under
+    or fade_to over, a straight fade between."""
+    h = np.asarray(height_w, dtype=float)
+    up = np.clip((fade_to - h) / (fade_to - fade_from), 0.0, 1.0)
+    down = np.clip((h + below_to) / (below_to - below_from), 0.0, 1.0)
+    return np.minimum(up, down)
 
 
 def heights_above_line(co, head, tip, width):
@@ -68,7 +77,7 @@ def main():  # pragma: no cover - runs inside Blender
     scene = bpy.context.scene
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
     meshes = [o for o in scene.objects if o.type == "MESH" and o.vertex_groups]
-    report = {"ok": False, "fade_from": FADE_FROM, "fade_to": FADE_TO, "sides": {}}
+    report = {"ok": False, "fade_from": FADE_FROM, "fade_to": FADE_TO, "below_from": BELOW_FROM, "below_to": BELOW_TO, "sides": {}}
     bones = arm.data.bones if arm else {}
     need = ["mixamorig:" + s + b for s in ("Left", "Right") for b in ("Shoulder", "Arm")]
     if arm is None or not meshes:

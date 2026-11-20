@@ -270,12 +270,20 @@ async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str,
         if diff:
             why = "the settings differ from " + "the earlier rig: " + ", ".join(diff)
             continue
-        sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
-        if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
-            continue
         picture = sc.lineage_file("base_color", ("prep",))
         if picture is None:
             raise FileNotFoundError("the painted clean-up has no picture")
+        recoloured = None
+        if ((donor.metrics or {}).get("separation") or {}).get("changed"):
+            # WP-75: the rig's separated arm has caps the new paint knows nothing of: colour them again from it
+            recoloured, caps_why, caps_rep = await _recolour_caps(sc, donor, Path(picture))
+            if recoloured is None:
+                why = caps_why
+                continue
+            picture = recoloured
+        sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
+        if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
+            continue
         for key in ("glb", "anim_glb", "anim_body"):
             path = sc.file(key)
             # A rig GLB that carries a material and picture of its own gets the new picture; the rig's own picture
@@ -284,11 +292,41 @@ async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str,
                 if not imaging.glb_replace_images(path, base_color=picture):
                     raise ValueError(f"the new picture could not be written into the rig ({key})")
         link_textures(sc)
-        sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture", retexture_why=None)
+        if recoloured is not None:
+            sc.register("base_color", recoloured)
+        sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture", retexture_why=None,
+                       caps_recoloured=None if recoloured is None else {
+                           "caps": int(caps_rep.get("recoloured") or 0),
+                           "ring_colour_diff": [c.get("ring_colour_diff") for c in caps_rep.get("caps", [])]})
         await judge(sc)
         return True
     sc.set_metrics(retexture_why=why)
     return False
+
+
+RECOLOURED_FILE = "caps_recoloured_base_color.png"
+
+
+async def _recolour_caps(sc: StageContext, donor: Any, picture: Path) -> tuple[Path | None, str | None, dict[str, Any]]:
+    """WP-75: the new picture with the donor rig's caps coloured again from it (separate.recolour: the caps found by
+    the rig's caps file, coloured from the new paint round their rings as the cut coloured them). -> (the picture, None,
+    report), or (None, why the rig is made again, report)."""
+    from .. import separate, shape
+
+    caps = library.version_file(donor, shape.CAPS_KEY, sc.settings)
+    glb = library.version_file(donor, "glb", sc.settings)
+    if caps is None or glb is None:
+        return None, "the earlier rig's separated arm has no caps file, so the rig is made again", {}
+    out = sc.dir / RECOLOURED_FILE
+    try:
+        rep = await asyncio.to_thread(separate.recolour, sc.settings, Path(glb), Path(caps), picture, out,
+                                      timeout=float(sc.settings.blender_timeout_seconds))
+    except Exception as e:  # noqa: BLE001
+        rep = {"ok": False, "reason": "error", "error": str(e)[:300]}
+    if not rep.get("ok") or not out.is_file():
+        return None, ("the separated arm's caps could not be coloured from the new paint "
+                      f"({rep.get('reason') or 'no picture'}), so the rig is made again"), rep
+    return out, None, rep
 
 
 # WP-27: a shaped clean-up keeps the rig it was shaped on. The Shape tab's job stores the cut model on that rig's
@@ -440,17 +478,20 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_metrics(rig_fix_error=str(e)[:500])
     if not rig_glb.is_file():
         rig_glb = raw_glb
+    cut = None
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
         await _leg_skin(sc, rig_glb, params)
-        await _shoulder_skin(sc, rig_glb)
         await _limb_joins(sc, rig_glb)
+        cut = await _separate_joined(sc, src, rig_glb)
+        await _shoulder_skin(sc, rig_glb)  # after the cut: it rederives the weights round the arm
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
         await _worn_region(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
+    await _cut_pictures(sc, cut)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
                    template=template)
     await _inspect(sc, rig_glb, bend_test)
@@ -1260,8 +1301,8 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
 
 async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
     """Shoulder skin pass (blender/shoulder_skin.py, WP-75): collarbone weight on skin standing high above the
-    collarbone (a hood, a tall collar, hair on the shoulder) goes to the chest, so the collarbone lift in the moves does
-    not swing it in toward the neck. In place, only when something changed; the rig before it is kept as
+    collarbone (a hood, a tall collar, hair on the shoulder) or far below it (the side of the chest under the armpit)
+    goes to the chest, so the collarbone lift in the moves does not swing it toward the neck or fold it. In place, only when something changed; the rig before it is kept as
     rig_before_shoulder_skin.glb. metrics.shoulder_skin: {ok, changed, sides} or {reason}. Never raises."""
     out = sc.dir / "rig_shoulder_skin.glb"
     report = sc.dir / "shoulder_skin.json"
@@ -1276,6 +1317,71 @@ async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
                                       "sides": rep.get("sides") or {}} if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(shoulder_skin={"error": str(e)[:300]})
+
+
+# WP-75 part B: an upper arm the 3D build grew into the body (metrics.limb_joins state `joined`) is separated here with
+# the Shape tab's engine (separate.py), before anything reads the rig's mesh for bends or moves. The rig keeps the
+# engine's rigged copy (the cut model on this skeleton in its rest pose, weights derived again round the cut); its
+# caps file and its pictures with the caps' colour (shape.refresh_pictures) are this rig version's.
+SEPARATION_WORK = "separation_work"
+
+
+async def _separate_joined(sc: StageContext, src: Path, rig_glb: Path) -> dict[str, Any] | None:
+    """Separate each joined upper arm (WP-75). metrics.separation: {changed, sides, messages, summary} or {changed:
+    false, reason}. The rig before it is kept as rig_before_separation.glb, and the joined-limb measure runs again on
+    the cut rig. -> {cut_glb, caps} for _cut_pictures when the model changed, else None. The engine's refusal leaves
+    the rig as it was, with its plain reasons. Never raises."""
+    from .. import separate, shape
+
+    limbs = ((sc.version.metrics or {}).get("limb_joins") or {}).get("limbs") or {}
+    sides = [s for s, name in (("L", "Left"), ("R", "Right")) if (limbs.get(f"{name}_upperarm") or {}).get("state") == "joined"]
+    if not sides:
+        sc.set_metrics(separation={"changed": False, "reason": "no upper arm is joined to the body"})
+        return None
+    work = sc.dir / SEPARATION_WORK
+    rigged = work / f"{shape.CARRY_KEY}.glb"
+    side = sides[0] if len(sides) == 1 else "both"
+    sc.progress(0.55, "separating the arm the 3D build joined to the body")
+    try:
+        report = await asyncio.to_thread(separate.separate, sc.settings, Path(src), Path(rig_glb), work / Path(src).name,
+                                         side=side, rigged_out=rigged, timeout=float(sc.settings.blender_timeout_seconds))
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(separation={"changed": False, "reason": "error", "error": str(e)[:300]})
+        shutil.rmtree(work, ignore_errors=True)
+        return None
+    info = {"sides": sides, "messages": report.get("messages", []), "summary": separate.summary(report)}
+    if not report.get("changed") or not rigged.is_file():
+        sc.set_metrics(separation={"changed": False, "reason": report.get("reason") or "refused", **info})
+        shutil.rmtree(work, ignore_errors=True)
+        return None
+    shutil.copy2(rig_glb, sc.dir / "rig_before_separation.glb")
+    shutil.copyfile(rigged, rig_glb)
+    caps_src = work / separate.CAPS_FILE
+    caps = json.loads(caps_src.read_text(encoding="utf-8")).get("caps", []) if caps_src.is_file() else []
+    if caps_src.is_file():
+        caps_file = sc.dir / f"{shape.CAPS_KEY}.json"
+        shutil.copyfile(caps_src, caps_file)
+        sc.register(shape.CAPS_KEY, caps_file)
+    sc.set_metrics(separation={"changed": True, **info})
+    await _limb_joins(sc, rig_glb)
+    return {"cut_glb": work / Path(src).name, "caps": caps}
+
+
+async def _cut_pictures(sc: StageContext, cut: dict[str, Any] | None) -> None:
+    """After link_textures: the rig version's own pictures with the caps' colour (the clean-up's pictures with the
+    caps' texels from the cut model, shape.refresh_pictures, as the Shape job makes them). Removes the work folder."""
+    from .. import shape
+
+    if not cut:
+        return
+    try:
+        sources = {k: sc.lineage_file(k, ("prep", "mesh")) for k in shape.PICTURES}
+        made = await asyncio.to_thread(shape.refresh_pictures, Path(cut["cut_glb"]), cut["caps"], sources, sc.dir)
+        for kind, f in made.items():
+            sc.register(kind, f)
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(separation_pictures_error=str(e)[:300])
+    shutil.rmtree(sc.dir / SEPARATION_WORK, ignore_errors=True)
 
 
 # WP-69 stiff parts (blender/worn_region.py): a part the person placed as stiff moves with one spine bone. Its region

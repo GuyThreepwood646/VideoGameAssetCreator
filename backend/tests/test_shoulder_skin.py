@@ -5,9 +5,10 @@ import pytest
 from vgac.blender import shoulder_skin as ss
 
 
-def test_keep_share_is_whole_low_down_and_fades_out_high_up():
-    h = [0.0, ss.FADE_FROM, (ss.FADE_FROM + ss.FADE_TO) / 2, ss.FADE_TO, 0.6, -0.2]
-    assert list(ss.keep_share(h)) == pytest.approx([1.0, 1.0, 0.5, 0.0, 0.0, 1.0])
+def test_keep_share_is_whole_near_the_line_and_fades_out_far_above_and_far_below():
+    h = [0.0, ss.FADE_FROM, (ss.FADE_FROM + ss.FADE_TO) / 2, ss.FADE_TO, 0.6, -ss.BELOW_FROM,
+         -(ss.BELOW_FROM + ss.BELOW_TO) / 2, -ss.BELOW_TO, -0.5]
+    assert list(ss.keep_share(h)) == pytest.approx([1.0, 1.0, 0.5, 0.0, 0.0, 1.0, 0.5, 0.0, 0.0])
 
 
 def test_height_is_measured_square_to_the_collarbone_line():
