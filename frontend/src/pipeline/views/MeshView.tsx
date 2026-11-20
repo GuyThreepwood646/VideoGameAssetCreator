@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
+import { api, creditText, libraryUrl, type Asset, type LibraryHairMetrics, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { aboutSize, gridReadout, measuredSize, sizeAxisOf } from '../../help'
 import { versionLook } from '../../recipe'
 import Viewer from '../../Viewer'
 import { usePaint } from '../../paint/usePaint'
+import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
 import { TouchUp } from './TouchUp'
@@ -63,6 +64,29 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const paint = usePaint(model, look?.look ?? null)
   const canPaint = version.stage === 'prep' && !!glb
   const paintTool = painting && model ? paint.toolFor(model) : null
+  // Save (WP-23): the painted picture goes to the backend as a new clean-up version made from this one.
+  const [saving, setSaving] = useState(false)
+  const [saveNote, setSaveNote] = useState<string | null>(null)
+  const savePaint = async () => {
+    const layer = paint.saveLayer()
+    if (!layer) return
+    const body = paintSaveBody(layer)
+    if (!body) {
+      setSaveNote('Nothing is painted yet.')
+      return
+    }
+    setSaving(true)
+    setSaveNote(null)
+    try {
+      await api.paint(version.id, body)
+      setSaveNote('Saved. The new version appears here when it is made. Keep it to carry the paint on to the rig and the export.')
+      onChanged?.()
+    } catch (e) {
+      setSaveNote(e instanceof Error ? e.message : 'Could not save the paint. Try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <div className="mesh-view">
       {glb ? (
@@ -70,7 +94,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
       ) : (
         <div className="placeholder-box">No 3D model in this version.</div>
       )}
-      {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} />}
+      {canPaint && <TouchUp paint={paint} painting={painting} onStart={() => setPainting(true)} onStop={() => setPainting(false)} onSave={savePaint} saving={saving} saveNote={saveNote} />}
       {showPicker && asset && <HairPicker asset={asset} version={version} focus={hairFocus} onFix={onFix} onChanged={onChanged} />}
       <div className="mesh-side">
         {libHairOn && libHair && (

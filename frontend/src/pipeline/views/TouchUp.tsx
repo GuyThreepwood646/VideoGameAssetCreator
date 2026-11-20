@@ -1,5 +1,5 @@
-// Touch up (WP-22): paint on the model's colour picture in step 4. The painted picture lives in this page only; it is not
-// saved yet (WP-23 carries it through the pipeline).
+// Touch up (WP-22, saving WP-23): paint on the model's colour picture in step 4. Save makes a new clean-up version with
+// the paint; until then the paint stays in this page.
 import { BRUSH_MAX, BRUSH_MIN, type PaintMode, type PaintSettings } from '../../paint/paintSession'
 import type { PaintState } from '../../paint/usePaint'
 
@@ -23,14 +23,14 @@ function edgeWord(hardness: number): string {
   return 'medium'
 }
 
-export function TouchUp({ paint, painting, onStart, onStop }: { paint: PaintState; painting: boolean; onStart: () => void; onStop: () => void }) {
+export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, saveNote }: { paint: PaintState; painting: boolean; onStart: () => void; onStop: () => void; onSave: () => void; saving: boolean; saveNote: string | null }) {
   const s: PaintSettings = paint.settings
   const cm = Math.round(s.radius * 100)
   return (
     <div className="touch-up" data-testid="touch-up">
       <div className="field-label">Touch up</div>
       <div className="small muted">
-        Paint on the colour picture of the model. The painted picture is not saved yet: it stays in this page and is lost when you leave it or rebuild the step.
+        Paint on the colour picture of the model. Save as a new version to keep it: the new version carries the paint on to the rig and the export. Until you save, the paint stays in this page and is lost when you leave it.
       </div>
       {paint.warnings.map((w) => (
         <div key={w.text} className={w.blocks ? 'warn-text' : 'small'}>
@@ -105,6 +105,13 @@ export function TouchUp({ paint, painting, onStart, onStop }: { paint: PaintStat
             <button type="button" className="btn" onClick={paint.resetAll}>
               Back to the original picture
             </button>
+          </div>
+          <div className="touch-up-row">
+            <button type="button" className="btn primary" disabled={!paint.saveable || !paint.canUndo || saving} onClick={onSave}>
+              {saving ? 'Saving the paint' : 'Save as a new version'}
+            </button>
+            {!paint.saveable && <span className="small muted">Save is not available yet for this model: some of its parts have pictures of their own.</span>}
+            {saveNote && <span className="small muted">{saveNote}</span>}
           </div>
           {paint.notice && <div className="small muted">{paint.notice}</div>}
         </>

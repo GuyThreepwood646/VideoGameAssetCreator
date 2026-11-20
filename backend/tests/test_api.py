@@ -724,3 +724,76 @@ def test_a_failed_first_version_is_not_kept_and_can_be_deleted(client, fake_exec
     wait_job(client, good["job"]["id"])
     assert client.delete(f"/api/versions/{good['version']['id']}").status_code == 409
 
+
+
+def _painted_png_b64(size: int = 16, mode: str = "RGBA") -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    img = Image.new("L", (size, size), 255) if mode == "L" else Image.new("RGBA", (size, size), (120, 40, 40, 255))
+    img.save(buf, "PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def test_painted_save_makes_a_clean_up_child_and_refuses_adjust_and_refine(client, fake_execute):
+    """WP-23: Touch up save is a new clean-up version from a finished one; a painted clean-up refuses Adjust and Refine."""
+    import base64
+
+    from vgac.db import Version as VersionRow
+
+    p, a = _project_asset(client, category="humanoid")
+    with session_factory()() as db:
+        parent = VersionRow(asset_id=a["id"], stage="prep", status="done", selected=True)
+        parent.params = {}
+        parent.metrics = {}
+        parent.files = {}
+        db.add(parent)
+        db.commit()
+        pid = parent.id
+    mask = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 16).decode()
+    r = client.post(f"/api/versions/{pid}/paint", json={"picture_png": _painted_png_b64(), "mask_png": _painted_png_b64(mode="L"),
+                                                       "strokes": [{"mode": "paint"}]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["job"]["kind"] == "prep.paint" and out["version"]["stage"] == "prep" and out["version"]["parent_version_id"] == pid
+    wait_job(client, out["job"]["id"])
+    child = out["version"]["id"]
+    # The parent is unchanged; the child is painted (the fake job marks no paint, so mark it the way the job does).
+    with session_factory()() as db:
+        cv = db.get(Version, child)
+        cv.metrics = {"painted": True, "painted_of": pid}
+        db.commit()
+    assert client.get(f"/api/versions/{pid}").json()["metrics"] == {}
+    # Adjust and Refine on the painted clean-up are refused with the plain reason.
+    adj = client.post(f"/api/versions/{child}/adjust", json={"params": {}})
+    assert adj.status_code == 409 and "Adjust and Refine would rebuild" in adj.json()["detail"]
+    ref = client.post(f"/api/versions/{child}/refine", json={"instruction": "more red"})
+    assert ref.status_code == 409 and "lose the paint" in ref.json()["detail"]
+    # A painted save on the clean-up that was just painted is allowed (the paint carries on from it).
+    assert client.post(f"/api/versions/{child}/paint", json={"picture_png": _painted_png_b64(), "mask_png": _painted_png_b64(mode="L")}).status_code == 200
+
+
+def test_painted_save_refuses_bad_input_and_other_steps(client, fake_execute):
+    from vgac.db import Version as VersionRow
+
+    p, a = _project_asset(client, category="humanoid")
+    with session_factory()() as db:
+        mesh = VersionRow(asset_id=a["id"], stage="mesh", status="done", selected=True)
+        mesh.params, mesh.metrics, mesh.files = {}, {}, {}
+        db.add(mesh)
+        db.commit()
+        mid = mesh.id
+    body = {"picture_png": _painted_png_b64(), "mask_png": _painted_png_b64(mode="L")}
+    assert client.post(f"/api/versions/{mid}/paint", json=body).status_code == 400  # only step 4 is painted
+    with session_factory()() as db:
+        prep = VersionRow(asset_id=a["id"], stage="prep", status="done", selected=True)
+        prep.params, prep.metrics, prep.files = {}, {}, {}
+        db.add(prep)
+        db.commit()
+        pid = prep.id
+    assert client.post(f"/api/versions/{pid}/paint", json={"picture_png": "bm90IGEgcGljdHVyZQ==", "mask_png": body["mask_png"]}).status_code == 400
+    assert client.post(f"/api/versions/{pid}/paint", json={"picture_png": body["picture_png"], "mask_png": body["mask_png"], "strokes": "x"}).status_code == 422
+    assert client.post("/api/versions/nope/paint", json=body).status_code == 404

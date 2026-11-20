@@ -3,7 +3,7 @@
 import * as THREE from 'three'
 import type { SurfaceHit, ViewerModel, ViewerTool } from '../viewerTool'
 import { paintDab, type Brush, type Dab, type DabTarget } from './paintDab'
-import { PaintLayer } from './paintLayer'
+import { PaintLayer, type StrokeRecord } from './paintLayer'
 
 export type PaintMode = 'paint' | 'erase' | 'pick'
 export type PaintSettings = {
@@ -17,6 +17,19 @@ export type PaintSettings = {
 }
 export const DEFAULT_PAINT: PaintSettings = { mode: 'paint', rgb: [178, 58, 58], radius: 0.02, hardness: 0.6, strength: 1, faceOnly: false, mirror: false }
 // Brush sizes offered, in metres (the slider shows centimetres).
+// What a stroke was set to, for the stroke log saved with the picture (WP-23). Sizes in centimetres.
+export function strokeRecordOf(s: PaintSettings): StrokeRecord {
+  return {
+    mode: s.mode === 'erase' ? 'erase' : 'paint',
+    rgb: [...s.rgb] as [number, number, number],
+    size_cm: Math.round(s.radius * 1000) / 10,
+    edge: Math.round(s.hardness * 100) / 100,
+    strength: Math.round(s.strength * 100) / 100,
+    only_clicked_part: s.faceOnly,
+    mirror: s.mirror,
+  }
+}
+
 export const BRUSH_MIN = 0.002
 export const BRUSH_MAX = 0.2
 const NEW_PICTURE = 512
@@ -194,6 +207,12 @@ export class PaintSession {
     return this.layers.reduce((n, l) => n + l.undoBytesUsed, 0)
   }
 
+  // The one picture a save can send: the model's own picture (one layer). Null when the model has parts with pictures
+  // of their own or blank parts that the session added; those cannot be saved yet.
+  saveableLayer(): PaintLayer | null {
+    return this.layers.length === 1 ? this.layers[0] : null
+  }
+
   undo(renderer?: THREE.WebGLRenderer): boolean {
     const layer = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((l) => l.canUndo)
     if (!layer || !layer.undo()) return false
@@ -268,14 +287,14 @@ export class PaintSession {
         }
       }
     }
-    const beginStroke = (hit: SurfaceHit): PaintLayer | null => {
+    const beginStroke = (hit: SurfaceHit, s: PaintSettings): PaintLayer | null => {
       if (active) return active
       const layer = this.layerByMesh.get(hit.mesh) ?? null
       if (!layer) {
         hooks.notice('That part has no picture to paint on.')
         return null
       }
-      layer.beginStroke()
+      layer.beginStroke(strokeRecordOf(s))
       active = layer
       strokeFace = { mesh: hit.mesh, face: hit.face }
       return layer
@@ -306,7 +325,7 @@ export class PaintSession {
           if (layer && rgb) hooks.picked(rgb)
           return
         }
-        const layer = beginStroke(hit)
+        const layer = beginStroke(hit, s)
         if (!layer) return
         last = hit.point.clone()
         paintAt(layer, hit, s, s.faceOnly ? strokeFace : null)

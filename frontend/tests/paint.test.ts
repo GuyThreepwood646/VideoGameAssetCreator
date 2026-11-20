@@ -255,3 +255,55 @@ test('warnings: no picture layout blocks, Low-poly blocks, Retro 64 warns, mirro
   const mirrored = modelOf([big]).model
   assert.ok(checkPaint(mirrored, null).some((w) => /mirrored/.test(w.text)), 'mirrored UVs warn')
 })
+
+// WP-23: the save sends the changed texels and the stroke log, and undo moves the log with its picture.
+const STROKE = { mode: 'paint' as const, rgb: [10, 200, 30] as [number, number, number], size_cm: 2, edge: 0.6, strength: 1, only_clicked_part: false, mirror: false }
+
+function paintRect(layer: PaintLayer, stroke: typeof STROKE | null, x0: number, y0: number, x1: number, y1: number): void {
+  layer.beginStroke(stroke)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const o = (y * layer.width + x) * 4
+      layer.pixels[o] = 10
+      layer.pixels[o + 1] = 200
+      layer.pixels[o + 2] = 30
+    }
+  }
+  layer.touch(x0, y0, x1, y1)
+  layer.endStroke()
+}
+
+test('the changed mask marks the texels that differ from the model picture, and nothing else', () => {
+  const layer = blankPicture([255, 255, 255])
+  assert.equal(layer.changedMask().reduce((n, v) => n + v, 0), 0)
+  paintRect(layer, STROKE, 4, 4, 8, 6)
+  const mask = layer.changedMask()
+  assert.equal(mask.reduce((n, v) => n + v, 0), 4 * 2)
+  assert.equal(mask[4 + 4 * SIZE], 1)
+  assert.equal(mask[0], 0)
+})
+
+test('the stroke log follows the picture through undo and redo', () => {
+  const layer = blankPicture([255, 255, 255])
+  paintRect(layer, STROKE, 1, 1, 3, 3)
+  paintRect(layer, { ...STROKE, mode: 'erase', rgb: [0, 0, 0] }, 5, 5, 7, 7)
+  assert.deepEqual(layer.strokeLog.map((s) => s.mode), ['paint', 'erase'])
+  layer.undo()
+  assert.deepEqual(layer.strokeLog.map((s) => s.mode), ['paint'])
+  layer.redo()
+  assert.deepEqual(layer.strokeLog.map((s) => s.mode), ['paint', 'erase'])
+})
+
+test('a stroke with no settings still makes an undo step and no log entry', () => {
+  const layer = blankPicture([255, 255, 255])
+  paintRect(layer, null, 2, 2, 4, 4)
+  assert.equal(layer.canUndo, true)
+  assert.deepEqual(layer.strokeLog, [])
+})
+
+test('undo back to the model picture leaves no changed texels', () => {
+  const layer = blankPicture([255, 255, 255])
+  paintRect(layer, STROKE, 1, 1, 6, 6)
+  layer.undo()
+  assert.equal(layer.changedMask().reduce((n, v) => n + v, 0), 0)
+})
