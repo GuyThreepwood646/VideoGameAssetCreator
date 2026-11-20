@@ -973,8 +973,11 @@ def limb_chain(bone_list, leaf_end):
 for li in leg_info:
     li["ik"] = None if li["splayed"] else limb_chain(li["bones"], low[li["leaf"]])
 for a_ in arm_info:
-    i0 = a_["bones"].index(a_["upper"])
-    a_["ik"] = limb_chain(a_["bones"][i0:i0 + 3], head[a_["bones"][min(len(a_["bones"]) - 1, i0 + 2)]]) if len(a_["bones"]) >= i0 + 3 else None
+    # The palm-down pass puts Extra_ForeArmTwist bones between ForeArm and Hand, all starting at the elbow. They are
+    # left out of the IK chain so its end is the Hand (the wrist), and the forearm length is elbow to wrist.
+    ik_bones = [b for b in a_["bones"] if "ForeArmTwist" not in b]
+    i0 = ik_bones.index(a_["upper"])
+    a_["ik"] = limb_chain(ik_bones[i0:i0 + 3], head[ik_bones[min(len(ik_bones) - 1, i0 + 2)]]) if len(ik_bones) >= i0 + 3 else None
     if a_["ik"] and a_["ik"]["a"] != a_["upper"]:
         a_["ik"] = None
 
@@ -1619,6 +1622,12 @@ def _death_pose(P, t, drop):
     P.move(up * (drop * fall + settle * height * fall * 0.3))
 
 
+def _reach_at_elbow(ch, deg):
+    """Distance from shoulder to wrist when the elbow is `deg` degrees (interior angle) for this arm chain."""
+    l1, l2 = ch["l1"], ch["l2"]
+    return math.sqrt(max(0.0, l1 * l1 + l2 * l2 - 2 * l1 * l2 * math.cos(math.radians(deg))))
+
+
 def death_settle(P, ground_z, lift=None):
     """Lay every limb of a final death pose on the ground: for each arm and leg chain, aim its end (wrist,
     ankle, paw) at ground height below where it is (gait.ground_target), arms pushed out beside the body, then
@@ -1644,6 +1653,12 @@ def death_settle(P, ground_z, lift=None):
             out_dir = P.root_q @ (lateral if limb["left"] else -lateral)
             r = lift.get(ch["end_bone"] or ch["m"], 0.022 * height)
             target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=0.35 * L)
+            # WP-77: the wrist target may not be farther from the shoulder than an arm at a 170 degree elbow, so the
+            # settled arm never straightens past 170 degrees (a target out of reach straightens it).
+            tv = Vector(target) - ha
+            d170 = _reach_at_elbow(ch, 170.0)
+            if tv.length > d170:
+                target = tuple(ha + tv * (d170 / tv.length))
             # The elbow bends along the ground toward the feet, never down into it.
             pole = hm + (-(P.root_q @ up) * 0.8 + out_dir * 0.2) * L
         else:
@@ -1937,7 +1952,9 @@ def _character_height():
 _foot_bones = [(leg_chain(li)["end_bone"] or leg_chain(li)["m"]) for li in leg_info if leg_chain(li)]
 _hand_bones = []
 for _a in arm_info:
-    if _a.get("fore") and byname[_a["fore"]].children:
+    if _a.get("ik") and _a["ik"]["end_bone"]:  # the arm chain's end is the Hand (the wrist), past any twist bones
+        _hand_bones.append(_a["ik"]["end_bone"])
+    elif _a.get("fore") and byname[_a["fore"]].children:
         _hand_bones.append(byname[_a["fore"]].children[0].name)
 for row in table:
     if row["name"] in ("walk", "run") and _foot_bones:

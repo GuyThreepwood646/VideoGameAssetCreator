@@ -205,8 +205,10 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
     return withAssets.sort((a, b) => (b.last_activity ?? b.created_at).localeCompare(a.last_activity ?? a.created_at))[0] ?? null
   }, [projects])
   const { data: assets } = useAsync(() => (recent ? api.listAssets(recent.id) : Promise.resolve([] as AssetSummary[])), [recent?.id])
-  if (!recent || !assets || assets.length === 0) return null
-  const latest = [...assets].sort((a, b) => lastTouched(b).localeCompare(lastTouched(a))).slice(0, 4)
+  // Assets with "Show on the project tile" turned off stay out of this row too.
+  const shown = (assets ?? []).filter((a) => a.show_on_project !== false)
+  if (!recent || shown.length === 0) return null
+  const latest = [...shown].sort((a, b) => lastTouched(b).localeCompare(lastTouched(a))).slice(0, 4)
   return (
     <section className="jump" aria-labelledby="jump-title">
       <div className="row-between">
