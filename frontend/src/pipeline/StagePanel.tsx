@@ -49,6 +49,7 @@ import { ExportView } from './views/ExportView'
 import { FixTicks } from './FixTicks'
 import { MeshView } from './views/MeshView'
 import { RigView } from './views/RigView'
+import { ShapeTab } from './views/ShapeTab'
 import { TurnaroundView } from './views/TurnaroundView'
 
 type Props = {
@@ -815,7 +816,12 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     case 'prep':
       return <MeshView version={version} category={category} asset={asset} hairFocus={stage === 'mesh' ? viewTool : null} onFix={onFix} onChanged={onChanged} />
     case 'rig':
-      return <RigView version={version} />
+      return (
+        <>
+          <RigView version={version} />
+          <ShapeTab version={version} onChanged={onChanged} />
+        </>
+      )
     case 'export':
       return <ExportView version={version} hideReady={hideReady} assetName={assetName} onChanged={onChanged} />
   }
