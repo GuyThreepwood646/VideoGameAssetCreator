@@ -379,3 +379,18 @@ def test_with_the_facing_decided_the_front_pictures_are_fitted_on_the_front_half
     for n in ("source", "picture"):
         assert asked[n] and all(abs(srcproject._signed(y - 10.0)) <= srcproject.FRONT_HALF for y in asked[n])
         assert 190.0 not in asked[n]
+
+
+def test_the_original_picture_is_pose_searched_with_a_fidelity_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The app always passes the fidelity hint (apply_files). The original picture's turn still comes from the pose search,
+    not from today's turn-only fit by colour (the hat's original was fitted at -120 that way, WP-61)."""
+    searched: list[str] = []
+    real = srcproject._pose_fit
+
+    def spy(mesh, tex, prepared, src, src_n, name, *a, **k):  # noqa: ANN001
+        searched.append(name)
+        return real(mesh, tex, prepared, src, src_n, name, *a, **k)
+
+    monkeypatch.setattr(srcproject, "_pose_fit", spy)
+    srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", yaw_hint=lambda: 0.0)
+    assert "source" in searched and "picture" in searched

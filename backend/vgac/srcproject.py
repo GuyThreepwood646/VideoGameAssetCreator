@@ -2278,8 +2278,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     def fit(name: str, src: Any, yaws: list[float]) -> View:
         p_, a_ = prepared(src, pic_n)
         bar = min(min_iou, SOURCE_MIN_IOU) if name == "source" else min_iou
-        if name == "source" and yaw_hint is None:  # WP-61: the original picture is searched like the picture (its turn is
-            pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log,  # not left to colour)
+        if name == "source":  # WP-61: the original picture is searched like the picture, hint or not (the fidelity hint is
+            # the built-from picture's turn, and the app always passes one; its turn is not left to colour)
+            pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log,
                               turns=wide if front_known else None)
             if pv is not None and (pv.ok or not _silhouette_refused(pv)):
                 return pv
