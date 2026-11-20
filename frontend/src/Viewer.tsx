@@ -22,6 +22,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { pointerRay, SurfacePicker, type SurfaceHit, type ViewerModel, type ViewerTool } from './viewerTool'
+import { buildRegionOverlay, disposeRegionOverlay, type RegionHighlight } from './regionOverlay'
 import { Info } from './components/Info'
 import { LightPicker } from './components/LightPicker'
 import { clipLabel, clipLoopsByName } from './help'
@@ -84,6 +85,8 @@ type Props = {
   onToolExit?: () => void
   // Called once a model is drawn, with its meshes and picker (paint uses them). Not called when the model is cleared.
   onModelLoaded?: (model: ViewerModel) => void
+  // The stiff region to draw over the model (WP-69 preview). Null to clear.
+  highlight?: RegionHighlight | null
 }
 
 type SceneHandles = {
@@ -558,7 +561,7 @@ function applyPointerOwnership(c: OrbitControls, move: boolean, toolOn: boolean)
   c.touches.ONE = toolOn ? (-1 as THREE.TOUCH) : move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded }: Props) {
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight }: Props) {
   // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
   const lookCtx = useContext(ViewerLookContext)
   const look = lookProp ?? lookCtx
@@ -599,8 +602,21 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const toolExitRef = useRef(onToolExit)
   toolExitRef.current = onToolExit
   const pickerRef = useRef<SurfacePicker | null>(null)
+  const regionRef = useRef<THREE.Object3D | null>(null)
   const onModelLoadedRef = useRef(onModelLoaded)
   onModelLoadedRef.current = onModelLoaded
+  // The stiff region preview (regionOverlay.ts): drawn over the model it was grown on, removed when cleared.
+  useEffect(() => {
+    if (regionRef.current) {
+      disposeRegionOverlay(regionRef.current)
+      regionRef.current = null
+    }
+    if (!highlight || !highlight.mesh.parent) return
+    const o = buildRegionOverlay(highlight.mesh, highlight.triangles)
+    if (!o) return
+    highlight.mesh.parent.add(o)
+    regionRef.current = o
+  }, [highlight])
 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)

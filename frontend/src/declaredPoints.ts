@@ -32,7 +32,30 @@ export function withPoint(parts: PlacedPart[], name: string, point: Point | null
   return parts.map((p) => (p.name === name ? { ...p, location: point ? [...point] : null } : p))
 }
 
-// Only sway parts take a point (the rig's spring pass reads them); other kinds are listed by the API but not marked.
+// A stiff part takes up to this many points; each grows its own piece and the pieces join (WP-69).
+export const MAX_STIFF_POINTS = 8
+
+// The version's parts with one stiff part's point added to its list (capped at MAX_STIFF_POINTS).
+export function withStiffPoint(parts: PlacedPart[], name: string, point: Point): PlacedPart[] {
+  return parts.map((p) => {
+    if (p.name !== name) return p
+    const list = [...(p.locations ?? [])]
+    if (list.length < MAX_STIFF_POINTS) list.push([...point])
+    return { ...p, locations: list }
+  })
+}
+
+// The version's parts with one point removed from a stiff part's list (by its position in the list).
+export function withoutStiffPoint(parts: PlacedPart[], name: string, index: number): PlacedPart[] {
+  return parts.map((p) => (p.name === name ? { ...p, locations: (p.locations ?? []).filter((_, i) => i !== index) } : p))
+}
+
+// The version's parts with one stiff part's points all cleared.
+export function withoutStiffPoints(parts: PlacedPart[], name: string): PlacedPart[] {
+  return parts.map((p) => (p.name === name ? { ...p, locations: [] } : p))
+}
+
+// The parts that take points: sway (the spring pass reads one point) and stiff (the worn pass reads a list).
 export function markable(parts: PlacedPart[]): PlacedPart[] {
-  return parts.filter((p) => p.kind === 'sway')
+  return parts.filter((p) => p.kind === 'sway' || p.kind === 'stiff')
 }

@@ -8,6 +8,9 @@ import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, 
 import { pointTool } from '../../declaredPoints'
 import type { ViewerModel } from '../../viewerTool'
 import { DeclaredPointsPanel, useDeclaredPoints } from './DeclaredPoints'
+import { growStiffRegion, regionTriangles } from '../../stiffRegion'
+import type { RegionHighlight } from '../../regionOverlay'
+import * as THREE from 'three'
 
 type RigInfo = { template?: string; bone_segments?: BoneSegment[]; bone_segments_gltf?: BoneSegment[]; bones?: BoneSegment[] }
 // metrics.hitboxes on the rig version (4.2).
@@ -100,13 +103,30 @@ export function RigView({ version }: { version: Version }) {
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
   const dp = useDeclaredPoints(version)
-  const { setPoint } = dp
+  const { setPoint, addStiffPoint, pending } = dp
   const [viewerModel, setViewerModel] = useState<ViewerModel | null>(null)
   const [markName, setMarkName] = useState<string | null>(null)
+  // A stiff part takes one point per click and stays in placing mode; a sway part takes its one point and leaves it.
+  const markKind = dp.parts?.find((p) => p.name === markName)?.kind ?? null
   const markTool = useMemo(
-    () => (markName && viewerModel ? pointTool((p) => { setPoint(markName, p); setMarkName(null) }) : null),
-    [markName, viewerModel, setPoint],
+    () =>
+      markName && viewerModel
+        ? pointTool((p) => {
+            if (markKind === 'stiff') addStiffPoint(markName, p)
+            else {
+              setPoint(markName, p)
+              setMarkName(null)
+            }
+          })
+        : null,
+    [markName, markKind, viewerModel, setPoint, addStiffPoint],
   )
+  // The stiff regions (WP-69) grown from every stiff point, saved or still pending, drawn over the model before keeping.
+  const stiffPoints = useMemo(
+    () => [...(dp.parts ?? []).filter((p) => p.kind === 'stiff').flatMap((p) => p.locations ?? []), ...Object.values(pending).flat()],
+    [dp.parts, pending],
+  )
+  const regionHighlight = useMemo(() => growHighlight(viewerModel, stiffPoints), [viewerModel, stiffPoints])
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
@@ -157,7 +177,7 @@ export function RigView({ version }: { version: Version }) {
           )}
         </div>
       )}
-      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} /> : <div className="placeholder-box">No 3D model in this version.</div>}
+      {glb ? <Viewer url={glb} bones={bones} bonesSpace={bonesSpace} height={440} hitboxes={hitDoc} clipInfo={clipInfo} defaultClip={animGlb ? 'walk' : undefined} clipRequest={clipReq} tool={markTool} onToolExit={() => setMarkName(null)} onModelLoaded={setViewerModel} highlight={regionHighlight} /> : <div className="placeholder-box">No 3D model in this version.</div>}
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
       {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
@@ -212,4 +232,28 @@ export function RigView({ version }: { version: Version }) {
       )}
     </div>
   )
+}
+
+// The region the stiff points cover on the model: the union of each point's grown piece (stiffRegion.ts), as the
+// triangles to draw. Positions are the mesh's own rest coordinates, the same frame the points are stored in.
+function growHighlight(model: ViewerModel | null, points: number[][]): RegionHighlight | null {
+  if (!model || points.length === 0) return null
+  let mesh: THREE.Mesh | null = null
+  for (const m of model.meshes) {
+    const n = m.geometry?.getAttribute('position')?.count ?? 0
+    if (n && (!mesh || n > (mesh.geometry.getAttribute('position')?.count ?? 0))) mesh = m
+  }
+  if (!mesh) return null
+  const geo = mesh.geometry
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const flat = pos.array as Float32Array
+  const index: ArrayLike<number> = geo.index ? (geo.index.array as ArrayLike<number>) : Array.from({ length: pos.count }, (_, i) => i)
+  const mask = new Uint8Array(pos.count)
+  for (const p of points) {
+    if (p.length !== 3) continue
+    const m = growStiffRegion(flat, index, [p[0], p[1], p[2]])
+    for (let i = 0; i < mask.length; i++) if (m[i]) mask[i] = 1
+  }
+  const triangles = regionTriangles(index, mask)
+  return triangles.length ? { mesh, triangles } : null
 }
