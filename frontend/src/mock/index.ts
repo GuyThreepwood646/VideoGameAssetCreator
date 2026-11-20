@@ -478,7 +478,7 @@ on('GET', '/api/projects', () =>
       for (const list of Object.values(a.stages)) for (const v of list ?? []) times.push(v.created_at)
       const kept = a.stages.concept?.find((v) => v.id === a.selected.concept)
       const pic = kept?.files.cutout ?? kept?.files.image
-      if (pic && covers.length < 4) covers.push(pic)
+      if (pic && covers.length < 4 && a.show_on_project !== false) covers.push(pic)
     }
     return { ...p, asset_count: assets.length, covers, last_activity: times.sort().at(-1) }
   }),
@@ -625,6 +625,7 @@ on('PUT', '/api/assets/:id', (m, body) => {
   const a = findAsset(m.groups!.id)
   for (const k of ['name', 'prompt', 'category', 'platform_target'] as const) if (typeof body[k] === 'string') (a as Record<string, unknown>)[k] = body[k]
   if (Array.isArray(body.parts)) a.parts = body.parts as { name: string; kind: string }[]
+  if (typeof body.show_on_project === 'boolean') a.show_on_project = body.show_on_project
   return a
 })
 on('DELETE', '/api/assets/:id', (m) => {

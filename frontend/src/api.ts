@@ -238,6 +238,8 @@ export type Asset = {
   hair?: HairChoice | null
   // "The face matters" (true unless turned off): off skips the face detail pass in step 4 (a hidden or very simple face).
   face_matters?: boolean
+  // "Show on the project tile" (true unless turned off): off keeps this asset's picture off the project's cover.
+  show_on_project?: boolean
   // What the character is made of (step 1 tick boxes): the answer in force, and whether the person has given it. The
   // clean-up reads these instead of guessing from the description.
   wears_armour?: boolean
@@ -1006,7 +1008,7 @@ export const api = {
   styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),
   createVariant: (aid: string, body: { change: string; name?: string }) => post<VariantResult>(`/api/assets/${aid}/variants`, body),
-  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target' | 'face_matters' | 'wears_armour' | 'body_is_metal'>>) =>
+  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target' | 'face_matters' | 'wears_armour' | 'body_is_metal' | 'show_on_project'>>) =>
     put<Asset>(`/api/assets/${id}`, body),
   deleteAsset: (id: string) => del<DeleteResult>(`/api/assets/${id}`),
 

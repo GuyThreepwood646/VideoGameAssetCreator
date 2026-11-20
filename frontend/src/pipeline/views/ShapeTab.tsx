@@ -16,6 +16,7 @@ import {
   gapWords,
   nearestArm,
   shapeBody,
+  shapeCheckLine,
   startWords,
   type ShapeSettings,
 } from './shapeModel'
@@ -231,13 +232,14 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
       </div>
       {note && <p className="muted">{note}</p>}
       <p className="muted">
-        After this, the next rig run makes the weights again for the new shape. Weight fixes near the cut come in a later step.
+        After this, the next rig run keeps this rig: its skeleton, and its weights with the ones near the cut made again. Try again on
+        the rig step makes the whole rig from scratch instead.
       </p>
     </div>
   )
 }
 
-// The log a separated clean-up carries (metrics.shape_log): what was done, the engine's measures and its plain lines.
+// The log a separated clean-up carries (metrics.shape_log): what was done, the engine's model check in words and its plain lines.
 export function ShapeLogNote({ log }: { log: ShapeLog }) {
   const e = log.engine
   const side = log.parameters.side === 'both' ? 'both arms' : log.parameters.side === 'L' ? 'left arm' : 'right arm'
@@ -250,9 +252,7 @@ export function ShapeLogNote({ log }: { log: ShapeLog }) {
       {log.messages.map((m) => (
         <p key={m}>{m}</p>
       ))}
-      <p className="muted">
-        Pieces {e.pieces ?? '-'}, open edges {e.open_edges ?? '-'}, bad edges {e.bad_edges ?? '-'}, new crossings {e.new_crossings ?? '-'}, caps placed {e.caps_placed}.
-      </p>
+      <p className="muted">{shapeCheckLine(e)}</p>
     </div>
   )
 }
