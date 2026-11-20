@@ -23,6 +23,7 @@ import numpy as np
 MAX_INFLUENCES = 4
 RADIUS = 0.8  # safety net: a region never reaches further than this from its point, in metres
 SEED_SIZE = 4000  # safety net: a region never has more vertices than this
+HOLE_ROUNDS = 3  # rounds of hole filling after the growth (see fill_holes)
 CREASE_DOT = 0.87  # seam duplicates join only when their normals agree within about 30 degrees
 SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
 SPINE_WORDS = ("spine", "chest")
@@ -100,6 +101,24 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
     return mask
 
 
+def fill_holes(region, edges, rounds=HOLE_ROUNDS):
+    """Take in any vertex outside the region whose edge neighbours are all inside it (a hole in the piece), for a few
+    rounds. A flat hole left out of the region keeps the hips' weights and tears away from the pack (WP-69)."""
+    region = np.array(region, dtype=bool, copy=True)
+    if not np.any(region) or not len(edges):
+        return region, 0
+    V = len(region)
+    adj = _adjacency(V, edges)
+    added = 0
+    for _ in range(max(0, int(rounds))):
+        grow = [v for v in range(V) if not region[v] and adj[v] and all(region[w] for w in adj[v])]
+        if not grow:
+            break
+        region[grow] = True
+        added += len(grow)
+    return region, added
+
+
 def spine_bone(names, heads, centre):
     """The chain bone (spine or chest) whose head is nearest the region's centre; None when there is none."""
     best, best_d = None, None
@@ -154,6 +173,7 @@ def run_numpy(W, edges, co, names, heads, region, seam=SEAM):
     bone head positions). Returns (W, report). W unchanged when there is no region or no spine bone."""
     W0 = np.array(W, dtype=float, copy=True)
     region = np.asarray(region, dtype=bool)
+    region, filled = fill_holes(region, edges)
     if not np.any(region):
         return W0, {"ok": False, "reason": "the stiff part region is empty"}
     centre = np.asarray(co, dtype=float)[region].mean(axis=0)
@@ -168,7 +188,7 @@ def run_numpy(W, edges, co, names, heads, region, seam=SEAM):
     rows = t > 1e-9
     out = cap_and_normalise(blended, rows)
     err = float(np.abs(out[rows].sum(axis=1) - 1.0).max()) if np.any(rows) else 0.0
-    report = {"ok": True, "bone": bone, "region_vertices": int(region.sum()),
+    report = {"ok": True, "bone": bone, "region_vertices": int(region.sum()), "holes_filled": int(filled),
               "seam_vertices": int((rows & ~region).sum()), "seam_rings": int(seam), "row_sum_error": err}
     return out, report
 
