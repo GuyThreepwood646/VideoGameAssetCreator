@@ -1006,3 +1006,80 @@ def walk_arm_mean_deg(clip: str = "walk", choice: str | None = None, samples: in
     for i in range(samples):
         total += swung_arm_angle(hold, WALK_ARM_SWING_DEG * math.cos(2 * math.pi * i / samples))
     return total / samples
+
+
+# ---- clip data for the game: locomotion speed and attack hit time (WP-19) -------------------------------------------
+# Both come from the posed frames a clip is made of, so they follow the motion that is actually exported rather than a
+# table. Coordinates are (x, y, z) with z up, metres in the rig's own units, sampled at fps.
+PLANT_TOLERANCE_SHARE = 0.02   # a foot counts as planted within this share of the character's height of its lowest point
+PLANT_MIN_SHARE = 0.15         # fewer planted frames than this share of the clip means no stance was found: fall back
+PLANT_MIN_SPEED = 0.05         # m/s: a planted foot that barely moves is an in-place clip, not a walk: fall back
+
+
+def _horizontal_speeds(track: list[tuple[float, float, float]], fps: float) -> list[float]:
+    """Horizontal speed (m/s) between consecutive frames of one point; len(track) - 1 values."""
+    out = []
+    for (x0, y0, _z0), (x1, y1, _z1) in zip(track, track[1:]):
+        out.append(math.hypot(x1 - x0, y1 - y0) * fps)
+    return out
+
+
+def planted_speed(feet: list[list[tuple[float, float, float]]], fps: float, height: float,
+                  tolerance_share: float = PLANT_TOLERANCE_SHARE) -> dict:
+    """The locomotion speed of a cyclic clip from its planted feet.
+
+    feet[k][i] is foot k's position at frame i. A foot is planted on the frames where it is within
+    tolerance_share * height of its own lowest point over the clip; while planted it travels with the body, so
+    the horizontal speed there is the body's speed. The speed is the median over the planted frames of every foot.
+    -> {"speed": m/s or None, "method": "planted_feet" | "fallback", "planted_share": 0..1, "reason": text}.
+    None means the clip has no stance to read (flat in-place motion, or too few planted frames): the caller keeps
+    its own default speed.
+    """
+    if not feet or not feet[0] or fps <= 0 or height <= 0:
+        return {"speed": None, "method": "fallback", "planted_share": 0.0, "reason": "no feet or no height"}
+    tol = tolerance_share * height
+    speeds: list[float] = []
+    frames_total = 0
+    for track in feet:
+        if len(track) < 3:
+            continue
+        low = min(p[2] for p in track)
+        speeds_k = _horizontal_speeds(track, fps)
+        frames_total += len(speeds_k)
+        for i, v in enumerate(speeds_k):
+            # the speed between frames i and i+1 belongs to the planted state if both ends are planted
+            if track[i][2] <= low + tol and track[i + 1][2] <= low + tol:
+                speeds.append(v)
+    if frames_total == 0:
+        return {"speed": None, "method": "fallback", "planted_share": 0.0, "reason": "clip too short"}
+    share = len(speeds) / frames_total
+    if share < PLANT_MIN_SHARE:
+        return {"speed": None, "method": "fallback", "planted_share": round(share, 4),
+                "reason": "planted on %.0f%% of frames, below %.0f%%" % (100 * share, 100 * PLANT_MIN_SHARE)}
+    speeds.sort()
+    mid = len(speeds) // 2
+    median = speeds[mid] if len(speeds) % 2 else (speeds[mid - 1] + speeds[mid]) / 2
+    if median < PLANT_MIN_SPEED:
+        return {"speed": None, "method": "fallback", "planted_share": round(share, 4),
+                "reason": "planted feet barely move (%.3f m/s): in place" % median}
+    return {"speed": round(median, 3), "method": "planted_feet", "planted_share": round(share, 4), "reason": ""}
+
+
+def peak_speed_frame(ends: dict[str, list[tuple[float, float, float]]], fps: float) -> dict:
+    """The hit frame of a one-shot clip: the frame of peak limb speed.
+
+    ends maps a limb end (hand, foot) to its positions per frame. The speed at frame i is the central-difference
+    speed of that end; the hit is the frame where any end is fastest. Checked on the built-in attack (WP-19 evidence):
+    the strike snap is the fastest frame, well above the wind-up and the recovery. A wind-up faster than the strike
+    would be picked instead, so each clip's speed curve is written to the report (hit_probe) to check that.
+    -> {"frame", "time" (seconds), "speed" (m/s), "end"}; frame is -1 when no end has three frames.
+    """
+    best = {"frame": -1, "time": -1.0, "speed": 0.0, "end": ""}
+    for name, track in ends.items():
+        if len(track) < 3:
+            continue
+        for i in range(1, len(track) - 1):
+            v = math.dist(track[i - 1], track[i + 1]) * fps / 2.0
+            if v > best["speed"]:
+                best = {"frame": i, "time": round(i / fps, 4), "speed": round(v, 3), "end": name}
+    return best
