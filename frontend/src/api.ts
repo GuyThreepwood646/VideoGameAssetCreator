@@ -136,12 +136,13 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
 export interface DeclaredPart {
   name: string
-  kind: 'separate' | 'sway' | string
+  kind: 'separate' | 'sway' | 'stiff' | string
 }
 
 // A declared part on one version (WP-20): GET/PUT /api/versions/{vid}/parts. A location is three metres in the rig GLB's
 // rest pose (y up), or null when no point is set.
-export type PlacedPart = { name: string; kind: string; location: number[] | null }
+// A stiff part takes a list of points (locations); a sway part takes one (location).
+export type PlacedPart = { name: string; kind: string; location: number[] | null; locations?: number[][] }
 export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'

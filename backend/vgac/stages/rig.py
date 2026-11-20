@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, headtris, imaging, library, limbjoins, quality
+from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -312,6 +312,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if template is None:
         await _skip(sc, f"rig_engine {sc.category.get('rig_engine', 'none')}", src)
         return
+    record_stiff_points(sc)
     if await retexture(sc, template, gpv, params):
         return
     lib_hair = library_hair(sc)
@@ -369,6 +370,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
+        await _worn_region(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -552,9 +554,7 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
     rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
     if rig_glb is None:
         return False
-    if refix:
-        sc.progress(0.08, "cleaning up the skin weights")
-        await _fix_weights_again(sc, rig_glb)
+    await _rig_base(sc, parent, rig_glb, params, refix=refix, moves="moves" in parts)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
         sc.set_params(**hp)
@@ -569,6 +569,31 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
 
         pipeline.select(sc.db, sc.version)
     return True
+
+
+async def _rig_base(sc: StageContext, parent: Any, rig_glb: Path, params: dict[str, Any], refix: bool, moves: bool) -> None:
+    """The rig GLB a reused version starts from, when the weight clean-up or the moves are due (WP-69 review): restore the
+    parent's pre-pass rig if the parent applied the stiff pass, run the clean-up if refix is due, then apply the current
+    stiff points. Nothing is due: the rig stays the parent's."""
+    if not (refix or moves):
+        return
+    await _moves_base(sc, parent, rig_glb, refix)
+    points = record_stiff_points(sc)
+    if points:
+        await _worn_region(sc, rig_glb, params, points)
+
+
+async def _moves_base(sc: StageContext, parent: Any, rig_glb: Path, refix: bool) -> None:
+    """Make the rig GLB a moves rerun starts from (WP-69 reuse). When the parent applied the stiff pass (its pre-pass
+    copy exists), the copy is restored first, so the pass is gone unless the current points apply it again. Then the
+    weight clean-up runs on that base when refix is due (it is not overwritten afterwards). In place."""
+    parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False)
+    pre = parent_dir / "rig_before_worn_region.glb"
+    if pre.is_file():
+        shutil.copy2(pre, rig_glb)
+    if refix:
+        sc.progress(0.08, "cleaning up the skin weights")
+        await _fix_weights_again(sc, rig_glb)
 
 
 async def refit(sc: StageContext, parent: Any, params: dict[str, Any]) -> bool:
@@ -1146,6 +1171,77 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
             sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+# WP-69 stiff parts (blender/worn_region.py): a part the person placed as stiff moves with one spine bone. Its region
+# is grown from the point on the rest mesh; the seam and the bone are set in the script.
+
+
+# WP-69: the stiff points are a setting of the rig, not only a file. The points a run applies are recorded in its
+# params (STIFF_PARAM, canonical: [{name, locations}] in order, or nothing when there are none), so a donor rig whose
+# points differ is not reused (reuse_differences counts the key), and a moves-only rerun applies the current points.
+STIFF_PARAM = "stiff_points"
+
+
+def stiff_parts_path(sc: StageContext) -> Path | None:
+    """The parts file the stiff points come from: this version's own, else the rig this one was adjusted from, else the
+    asset's selected rig (a fresh rig from a painted clean-up has no parent rig)."""
+    own = sc.file("parts")
+    if own is not None:
+        return Path(own)
+    if sc.parent is not None and sc.parent.stage == "rig":
+        found = library.version_file(sc.parent, "parts", sc.settings)
+        if found is not None:
+            return Path(found)
+    from sqlalchemy import select
+
+    from ..db import Version
+
+    sel = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.selected.is_(True))).first()
+    if sel is not None and sel.id != sc.version.id:
+        found = library.version_file(sel, "parts", sc.settings)
+        if found is not None:
+            return Path(found)
+    return None
+
+
+def stiff_points_for(sc: StageContext) -> list[dict[str, Any]]:
+    """The stiff parts with points this run applies, canonical (see STIFF_PARAM)."""
+    rows = declared_parts.for_stiff(declared_parts.read_placed(stiff_parts_path(sc)))
+    return [{"name": r["name"], "locations": [[round(float(v), 4) for v in loc] for loc in r["locations"]]} for r in rows]
+
+
+def record_stiff_points(sc: StageContext) -> list[dict[str, Any]]:
+    """Set the run's STIFF_PARAM from the points it will apply (None when there are none) and return them."""
+    points = stiff_points_for(sc)
+    sc.set_params(**{STIFF_PARAM: points or None})
+    return points
+
+
+async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any], points: list[dict[str, Any]] | None = None) -> None:
+    """Stiff parts (blender/worn_region.py, WP-69): each placed stiff part moves with the spine bone nearest its region.
+    Applies `points` (the run's record, see record_stiff_points) or, when not given, the points stiff_points_for finds.
+    Does nothing when no stiff part is placed. metrics.worn_region: {ok, points, meshes} or {reason}. Never raises."""
+    if points is None:
+        points = stiff_points_for(sc)
+    if not points:
+        return
+    out = sc.dir / "rig_worn_region.glb"
+    report = sc.dir / "worn_region.json"
+    points_file = declared_parts.write_placed(sc.dir / "stiff_points.json", points)
+    args = [rig_glb, out, "--report", report, "--points", points_file]
+    try:
+        await sc.blender("worn_region.py", args, log_name="worn_region.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_worn_region.glb")
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(worn_region={"ok": True, "points": rep.get("points", []), "meshes": rep.get("meshes", [])})
+        else:
+            sc.set_metrics(worn_region={"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(worn_region={"error": str(e)[:300]})
 
 
 async def _skin_stretch(sc: StageContext) -> None:
