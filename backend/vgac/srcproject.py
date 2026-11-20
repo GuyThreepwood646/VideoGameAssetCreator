@@ -2184,9 +2184,15 @@ INTENDED_TURN = {"quarter": 45.0, "quarter2": -45.0, "left": 90.0, "right": -90.
 POSE_HINT_DEG = 20.0  # the pose search of a drawn view covers turns this far either side of its intended turn
 
 
+def _silhouette_refused(v: "View") -> bool:
+    """Whether a view was refused for its silhouette (fit_view's own check), as opposed to the D2 refusal or the turn."""
+    return "silhouette" in str(v.info.get("refused", ""))
+
+
 def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared", src: Any, src_n: int | None, name: str,
               centre: np.ndarray, scale: float, size: int, min_iou: float, atlas_job: Any,
-              log: Callable[[str], None] | None, hint: float | None = None) -> tuple["View | None", dict[str, Any]]:
+              log: Callable[[str], None] | None, hint: float | None = None,
+              turns: list[float] | None = None) -> tuple["View | None", dict[str, Any]]:
     """WP-61: the pose search (turn, tilt, lens) for one picture, then the D2 check, then the fit at the picked pose.
     hint: the turn the view is meant to be seen from; the search covers turns within POSE_HINT_DEG of it (None: all turns).
     Returns (view, record). The view is None when the search fails outright (the caller keeps its turn-only fit, logged);
@@ -2194,7 +2200,8 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
     from . import posesearch as ps
 
     pic, alpha = prepared(src, src_n)
-    turns = None if hint is None else [float(hint) + d for d in (-POSE_HINT_DEG, -POSE_HINT_DEG / 2, 0.0, POSE_HINT_DEG / 2, POSE_HINT_DEG)]
+    if hint is not None:
+        turns = [float(hint) + d for d in (-POSE_HINT_DEG, -POSE_HINT_DEG / 2, 0.0, POSE_HINT_DEG / 2, POSE_HINT_DEG)]
     try:
         poses = ps.search(mesh, alpha, centre, scale, turns=turns)
     except Exception as e:  # a failed search keeps the turn-only fit, and the record says so
@@ -2268,10 +2275,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         bar = min(min_iou, SOURCE_MIN_IOU) if name == "source" else min_iou
         if name in INTENDED_TURN:  # WP-61: a drawn view is searched for its tilt and lens near the turn it is seen from
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log, INTENDED_TURN[name])
-            if pv is not None and pv.ok:
+            if pv is not None and (pv.ok or not _silhouette_refused(pv)):  # a D2 refusal stands: the view does not paint
                 return pv
-            fb = fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
-            return pv if (pv is not None and not fb.ok) else fb  # the turn-only fit stays when the search fails outright
+            return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)  # search failed
         return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
 
     # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were
@@ -2303,13 +2309,14 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         if yaw_hint is None:
             # WP-61: the picture is fitted at the pose the search finds (turn, tilt, lens). Today's turn-only fit stays when
             # the search fails outright, and when D2 refuses a picture that today's fit accepts (the refusal is recorded).
-            pv, _ = _pose_fit(mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, atlas_job, log)
-            if pv is None:
+            pv, _ = _pose_fit(mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, atlas_job, log,
+                              turns=wide if front_known else None)  # the facing decided: the picture's front half only
+            if pv is None or (not pv.ok and _silhouette_refused(pv)):
+                # the search failed outright (or its pose misses the silhouette, which the similarity fit scores differently):
+                # today's turn-only fit stands, and the record says so
                 front.info["pose_search"] = "failed: the turn-only fit is kept"
-            elif pv.ok or not front.ok:
+            else:  # the search's answer stands, including a D2 refusal: a refused picture does not paint
                 front = pv
-            else:
-                front.info["pose_search"] = {"refused": pv.info.get("refused")}
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
         # a drawn view fitted at a turn that contradicts the front is refused like one that does not fit (item 8)
         front_yaw, front_by = front_turn({**fitted, "picture": front}, head_yaw)
