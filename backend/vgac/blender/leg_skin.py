@@ -1,7 +1,7 @@
 """Blender headless: leg and hip skin pass on a rigged GLB (WP-18), run after rig_fix and the joins.
 
 Run: blender -b --python leg_skin.py -- <rig.glb> <out.glb> --report <json> [--passes 4] [--alpha 0.5]
-     [--band 0.03] [--half 0] [--no-keep-dominant] [--max-change 0.2]
+     [--band 0.03] [--half 0] [--no-keep-dominant] [--max-change 0.3]
 
 Three changes, all on the skin weights of the leg zone only (vertices with at least LEG_MASS_MIN of their weight on
 thigh, calf, foot or toe bones). Bone lengths, the rest mesh and the animation are not touched.
@@ -22,7 +22,7 @@ import numpy as np
 
 LEG_MASS_MIN = 0.05  # share of a vertex's weight on leg bones from which it is in the leg zone
 MAX_INFLUENCES = 4
-MAX_CHANGE = 0.2  # a smoothed row whose weights moved by more than this (sum of absolute changes) keeps its own
+MAX_CHANGE = 0.3  # a smoothed row whose weights moved by more than this (sum of absolute changes) keeps its own
 
 
 def leg_group_kind(name):
