@@ -189,6 +189,21 @@ def _common_opt(flag, default):
     return argv[argv.index(flag) + 1] if flag in argv else default
 
 
+def turned_back(joints):
+    """True when a finger chain's first bone runs back toward the wrist. joints: the knuckle, the two inner joints and the
+    tip, in frame coordinates (a along the hand from the wrist, u, n). A finger that runs outward has a[1] > a[0]."""
+    j = np.asarray(joints, float)
+    return bool(j[1, 0] - j[0, 0] <= 0.0)
+
+
+def _joints(arm, names, AW):
+    """World joint points of a finger chain whose three bones are `names`: knuckle, the two inner joints, tip."""
+    bones = arm.data.bones
+    heads = [np.array(AW @ bones[n].head_local) for n in names]
+    tails = [np.array(AW @ bones[n].tail_local) for n in names]
+    return [heads[0], tails[0], tails[1], tails[2]]
+
+
 def build_side(arm, mesh, side, report):
     import bpy
     from mathutils import Vector
@@ -196,18 +211,25 @@ def build_side(arm, mesh, side, report):
     AW = arm.matrix_world
     have = {f: [n for n in ch if n in arm.data.bones] for f, ch in _chain_names(side).items()}
     rep = report[side] = {"side": side, "had": {f: len(v) for f, v in have.items()}}
-    if all(len(v) == 3 for v in have.values()):
-        rep.update(path="complete", built=0)
-        return
+    complete = all(len(v) == 3 for v in have.values())
     st = hand_state(arm, mesh, side)
     pts = st["pts"]
     if len(pts) < 50:
-        rep.update(path="refused", reason="no hand found on the skin")
+        if complete:
+            rep.update(path="complete", built=0)
+        else:
+            rep.update(path="refused", reason="no hand found on the skin")
         return
     wrist = np.array(AW @ arm.data.bones[st["hand"]].head_local)
     thumb = np.array(AW @ arm.data.bones[have["Thumb"][0]].head_local) if have["Thumb"] else None
     chains = sum(1 for v in have.values() if len(v) == 3)
     fr = hand_frame(wrist, pts, thumb)
+    # a finger chain that runs back toward the wrist (its first bone) is the one fault a complete hand can hide: the
+    # four fingers are checked, not the thumb (it leaves the palm at an angle). Such a chain is repaired in place.
+    back = [f for f in FINGERS if len(have[f]) == 3 and fr is not None and turned_back(coords(fr, np.array(_joints(arm, have[f], AW))))]
+    if complete and not back:
+        rep.update(path="complete", built=0)
+        return
     if chains < 2 or fr is None:
         # the rigger itself saw one lump (a single chain or none): nothing tells the fingers' sides or says they exist
         rep.update(path="lump", chains=chains, reason="the skeleton found at most one chain in this hand: the model's hand is a lump, so no finger chains were built")
@@ -221,13 +243,22 @@ def build_side(arm, mesh, side, report):
         marked = [coords(fr, np.asarray(t, float))[0] for t in mk]
         plan = {"path": "marks", "centres": [float(x[1]) for x in marked], "lane": plan["lane"] or [0.02] * 4, "peaks": 4}
     rep.update(path=plan["path"], peaks=plan["peaks"], reach_m=round(reach, 4))
-    # a predicted finger chain stays on its nearest lane (renamed to that lane's finger); the other lanes are built
-    lane_of = {}
+    # a predicted finger chain stays on its nearest lane (renamed to that lane's finger); the other lanes are built.
+    # A chain that runs back keeps its lane only when no outward chain holds that lane; then it is repaired in place.
+    lane_of, turned_lanes, refused_back = {}, [], []
     for f in FINGERS:
-        if len(have[f]) == 3:
+        if len(have[f]) == 3 and f not in back:
             head = np.array(AW @ arm.data.bones[have[f][0]].head_local)
             k = int(np.argmin([abs(float(coords(fr, head)[0, 1]) - cc) for cc in plan["centres"]]))
             lane_of.setdefault(k, f)
+    for f in back:
+        head = np.array(AW @ arm.data.bones[have[f][0]].head_local)
+        k = int(np.argmin([abs(float(coords(fr, head)[0, 1]) - cc) for cc in plan["centres"]]))
+        if k in lane_of:
+            refused_back.append(f)
+            continue
+        lane_of[k] = f
+        turned_lanes.append(k)
     renames = {}
     for k, f in lane_of.items():
         if f != FINGERS[k]:
@@ -245,19 +276,32 @@ def build_side(arm, mesh, side, report):
         mesh.vertex_groups[i].name = tmp[o]
     for o, i in group_at.items():
         mesh.vertex_groups[i].name = renames[o]
-    rep["kept"] = {FINGERS[k]: f for k, f in lane_of.items()}
+    rep["kept"] = {FINGERS[k]: f for k, f in lane_of.items() if k not in turned_lanes}
     rep["renamed"] = {o.split(":")[1]: n.split(":")[1] for o, n in renames.items()}
+    rep["repaired"] = [FINGERS[k] for k in turned_lanes]
+    if refused_back:
+        rep["turned_back_refused"] = refused_back
     inv = AW.inverted()
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="EDIT")
     eb = arm.data.edit_bones
     hand_eb = eb[st["hand"]]
+
+    def place(k):
+        jp = chain_from_tip(c, marked[k], plan["lane"][k], reach) if marked else chain_points(c, plan["centres"][k], plan["lane"][k], reach)
+        return [fr["wrist"] + fr["f"] * p[0] + fr["u"] * p[1] + fr["n"] * p[2] for p in jp]
+
     built = []
+    for k in turned_lanes:  # the same three bones, moved onto their lane; names, parents and skin stay
+        world = place(k)
+        for i in range(3):
+            b = eb[f"{PREFIX}{side}Hand{FINGERS[k]}{i + 1}"]
+            b.head, b.tail = inv @ Vector(world[i]), inv @ Vector(world[i + 1])
+            built.append(b.name)
     for k, f in enumerate(FINGERS):
         if k in lane_of:
             continue
-        jp = chain_from_tip(c, marked[k], plan["lane"][k], reach) if marked else chain_points(c, plan["centres"][k], plan["lane"][k], reach)
-        world = [fr["wrist"] + fr["f"] * p[0] + fr["u"] * p[1] + fr["n"] * p[2] for p in jp]
+        world = place(k)
         parent = hand_eb
         for i in range(3):
             b = eb.new(f"{PREFIX}{side}Hand{f}{i + 1}")
@@ -269,6 +313,8 @@ def build_side(arm, mesh, side, report):
     for n in built:
         if n not in mesh.vertex_groups:
             mesh.vertex_groups.new(name=n)
+    if complete:
+        rep["path"] = "complete"  # the five fingers were there; only the turned chains were repaired
     # skin: only the skin the palm bone (or a built chain) still holds is shared, among the palm and the built chains by distance. The
     # chains SkinToken predicted keep their own weights, so a hand whose fingers were already separate keeps that separation.
     bones = arm.data.bones
