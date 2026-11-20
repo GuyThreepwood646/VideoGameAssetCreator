@@ -83,7 +83,7 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
       <div className="row-gap">
         <input
           value={path}
-          placeholder="Full path, for example D:\LoRAs"
+          placeholder="D:\LoRAs"
           aria-label="Full path of a LoRA folder"
           onChange={(e) => setPath(e.target.value)}
           onKeyDown={(e) => {
