@@ -53,7 +53,9 @@ class Box:
 
 @pytest.fixture
 def box(tmp_path: Path, settings_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from vgac import comfy_install, config, db, jobs, reference, user_addons
+    from unittest import mock
+
+    from vgac import comfy_install, config, db, lora_folders, reference, user_addons
 
     b = Box(tmp_path)
     monkeypatch.setenv("VGAC_MACHINE", str(b.machine))
@@ -61,26 +63,29 @@ def box(tmp_path: Path, settings_path: Path, monkeypatch: pytest.MonkeyPatch):
     config.reset_settings()
     db.reset_engine()
     reference.reload()
-    monkeypatch.setattr(comfy_install, "install_root", lambda: b.install)
 
     class Sup:
         def state(self, name: str) -> str:
             return b.state.get(name, "stopped")
-
-    class Queue:
-        supervisor = Sup()
-
-    monkeypatch.setattr(jobs, "active_queue", lambda: Queue())
 
     def fake_choices():
         if b.listed is None:
             return None
         return list(b.listed)
 
-    monkeypatch.setattr(user_addons, "_engine_choices", fake_choices)
-    yield b
-    db.reset_engine()
-    config.reset_settings()
+    # Patched and restored explicitly here, so no other test ever sees the fake queue.
+    patches = [mock.patch.object(comfy_install, "install_root", lambda: b.install),
+               mock.patch.object(lora_folders, "_supervisor", lambda: Sup()),
+               mock.patch.object(user_addons, "_engine_choices", fake_choices)]
+    for p in patches:
+        p.start()
+    try:
+        yield b
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        db.reset_engine()
+        config.reset_settings()
 
 
 @pytest.fixture

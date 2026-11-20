@@ -247,19 +247,24 @@ def _write_file(folders: list[str]) -> None:
 # --- the restart note ---------------------------------------------------------------------------------------------------
 
 
+def _supervisor() -> Any:
+    """The running engines' supervisor (jobs.active_queue), or None when the app has no queue running."""
+    from . import jobs
+
+    queue = jobs.active_queue()
+    return queue.supervisor if queue is not None else None
+
+
 def restart_notes() -> list[dict[str, Any]]:
     """Per configured ComfyUI card: {card, state, text}. state: restart (the app started it and it is running: stop and start it),
     starts_later (the app started it and it is not running: it reads the folders when it next starts), not_app (the app
     started it, but its model folders file is not the app's), external (no engine of the app's: the app does not start it)."""
-    from . import jobs
-
     mpath = config.machine_path()
     try:
         insts = (config.read_machine(mpath).get("backend") or {}).get("instances") or {} if mpath else {}
     except config.ConfigError:
         insts = {}
-    queue = jobs.active_queue()
-    sup = queue.supervisor if queue is not None else None
+    sup = _supervisor()
     path = str(app_file())
     out: list[dict[str, Any]] = []
     for name in sorted(insts):
