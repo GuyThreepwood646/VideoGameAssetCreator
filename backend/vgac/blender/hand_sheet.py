@@ -211,8 +211,11 @@ for clip in clip_names:
             c = hand_centre(side, f)
             px = world_to_camera_view(scene, CAM, c)
             half = REGION / 2.0
-            x0, x1 = max(0.0, px.x - half), min(1.0, px.x + half)
-            y0, y1 = max(0.0, px.y - half), min(1.0, px.y + half)
+            # Keep the cut inside the frame, so a hand that leaves the frame still gets a picture (at the edge).
+            cx = min(max(px.x, half), 1.0 - half)
+            cy = min(max(px.y, half), 1.0 - half)
+            x0, x1 = cx - half, cx + half
+            y0, y1 = cy - half, cy + half
             scene.render.border_min_x, scene.render.border_max_x = x0, x1
             scene.render.border_min_y, scene.render.border_max_y = y0, y1
             scene.render.resolution_x = FULL

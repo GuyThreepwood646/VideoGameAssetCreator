@@ -75,7 +75,8 @@ def request(version_dir: Path, asset: Any, version: Any, params: dict[str, Any])
     prior = current_state(version_dir)
     if prior and prior.get("state") in LIVE and prior.get("settings") == chosen:
         return public(prior)
-    job = pipeline.queue().submit(jobs.HOST, KIND, asset.id, None, {"version_id": version.id, "settings": chosen},
+    # No asset id: a preview is not a step of the asset, so a failed preview does not mark the asset's steps as failed.
+    job = pipeline.queue().submit(jobs.HOST, KIND, None, None, {"version_id": version.id, "settings": chosen},
                                   message="waiting to make the hand preview")
     write_state(version_dir, {"state": "queued", "settings": chosen, "job_id": job.id})
     return public(current_state(version_dir))
