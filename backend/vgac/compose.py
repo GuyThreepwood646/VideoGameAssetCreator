@@ -263,13 +263,17 @@ def start(db: Session, a: Asset, features: Checked, picture: Image.Image | None,
         from . import lora_defaults
 
         edit_addons = lora_defaults.defaults_for("edit_addons", a.category) or None
+        by_default = list(edit_addons or {})
+    else:
+        by_default = []
     pairs = ([({"role": "character", "note": None}, picture)] if picture is not None else []) + list(features)
     roles = [r for r, _ in pairs]
     words = (a.prompt or "").strip() or None
     v = pipeline.new_version(db, a, "concept", None, {"source": "compose", "compose_roles": roles, "words": words,
                                                        "seed": int(seed if seed is not None else random_seed()),
                                                        "model": "qwen_edit", "readiness_block": True,
-                                                       **({"edit_addons": edit_addons} if edit_addons else {})})
+                                                       **({"edit_addons": edit_addons} if edit_addons else {}),
+                                                       **({"edit_addons_by_default": by_default} if by_default else {})})
     folder = library.version_dir(a, v, get_settings())
     for i, (_, img) in enumerate(pairs, start=1):
         _register(db, v, f"compose_{i}", uploads.save_png(uploads.flatten(img) if img.mode == "RGBA" else img, folder, f"compose_{i}.png"))

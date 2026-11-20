@@ -4710,3 +4710,7 @@ button.preset-card:hover:not(:disabled) {
   gap: var(--s1) var(--s3);
   margin: var(--s1) 0 var(--s2);
 }
+.edit-lora-limit {
+  margin-top: var(--s1);
+  font-weight: 600;
+}

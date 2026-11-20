@@ -114,8 +114,8 @@ def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, An
     if op in ("run", "adjust", "refine") and isinstance(payload.get("params"), dict):
         # The LoRA settings the version was given (new_version, with the defaults) reach the job as well.
         own = v.params or {}
-        lora = {k: own[k] for k in lora_defaults.lora_knobs(v.stage, asset.category) + (["edit_addons"] if op == "refine" else [])
-                if k in own and k not in payload["params"]}
+        knobs = lora_defaults.lora_knobs(v.stage, asset.category) + (["edit_addons"] if op == "refine" else [])
+        lora = {k: own[k] for knob in knobs for k in (knob, lora_defaults.by_default_key(knob)) if k in own and k not in payload["params"]}
         if lora:
             payload = {**payload, "params": {**payload["params"], **lora}}
     body = {"version_id": v.id, "op": op, **payload}

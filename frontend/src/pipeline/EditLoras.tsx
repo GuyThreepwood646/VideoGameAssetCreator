@@ -3,22 +3,18 @@
 // on the ones that start on for this kind of asset (System, Your library); and the notes the version records for LoRAs it
 // could not use.
 import { Info } from '../components/Info'
-import { EDIT_LORA_LIMIT, type EditChoice, type EditLora, warningOf } from '../editLoras'
+import { EDIT_LORA_LIMIT, LIMIT_REACHED, onForThisRun, type EditChoice, type EditLora, warningOf } from '../editLoras'
 import { STRENGTH_LABELS } from '../help'
 
 const STEPS: Exclude<EditChoice, 'off'>[] = ['subtle', 'normal', 'strong']
 
-// "On for this run: Ink look (Normal), Soft light (Subtle)." or the sentence for none.
-export function onForThisRun(entries: EditLora[], choices: Record<string, EditChoice>): string {
-  const on = entries.filter((e) => (choices[e.id] ?? 'off') !== 'off').map((e) => `${e.label} (${STRENGTH_LABELS[choices[e.id] as Exclude<EditChoice, 'off'>]})`)
-  return on.length ? `On for this run: ${on.join(', ')}.` : 'None of your LoRAs are on for this run.'
-}
 
 export function EditLoras({
   purpose,
   entries,
   choices,
   startsOn = {},
+  byDefault = [],
   kindWords = 'this kind of asset',
   disabled,
   notes,
@@ -29,6 +25,8 @@ export function EditLoras({
   choices: Record<string, EditChoice>
   // The LoRAs that start on for this kind of asset in this step (lora_defaults), so each can say so.
   startsOn?: Record<string, EditChoice>
+  // The LoRAs that are on for this run because of their default (not chosen on this asset).
+  byDefault?: string[]
   // The kind of asset in plain words ("humanoids"), for that note.
   kindWords?: string
   disabled?: boolean
@@ -49,7 +47,8 @@ export function EditLoras({
       )}
       {entries.length > 0 && (
         <div className="small edit-lora-summary" role="status">
-          {onForThisRun(entries, choices)} <span className="muted">Two at a time is the limit for one step.{full ? ' Turn one off to choose another.' : ''}</span>
+          {onForThisRun(entries, choices, byDefault, kindWords)}
+          {full ? <div className="edit-lora-limit">{LIMIT_REACHED}</div> : <span className="muted"> {EDIT_LORA_LIMIT} at a time is the most for one step.</span>}
         </div>
       )}
       {entries.map((e) => {
@@ -68,7 +67,7 @@ export function EditLoras({
                 aria-label={`${e.label} for ${purpose}: ${on ? 'on' : 'off'}`}
                 className={'switch' + (on ? ' switch-on' : '')}
                 disabled={disabled || blocked}
-                title={blocked ? 'Two are on already: turn one off first' : on ? 'Switch this LoRA off for this run' : 'Switch this LoRA on for this run'}
+                title={blocked ? LIMIT_REACHED : on ? 'Switch this LoRA off for this run' : 'Switch this LoRA on for this run'}
                 onClick={() => onChange(e.id, on ? 'off' : strength)}
               >
                 <span className="switch-knob" />
@@ -92,6 +91,7 @@ export function EditLoras({
                 ))}
               </span>
             </div>
+            {blocked && <div className="muted small">{LIMIT_REACHED}</div>}
             {startsOn[e.id] && <div className="muted small">Starts on for {kindWords} (set in System, Your library).</div>}
             {warningOf(e) && <div className="addon-note small">{warningOf(e)}</div>}
           </div>

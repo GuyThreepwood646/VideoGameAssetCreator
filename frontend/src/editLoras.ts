@@ -1,6 +1,7 @@
 // Your LoRAs for the picture-edit uses (backend stages/picture_loras.py; the model id is reference.EDIT_MODEL).
 // The types live in api.ts; the helpers are here.
-import type { EditChoice, EditLora, MadeFor, Version } from './api'
+import type { EditChoice, EditLora, MadeFor, StartOn, Version } from './api'
+import { STRENGTH_LABELS } from './help'
 
 export type { EditChoice, EditListing, EditLora } from './api'
 
@@ -99,3 +100,31 @@ export function warningOf(x: unknown): string {
   const w = (x as { warning?: unknown } | null | undefined)?.warning
   return typeof w === 'string' ? w : ''
 }
+
+// "On for this run: Ink look (Normal, on by default for Humanoid assets), Soft light (Strong)." or the sentence for none.
+// `byDefault`: the LoRAs on because of their default, not chosen on this asset.
+export function onForThisRun(entries: EditLora[], choices: Record<string, EditChoice>, byDefault: string[] = [], kindWords = 'this kind of asset'): string {
+  const on = entries
+    .filter((e) => (choices[e.id] ?? 'off') !== 'off')
+    .map((e) => `${e.label} (${STRENGTH_LABELS[choices[e.id] as Exclude<EditChoice, 'off'>]}${byDefault.includes(e.id) ? `, on by default for ${kindWords}` : ''})`)
+  return on.length ? `On for this run: ${on.join(', ')}.` : 'None of your LoRAs are on for this run.'
+}
+
+// The sentence when a step already has as many of your LoRAs on as it takes.
+export const LIMIT_REACHED = `${EDIT_LORA_LIMIT} are on, the most one step takes. Turn one off to switch another on.`
+
+// The kinds of assets a LoRA starts on for, in the words the app uses for them.
+function kinds(ids: string[], labels: Map<string, string>): string {
+  return ids.map((c) => labels.get(c) ?? c).join(', ')
+}
+
+// The one plain line under a LoRA in Your library.
+export function startOnSentence(a: { stage?: string; start_on?: StartOn }, labels: Map<string, string>): string {
+  const so = a.start_on
+  if (!so || so.categories.length === 0) return 'Starts off everywhere: switch it on in a step when you want it.'
+  const where = kinds(so.categories, labels)
+  if (!isEditLora(a)) return `Starts on for the first picture of: ${where}.`
+  const steps = EDIT_KNOBS.filter((k) => so.uses.includes(k)).map((k) => EDIT_KNOB_LABELS[k])
+  return `Starts on for: ${where}; in ${steps.join(', ')}.`
+}
+

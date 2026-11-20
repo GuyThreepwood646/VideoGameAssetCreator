@@ -63,12 +63,25 @@ def fill(stage: str, category: str | None, params: dict[str, Any], knobs: list[s
     """`params` with the defaults written into every LoRA setting of the step it does not have. A new dict."""
     out = dict(params or {})
     for knob in knobs if knobs is not None else lora_knobs(stage, category):
-        if out.get(knob) is not None:
-            continue
+        mark = by_default_key(knob)
         d = defaults_for(knob, category)
-        if d:
-            out[knob] = d
+        if out.get(knob) is None:
+            if d:
+                out[knob] = d
+                out[mark] = list(d)
+            continue
+        if mark in out:
+            # A LoRA stays "on by default" only while it is still on at the strength its default gives it; one the person
+            # changed or switched off is their own choice from then on (the list only ever shrinks).
+            choice = out[knob] if isinstance(out[knob], dict) else {}
+            kept = [i for i in out.get(mark) or [] if i in d and choice.get(i) == d[i]]
+            out[mark] = kept  # an empty list (not a missing key) so a stage that merges its parent's settings sees it too
     return out
+
+
+def by_default_key(knob: str) -> str:
+    """The version setting that lists the LoRAs of `knob` that are on because of their default, not chosen on the asset."""
+    return f"{knob}_by_default"
 
 
 def clean_start_on(a: dict[str, Any], categories: Any, uses: Any) -> dict[str, list[str]]:
@@ -98,14 +111,14 @@ def clean_start_on(a: dict[str, Any], categories: Any, uses: Any) -> dict[str, l
                 others = [o for o in reference.addons() if o.get("mine") and o["id"] != a["id"] and starts_on(o, u, c)]
                 if len(others) >= reference.MAX_EDIT_LORAS:
                     names = " and ".join(o.get("label") or "another LoRA" for o in others)
-                    raise ValueError(f"{names} already start on for {category_label(c)} in {USE_LABELS[u]}. One step takes at most "
+                    raise ValueError(f"{names} already start on for {category_label(c)} assets in {USE_LABELS[u]}. One step takes at most "
                                      f"{reference.MAX_EDIT_LORAS} of your LoRAs; turn one of them off there first.")
     return {"categories": cats, "uses": us}
 
 
 def category_label(cid: str) -> str:
     try:
-        return str(reference.category(cid).get("label") or cid).lower()
+        return str(reference.category(cid).get("label") or cid)  # the name the app shows everywhere
     except KeyError:
         return cid
 

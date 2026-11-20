@@ -11,7 +11,9 @@ import { isEditLora, warningOf } from './editLoras'
 import { AddMyAddon, ChangeMyAddon } from './pipeline/AddMyAddon'
 import { AddMyHairstyle } from './pipeline/AddMyHairstyle'
 import { MyMoveForm, MyMoveUpload } from './pipeline/MyMoves'
-import { StartOnForm, startOnSentence, useCategoryLabels } from './pipeline/StartOn'
+import { StartOnForm } from './pipeline/StartOn'
+import { startOnSentence } from './editLoras'
+import { useCategoryLabels } from './refdata'
 
 type Lib = { addons: AddonEntry[]; hair: MyHairStyle[]; moves: MyMoveFile[]; maxMb: number }
 type Adding = 'addon' | 'hair' | 'move' | null

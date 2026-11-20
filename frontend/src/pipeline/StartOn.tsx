@@ -6,26 +6,6 @@ import { ErrorText } from '../components/ui'
 import { EDIT_KNOBS, EDIT_KNOB_LABELS, isEditLora } from '../editLoras'
 import { useRefData } from '../refdata'
 
-// The kinds of assets a LoRA starts on for, in the words the app uses for them.
-function kinds(ids: string[], labels: Map<string, string>): string {
-  return ids.map((c) => labels.get(c) ?? c).join(', ')
-}
-
-// The one plain line under a LoRA in Your library.
-export function startOnSentence(a: Pick<AddonEntry, 'stage' | 'start_on'>, labels: Map<string, string>): string {
-  const so = a.start_on
-  if (!so || so.categories.length === 0) return 'Starts off everywhere: switch it on in a step when you want it.'
-  const where = kinds(so.categories, labels)
-  if (!isEditLora(a)) return `Starts on for the first picture of: ${where}.`
-  const steps = EDIT_KNOBS.filter((k) => so.uses.includes(k)).map((k) => EDIT_KNOB_LABELS[k])
-  return `Starts on for: ${where}; in ${steps.join(', ')}.`
-}
-
-export function useCategoryLabels(): Map<string, string> {
-  const { ref } = useRefData()
-  return new Map((ref?.categories ?? []).map((c) => [c.id, c.label]))
-}
-
 export function StartOnForm({ entry, onSaved, onCancel }: { entry: AddonEntry; onSaved: () => void; onCancel: () => void }) {
   const { ref } = useRefData()
   const edit = isEditLora(entry)

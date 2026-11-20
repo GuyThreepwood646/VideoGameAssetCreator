@@ -959,7 +959,7 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
         # Nothing chosen for this refine: your LoRAs that start on for refines of this kind of asset (lora_defaults.py).
         rparams = lora_defaults.fill("concept", a.category, rparams, knobs=["edit_addons"])
     inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items()
-                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied")}
+                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied", "edit_addons_by_default")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
     if body.fix_for and parent.stage != "concept":

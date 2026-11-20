@@ -93,16 +93,27 @@ def test_fill_gives_each_step_only_its_own_defaults_for_the_assets_kind(mine_set
     user_addons.set_start_on(face, ["humanoid"], ["face_addons", "edit_addons"])
     user_addons.set_start_on(paint, ["humanoid"], [])
 
-    assert lora_defaults.fill("turnaround", "humanoid", {}) == {"view_addons": {view: "normal"}}
-    assert lora_defaults.fill("turnaround", "prop_rigid", {}) == {"view_addons": {view: "normal"}}
+    # Each filled setting also lists the LoRAs that are on because of their default (the step form says so).
+    assert lora_defaults.fill("turnaround", "humanoid", {}) == {"view_addons": {view: "normal"}, "view_addons_by_default": [view]}
+    assert lora_defaults.fill("turnaround", "prop_rigid", {})["view_addons"] == {view: "normal"}
     assert lora_defaults.fill("turnaround", "quadruped", {}) == {}  # not a kind it starts on for
-    assert lora_defaults.fill("prep", "humanoid", {}) == {"face_addons": {face: "normal"}}
-    assert lora_defaults.fill("concept", "humanoid", {}) == {"addons": {paint: "normal"}}
-    assert lora_defaults.fill("concept", "humanoid", {}, knobs=["edit_addons"]) == {"edit_addons": {face: "normal"}}
+    assert lora_defaults.fill("prep", "humanoid", {}) == {"face_addons": {face: "normal"}, "face_addons_by_default": [face]}
+    assert lora_defaults.fill("concept", "humanoid", {})["addons"] == {paint: "normal"}
+    assert lora_defaults.fill("concept", "humanoid", {}, knobs=["edit_addons"])["edit_addons"] == {face: "normal"}
     assert lora_defaults.fill("mesh", "humanoid", {"seed": 1}) == {"seed": 1}  # a step without LoRAs is left alone
     # The person's own choice, even "none of your LoRAs", is never changed.
     assert lora_defaults.fill("turnaround", "humanoid", {"view_addons": {}}) == {"view_addons": {}}
     assert lora_defaults.fill("turnaround", "humanoid", {"view_addons": {view: "strong"}}) == {"view_addons": {view: "strong"}}
+    # A LoRA the person changed (another strength) stops being "on by default"; one left as it was stays so.
+    changed = lora_defaults.fill("turnaround", "humanoid", {"view_addons": {view: "strong"}, "view_addons_by_default": [view]})
+    assert changed["view_addons_by_default"] == []
+    kept = lora_defaults.fill("turnaround", "humanoid", {"view_addons": {view: "normal"}, "view_addons_by_default": [view]})
+    assert kept["view_addons_by_default"] == [view]
+    # A list sent by the form is checked the same way: an id that is not a default (or not on) is dropped.
+    sent = lora_defaults.fill("turnaround", "humanoid", {"view_addons": {view: "normal", face: "strong"}, "view_addons_by_default": [view, face, "mine_x"]})
+    assert sent["view_addons_by_default"] == [view]
+    # Filling never writes what a run applied: that is the run's own record.
+    assert not any(k.endswith("_applied") for k in lora_defaults.fill("prep", "humanoid", {}))
 
 
 def test_new_version_records_the_defaults_and_the_job_gets_them(mine_settings, monkeypatch):  # noqa: F811
@@ -134,13 +145,17 @@ def test_new_version_records_the_defaults_and_the_job_gets_them(mine_settings, m
         s.commit()
         v = pipeline.new_version(s, a, "turnaround", None, {})
         assert v.params["view_addons"] == {view: "normal"}  # recorded on the version, so later versions see it
+        assert v.params["view_addons_by_default"] == [view]
         pipeline.submit(s, a, v, "run", {"params": {}})
-        assert sent[-1]["params"]["view_addons"] == {view: "normal"}
+        assert sent[-1]["params"]["view_addons"] == {view: "normal"} and sent[-1]["params"]["view_addons_by_default"] == [view]
         # A child that inherits the parent's choice keeps it; one with the LoRA switched off stays off.
-        off = pipeline.new_version(s, a, "turnaround", v, {"view_addons": {}})
-        assert off.params["view_addons"] == {}
+        off = pipeline.new_version(s, a, "turnaround", v, {**v.params, "view_addons": {}})
+        assert off.params["view_addons"] == {} and off.params["view_addons_by_default"] == []
+        # An adjust that keeps the LoRA as it was keeps it "on by default"; the parent's record is not changed.
+        same = pipeline.new_version(s, a, "turnaround", v, {**v.params, "seed": 3})
+        assert same.params["view_addons_by_default"] == [view] and v.params["view_addons_by_default"] == [view]
         pipeline.submit(s, a, off, "adjust", {"params": {"view_addons": {}}})
-        assert sent[-1]["params"]["view_addons"] == {}
+        assert sent[-1]["params"]["view_addons"] == {} and sent[-1]["params"]["view_addons_by_default"] == []
         # A paint job does not take step settings: nothing is added to it.
         pipeline.submit(s, a, v, "paint", {})
         assert "params" not in sent[-1]
@@ -205,14 +220,25 @@ def test_a_refine_and_a_step_run_through_the_api_use_the_defaults_and_keep_a_cho
         wait_job(c, out["job"]["id"])
         vid = out["version"]["id"]
         ref = c.post(f"/api/versions/{vid}/refine", json={"instruction": "red cloak"}).json()
-        assert ref["version"]["params"]["edit_addons"] == {ink: "normal"}
+        assert ref["version"]["params"]["edit_addons"] == {ink: "normal"} and ref["version"]["params"]["edit_addons_by_default"] == [ink]
         wait_job(c, ref["job"]["id"])
         assert fake_execute[-1]["payload"]["params"]["edit_addons"] == {ink: "normal"}
         mine = c.post(f"/api/versions/{vid}/refine", json={"instruction": "blue", "edit_addons": {}}).json()
-        assert mine["version"]["params"]["edit_addons"] == {}
+        assert mine["version"]["params"]["edit_addons"] == {} and not mine["version"]["params"].get("edit_addons_by_default")
         wait_job(c, mine["job"]["id"])
         assert fake_execute[-1]["payload"]["params"]["edit_addons"] == {}
         run = c.post(f"/api/assets/{a['id']}/stages/turnaround/run", json={}).json()
         assert run["version"]["params"]["view_addons"] == {ink: "normal"}
         wait_job(c, run["job"]["id"])
         assert fake_execute[-1]["payload"]["params"]["view_addons"] == {ink: "normal"}
+
+
+def test_the_limit_refusal_names_the_loras_and_uses_the_apps_category_name(mine_settings):  # noqa: F811
+    from vgac import user_addons
+
+    a, b, c = (own_lora(mine_settings, f"n{i}.safetensors", f"Name {i}")["id"] for i in range(3))
+    user_addons.set_start_on(a, ["humanoid"], ["view_addons"])
+    user_addons.set_start_on(b, ["humanoid"], ["view_addons"])
+    with pytest.raises(user_addons.AddonFileError) as e:
+        user_addons.set_start_on(c, ["humanoid"], ["view_addons"])
+    assert str(e.value).startswith("Name 0 and Name 1 already start on for Humanoid assets in the side views.")

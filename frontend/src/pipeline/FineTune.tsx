@@ -159,7 +159,16 @@ export function FineTune({
   const ownEdit = editLoras(myAddons)
   const loraKnobs = ownEdit.length ? shown.filter((p) => isEditKnob(p.type)) : []
   const advanced = shown.filter((p) => !simple.includes(p) && !loraKnobs.includes(p))
-  const kindWords = `${(refData?.categories.find((c) => c.id === asset.category)?.label ?? 'this kind of').toLowerCase()} assets`
+  // The kind of asset in the words the app shows everywhere (the category's label).
+  const kindWords = `${refData?.categories.find((c) => c.id === asset.category)?.label ?? 'this kind of'} assets`
+  // The LoRAs of a setting that are on because of their default: all the defaults when the version has no such setting
+  // yet, else the ones the version records (lora_defaults.fill), while they are still as the version has them.
+  const byDefault = (knob: string): string[] => {
+    const recorded = target.params?.[knob] == null ? Object.keys(loraStart(knob)) : ((target.params?.[`${knob}_by_default`] as string[] | undefined) ?? [])
+    const now = addonChoices(values[knob])
+    const was = addonChoices(initial[knob])
+    return recorded.filter((id) => now[id] !== undefined && now[id] === was[id])
+  }
 
   // Tool focus: fill in the fix's params, open Advanced if the setting lives there, scroll to it and focus it.
   const formRef = useRef<HTMLFormElement>(null)
@@ -207,6 +216,9 @@ export function FineTune({
       const ids = new Set(editLoras(myAddons).map((a) => a.id))
       for (const p of editParams) if (p.name in params) params[p.name] = Object.fromEntries(Object.entries(addonChoices(params[p.name])).filter(([k]) => ids.has(k)))
     }
+    // With a changed LoRA setting, the ones still on because of their default go along, so the run records them as that
+    // (the backend keeps only those still on at their default's strength, lora_defaults.fill).
+    for (const p of visible) if ((p.type === 'addons' || isEditKnob(p.type)) && p.name in params) params[`${p.name}_by_default`] = byDefault(p.name)
     return params
   }
   const submit = (e: FormEvent) => {
@@ -247,6 +259,7 @@ export function FineTune({
           entries={ownEdit}
           choices={addonChoices(values[p.name]) as Record<string, EditChoice>}
           startsOn={loraStart(p.name)}
+          byDefault={byDefault(p.name)}
           kindWords={kindWords}
           disabled={disabled}
           notes={editLoraNotes(target).filter((n) => n.startsWith(label))}
