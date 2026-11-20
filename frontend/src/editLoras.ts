@@ -1,6 +1,6 @@
 // Your LoRAs for the picture-edit uses (backend stages/picture_loras.py; the model id is reference.EDIT_MODEL).
 // The types live in api.ts; the helpers are here.
-import type { EditLora, MadeFor, Version } from './api'
+import type { EditChoice, EditLora, MadeFor, Version } from './api'
 
 export type { EditChoice, EditListing, EditLora } from './api'
 
@@ -23,6 +23,20 @@ export const EDIT_LORA_LIMIT = 2
 // The schema's knob type for these (api.ts AdjustParam does not list it yet, so the check is by text).
 export function isEditKnob(type: string): boolean {
   return type === 'edit_addons'
+}
+
+// Which of your LoRAs start on for this kind of asset in one step setting (backend lora_defaults.defaults_for): a painter
+// LoRA in the step 1 list ('addons'), a picture-edit LoRA in the uses it names. A picture-edit use takes at most two.
+export function loraDefaults(entries: { id: string; stage?: string; default_strength?: string; start_on?: { categories: string[]; uses: string[] } }[] | null | undefined, knob: string, category: string): Record<string, EditChoice> {
+  const out: Record<string, EditChoice> = {}
+  for (const e of entries ?? []) {
+    const so = e.start_on
+    if (!so || !so.categories.includes(category)) continue
+    const uses = (e.stage ?? 'concept') === 'concept' ? ['addons'] : so.uses
+    if (!uses.includes(knob)) continue
+    out[e.id] = (e.default_strength as EditChoice | undefined) ?? 'normal'
+  }
+  return (EDIT_KNOBS as readonly string[]).includes(knob) ? Object.fromEntries(Object.entries(out).slice(0, EDIT_LORA_LIMIT)) : out
 }
 
 // What picture_loras.edit_loras records per use, in the version's metrics.

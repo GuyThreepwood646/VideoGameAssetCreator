@@ -258,6 +258,11 @@ def start(db: Session, a: Asset, features: Checked, picture: Image.Image | None,
     {job, version}. The asset's description gives the words; `edit_addons` is the person's LoRAs for combining."""
     from .stages.base import random_seed
 
+    if edit_addons is None:
+        # Nothing chosen: your LoRAs that start on for combined photos of this kind of asset (lora_defaults.py).
+        from . import lora_defaults
+
+        edit_addons = lora_defaults.defaults_for("edit_addons", a.category) or None
     pairs = ([({"role": "character", "note": None}, picture)] if picture is not None else []) + list(features)
     roles = [r for r, _ in pairs]
     words = (a.prompt or "").strip() or None

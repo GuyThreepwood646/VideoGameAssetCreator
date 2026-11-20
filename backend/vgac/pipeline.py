@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import select as sql_select
 from sqlalchemy.orm import Session
 
-from . import firstrun, reference
+from . import firstrun, lora_defaults, reference
 from .db import Asset, Job, Version, job_to_dict, version_to_dict
 from .jobs import JobQueue, active_queue, job_kind
 from .reference import STAGE_ORDER
@@ -85,6 +85,8 @@ def new_version(db: Session, asset: Asset, stage: str, parent: Version | None, p
     the next stage has a parent."""
     merged = {k: v for k, v in reference.stage_defaults(stage).items() if v is not None}
     merged.update(params or {})
+    # Your LoRAs that start on for this kind of asset (lora_defaults.py), in every LoRA setting the version does not have.
+    merged = lora_defaults.fill(stage, asset.category, merged)
     v = Version(asset_id=asset.id, stage=stage, parent_version_id=parent.id if parent else None, status="queued")
     v.params = merged
     db.add(v)
@@ -109,6 +111,13 @@ def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, An
         v.status, v.error = "error", text
         db.commit()
         raise Conflict(text)
+    if op in ("run", "adjust", "refine") and isinstance(payload.get("params"), dict):
+        # The LoRA settings the version was given (new_version, with the defaults) reach the job as well.
+        own = v.params or {}
+        lora = {k: own[k] for k in lora_defaults.lora_knobs(v.stage, asset.category) + (["edit_addons"] if op == "refine" else [])
+                if k in own and k not in payload["params"]}
+        if lora:
+            payload = {**payload, "params": {**payload["params"], **lora}}
     body = {"version_id": v.id, "op": op, **payload}
     job = q.submit(instance, kind, asset.id, v.id, body, message=message)
     db.refresh(v)

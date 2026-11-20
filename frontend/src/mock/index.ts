@@ -1555,6 +1555,23 @@ on('PUT', '/api/my-addons/:id', (m, body) => {
   return entry
 })
 
+// Which kinds of assets and steps one of your LoRAs starts on in (backend user_addons.set_start_on, lora_defaults.py).
+on('PUT', '/api/my-addons/:id/start-on', (m, body) => {
+  const entry = myAddons.find((a) => a.id === m.groups!.id)
+  if (!entry) throw new HttpError(404, 'That LoRA is not on your list.')
+  const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
+  const edit = entry.stage === 'edit'
+  const uses = edit && Array.isArray(body.uses) ? body.uses.map(String).filter((u: string) => (EDIT_KNOB_IDS as readonly string[]).includes(u)) : []
+  if (edit && categories.length && !uses.length) throw new HttpError(400, 'Choose at least one step it starts on in.')
+  for (const u of uses)
+    for (const c of categories) {
+      const others = myAddons.filter((o) => o.id !== entry.id && o.start_on?.categories.includes(c) && o.start_on.uses.includes(u))
+      if (others.length >= EDIT_LORA_MAX) throw new HttpError(400, `One step takes at most ${EDIT_LORA_MAX} of your LoRAs; turn one of them off there first.`)
+    }
+  entry.start_on = { categories, uses }
+  return entry
+})
+
 // Add a move (mock/moves.ts): the library, a character's moves, and your own animation files.
 function keptRig(a: Asset): Version | null {
   const id = a.selected.rig
