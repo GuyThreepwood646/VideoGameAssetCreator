@@ -155,7 +155,7 @@ def add(value: Any) -> dict[str, Any]:
     _save(current + [text])
     found = state["lora_files"]
     count = "no LoRA files yet" if found == 0 else (f"{found} LoRA file" + ("" if found == 1 else "s"))
-    return {**listing(), "message": f"Added. This folder has {count}. Restart ComfyUI to see them (see the note below the list).",
+    return {**listing(), "message": f"Added. This folder has {count}. " + _after_change(restart_cards(), removing=False),
             "added": text}
 
 
@@ -166,8 +166,8 @@ def remove(value: Any) -> dict[str, Any]:
     if len(left) == len(current):
         raise FolderError("That folder is not in your list.", 404)
     _save(left)
-    return {**listing(), "message": "Removed from the list. The folder and its files were not touched. Restart ComfyUI to stop "
-                                    "it reading them (see the note below the list).", "removed": text}
+    return {**listing(), "message": "Removed from the list. The folder and its files were not touched. "
+                                    + _after_change(restart_cards(), removing=True), "removed": text}
 
 
 def _save(folders: list[str]) -> None:
@@ -219,6 +219,8 @@ def merged_text(existing: str, folders: list[str]) -> str:
         data = yaml.safe_load(existing) if existing.strip() else {}
     except yaml.YAMLError:
         data = None
+    if data is None:  # a file with only its comments (every folder removed)
+        data = {}
     if not isinstance(data, dict):
         raise FolderError("The model folders file is not readable YAML, so the LoRA folders could not be written. "
                           "Ask for ComfyUI to be set up again from the setup card.", 500)
@@ -281,17 +283,38 @@ def restart_notes() -> list[dict[str, Any]]:
             continue
         if not eng.get("extra_model_paths") or os.path.normcase(str(eng["extra_model_paths"])) != os.path.normcase(path):
             out.append({"card": name, "state": "not_app", "text":
-                        f"{card}: this ComfyUI does not read the app's model folders file. Start it from the app, "
+                        f"{card}: this ComfyUI does not read the app's folders file. Start it from the app, "
                         "or add the LoRA folders in that ComfyUI's own settings."})
             continue
         running = sup is not None and sup.state(name) == "running"
         if running:
             out.append({"card": name, "state": "restart", "text":
-                        f"{card}: restart its ComfyUI to see the change. On the Graphics cards panel press Stop, then Start on this card."})
+                        f"{card}: stop and start its ComfyUI on the Graphics cards panel to see the change."})
         else:
             out.append({"card": name, "state": "starts_later", "text":
                         f"{card}: its ComfyUI is not running. It reads the folders when the app starts it."})
     return out
+
+
+def restart_cards() -> list[str]:
+    return [n["card"] for n in restart_notes() if n["state"] == "restart"]
+
+
+def _card_names(cards: list[str]) -> str:
+    names = [f"card {c}" for c in cards]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _after_change(cards: list[str], removing: bool) -> str:
+    """The plain sentence after an add or remove: which cards to stop and start (they are listed under the list), or that
+    ComfyUI reads the folders when it starts."""
+    if not cards:
+        return "ComfyUI reads these folders when it starts."
+    if removing:
+        return "Stop and start the cards listed below so ComfyUI stops reading this folder."
+    if len(cards) == 1:
+        return f"Stop and start {_card_names(cards)}'s ComfyUI on the Graphics cards panel to see it."
+    return f"Stop and start the ComfyUI of {_card_names(cards)} on the Graphics cards panel to see it."
 
 
 def listing() -> dict[str, Any]:

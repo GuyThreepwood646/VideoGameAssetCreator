@@ -33,6 +33,7 @@ test('the LoRA folder list adds and removes folders and asks the folder picker o
   const src = read('../src/components/LoraFolders.tsx')
   assert.ok(src.includes('api.addLoraFolder(p)') && src.includes('api.removeLoraFolder(f.path)'))
   assert.ok(src.includes('host.pickFolder(') && src.includes('if (!host) return'))
+  assert.ok(src.includes('ComfyUI reads these folders when it starts.'))
   assert.ok(!/symlink|junction/i.test(src))
 })
 

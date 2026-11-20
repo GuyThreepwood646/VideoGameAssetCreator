@@ -238,7 +238,7 @@ def test_the_restart_note_names_the_card_to_stop_and_start(client, box):
     box.state = {"a": "running"}  # b is not running
     body = client.post("/api/lora-folders", json={"path": str(box.a)}).json()
     notes = {n["card"]: n for n in body["restart"]}
-    assert notes["a"]["state"] == "restart" and "Stop, then Start on this card" in notes["a"]["text"]
+    assert notes["a"]["state"] == "restart" and "stop and start its ComfyUI" in notes["a"]["text"]
     assert notes["b"]["state"] == "starts_later" and "reads the folders when the app starts it" in notes["b"]["text"]
     assert notes["c"]["state"] == "external" and "add the LoRA folders in that ComfyUI's own settings" in notes["c"]["text"]
     assert body["restart_cards"] == ["a"]
@@ -248,7 +248,7 @@ def test_an_engine_with_another_file_is_told_to_add_the_folder_itself(client, bo
     _set_cards(box, {"a": "other"})
     body = client.post("/api/lora-folders", json={"path": str(box.a)}).json()
     (note,) = body["restart"]
-    assert note["state"] == "not_app" and "does not read the app's model folders file" in note["text"]
+    assert note["state"] == "not_app" and "does not read the app's folders file" in note["text"]
     assert body["restart_cards"] == []
 
 
@@ -257,7 +257,7 @@ def test_removing_a_folder_gives_the_same_restart_note(client, box):
     box.state = {"a": "running"}
     client.post("/api/lora-folders", json={"path": str(box.a)})
     body = client.post("/api/lora-folders/remove", json={"path": str(box.a)}).json()
-    assert body["restart_cards"] == ["a"] and "Restart ComfyUI" in body["message"]
+    assert body["restart_cards"] == ["a"] and "Stop and start the cards listed below" in body["message"]
 
 
 # --- a LoRA in a linked folder: listed, and used where it is --------------------------------------------------------------
@@ -337,3 +337,30 @@ def test_the_list_says_which_folders_are_missing_or_unreadable(client, box):
     box.b.rmdir()
     folders = client.get("/api/my-addons").json()["folders"]
     assert [f["exists"] for f in folders] == [True, False]
+
+
+def test_the_message_names_the_card_to_stop_and_start_or_says_it_reads_on_start(client, box):
+    _set_cards(box, {"a": "app"})
+    box.state = {"a": "running"}
+    body = client.post("/api/lora-folders", json={"path": str(box.a)}).json()
+    assert body["message"].endswith("Stop and start card a's ComfyUI on the Graphics cards panel to see it.")
+    box.state = {}
+    body = client.post("/api/lora-folders/remove", json={"path": str(box.a)}).json()
+    assert body["message"].endswith("ComfyUI reads these folders when it starts.")
+    box.state = {"a": "running"}
+    client.post("/api/lora-folders", json={"path": str(box.a)})
+    box.state = {"a": "running", "b": "running"}
+    _set_cards(box, {"a": "app", "b": "app"})
+    client.post("/api/lora-folders/remove", json={"path": str(box.a)})
+    r = client.post("/api/lora-folders", json={"path": str(box.a)})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "ComfyUI of card a and card b on the Graphics cards panel" in body["message"]
+
+
+def test_a_file_with_only_its_comments_takes_a_folder_again(box):
+    from vgac import lora_folders
+
+    text = lora_folders.merged_text("", [])  # the header only, as left after the last folder was removed
+    assert yaml.safe_load(text) is None
+    assert yaml.safe_load(lora_folders.merged_text(text, [str(box.a)]))[lora_folders.SECTION]["loras"] == str(box.a)

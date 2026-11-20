@@ -7,6 +7,23 @@ import { api, type LoraFolders as LoraFoldersState, type LoraRestartNote } from 
 import { hostPick } from '../desktop'
 import { ErrorText } from './ui'
 
+// The per-card notes after a change, or on opening the panel. When a card is running, every card's note is shown (stop and start
+// the one named). When none is running, ComfyUI reads the folders when it starts; only the cards the app does not start are named.
+function cardNotes(notes: LoraRestartNote[]) {
+  const running = notes.some((n) => n.state === 'restart')
+  const shown = running ? notes : notes.filter((n) => n.state === 'not_app' || n.state === 'external')
+  return (
+    <>
+      {!running && <div className="small">ComfyUI reads these folders when it starts.</div>}
+      {shown.map((n) => (
+        <div key={n.card + n.state} className="small">
+          {n.text}
+        </div>
+      ))}
+    </>
+  )
+}
+
 export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
   const [data, setData] = useState<LoraFoldersState | null>(null)
   const [path, setPath] = useState('')
@@ -18,7 +35,10 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
   useEffect(() => {
     api
       .loraFolders()
-      .then(setData)
+      .then((d) => {
+        setData(d)
+        setNotes(d.restart)
+      })
       .catch((e: unknown) => setError(e))
   }, [])
 
@@ -107,11 +127,7 @@ export default function LoraFolders({ onChanged }: { onChanged?: () => void }) {
           {message}
         </div>
       )}
-      {notes.map((n) => (
-        <div key={n.card + n.state} className={n.state === 'restart' ? 'warn small' : 'muted small'}>
-          {n.text}
-        </div>
-      ))}
+      {notes.length > 0 && cardNotes(notes)}
       <ErrorText error={error} />
     </div>
   )

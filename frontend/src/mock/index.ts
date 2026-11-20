@@ -1468,9 +1468,9 @@ on('POST', '/api/lora-folders', (_m, body): LoraFolders => {
   return {
     folders: mockFolderStates(),
     max_folders: 20,
-    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): restart its ComfyUI to see the change. On the Graphics cards panel press Stop, then Start on this card.' }],
+    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
     restart_cards: ['a'],
-    message: 'Added. Restart ComfyUI to see them (see the note below the list).',
+    message: "Added. This folder has 2 LoRA files. Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
     added: path,
   }
 })
@@ -1482,9 +1482,9 @@ on('POST', '/api/lora-folders/remove', (_m, body): LoraFolders => {
   return {
     folders: mockFolderStates(),
     max_folders: 20,
-    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): restart its ComfyUI to see the change. On the Graphics cards panel press Stop, then Start on this card.' }],
+    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
     restart_cards: ['a'],
-    message: 'Removed from the list. The folder and its files were not touched. Restart ComfyUI to stop it reading them (see the note below the list).',
+    message: 'Removed from the list. The folder and its files were not touched. Stop and start the cards listed below so ComfyUI stops reading this folder.',
     removed: path,
   }
 })
