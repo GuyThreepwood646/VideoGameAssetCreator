@@ -116,6 +116,15 @@ def test_a_cut_that_makes_both_arms_worse_is_dropped_and_the_rig_carries_on(tmp_
     assert "The right arm was left joined" in m["message"] and not (tmp_path / rig.SEPARATION_WORK).exists()
 
 
+def test_a_flap_under_the_arm_is_named_in_plain_words(tmp_path, files, monkeypatch, passes):
+    monkeypatch.setattr(separate, "separate", _engine([]))
+    passes["worse"] = {"L": ["flap"]}
+    sc = _sc(tmp_path, {"Left": "joined"})
+    assert asyncio.run(rig._separate_joined(sc, *files)) is None
+    assert sc.version.metrics["separation"]["message"] == ("The left arm was left joined to the body: separating it made "
+                                                           "the skin under the arm pull out into a flap when the arm is raised.")
+
+
 def test_a_cut_that_makes_one_arm_worse_is_made_again_on_the_other_only(tmp_path, files, monkeypatch, passes):
     src, rig_glb = files
     calls = []

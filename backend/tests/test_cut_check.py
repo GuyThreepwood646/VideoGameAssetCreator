@@ -27,6 +27,18 @@ def test_regions_keep_to_the_own_side_and_their_bands():
     assert r["shoulder"].tolist() == [True, False, False, False, False]
     assert r["side"].tolist() == [False, True, False, True, False]  # the last is 1.5 widths down
     assert r["pit"].tolist() == [True, False, False, False, False]  # the second is 0.76 widths from the armpit
+    assert r["under"].tolist() == [False, True, False, True, True]  # 1.5 widths down is still under the arm
+
+
+def test_torn_area_is_the_posed_area_of_faces_pulled_past_the_ratio_in_shoulder_widths():
+    rest = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [5, 0, 0], [6, 0, 0], [5, 1, 0.0]])
+    posed = rest.copy()
+    posed[2] = [0, 2, 0]  # the first triangle pulled to twice its height: area 1
+    T = [[0, 1, 2], [3, 4, 5]]
+    assert cc.torn_area(rest, posed, T, [True] * 6, W=1.0) == pytest.approx(1.0)
+    assert cc.torn_area(rest, posed, T, [True] * 6, W=2.0) == pytest.approx(0.25)
+    assert cc.torn_area(rest, posed, T, [False, True, True, True, True, True], W=1.0) == 0.0
+    assert cc.torn_area(rest, rest, T, [True] * 6, W=1.0) == 0.0
 
 
 def test_worse_sides_names_what_the_cut_made_worse_within_the_tolerances():
@@ -35,6 +47,9 @@ def test_worse_sides_names_what_the_cut_made_worse_within_the_tolerances():
     assert cc.worse_sides(before, after) == {"Left": ["shoulder", "crossings"]}
     assert cc.worse_sides(before, {"Left": after["Left"]}) == {"Left": ["shoulder", "crossings"]}
     assert cc.worse_sides(before, before) == {}
+    flap = {"Left": {"shoulder": 0.05, "side": 0.04, "crossings": 2, "flap": 0.44}}
+    assert cc.worse_sides({"Left": dict(before["Left"], flap=0.20)}, flap) == {"Left": ["flap"]}
+    assert cc.worse_sides({"Left": dict(before["Left"], flap=0.40)}, flap) == {}
 
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +81,6 @@ def test_the_check_measures_both_rigs_and_judges_them_by_worse_sides(tmp_path):
     assert rep["ok"] and rep["raise_deg"] == [90.0, 120.0]
     for k in ("before", "after"):
         assert set(rep[k]["sides"]) == {"Left", "Right"}
-        assert all(set(v) == {"shoulder", "side", "crossings"} for v in rep[k]["sides"].values())
+        assert all(set(v) == {"shoulder", "side", "crossings", "flap"} for v in rep[k]["sides"].values())
     assert rep["before"]["sides"]["Left"]["side"] > 0  # the fused arm stretches the side when raised
     assert rep["worse"] == cc.worse_sides(rep["before"]["sides"], rep["after"]["sides"])

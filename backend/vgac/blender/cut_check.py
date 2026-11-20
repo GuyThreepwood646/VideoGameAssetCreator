@@ -10,6 +10,10 @@ each side, against the rig's own rest pose:
   shoulder  share of edges within 0.5 shoulder widths of the shoulder joint stretched over STRETCH (1.3) times
   side      the same for the side under the arm (0.10 to 1.10 widths below the joint, 0.30 in to 0.15 out)
   crossings triangles near the armpit passing through each other (not sharing a point)
+  flap      the posed area (in W squared) of the faces under the arm (0.10 to 1.50 widths below the joint, 0.30 in
+            to 1.00 out) whose longest edge is over TEAR (1.5) times its rest length: skin pulled out into a sheet
+            between the raised arm and the body. (The goblin's left cut handed hoodie-hem points from the hips to the
+            upper arm, and raising the arm pulled the hem up into a thin flap from the armpit, WP-75 round 2.)
 The worst over RAISE_DEGS is kept. worse_sides() says which sides the cut made worse (STRETCH_TOL for stretch,
 CROSS_TOL for crossings); the rig step keeps the cut only on the others.
 
@@ -28,6 +32,8 @@ RAISE_DEGS = (90.0, 120.0)
 STRETCH = 1.3
 STRETCH_TOL = 0.002  # a share of edges: the cut may not stretch more edges than this over the uncut rig
 CROSS_TOL = 5  # armpit crossings the cut may add (the WP-75 pass mark: today plus 5)
+TEAR = 1.5
+FLAP_TOL = 0.05  # W squared of torn skin under the arm the cut may add
 MIN_EDGE_M = 0.001
 
 
@@ -41,7 +47,8 @@ def regions(co, joint, mid, lat, fwd, W, sign):
     shoulder = (np.linalg.norm(d, axis=1) < 0.5 * W) & own
     side = (u >= -0.30 * W) & (u <= 0.15 * W) & (z >= -1.10 * W) & (z <= -0.10 * W) & (np.abs(f) < 0.35 * W) & own
     pit = (np.linalg.norm(d - np.array([0.0, 0.0, -0.25 * W]), axis=1) < 0.40 * W) & own
-    return {"shoulder": shoulder, "side": side, "pit": pit}
+    under = (u >= -0.30 * W) & (u <= 1.00 * W) & (z >= -1.50 * W) & (z <= -0.10 * W) & own
+    return {"shoulder": shoulder, "side": side, "pit": pit, "under": under}
 
 
 def stretch_share(rest, posed, edges, mask, ratio=STRETCH, min_len=MIN_EDGE_M):
@@ -59,9 +66,30 @@ def stretch_share(rest, posed, edges, mask, ratio=STRETCH, min_len=MIN_EDGE_M):
     return float((p[keep] > ratio * r[keep]).mean())
 
 
-def worse_sides(before, after, stretch_tol=STRETCH_TOL, cross_tol=CROSS_TOL):
+def torn_area(rest, posed, tris, mask, W, ratio=TEAR, min_len=MIN_EDGE_M):
+    """Posed area, in W squared, of the triangles with all corners in `mask` whose longest posed edge is over `ratio`
+    times their longest rest edge."""
+    T = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+    m = np.asarray(mask, bool)
+    T = T[m[T].all(axis=1)]
+    if not len(T):
+        return 0.0
+
+    def longest(P):
+        a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+        return np.max([np.linalg.norm(a - b, axis=1), np.linalg.norm(b - c, axis=1), np.linalg.norm(c - a, axis=1)], axis=0)
+
+    r = longest(rest)
+    torn = (r > min_len) & (longest(posed) > ratio * r)
+    if not torn.any():
+        return 0.0
+    a, b, c = posed[T[torn, 0]], posed[T[torn, 1]], posed[T[torn, 2]]
+    return float(0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / W ** 2)
+
+
+def worse_sides(before, after, stretch_tol=STRETCH_TOL, cross_tol=CROSS_TOL, flap_tol=FLAP_TOL):
     """{side: [what got worse]} for the sides where the cut rig is worse than the uncut one, from two reports'
-    "sides" ({side: {shoulder, side, crossings}}). A side missing from either is not judged."""
+    "sides" ({side: {shoulder, side, crossings, flap}}). A side missing from either is not judged."""
     out = {}
     for s, b in (before or {}).items():
         a = (after or {}).get(s)
@@ -74,6 +102,8 @@ def worse_sides(before, after, stretch_tol=STRETCH_TOL, cross_tol=CROSS_TOL):
             why.append("side")
         if a["crossings"] > b["crossings"] + cross_tol:
             why.append("crossings")
+        if a.get("flap", 0.0) > b.get("flap", 0.0) + flap_tol:
+            why.append("flap")
         if why:
             out[s] = why
     return out
@@ -83,7 +113,7 @@ def worse_sides(before, after, stretch_tol=STRETCH_TOL, cross_tol=CROSS_TOL):
 
 
 def measure(path):  # pragma: no cover - runs inside Blender
-    """{side: {shoulder, side, crossings}} for one rig, the worst over RAISE_DEGS; or {"reason"}."""
+    """{side: {shoulder, side, crossings, flap}} for one rig, the worst over RAISE_DEGS; or {"reason"}."""
     import bpy
     from mathutils import Matrix, Vector
     from mathutils.bvhtree import BVHTree
@@ -166,7 +196,7 @@ def measure(path):  # pragma: no cover - runs inside Blender
 
     res = {}
     for s, sign in (("Left", 1), ("Right", -1)):
-        res[s] = {"shoulder": 0.0, "side": 0.0, "crossings": 0}
+        res[s] = {"shoulder": 0.0, "side": 0.0, "crossings": 0, "flap": 0.0}
     for angle in RAISE_DEGS:
         pose(angle)
         posed = coords()
@@ -177,6 +207,7 @@ def measure(path):  # pragma: no cover - runs inside Blender
                 reg = regions(R, np.array(J[s]), np.array(mid), np.array(lat), np.array(fwd), W, sign)
                 r["shoulder"] = max(r["shoulder"], round(stretch_share(R, P, E, reg["shoulder"]), 4))
                 r["side"] = max(r["side"], round(stretch_share(R, P, E, reg["side"]), 4))
+                r["flap"] = max(r["flap"], round(torn_area(R, P, T, reg["under"], W), 4))
                 tris = T[reg["pit"][T].any(axis=1)]
                 if len(tris) < 2:
                     continue

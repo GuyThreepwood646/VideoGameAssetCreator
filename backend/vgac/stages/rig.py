@@ -1359,7 +1359,7 @@ SEPARATION_WORK = "separation_work"
 
 SIDE_WORD = {"L": "left", "R": "right"}
 WORSE_WORD = {"shoulder": "the shoulder stretch more", "side": "the side stretch more",
-              "crossings": "the skin fold through itself"}
+              "crossings": "the skin fold through itself", "flap": "the skin under the arm pull out into a flap"}
 
 
 def separation_message(cut: list[str], worse: dict[str, list[str]], refused: list[str] | None = None) -> str | None:
@@ -1419,10 +1419,11 @@ async def _cut_worse(sc: StageContext, before: Path, after: Path) -> dict[str, l
 
 async def _separate_joined(sc: StageContext, src: Path, rig_glb: Path) -> dict[str, Any] | None:
     """Separate each joined upper arm (WP-75), with the shoulder skin pass after. The cut is kept only on the sides
-    where it does not make raising the arm worse (cut_check.py, with the collarbone lift): shoulder or side stretch, or
-    armpit crossings. metrics.separation: {changed, sides (cut), worse, message, messages, summary}; `message` is the
-    plain line for the rig page. The rig before the cut is kept as rig_before_separation.glb; where nothing is cut the
-    rig carries on as it was, with the shoulder skin pass. The joined-limb measure runs again on a cut rig.
+    where it does not make raising the arm worse (cut_check.py, with the collarbone lift): shoulder or side stretch,
+    armpit crossings, or a flap of skin pulled out under the arm. metrics.separation: {changed, sides (cut), worse,
+    message, messages, summary}; `message` is the plain line for the rig page. The rig before the cut is kept as
+    rig_before_separation.glb; where nothing is cut the rig carries on as it was, with the shoulder skin pass. The
+    joined-limb measure runs again on a cut rig.
     -> {cut_glb, caps} for _cut_pictures when the model changed, else None. Never raises."""
     from .. import separate, shape
 
