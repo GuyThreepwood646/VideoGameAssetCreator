@@ -212,6 +212,21 @@ def points(img: np.ndarray) -> dict[str, Any] | None:
     return None
 
 
+def fallback(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
+    """Eyes and mouth by the local MediaPipe package (vgac/lipmarks.py, on the processor) for a face picture the
+    darkest-spot finder could not read (WP-66: its eye band or mouth band lies outside the skin region, as with hair over
+    the temple or a dark mouth). Used only after darkest_landmarks returns None, so no picture the darkest-spot finder
+    reads changes. None when the package or its model is missing, no face is found, or it is not the model's face."""
+    from . import lipmarks
+
+    if not lipmarks.available():
+        return None
+    m = local(img)
+    if m is None or not plausible(m, info):
+        return None
+    return m
+
+
 def find(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
     """Eyes and mouth by MediaPipe for a face picture framed like the model's render, or None (no card set, no face,
     or not the model's face)."""

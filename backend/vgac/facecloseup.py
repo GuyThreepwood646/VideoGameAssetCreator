@@ -173,6 +173,7 @@ def guard(view: dict[str, Any], info: dict[str, Any], crop: np.ndarray, closeup:
         out["likeness"] = face.likeness(a, b, inner, painted_head_px)
         return out
     pa = points(la)
+    out["landmark_finder"] = "mediapipe" if la.get("how") == "mediapipe" else "darkest"  # the record of which finder read the eyes and mouth
     # the painting's features in the crop's own pixels: the close-up is searched and corrected in the crop's framing
     pa0 = unmove_points(pa, pre) if pre else pa
     found = match_shifts(a, b, pa0, w, painted_head_px)
