@@ -348,6 +348,19 @@ def is_engine_lost(err: BaseException) -> bool:
     return False
 
 
+def stalled_message(instance: str, step: str, limit: float | None, settings: Settings | None = None) -> str:
+    """The plain message for a step whose ComfyUI work made no result within its time limit. The app never restarts
+    ComfyUI itself: the person restarts the card's ComfyUI and runs the step again."""
+    if limit is None:
+        wait_text = "in the time allowed"
+    elif limit < 120:
+        wait_text = f"within {int(limit)} seconds"
+    else:
+        wait_text = f"within {int(-(-limit // 60))} minutes"
+    return (f"{gpu_name(instance, settings)} did not finish {step} {wait_text}. Its graphics engine may be hung. "
+            "The app has not restarted it. Restart ComfyUI for that card, then run this step again.")
+
+
 def engine_lost_message(instance: str, settings: Settings | None = None) -> str:
     inst = (settings or get_settings()).instances.get(instance)
     if inst is not None and inst.engine is None and inst.start_script is None:
