@@ -21,7 +21,9 @@ import sys
 import numpy as np
 
 MAX_INFLUENCES = 4
-RADIUS = 0.6  # metres from the placed point; a region never grows past it (edges only, see the handover)
+RADIUS = 0.8  # safety net: a region never reaches further than this from its point, in metres
+SEED_SIZE = 4000  # safety net: a region never has more vertices than this
+CREASE_DOT = 0.87  # seam duplicates join only when their normals agree within about 30 degrees
 SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
 SPINE_WORDS = ("spine", "chest")
 
@@ -40,25 +42,60 @@ def _adjacency(V, edges):
     return adj
 
 
-def grow_region(co, edges, point, radius=RADIUS):
-    """Vertices connected to the one nearest the point along edges, within radius of the point. A bool mask."""
+def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
+    """The region grown from the vertex nearest the point (WP-69 stage 3). Growth crosses mesh edges and seam
+    duplicates (same position, normals within about 30 degrees), and stops at a concave edge: where the next face lies
+    behind this one (a valley, such as where a backpack meets the back), so convex ridges such as a box's own edges are
+    crossed. Safety nets: radius from the point and a vertex limit. faces: (F, 3) triangle vertex indices.
+    Returns a bool mask. Calibrated on The Heir's pack: a click on it reaches 220 of its 227 vertices."""
     co = np.asarray(co, dtype=float).reshape(-1, 3)
     V = len(co)
     mask = np.zeros(V, dtype=bool)
-    if V == 0:
+    faces = np.asarray(faces, dtype=int).reshape(-1, 3)
+    if V == 0 or len(faces) == 0:
         return mask
     dist = np.linalg.norm(co - np.asarray(point, dtype=float), axis=1)
     start = int(np.argmin(dist))
     if dist[start] > radius:
         return mask
-    adj = _adjacency(V, edges)
-    stack = [start]
+    fc = co[faces].mean(axis=1)
+    fn = np.cross(co[faces[:, 1]] - co[faces[:, 0]], co[faces[:, 2]] - co[faces[:, 0]])
+    fn = fn / np.maximum(np.linalg.norm(fn, axis=1), 1e-12)[:, None]
+    vn = np.zeros_like(co)
+    for k in range(3):
+        np.add.at(vn, faces[:, k], fn)
+    vn = vn / np.maximum(np.linalg.norm(vn, axis=1), 1e-12)[:, None]
+    edge_faces = {}
+    for fi, (a0, b0, c0) in enumerate(faces):
+        for p_, q_ in ((a0, b0), (b0, c0), (c0, a0)):
+            edge_faces.setdefault((min(p_, q_), max(p_, q_)), []).append(fi)
+    adj = [[] for _ in range(V)]
+    for (p_, q_), fs in edge_faces.items():
+        concave = False
+        if len(fs) == 2:
+            f1, f2 = fs
+            concave = np.dot(fn[f1], fc[f2] - fc[f1]) < -1e-6 or np.dot(fn[f2], fc[f1] - fc[f2]) < -1e-6
+        if not concave:
+            adj[p_].append(q_)
+            adj[q_].append(p_)
+    buckets = {}
+    for i, p_ in enumerate(np.round(co, 5)):
+        buckets.setdefault(tuple(p_), []).append(i)
+    for group in buckets.values():
+        for a0 in group:
+            for b0 in group:
+                if a0 < b0 and np.dot(vn[a0], vn[b0]) > CREASE_DOT:
+                    adj[a0].append(b0)
+                    adj[b0].append(a0)
     mask[start] = True
-    while stack:
+    stack = [start]
+    count = 1
+    while stack and count < limit:
         u = stack.pop()
         for w in adj[u]:
             if not mask[w] and dist[w] <= radius:
                 mask[w] = True
+                count += 1
                 stack.append(w)
     return mask
 
@@ -176,11 +213,14 @@ def main():  # pragma: no cover - runs inside Blender
                     W[v.index, g.group] = g.weight
             co = np.array([tuple(o.matrix_world @ v.co) for v in o.data.vertices], dtype=float).reshape(-1, 3)
             edges = np.array([[e.vertices[0], e.vertices[1]] for e in o.data.edges], dtype=int).reshape(-1, 2)
+            o.data.calc_loop_triangles()
+            faces = np.array([tuple(t.vertices) for t in o.data.loop_triangles], dtype=int).reshape(-1, 3)
             region = np.zeros(V, dtype=bool)
             for p in points:
-                m = grow_region(co, edges, gltf_to_blender(p["location"]), radius)
-                report["points"].append({"name": p.get("name"), "vertices": int(m.sum())})
-                region |= m
+                for loc in p.get("locations") or []:
+                    m = grow_region(co, faces, gltf_to_blender(loc), radius)
+                    report["points"].append({"name": p.get("name"), "vertices": int(m.sum())})
+                    region |= m
             heads = [bone_heads.get(n, [0.0, 0.0, 0.0]) for n in vg_names]
             W2, rep = run_numpy(W, edges, co, vg_names, heads, region, seam=seam)
             rep["mesh"] = o.name

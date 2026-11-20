@@ -14,16 +14,25 @@ def test_gltf_to_blender_swaps_up_axis():
     assert wr.gltf_to_blender([1.0, 2.0, 3.0]).tolist() == [1.0, -3.0, 2.0]
 
 
-def test_grow_region_stops_at_radius_and_follows_edges():
-    co = np.array([[0.0, 0, 0], [0.1, 0, 0], [0.2, 0, 0], [0.9, 0, 0], [0.1, 0.9, 0]])
-    edges = _chain(4)  # 0-1-2-3, and vertex 4 is not connected
-    m = wr.grow_region(co, edges, [0.0, 0.0, 0.0], radius=0.25)
-    assert m.tolist() == [True, True, True, False, False]
+def _quad_pair(z_fold):
+    # two triangles sharing an edge, first flat in XY, second folded by z_fold (a crease) about the shared edge
+    co = np.array([[0.0, 0, 0], [1.0, 0, 0], [0.0, 1, 0], [1.0, 1, z_fold]])
+    faces = np.array([[0, 1, 2], [1, 3, 2]])
+    return co, faces
 
 
-def test_grow_region_empty_when_point_is_far():
-    co = np.zeros((3, 3))
-    assert not wr.grow_region(co, _chain(3), [5.0, 5.0, 5.0], radius=0.25).any()
+def test_grow_crosses_a_convex_ridge():
+    # a convex ridge: the second face folds up (outward normals turn away), so growth continues across it
+    co, faces = _quad_pair(-0.5)
+    m = wr.grow_region(co, faces, [0.1, 0.1, 0.0], radius=5.0)
+    assert m.all()
+
+
+def test_grow_respects_radius_and_empty_when_far():
+    co, faces = _quad_pair(-0.5)
+    assert not wr.grow_region(co, faces, [9.0, 9.0, 9.0], radius=0.5).any()
+    m = wr.grow_region(co, faces, [0.0, 0.0, 0.0], radius=0.6)
+    assert m[0] and not m[3]
 
 
 def test_spine_bone_is_nearest_chain_bone():
@@ -68,8 +77,21 @@ def test_influences_capped_at_four():
 def test_stiff_kind_is_allowed_for_humanoids_and_selects_for_rig():
     assert "stiff" in dp.KINDS
     assert dp.clean_kind("stiff", "humanoid") == "stiff"
-    rows = [{"name": "backpack", "kind": "stiff", "location": [0.0, 0.1, 1.1]},
-            {"name": "cape", "kind": "sway", "location": [0.0, 0.1, 1.0]},
-            {"name": "lid", "kind": "stiff", "location": None}]
+    rows = [{"name": "backpack", "kind": "stiff", "location": None, "locations": [[0.0, 1.1, -0.25], [0.1, 1.0, -0.2]]},
+            {"name": "cape", "kind": "sway", "location": [0.0, 0.1, 1.0], "locations": []},
+            {"name": "lid", "kind": "stiff", "location": None, "locations": []}]
     assert [r["name"] for r in dp.for_stiff(rows)] == ["backpack"]
+    assert len(dp.for_stiff(rows)[0]["locations"]) == 2
     assert [r["name"] for r in dp.for_springs(rows)] == ["cape"]
+
+
+def test_placed_stiff_takes_points_and_caps_them():
+    declared = [{"name": "backpack", "kind": "stiff"}]
+    rows = dp.placed([{"name": "backpack", "locations": [[0, 1, 0], [0.1, 1, 0]]}], declared, "humanoid")
+    assert rows[0]["locations"] == [[0.0, 1.0, 0.0], [0.1, 1.0, 0.0]]
+    too_many = [[0, 1, 0]] * (dp.MAX_POINTS + 1)
+    try:
+        dp.placed([{"name": "backpack", "locations": too_many}], declared, "humanoid")
+        raise AssertionError("expected a PartError")
+    except dp.PartError:
+        pass

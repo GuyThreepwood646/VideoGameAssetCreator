@@ -26,6 +26,7 @@ from typing import Any
 KINDS = ("separate", "sway", "stiff")
 # Kinds that need a location to do anything in the rig step: sway (spring bones) and stiff (rigid with a spine bone).
 LOCATED_KINDS = ("sway", "stiff")
+MAX_POINTS = 8  # points per stiff part; each grows its own piece and the pieces join
 # Kinds a category may use. Sway is for people-shaped characters; the spring pass only runs on humanoids.
 CATEGORY_KINDS = {"humanoid": ("separate", "sway", "stiff")}
 DEFAULT_KIND = "separate"
@@ -126,7 +127,15 @@ def placed(items: Any, declared: list[dict[str, str]], category: str | None) -> 
         kind = clean_kind(it.get("kind") or have[key], category)
         if kind != have[key]:
             raise PartError(f"'{name}' is declared as {have[key]}, not {kind}.")
-        out.append({"name": name, "kind": kind, "location": clean_location(it.get("location"))})
+        if kind == "stiff":
+            locs = [clean_location(x) for x in (it.get("locations") or [])]
+            if any(x is None for x in locs):
+                raise PartError("Each point of a stiff part is three numbers in metres.")
+            if len(locs) > MAX_POINTS:
+                raise PartError(f"A stiff part takes at most {MAX_POINTS} points.")
+            out.append({"name": name, "kind": kind, "location": None, "locations": locs})
+        else:
+            out.append({"name": name, "kind": kind, "location": clean_location(it.get("location")), "locations": []})
     return out
 
 
@@ -155,14 +164,18 @@ def for_springs(placed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def for_stiff(placed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The stiff parts that have a location, for blender/worn_region.py --points: [{name, location}] (WP-69)."""
-    return [{"name": r["name"], "location": r["location"]}
-            for r in placed_rows if r.get("kind") == "stiff" and r.get("location")]
+    """The stiff parts that have points, for blender/worn_region.py --points: [{name, locations}] (WP-69)."""
+    return [{"name": r["name"], "locations": r["locations"]}
+            for r in placed_rows if r.get("kind") == "stiff" and r.get("locations")]
 
 
 def view(declared: list[dict[str, str]], placed_rows: list[dict[str, Any]], applies: bool) -> dict[str, Any]:
     """What the API answers: the asset's declared parts, this version's placed parts and whether the rig step reads
     them (a rig version only)."""
-    loc = {r["name"].lower(): r.get("location") for r in placed_rows}
-    rows = [{"name": p["name"], "kind": p["kind"], "location": loc.get(p["name"].lower())} for p in declared]
+    loc = {r["name"].lower(): r for r in placed_rows}
+    rows = []
+    for p in declared:
+        r = loc.get(p["name"].lower()) or {}
+        rows.append({"name": p["name"], "kind": p["kind"], "location": r.get("location"),
+                     "locations": r.get("locations") or []})
     return {"parts": rows, "placed": placed_rows, "applies_to_rig": applies}

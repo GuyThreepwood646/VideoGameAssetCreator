@@ -49,7 +49,7 @@ def test_location_is_three_metres_and_bounded():
 def test_placed_must_match_a_declared_part_with_the_same_kind():
     declared = [{"name": "Cape", "kind": "sway"}, {"name": "belt", "kind": "separate"}]
     rows = dp.placed([{"name": "cape", "kind": "sway", "location": [0, 0.9, 0.1]}], declared, "humanoid")
-    assert rows == [{"name": "cape", "kind": "sway", "location": [0, 0.9, 0.1]}]
+    assert rows == [{"name": "cape", "kind": "sway", "location": [0, 0.9, 0.1], "locations": []}]
     with pytest.raises(dp.PartError, match="not a declared part"):
         dp.placed([{"name": "hat", "kind": "sway"}], declared, "humanoid")
     with pytest.raises(dp.PartError, match="declared as sway"):
@@ -111,8 +111,8 @@ def test_get_and_put_a_rig_versions_placed_parts(api):
     client, ids = api
     got = client.get(f"/api/versions/{ids['rig']}/parts").json()
     assert got["applies_to_rig"] is True
-    assert got["parts"] == [{"name": "cape", "kind": "sway", "location": None},
-                            {"name": "belt", "kind": "separate", "location": None}]
+    assert got["parts"] == [{"name": "cape", "kind": "sway", "location": None, "locations": []},
+                            {"name": "belt", "kind": "separate", "location": None, "locations": []}]
     r = client.put(f"/api/versions/{ids['rig']}/parts",
                    json={"parts": [{"name": "cape", "kind": "sway", "location": [0.0, 0.85, 0.12]}]})
     assert r.status_code == 200, r.text

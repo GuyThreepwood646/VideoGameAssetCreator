@@ -2,9 +2,10 @@
 
   GET /api/versions/{vid}/parts   the asset's declared parts, each with this version's location (or none), and the
                                   placed list as stored
-  PUT /api/versions/{vid}/parts   {parts: [{name, kind, location?}]}: replaces this version's placed parts. A location
-                                  is three numbers in metres in the rig GLB's rest pose (y up). Each name must be a
-                                  declared part of the asset with the same kind.
+  PUT /api/versions/{vid}/parts   {parts: [{name, kind, location?, locations?}]}: replaces this version's placed parts.
+                                  A location (sway) or locations (stiff, up to 8 points) is three numbers in metres in
+                                  the rig GLB's rest pose (y up). Each name must be a declared part of the asset with
+                                  the same kind.
 
 Only rig versions take placed parts: the rig step reads parts.json when it runs the spring bones
 (stages/rig.py _springs). Writing it does not re-run a finished rig; `applies_to_rig` says whether the step reads it.
@@ -29,6 +30,7 @@ class PlacedIn(BaseModel):
     name: str = Field(max_length=200)
     kind: str | None = Field(default=None, max_length=20)
     location: list[float] | None = Field(default=None, max_length=3)
+    locations: list[list[float]] | None = Field(default=None, max_length=8)
 
 
 class PartsIn(BaseModel):
