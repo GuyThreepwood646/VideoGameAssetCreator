@@ -239,6 +239,11 @@ class PaintIn(BaseModel):
     strokes: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SmoothIn(BaseModel):
+    # Smooth the paint (WP-24): "light" or "strong" (paintsave.SMOOTH_STRENGTHS).
+    strength: Literal["light", "strong"]
+
+
 class JudgeIn(BaseModel):
     mode: str = "metrics"
 
@@ -980,6 +985,22 @@ def paint_version(vid: str, body: PaintIn, db: Session = Depends(get_session)) -
     v = pipeline.new_version(db, a, "prep", parent, inherited)
     paintsave.write_inputs(library.version_dir(a, v, get_settings()), picture, mask, strokes)
     job = pipeline.submit(db, a, v, "paint", {})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/smooth")
+def smooth_version(vid: str, body: SmoothIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Smooth the paint (WP-24): a new clean-up version from this painted one, with the paint smoothed inside its mask.
+    Only a painted clean-up can be smoothed; the job copies the parent's files and writes the new picture."""
+    parent = _version(db, vid)
+    if parent.status != "done":
+        raise HTTPException(409, f"version is {parent.status}, not done")
+    if parent.stage != "prep" or not paintsave.is_painted(parent):
+        raise HTTPException(400, "only a painted clean-up can be smoothed")
+    a = _asset(db, parent.asset_id)
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", parent, inherited)
+    job = pipeline.submit(db, a, v, "smooth", {"params": {"strength": body.strength}})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 

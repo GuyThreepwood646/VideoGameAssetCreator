@@ -1301,6 +1301,45 @@ def put_attachment(aid: str, att_id: str, body: AttachmentPut, db: Session = Dep
     return {"attachment": at, "panel": panel(db, a)}
 
 
+class AttachmentRecordIn(BaseModel):
+    attachment: dict[str, Any]
+
+
+def _nums(v: Any, n: int, what: str) -> list[float]:
+    if not isinstance(v, list) or len(v) != n or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
+        raise HTTPException(400, f"{what} is {n} numbers")
+    return [float(x) for x in v]
+
+
+@router.put("/api/assets/{aid}/attachments/{att_id}/record")
+def restore_attachment(aid: str, att_id: str, body: AttachmentRecordIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Put back a whole earlier record of one attachment (undo and redo in the item editor). The record must be the same
+    attachment on the same item; its place, hold, position, rotation and scale are checked the way a change is."""
+    a = _asset_or_404(db, aid)
+    cur, i = _find_att(a, att_id)
+    at = dict(body.attachment)
+    if at.get("id") != att_id or at.get("item_asset_id") != cur.get("item_asset_id"):
+        raise HTTPException(400, "that record is not this attachment")
+    if at.get("socket") not in PLACES:
+        raise HTTPException(400, f"unknown attachment point {at.get('socket')!r}")
+    if at.get("stow_socket") not in (None, "") and at.get("stow_socket") not in PLACES:
+        raise HTTPException(400, f"unknown attachment point {at.get('stow_socket')!r}")
+    pos = _nums(at.get("position"), 3, "position")
+    if any(abs(v) > 2 for v in pos):
+        raise HTTPException(400, "position is three numbers in metres, each within 2 m")
+    at["position"] = [round(v, 5) for v in pos]
+    at["rotation"] = [round(v, 6) for v in _nums(at.get("rotation"), 4, "rotation")]
+    at["rotation_deg"] = [round(v, 4) for v in _nums(at.get("rotation_deg"), 3, "rotation_deg")]
+    try:
+        scale = float(at.get("scale"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "scale is one number")
+    at["scale"] = round(min(SCALE_MAX, max(SCALE_MIN, scale)), 4)
+    at["touched"] = bool(at.get("touched"))
+    _save_att(db, a, i, at)
+    return {"attachment": at, "panel": panel(db, a)}
+
+
 @router.post("/api/assets/{aid}/attachments/{att_id}/nudge")
 def nudge_attachment(aid: str, att_id: str, body: NudgeIn, db: Session = Depends(get_session)) -> dict[str, Any]:
     """One press of a nudge button: move, turn (character axes), slide along the item, Smaller or Bigger, or Start
