@@ -82,6 +82,63 @@ def _mask(cutout: Path | str | Image.Image, side: int = ANALYSE_SIDE) -> tuple[n
     return np.asarray(a) >= 128, full
 
 
+def component_boxes(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
+    """(area, top, left, bottom, right) of each 8-connected part of a boolean mask, largest first; the box is inclusive."""
+    h, w = mask.shape
+    seen = np.zeros_like(mask, dtype=bool)
+    out: list[tuple[int, int, int, int, int]] = []
+    ys, xs = np.nonzero(mask)
+    for y0, x0 in zip(ys.tolist(), xs.tolist()):
+        if seen[y0, x0]:
+            continue
+        seen[y0, x0] = True
+        q = deque([(y0, x0)])
+        n, top, left, bottom, right = 0, y0, x0, y0, x0
+        while q:
+            y, x = q.popleft()
+            n += 1
+            top, bottom = min(top, y), max(bottom, y)
+            left, right = min(left, x), max(right, x)
+            for dy in (-1, 0, 1):
+                yy = y + dy
+                if yy < 0 or yy >= h:
+                    continue
+                for dx in (-1, 0, 1):
+                    xx = x + dx
+                    if 0 <= xx < w and mask[yy, xx] and not seen[yy, xx]:
+                        seen[yy, xx] = True
+                        q.append((yy, xx))
+        out.append((n, top, left, bottom, right))
+    return sorted(out, reverse=True)
+
+
+def group_parts(boxes: list[tuple[int, int, int, int, int]], gap: float) -> list[int]:
+    """Areas of the groups left when parts whose boxes lie within `gap` pixels of each other are joined (union-find).
+    gap 0 leaves every part alone, as components() does."""
+    n = len(boxes)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        _, t1, l1, b1, r1 = boxes[i]
+        for j in range(i + 1, n):
+            _, t2, l2, b2, r2 = boxes[j]
+            dy = max(0, max(t1, t2) - min(b1, b2))
+            dx = max(0, max(l1, l2) - min(r1, r2))
+            if max(dy, dx) <= gap:
+                parent[find(j)] = find(i)
+    totals: dict[int, int] = {}
+    for i in range(n):
+        r = find(i)
+        totals[r] = totals.get(r, 0) + boxes[i][0]
+    return sorted(totals.values(), reverse=True)
+
+
 def components(mask: np.ndarray) -> list[int]:
     """Areas (in pixels) of the 8-connected parts of a boolean mask, largest first."""
     h, w = mask.shape
@@ -149,10 +206,18 @@ def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | 
     redraw = {"redraw": redraw_instruction(cat)}
     mask, (fw, fh) = _mask(cutout)
     h, w = mask.shape
-    areas = components(mask)
-    total = sum(areas)
+    boxes = component_boxes(mask)
+    total = sum(b[0] for b in boxes)
     if total == 0:
         return [quality.check("one_subject", False, 0, 1, vars={**redraw, "empty": True})]
+    # subject_gap (data/categories, share of the subject's longer side): pieces closer than this belong to one subject,
+    # such as a crate beside a wall or a cluster of plants. Unset (people, creatures, vehicles): every piece counts alone.
+    gap_share = float(cat.get("subject_gap") or 0.0)
+    if gap_share > 0 and boxes:
+        span = max(max(b[4] for b in boxes) - min(b[2] for b in boxes), max(b[3] for b in boxes) - min(b[1] for b in boxes)) + 1
+        areas = group_parts(boxes, gap_share * span)
+    else:
+        areas = [b[0] for b in boxes]
     parts = [a for a in areas if a >= max(4, MIN_PART_SHARE * total)]
     out = [quality.check("one_subject", len(parts) == 1, len(parts), 1, vars=dict(redraw))]
     ys, xs = np.nonzero(mask)

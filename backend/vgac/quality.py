@@ -270,13 +270,15 @@ def texture_checks(files: dict[str, Path | str], texture_budget: int | None = No
 
 
 def rig_checks(info: dict[str, Any], rig_expected: bool, min_coverage: float = 0.99,
-               group_per_vertex: int | None = None) -> list[Check]:
+               group_per_vertex: int | None = None, moving_parts: list[str] | None = None) -> list[Check]:
     """From rig_info.json: bone count, single root, weight coverage, influences, normalisation. max_influences is
-    compared with the rig's own group_per_vertex parameter (default 4)."""
+    compared with the rig's own group_per_vertex parameter (default 4). moving_parts: the names of the parts the
+    asset declared to move (declared_parts kind separate); with no skeleton they are named as not rigged yet."""
     out: list[Check] = []
     bones = int(info.get("bones", 0))
     if not rig_expected:
-        out.append(check("bones", bones == 0, bones, 0))
+        vars_ = {"moving": list(moving_parts)} if moving_parts and bones == 0 else None
+        out.append(check("bones", bones == 0, bones, 0, vars=vars_))
         return out
     out.append(check("bones", bones > 0, bones, ">0"))
     roots = info.get("roots") or []

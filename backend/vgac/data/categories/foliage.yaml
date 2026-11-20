@@ -3,6 +3,8 @@ label: Foliage
 rig_engine: none
 silhouette_min: 0.45
 symmetric: false
+# WP-47: pieces closer than this share of the subject's longer side are one subject (a crate by a wall, leaves of one plant).
+subject_gap: 0.08
 size_m: 2.5
 # Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
 # largest of all three. size_word is the axis word in sentences; size_label and size_hint label the prep knob.
