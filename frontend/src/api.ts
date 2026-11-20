@@ -456,7 +456,7 @@ export type RemovedAddon = { removed: string; file_name: string; file_kept: bool
 // The person's LoRA folders (backend lora_folders.py): each folder's state, and what to do about ComfyUI after a change.
 export type LoraFolderState = { path: string; exists: boolean; readable: boolean; lora_files: number; problem: string }
 export type LoraRestartNote = { card: string; state: 'restart' | 'starts_later' | 'not_app' | 'external'; text: string }
-export type LoraFolders = { folders: LoraFolderState[]; max_folders: number; restart: LoraRestartNote[]; restart_cards: string[]; message?: string; added?: string; removed?: string }
+export type LoraFolders = { folders: LoraFolderState[]; max_folders: number; restart: LoraRestartNote[]; restart_cards: string[]; note: string; message?: string; added?: string; removed?: string }
 
 // Your LoRAs for the picture-edit uses (picture_loras.py). Each use has its own choice; a LoRA is for picture edits when its stage is edit.
 export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'

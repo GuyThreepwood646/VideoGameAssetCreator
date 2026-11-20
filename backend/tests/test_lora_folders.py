@@ -257,7 +257,7 @@ def test_removing_a_folder_gives_the_same_restart_note(client, box):
     box.state = {"a": "running"}
     client.post("/api/lora-folders", json={"path": str(box.a)})
     body = client.post("/api/lora-folders/remove", json={"path": str(box.a)}).json()
-    assert body["restart_cards"] == ["a"] and "Stop and start the cards listed below" in body["message"]
+    assert body["restart_cards"] == ["a"] and "Stop and start card a's ComfyUI on the Graphics cards panel so it stops reading it." in body["message"]
 
 
 # --- a LoRA in a linked folder: listed, and used where it is --------------------------------------------------------------
@@ -347,6 +347,7 @@ def test_the_message_names_the_card_to_stop_and_start_or_says_it_reads_on_start(
     box.state = {}
     body = client.post("/api/lora-folders/remove", json={"path": str(box.a)}).json()
     assert body["message"].endswith("ComfyUI reads these folders when it starts.")
+    assert client.get("/api/lora-folders").json()["note"] == "ComfyUI reads these folders when it starts."
     box.state = {"a": "running"}
     client.post("/api/lora-folders", json={"path": str(box.a)})
     box.state = {"a": "running", "b": "running"}

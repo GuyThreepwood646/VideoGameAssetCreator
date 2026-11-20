@@ -310,18 +310,18 @@ def _after_change(cards: list[str], removing: bool) -> str:
     ComfyUI reads the folders when it starts."""
     if not cards:
         return "ComfyUI reads these folders when it starts."
-    if removing:
-        return "Stop and start the cards listed below so ComfyUI stops reading this folder."
+    tail = "so it stops reading it." if removing else "to see it."
     if len(cards) == 1:
-        return f"Stop and start {_card_names(cards)}'s ComfyUI on the Graphics cards panel to see it."
-    return f"Stop and start the ComfyUI of {_card_names(cards)} on the Graphics cards panel to see it."
+        return f"Stop and start {_card_names(cards)}'s ComfyUI on the Graphics cards panel {tail}"
+    return f"Stop and start the ComfyUI of {_card_names(cards)} on the Graphics cards panel {tail}"
 
 
 def listing() -> dict[str, Any]:
     folders = [check(f) for f in saved_folders()]
     notes = restart_notes()
-    return {"folders": folders, "max_folders": MAX_FOLDERS, "restart": notes,
-            "restart_cards": [n["card"] for n in notes if n["state"] == "restart"]}
+    cards = [n["card"] for n in notes if n["state"] == "restart"]
+    return {"folders": folders, "max_folders": MAX_FOLDERS, "restart": notes, "restart_cards": cards,
+            "note": _after_change(cards, removing=False)}
 
 
 # --- API -----------------------------------------------------------------------------------------------------------------

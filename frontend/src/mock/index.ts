@@ -1459,7 +1459,7 @@ on('GET', '/api/my-addons/available', () =>
     .filter((f) => !myAddons.some((a) => a.file_name === f.file_name))
     .map((f) => ({ folder: MOCK_ADDON_FOLDER, file_name: f.file_name, path: `${MOCK_ADDON_FOLDER}\\${f.file_name}`, bytes: f.bytes, prefill: f.prefill })),
 )
-on('GET', '/api/lora-folders', (): LoraFolders => ({ folders: mockFolderStates(), max_folders: 20, restart: [], restart_cards: [] }))
+on('GET', '/api/lora-folders', (): LoraFolders => ({ folders: mockFolderStates(), max_folders: 20, restart: [], restart_cards: [], note: 'ComfyUI reads these folders when it starts.' }))
 on('POST', '/api/lora-folders', (_m, body): LoraFolders => {
   const path = String(body.path ?? '').trim()
   if (!path) throw new HttpError(400, 'Give the full path of the LoRA folder.')
@@ -1470,6 +1470,7 @@ on('POST', '/api/lora-folders', (_m, body): LoraFolders => {
     max_folders: 20,
     restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
     restart_cards: ['a'],
+    note: "Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
     message: "Added. This folder has 2 LoRA files. Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
     added: path,
   }
@@ -1484,7 +1485,8 @@ on('POST', '/api/lora-folders/remove', (_m, body): LoraFolders => {
     max_folders: 20,
     restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
     restart_cards: ['a'],
-    message: 'Removed from the list. The folder and its files were not touched. Stop and start the cards listed below so ComfyUI stops reading this folder.',
+    note: "Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
+    message: "Removed from the list. The folder and its files were not touched. Stop and start card a's ComfyUI on the Graphics cards panel so it stops reading it.",
     removed: path,
   }
 })
