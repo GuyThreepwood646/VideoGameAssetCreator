@@ -425,7 +425,8 @@ def test_a_humanoid_with_its_library_missing_gets_a_warning_with_the_reason_and_
     c = checks["library_missing"]
     assert c["ok"] is False and c["severity"] == "warn"
     assert c["help"].startswith("The shared animation library is not on this PC")
-    assert "Setup-Extras" in c["fix_note"] and c["fix_kind"] == "outside"
+    assert "Health page" in c["fix_note"] and c["fix_kind"] == "by_hand"
+    assert "Setup-Extras" not in c["fix_note"] and "\\" not in c["fix_note"]  # no commands or folder paths
     assert "library_clips" not in checks  # the moves never came from the library
 
 

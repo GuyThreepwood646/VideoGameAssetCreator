@@ -88,9 +88,8 @@ NOTES: dict[str, tuple[str, str]] = {
                                       "or accept the 3D builder's own colours."),
     "tiles_cleanly": ("by_hand", "Make the picture again, asking for a seamless, evenly lit texture with nothing large near the edges."),
     # step 5 (skeleton)
-    "library_missing": ("outside", "Nothing in the app fixes this: the app cannot add the shared animation library. Put it back: run "
-                                   "setup\\Setup-Extras.ps1 -Packs -Install and give it the zip, or unzip it into data\\animations by hand, "
-                                   "keeping the folder names. Then make the moves again."),
+    "library_missing": ("by_hand", "Open the Health page (the Setup needs attention link at the top) and read the Shared animation library line, "
+                                   "which says how to put the library back. Then make the moves again on the Make it move step."),
     "bones": ("by_hand", "Run the skeleton step again with the other skeleton template; if it fails twice, this model cannot be rigged automatically. "
                          "Use your own 3D model, build the 3D model again, or edit the parts by hand."),
     "single_root": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),

@@ -1111,7 +1111,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       },
       undefined,
       (err) => {
-        if (!cancelled) setStatus('Load failed: ' + (err instanceof Error ? err.message : String(err)))
+        // The raw address and status stay out of the page; the console keeps them for a developer.
+        console.warn('Moving model did not load', err)
+        if (!cancelled) setStatus('The moving model could not be shown. Make the moves again on this step.')
       },
     )
     return () => {
