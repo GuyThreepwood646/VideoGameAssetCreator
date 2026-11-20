@@ -1,7 +1,7 @@
 """Find the camera a picture was taken from: turn, tilt and lens (WP-61 part C, first version).
 
 The search scores each candidate pose by how well the model's outline, drawn from that pose, matches the picture's
-silhouette. A coarse grid (turn in 10 degree steps, tilt -10 to 60 in 10 degree steps, lens orthographic, 85, 50 or
+silhouette. A coarse grid (turn in 10 degree steps, tilt -20 to 60 in 10 degree steps, lens orthographic, 85, 50 or
 35 mm) is scored at a small size; the best poses are then refined locally to about 2 degrees.
 
 Not yet in this version: the inner-edge and colour-structure terms named in the brief. Paint does not call this module
@@ -16,7 +16,7 @@ from vgac import face
 from vgac import srcproject as sp
 
 TURNS = list(range(0, 360, 10))
-TILTS = list(range(-10, 61, 10))
+TILTS = list(range(-20, 61, 10))  # pictures taken from slightly below are real (WP-61 part C)
 LENSES: list[float | None] = [None, 85.0, 50.0, 35.0]
 COARSE_N = 128
 
