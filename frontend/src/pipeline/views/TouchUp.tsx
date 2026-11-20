@@ -151,9 +151,10 @@ export function SmoothPaint({ versionId, smoothed, onDone }: { versionId: string
     <div className="touch-up" data-testid="smooth-paint">
       <div className="field-label">Smooth the paint</div>
       <div className="small muted">
-        Softens the hard brush edges and the speckle inside the painted area only. Colours outside it, and the edges of real colour changes, stay as they are. Saves as a new version.
+        Evens out the speckle and rough colour inside the painted area only. Colours outside it, and the edges between different painted colours, stay as they are. Saves as a new version.
         {smoothed ? ` This version is already smoothed (${smoothed}).` : ''}
       </div>
+      <div className="small muted">Smooth evens out the painted colour. To blend the paint's edge into the picture, paint with a softer edge.</div>
       <div className="touch-up-row">
         <span className="segmented" role="radiogroup" aria-label="How much to smooth">
           {SMOOTH_CHOICES.map((c) => (
