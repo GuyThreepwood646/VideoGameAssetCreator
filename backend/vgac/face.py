@@ -697,12 +697,17 @@ def inner_face(info: dict[str, Any]) -> np.ndarray:
 
 def landmarks(img: np.ndarray, info: dict[str, Any]) -> dict[str, Any] | None:
     """Eyes and mouth of a front face picture: MediaPipe's when a face pass has set a card and it finds the model's
-    face (vgac/facemarks.py), else darkest_landmarks."""
+    face (vgac/facemarks.py), else darkest_landmarks, else MediaPipe on the processor (facemarks.fallback)."""
     from . import facemarks
 
     m = facemarks.find(img, info)
     if m is None:
-        return darkest_landmarks(img, info)
+        dk = darkest_landmarks(img, info)
+        if dk is not None:
+            return dk
+        # WP-66: the darkest-spot finder found no eye band or mouth band inside the skin region (hair over a temple, a
+        # dark mouth); MediaPipe, on the processor, is asked only then, so every picture the darkest spots read is as before
+        return facemarks.fallback(img, info)
     return add_mouth_corners(m, img, info)
 
 
