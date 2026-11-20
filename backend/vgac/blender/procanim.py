@@ -728,8 +728,11 @@ def limb_chain(bone_list, leaf_end):
 for li in leg_info:
     li["ik"] = None if li["splayed"] else limb_chain(li["bones"], low[li["leaf"]])
 for a_ in arm_info:
-    i0 = a_["bones"].index(a_["upper"])
-    a_["ik"] = limb_chain(a_["bones"][i0:i0 + 3], head[a_["bones"][min(len(a_["bones"]) - 1, i0 + 2)]]) if len(a_["bones"]) >= i0 + 3 else None
+    # The palm-down pass puts Extra_ForeArmTwist bones between ForeArm and Hand, all starting at the elbow. They are
+    # left out of the IK chain so its end is the Hand (the wrist), and the forearm length is elbow to wrist.
+    ik_bones = [b for b in a_["bones"] if "ForeArmTwist" not in b]
+    i0 = ik_bones.index(a_["upper"])
+    a_["ik"] = limb_chain(ik_bones[i0:i0 + 3], head[ik_bones[min(len(ik_bones) - 1, i0 + 2)]]) if len(ik_bones) >= i0 + 3 else None
     if a_["ik"] and a_["ik"]["a"] != a_["upper"]:
         a_["ik"] = None
 
@@ -1652,7 +1655,9 @@ def _character_height():
 _foot_bones = [(leg_chain(li)["end_bone"] or leg_chain(li)["m"]) for li in leg_info if leg_chain(li)]
 _hand_bones = []
 for _a in arm_info:
-    if _a.get("fore") and byname[_a["fore"]].children:
+    if _a.get("ik") and _a["ik"]["end_bone"]:  # the arm chain's end is the Hand (the wrist), past any twist bones
+        _hand_bones.append(_a["ik"]["end_bone"])
+    elif _a.get("fore") and byname[_a["fore"]].children:
         _hand_bones.append(byname[_a["fore"]].children[0].name)
 for row in table:
     if row["name"] in ("walk", "run") and _foot_bones:
