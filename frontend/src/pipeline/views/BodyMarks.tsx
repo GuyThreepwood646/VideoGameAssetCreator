@@ -4,7 +4,7 @@ import { Info } from '../../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { useEditHistory } from '../../editHistory'
 import { UndoRedoButtons } from '../../components/UndoRedo'
-import { restorePlan, snapshotMarks, type MarkSnapshot } from './marksHistory'
+import { snapshotState, stateRestorePlan, type MarkState } from './marksHistory'
 
 // Mark the body (step 2): the app's marks on the front picture and one other picture (a three-quarter, side or back
 // view), each draggable; all six open enlarged. The marks are a note on this version's pictures (marks.json): moving one,
@@ -301,16 +301,6 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
     }
   }, [versionId])
 
-  const run = useCallback(
-    (p: Promise<Marks>) => {
-      setBusy(true)
-      setError(null)
-      p.then(setData)
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-        .finally(() => setBusy(false))
-    },
-    [],
-  )
   // Undo and redo: each change is saved as before, then a step remembers the marks from before and after it.
   const { history, activate } = useEditHistory()
   const dataRef = useRef<Marks | null>(null)
@@ -323,26 +313,27 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
   }, [data])
   // Puts the marks back to a snapshot with the existing PUT (moves) and reset calls: only what differs is sent.
   const putBack = useCallback(
-    async (target: MarkSnapshot) => {
+    async (target: MarkState) => {
       const cur = dataRef.current
       if (!cur) return
-      const plan = restorePlan(snapshotMarks(cur), target)
+      const plan = stateRestorePlan(snapshotState(cur), target)
       if (plan.moves.length) show(await api.moveMarks(versionId, plan.moves))
       for (const r of plan.resets) show(await api.resetMarks(versionId, r.view, r.joint))
+      if (plan.accepted !== null) show(await api.setMarksAccepted(versionId, plan.accepted))
     },
     [show, versionId],
   )
   const change = useCallback(
     async (label: string, key: string | undefined, p: Promise<Marks>) => {
       const cur = dataRef.current
-      const before = cur ? snapshotMarks(cur) : null
+      const before = cur ? snapshotState(cur) : null
       setBusy(true)
       setError(null)
       try {
         const next = await p
         show(next)
         if (before) {
-          const after = snapshotMarks(next)
+          const after = snapshotState(next)
           history.record({ label, key, undo: () => putBack(before), redo: () => putBack(after) })
         }
       } catch (e: unknown) {
@@ -363,6 +354,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
     (view: MarkView, joint: string) => void change(`remove the ${nameOf(joint)}`, undefined, api.resetMarks(versionId, view, joint)),
     [change, versionId],
   )
+  const sayAccepted = () => void change('say these look right', undefined, api.acceptMarks(versionId))
   const putBackAll = () => void change("put back the app's marks", undefined, api.resetMarks(versionId))
   const historyError = history.lastError ? (history.lastError instanceof Error ? history.lastError.message : String(history.lastError)) : null
 
@@ -449,7 +441,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
             <div className="body-marks-actions">
               <UndoRedoButtons history={history} />
               {data.state === 'check' && (
-                <button type="button" disabled={busy} onClick={() => run(api.acceptMarks(versionId))}>
+                <button type="button" disabled={busy} onClick={sayAccepted}>
                   These look right
                 </button>
               )}

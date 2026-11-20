@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { markKey, restorePlan, snapshotMarks, type MarkSnapshot } from '../src/pipeline/views/marksHistory'
+import { markKey, restorePlan, snapshotMarks, stateRestorePlan, type MarkSnapshot, type MarkState } from '../src/pipeline/views/marksHistory'
 import type { BodyMarks } from '../src/api'
 
 function marks(spec: Record<string, Record<string, { x: number | null; y: number | null; source?: 'app' | 'you' }>>): BodyMarks {
@@ -77,4 +77,36 @@ test('the app mark that was reset and the person mark that was dropped come back
 test('a mark already exactly as it was is left alone', () => {
   const same: MarkSnapshot = { 'front|chin': { x: 10, y: 20, source: 'app' } }
   assert.deepEqual(restorePlan(same, same), { moves: [], resets: [] })
+})
+
+test('a person move, then undo after "These look right": the accept is kept (the flag is not touched)', () => {
+  const before: MarkState = { marks: { 'front|knee_L': { x: 30, y: 40, source: 'app' } }, accepted: true }
+  const afterMove: MarkState = { marks: { 'front|knee_L': { x: 33, y: 40, source: 'you' } }, accepted: true }
+  const plan = stateRestorePlan(afterMove, before)
+  assert.deepEqual(plan.moves, [])
+  assert.deepEqual(plan.resets, [{ view: 'front', joint: 'knee_L' }])
+  assert.equal(plan.accepted, true, 'the reset clears the accept, so it is set again after the put-back')
+})
+
+test('undo of "These look right" clears the flag and changes no marks', () => {
+  const before: MarkState = { marks: { 'front|knee_L': { x: 30, y: 40, source: 'app' } }, accepted: false }
+  const accepted: MarkState = { marks: { 'front|knee_L': { x: 30, y: 40, source: 'app' } }, accepted: true }
+  assert.deepEqual(stateRestorePlan(accepted, before), { moves: [], resets: [], accepted: false })
+})
+
+test('redo of "These look right" sets the flag again', () => {
+  const before: MarkState = { marks: {}, accepted: false }
+  const accepted: MarkState = { marks: {}, accepted: true }
+  assert.deepEqual(stateRestorePlan(before, accepted), { moves: [], resets: [], accepted: true })
+})
+
+test('an undo of "Put back the app\'s marks" brings back the person marks and the accept they had', () => {
+  const before: MarkState = { marks: { 'front|chin': { x: 12, y: 20, source: 'you' } }, accepted: true }
+  const putBack: MarkState = { marks: { 'front|chin': { x: 10, y: 20, source: 'app' } }, accepted: false }
+  assert.deepEqual(stateRestorePlan(putBack, before), { moves: [{ view: 'front', joint: 'chin', x: 12, y: 20 }], resets: [], accepted: true })
+})
+
+test('a step with no change to the flag and no mark change makes no calls', () => {
+  const s: MarkState = { marks: { 'front|chin': { x: 10, y: 20, source: 'app' } }, accepted: true }
+  assert.deepEqual(stateRestorePlan(s, s), { moves: [], resets: [], accepted: null })
 })

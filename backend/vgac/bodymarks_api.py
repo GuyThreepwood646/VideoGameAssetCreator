@@ -38,6 +38,10 @@ class MarksIn(BaseModel):
     accept: bool = False
 
 
+class AcceptedIn(BaseModel):
+    accepted: bool
+
+
 class ResetIn(BaseModel):
     view: str | None = Field(default=None, max_length=16)
     joint: str | None = Field(default=None, max_length=32)
@@ -137,6 +141,16 @@ def put_marks(vid: str, body: MarksIn, db: Session = Depends(get_session)) -> di
         raise HTTPException(400, str(e))
     if body.accept:
         bodymarks.accept(doc)
+    publish(db, v, doc)
+    return out(v, doc)
+
+
+@router.put("/api/versions/{vid}/marks/accepted")
+def put_marks_accepted(vid: str, body: AcceptedIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Set or clear "These look right" as it was: used by undo and redo of that step (and nothing else)."""
+    v = _turnaround(db, vid)
+    doc = load(db, v)
+    bodymarks.set_accepted(doc, body.accepted)
     publish(db, v, doc)
     return out(v, doc)
 

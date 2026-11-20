@@ -52,3 +52,21 @@ export function restorePlan(
   }
   return { moves, resets }
 }
+
+// A step's state: where each mark is and who placed it, and whether the person said "These look right".
+export type MarkState = { marks: MarkSnapshot; accepted: boolean }
+
+export function snapshotState(d: BodyMarks): MarkState {
+  return { marks: snapshotMarks(d), accepted: !!d.accepted }
+}
+
+// The whole put-back for a state: the moves and resets for the marks, and the flag to set afterwards (null when it
+// already is right). A reset always clears the flag (the app's marks start again), so the flag is decided after the resets.
+export function stateRestorePlan(
+  current: MarkState,
+  target: MarkState,
+): { moves: MarkMove[]; resets: { view: MarkView; joint: string }[]; accepted: boolean | null } {
+  const { moves, resets } = restorePlan(current.marks, target.marks)
+  const afterMarks = resets.length > 0 ? false : current.accepted
+  return { moves, resets, accepted: target.accepted !== afterMarks ? target.accepted : null }
+}

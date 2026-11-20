@@ -974,6 +974,8 @@ export const api = {
   getMarks: (vid: string) => get<BodyMarks>(`/api/versions/${vid}/marks`),
   moveMarks: (vid: string, moves: MarkMove[]) => put<BodyMarks>(`/api/versions/${vid}/marks`, { moves }),
   acceptMarks: (vid: string) => put<BodyMarks>(`/api/versions/${vid}/marks`, { accept: true }),
+  // Undo and redo of "These look right": sets the flag as it was.
+  setMarksAccepted: (vid: string, accepted: boolean) => put<BodyMarks>(`/api/versions/${vid}/marks/accepted`, { accepted }),
   resetMarks: (vid: string, view?: MarkView, joint?: string) =>
     post<BodyMarks>(`/api/versions/${vid}/marks/reset`, view ? (joint ? { view, joint } : { view }) : {}),
   paletteFromImage: (image: string, colors: 8 | 16 | 32 = 8) => post<PaletteResult>('/api/palette-from-image', { image, colors }),
