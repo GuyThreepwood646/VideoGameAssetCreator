@@ -141,6 +141,9 @@ export function FineTune({
   // How the views are turned (turn_method): the LoRA list and the angle strength follow the choice on screen.
   const turnMethod = (String(values.turn_method ?? target.params?.turn_method ?? 'standard') || 'standard') as TurnMethod
 
+  // WP-76: a rig whose hands are one lump (no finger bones) relaxes only the wrist; the rig step records the finger count per hand.
+  const handFingers = target.metrics?.hand_fingers
+  const restingNoFingers = Array.isArray(handFingers) && handFingers.length > 0 && handFingers.every((n) => n === 0)
   const schemaHasFlag = visible.some((p) => p.simple !== undefined)
   // The concept step always shows its add-ons section (it says when nothing is tested and offers your own).
   const shown = visible.filter(
@@ -450,6 +453,9 @@ export function FineTune({
         <fieldset className="resting-group">
           <legend>Resting pose</legend>
           <div className="adjust-grid">{simpleShown.filter((p) => p.group === 'Resting pose').map((p) => renderField(p, false))}</div>
+          {stage === 'rig' && restingNoFingers && (
+            <div className="muted small">This character&apos;s hands have no fingers to bend, so only the wrist relaxes. The hand shape and finger curl set how far the wrist bends.</div>
+          )}
           {stage === 'rig' && (
             <RestingPosePreview
               versionId={target.id}

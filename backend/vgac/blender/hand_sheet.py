@@ -135,7 +135,7 @@ def hand_bounds(side, frames_):
     return (lo + hi) * 0.5, max((hi - lo).length, 0.05)
 
 
-def add_camera(side, centre, reach, axis):
+def _unused_add_camera(side, centre, reach, axis):
     cam_d = bpy.data.cameras.new(f"cam_{side}")
     cam_d.type = "ORTHO"
     cam_d.ortho_scale = reach * 1.6
@@ -148,6 +148,52 @@ def add_camera(side, centre, reach, axis):
     return cam
 
 
+# One fixed camera on the whole figure, in front of it (the body faces -Y, as procanim's forward does on these rigs);
+# each picture is a render region cut around the hand of that frame, so the hand is always in the picture.
+from bpy_extras.object_utils import world_to_camera_view  # noqa: E402
+
+FULL = 1024
+REGION = 0.26  # the picture's width as a share of the full frame
+W_arm = arm.matrix_world
+_bb = [W_arm @ b.head_local for b in arm.data.bones]
+_lo = Vector((min(p.x for p in _bb), min(p.y for p in _bb), min(p.z for p in _bb)))
+_hi = Vector((max(p.x for p in _bb), max(p.y for p in _bb), max(p.z for p in _bb)))
+BODY_C = (_lo + _hi) * 0.5
+BODY_H = max((_hi - _lo).z, 0.5)
+FORWARD = Vector((0.0, -1.0, 0.0))
+
+cam_d = bpy.data.cameras.new("cam_body")
+cam_d.type = "ORTHO"
+cam_d.ortho_scale = BODY_H * 1.25
+cam_d.clip_start = 0.01
+cam_d.clip_end = 100.0
+CAM = bpy.data.objects.new("cam_body", cam_d)
+scene.collection.objects.link(CAM)
+CAM.location = BODY_C + FORWARD * BODY_H * 3.0
+CAM.rotation_mode = "QUATERNION"
+CAM.rotation_quaternion = (BODY_C - CAM.location).normalized().to_track_quat("-Z", "Z")
+scene.camera = CAM
+scene.render.resolution_x = FULL
+scene.render.resolution_y = FULL
+scene.render.use_border = True
+scene.render.use_crop_to_border = True
+clear_lights()
+key_pos = BODY_C + Vector((-1.0, -1.0, 1.0)) * BODY_H * 0.9 + Vector((0, 0, 0.6))
+light("key", key_pos, 900.0, BODY_H * 0.8)
+light("fill", BODY_C + Vector((1.0, -1.0, 0.3)) * BODY_H * 0.9, 300.0, BODY_H * 0.8)
+light("rim", BODY_C + Vector((0.0, 1.0, 1.0)) * BODY_H * 0.9, 400.0, BODY_H * 0.8)
+
+
+def hand_centre(side, f):
+    """Centre of this hand in world space at frame f (the wrist and every finger bone the rig has)."""
+    hand, fingers = hand_names(side)
+    scene.frame_set(f)
+    bpy.context.view_layer.update()
+    pb = arm.evaluated_get(bpy.context.evaluated_depsgraph_get()).pose.bones
+    pts = [W_arm @ pb[n].matrix.translation for n in [hand] + fingers if n in pb]
+    return sum(pts, Vector()) / max(len(pts), 1)
+
+
 result = {"size": size, "sides": {}, "clips": {}}
 for clip in clip_names:
     act = bpy.data.actions.get(clip)
@@ -155,34 +201,27 @@ for clip in clip_names:
         continue
     arm.animation_data.action = act
     frames_ = sample_frames(act)
-    all_frames = list(range(int(act.frame_range[0]), int(act.frame_range[1]) + 1))
     entry = {"frames": [], "frame_numbers": frames_}
     for side in SIDES:
         hand, _ = hand_names(side)
         if hand not in arm.data.bones:
             continue
-        centre, reach = hand_bounds(side, all_frames)
-        axis = curl_axis(side)
-        result["sides"][side] = {"axis": [round(c, 4) for c in axis]}
-        cam = add_camera(side, centre, reach, axis)
-        right = axis.cross(Vector((0, 0, 1))).normalized()
-        up = right.cross(axis).normalized()
-        toward = axis  # subject to camera
+        result["sides"][side] = {"axis": [round(c, 4) for c in curl_axis(side)]}
         for i, f in enumerate(frames_):
-            # The camera and lights follow this frame's hand (the zoom stays the clip's), so the hand is in the picture.
-            c_f, _ = hand_bounds(side, [f])
-            cam.location = c_f + axis * reach * 3.0
-            clear_lights()
-            light("key", c_f + up * reach * 2.0 - right * reach * 2.0 + toward * reach * 2.0, 900.0, reach * 2.0)
-            light("fill", c_f + right * reach * 2.0 + toward * reach * 1.5, 300.0, reach * 2.0)
-            light("rim", c_f - toward * reach * 2.5 + up * reach * 1.5, 500.0, reach * 2.0)
-            scene.frame_set(f)
-            bpy.context.view_layer.update()
+            c = hand_centre(side, f)
+            px = world_to_camera_view(scene, CAM, c)
+            half = REGION / 2.0
+            x0, x1 = max(0.0, px.x - half), min(1.0, px.x + half)
+            y0, y1 = max(0.0, px.y - half), min(1.0, px.y + half)
+            scene.render.border_min_x, scene.render.border_max_x = x0, x1
+            scene.render.border_min_y, scene.render.border_max_y = y0, y1
+            scene.render.resolution_x = FULL
+            scene.render.resolution_y = FULL
+            scene.render.resolution_percentage = 100
             name = f"{clip}_{i}_{side.lower()}.png"
             scene.render.filepath = os.path.join(out_dir, name)
             bpy.ops.render.render(write_still=True)
             entry["frames"].append({"side": side, "file": name})
-        bpy.data.objects.remove(cam, do_unlink=True)
     result["clips"][clip] = entry
     arm.animation_data.action = None
 

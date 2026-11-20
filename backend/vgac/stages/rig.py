@@ -842,7 +842,8 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
             sc.set_metrics(anim_kind=rep.get("kind"), motion=rep.get("motion"), clips=rep.get("clips"),
                            missing_clips=rep.get("missing_clips"), legs_moved=rep.get("legs_moved"),
                            legs_total=rep.get("legs_total"), wings_found=rep.get("wings_found"), walk_probe=rep.get("walk_probe"),
-                           clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []))
+                           clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []),
+                           hand_fingers=[len(h.get("fingers") or []) for h in (rep.get("hands") or [])])  # WP-76: finger chains per hand (0 = one-lump)
         await _retarget(sc, anim_glb, params, chosen_moves)
         await _after_moves(sc, anim_glb, params)
     except Exception as e:

@@ -633,7 +633,7 @@ HAND_SHAPES = {  # (proximal, middle, distal, wrist) at full amount; the hand_po
     "relaxed": (12.0, 16.0, 10.0, 6.0),
     "fist": (50.0, 65.0, 35.0, 8.0),
 }
-GRIP_SHAPE = (80.0, 95.0, 55.0, 12.0)  # attack: a closed grip, blended in over the strike
+GRIP_SHAPE = (50.0, 60.0, 35.0, 12.0)  # attack: a closed grip, blended in over the strike
 FINGER_SCALE = {"Thumb": 0.6, "Index": 0.75, "Middle": 0.9, "Ring": 1.0, "Pinky": 1.1}  # gentle, rising to the little finger
 _hands_cache = None
 
@@ -646,8 +646,8 @@ def _wpos(name, tail=False):
 
 
 def _hand_rig():
-    """Per humanoid hand with finger chains: the wrist bone, the three bones of each finger found, and the curl axis
-    (world). Built once; empty for non-humanoids and one-lump hands."""
+    """Per humanoid hand: the wrist bone, the three bones of each finger found (none on a one-lump hand, which only
+    relaxes at the wrist), and the curl axis (world). Built once; empty for non-humanoids."""
     global _hands_cache
     if _hands_cache is not None:
         return _hands_cache
@@ -667,6 +667,15 @@ def _hand_rig():
             bs = [f"{base}Hand{f}{k}" for k in (1, 2, 3)]
             if all(b in byname for b in bs):
                 fingers[f] = bs
+        if not fingers:
+            # A one-lump hand (no finger bones): only the wrist relaxes. palm_down.py never turns it, so its palm faces
+            # the front of the body; the wrist turns toward the front (f x forward, a positive turn moves f toward it).
+            wrist = _wpos(hand)
+            f_dir = (_wpos(hand, tail=True) - wrist).normalized()
+            n = (forward - f_dir * forward.dot(f_dir)).normalized()
+            axis = f_dir.cross(n).normalized()
+            _hands_cache.append({"hand": hand, "fingers": {}, "axis": axis, "finger_axes": {}})
+            continue
         if "Thumb" not in fingers or not all(k in fingers for k in ("Index", "Middle", "Ring", "Pinky")):
             continue
         wrist = _wpos(hand)
@@ -681,11 +690,19 @@ def _hand_rig():
         # Each finger turns about its own proximal bone's axis (its rest direction x palm normal), so a finger whose
         # rest chain points off the hand's line still curls toward the palm; the hand axis is the fallback.
         finger_axes = {}
-        for f, bs in fingers.items():
+        turned_back = []
+        for f, bs in list(fingers.items()):
             d = _wpos(bs[0], tail=True) - _wpos(bs[0])
+            if f != "Thumb" and d.dot(f_dir) < 0.3 * d.length:  # the thumb points out to the side, so it is not tested
+                # A finger chain whose first bone points back toward the wrist (a rig fault from the finger build) is
+                # left as the rig has it: curling it would fold it through the palm. Recorded in the report.
+                turned_back.append(f)
+                del fingers[f]
+                continue
             ax = d.cross(n)
             finger_axes[f] = ax.normalized() if ax.length > 0.2 * d.length else axis
-        _hands_cache.append({"hand": hand, "fingers": fingers, "axis": axis, "finger_axes": finger_axes})
+        _hands_cache.append({"hand": hand, "fingers": fingers, "axis": axis, "finger_axes": finger_axes,
+                             "turned_back": turned_back})
     return _hands_cache
 
 
@@ -1848,7 +1865,7 @@ def idle_feet_report():
 
 
 report["idle_feet"] = idle_feet_report()
-report["hands"] = [{"hand": h["hand"], "fingers": sorted(h["fingers"]), "axis": [round(c, 4) for c in h["axis"]]} for h in _hand_rig()]  # WP-76
+report["hands"] = [{"hand": h["hand"], "fingers": sorted(h["fingers"]), "turned_back": h.get("turned_back", []), "axis": [round(c, 4) for c in h["axis"]]} for h in _hand_rig()]  # WP-76
 if report["idle_feet"]:
     report["idle_feet"]["plant_error_max"] = _plant_error[0]
 if _stance:
