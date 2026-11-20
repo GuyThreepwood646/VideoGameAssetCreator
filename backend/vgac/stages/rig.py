@@ -254,6 +254,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
+        await _worn_region(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
@@ -1028,6 +1029,41 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
             sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+# WP-69 worn region (blender/worn_region.py). The box is the Heir's backpack measured on the rest pose: behind the
+# body's back surface (Y 0.10 and up), 0.42 either side, between Z 0.65 and 1.60 m. Setting worn_region (default off
+# until it wins on every category it is tried on) turns it on.
+WORN_REGION_BONE = "mixamorig:Spine2"
+WORN_REGION_BOX = {"region_y": 0.10, "region_x": 0.42, "region_z": "0.65,1.60", "seam": 8, "max_change": 0}
+
+
+async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Worn region pass (blender/worn_region.py, WP-69): the worn item's box moves with one bone (Spine2, the chest),
+    with an eight-ring seam. Off unless the setting worn_region is on. metrics.worn_region: {ok, meshes} or {reason}.
+    Never raises."""
+    on = params.get("worn_region") is True
+    sc.set_params(worn_region=on)
+    if not on:
+        return
+    out = sc.dir / "rig_worn_region.glb"
+    report = sc.dir / "worn_region.json"
+    box = WORN_REGION_BOX
+    args = [rig_glb, out, "--report", report, "--bone", WORN_REGION_BONE,
+            "--region-y", str(box["region_y"]), "--region-x", str(box["region_x"]), "--region-z", box["region_z"],
+            "--seam", str(box["seam"]), "--max-change", str(box["max_change"])]
+    try:
+        await sc.blender("worn_region.py", args, log_name="worn_region.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_worn_region.glb")
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(worn_region={"ok": True, "meshes": rep.get("meshes", [])})
+        else:
+            sc.set_metrics(worn_region={"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(worn_region={"error": str(e)[:300]})
 
 
 async def _skin_stretch(sc: StageContext) -> None:
