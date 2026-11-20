@@ -161,3 +161,16 @@ def test_smoothing_guards_keep_dominant_bone_and_limit_change():
     # With a tight change limit a row that moves a lot keeps its original weights.
     W_lim, _ = ls.smooth_zone(W, edges, zone, passes=4, alpha=0.5, keep_dominant=False, max_change=0.01)
     assert np.allclose(W_lim[1], W[1])
+
+
+def test_stretch_floor_drops_sliver_edges():
+    # A 2 mm edge stretched 20 times would dominate the max; the 5 mm floor drops it, a 1 m edge stays.
+    rest = np.array([[0.0, 0, 0], [0.002, 0, 0], [0.0, 0, 0], [1.0, 0, 0]])
+    f = rest.copy()
+    f[1] = [0.04, 0, 0]
+    edges = np.array([[0, 1], [2, 3]])
+    regions = ["legs", "legs"]
+    no_floor = ss.edge_stats(rest, [f], edges, regions)
+    floored = ss.edge_stats(rest, [f], edges, regions, min_rest=ss.FLOOR_M)
+    assert no_floor["all"]["edges"] == 2 and no_floor["all"]["max_ratio"] == pytest.approx(20.0, rel=1e-3)
+    assert floored["all"]["edges"] == 1 and floored["all"]["max_ratio"] == pytest.approx(1.0, rel=1e-3)

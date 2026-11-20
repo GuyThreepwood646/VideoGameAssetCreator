@@ -5,7 +5,8 @@ Run: blender -b --python skin_stretch.py -- <anim.glb> <out.json> [--clips walk,
 For each NLA clip (walk and run by default) the script poses the skinned meshes at evenly spaced frames of the
 clip, and compares every mesh edge with its rest length (the GLB with no clip playing). An edge counts as stretched
 in a clip when its longest length over the sampled frames is more than THRESHOLD (1.3) times its rest length.
-Edges shorter than MIN_REST_M (1 mm) are skipped. Each edge belongs to one body region, from the bones that
+Edges shorter than MIN_REST_M (1 mm) are skipped. Each clip also carries "regions_floor_5mm", the same figures with
+edges under FLOOR_M (5 mm) at rest skipped too, so sliver-length edges cannot dominate the max. Each edge belongs to one body region, from the bones that
 dominate its two ends (see region_of_bone and edge_region):
   hips  the hips bone (the pelvis and the hip joints where they meet it)
   legs  thigh, calf, foot and toe bones
@@ -26,7 +27,8 @@ import sys
 import numpy as np
 
 THRESHOLD = 1.3
-MIN_REST_M = 0.001
+MIN_REST_M = 0.001  # edges shorter than this at rest are skipped in every figure
+FLOOR_M = 0.005  # the second set of figures also skips edges shorter than this at rest (sliver-length edges)
 REGION_PRIORITY = ("hips", "legs", "arms", "torso", "other")
 
 
@@ -172,7 +174,8 @@ def main():  # pragma: no cover - runs inside Blender
             scene.frame_set(f)
             frames.append(coords())
         stats = edge_stats(rest, frames, edges, regions)
-        result["clips"][name] = {"frames": len(frames), "regions": stats}
+        floored = edge_stats(rest, frames, edges, regions, min_rest=FLOOR_M)
+        result["clips"][name] = {"frames": len(frames), "regions": stats, "regions_floor_5mm": floored}
     set_tracks(None)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=1)
