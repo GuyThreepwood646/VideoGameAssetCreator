@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
-import { markable, pointTool, restPoint, withPoint } from '../src/declaredPoints'
+import { markable, pointTool, restPoint, withPoint, withStiffPoint, withoutStiffPoint, withoutStiffPoints, MAX_STIFF_POINTS } from '../src/declaredPoints'
 import type { SurfaceHit } from '../src/viewerTool'
 
 // A mesh moved and turned (as the viewer frames and turns a model): a point on its geometry must come back as the
@@ -41,10 +41,24 @@ test('withPoint replaces only the named part and clears it on null', () => {
   assert.deepEqual(parts[0].location, null) // the input is not changed
 })
 
-test('markable keeps only the sway parts', () => {
+test('markable keeps the sway and stiff parts', () => {
   const parts = [
     { name: 'cape', kind: 'sway', location: null },
     { name: 'belt', kind: 'separate', location: null },
+    { name: 'pack', kind: 'stiff', location: null, locations: [] },
   ]
-  assert.deepEqual(markable(parts).map((p) => p.name), ['cape'])
+  assert.deepEqual(markable(parts).map((p) => p.name), ['cape', 'pack'])
+})
+
+test('stiff points are added, removed and capped', () => {
+  const parts = [{ name: 'pack', kind: 'stiff', location: null, locations: [] as number[][] }]
+  let set = withStiffPoint(parts, 'pack', [0, 1, 0])
+  set = withStiffPoint(set, 'pack', [0.1, 1, 0])
+  assert.deepEqual(set[0].locations, [[0, 1, 0], [0.1, 1, 0]])
+  assert.deepEqual(withoutStiffPoint(set, 'pack', 0)[0].locations, [[0.1, 1, 0]])
+  assert.deepEqual(withoutStiffPoints(set, 'pack')[0].locations, [])
+  let full = parts
+  for (let i = 0; i < MAX_STIFF_POINTS + 3; i++) full = withStiffPoint(full, 'pack', [i, 0, 0])
+  assert.equal(full[0].locations?.length, MAX_STIFF_POINTS)
+  assert.deepEqual(parts[0].locations, []) // the input is not changed
 })

@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, headtris, library, limbjoins, quality
+from .. import declared_parts, guidance, headtris, library, limbjoins, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -438,6 +438,16 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
     if refix:
         sc.progress(0.08, "cleaning up the skin weights")
         await _fix_weights_again(sc, rig_glb)
+    if "moves" in parts:
+        # Stiff parts placed on the parent (WP-69): start from the parent's weights before its stiff pass, then apply
+        # the points again, so a changed point is not added on top of the old one.
+        parent_dir = library.version_dir(sc.asset, parent, sc.settings, create=False)
+        pre = parent_dir / "rig_before_worn_region.glb"
+        parent_parts = library.version_file(parent, "parts", sc.settings)
+        if parent_parts is not None and declared_parts.for_stiff(declared_parts.read_placed(parent_parts)):
+            if pre.is_file():
+                shutil.copy2(pre, rig_glb)
+            await _worn_region(sc, rig_glb, params, parent_parts)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
         sc.set_params(**hp)
@@ -1035,10 +1045,11 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
 # is grown from the point on the rest mesh; the seam and the bone are set in the script.
 
 
-async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any], parts_path: Path | None = None) -> None:
     """Stiff parts (blender/worn_region.py, WP-69): each placed stiff part moves with the spine bone nearest its region.
+    Reads the points from parts_path (the rig version the points were placed on) or this version's own parts file.
     Does nothing when no stiff part is placed. metrics.worn_region: {ok, points, meshes} or {reason}. Never raises."""
-    points = declared_parts.for_stiff(declared_parts.read_placed(sc.file("parts")))
+    points = declared_parts.for_stiff(declared_parts.read_placed(parts_path if parts_path is not None else sc.file("parts")))
     sc.set_params(stiff_parts=[p["name"] for p in points])
     if not points:
         return

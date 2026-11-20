@@ -94,6 +94,8 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE):
     while stack and count < limit:
         u = stack.pop()
         for w in adj[u]:
+            if count >= limit:
+                break
             if not mask[w] and dist[w] <= radius:
                 mask[w] = True
                 count += 1
