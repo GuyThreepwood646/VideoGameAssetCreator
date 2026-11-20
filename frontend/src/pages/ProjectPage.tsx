@@ -183,6 +183,14 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         </div>
       </Link>
       <div className="asset-card-tools">
+        <label className="small tile-toggle" title="Show this asset's picture on the project's tile on the Projects page">
+          <input
+            type="checkbox"
+            checked={asset.show_on_project !== false}
+            onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
+          />{' '}
+          Show on the project tile
+        </label>
         {badge && (
           <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
             {badge.text}
