@@ -340,6 +340,81 @@ def test_retexture_swaps_the_picture_in_the_rig_and_skips_the_rig_run(version_fi
     assert (_base_colour(donor_glb)[..., 0] == base[..., 0]).all()
 
 
+def _retexture_setup(tmp_path, donor_metrics=None, donor_extra=None):
+    """A donor rig of the root geometry, the painted clean-up over it (its picture's red channel 240) and the new rig
+    version's StageContext stand-in. -> (sc, new rig, donor, base picture)."""
+    base = _picture(seed=5)
+    donor_dir = tmp_path / "donor"
+    donor_dir.mkdir()
+    donor_glb = _glb(donor_dir / "rig.glb", base[..., :3])
+    Image.fromarray(base).save(donor_dir / "base_color.png")
+    root = _version("root")
+    donor = _version("donor", stage="rig", parent="root", params={"template_label": "Mixamo", "group_per_vertex": 4},
+                     files={"glb": str(donor_glb), "base_color": str(donor_dir / "base_color.png"), **(donor_extra or {})},
+                     metrics=donor_metrics)
+    donor.folder = donor_dir
+    painted_dir = tmp_path / "painted"
+    painted_dir.mkdir()
+    painted_glb = _glb(painted_dir / "prep.glb", base[..., :3])
+    new_picture = base.copy()
+    new_picture[..., 0] = 240
+    Image.fromarray(new_picture).save(painted_dir / "base_color.png")
+    painted = _version("painted", parent="root", metrics={"painted": True},
+                       files={"glb": str(painted_glb), "base_color": str(painted_dir / "base_color.png")})
+    painted.folder = painted_dir
+    db = _FakeDb(root, painted, donor)
+    new_rig = _version("new_rig", stage="rig", parent="painted", params={"template_label": "Mixamo", "group_per_vertex": 4})
+    new_rig.folder = tmp_path / "new_rig"
+    new_rig.folder.mkdir()
+    lineage_files = {"base_color": str(painted_dir / "base_color.png")}
+    sc = SimpleNamespace(db=db, asset=SimpleNamespace(id="a", project_id="p", category="character"),
+                         settings=SimpleNamespace(blender_timeout_seconds=60), version=new_rig, dir=new_rig.folder,
+                         parent=painted)
+    sc.iter_lineage = lambda include_self=False: iter([painted, root])
+    sc.lineage_file = lambda key, stages=None: Path(lineage_files[key]) if key in lineage_files else None
+    sc.file = lambda key: Path(new_rig.files[key]) if new_rig.files.get(key) else None
+    sc.progress = lambda *a, **k: None
+    sc.register = lambda key, path: new_rig.files.__setitem__(key, str(path)) or str(path)
+    sc.set_metrics = lambda **v: new_rig.metrics.update(v)
+    sc.set_params = lambda **v: new_rig.params.update(v)
+    sc.save = lambda: None
+    return sc, new_rig, donor, base, painted_dir
+
+
+def test_retexture_over_a_separated_rig_colours_the_caps_from_the_new_paint(version_files, tmp_path, monkeypatch):
+    caps = tmp_path / "shape_caps.json"
+    caps.write_text('{"format": 1, "caps": []}', encoding="utf-8")
+    sc, new_rig, donor, base, painted_dir = _retexture_setup(tmp_path, {"separation": {"changed": True}}, {"shape_caps": str(caps)})
+    calls = []
+
+    def fake_recolour(settings, rig_glb, caps_json, picture, out_png, timeout=None):
+        calls.append((Path(rig_glb), Path(caps_json), Path(picture)))
+        im = np.array(Image.open(picture).convert("RGBA"))
+        im[..., 1] = 7  # the caps' texels, coloured from the new paint
+        Image.fromarray(im).save(out_png)
+        return {"ok": True, "recoloured": 2, "caps": [{"ring_colour_diff": 0.9}, {"ring_colour_diff": 1.1}]}
+
+    monkeypatch.setattr(rig, "judge", lambda _sc: asyncio.sleep(0))
+    monkeypatch.setattr(rig, "link_textures", lambda s: new_rig.files.__setitem__("base_color", str(painted_dir / "base_color.png")))
+    from vgac import separate
+
+    monkeypatch.setattr(separate, "recolour", fake_recolour)
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    assert calls and calls[0][1] == caps and calls[0][2] == painted_dir / "base_color.png"  # the new paint, not the old caps
+    assert new_rig.metrics["caps_recoloured"] == {"caps": 2, "ring_colour_diff": [0.9, 1.1]}
+    assert Path(new_rig.files["base_color"]).name == rig.RECOLOURED_FILE
+    col = _base_colour(Path(new_rig.files["glb"]))
+    assert (col[..., 0] == 240).all() and (col[..., 1] == 7).all()
+
+
+def test_retexture_over_a_separated_rig_without_its_caps_file_makes_the_rig_again(version_files, tmp_path, monkeypatch):
+    sc, new_rig, donor, base, painted_dir = _retexture_setup(tmp_path, {"separation": {"changed": True}})
+    monkeypatch.setattr(rig, "judge", lambda _sc: asyncio.sleep(0))
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is False
+    assert "no caps file" in new_rig.metrics["retexture_why"]
+    assert "glb" not in new_rig.files  # nothing of the donor was taken
+
+
 # --- export: the input of an edited version carries the new picture --------------------------------------------
 
 

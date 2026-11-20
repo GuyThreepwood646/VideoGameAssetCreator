@@ -2,8 +2,10 @@
 
 Takes parameters only: which arm (`side`), the gap to open (`gap`, metres) and how far down the upper arm the cut may
 start (`start`, a share of the upper arm from the shoulder joint). The rig's skin weights say where the arm is; the
-step 4 model is cut, capped and checked in Blender, and the result is a new GLB and a report. The caller (WP-26's
-Shape tab job) makes the new step 4 version from it; nothing here touches the library.
+step 4 model is cut, capped and checked in Blender, and the result is a new GLB and a report. The callers (WP-26's
+Shape tab job, which makes a new step 4 version from it, and the rig step, which cuts an arm the joined-limb measure
+finds joined, WP-75) keep what they need; nothing here touches the library. recolour() colours a cut rig's caps again
+from a repainted picture.
 
 Report keys the caller reads: changed (a new model was written; false means keep the one you have, and `messages`
 says why), ok (no new open edges, edges with three or more faces, pieces or crossing triangles), check, input.check,
@@ -131,3 +133,27 @@ def summary(report: dict[str, Any]) -> dict[str, Any]:
             "skipped": [c.get("reason") for c in caps if not c.get("ok")],
             "open_edges": ck.get("open_edges"), "bad_edges": ck.get("bad_edges"), "pieces": ck.get("shells"),
             "new_crossings": ck.get("new_crossings"), "caps_placed": report.get("uv", {}).get("placed", 0)}
+
+
+def recolour(settings: Settings, rig_glb: Path, caps_json: Path, picture: Path, out_png: Path,
+             timeout: float | None = 600) -> dict[str, Any]:
+    """WP-75: the caps of a separated rig coloured again from a new picture (a repainted clean-up), the way the cut
+    coloured them (blender/separate.py --recolour). The caps are found by caps.json's texture triangles; every other
+    texel of `picture` is kept. -> the report: ok, recoloured (caps coloured), caps [{side, of, triangles, found,
+    ring_colour_diff, ...}], reason when ok is false. out_png is written only when ok."""
+    for f in (rig_glb, caps_json, picture):
+        if not Path(f).is_file():
+            raise ToolError(f"missing input: {f}")
+    out_png = Path(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    report_path = out_png.parent / "recolour.json"
+    report_path.unlink(missing_ok=True)
+    run_blender(settings, "separate.py", ["--recolour", Path(rig_glb), Path(caps_json), Path(picture), out_png,
+                                          "--report", report_path],
+                log_path=out_png.parent / "recolour.log", timeout=timeout)
+    if not report_path.is_file():
+        raise ToolError("the cap recolour wrote no report (see recolour.log)")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not report.get("ok"):
+        out_png.unlink(missing_ok=True)
+    return report

@@ -458,3 +458,64 @@ def test_each_side_of_a_separated_arm_is_rounded_and_the_two_never_touch(tmp_pat
     assert arm.max() > gap / 2 + 0.5 * cap["dome_m"] and body.min() < -(gap / 2 + 0.5 * cap["dome_m"])
     assert np.ptp(arm) > 0.5 * cap["dome_m"] and np.ptp(body) > 0.5 * cap["dome_m"]
     assert np.abs(d).min() < gap / 4 and rep["check"]["crossing_kinds"]["cap_cap"] == 0
+
+
+# --- WP-75: a repainted clean-up over a separated rig: the caps coloured again from the new paint ------------------
+
+
+def test_ring_plane_fits_the_ring_and_faces_the_caps_own_surface():
+    ring = np.array([[np.cos(a), np.sin(a), 0.002 * np.sin(3 * a)] for a in np.linspace(0, 2 * np.pi, 24, endpoint=False)])
+    pc, pn, sign = sp.ring_plane(ring, [[0.0, 0.0, -0.5], [0.3, 0.0, -0.4]])
+    assert np.allclose(pc, 0.0, atol=1e-3) and abs(abs(pn[2]) - 1.0) < 1e-3
+    assert sign * pn[2] < 0  # the surface beside the ring lies below it
+    assert sp.ring_plane(ring, [[0.0, 0.0, 0.5]])[2] * sp.ring_plane(ring, [[0.0, 0.0, 0.5]])[1][2] > 0
+
+
+def test_match_faces_finds_every_face_on_a_cap_triangle_even_where_a_dome_repeats_one():
+    tri = [[0.1, 0.1], [0.2, 0.1], [0.1, 0.2]]
+    other = [[0.6, 0.6], [0.7, 0.6], [0.6, 0.7]]
+    centres = np.array([np.mean(tri, axis=0), np.mean(other, axis=0), np.mean(tri, axis=0), [0.9, 0.9]])
+    faces, found = sp.match_faces(centres, [tri, other, tri])
+    assert faces == [0, 1, 2] and found == 3
+    faces, found = sp.match_faces(centres, [[[0.4, 0.4], [0.5, 0.4], [0.4, 0.5]]])
+    assert faces == [] and found == 0
+
+
+@pytest.mark.skipif(not BLENDER.is_file(), reason="needs Blender (VGAC_TEST_BLENDER)")
+def test_a_repainted_picture_colours_the_caps_from_the_new_ring(tmp_path):
+    from PIL import Image
+
+    from vgac import shape
+    from vgac.config import Settings
+
+    _fused(tmp_path)
+    report = tmp_path / "s.json"
+    subprocess.run([str(BLENDER), "-b", "-t", "2", "--python", str(SCRIPT), "--", str(tmp_path / "step4.glb"),
+                    str(tmp_path / "rig.glb"), str(tmp_path / "s.glb"), "--report", str(report), "--side", "L",
+                    "--rigged-out", str(tmp_path / "s_rig.glb")], check=True, capture_output=True, timeout=600)
+    rep = json.loads(report.read_text(encoding="utf-8"))
+    assert rep["changed"]
+    islands = rep["uv"]["cap_islands"]
+    (tmp_path / "caps.json").write_text(json.dumps({"format": 1, "caps": islands}), encoding="utf-8")
+    old = np.array([0.6, 0.4, 0.3]) * 255
+    new = np.array([40, 120, 210])
+    Image.new("RGBA", (256, 256), (*[int(x) for x in new], 255)).save(tmp_path / "repainted.png")  # the ring repainted
+    st = Settings.model_construct(blender_exe=BLENDER)
+    out = wrap.recolour(st, tmp_path / "s_rig.glb", tmp_path / "caps.json", tmp_path / "repainted.png",
+                        tmp_path / "recoloured.png", timeout=600)
+    assert out["ok"] and out["recoloured"] == len(islands) == 2
+    assert all(c["found"] == c["triangles"] and c["ring_points"] > 0 for c in out["caps"])
+    assert all(c["ring_colour_diff"] < 2.0 for c in out["caps"])  # WP-27's own bound on this one-colour fixture
+    px = np.asarray(Image.open(tmp_path / "recoloured.png").convert("RGB")).astype(float)
+    on_caps = np.asarray(shape.cap_mask(islands, (256, 256), margin=0)) > 0
+    assert on_caps.any()
+    cap_col = px[on_caps].mean(axis=0)
+    assert np.abs(cap_col - new).max() < 3.0 and np.abs(cap_col - old).max() > 50
+
+
+def test_recolour_wrapper_needs_its_inputs(tmp_path):
+    from vgac.config import Settings
+
+    with pytest.raises(ToolError, match="missing input"):
+        wrap.recolour(Settings.model_construct(blender_exe=BLENDER), tmp_path / "no.glb", tmp_path / "caps.json",
+                      tmp_path / "p.png", tmp_path / "o.png")
