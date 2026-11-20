@@ -2185,15 +2185,18 @@ POSE_HINT_DEG = 20.0  # the pose search of a drawn view covers turns this far ei
 
 
 PRIOR_DEG = 30.0      # a pose agrees with the expected turn when its turn is within this of it
+DRAWN_PRIOR_DEG = 20.0  # the same for a drawn view and the turn it was drawn at
+PICTURE_SEARCH_DEG = 45.0  # the step 1 picture's search covers turns this far either side of its expected turn
 
 
 def _settle_by_prior(mesh: dict[str, np.ndarray], alpha: np.ndarray, pic: np.ndarray, tex: np.ndarray,
                      centre: np.ndarray, scale: float, poses: list[Any], prior: float, min_iou: float,
-                     tilts: list[float] | None, lenses: list[float | None] | None) -> tuple[Any, dict[str, Any], str | None]:
+                     tilts: list[float] | None, lenses: list[float | None] | None, window: float = PRIOR_DEG,
+                     keep: int = 3) -> tuple[Any, dict[str, Any], str | None]:
     """WP-61 option a: the pose to fit when the picture's turn is expected (the step 1 picture at the model's front, the
     original at the step 1 picture's pose). Among the poses scoring within D2_MARGIN of the best, the one nearest the
-    expected turn is taken, when it is within PRIOR_DEG of it ("kept" when that is the best, else "tie-break"). When none
-    is, the best pose within PRIOR_DEG of it is searched for: taken when it scores within 2 * D2_MARGIN of the best
+    expected turn is taken, when it is within `window` of it ("kept" when that is the best, else "tie-break"). When none
+    is, the best pose within `window` of it is searched for: taken when it scores within 2 * D2_MARGIN of the best
     ("override"), else the picture is refused ("refused"). Returns (pose, record, refusal reason or None)."""
     from . import posesearch as ps
 
@@ -2203,16 +2206,16 @@ def _settle_by_prior(mesh: dict[str, np.ndarray], alpha: np.ndarray, pic: np.nda
         return [round(p.turn, 2), round(p.tilt, 2), p.lens, round(p.score, 4)]
 
     near = [p for p in poses if best.score - p.score <= D2_MARGIN and p.iou >= min_iou]
-    agree = [p for p in near if _angdiff(p.turn, prior) <= PRIOR_DEG]
+    agree = [p for p in near if _angdiff(p.turn, prior) <= window]
     rec: dict[str, Any] = {"prior": round(prior, 2), "best": pose_of(best)}
     if agree:
         pick = min(agree, key=lambda p: (_angdiff(p.turn, prior), -p.score))
         rec.update(decision="kept" if pick is best else "tie-break", picked=pose_of(pick), gap=round(best.score - pick.score, 4))
         return pick, rec, None
-    turns = [prior + d for d in (-PRIOR_DEG, -20.0, -10.0, 0.0, 10.0, 20.0, PRIOR_DEG)]
+    turns = [prior + float(d) for d in np.linspace(-window, window, int(round(2 * window / 10.0)) + 1)]
     try:
-        alt = [p for p in ps.search(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses, rgb=pic, tex=tex)
-               if _angdiff(p.turn, prior) <= PRIOR_DEG and p.iou >= min_iou]
+        alt = [p for p in ps.search(mesh, alpha, centre, scale, keep=keep, turns=turns, tilts=tilts, lenses=lenses, rgb=pic,
+                                    tex=tex) if _angdiff(p.turn, prior) <= window and p.iou >= min_iou]
     except Exception:  # noqa: BLE001  (no pose near the expected turn: refused below)
         alt = []
     if alt and best.score - alt[0].score <= 2 * D2_MARGIN:
@@ -2220,7 +2223,7 @@ def _settle_by_prior(mesh: dict[str, np.ndarray], alpha: np.ndarray, pic: np.nda
         return alt[0], rec, None
     rec.update(decision="refused", picked=None, gap=round(best.score - alt[0].score, 4) if alt else None)
     why = (f"its best pose (turn {best.turn:.0f}) is {_angdiff(best.turn, prior):.0f} degrees from the turn it is expected at "
-           f"({prior:.0f}), and no pose within {PRIOR_DEG:.0f} degrees of that scores within {2 * D2_MARGIN:g} of it")
+           f"({prior:.0f}), and no pose within {window:.0f} degrees of that scores within {2 * D2_MARGIN:g} of it")
     return best, rec, why
 
 
@@ -2244,8 +2247,9 @@ GUARD_MIN_SHARE = 0.05  # a drawn view overlaps a picture when it sees at least 
 def _guard_by_views(v: "View", src: Any, fitted: dict[str, "View"], sources: dict[str, Any], atlas: "Atlas",
                     mesh: dict[str, np.ndarray], centre: np.ndarray, scale: float, prepared: "Prepared", pic_n: int | None,
                     log: Callable[[str], None] | None) -> None:
-    """WP-61 option a's guard: a picture whose pose the expected turn decided (a tie-break or an override) is refused when
-    a drawn view that sees the same texels paints them more than D2_THRESHOLD apart. The checks go in its record."""
+    """WP-61 option a's guard: a picture or drawn view whose pose the expected turn decided (a tie-break or an override)
+    is refused when another fitted picture or view that sees the same texels paints them more than D2_THRESHOLD apart.
+    The checks go in its record."""
     ps_ = v.info.get("pose_search")
     pr = ps_.get("prior") if isinstance(ps_, dict) else None
     if not v.ok or not pr or pr.get("decision") not in ("tie-break", "override"):
@@ -2263,7 +2267,7 @@ def _guard_by_views(v: "View", src: Any, fitted: dict[str, "View"], sources: dic
     checks: list[dict[str, Any]] = []
     for n, s in sources.items():
         w = fitted.get(n)
-        if (n not in INTENDED_TURN and n != "front") or w is None or not w.ok or "yaw" not in w.info:
+        if w is None or w is v or n == v.name or not w.ok or "yaw" not in w.info:
             continue
         lb, vb = lab_of(s)
         d, share = view_disagreement(atlas, mesh, centre, scale, (la, va, pose_of(v)), (lb, vb, pose_of(w)))
@@ -2287,10 +2291,12 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
               centre: np.ndarray, scale: float, size: int, min_iou: float, atlas_job: Any,
               log: Callable[[str], None] | None, hint: float | None = None,
               turns: list[float] | None = None, tilts: list[float] | None = None,
-              lenses: list[float | None] | None = None, prior: float | None = None) -> tuple["View | None", dict[str, Any]]:
+              lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
+              keep: int = 3) -> tuple["View | None", dict[str, Any]]:
     """WP-61: the pose search (turn, tilt, lens) for one picture, then the D2 check, then the fit at the picked pose.
     hint: the turn the view is meant to be seen from; the search covers turns within POSE_HINT_DEG of it (None: all turns).
-    prior: the turn the picture is expected at (_settle_by_prior); the search still covers `turns`.
+    prior: the turn the picture is expected at, window: how far from it a pose still agrees (_settle_by_prior); the
+    search still covers `turns`. keep: how many coarse poses are refined.
     Returns (view, record). The view is None when the search fails outright (the caller keeps its turn-only fit, logged);
     otherwise it is ok, or refused for D2 (the reason names the rival) or for its silhouette."""
     from . import posesearch as ps
@@ -2300,7 +2306,8 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
         turns = [float(hint) + d for d in (-POSE_HINT_DEG, -POSE_HINT_DEG / 2, 0.0, POSE_HINT_DEG / 2, POSE_HINT_DEG)]
     try:
         tm: dict[str, float] = {}
-        poses = ps.search(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses, rgb=pic, tex=tex, timings=tm)
+        poses = ps.search(mesh, alpha, centre, scale, keep=keep, turns=turns, tilts=tilts, lenses=lenses, rgb=pic, tex=tex,
+                          timings=tm)
     except Exception as e:  # a failed search keeps the turn-only fit, and the record says so
         if log:
             log(f"view {name}: pose search failed ({e}); the turn-only fit is kept")
@@ -2310,7 +2317,7 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
     prior_rec: dict[str, Any] | None = None
     if prior is not None and top.iou >= min_iou:
         top, prior_rec, refuse_why = _settle_by_prior(mesh, alpha, pic, tex, centre, scale, poses, float(prior), min_iou,
-                                                      tilts, lenses)
+                                                      tilts, lenses, window, keep)
     rec: dict[str, Any] = {"turn": round(top.turn, 2), "tilt": round(top.tilt, 2), "lens": top.lens, "iou": round(top.iou, 4),
                            "score": round(top.score, 4), "terms": {k: round(v, 4) for k, v in top.terms.items()},
                            "hint": hint, "seconds": tm, "rivals": []}
@@ -2330,7 +2337,7 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
         far = max(_angdiff(r.turn, top.turn), abs(r.tilt - top.tilt)) > D2_FAR_DEG or r.lens != top.lens
         if not far:
             continue
-        if prior is not None and _angdiff(r.turn, float(prior)) > PRIOR_DEG:
+        if prior is not None and _angdiff(r.turn, float(prior)) > window:
             continue
         d, only = pose_disagreement(atlas, mesh, lab, valid, centre, scale, (top.turn, top.tilt, top.lens),
                                     (r.turn, r.tilt, r.lens))
@@ -2399,7 +2406,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             near = prec.get("tilt") is not None
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log, INTENDED_TURN[name],
                               tilts=[float(prec["tilt"]) + d for d in (-20.0, -10.0, 0.0, 10.0, 20.0)] if near else None,
-                              lenses=[prec.get("lens")] if near else None)
+                              lenses=[prec.get("lens")] if near else None, prior=INTENDED_TURN[name],
+                              window=DRAWN_PRIOR_DEG, keep=1)  # expected at the turn it was drawn at; best coarse pose only
             if pv is not None and (pv.ok or not _silhouette_refused(pv)):  # a D2 refusal stands: the view does not paint
                 return pv
             return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)  # search failed
@@ -2409,8 +2417,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     # measured and are no faster, the large images saturate memory either way); which ones are used, and in which
     # order, is decided afterwards exactly as if they had been fitted one after another.
     wide = front_half(PICTURE_YAWS, head_yaw) if front_known else PICTURE_YAWS
-    # WP-61 option a: the model is built with the step 1 picture at its front, so that is the turn it is expected at
-    picture_prior = float(head_yaw) if front_known else 0.0
+    # WP-61 option a: the model is built with the step 1 picture at its front (turn 0), so that is the turn it is expected
+    # at, whatever the clean-up decided about the face; it is searched within PICTURE_SEARCH_DEG of that
+    picture_prior = 0.0
     wanted: list[tuple[str, Any, list[float]]] = [("picture", picture, picture_yaws or wide)]
     wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, FRONT_YAWS)) if s is not None]
     if mode != "off":
@@ -2426,7 +2435,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         # WP-61: the picture's pose search first; the drawn views wait for its tilt and lens (submitted earlier, so a
         # view waiting on it never holds back a job it needs)
         # the turns the caller allows (picture_yaws), else the front half when the facing is decided, else the whole circle
-        picture_turns = [float(y) for y in picture_yaws] if picture_yaws else (wide if front_known else None)
+        picture_turns = ([float(y) for y in picture_yaws] if picture_yaws else
+                         [picture_prior + float(d) for d in np.arange(-PICTURE_SEARCH_DEG, PICTURE_SEARCH_DEG + 1e-6, 10.0)])
         picture_pose_job = pool.submit(contextvars.copy_context().run, _pose_fit, mesh, tex, prepared, picture, pic_n, "picture",
                                        centre, scale, size, min_iou, atlas_job, log, None, picture_turns, None, None,
                                        picture_prior)
@@ -2454,10 +2464,11 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             front = pv
         # a picture whose pose the expected turn decided is checked against the drawn views that see the same texels
         sources = {n: s for n, s, _ in wanted}
-        _guard_by_views(front, picture, fitted, sources, atlas_job.result(), mesh, centre, scale, prepared, pic_n, log)
-        if "source" in fitted:
-            _guard_by_views(fitted["source"], source, fitted, sources, atlas_job.result(), mesh, centre, scale, prepared,
-                            pic_n, log)
+        views_now = {**fitted, "picture": front}
+        for n in ["picture", "source", *INTENDED_TURN]:  # every picture or view whose turn its expected turn settled
+            if n in views_now:
+                _guard_by_views(views_now[n], sources[n], views_now, sources, atlas_job.result(), mesh, centre, scale,
+                                prepared, pic_n, log)
         front.info["front_view"] = bool(abs(((front.info.get("yaw", 0.0) + 180) % 360) - 180) <= 25)
         # a drawn view fitted at a turn that contradicts the front is refused like one that does not fit (item 8)
         front_yaw, front_by = front_turn({**fitted, "picture": front}, head_yaw)

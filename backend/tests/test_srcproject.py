@@ -404,3 +404,14 @@ def test_the_original_picture_is_pose_searched_with_a_fidelity_hint(monkeypatch:
     monkeypatch.setattr(srcproject, "_pose_fit", spy)
     srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", yaw_hint=lambda: 0.0)
     assert "source" in searched and "picture" in searched
+
+
+def test_a_drawn_view_near_tie_goes_to_the_turn_it_was_drawn_at() -> None:
+    """A drawn left view (drawn at 90) whose best pose is 62.5 on a near four-fold model: a pose at 85 scoring within the
+    margin is taken (tie-break, 20-degree window), as the hat's left view needed (WP-61)."""
+    from vgac import posesearch as ps
+
+    poses = [ps.Pose(62.5, 12.5, None, 0.9, 3.0, {}), ps.Pose(85.0, 12.5, None, 0.9, 2.995, {})]
+    pick, rec, why = srcproject._settle_by_prior(None, None, None, None, None, 1.0, poses, 90.0, 0.5, None, None,
+                                                 window=srcproject.DRAWN_PRIOR_DEG, keep=1)
+    assert why is None and pick.turn == 85.0 and rec["decision"] == "tie-break"
