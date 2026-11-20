@@ -18,12 +18,19 @@ added the weights, the cap colour and the rest pose (evidence in bakeoff/wp25 an
    air pocket) is cut too and becomes a hole in the cap, so the cap is exactly the plane's section of the solid. A cut
    piece whose inner cut does not close is refused (reason `inner_cut_not_closed`; for example a flat wall lying in the
    plane), and so is a closed cut that would only fence off a small patch.
-4. The gap. Inside the outline, every surface point within gap/2 of the plane, the cut's own copies included, moves
-   straight off the plane to its own side (at most gap/2), so a cloth layer lying along the plane cannot poke through a
-   cap. The gap narrows to nothing over RAMP at the cut's ends, which stay put: they are the ends of the new armpit.
+4. The gap (after step 5's weights, which are read on the surface as cut). Each side's end is rounded (WP-74):
+   every copy moves off the plane to its own side by gap/2 plus a dome height (DOME_SHARE of the cap's half-width, at
+   most DOME_MAX), and every other surface point near the plane inside the outline or beside the cut is drawn back
+   with it, less the further it is (drawn_back keeps the order of points along the normal, so a cloth layer lying
+   along the plane cannot poke through a cap and no layers cross). It all
+   narrows to nothing over RAMP at the cut's ends, which stay put: they are the ends of the new armpit. At rest the
+   two sides meet in a crease, as an arm against a torso, not a slot between two walls.
 5. Weights. Each side of the fused strip lets go of the other side's weights (fading in past `start`).
-6. Caps. One constrained Delaunay triangulation of the outline with inner points gives both caps, parallel copies a
-   gap apart, joined at the new armpit edge; inner points blend the weights of the nearest edge points.
+6. Caps. One constrained Delaunay triangulation of the outline with inner points gives both caps, joined at the
+   new armpit edge. Each is a dome (dome_field: a membrane over the outline, with an elliptical section), from its
+   drawn-back edge to gap/2 off the plane at its crown, so the arm's end and the body's side are both rounded and a
+   gap apart at their closest. Inner points blend the weights of the nearest edge points. A dome that still makes
+   surfaces cross is made again lower at that cut (DOME_STEP each pass, flat under DOME_LEAST; `dome_lowered`).
 7. Weights again (WP-27, _rederive). The arm's own surface is flooded from the arm side of its cuts; on it only the
    arm's bones stay, everywhere else past the shoulder this arm's bones go (hair or robe the build skinned to the arm),
    points left with nothing are filled from their own side, and each side is smoothed on its own with a volume limit.
@@ -35,8 +42,8 @@ added the weights, the cap colour and the rest pose (evidence in bakeoff/wp25 an
    is read just inside the surface triangles beside it (only texels the surface covers), cap pixels blend those by
    inverse distance, and the surface's own detail is mirrored across the ring within a small swing. Every picture of
    the material is filled so; normal maps get a flat normal. Cap corners get shading normals blended from the surface
-   round the ring (and half the cap's own facing, never more than 60 degrees off it), so a cap does not shade as a
-   separate flat block. Nothing else in any picture
+   round the ring (and half the dome's own facing there, never more than 60 degrees off it), turning to the dome's
+   own facing further in. Nothing else in any picture
    changes. The report lists each cap's texture triangles (the paint tools find the caps there) and its colour match.
 10. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
    not cross before. `ok` is false when any of them got worse.
@@ -70,6 +77,15 @@ RELEASE_RAMP = 0.15  # share of the upper arm past `start` over which the lettin
 RELEASE_NEAR = 0.06  # m: within this of the cut a point's side is its side of the plane, further out its arm share
 SLAB_MARGIN = 0.0005  # m kept between a pushed point and the cap
 CAP_SPACING_MIN = 0.02  # m: the least spacing of a cap's inner points (twice the cut's edge length otherwise)
+CAP_SPACING_MAX = 0.05  # m: the most
+DOME_SHARE = 0.3  # a cap's dome height as a share of its half-width (the furthest a point inside it is from its edge)
+DOME_MAX = 0.02  # m: the highest dome
+DRAW_REACH = 2.5  # the surface beside a cut is drawn back over this many times (gap/2 + dome height) from the plane
+GAP_NEAR = 0.01  # m: outside the outline the gap alone (WP-27's) fades out over this
+DRAW_NEAR = 1.5  # outside the cut's outline, the drawing back fades out over this many reaches from the cut
+DOME_STEP = 0.7  # a dome that made surfaces cross is made again at this share of its height
+DOME_LEAST = 0.2  # under this share it is made flat (the gap alone, as before WP-74)
+CAP_NORMAL_FADE = 0.03  # m: a cap point this far from its ring shades by its own dome alone
 NOT_UPPER_ARM = 0.35  # a weight-line piece starting this far past `start` (in upper-arm lengths) is not an upper-arm join
 RAISE_DEG = 90.0  # the test raise: the upper arm swung out to the side, about the front axis at the shoulder joint
 STRETCH_RATIO = 1.6  # an edge longer than this times its rest length in the raise is stretched
@@ -356,8 +372,109 @@ def cap_grid(loops, spacing):
     return G[seg_distance(G, A, B) > spacing / 2]
 
 
-def main(skip=None):  # pragma: no cover - runs inside Blender
-    """skip: sides already put back by an earlier pass (their report parts), when a cut made the raise worse."""
+def half_width(loops, spacing=0.005):
+    """How far the point deepest inside a cap outline (loops as cap_grid takes them) is from its edge, in metres."""
+    G = cap_grid(loops, spacing)
+    if not len(G):
+        return 0.0
+    A = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    B = np.vstack([np.roll(np.asarray(lp, dtype=float), -1, axis=0) for lp in loops])
+    return float(seg_distance(G, A, B).max())
+
+
+def dome_height(loops, gap):
+    """A cap's dome height: DOME_SHARE of its half-width, at most DOME_MAX (never under nothing)."""
+    return float(min(DOME_MAX, DOME_SHARE * half_width(loops, max(0.002, gap))))
+
+
+def dome_field(n_points, tris, fixed):
+    """The rounded shape of a cap, 0 at its edge to 1 at its crown: the graph Poisson solution (a membrane under even
+    pressure) over the cap's triangles with the edge points `fixed` at 0, scaled to 1 at its highest, then its square
+    root, so a long strip gets an elliptical section like the inside of a limb and the edge rises steeply."""
+    fixed = np.asarray(fixed, dtype=bool)
+    free = np.flatnonzero(~fixed)
+    out = np.zeros(n_points)
+    if not len(free):
+        return out
+    nb = [set() for _ in range(n_points)]
+    for a, b, c in tris:
+        nb[a].update((b, c))
+        nb[b].update((a, c))
+        nb[c].update((a, b))
+    pos = {int(i): k for k, i in enumerate(free)}
+    L = np.zeros((len(free), len(free)))
+    for k, i in enumerate(free):
+        L[k, k] = max(1, len(nb[i]))
+        for j in nb[i]:
+            if j in pos:
+                L[k, pos[j]] -= 1.0
+    z = np.linalg.lstsq(L, np.ones(len(free)), rcond=None)[0] if len(free) > 1 else np.ones(1)
+    z = np.clip(z, 0.0, None)
+    if z.max() <= 0:
+        return out
+    out[free] = np.sqrt(z / z.max())
+    return out
+
+
+def drawn_back(d, g, reach):
+    """Distances from the plane after drawing the surface back from a cut: a point at signed distance d moves to
+    d + sign(d) * g * (1 - |d|/reach)^2, so the cut itself sits g off the plane, points at `reach` stay put, and the
+    order of points along the normal is kept (reach >= 2 g). g may be one value or one per point."""
+    d = np.asarray(d, dtype=float)
+    g = np.broadcast_to(np.asarray(g, dtype=float), d.shape)
+    a = np.abs(d)
+    k = np.clip(1.0 - a / reach, 0.0, None) ** 2
+    s = np.where(d >= 0, 1.0, -1.0)
+    return s * (a + g * k)
+
+
+def draw_weights(P2, loops, ramps, fade, chord=None, clear=0.0, chunk=4096):
+    """How much of the drawing back each place on the cut plane gets (0 to 1), as a function of the place alone so the
+    drawing back moves the space round the cut as a whole and cannot make surfaces cross: the ramp of the nearest
+    outline point (0 at the cut's ends), fading out smoothly over `fade` outside the outline, and, for an open cut,
+    nothing within `clear` of the line between its ends (the shoulder there is not cut). P2 (n, 2); loops as
+    cap_grid takes them; ramps: one array per loop; chord: the two ends (2D) or None."""
+    P2 = np.asarray(P2, dtype=float).reshape(-1, 2)
+    B = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    R = np.concatenate([np.asarray(r, dtype=float) for r in ramps])
+    outer = np.asarray(loops[0], dtype=float)
+    A_o, B_o = outer, np.roll(outer, -1, axis=0)
+    w = np.zeros(len(P2))
+    for s in range(0, len(P2), chunk):
+        Q = P2[s:s + chunk]
+        near = np.argmin(((Q[:, None, :] - B[None]) ** 2).sum(axis=2), axis=1)
+        ws = R[near]
+        out = ~inside_polygon(Q, outer)
+        if out.any():  # smoothly: flat at the outline, so the surface just outside goes as far as the cap's edge
+            x = np.clip(seg_distance(Q[out], A_o, B_o) / fade, 0.0, 1.0)
+            ws[out] *= 1.0 - x * x * (3.0 - 2.0 * x)
+        if chord is not None and clear > 0:
+            ws *= np.clip(seg_distance(Q, chord[0][None], chord[1][None]) / clear, 0.0, 1.0)
+        w[s:s + chunk] = ws
+    return w
+
+
+def lower_domes(lower, sides, step=DOME_STEP, least=DOME_LEAST):
+    """The next dome shares after a pass whose domes made surfaces cross at the cuts `sides` (keys as "R0"): each of
+    those times `step`, and flat (0) once under `least`; None when every one of them is flat already (nothing to
+    lower)."""
+    out = dict(lower)
+    changed = False
+    for sd in sides:
+        x = out.get(sd, 1.0)
+        if x <= 0:
+            continue
+        x *= step
+        out[sd] = x if x >= least else 0.0
+        changed = True
+    return out if changed else None
+
+
+def main(skip=None, lower=None):  # pragma: no cover - runs inside Blender
+    """skip: sides already put back by an earlier pass (their report parts), when a cut made the raise worse. lower:
+    {side and cut number, as "R0": share of the dome height} for cuts whose domes made surfaces cross in an earlier
+    pass (lower_domes)."""
+    lower = dict(lower or {})
     import bmesh
     import bpy
     from mathutils import Vector
@@ -402,6 +519,8 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     bm.from_mesh(me)
     rest_off = bm.verts.layers.float_vector.new("rest_off")
     rig_ix = bm.verts.layers.int.new("rig_ix")
+    bm.verts.layers.float_vector.new("pre_draw")  # where a point drawn back from a cut was (_clear_slab, _rederive)
+    bm.verts.layers.int.new("drawn")
     bm.verts.ensure_lookup_table()
     for v in bm.verts:
         if corr is not None and corr[0][v.index] >= 0:
@@ -556,7 +675,8 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
             if why:
                 caps.append({"ok": False, "reason": why, "plane_flatness_m": round(flat, 4)})
                 continue
-            info = _cut_and_cap(bm, comp, Vector(c), Vector(n), gap, tv, dl, groups, arm_names, start, holes, ash)
+            info = _cut_and_cap(bm, comp, Vector(c), Vector(n), gap, tv, dl, groups, arm_names, start, holes, ash,
+                                lower.get(f"{side}{len(caps)}", 1.0))
             info.update(plane_flatness_m=round(flat, 4), band_m=round(reach, 4), plane_pieces=len(comps),
                         weight_line_m=round(pc["length"], 4))
             caps.append(info)
@@ -581,7 +701,7 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
                 rep["caps"] = [{**{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")},
                                 **({"ok": False, "reason": "stretch_rose"} if cp.get("ok") else {})} for cp in caps]
                 bm.free()
-                return main(skip={**(skip or {}), side: rep})
+                return main(skip={**(skip or {}), side: rep}, lower=lower)
         for cp in caps:
             cp["_side"] = side
         rep["caps"] = [{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")} for cp in caps]
@@ -608,19 +728,32 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     report["check"]["crossing_faces_on_caps"] = on_caps
     capset = {f for sd in report["sides"].values() for cp in sd.get("_caps", []) for f in cp.get("faces", []) if f.is_valid}
     kinds = {"cap_cap": 0, "cap_surface": 0, "surface_surface": 0, "surface_surface_new": 0}
+    new_pairs = []
     for i, j in report["check"].pop("_pairs"):
         k = (bm.faces[i] in capset) + (bm.faces[j] in capset)
         kinds[("surface_surface", "cap_surface", "cap_cap")[k]] += 1
+        cs = [bm.faces[x].calc_center_median() for x in (i, j)]
         if k == 0:
-            cs = [bm.faces[x].calc_center_median() for x in (i, j)]
-            if not all(any((c - q).length < 0.01 for q in in_cross) for c in cs):
-                kinds["surface_surface_new"] += 1
+            if all(any((c - q).length < 0.01 for q in in_cross) for c in cs):
+                continue
+            kinds["surface_surface_new"] += 1
+        new_pairs.append([[round(x, 4) for x in c] + [int(bm.faces[f] in capset)] for c, f in zip(cs, (i, j))])
     report["check"]["crossing_kinds"] = kinds
     report["check"]["new_crossings"] = kinds["cap_cap"] + kinds["cap_surface"] + kinds["surface_surface_new"]
+    if report["check"]["new_crossings"]:
+        # a dome that made surfaces cross is lowered at its cut and the whole run made again (down to flat caps)
+        planes = [(f"{sd}{k}", cp["_plane"]) for sd, s_ in report["sides"].items()
+                  for k, cp in enumerate(s_.get("_caps", [])) if cp.get("ok") and "_plane" in cp]
+        nxt = lower_domes(lower, [sd for sd in {_nearest_side(pair, planes) for pair in new_pairs} if sd])
+        if nxt is not None:
+            bm.free()
+            return main(skip=skip, lower=nxt)
+    report["dome_lowered"] = {sd: round(x, 3) for sd, x in lower.items() if x < 1.0}
     report["check"].pop("crossing_faces")
     if _common.flag("--debug"):
         # for looking at a run: cap faces red and crossing faces yellow in the outputs, cap points for the stretch test
         report["debug_face_fail"] = _FACE_FAIL
+        report["debug_new_crossings"] = new_pairs  # each pair: two face centres, each with 1 when it is a cap face
         report["debug_cap_points"] = [[round(c, 4) for c in v.co] for v in sorted({v for f in capset for v in f.verts},
                                                                                    key=lambda v: tuple(v.co))][::3]
         report["debug_crossing_xyz"] = [[round(c, 3) for c in f.calc_center_median()] for f in list(xf)[:400]]
@@ -686,6 +819,16 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     report["ok"] = (ck["open_edges"] <= ik["open_edges"] and ck["bad_edges"] <= ik["bad_edges"]
                     and ck["new_crossings"] == 0 and ck["shells"] <= ik["shells"])
     return _finish(report, report_path)
+
+
+def _nearest_side(pair, planes):  # pragma: no cover
+    """The cut (side and number) whose plane passes nearest a crossing pair's first face (face centres as in the debug
+    list)."""
+    if not planes:
+        return None
+    c = np.array(pair[0][:3])
+    return min(planes, key=lambda sp_: abs(float((c - np.array(sp_[1][0][:])) @ np.array(sp_[1][1][:])))
+               + 0.1 * float(np.linalg.norm(c - np.array(sp_[1][0][:]))))[0]
 
 
 def _finish(report, path):  # pragma: no cover
@@ -799,9 +942,11 @@ def _arm_bones(arm_obj, prefix):  # pragma: no cover
     return {top.name} | {c.name for c in top.children_recursive}
 
 
-def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=(), ash=None):  # pragma: no cover
-    """Split the mesh along one flat cut piece (plane point pc, normal pn toward the arm), open the gap, let each side
-    go of the other's weights, and close each side with a flat cap."""
+def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=(), ash=None,
+                 dome_share=1.0):  # pragma: no cover
+    """Split the mesh along one flat cut piece (plane point pc, normal pn toward the arm), let each side go of the
+    other's weights, open the gap and draw the surface back, and close each side with a domed cap (its height
+    `dome_share` of the full dome, lowered when an earlier pass crossed)."""
     import bmesh
     from mathutils import geometry
 
@@ -847,20 +992,24 @@ def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=
     for copies in (arm_side, body_side):
         for src, v in copies.items():
             tv[v] = t_path[src]
-    # open the gap: clear a slab of half-width gap/2 round the plane inside the cut's outline. Every copy, and every
-    # other surface point inside the slab there (a cloth layer lying along the plane, a grazing fold), moves straight
-    # off the plane to its own side; the slab narrows to nothing at the cut's ends, which stay put.
-    moved = _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, tv, start)
+    # each side's end is rounded (WP-74): a dome of this height, and the surface beside the cut drawn back by it
+    to2, _ = _plane_frame(path, pc, pn)
+    dome = dome_share * dome_height([to2([v.co[:] for v in lp]) for lp in [path] + hole_paths], gap)
+    # weights first, on the surface as cut (drawing it back moves points nearer or further from the cut)
     released = _release(bm, arm_side, body_side, dl, groups, arm_names, set(ends), pc, pn, tv, start, ash)
-    # flat caps
+    # open the gap: every copy moves off the plane to its own side by gap/2 plus the dome height, and every other
+    # surface point near the plane inside the cut's outline or beside the cut (a cloth layer lying along the plane, a
+    # grazing fold, the surface rolling into the cut) is drawn back with it, less the further it is; all of it narrows
+    # to nothing at the cut's ends, which stay put.
+    moved, field = _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, dome, closed)
     faces = []
     info = {"ok": True, "closed": bool(closed), "points": len(path), "length_m": round(length, 4), "released": released,
-            "moved_points": moved,
+            "moved_points": moved, "dome_m": round(dome, 4),
             "t_range": [round(min(t_path.values()), 3), round(max(t_path.values()), 3)]}
     if not closed:
         info["new_armpit_m"] = round((path[0].co - path[-1].co).length, 4)
     info["holes"] = len(hole_paths)
-    faces, uv2d, why = _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
+    faces, uv2d, why = _dome_caps(bm, path, hole_paths, arm_side, body_side, field, pc, pn, gap, dl, dome)
     if why:
         info["cap_fill"] = why
     info["_uv2d"] = uv2d
@@ -871,23 +1020,29 @@ def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=
     info["cap_triangles"] = len(faces)
     info["faces"] = faces
     info["_plane"] = (pc.copy(), pn.copy())
+    if "--debug" in sys.argv:
+        info["debug_plane"] = [[round(x, 5) for x in pc], [round(x, 5) for x in pn]]
     del on_path
     return info
 
 
-def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl):  # pragma: no cover
+def _dome_caps(bm, path, hole_paths, arm_side, body_side, field, pc, pn, gap, dl, dome):  # pragma: no cover
     """Both caps from one constrained Delaunay triangulation of the cut's outline (holes left open) with inner points
-    at the cut's own edge spacing, so the two caps are parallel copies and their triangles stay small enough to bend
-    near the new armpit. Inner points take their weights from the nearest edge points of their own side.
+    at the cut's own edge spacing, so their triangles are small enough to round and to bend near the new armpit. Each
+    cap is a dome (WP-74): from its edge, drawn back gap/2 + `dome` off the plane, it rises toward the other side to
+    gap/2 off the plane at its crown (dome_field), so the arm's end and the body's side are both rounded and never
+    meet; nowhere is it nearer the plane than WP-27's flat cap. Inner points take their weights from the nearest edge
+    points of their own side.
     -> (faces, {vert: (u, v) metres on the plane}, reason or None)."""
     from mathutils import Vector, geometry
 
-    to2, _ = _plane_frame(path, pc, pn)
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]
+    to2, _ = _plane_frame(path, pc, pn, at=lambda v: v[pre][:] if v[drawn] else v.co[:])
     c0, ax_u, ax_v, nn = to2.frame
     loops_src = [list(path)] + [list(hp) for hp in hole_paths]
     L2 = [to2([v.co[:] for v in lp]) for lp in loops_src]
     seg = np.concatenate([np.linalg.norm(np.diff(np.vstack([l_, l_[:1]]), axis=0), axis=1) for l_ in L2])
-    spacing = float(min(0.05, max(CAP_SPACING_MIN, 2.0 * np.median(seg))))
+    spacing = float(min(CAP_SPACING_MAX, max(CAP_SPACING_MIN, 2.0 * np.median(seg))))
     G = cap_grid(L2, spacing)
     pts = np.vstack(L2 + [G]) if len(G) else np.vstack(L2)
     edges, off = [], 0
@@ -920,16 +1075,23 @@ def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
     # inside the outline and outside every hole: the triangle lies in an odd number of the input loops
     tri = [[idx[k] for k in f] for f, src in zip(o_faces, o_face_src) if len(src) % 2 == 1]
     B2 = np.vstack(L2)
+    nb_ = len(B2)
+    crown = dome_field(len(pts), tri, np.arange(len(pts)) < nb_)
+    # how far each inner point is lifted: the same field the surface was drawn back by (so it stays beyond the cap)
+    rg, rf = field(c0 + np.asarray(G, dtype=float).reshape(-1, 2) @ np.vstack([ax_u, ax_v])) if len(G) else ([], [])
     for copies, sign in ((arm_side, 1.0), (body_side, -1.0)):
         bverts = [copies[v] for v in flat_src]
-        rmp = [ramp.get(v, 1.0) for v in flat_src]
         allv = list(bverts)
-        for p in G:
+        for gi, p in enumerate(G):
             d = np.linalg.norm(B2 - p, axis=1)
             near = np.argsort(d)[:4]
-            r = float(rmp[near[0]])
-            co = c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * gap / 2 * r)
+            r = float(rg[gi])
+            lift = max(r * (gap / 2 + dome * (1.0 - float(crown[nb_ + gi]))), gap / 2 * float(rf[gi]))
+            co = c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * lift)
             nv = bm.verts.new(Vector(co))
+            # where along the arm it is: as a flat cap a gap apart (WP-27), so the weights do not depend on the dome
+            nv[pre] = Vector(c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * gap / 2 * float(rf[gi])))
+            nv[drawn] = 1
             w = 1.0 / np.maximum(d[near], 1e-6)
             w /= w.sum()
             acc = {}
@@ -946,11 +1108,15 @@ def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
     return [f for f in faces if f is not None], uv2d, None
 
 
-def _plane_frame(path, pc, pn):  # pragma: no cover
-    """2D coordinates on the cut plane: -> (to2(P) -> (n, 2), outline polygon (m, 2))."""
+def _plane_frame(path, pc, pn, at=None):  # pragma: no cover
+    """2D coordinates on the cut plane: -> (to2(P) -> (n, 2), outline polygon (m, 2)). at: point -> position used for
+    the frame's axes (default where it is)."""
     c0 = np.array(pc[:])
     nn = np.array(pn[:])
     P = np.array([v.co[:] for v in path]) - c0
+    if at is not None:  # the cut's points where WP-27 left them, a gap apart, so the caps' inner points are laid out
+        # as WP-27 laid them out (the weights round the cut are derived from them)
+        P = np.array([at(v) for v in path]) - c0
     _, _, vt = np.linalg.svd(P, full_matrices=False)
     ax_u = vt[0] - nn * (vt[0] @ nn)
     ax_u /= np.linalg.norm(ax_u)
@@ -964,50 +1130,88 @@ def _plane_frame(path, pc, pn):  # pragma: no cover
     return to2, to2(np.array([v.co[:] for v in path]))
 
 
-def _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, tv, start):  # pragma: no cover
+def _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, dome=0.0,
+                closed=True):  # pragma: no cover
+    """Open the gap and draw the surface back from the cut (drawn_back, by draw_weights): each copy goes gap/2 + dome
+    off the plane to its own side, and every other point within the reach of the plane goes with it, less the further
+    it is from the plane and, outside the cut's outline, from the outline. The amount depends only on where a point
+    is, so surfaces keep their order along the normal and none cross."""
+    full = gap / 2 + dome
+    reach = DRAW_REACH * full
+    side_of, src_of = {}, {}
+    for src, v in arm_side.items():
+        side_of[v], src_of[v] = 1.0, src
+    for src, v in body_side.items():
+        side_of[v], src_of[v] = -1.0, src
+    endset = {arm_side[v] for v in ends} | set(ends)
+    cand = [v for v in bm.verts if v not in endset and (v in side_of or abs((v.co - pc).dot(pn)) < reach)]
+    if not cand:
+        return 0, _draw_field(path, hole_paths, ramp, pc, pn, closed, reach)
+    base = _draw_field(path, hole_paths, ramp, pc, pn, closed, reach)
+    w, fl = base([v.co[:] for v in cand])
+    # surface that crosses the plane whole where it would be drawn back (not cut here: a piece another cut of this
+    # arm closes, the shoulder past the cut's ends) must not be pulled apart: nothing moves there, fading in over the
+    # reach round it
+    wi = {v: max(x, y) for v, x, y in zip(cand, w, fl)}
+    whole = [v.co.copy() for v in cand if v not in side_of and wi[v] > 0 and any(
+        wi.get(e.other_vert(v), 0.0) > 0 and e.other_vert(v) not in side_of
+        and ((v.co - pc).dot(pn)) * ((e.other_vert(v).co - pc).dot(pn)) < -1e-12 for e in v.link_edges)]
+    field = base
+    if whole:
+        field = _draw_field(path, hole_paths, ramp, pc, pn, closed, reach, whole)
+        w, fl = field([v.co[:] for v in cand])
+    # each moved point remembers where it was, so the weights are derived from the surface as cut (_rederive)
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]  # made in main (a new layer
+    # would free every point reference held here)
+    moved = 0
+    for v, wv, fv in zip(cand, w, fl):
+        d = (v.co - pc).dot(pn)
+        if not v[drawn]:
+            v[pre] = v.co
+            v[drawn] = 1
+        if v in side_of:
+            v[pre] = v.co + pn * (side_of[v] * gap / 2 * ramp[src_of[v]] - d)  # a copy as WP-27 left it
+            v.co += pn * (side_of[v] * max(full * wv, gap / 2 * fv) - d)
+            moved += 1
+            continue
+        g = max((full + SLAB_MARGIN) * wv, (gap / 2 + SLAB_MARGIN) * fv)
+        if g <= 0:
+            continue
+        nd = float(drawn_back(np.array([d if abs(d) > 1e-9 else 1e-9]), g, reach)[0])
+        if abs(nd - d) < 1e-7:
+            continue
+        v.co += pn * (nd - d)
+        moved += 1
+    return moved, field
+
+
+def _draw_field(path, hole_paths, ramp, pc, pn, closed, reach, whole=()):  # pragma: no cover
+    """draw_weights for this cut, fading to nothing within the reach of `whole` (points where the surface crosses the
+    plane uncut): -> f(points (n, 3)) -> (weights (n,), floor (n,)). The floor is the gap alone as WP-27 opened it
+    (the ramp inside the outline and within GAP_NEAR beside it), which every point keeps at least, so the two sides'
+    copies never lie on each other where the drawing back fades out."""
+    from mathutils import Vector
     from mathutils.kdtree import KDTree
 
     to2, poly = _plane_frame(path, pc, pn)
-    every = list(path) + [v for hp in hole_paths for v in hp]
-    kd = KDTree(len(every))
-    for i, v in enumerate(every):
-        kd.insert(v.co, i)
-    kd.balance()
-    half = gap / 2
-    side_of = {}
-    for src, v in arm_side.items():
-        side_of[v] = (1.0, src)
-    for src, v in body_side.items():
-        side_of[v] = (-1.0, src)
-    moved = 0
-    cand = [v for v in bm.verts if v in side_of or (tv.get(v, 0.0) > start and abs((v.co - pc).dot(pn)) < half + SLAB_MARGIN)]
-    if not cand:
-        return 0
-    near_out = [kd.find(v.co)[2] < 0.01 for v in cand]
-    inside = inside_polygon(to2([v.co[:] for v in cand]), poly)
-    for v, ins, near in zip(cand, inside, near_out):
-        if v in side_of:
-            sign, src = side_of[v]
-            if src in ends:
-                continue
-            h = half * ramp[src]
-            d = (v.co - pc).dot(pn)
-            v.co += pn * (sign * h - d)
-            moved += 1
-            continue
-        if not (ins or near):
-            continue
-        _, j, _ = kd.find(v.co)
-        h = half * ramp[every[j]]
-        if h <= 0:
-            continue
-        d = (v.co - pc).dot(pn)
-        if abs(d) >= h + SLAB_MARGIN:
-            continue
-        sign = 1.0 if d > 0 else -1.0
-        v.co += pn * (sign * (h + SLAB_MARGIN) - d)
-        moved += 1
-    return moved
+    loops = [poly] + [to2([v.co[:] for v in hp]) for hp in hole_paths]
+    ramps = [[ramp.get(v, 1.0) for v in lp] for lp in [path] + list(hole_paths)]
+    chord = None if closed else (poly[0], poly[-1])
+    kw = None
+    if len(whole):
+        kw = KDTree(len(whole))
+        for i, c in enumerate(whole):
+            kw.insert(c, i)
+        kw.balance()
+
+    def f(P):
+        P = np.asarray(P, dtype=float).reshape(-1, 3)
+        P2 = to2(P)
+        w = draw_weights(P2, loops, ramps, DRAW_NEAR * reach, chord, reach)
+        if kw is not None:
+            w *= np.array([min(1.0, kw.find(Vector(p))[2] / reach) for p in P])
+        return w, draw_weights(P2, loops, ramps, GAP_NEAR)
+    return f
 
 
 def _inner_loops(bm, comp, pc, pn, tv, start):  # pragma: no cover
@@ -1174,7 +1378,10 @@ def _rederive(bm, dl, groups, arm_names, chain, caps, start):  # pragma: no cove
     bm.verts.ensure_lookup_table()
     n = len(bm.verts)
     P = np.array([v.co[:] for v in bm.verts])
-    t, _ = chain_param(P, chain)
+    # where along the arm each point is, on the surface as cut (before it was drawn back from the cut, WP-74)
+    pre, drawn = bm.verts.layers.float_vector.get("pre_draw"), bm.verts.layers.int.get("drawn")
+    P0 = np.array([v[pre][:] if pre is not None and v[drawn] else v.co[:] for v in bm.verts]) if pre else P
+    t, _ = chain_param(P0, chain)
     nbrs = [[e.other_vert(v).index for e in v.link_edges] for v in bm.verts]
     is_arm = np.array([g in arm_names for g in groups], dtype=bool)
     ends = sorted({v.index for cp in cut for v in cp["_ends"] if v.is_valid})
@@ -1182,7 +1389,7 @@ def _rederive(bm, dl, groups, arm_names, chain, caps, start):  # pragma: no cove
     for k, cp in enumerate(cut):
         for v in cp["_arm_copies"] + cp["_body_copies"]:
             if v.is_valid:
-                pts.append(v.co.copy())
+                pts.append(Vector(P0[v.index]))
                 planes.append(k)
     kd = KDTree(len(pts))
     for i, c in enumerate(pts):
@@ -1191,9 +1398,10 @@ def _rederive(bm, dl, groups, arm_names, chain, caps, start):  # pragma: no cove
     side = np.zeros(n)
     near = np.zeros(n, dtype=bool)
     for v in bm.verts:
-        _, j, d = kd.find(v.co)
+        co = Vector(P0[v.index])
+        _, j, d = kd.find(co)
         pc, pn = cut[planes[j]]["_plane"]
-        side[v.index] = (v.co - pc).dot(pn)
+        side[v.index] = (co - pc).dot(pn)
         near[v.index] = d < RELEASE_NEAR
     W0 = [dict(v[dl].items()) for v in bm.verts]
     share0 = arm_share(W0, groups, arm_names)
@@ -1383,15 +1591,26 @@ def facing_normals(n, own, least=CAP_LEAST_FACING):
     """Unit normals (n, 3) turned toward `own` (the cap's facing) until they face it by at least `least` (a cosine), so
     a blend from a ring whose surface faces away never shades the cap from behind."""
     n = np.asarray(n, float)
-    own = np.asarray(own, float)
+    own = np.broadcast_to(np.asarray(own, float), n.shape)
     out = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
     for a in np.linspace(0.1, 1.0, 10):
-        low = out @ own < least - 1e-9
+        low = (out * own).sum(axis=1) < least - 1e-9
         if not low.any():
             break
-        m = (1 - a) * n[low] / np.maximum(np.linalg.norm(n[low], axis=1, keepdims=True), 1e-9) + a * own
+        m = (1 - a) * n[low] / np.maximum(np.linalg.norm(n[low], axis=1, keepdims=True), 1e-9) + a * own[low]
         out[low] = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-9)
     return out
+
+
+def cap_shading(ring_n, own, far, fade=CAP_NORMAL_FADE, share=CAP_NORMAL_SHARE):
+    """Shading normals for cap corners: ring_n (the ring's normals blended to each corner) plus `share` of the corner's
+    own facing `own` (n, 3) at the ring, turning to `own` alone at `fade` from it (far: each corner's distance from the
+    ring), never facing away from `own`."""
+    ring_n = np.asarray(ring_n, float)
+    own = np.asarray(own, float)
+    t = np.clip(np.asarray(far, float) / fade, 0.0, 1.0)[:, None]
+    rn = ring_n / np.maximum(np.linalg.norm(ring_n, axis=1, keepdims=True), 1e-9)
+    return facing_normals((1 - t) * (rn + share * own) + t * own, own)
 
 
 def idw_colour(pts, ring_xyz, ring_col, k=IDW_NEAREST, power=2.0, chunk=4096):
@@ -1618,10 +1837,9 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
 
 
 def _cap_normals(island_faces, capset):  # pragma: no cover
-    """Shading normals for each cap corner: the surface normals round the cap's ring blended by inverse distance, plus
-    CAP_NORMAL_SHARE of the cap's own facing, so a cap shades as a continuation of the surface round it rather than as
-    one flat plane facing elsewhere (a flat cap read as a hard-edged block under light even with the right colour).
-    -> {face: [normal per corner]}."""
+    """Shading normals for each cap corner (cap_shading): at the ring the surface normals round it blended by inverse
+    distance, plus CAP_NORMAL_SHARE of the dome's own facing there, so the cap shades on from the surface beside it;
+    further in, the dome's own facing alone. -> {face: [normal per corner]}."""
     out = {}
     for fs in island_faces:
         ring, ring_n = [], []
@@ -1632,12 +1850,19 @@ def _cap_normals(island_faces, capset):  # pragma: no cover
                 if n.length > 1e-12:
                     ring.append(v.co[:])
                     ring_n.append(n.normalized()[:])
-        own = sum((f.normal * f.calc_area() for f in fs), type(fs[0].normal)((0.0, 0.0, 0.0)))
-        own = np.array(own.normalized()[:]) if own.length > 1e-12 else np.zeros(3)
         if not ring:
             continue
+        # each corner's own facing is the dome's there (WP-74): the area-weighted normal of the cap's faces round it
+        vn = {}
+        for f in fs:
+            for v in f.verts:
+                vn[v] = vn.get(v, 0) + np.array(f.normal[:]) * f.calc_area()
+        own = np.array([vn[lp.vert] for f in fs for lp in f.loops], dtype=float)
+        own /= np.maximum(np.linalg.norm(own, axis=1, keepdims=True), 1e-12)
         pts = np.array([lp.vert.co[:] for f in fs for lp in f.loops])
-        nb = facing_normals(idw_colour(pts, np.array(ring), np.array(ring_n)) + CAP_NORMAL_SHARE * own, own)
+        R = np.array(ring)
+        far = np.array([np.linalg.norm(R - p, axis=1).min() for p in pts])
+        nb = cap_shading(idw_colour(pts, R, np.array(ring_n)), own, far)
         k = 0
         for f in fs:
             out[f] = [tuple(nb[k + i]) for i in range(len(f.loops))]

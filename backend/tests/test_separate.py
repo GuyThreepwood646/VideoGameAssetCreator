@@ -126,10 +126,10 @@ def _fused(tmp: Path, *extra: str) -> Path:
     return tmp
 
 
-def _separate(tmp: Path, name: str) -> dict:
+def _separate(tmp: Path, name: str, *extra: str) -> dict:
     report = tmp / f"{name}.json"
     subprocess.run([str(BLENDER), "-b", "-t", "2", "--python", str(SCRIPT), "--", str(tmp / "step4.glb"),
-                    str(tmp / "rig.glb"), str(tmp / f"{name}.glb"), "--report", str(report), "--side", "L"],
+                    str(tmp / "rig.glb"), str(tmp / f"{name}.glb"), "--report", str(report), "--side", "L", *extra],
                    check=True, capture_output=True, timeout=600)
     return json.loads(report.read_text(encoding="utf-8"))
 
@@ -319,3 +319,107 @@ def test_weights_off_the_arm_are_taken_off_and_the_rigged_copy_sits_in_the_rig_r
         return P[(P[:, 0] > 0.15) & (P[:, 1] < 1.06)]  # glTF is y up: y is height
 
     assert len(hand(out_pts)) and hand(out_pts)[:, 2].mean() == pytest.approx(hand(rig_pts)[:, 2].mean(), abs=0.005)
+
+
+# --- WP-74: rounded ends instead of two flat plates ----------------------------------------------------------------
+
+
+def _strip(width=0.1, length=0.4, step=0.01):
+    """A long cap outline (a strip) as cap_grid takes it, and its CDT-free triangulation over a regular grid."""
+    xs = np.arange(0, length + 1e-9, step)
+    ys = np.arange(0, width + 1e-9, step)
+    P = np.array([[x, y] for y in ys for x in xs])
+    nx = len(xs)
+    tris = []
+    for j in range(len(ys) - 1):
+        for i in range(nx - 1):
+            a, b, c, d = j * nx + i, j * nx + i + 1, (j + 1) * nx + i, (j + 1) * nx + i + 1
+            tris += [(a, b, d), (a, d, c)]
+    edge = (P[:, 0] < 1e-9) | (P[:, 0] > length - 1e-9) | (P[:, 1] < 1e-9) | (P[:, 1] > width - 1e-9)
+    return P, tris, edge
+
+
+def test_a_dome_is_nothing_at_its_edge_highest_in_the_middle_and_round_across_a_long_strip():
+    P, tris, edge = _strip()
+    D = sp.dome_field(len(P), tris, edge)
+    assert np.allclose(D[edge], 0) and D.max() == pytest.approx(1.0)
+    mid = np.abs(P[:, 0] - 0.2) < 1e-9  # a section across the strip, half way along
+    sec = D[mid][np.argsort(P[mid, 1])]
+    assert np.argmax(sec) == len(sec) // 2  # highest on the strip's middle line
+    assert sec[1] > 0.4  # one step in from the edge it has already risen steeply (an elliptical section, not a tent)
+    assert np.all(np.diff(sec[: len(sec) // 2 + 1]) > 0)  # rising all the way to the crown: no flat plate
+    # a narrow strip is lower than a wide one: the dome follows the cap's own width
+    assert sp.half_width([np.array([[0, 0], [0.4, 0], [0.4, 0.04], [0, 0.04]])], 0.002) == pytest.approx(0.02, abs=2e-3)
+    assert sp.dome_height([np.array([[0, 0], [0.4, 0], [0.4, 0.04], [0, 0.04]])], 0.006) == pytest.approx(
+        sp.DOME_SHARE * 0.02, abs=1e-3)
+    assert sp.dome_height([np.array([[0, 0], [1, 0], [1, 1], [0, 1]])], 0.006) == sp.DOME_MAX
+
+
+def test_drawing_back_moves_the_cut_off_the_plane_keeps_far_points_and_never_reorders_layers():
+    g, reach = 0.02, 0.05
+    d = np.linspace(-0.08, 0.08, 321)
+    nd = sp.drawn_back(d, g, reach)
+    assert np.all(np.diff(nd[d > 0]) > 0) and np.all(np.diff(nd[d < 0]) > 0)  # layers keep their order on each side
+    assert nd[d > 0].min() >= g - 1e-9 and nd[d < 0].max() <= -g + 1e-9  # nothing left inside the band round the cut
+    far = np.abs(d) >= reach
+    assert np.allclose(nd[far], d[far])  # beyond the reach nothing moves
+    # one weight per point (less drawing back where the weight is lower)
+    assert sp.drawn_back(np.array([0.001, 0.001]), np.array([g, 0.0]), reach).tolist() == pytest.approx(
+        [0.001 + g * (1 - 0.001 / reach) ** 2, 0.001])
+
+
+def test_draw_weights_follow_the_ramp_fade_outside_and_leave_the_shoulder_between_the_ends_alone():
+    sq = np.array([[0, 0], [0.2, 0], [0.2, 0.2], [0, 0.2]], dtype=float)
+    ramps = [np.array([0.0, 1.0, 1.0, 0.0])]
+    P = np.array([[0.19, 0.1], [0.3, 0.1], [0.35, 0.1], [0.01, 0.1], [0.1, 0.01], [0.15, -0.01]])
+    w = sp.draw_weights(P, [sq], ramps, fade=0.2)
+    assert w[0] == 1.0  # inside, its nearest outline point fully open
+    assert 0 < w[2] < w[1] < 1.0  # outside: fading out with the distance from the outline
+    assert sp.draw_weights(np.array([[0.6, 0.1]]), [sq], ramps, fade=0.2)[0] == 0.0
+    assert w[3] == 0.0  # nearest outline point is a cut end: nothing moves
+    x = np.array([[0.2 + 1e-4, 0.1]])  # just outside the outline it goes on almost as far as just inside (no step)
+    assert sp.draw_weights(x, [sq], ramps, fade=0.2)[0] == pytest.approx(1.0, abs=1e-3)
+    chord = (np.array([0.0, 0.0]), np.array([0.2, 0.0]))  # an open cut whose ends are the bottom corners
+    wc = sp.draw_weights(P, [sq], ramps, fade=0.2, chord=chord, clear=0.05)
+    assert w[5] > 0.9 and wc[5] < 0.25  # beside the line between the ends: little or none
+    assert wc[0] == w[0]  # far from it: unchanged
+
+
+def test_a_dome_that_made_surfaces_cross_is_lowered_step_by_step_then_flat_then_left():
+    lw = sp.lower_domes({}, ["R0"])
+    assert lw == {"R0": sp.DOME_STEP}
+    while lw["R0"] > 0:
+        lw = sp.lower_domes(lw, ["R0"])
+    assert lw["R0"] == 0.0
+    assert sp.lower_domes(lw, ["R0"]) is None  # already flat: nothing left to lower, the run stands as it is
+    assert sp.lower_domes({"R0": 0.0}, ["R0", "L0"]) == {"R0": 0.0, "L0": sp.DOME_STEP}
+
+
+def test_cap_shading_follows_the_ring_at_the_edge_and_the_dome_inside():
+    ring = np.array([[1.0, 0, 0], [1.0, 0, 0]])
+    own = np.array([[0, 0, 1.0], [0.6, 0, 0.8]])
+    n = sp.cap_shading(ring, own, np.array([0.0, 1.0]))
+    assert np.allclose(np.linalg.norm(n, axis=1), 1)
+    assert n[0][0] > 0.5  # at the ring: mostly the surface beside it
+    assert np.allclose(n[1], own[1])  # well inside: the dome's own facing
+    assert ((n * own).sum(axis=1) >= sp.CAP_LEAST_FACING - 1e-6).all()
+
+
+@pytest.mark.skipif(not BLENDER.is_file(), reason="needs Blender (VGAC_TEST_BLENDER)")
+def test_each_side_of_a_separated_arm_is_rounded_and_the_two_never_touch(tmp_path):
+    _fused(tmp_path)
+    rep = _separate(tmp_path, "d", "--debug")
+    assert rep["ok"] and rep["check"]["new_crossings"] == 0 and rep["check"]["open_edges"] == 0
+    cap = rep["sides"]["L"]["caps"][0]
+    assert cap["dome_m"] > 0.005 and rep["dome_lowered"] == {}
+    pc, pn = (np.array(x) for x in cap["debug_plane"])
+    C = np.array(rep["debug_cap_points"])
+    d = (C - pc) @ pn
+    gap = 0.006
+    arm, body = d[d > 1e-4], d[d < -1e-4]
+    # each cap lies off the plane on its own side, from about gap/2 at its crown to gap/2 + dome at its edge: rounded,
+    # not a flat plate
+    # (all but the few next to the cut's ends, where the gap and the dome narrow to nothing)
+    assert (arm > gap / 2 * 0.9).mean() > 0.8 and arm.max() > gap / 2 + 0.5 * cap["dome_m"]
+    assert (body < -gap / 2 * 0.9).mean() > 0.8 and body.min() < -(gap / 2 + 0.5 * cap["dome_m"])
+    assert np.ptp(arm) > 0.5 * cap["dome_m"] and np.ptp(body) > 0.5 * cap["dome_m"]
