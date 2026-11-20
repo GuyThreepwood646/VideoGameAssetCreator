@@ -232,8 +232,13 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                label="What may sway on the head",
                description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before). Nothing on the head sways holds the head still, hair included, built-in or from the library"),
         # How far the arms hang from the sides in the built-in walk, idle and turn moves (blender/gait.py ARM_POSE_SHIFT_DEG).
-        _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose",
+        _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose", group="Resting pose",
                description="How far the arms hang from the sides in the walk, the stand still and the turns. Close tucks them in, Relaxed is the usual pose, Open holds them a little further out. The character's body and skin are not changed"),
+        # WP-76: the resting hand in every built-in move (blender/procanim.py HAND_SHAPES); the rest pose and the skin stay open.
+        _param("hand_pose", "select", "relaxed", options=["open", "relaxed", "fist"], categories=["humanoid"], label="Hand shape", group="Resting pose",
+               description="How the hands hold themselves in the moves. Relaxed is a gentle curl that rises from the index finger to the little finger, with the thumb tucked a little and the wrist bent a touch. Loose fist curls them further. Open keeps the hands flat, as before. Attacks still close the hand into a grip. The rest pose and the skin are not changed"),
+        _param("finger_curl", "number", 1.0, min=0, max=1.5, step=0.1, label="Finger curl", group="Resting pose", categories=["humanoid"],
+               description="How far the chosen hand shape curls the fingers: 0 leaves them straight, 1 is the shape as designed, 1.5 curls more"),
         _param("neutral_pose", "boolean", False, categories=["humanoid"], label="Neutral pose clip",
                description="Adds one still frame, named neutral_pose, that holds the stand-still arm angle (with the Arm pose setting). Off by default. The rest pose and the skin are not changed"),
     ],

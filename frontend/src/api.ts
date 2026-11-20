@@ -161,6 +161,8 @@ export type ItemSuggestionState = {
   job_id?: string
 }
 export type SuggestionAnswer = { version_id: string; installed: boolean; eligible: SuggestedItem[]; state: ItemSuggestionState | null }
+export type PosePreviewState = { state: 'none' | 'queued' | 'running' | 'done' | 'failed'; reason?: string; settings?: Record<string, unknown>; picture?: boolean }
+export type PosePreviewAnswer = { version_id: string; state: PosePreviewState }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
@@ -357,6 +359,8 @@ export type AdjustParam = {
   description?: string
   help?: HelpText
   simple?: boolean
+  // A named group of settings shown together under one heading (WP-76: Resting pose).
+  group?: string
   // Plain words for select and multiselect values ({value: label}); help.ts OPTION_LABELS is the fallback.
   option_labels?: Record<string, string>
   // The categories this knob applies to; absent means every category (2.3).
@@ -990,6 +994,9 @@ export const api = {
   getSuggestion: (vid: string) => get<SuggestionAnswer>(`/api/versions/${vid}/suggestion`),
   startSuggestion: (vid: string) => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion`, {}),
   markSuggestion: (vid: string, state: 'dismissed' | 'kept') => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion/${state}`, {}),
+  // The resting pose preview on a rig version (WP-76, pose_preview.py): the hands in the chosen resting pose, before a rig run.
+  getPosePreview: (vid: string) => get<PosePreviewAnswer>(`/api/versions/${vid}/pose-preview`),
+  startPosePreview: (vid: string, settings: Record<string, unknown>) => post<PosePreviewAnswer>(`/api/versions/${vid}/pose-preview`, { settings }),
   // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
   turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.

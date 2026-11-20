@@ -29,7 +29,7 @@ import gait  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 # ---- arguments -----------------------------------------------------------------------------------------------
-_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose")
+_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose", "--hand-pose", "--finger-curl")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
@@ -40,6 +40,8 @@ SIZE = gait.factor(_common.opt("--size", None), gait.MOVE_SIZE)
 SPEED = gait.factor(_common.opt("--speed", None), gait.MOVE_SPEED)
 ARM_POSE = gait.arm_pose_choice(_common.opt("--arm-pose", None))  # close, relaxed (default) or open
 NEUTRAL_POSE = _common.flag("--neutral-pose")  # D9: add the one-frame neutral pose clip (humanoids only)
+HAND_POSE = gait.hand_pose_choice(_common.opt("--hand-pose", None))  # open, relaxed (default) or fist (WP-76)
+FINGER_CURL = gait.finger_curl_amount(_common.opt("--finger-curl", None))  # scales the hand shape (WP-76)
 
 _common.open_glb(src)
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -618,6 +620,96 @@ def arms_relax(P, clip, extra=0.0):
     for a in arm_info:
         d = gait.arm_drop_deg(a["rest_deg"], clip, ARM_POSE, a["shoulder_out"], a["arm_len"], hip_half, extra)
         P.r(a["upper"], a["drop_axis"], -d)
+
+
+# ---- relaxed hands (WP-76): finger and wrist curl about the palm-normal axis ---------------------------------------
+# Built-in clips leave the fingers at their rest bend, so hands hang flat. Each humanoid hand with five finger chains
+# curls toward its palm: proximal, middle and distal joints by the shape below (degrees, scaled by FINGER_SCALE and by
+# the finger_curl setting), and the wrist bends a little. The axis is the rest palm normal's rotation axis (f x n, f the
+# hand's direction, n the palm side from the thumb as palm_down.py takes it), so a positive turn moves a finger toward
+# its palm. Hands with no finger chains (one-lump hands) get no curl.
+HAND_SHAPES = {  # (proximal, middle, distal, wrist) at full amount; the hand_pose setting picks one
+    "open": (0.0, 0.0, 0.0, 0.0),
+    "relaxed": (12.0, 16.0, 10.0, 6.0),
+    "fist": (50.0, 65.0, 35.0, 8.0),
+}
+GRIP_SHAPE = (80.0, 95.0, 55.0, 12.0)  # attack: a closed grip, blended in over the strike
+FINGER_SCALE = {"Thumb": 0.6, "Index": 0.75, "Middle": 0.9, "Ring": 1.0, "Pinky": 1.1}  # gentle, rising to the little finger
+_hands_cache = None
+
+
+def _wpos(name, tail=False):
+    """World position of a rest bone's head (or tail)."""
+    m = REST[name]
+    p = m @ Vector((0, byname[name].length, 0)) if tail else m.translation
+    return W @ p
+
+
+def _hand_rig():
+    """Per humanoid hand with finger chains: the wrist bone, the three bones of each finger found, and the curl axis
+    (world). Built once; empty for non-humanoids and one-lump hands."""
+    global _hands_cache
+    if _hands_cache is not None:
+        return _hands_cache
+    _hands_cache = []
+    for a in arm_info:
+        fore = a.get("fore")
+        if not fore or fore not in byname:
+            continue
+        if not fore.endswith("ForeArm"):
+            continue
+        base = fore[: -len("ForeArm")]  # the palm-down pass hangs the hand off the forearm's twist bones, so name it
+        hand = base + "Hand"
+        if hand not in byname:
+            continue
+        fingers = {}
+        for f in FINGER_SCALE:
+            bs = [f"{base}Hand{f}{k}" for k in (1, 2, 3)]
+            if all(b in byname for b in bs):
+                fingers[f] = bs
+        if "Thumb" not in fingers or not all(k in fingers for k in ("Index", "Middle", "Ring", "Pinky")):
+            continue
+        wrist = _wpos(hand)
+        knuckles = [_wpos(fingers[f][0]) for f in ("Index", "Middle", "Ring", "Pinky")]
+        f_dir = ((sum(knuckles, Vector()) / len(knuckles)) - wrist).normalized()
+        thumb = _wpos(fingers["Thumb"][0]) - wrist
+        t = (thumb - f_dir * thumb.dot(f_dir)).normalized()
+        n = f_dir.cross(t).normalized()  # out of a left palm, into a right one (palm_down.py)
+        if not a["left"]:
+            n = -n
+        axis = f_dir.cross(n).normalized()
+        # Each finger turns about its own proximal bone's axis (its rest direction x palm normal), so a finger whose
+        # rest chain points off the hand's line still curls toward the palm; the hand axis is the fallback.
+        finger_axes = {}
+        for f, bs in fingers.items():
+            d = _wpos(bs[0], tail=True) - _wpos(bs[0])
+            ax = d.cross(n)
+            finger_axes[f] = ax.normalized() if ax.length > 0.2 * d.length else axis
+        _hands_cache.append({"hand": hand, "fingers": fingers, "axis": axis, "finger_axes": finger_axes})
+    return _hands_cache
+
+
+def hands_curl(P, shape, amount):
+    """Curl every humanoid hand by shape (proximal, middle, distal, wrist degrees) times amount."""
+    if amount <= 0:
+        return
+    p, m, d, w = shape
+    for h in _hand_rig():
+        ax = h["axis"]
+        P.r(h["hand"], ax, amount * w)
+        for f, bs in h["fingers"].items():
+            k = amount * FINGER_SCALE[f]
+            fa = h["finger_axes"][f]
+            P.r(bs[0], fa, k * p)
+            P.r(bs[1], fa, k * m)
+            P.r(bs[2], fa, k * d)
+
+
+def hands_pose(P, grip=0.0):
+    """The resting hand (hand_pose setting, scaled by finger_curl), blended toward a closed grip by grip (0 to 1)."""
+    base = HAND_SHAPES[HAND_POSE]
+    shape = tuple(b + (g - b) * grip for b, g in zip(base, GRIP_SHAPE))
+    hands_curl(P, shape, FINGER_CURL)
 
 
 def wing_pose(P, w, flap_deg, sweep_deg=0.0, fold=0.0, lag_curve=None):
@@ -1541,6 +1633,18 @@ CLIP_FNS = {gait.NEUTRAL_CLIP: clip_neutral, "idle": clip_idle, "walk": clip_wal
             "glide": clip_glide, "takeoff": clip_takeoff, "land": clip_land}
 
 
+def _with_hands(fn, clip):
+    """A clip's pose plus the resting hand (WP-76); attack closes the hand into a grip over its strike."""
+    def run(P, t):
+        fn(P, t)
+        grip = gait.envelope(t, [(0.0, 0), (0.35, 0.3), (0.5, 1), (0.62, 1), (1.0, 0)]) if clip == "attack" else 0.0
+        hands_pose(P, grip)
+    return run
+
+
+CLIP_FNS = {k: _with_hands(v, k) for k, v in CLIP_FNS.items()}
+
+
 # ---- ground fix for death ------------------------------------------------------------------------------------
 
 
@@ -1744,6 +1848,7 @@ def idle_feet_report():
 
 
 report["idle_feet"] = idle_feet_report()
+report["hands"] = [{"hand": h["hand"], "fingers": sorted(h["fingers"]), "axis": [round(c, 4) for c in h["axis"]]} for h in _hand_rig()]  # WP-76
 if report["idle_feet"]:
     report["idle_feet"]["plant_error_max"] = _plant_error[0]
 if _stance:

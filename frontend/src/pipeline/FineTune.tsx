@@ -14,6 +14,7 @@ import { EditLoras } from './EditLoras'
 import { FrontPicker } from './FrontPicker'
 import { type ToolFocus } from './openTool'
 import { defaultFor } from './stepSettings'
+import { RestingPosePreview } from './RestingPosePreview'
 
 const SIZE_OPTIONS = [768, 1024, 1280, 1536, 2048]
 
@@ -443,7 +444,20 @@ export function FineTune({
         )}
       </div>
       {visible.length === 0 && <div className="muted small">Nothing to fine-tune in this step.</div>}
-      {simpleShown.length > 0 && <div className="adjust-grid">{simpleShown.map((p) => renderField(p, false))}</div>}
+      {simpleShown.some((p) => !p.group) && <div className="adjust-grid">{simpleShown.filter((p) => !p.group).map((p) => renderField(p, false))}</div>}
+      {/* WP-76: the resting pose settings, with a preview of the hands before a rig run (rig step only). */}
+      {simpleShown.some((p) => p.group === 'Resting pose') && (
+        <fieldset className="resting-group">
+          <legend>Resting pose</legend>
+          <div className="adjust-grid">{simpleShown.filter((p) => p.group === 'Resting pose').map((p) => renderField(p, false))}</div>
+          {stage === 'rig' && (
+            <RestingPosePreview
+              versionId={target.id}
+              settings={Object.fromEntries(['arm_pose', 'hand_pose', 'finger_curl'].filter((k) => k in values).map((k) => [k, values[k]]))}
+            />
+          )}
+        </fieldset>
+      )}
       {stage === 'concept' && addonsParam && painter && (
         <AddonsHint
           rows={rows}
