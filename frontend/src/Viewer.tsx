@@ -21,7 +21,7 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { pointerRay, SurfacePicker, type SurfaceHit, type ViewerTool } from './viewerTool'
+import { pointerRay, SurfacePicker, type SurfaceHit, type ViewerModel, type ViewerTool } from './viewerTool'
 import { Info } from './components/Info'
 import { LightPicker } from './components/LightPicker'
 import { clipLabel, clipLoopsByName } from './help'
@@ -82,6 +82,8 @@ type Props = {
   // A pointer tool (viewerTool.ts) that takes the left pointer while set; Escape calls onToolExit so the owner can clear it.
   tool?: ViewerTool | null
   onToolExit?: () => void
+  // Called once a model is drawn, with its meshes and picker (paint uses them). Not called when the model is cleared.
+  onModelLoaded?: (model: ViewerModel) => void
 }
 
 type SceneHandles = {
@@ -556,7 +558,7 @@ function applyPointerOwnership(c: OrbitControls, move: boolean, toolOn: boolean)
   c.touches.ONE = toolOn ? (-1 as THREE.TOUCH) : move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit }: Props) {
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded }: Props) {
   // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
   const lookCtx = useContext(ViewerLookContext)
   const look = lookProp ?? lookCtx
@@ -597,6 +599,8 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   const toolExitRef = useRef(onToolExit)
   toolExitRef.current = onToolExit
   const pickerRef = useRef<SurfacePicker | null>(null)
+  const onModelLoadedRef = useRef(onModelLoaded)
+  onModelLoadedRef.current = onModelLoaded
 
   const [shading, setShadingState] = useState<Shading>('textured')
   const [turntable, setTurntable] = useState(turntableDefault && !reduceMotion)
@@ -975,6 +979,12 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           if ((o as THREE.Mesh).isMesh) pickable.push(o as THREE.Mesh)
         })
         pickerRef.current = new SurfacePicker(pickable)
+        onModelLoadedRef.current?.({
+          meshes: pickable,
+          renderer: hh.renderer,
+          picker: pickerRef.current,
+          texturedMaterial: (mesh) => originalsRef.current.get(mesh) ?? mesh.material,
+        })
 
         let tris = 0
         let skinned = false

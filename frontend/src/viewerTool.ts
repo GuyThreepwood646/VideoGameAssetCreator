@@ -17,6 +17,16 @@ export type SurfaceHit = {
   distance: number // from the camera to the spot, in scene units
 }
 
+// What the viewer hands to its owner once a model is drawn: the file's own meshes, the renderer (for partial texture
+// uploads), a picker for those meshes, and the textured material of each mesh (the viewer may show another material
+// in wireframe or normals mode).
+export type ViewerModel = {
+  meshes: THREE.Mesh[]
+  renderer: THREE.WebGLRenderer
+  picker: SurfacePicker
+  texturedMaterial: (mesh: THREE.Mesh) => THREE.Material | THREE.Material[]
+}
+
 // A tool plugs into the viewer. Keep the object stable (useMemo or useRef): when the object changes the viewer calls
 // the old tool's cancel().
 export type ViewerTool = {
@@ -71,7 +81,7 @@ export class SurfacePicker {
       mesh.updateWorldMatrix(true, false)
       _inv.copy(mesh.matrixWorld).invert()
       _ray.copy(ray).applyMatrix4(_inv)
-      const bvh = this.bvhOf(mesh.geometry)
+      const bvh = this.bvhFor(mesh.geometry)
       const hit = bvh.raycastFirst(_ray, THREE.FrontSide)
       if (!hit || hit.faceIndex == null) continue
       const point = hit.point.clone().applyMatrix4(mesh.matrixWorld)
@@ -83,7 +93,8 @@ export class SurfacePicker {
     return { point, normal: this.normalAt(mesh, face), face, uv: this.uvAt(mesh, face, local), mesh, distance }
   }
 
-  private bvhOf(geometry: THREE.BufferGeometry): MeshBVH {
+  // The BVH over a geometry (built on first use). Paint uses it to find the triangles under a brush.
+  bvhFor(geometry: THREE.BufferGeometry): MeshBVH {
     let bvh = this.bvhs.get(geometry)
     if (!bvh) {
       bvh = new MeshBVH(geometry)
@@ -128,12 +139,6 @@ export class SurfacePicker {
     THREE.Triangle.getInterpolation(local, _a, _b, _c, _uvA, _uvB, _uvC, _uvOut)
     return _uvOut.clone()
   }
-}
-
-// The simplest tool: reports the spot a click lands on. Step 4 uses it to show what the picker finds; a tool that needs
-// more (painting, marking) follows the same shape.
-export function spotProbe(onSpot: (hit: SurfaceHit | null) => void): ViewerTool {
-  return { id: 'spot-probe', cursor: 'crosshair', down: (hit) => onSpot(hit) }
 }
 
 // Converts a pointer event to a scene ray through the camera. Used by the viewer; exported for tools that want the ray.
