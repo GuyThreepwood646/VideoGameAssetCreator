@@ -21,11 +21,9 @@ clips: [idle, walk, run, turn_left, turn_right, attack, hit, death]
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
-  The animal stands in a neutral four-legged standing pose, all four feet on the ground, body level,
-  head in line with the spine and turned slightly away from the viewer, seen from a three-quarter
-  front angle so one flank and the chest are visible. The tail hangs clear of the legs, not touching
-  them. Each leg is separate, with a clear gap of empty space between every pair of legs, so no leg
-  overlaps or touches another. Whole body visible with margin around it, centred in frame. Plain flat light grey
+  The animal stands in a neutral four-legged standing pose, all four feet on the ground, head level
+  and facing forward, seen from a three-quarter front angle so the face, chest and one flank are
+  visible, whole body visible with margin around it, centred in frame. Plain flat light grey
   background. Soft even studio lighting from the front with no hard shadows. No text, no logos,
   no background scenery, no motion blur, no cropping.
 budgets:
