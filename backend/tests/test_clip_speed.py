@@ -92,3 +92,20 @@ def test_peak_limb_speed_frame_is_the_strike():
 def test_peak_speed_frame_needs_three_frames():
     out = gait.peak_speed_frame({"hand_r": [(0.0, 0.0, 0.0), (0.1, 0.0, 0.0)]}, FPS)
     assert out["frame"] == -1
+
+
+def test_measured_row_carries_the_speed():
+    res = gait.planted_speed([_cycle(30, 0.6, 1.4), _cycle(30, 0.6, 1.4)], FPS, HEIGHT)
+    fields = gait.speed_row_fields(res)
+    assert fields["speed_method"] == "planted_feet"
+    assert abs(fields["speed_mps"] - 1.4) < 0.05
+    assert fields["planted_share"] > 0
+
+
+def test_unmeasured_row_carries_no_speed_mps():
+    # A flat clip: the row has a method and a reason but no speed_mps, so the importer keeps its default.
+    res = gait.planted_speed([[(0.0, 0.0, 0.0)] * 30], FPS, HEIGHT)
+    fields = gait.speed_row_fields(res)
+    assert "speed_mps" not in fields
+    assert fields["speed_method"] == "fallback"
+    assert fields["speed_reason"]

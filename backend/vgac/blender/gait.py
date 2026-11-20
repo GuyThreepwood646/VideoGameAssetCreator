@@ -1083,3 +1083,15 @@ def peak_speed_frame(ends: dict[str, list[tuple[float, float, float]]], fps: flo
             if v > best["speed"]:
                 best = {"frame": i, "time": round(i / fps, 4), "speed": round(v, 3), "end": name}
     return best
+
+
+def speed_row_fields(res: dict) -> dict:
+    """The clip-row fields for a planted_speed result. speed_mps is present only when a speed was measured: a clip
+    without one (or a library clip, which never goes through here) carries no speed, and the importer keeps its
+    default for it."""
+    out = {"speed_method": res["method"], "planted_share": res["planted_share"]}
+    if res.get("speed") is not None:
+        out["speed_mps"] = res["speed"]
+    else:
+        out["speed_reason"] = res.get("reason", "")
+    return out

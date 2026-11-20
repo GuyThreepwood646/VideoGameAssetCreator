@@ -670,7 +670,7 @@ public static class VgacImport
             }
             if (clipSet.Count > 0)
             {
-                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle, sidecarClips);
+                var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle, sidecarClips, fbxPath);
                 animator.runtimeAnimatorController = ctrl;
                 report.clipCount = clipSet.Count;
             }
@@ -1893,11 +1893,22 @@ public static class VgacImport
     }
 
     // Version 22: the measured speed of a walk or run clip from the sidecar (planted feet), or null when the rig stage had none.
-    static float? MeasuredSpeed(Dictionary<string, SidecarClip> side, string clip)
+    // The clip must come from the character's own FBX (asset path == ownFbx), the one the sidecar measured.
+    static float? MeasuredSpeed(Dictionary<string, SidecarClip> side, string clip, AnimationClip playing, string ownFbx)
     {
-        if (side == null || !side.TryGetValue(clip, out var c)) return null;
+        if (side == null || playing == null || ownFbx == null) return null;
+        if (AssetDatabase.GetAssetPath(playing) != ownFbx) return null;
+        if (!side.TryGetValue(clip, out var c)) return null;
         if (!string.Equals(c.speed_method, "planted_feet", StringComparison.OrdinalIgnoreCase)) return null;
         return c.speed_mps > 0f ? (float?)c.speed_mps : null;
+    }
+
+    static string SpeedText(AnimationClip clip, float? measured, string dflt)
+    {
+        if (clip == null) return "none";
+        return measured.HasValue
+            ? "planted_feet " + measured.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " (own clip " + clip.name + ")"
+            : "default " + dflt + " (" + (clip.name) + ", shared library or no measurement)";
     }
 
     [Serializable] class Sidecar { public int version; public string motion = ""; public List<SidecarClip> clips = new List<SidecarClip>(); }
@@ -2197,7 +2208,7 @@ public static class VgacImport
     }
 
     static AnimatorController BuildController(string path, List<AnimationClip> clips, bool humanoid, float speedScale, ControllerInfo info,
-                                              HashSet<string> added = null, AnimationClip ownIdle = null, Dictionary<string, SidecarClip> side = null)
+                                              HashSet<string> added = null, AnimationClip ownIdle = null, Dictionary<string, SidecarClip> side = null, string ownFbx = null)
     {
         AssetDatabase.DeleteAsset(path);
         var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
@@ -2247,12 +2258,13 @@ public static class VgacImport
         var cycle = new List<(AnimationClip clip, float speed)>();
         if (idle) cycle.Add((idle, 0f));
         // Version 22: the walk and run speeds measured from the planted feet by the rig stage; the defaults when a clip has none.
-        var walkMeasured = MeasuredSpeed(side, "walk");
-        var runMeasured = MeasuredSpeed(side, "run");
+        // A measured speed applies only to the clip that plays: the one that came from the character's own FBX (the
+        // sidecar measured that one). A shared-library walk or run keeps its default.
+        var walkMeasured = MeasuredSpeed(side, "walk", walk, ownFbx);
+        var runMeasured = MeasuredSpeed(side, "run", run, ownFbx);
         if (walk) cycle.Add((walk, (walkMeasured ?? 1.4f) * speedScale));
         if (run) cycle.Add((run, (runMeasured ?? 3.5f) * speedScale));
-        info.speedSource = "walk " + (walkMeasured.HasValue ? "planted_feet " + walkMeasured.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "default 1.4")
-            + "; run " + (runMeasured.HasValue ? "planted_feet " + runMeasured.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "default 3.5");
+        info.speedSource = "walk " + SpeedText(walk, walkMeasured, "1.4") + "; run " + SpeedText(run, runMeasured, "3.5");
         if (side != null && side.TryGetValue("attack", out var atk) && atk.hit_frame >= 0)
             info.attackHit = "frame " + atk.hit_frame + " at " + atk.hit_time.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " s (" + atk.hit_end + ")";
         if (cycle.Count >= 2)

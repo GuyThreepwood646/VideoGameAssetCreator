@@ -1645,14 +1645,9 @@ for row in table:
     if row["name"] in ("walk", "run") and _foot_bones:
         feet = _ends_positions(poses[row["name"]], _foot_bones)
         res = gait.planted_speed([feet[b] for b in _foot_bones], fps, _character_height())
-        row["speed_method"], row["planted_share"] = res["method"], res["planted_share"]
-        if res["speed"] is not None:
-            row["speed_mps"] = res["speed"]  # absent when the clip has no stance: the importer keeps its default
-        else:
-            row["speed_reason"] = res["reason"]
+        row.update(gait.speed_row_fields(res))  # speed_mps only when measured; the importer keeps its default otherwise
     elif row["name"] in ("walk", "run"):
-        row["speed_method"], row["planted_share"] = "fallback", 0.0
-        row["speed_reason"] = "no legs"
+        row.update(gait.speed_row_fields({"speed": None, "method": "fallback", "planted_share": 0.0, "reason": "no legs"}))
     if row["name"] == "attack" and (_hand_bones or _foot_bones):
         ends = _ends_positions(poses[row["name"]], _hand_bones + _foot_bones)
         hit = gait.peak_speed_frame(ends, fps)
