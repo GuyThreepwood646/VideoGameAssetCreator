@@ -1,12 +1,16 @@
-"""Blender headless: a worn item that must not bend with the body moves rigidly with one bone (WP-69).
+"""Blender headless: a stiff part moves rigidly with one spine bone (WP-69).
 
-Run: blender -b --python worn_region.py -- <rig.glb> <out.glb> --report <json> --bone mixamorig:Spine2
-     --region-y 0.10 --region-x 0.42 --region-z 0.65,1.60 [--seam 2] [--max-change 0.3]
+Run: blender -b --python worn_region.py -- <rig.glb> <out.glb> --report <json> --points <json> [--seam 8]
+     [--radius 0.25]
 
-The region is the set of mesh vertices in a box on the rest pose: Y at least region-y (behind the body's back surface,
-about Y 0 on the built-in rigs), |X| at most region-x, Z between the two region-z values. The region's weights become
-the one bone. Seam: the next `seam` rings of vertices blend toward the bone (ring k takes (seam + 1 - k) / (seam + 1)
-of the bone), so there is no tear. Everything else is unchanged. Four influences, normalised.
+--points is the list of stiff parts placed on this rig version: [{"name", "location": [x, y, z]}], the location in the
+rig GLB's own glTF frame (Y up, the character facing +Z), as declared_parts.py stores it.
+
+For each point the region is grown from the mesh vertex nearest the point: the vertices connected to it along mesh
+edges, within RADIUS metres of the point. The regions of all points are joined. The region's weights become one
+spine bone: the chain bone (Spine, Spine1, Spine2, Chest) whose head is nearest the region's centre. Seam: the next
+SEAM rings blend toward that bone (ring k takes (seam + 1 - k) / (seam + 1)), so the cut is not torn. Four
+influences, normalised. Nothing else changes.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
 """
@@ -17,28 +21,70 @@ import sys
 import numpy as np
 
 MAX_INFLUENCES = 4
+RADIUS = 0.6  # metres from the placed point; a region never grows past it (edges only, see the handover)
+SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
+SPINE_WORDS = ("spine", "chest")
 
 
-def region_mask(co, region_y, region_x, region_z):
-    """Boolean per vertex for the worn-item box on rest coordinates co (V, 3)."""
-    x, y, z = co[:, 0], co[:, 1], co[:, 2]
-    zlo, zhi = region_z
-    return (y >= region_y) & (np.abs(x) <= region_x) & (z >= zlo) & (z <= zhi)
+def gltf_to_blender(p):
+    """glTF (Y up, facing +Z) to Blender's Z-up frame after the glTF import (Blender Y = -glTF Z)."""
+    x, y, z = p
+    return np.array([x, -z, y], dtype=float)
+
+
+def _adjacency(V, edges):
+    adj = [[] for _ in range(V)]
+    for a, b in np.asarray(edges, dtype=int).reshape(-1, 2):
+        adj[a].append(b)
+        adj[b].append(a)
+    return adj
+
+
+def grow_region(co, edges, point, radius=RADIUS):
+    """Vertices connected to the one nearest the point along edges, within radius of the point. A bool mask."""
+    co = np.asarray(co, dtype=float).reshape(-1, 3)
+    V = len(co)
+    mask = np.zeros(V, dtype=bool)
+    if V == 0:
+        return mask
+    dist = np.linalg.norm(co - np.asarray(point, dtype=float), axis=1)
+    start = int(np.argmin(dist))
+    if dist[start] > radius:
+        return mask
+    adj = _adjacency(V, edges)
+    stack = [start]
+    mask[start] = True
+    while stack:
+        u = stack.pop()
+        for w in adj[u]:
+            if not mask[w] and dist[w] <= radius:
+                mask[w] = True
+                stack.append(w)
+    return mask
+
+
+def spine_bone(names, heads, centre):
+    """The chain bone (spine or chest) whose head is nearest the region's centre; None when there is none."""
+    best, best_d = None, None
+    for n, h in zip(names, heads):
+        low = str(n).replace("mixamorig:", "").lower()
+        if not any(w in low for w in SPINE_WORDS):
+            continue
+        d = float(np.linalg.norm(np.asarray(h, dtype=float) - np.asarray(centre, dtype=float)))
+        if best_d is None or d < best_d:
+            best, best_d = n, d
+    return best
 
 
 def ring_blend(edges, region, seam):
-    """Per vertex, the blend toward the bone: 1.0 in the region, (seam + 1 - k) / (seam + 1) in ring k (k = 1 .. seam
-    rings out from the region), 0 elsewhere. Rings grow along mesh edges."""
+    """Per vertex blend toward the bone: 1.0 in the region, (seam + 1 - k) / (seam + 1) in ring k, 0 elsewhere."""
     V = len(region)
     t = np.where(region, 1.0, 0.0)
     if seam <= 0 or not len(edges):
         return t
-    adj = [[] for _ in range(V)]
-    for a, b in edges:
-        adj[a].append(b)
-        adj[b].append(a)
+    adj = _adjacency(V, edges)
     frontier = np.where(region)[0].tolist()
-    seen = region.copy()
+    seen = np.array(region, dtype=bool, copy=True)
     for k in range(1, seam + 1):
         nxt = []
         for v in frontier:
@@ -66,31 +112,27 @@ def cap_and_normalise(W, rows):
     return W
 
 
-def run_numpy(W, edges, co, names, bone, region_y, region_x, region_z, seam=2, max_change=0.3):
-    """The whole pass on arrays. names: one bone name per column of W. Returns (W, report dict).
-    If the bone is missing, W is returned unchanged with a reason."""
-    if bone not in names:
-        return np.array(W, dtype=float, copy=True), {"ok": False, "reason": f"bone {bone} not on the mesh"}
-    col = list(names).index(bone)
-    region = region_mask(co, region_y, region_x, region_z)
-    report = {"ok": True, "bone": bone, "region_vertices": int(region.sum()), "seam_rings": seam}
-    if not np.any(region):
-        report.update(ok=False, reason="empty region")
-        return np.array(W, dtype=float, copy=True), report
-    t = ring_blend(edges, region, seam)
+def run_numpy(W, edges, co, names, heads, region, seam=SEAM):
+    """The pass on arrays. region: bool mask over vertices. names and heads: one bone per column of W (heads are the
+    bone head positions). Returns (W, report). W unchanged when there is no region or no spine bone."""
     W0 = np.array(W, dtype=float, copy=True)
+    region = np.asarray(region, dtype=bool)
+    if not np.any(region):
+        return W0, {"ok": False, "reason": "the stiff part region is empty"}
+    centre = np.asarray(co, dtype=float)[region].mean(axis=0)
+    bone = spine_bone(names, heads, centre)
+    if bone is None:
+        return W0, {"ok": False, "reason": "no spine or chest bone on this rig"}
+    col = list(names).index(bone)
+    t = ring_blend(edges, region, seam)
     target = np.zeros_like(W0)
     target[:, col] = 1.0
     blended = (1.0 - t[:, None]) * W0 + t[:, None] * target
     rows = t > 1e-9
-    moved = np.abs(blended - W0).sum(axis=1)
-    # a seam row whose weights would move by more than max_change keeps its own weights (as leg_skin does)
-    far = rows & ~region & (moved > max_change) if max_change > 0 else np.zeros(len(rows), dtype=bool)
-    blended[far] = W0[far]
-    rows = rows & ~far
-    out = cap_and_normalise(blended, rows | region)
-    report.update(seam_vertices=int((rows & ~region).sum()), kept_seam_vertices=int(far.sum()),
-                  row_sum_error=float(np.abs(out[rows | region].sum(axis=1) - 1.0).max()) if np.any(rows | region) else 0.0)
+    out = cap_and_normalise(blended, rows)
+    err = float(np.abs(out[rows].sum(axis=1) - 1.0).max()) if np.any(rows) else 0.0
+    report = {"ok": True, "bone": bone, "region_vertices": int(region.sum()),
+              "seam_vertices": int((rows & ~region).sum()), "seam_rings": int(seam), "row_sum_error": err}
     return out, report
 
 
@@ -106,19 +148,25 @@ def main():  # pragma: no cover - runs inside Blender
     argv = _common.after_double_dash()
     src, dst = os.path.abspath(argv[0]), os.path.abspath(argv[1])
     report_path = _common.opt("--report", None)
-    bone = _common.opt("--bone", "mixamorig:Spine2")
-    ry = float(_common.opt("--region-y", "0.10"))
-    rx = float(_common.opt("--region-x", "0.42"))
-    rz = [float(v) for v in _common.opt("--region-z", "0.65,1.60").split(",")]
-    seam = int(_common.opt("--seam", "2"))
-    max_change = float(_common.opt("--max-change", "0.3"))
+    points_path = _common.opt("--points", None)
+    seam = int(_common.opt("--seam", str(SEAM)))
+    radius = float(_common.opt("--radius", str(RADIUS)))
+    points = []
+    if points_path:
+        with open(points_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        points = data.get("parts", []) if isinstance(data, dict) else data
     _common.open_glb(src)
     scene = bpy.context.scene
+    arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
     meshes = [o for o in scene.objects if o.type == "MESH" and o.vertex_groups]
-    report = {"ok": False, "meshes": []}
-    if not meshes:
-        report["reason"] = "no skinned mesh"
+    report = {"ok": False, "points": [], "meshes": []}
+    if not meshes or arm is None:
+        report["reason"] = "no armature or no skinned mesh"
+    elif not points:
+        report["reason"] = "no stiff parts placed"
     else:
+        bone_heads = {b.name: list(arm.matrix_world @ b.head_local) for b in arm.data.bones}
         for o in meshes:
             vg_names = [g.name for g in o.vertex_groups]
             V = len(o.data.vertices)
@@ -126,9 +174,15 @@ def main():  # pragma: no cover - runs inside Blender
             for v in o.data.vertices:
                 for g in v.groups:
                     W[v.index, g.group] = g.weight
-            co = np.array([tuple(v.co) for v in o.data.vertices], dtype=float).reshape(-1, 3)
+            co = np.array([tuple(o.matrix_world @ v.co) for v in o.data.vertices], dtype=float).reshape(-1, 3)
             edges = np.array([[e.vertices[0], e.vertices[1]] for e in o.data.edges], dtype=int).reshape(-1, 2)
-            W2, rep = run_numpy(W, edges, co, vg_names, bone, ry, rx, rz, seam=seam, max_change=max_change)
+            region = np.zeros(V, dtype=bool)
+            for p in points:
+                m = grow_region(co, edges, gltf_to_blender(p["location"]), radius)
+                report["points"].append({"name": p.get("name"), "vertices": int(m.sum())})
+                region |= m
+            heads = [bone_heads.get(n, [0.0, 0.0, 0.0]) for n in vg_names]
+            W2, rep = run_numpy(W, edges, co, vg_names, heads, region, seam=seam)
             rep["mesh"] = o.name
             report["meshes"].append(rep)
             if rep.get("ok"):

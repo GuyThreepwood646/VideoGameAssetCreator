@@ -1031,27 +1031,21 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
 
 
-# WP-69 worn region (blender/worn_region.py). The box is the Heir's backpack measured on the rest pose: behind the
-# body's back surface (Y 0.10 and up), 0.42 either side, between Z 0.65 and 1.60 m. Setting worn_region (default off
-# until it wins on every category it is tried on) turns it on.
-WORN_REGION_BONE = "mixamorig:Spine2"
-WORN_REGION_BOX = {"region_y": 0.10, "region_x": 0.42, "region_z": "0.65,1.60", "seam": 8, "max_change": 0}
+# WP-69 stiff parts (blender/worn_region.py): a part the person placed as stiff moves with one spine bone. Its region
+# is grown from the point on the rest mesh; the seam and the bone are set in the script.
 
 
 async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
-    """Worn region pass (blender/worn_region.py, WP-69): the worn item's box moves with one bone (Spine2, the chest),
-    with an eight-ring seam. Off unless the setting worn_region is on. metrics.worn_region: {ok, meshes} or {reason}.
-    Never raises."""
-    on = params.get("worn_region") is True
-    sc.set_params(worn_region=on)
-    if not on:
+    """Stiff parts (blender/worn_region.py, WP-69): each placed stiff part moves with the spine bone nearest its region.
+    Does nothing when no stiff part is placed. metrics.worn_region: {ok, points, meshes} or {reason}. Never raises."""
+    points = declared_parts.for_stiff(declared_parts.read_placed(sc.file("parts")))
+    sc.set_params(stiff_parts=[p["name"] for p in points])
+    if not points:
         return
     out = sc.dir / "rig_worn_region.glb"
     report = sc.dir / "worn_region.json"
-    box = WORN_REGION_BOX
-    args = [rig_glb, out, "--report", report, "--bone", WORN_REGION_BONE,
-            "--region-y", str(box["region_y"]), "--region-x", str(box["region_x"]), "--region-z", box["region_z"],
-            "--seam", str(box["seam"]), "--max-change", str(box["max_change"])]
+    points_file = declared_parts.write_placed(sc.dir / "stiff_points.json", points)
+    args = [rig_glb, out, "--report", report, "--points", points_file]
     try:
         await sc.blender("worn_region.py", args, log_name="worn_region.log",
                          timeout=sc.settings.blender_timeout_seconds)
@@ -1059,7 +1053,7 @@ async def _worn_region(sc: StageContext, rig_glb: Path, params: dict[str, Any]) 
         if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
             shutil.copy2(rig_glb, sc.dir / "rig_before_worn_region.glb")
             shutil.move(str(out), str(rig_glb))
-            sc.set_metrics(worn_region={"ok": True, "meshes": rep.get("meshes", [])})
+            sc.set_metrics(worn_region={"ok": True, "points": rep.get("points", []), "meshes": rep.get("meshes", [])})
         else:
             sc.set_metrics(worn_region={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001

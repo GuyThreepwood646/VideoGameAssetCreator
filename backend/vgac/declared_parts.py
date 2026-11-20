@@ -23,11 +23,11 @@ import math
 from pathlib import Path
 from typing import Any
 
-KINDS = ("separate", "sway")
-# Kinds that need a location to do anything in the rig step (only sway, for now).
-LOCATED_KINDS = ("sway",)
+KINDS = ("separate", "sway", "stiff")
+# Kinds that need a location to do anything in the rig step: sway (spring bones) and stiff (rigid with a spine bone).
+LOCATED_KINDS = ("sway", "stiff")
 # Kinds a category may use. Sway is for people-shaped characters; the spring pass only runs on humanoids.
-CATEGORY_KINDS = {"humanoid": ("separate", "sway")}
+CATEGORY_KINDS = {"humanoid": ("separate", "sway", "stiff")}
 DEFAULT_KIND = "separate"
 NAME_MAX = 40
 COORD_MAX_M = 5.0
@@ -151,7 +151,13 @@ def write_placed(path: Path, parts: list[dict[str, Any]]) -> Path:
 def for_springs(placed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The sway parts that have a location, for blender/springs.py --declared: [{name, kind, location}]."""
     return [{"name": r["name"], "kind": r["kind"], "location": r["location"]}
-            for r in placed_rows if r.get("kind") in LOCATED_KINDS and r.get("location")]
+            for r in placed_rows if r.get("kind") == "sway" and r.get("location")]
+
+
+def for_stiff(placed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The stiff parts that have a location, for blender/worn_region.py --points: [{name, location}] (WP-69)."""
+    return [{"name": r["name"], "location": r["location"]}
+            for r in placed_rows if r.get("kind") == "stiff" and r.get("location")]
 
 
 def view(declared: list[dict[str, str]], placed_rows: list[dict[str, Any]], applies: bool) -> dict[str, Any]:
