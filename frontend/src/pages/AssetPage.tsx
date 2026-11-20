@@ -71,7 +71,8 @@ export default function AssetPage() {
       const t = e.target as HTMLElement | null
       if (e.ctrlKey || e.metaKey || e.altKey || (t && (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable))) return
       if (document.querySelector('[role=dialog]')) return
-      const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
+      // "Try again" is found in the review answers and in the error box of a step (class try-again), wherever it sits.
+      const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button, button.try-again')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
       const k = e.key.toLowerCase()
       if (k === 'k') byText('yes, keep')?.click()
       else if (k === 'r') byText('try again')?.click()

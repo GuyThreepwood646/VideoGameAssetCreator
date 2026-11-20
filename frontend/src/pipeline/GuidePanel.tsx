@@ -259,7 +259,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       happened = humanError(failed.error)
       now = 'Try again, or change the description.'
       action = (
-        <button type="button" className="primary" disabled={busy} onClick={() => onRetry(failed)}>
+        <button type="button" className="primary try-again" disabled={busy} onClick={() => onRetry(failed)}>
           Try again
           <span className="btn-est">{fmtDuration(est)}</span>
         </button>
