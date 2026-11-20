@@ -104,6 +104,9 @@ export function RigView({ version }: { version: Version }) {
   // rig.carry (WP-27): a rig on a separated clean-up keeps the rig the arm was separated on, or says why it could not.
   const carried = m.rig_method === 'carry'
   const carryWhy = typeof m.carry_why === 'string' ? m.carry_why : null
+  // WP-75: the rig step separates an arm the 3D build joined to the body, or says why it left it joined.
+  const sepRec = m.separation && typeof m.separation === 'object' ? (m.separation as { message?: unknown }) : null
+  const sepLine = typeof sepRec?.message === 'string' ? sepRec.message : null
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
@@ -189,7 +192,7 @@ export function RigView({ version }: { version: Version }) {
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing || carried || carryWhy) && (
+      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing || carried || carryWhy || sepLine) && (
         <div className="rig-lines small">
           {carried && (
             <div>
@@ -198,6 +201,7 @@ export function RigView({ version }: { version: Version }) {
             </div>
           )}
           {!carried && carryWhy && <div>Made from scratch, not kept from the rig the arm was separated on: {carryWhy}.</div>}
+          {sepLine && <div>{sepLine}</div>}
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>

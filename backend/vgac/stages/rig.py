@@ -502,8 +502,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _joins(sc, rig_glb, params)
         await _leg_skin(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
-        cut = await _separate_joined(sc, src, rig_glb)
-        await _shoulder_skin(sc, rig_glb)  # after the cut: it rederives the weights round the arm
+        cut = await _separate_joined(sc, src, rig_glb)  # then the shoulder skin pass, after any cut
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
@@ -1320,22 +1319,35 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
 
 async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
     """Shoulder skin pass (blender/shoulder_skin.py, WP-75): collarbone weight on skin standing high above the
-    collarbone (a hood, a tall collar, hair on the shoulder) or far below it (the side of the chest under the armpit)
-    goes to the chest, so the collarbone lift in the moves does not swing it toward the neck or fold it. In place, only when something changed; the rig before it is kept as
-    rig_before_shoulder_skin.glb. metrics.shoulder_skin: {ok, changed, sides} or {reason}. Never raises."""
-    out = sc.dir / "rig_shoulder_skin.glb"
-    report = sc.dir / "shoulder_skin.json"
+    collarbone (a hood, a tall collar, hair on the shoulder) goes to the chest, so the collarbone lift in the moves
+    does not swing it toward the neck (a separated arm's side also gets the band under the collarbone, _cut). In place, only
+    when something changed; the rig before it is kept as rig_before_shoulder_skin.glb. metrics.shoulder_skin: {ok,
+    changed, sides} or {reason}. Never raises."""
     try:
-        await sc.blender("shoulder_skin.py", [rig_glb, out, "--report", report], log_name="shoulder_skin.log",
-                         timeout=sc.settings.blender_timeout_seconds)
-        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
-        if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
-            shutil.copy2(rig_glb, sc.dir / "rig_before_shoulder_skin.glb")
-            shutil.move(str(out), str(rig_glb))
-        sc.set_metrics(shoulder_skin={"ok": bool(rep.get("ok")), "changed": int(rep.get("changed") or 0),
-                                      "sides": rep.get("sides") or {}} if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
+        rep = await _skin_pass(sc, rig_glb, keep_before=sc.dir / "rig_before_shoulder_skin.glb")
+        sc.set_metrics(shoulder_skin={"ok": True, "changed": int(rep.get("changed") or 0), "sides": rep.get("sides") or {}}
+                       if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(shoulder_skin={"error": str(e)[:300]})
+
+
+async def _skin_pass(sc: StageContext, glb: Path, keep_before: Path | None = None, below: list[str] | None = None) -> dict[str, Any]:
+    """blender/shoulder_skin.py on `glb`, in place when it changed something (the file before it copied to
+    keep_before); `below`: the separated sides (L, R), which also get the band under the collarbone. -> its report.
+    Raises on a Blender error."""
+    glb = Path(glb)
+    out = glb.with_name(glb.stem + "_shoulder_skin.glb")
+    report = glb.with_name(glb.stem + "_shoulder_skin.json")
+    args = [glb, out, "--report", report] + (["--below", ",".join(below)] if below else [])
+    await sc.blender("shoulder_skin.py", args, log_name="shoulder_skin.log",
+                     timeout=sc.settings.blender_timeout_seconds)
+    rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+    if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
+        if keep_before is not None:
+            shutil.copy2(glb, keep_before)
+        shutil.move(str(out), str(glb))
+    report.unlink(missing_ok=True)
+    return rep
 
 
 # WP-75 part B: an upper arm the 3D build grew into the body (metrics.limb_joins state `joined`) is separated here with
@@ -1345,35 +1357,112 @@ async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
 SEPARATION_WORK = "separation_work"
 
 
-async def _separate_joined(sc: StageContext, src: Path, rig_glb: Path) -> dict[str, Any] | None:
-    """Separate each joined upper arm (WP-75). metrics.separation: {changed, sides, messages, summary} or {changed:
-    false, reason}. The rig before it is kept as rig_before_separation.glb, and the joined-limb measure runs again on
-    the cut rig. -> {cut_glb, caps} for _cut_pictures when the model changed, else None. The engine's refusal leaves
-    the rig as it was, with its plain reasons. Never raises."""
+SIDE_WORD = {"L": "left", "R": "right"}
+WORSE_WORD = {"shoulder": "the shoulder stretch more", "side": "the side stretch more",
+              "crossings": "the skin fold through itself"}
+
+
+def separation_message(cut: list[str], worse: dict[str, list[str]], refused: list[str] | None = None) -> str | None:
+    """The plain line the rig page shows about the arm separation: which arms were separated, which were left joined
+    and why (`worse`: {side: what the cut made worse when the arm is raised}; `refused`: the engine's own lines)."""
+    parts = []
+    if cut:
+        names = " and ".join(SIDE_WORD[x] for x in cut)
+        verb = "arms were" if len(cut) > 1 else "arm was"
+        parts.append(f"The {names} {verb} separated from the body, so the side does not stretch like a web when the arm "
+                     "lifts.")
+    for side, why in worse.items():
+        what = " and ".join(WORSE_WORD[w] for w in why)
+        parts.append(f"The {SIDE_WORD[side]} arm was left joined to the body: separating it made {what} when the arm is "
+                     "raised.")
+    if refused:
+        parts.append("The arm was left joined to the body. " + " ".join(refused))
+    return " ".join(parts) or None
+
+
+async def _cut(sc: StageContext, src: Path, rig_glb: Path, sides: list[str], work: Path) -> tuple[Path | None, dict[str, Any]]:
+    """The Shape tab's engine on `sides` of the rig -> (the rigged cut model with the shoulder skin pass, the band
+    under the collarbone on the cut sides, the engine's report), or (None, report) when it refused, or (None, {reason, error}) when it failed."""
     from .. import separate, shape
 
-    limbs = ((sc.version.metrics or {}).get("limb_joins") or {}).get("limbs") or {}
-    sides = [s for s, name in (("L", "Left"), ("R", "Right")) if (limbs.get(f"{name}_upperarm") or {}).get("state") == "joined"]
-    if not sides:
-        sc.set_metrics(separation={"changed": False, "reason": "no upper arm is joined to the body"})
-        return None
-    work = sc.dir / SEPARATION_WORK
     rigged = work / f"{shape.CARRY_KEY}.glb"
     side = sides[0] if len(sides) == 1 else "both"
-    sc.progress(0.55, "separating the arm the 3D build joined to the body")
     try:
         report = await asyncio.to_thread(separate.separate, sc.settings, Path(src), Path(rig_glb), work / Path(src).name,
                                          side=side, rigged_out=rigged, timeout=float(sc.settings.blender_timeout_seconds))
     except Exception as e:  # noqa: BLE001
-        sc.set_metrics(separation={"changed": False, "reason": "error", "error": str(e)[:300]})
-        shutil.rmtree(work, ignore_errors=True)
-        return None
-    info = {"sides": sides, "messages": report.get("messages", []), "summary": separate.summary(report)}
+        return None, {"reason": "error", "error": str(e)[:300]}
     if not report.get("changed") or not rigged.is_file():
-        sc.set_metrics(separation={"changed": False, "reason": report.get("reason") or "refused", **info})
+        return None, report
+    try:
+        await _skin_pass(sc, rigged, below=sides)
+    except Exception as e:  # noqa: BLE001
+        return None, {"reason": "error", "error": str(e)[:300]}
+    return rigged, report
+
+
+async def _cut_worse(sc: StageContext, before: Path, after: Path) -> dict[str, list[str]] | None:
+    """blender/cut_check.py: {side L/R: what the cut made worse with the arm raised and the collarbone lifted} (empty
+    when nothing), or None when the check could not run. Its numbers go to metrics.cut_check."""
+    report = sc.dir / "cut_check.json"
+    try:
+        await sc.blender("cut_check.py", [before, after, "--report", report], log_name="cut_check.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if not rep.get("ok"):
+        return None
+    sc.set_metrics(cut_check={k: rep.get(k) for k in ("before", "after", "worse")})
+    return {("L" if k == "Left" else "R"): v for k, v in (rep.get("worse") or {}).items()}
+
+
+async def _separate_joined(sc: StageContext, src: Path, rig_glb: Path) -> dict[str, Any] | None:
+    """Separate each joined upper arm (WP-75), with the shoulder skin pass after. The cut is kept only on the sides
+    where it does not make raising the arm worse (cut_check.py, with the collarbone lift): shoulder or side stretch, or
+    armpit crossings. metrics.separation: {changed, sides (cut), worse, message, messages, summary}; `message` is the
+    plain line for the rig page. The rig before the cut is kept as rig_before_separation.glb; where nothing is cut the
+    rig carries on as it was, with the shoulder skin pass. The joined-limb measure runs again on a cut rig.
+    -> {cut_glb, caps} for _cut_pictures when the model changed, else None. Never raises."""
+    from .. import separate, shape
+
+    limbs = ((sc.version.metrics or {}).get("limb_joins") or {}).get("limbs") or {}
+    sides = [x for x, name in (("L", "Left"), ("R", "Right")) if (limbs.get(f"{name}_upperarm") or {}).get("state") == "joined"]
+    if not sides:
+        sc.set_metrics(separation={"changed": False, "reason": "no upper arm is joined to the body", "message": None})
+        await _shoulder_skin(sc, rig_glb)
+        return None
+    sc.progress(0.55, "separating the arm the 3D build joined to the body")
+    before = sc.dir / "rig_before_separation.glb"
+    shutil.copy2(rig_glb, before)
+    work = sc.dir / SEPARATION_WORK
+    rigged, report = await _cut(sc, src, before, sides, work)
+    await _shoulder_skin(sc, rig_glb)  # the uncut rig with the pass: the rig when nothing is cut, and the check's base
+    if rigged is None:
+        refused = report.get("messages") or ["The separation could not run, so the rig was made as before."]
+        sc.set_metrics(separation={"changed": False, "reason": report.get("reason") or "refused",
+                                   "message": separation_message([], {}, refused), "messages": report.get("messages", []),
+                                   **({"error": report["error"]} if report.get("error") else {})})
         shutil.rmtree(work, ignore_errors=True)
         return None
-    shutil.copy2(rig_glb, sc.dir / "rig_before_separation.glb")
+    worse = await _cut_worse(sc, rig_glb, rigged)
+    if worse is None:  # whether the cut helps cannot be told: the rig stays as it was
+        sc.set_metrics(separation={"changed": False, "reason": "check_failed", "message": separation_message(
+            [], {}, ["Whether separating it helps could not be measured, so the rig was made as before."])})
+        shutil.rmtree(work, ignore_errors=True)
+        return None
+    keep = [x for x in sides if x not in worse]
+    if keep and keep != sides:  # cut again, only where it helps
+        shutil.rmtree(work, ignore_errors=True)
+        rigged, report = await _cut(sc, src, before, keep, work)
+        if rigged is None:
+            keep = []
+    info = {"worse": worse, "messages": report.get("messages", []), "summary": separate.summary(report) if keep else None}
+    if not keep:
+        sc.set_metrics(separation={"changed": False, "reason": "made_worse", "sides": [],
+                                   "message": separation_message([], worse), **info})
+        shutil.rmtree(work, ignore_errors=True)
+        return None
     shutil.copyfile(rigged, rig_glb)
     caps_src = work / separate.CAPS_FILE
     caps = json.loads(caps_src.read_text(encoding="utf-8")).get("caps", []) if caps_src.is_file() else []
@@ -1381,7 +1470,7 @@ async def _separate_joined(sc: StageContext, src: Path, rig_glb: Path) -> dict[s
         caps_file = sc.dir / f"{shape.CAPS_KEY}.json"
         shutil.copyfile(caps_src, caps_file)
         sc.register(shape.CAPS_KEY, caps_file)
-    sc.set_metrics(separation={"changed": True, **info})
+    sc.set_metrics(separation={"changed": True, "sides": keep, "message": separation_message(keep, worse), **info})
     await _limb_joins(sc, rig_glb)
     return {"cut_glb": work / Path(src).name, "caps": caps}
 
