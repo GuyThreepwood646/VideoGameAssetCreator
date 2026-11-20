@@ -249,6 +249,14 @@ def test_cap_colour_reads_only_covered_texels_and_follows_the_ring():
     assert out[1].tolist() == pytest.approx([0.5, 0, 0.5])  # half way: half of each, not one flat average of a patch
 
 
+def test_cap_normals_never_face_away_from_the_cap():
+    own = np.array([0, 0, 1.0])
+    n = sp.facing_normals(np.array([[0, 0, 2.0], [1, 0, 0.0], [0, 0, -1.0]]), own)
+    assert np.allclose(np.linalg.norm(n, axis=1), 1)
+    assert np.allclose(n[0], own)  # already facing: only made unit length
+    assert (n @ own >= sp.CAP_LEAST_FACING - 1e-6).all()  # side-on and backward ones turned toward the cap's facing
+
+
 def test_dilate_fill_grows_the_cap_colour_by_its_padding_only():
     px = np.zeros((9, 9, 3), np.float32)
     mask = np.zeros((9, 9), bool)

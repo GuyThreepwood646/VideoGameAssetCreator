@@ -34,7 +34,9 @@ added the weights, the cap colour and the rest pose (evidence in bakeoff/wp25 an
    density, smaller if short of room). Their colour comes from the surface round their ring: each ring point's colour
    is read just inside the surface triangles beside it (only texels the surface covers), cap pixels blend those by
    inverse distance, and the surface's own detail is mirrored across the ring within a small swing. Every picture of
-   the material is filled so; normal maps get a flat normal; cap faces are shaded flat. Nothing else in any picture
+   the material is filled so; normal maps get a flat normal. Cap corners get shading normals blended from the surface
+   round the ring (and half the cap's own facing, never more than 60 degrees off it), so a cap does not shade as a
+   separate flat block. Nothing else in any picture
    changes. The report lists each cap's texture triangles (the paint tools find the caps there) and its colour match.
 10. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
    not cross before. `ok` is false when any of them got worse.
@@ -80,6 +82,8 @@ WEIGHT_LIMIT = 0.3  # the volume limit: a point's weights may move at most this 
 RING_INSET = 0.35  # an edge point's colour is read this far from it toward the middle of each surface triangle beside it
 SAMPLE_RADIUS_PX = 2  # texels round that read point averaged (only those the surface covers)
 IDW_NEAREST = 12  # a cap pixel blends the colours of this many nearest edge points
+CAP_LEAST_FACING = 0.5  # a cap's shading normal stays within 60 degrees of the way the cap faces
+CAP_NORMAL_SHARE = 0.5  # how much of a cap's own facing is kept in its shading normals (the rest from its ring)
 MIRROR_REACH = 0.1  # m: the surface a cap mirrors from lies within the cap's size plus this of its middle
 MIRROR_SWING = 0.08  # the most the mirrored detail moves a cap pixel off the blended ring colour (of 1)
 MIRROR_LAND = 0.03  # m: a mirrored point further than this from that surface keeps the blended ring colour
@@ -623,12 +627,22 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         _debug_colours(bm, me, report, xf)
     all_caps = [cp for s in report["sides"].values() for cp in s.pop("_caps", [])]
     report["uv"] = _cap_uvs(bm, me, mo, all_caps)
+    cap_normals = report["uv"].pop("_normals", {})
+    bm.faces.index_update()
+    cap_normals = {f.index: ns for f, ns in cap_normals.items() if f.is_valid}
     for cp in all_caps:
         cp.pop("_plane", None)
         cp.pop("faces", None)
         cp.pop("edge_verts", None)
     bm.to_mesh(me)
     me.update()
+    if cap_normals:  # the caps' blended shading normals; every other corner keeps the normal it has
+        corner = [tuple(c.vector) for c in me.corner_normals]
+        for pi, ns in cap_normals.items():
+            for li, n in zip(me.polygons[pi].loop_indices, ns):
+                corner[li] = n
+        me.normals_split_custom_set(corner)
+        report["uv"]["cap_normals"] = len(cap_normals)
     bm.free()
 
     # step 4 output: the mesh alone
@@ -1365,6 +1379,21 @@ def sample_many(px, covered, uvs):
     return out
 
 
+def facing_normals(n, own, least=CAP_LEAST_FACING):
+    """Unit normals (n, 3) turned toward `own` (the cap's facing) until they face it by at least `least` (a cosine), so
+    a blend from a ring whose surface faces away never shades the cap from behind."""
+    n = np.asarray(n, float)
+    own = np.asarray(own, float)
+    out = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    for a in np.linspace(0.1, 1.0, 10):
+        low = out @ own < least - 1e-9
+        if not low.any():
+            break
+        m = (1 - a) * n[low] / np.maximum(np.linalg.norm(n[low], axis=1, keepdims=True), 1e-9) + a * own
+        out[low] = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-9)
+    return out
+
+
 def idw_colour(pts, ring_xyz, ring_col, k=IDW_NEAREST, power=2.0, chunk=4096):
     """Colours for points (n, 3) blended from the ring's colours by inverse distance over the k nearest ring points."""
     pts, ring_xyz, ring_col = (np.asarray(x, float) for x in (pts, ring_xyz, ring_col))
@@ -1444,9 +1473,9 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     their edge (WP-27): each edge point's colour is read just inside the surface triangles beside it, from texels the
     surface really covers (never the empty atlas round an island), and each cap pixel blends the colours of the edge
     points nearest it by inverse distance, so a cap follows its ring where the ring changes colour. Every picture of
-    the material is filled the same way; normal maps get a flat normal. Cap faces are shaded flat. The report lists
-    each cap's texture triangles (so the paint tools can find the caps) and how far its colour at the ring is from
-    the surface beside it."""
+    the material is filled the same way; normal maps get a flat normal. Cap corners get blended shading normals
+    (_cap_normals). The report lists each cap's texture triangles (so the paint tools can find the caps) and how far
+    its colour at the ring is from the surface beside it."""
     import uvfit
 
     uvl = bm.loops.layers.uv.active
@@ -1468,7 +1497,7 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
                 planes.append((pc, pn, sign))
         capset.update(fs)
     for f in capset:
-        f.smooth = False  # a cap's normal is its own: flat, not blended with the surface round it
+        f.smooth = True  # shaded by the normals blended from its ring (_cap_normals), not as one flat plane
     surf = [f for f in bm.faces if f not in capset]
     uv_t = np.array([[l[uvl].uv[:] for l in f.loops] for f in surf])
     xyz_t = np.array([[l.vert.co[:] for l in f.loops] for f in surf])
@@ -1584,6 +1613,35 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     for isl, rr in zip(out["cap_islands"], ring_report):
         isl.update(rr)
     out["placed"] = len(placed)
+    out["_normals"] = _cap_normals([isl[0] for isl in islands], capset)
+    return out
+
+
+def _cap_normals(island_faces, capset):  # pragma: no cover
+    """Shading normals for each cap corner: the surface normals round the cap's ring blended by inverse distance, plus
+    CAP_NORMAL_SHARE of the cap's own facing, so a cap shades as a continuation of the surface round it rather than as
+    one flat plane facing elsewhere (a flat cap read as a hard-edged block under light even with the right colour).
+    -> {face: [normal per corner]}."""
+    out = {}
+    for fs in island_faces:
+        ring, ring_n = [], []
+        for v in {v for f in fs for v in f.verts}:
+            nb = [g for g in v.link_faces if g not in capset]
+            if nb:
+                n = sum((g.normal * g.calc_area() for g in nb), type(v.co)((0.0, 0.0, 0.0)))
+                if n.length > 1e-12:
+                    ring.append(v.co[:])
+                    ring_n.append(n.normalized()[:])
+        own = sum((f.normal * f.calc_area() for f in fs), type(fs[0].normal)((0.0, 0.0, 0.0)))
+        own = np.array(own.normalized()[:]) if own.length > 1e-12 else np.zeros(3)
+        if not ring:
+            continue
+        pts = np.array([lp.vert.co[:] for f in fs for lp in f.loops])
+        nb = facing_normals(idw_colour(pts, np.array(ring), np.array(ring_n)) + CAP_NORMAL_SHARE * own, own)
+        k = 0
+        for f in fs:
+            out[f] = [tuple(nb[k + i]) for i in range(len(f.loops))]
+            k += len(f.loops)
     return out
 
 
