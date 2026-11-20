@@ -367,7 +367,8 @@ def public(a: dict[str, Any]) -> dict[str, Any]:
     from . import reference
 
     return {**reference.addon_public(a), "mine": True, "file_name": a.get("file_name") or "", "added_at": a.get("added_at") or "",
-            "warning": a.get("warning") or "", "made_for": a.get("made_for") or "", "placement": placement_view(a)}
+            "warning": a.get("warning") or "", "made_for": a.get("made_for") or "", "placement": placement_view(a),
+            "start_on": a.get("start_on") or {"categories": [], "uses": []}}
 
 
 def _check_form(label: str, base_models: list[str], trigger: str, default_strength: str, source: str) -> tuple[str, list[str]]:
@@ -483,12 +484,39 @@ def _normalise(a: dict[str, Any]) -> dict[str, Any] | None:
         "trigger": _clean_line(a.get("trigger"), MAX_TRIGGER_CHARS), "strengths": dict(STRENGTHS),
         "default_strength": strength, "licence": LICENCE_MINE, "source": _clean_line(a.get("source"), MAX_SOURCE_CHARS),
         "made_for": made_for, "warning": QWEN_PLAIN_WARNING if edit and made_for == "qwen_image" else "",
-        "mine": True, "added_at": a.get("added_at") or "",
+        "mine": True, "added_at": a.get("added_at") or "", "start_on": _start_on(a),
         "placement": {"mode": "in_place", "path": pl["path"], "size": pl.get("size")},
         "help": {"meaning": f"Your own LoRA, from the file {name}.",
                  "why": "You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.",
                  "technical": f"LoRA {f}, model only, for {labels or 'no model'}"},
     }
+
+
+def _start_on(a: dict[str, Any]) -> dict[str, list[str]]:
+    """The kinds of assets and steps a LoRA starts on (lora_defaults.py), as stored; anything unreadable reads as none."""
+    so = a.get("start_on") if isinstance(a.get("start_on"), dict) else {}
+    return {k: [x for x in so.get(k) or [] if isinstance(x, str)] for k in ("categories", "uses")}
+
+
+def set_start_on(aid: str, categories: list[str], uses: list[str]) -> dict[str, Any]:
+    """Save which kinds of assets and steps one of the person's LoRAs starts on. The file is not touched."""
+    from . import lora_defaults
+
+    if aid in _builtin_ids():
+        raise AddonFileError("Tested LoRAs come with the app and cannot be changed.")
+    with _lock:
+        items = _read_raw()
+        found = next((a for a in items if a.get("id") == aid), None)
+        norm = _normalise(found) if found else None
+        if norm is None:
+            raise AddonFileError("That LoRA is not on your list.", status=404)
+        try:
+            found["start_on"] = lora_defaults.clean_start_on(norm, categories, uses)
+        except ValueError as e:
+            raise AddonFileError(str(e)) from None
+        _write_raw(items)
+        done = _normalise(found)
+    return public(done or found)
 
 
 def entries() -> list[dict[str, Any]]:
@@ -714,6 +742,11 @@ class MyAddonChange(BaseModel):
     made_for: str = Field(default="", max_length=40)
 
 
+class StartOnIn(BaseModel):
+    categories: list[str] = Field(default_factory=list, max_length=40)
+    uses: list[str] = Field(default_factory=list, max_length=10)
+
+
 @router.get("/api/my-addons")
 def get_my_addons() -> dict[str, Any]:
     return listing()
@@ -733,6 +766,14 @@ def put_my_addon(aid: str, body: MyAddonChange) -> dict[str, Any]:
     try:
         return update(aid, body.label, body.base_models, body.trigger, body.default_strength, body.source,
                      made_for_answer=body.made_for)
+    except AddonFileError as e:
+        raise _http(e)
+
+
+@router.put("/api/my-addons/{aid}/start-on")
+def put_start_on(aid: str, body: StartOnIn) -> dict[str, Any]:
+    try:
+        return set_start_on(aid, body.categories, body.uses)
     except AddonFileError as e:
         raise _http(e)
 

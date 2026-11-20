@@ -1,19 +1,21 @@
-// Your LoRAs for one picture-edit use (refine, side views, pose redraw, face close-up): one row per LoRA with Off, Subtle,
-// Normal or Strong, the LoRA's warning, and the notes the version records for LoRAs it could not use.
+// Your LoRAs for one picture-edit use (refine, side views, pose redraw, face close-up): one row per LoRA with an On or Off
+// switch and, when on, Subtle, Normal or Strong; a plain line saying which are on for this run; the LoRA's warning; a note
+// on the ones that start on for this kind of asset (System, Your library); and the notes the version records for LoRAs it
+// could not use.
 import { Info } from '../components/Info'
-import { EDIT_LORA_LIMIT, type EditChoice, type EditLora, warningOf } from '../editLoras'
+import { EDIT_LORA_LIMIT, LIMIT_REACHED, onForThisRun, STRENGTH_WORDS, type EditChoice, type EditLora, warningOf } from '../editLoras'
+import { STRENGTH_LABELS } from '../help'
 
-const CHOICES: { id: EditChoice; label: string }[] = [
-  { id: 'off', label: 'Off' },
-  { id: 'subtle', label: 'Subtle' },
-  { id: 'normal', label: 'Normal' },
-  { id: 'strong', label: 'Strong' },
-]
+const STEPS: Exclude<EditChoice, 'off'>[] = ['subtle', 'normal', 'strong']
+
 
 export function EditLoras({
   purpose,
   entries,
   choices,
+  startsOn = {},
+  byDefault = [],
+  kindWords = 'this kind of asset',
   disabled,
   notes,
   onChange,
@@ -21,6 +23,12 @@ export function EditLoras({
   purpose: string
   entries: EditLora[]
   choices: Record<string, EditChoice>
+  // The LoRAs that start on for this kind of asset in this step (lora_defaults), so each can say so.
+  startsOn?: Record<string, EditChoice>
+  // The LoRAs that are on for this run because of their default (not chosen on this asset).
+  byDefault?: string[]
+  // The kind of asset in plain words ("humanoids"), for that note.
+  kindWords?: string
   disabled?: boolean
   notes?: string[]
   onChange: (id: string, choice: EditChoice) => void
@@ -38,34 +46,58 @@ export function EditLoras({
         <div className="muted small">You have no LoRAs for picture edits yet. Add one from the LoRA list on the Concept step, and choose Picture edits.</div>
       )}
       {entries.length > 0 && (
-        <div className="muted small">
-          Two at a time is the limit for one step.{full ? ' Turn one off to choose another.' : ''}
+        <div className="small edit-lora-summary" role="status">
+          {onForThisRun(entries, choices, byDefault, kindWords)}
+          {full ? <div className="edit-lora-limit">{LIMIT_REACHED}</div> : <span className="muted"> {EDIT_LORA_LIMIT} at a time is the most for one step.</span>}
+          <div className="muted">{STRENGTH_WORDS}</div>
         </div>
       )}
       {entries.map((e) => {
         const current = choices[e.id] ?? 'off'
-        // At the limit, a LoRA that is off cannot be turned on; Off stays available on every row.
-        const blocked = full && current === 'off'
+        const on = current !== 'off'
+        const strength: Exclude<EditChoice, 'off'> = on ? current : ((e.default_strength as Exclude<EditChoice, 'off'> | undefined) ?? 'normal')
+        // At the limit, a LoRA that is off cannot be turned on; a LoRA that is on can always be turned off.
+        const blocked = full && !on
         return (
-          <div key={e.id} className="edit-lora-row">
-            <div className="row-between">
-              <span>{e.label}</span>
+          <div key={e.id} className={'edit-lora-row' + (on ? '' : ' addon-off')}>
+            <div className="addon-head">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={`${e.label} for ${purpose}: ${on ? 'on' : 'off'}`}
+                className={'switch' + (on ? ' switch-on' : '')}
+                disabled={disabled || blocked}
+                title={blocked ? LIMIT_REACHED : on ? 'Switch this LoRA off for this run' : 'Switch this LoRA on for this run'}
+                onClick={() => onChange(e.id, on ? 'off' : strength)}
+              >
+                <span className="switch-knob" />
+                <span className="switch-label">{on ? 'On' : 'Off'}</span>
+              </button>
+              <span className="addon-label">{e.label}</span>
               <span className="segmented" role="radiogroup" aria-label={`Strength of ${e.label} for ${purpose}`}>
-                {CHOICES.map((c) => (
+                {STEPS.map((s) => (
                   <button
-                    key={c.id}
+                    key={s}
                     type="button"
                     role="radio"
-                    aria-checked={current === c.id}
-                    disabled={disabled || (blocked && c.id !== 'off')}
-                    className={'seg' + (current === c.id ? ' seg-on' : '')}
-                    onClick={() => onChange(e.id, c.id)}
+                    aria-checked={on && strength === s}
+                    disabled={disabled || !on}
+                    title={on ? undefined : 'Switch the LoRA on to choose a strength'}
+                    className={'seg' + (on && strength === s ? ' seg-on' : '')}
+                    onClick={() => onChange(e.id, s)}
                   >
-                    {c.label}
+                    {STRENGTH_LABELS[s]}
                   </button>
                 ))}
               </span>
             </div>
+            {blocked && <div className="muted small">{LIMIT_REACHED}</div>}
+            {startsOn[e.id] && (
+              <div className="muted small">
+                On by default for {kindWords}{on ? '' : ', switched off for this run'} (set in System, Your library).
+              </div>
+            )}
             {warningOf(e) && <div className="addon-note small">{warningOf(e)}</div>}
           </div>
         )

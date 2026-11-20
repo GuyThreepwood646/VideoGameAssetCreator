@@ -7,7 +7,7 @@ import { Disclosure, Field } from '../components/ui'
 import { aboutSize, fmtDuration, plainJargon, gridReadout, isSimpleParam, knobShown, measuredSize, modelLabel, MOTION_BY_CATEGORY, MOVES_BY_MOTION, optionLabel, paramPlain, platformPlain, sizeHint, sizeQuestion, totalEstimate } from '../help'
 import { type RefData } from '../refdata'
 import { useRecipe } from '../recipe'
-import { editLoras, EDIT_KNOB_LABELS, editLoraNotes, isEditKnob, type EditChoice, type EditKnob } from '../editLoras'
+import { editLoras, EDIT_KNOB_LABELS, editLoraNotes, isEditKnob, loraDefaults, type EditChoice, type EditKnob } from '../editLoras'
 import { addonRows, AddonsHint, AddonsList, addonsNotUsed, TurnaroundAddons } from './Addons'
 import { useMyAddons, withMyAddons } from './AddMyAddon'
 import { EditLoras } from './EditLoras'
@@ -57,7 +57,13 @@ export function FineTune({
   // Reset the form only when its content changes: another version, another schema or
   // other stored settings. Asset reloads hand over new objects with the same content,
   // and those must not wipe what the person is editing.
-  const resetKey = `${target.id}|${JSON.stringify(visible)}|${JSON.stringify(target.params ?? {})}`
+  // Your own LoRAs (GET /api/my-addons): the step's LoRA settings list them, and say which start on for this kind of asset.
+  const myAddons = useMyAddons(visible.some((p) => p.type === 'addons' || isEditKnob(p.type)))
+  // A LoRA setting this version does not have starts from the LoRAs that start on for this kind of asset (the backend
+  // fills the same ones in when the version is made, lora_defaults.py).
+  const loraStart = (knob: string) => loraDefaults(myAddons?.addons, knob, asset.category)
+  const startKey = JSON.stringify(visible.filter((p) => p.type === 'addons' || isEditKnob(p.type)).map((p) => loraStart(p.name)))
+  const resetKey = `${target.id}|${JSON.stringify(visible)}|${JSON.stringify(target.params ?? {})}|${startKey}`
   const initial = useMemo(() => {
     const out: Record<string, unknown> = {}
     for (const p of visible) {
@@ -77,7 +83,8 @@ export function FineTune({
       else if (Array.isArray(cur)) out[name] = [...new Set(cur.map((c) => (c === 'turn_left' || c === 'turn_right' ? 'turn' : String(c))))]
     }
     // Add-ons: only the choices this version made ({id: off | subtle | normal | strong}); the rest follow the recipe.
-    for (const p of visible) if (p.type === 'addons' || isEditKnob(p.type)) out[p.name] = addonChoices(target.params?.[p.name])
+    // A setting the version does not have shows the LoRAs that start on for this kind of asset.
+    for (const p of visible) if (p.type === 'addons' || isEditKnob(p.type)) out[p.name] = target.params?.[p.name] == null ? loraStart(p.name) : addonChoices(target.params[p.name])
     // A character gets Three-quarter (other side) whenever Three-quarter is drawn (turnaround with_second_quarter), so
     // the ticks show it unless this version left it out (second_quarter false).
     if (stage === 'turnaround' && asset.category === 'humanoid' && Array.isArray(out.views)) {
@@ -116,7 +123,6 @@ export function FineTune({
   const painter = String(values.model ?? target.params?.model ?? suggestion?.model ?? recipe?.concept.model ?? '')
   // The tested add-ons from the schema plus your own from the live list (GET /api/my-addons).
   const editParams = visible.filter((p) => isEditKnob(p.type))
-  const myAddons = useMyAddons((stage === 'concept' && !!addonsParam) || editParams.length > 0)
   // Your LoRAs for the picture-edit uses (picture_loras.py): one choice per use, never shared between uses.
   const setEditChoice = (knob: string, id: string, choice: EditChoice) => {
     const next = { ...addonChoices(values[knob]), [id]: choice }
@@ -149,7 +155,21 @@ export function FineTune({
       !(stage === 'turnaround' && p.name === 'lora_strength' && turnMethod !== 'standard'),
   )
   const simple = shown.filter((p) => p.type !== 'addons' && isSimpleParam(stage, p, schemaHasFlag))
-  const advanced = shown.filter((p) => !simple.includes(p))
+  // Your picture-edit LoRAs get their own section outside Advanced once you have any, so it is plain which are on.
+  const ownEdit = editLoras(myAddons)
+  const loraKnobs = ownEdit.length ? shown.filter((p) => isEditKnob(p.type)) : []
+  const advanced = shown.filter((p) => !simple.includes(p) && !loraKnobs.includes(p))
+  // The kind of asset in the words the app shows everywhere (the category's label).
+  const cat0 = refData?.categories.find((c) => c.id === asset.category)
+  const kindWords = cat0?.noun ? `${cat0.noun}s` : 'this kind of asset'
+  // The LoRAs of a setting that are on because of their default: all the defaults when the version has no such setting
+  // yet, else the ones the version records (lora_defaults.fill), while they are still as the version has them.
+  const byDefault = (knob: string): string[] => {
+    const recorded = target.params?.[knob] == null ? Object.keys(loraStart(knob)) : ((target.params?.[`${knob}_by_default`] as string[] | undefined) ?? [])
+    const now = addonChoices(values[knob])
+    const was = addonChoices(initial[knob])
+    return recorded.filter((id) => now[id] !== undefined && now[id] === was[id])
+  }
 
   // Tool focus: fill in the fix's params, open Advanced if the setting lives there, scroll to it and focus it.
   const formRef = useRef<HTMLFormElement>(null)
@@ -197,6 +217,9 @@ export function FineTune({
       const ids = new Set(editLoras(myAddons).map((a) => a.id))
       for (const p of editParams) if (p.name in params) params[p.name] = Object.fromEntries(Object.entries(addonChoices(params[p.name])).filter(([k]) => ids.has(k)))
     }
+    // With a changed LoRA setting, the ones still on because of their default go along, so the run records them as that
+    // (the backend keeps only those still on at their default's strength, lora_defaults.fill).
+    for (const p of visible) if ((p.type === 'addons' || isEditKnob(p.type)) && p.name in params) params[`${p.name}_by_default`] = byDefault(p.name)
     return params
   }
   const submit = (e: FormEvent) => {
@@ -234,8 +257,11 @@ export function FineTune({
       return (
         <EditLoras
           purpose={p.label || label}
-          entries={editLoras(myAddons)}
+          entries={ownEdit}
           choices={addonChoices(values[p.name]) as Record<string, EditChoice>}
+          startsOn={loraStart(p.name)}
+          byDefault={byDefault(p.name)}
+          kindWords={kindWords}
           disabled={disabled}
           notes={editLoraNotes(target).filter((n) => n.startsWith(label))}
           onChange={(id, choice) => setEditChoice(p.name, id, choice)}
@@ -453,6 +479,11 @@ export function FineTune({
             window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(`[data-knob="${addonsParam.name}"]`)?.scrollIntoView({ block: 'center' }))
           }}
         />
+      )}
+      {loraKnobs.length > 0 && (
+        <div className="your-loras" data-your-loras>
+          <div className="adjust-grid">{loraKnobs.map((p) => renderField(p, false))}</div>
+        </div>
       )}
       {(advanced.length > 0 || turnaroundAddons.length > 0) && (
         <Disclosure label={advanced.length ? `Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})` : 'Advanced'} open={advOpen} onToggle={setAdvOpen}>

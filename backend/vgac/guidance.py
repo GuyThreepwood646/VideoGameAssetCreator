@@ -276,7 +276,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
     # The person's own LoRAs for the picture-edit uses (docs/PLAN-qwen-edit-loras-2026-11-18.md). Each use has its own choice.
     "edit_addons": {"simple": False, "help": {"meaning": "Your own LoRAs for this redraw: picture-edit LoRAs you added, loaded after the built-in edit LoRA.",
-                                              "why": "Only this redraw uses them; a later redraw chooses again. Check the picture after you choose one.",
+                                              "why": "Only this redraw uses them; a later redraw starts again from the ones you set to start on in Your library. Check the picture after you choose one.",
                                               "technical": "Your LoRAs (stage edit) chained after the Lightning LoRA on the edit graph (qwen_edit.add_personal_loras)"},
                     "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
     "view_addons": {"simple": False, "help": {"meaning": "Your own LoRAs for the side views: picture-edit LoRAs you added, loaded after the built-in views LoRA.",

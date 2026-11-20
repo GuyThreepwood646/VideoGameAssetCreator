@@ -4687,3 +4687,38 @@ button.preset-card:hover:not(:disabled) {
   border-color: var(--border-control);
   font-weight: 400;
 }
+
+/* Your LoRAs for one step (FineTune, EditLoras.tsx) and where one starts on (StartOn.tsx). */
+.your-loras {
+  margin-top: var(--s3);
+}
+.edit-lora-row {
+  padding: var(--s1) 0;
+}
+.edit-lora-summary {
+  margin: var(--s1) 0;
+}
+.start-on-line {
+  margin-top: var(--s1);
+}
+.start-on-form {
+  margin: var(--s2) 0;
+}
+.start-on-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  margin: var(--s1) 0 var(--s2);
+}
+.edit-lora-limit {
+  margin-top: var(--s1);
+  font-weight: 600;
+}
+/* An off LoRA's strengths and a LoRA that cannot be switched on stay readable (secondary text, not faded). */
+.edit-loras .segmented > .seg:disabled {
+  opacity: 1;
+  color: var(--muted);
+}
+.edit-loras .switch:disabled {
+  opacity: 0.85;
+}
