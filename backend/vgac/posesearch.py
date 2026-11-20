@@ -38,13 +38,14 @@ def _score(mesh: dict, cam: face.Camera, pm: np.ndarray) -> float:
 
 
 def coarse(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, n: int = COARSE_N,
-           lenses: list[float | None] | None = None) -> list[Pose]:
-    """Every coarse pose scored, best first."""
+           lenses: list[float | None] | None = None, turns: list[float] | None = None,
+           tilts: list[float] | None = None) -> list[Pose]:
+    """Every coarse pose scored, best first. turns and tilts default to the full grid."""
     pm = _mask_small(alpha, n)
     out: list[Pose] = []
     for lens in (LENSES if lenses is None else lenses):
-        for tilt in TILTS:
-            for turn in TURNS:
+        for tilt in (TILTS if tilts is None else tilts):
+            for turn in (TURNS if turns is None else turns):
                 cam = face.Camera(target=np.asarray(centre, dtype=np.float64), yaw_deg=float(turn), scale=float(scale),
                                   size=n, tilt_deg=float(tilt), lens_mm=lens)
                 out.append(Pose(float(turn), float(tilt), lens, _score(mesh, cam, pm)))
@@ -67,9 +68,11 @@ def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, star
     return best
 
 
-def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep: int = 3) -> list[Pose]:
-    """Coarse grid, then a local refinement of the `keep` best coarse poses. Best first."""
-    coarse_best = coarse(mesh, alpha, centre, scale)[:keep]
+def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep: int = 3,
+           turns: list[float] | None = None, tilts: list[float] | None = None) -> list[Pose]:
+    """Coarse grid, then a local refinement of the `keep` best coarse poses. Best first. turns and tilts restrict the
+    coarse grid (paint's view searches use the turn the view is meant to be seen from, plus or minus 20 degrees)."""
+    coarse_best = coarse(mesh, alpha, centre, scale, turns=turns, tilts=tilts)[:keep]
     refined = [refine(mesh, alpha, centre, scale, p) for p in coarse_best]
     refined.sort(key=lambda p: -p.iou)
     return refined
