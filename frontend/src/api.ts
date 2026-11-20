@@ -134,6 +134,11 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // How the app can fix a failing check. A re-run fix names a stage and params; a tool fix (`ui`) opens an editor
 // instead (2.5): the parts editor, or the front picker in prep. `label` is the button text (fix_label in the
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
+export interface DeclaredPart {
+  name: string
+  kind: 'separate' | 'sway' | string
+}
+
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
 export type CheckFix = { stage?: string; params?: Record<string, unknown>; label?: string; ui?: FixTool | string; knob?: string; op?: 'refine' | 'upscale'; instruction?: string }
@@ -193,7 +198,8 @@ export type Asset = {
   style_preset: string
   platform_target: PlatformId
   prompt: string
-  parts: string[]
+  // Declared parts: a name and what it is for (separate: a piece that moves or swaps; sway: a hanging part, humanoids).
+  parts: DeclaredPart[]
   created_at: string
   // The painter chosen on the creation form; the default for concept runs.
   concept_model?: string | null
@@ -939,7 +945,7 @@ export const api = {
     pid: string,
     // image: start from a picture (a data: URL); the prompt may then be empty. features: feature photos; step 1 is
     // then one picture combined from them (compose), and a human's face photo is kept as the face close-up.
-    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: string[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean; edit_addons?: Record<string, EditChoice> },
+    body: { name: string; category: string; style_preset: string; platform_target?: PlatformId; prompt: string; parts?: DeclaredPart[]; concept_model?: string; image?: string; features?: FeaturePhoto[]; items?: 'separate' | 'keep'; hair?: HairSource; face_matters?: boolean; wears_armour?: boolean; body_is_metal?: boolean; different_look?: boolean; edit_addons?: Record<string, EditChoice> },
   ) => post<Asset & { upload?: RunResult; compose?: RunResult; face_closeup?: boolean }>(`/api/projects/${pid}/assets`, body),
 
   // The people in a feature photo, for the suggested box (backend vgac/people.py). Never blocks the form: a failure is a status.

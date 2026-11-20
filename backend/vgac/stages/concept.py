@@ -120,8 +120,8 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
         parts.append(sc.category["pose_block"])
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
-    if sc.asset.parts:
-        parts.append("The following parts are clearly separate pieces: " + ", ".join(sc.asset.parts) + ".")
+    if sc.asset.parts:  # the names of the declared parts (declared_parts.py); the picture is asked to draw them apart
+        parts.append("The following parts are clearly separate pieces: " + ", ".join(p["name"] for p in sc.asset.parts) + ".")
     # Last: placed after the style block it changed the character more (runtime/tmp/celface).
     parts.append(face_sentence(sc, params, base))
     return " ".join(p for p in parts if p)
@@ -248,6 +248,12 @@ async def readiness_judge(sc: StageContext, cutout: Path | None = None) -> None:
     drawn = await _face_check(sc, cutout)
     if drawn is not None:
         checks.append(drawn)
+    rg = (getattr(getattr(sc, "version", None), "metrics", None) or {}).get("redraw_guard")
+    if rg:
+        from .. import buildpose
+
+        checks.append(buildpose.redraw_guard_check("redraw_guard", "The redraw", rg, int(rg.get("tries") or 1) > 1,
+                                                   "It is kept because you asked for it; the version before it is unchanged."))
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -590,9 +596,52 @@ async def refine(sc: StageContext, instruction: str, view: str | None, mask_png:
         sc.set_params(reference_experimental=True)
     # The person's own LoRAs for this refine only: the request's choice (never the parent's, which the job does not carry).
     loras = await edit_loras(sc, "edit_addons", params)
-    entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
-                           message="instruction edit" + (" with a reference picture" if ref_name else ""), base=0.05, span=0.6)
-    edited = await sc.download_image(entry, "save", sc.dir / ("edit_raw.png" if mask_png else "image.png"))
+    # "Redraw it ready for 3D" (readiness.HUMANOID_REDRAW) is guarded (WP-09): a redraw that adds or takes off clothing is
+    # drawn again with a new seed, and when every try is refused the last is kept with a redraw_guard warning.
+    # UNTESTED ON A CARD.
+    from .. import buildpose, readiness
+
+    person = None
+    if mask_png is None and readiness.is_humanoid_redraw(instruction) and ref_name is None:
+        person = library.version_file(parent, "cutout", sc.settings)
+    tries = 1
+    if person is not None:
+        from .turnaround import POSE_GUARD_RETRIES
+
+        tries += POSE_GUARD_RETRIES
+    guard: dict[str, Any] | None = None
+    used = 0
+    for n in range(tries):
+        if n:
+            seed = random_seed()
+            sc.set_params(seed=seed)
+        try:
+            entry = await sc.comfy(edit_graph(name, instruction, seed, sc.prefix("edit"), reference_name=ref_name, loras=loras),
+                                   message="instruction edit" + (" with a reference picture" if ref_name else "") + (", another try" if n else ""),
+                                   base=0.05, span=0.6)
+            # A guarded redraw's tries are kept apart; the last good one becomes image.png below.
+            dest = sc.dir / ("edit_raw.png" if mask_png else f"redraw_try_{n + 1}.png" if person is not None else "image.png")
+            got = await sc.download_image(entry, "save", dest)
+            if person is None:
+                edited = got
+                break
+            cut = await sc.cutout(Path(got), "guard_cutout")
+            verdict = await asyncio.to_thread(buildpose.guard, Path(person), Path(cut["cutout"]), True)
+        except Exception as e:  # noqa: BLE001  (a failed reroll keeps the try before it; a failed first try fails the step)
+            if n == 0 or type(e).__name__ == "JobCancelled":
+                raise
+            break
+        edited, guard, used = got, verdict, n + 1
+        if guard["ok"]:
+            break
+    if person is not None:
+        import shutil
+
+        shutil.copyfile(edited, sc.dir / "image.png")
+        edited = sc.dir / "image.png"
+    if guard is not None:
+        sc.set_metrics(redraw_guard={"tries": used, "ok": guard["ok"], "reasons": guard["reasons"],
+                                     "not_compared": guard["not_compared"], "measures": guard.get("measures")})
     if mask_png is not None:
         sc.register("edit_raw", edited)
         edited = apply_mask(src, edited, mask_png, sc.dir / "image.png")

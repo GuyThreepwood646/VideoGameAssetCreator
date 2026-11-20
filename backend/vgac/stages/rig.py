@@ -243,6 +243,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         rig_glb = raw_glb
     if template == TEMPLATES["mixamo"]:
         await _joins(sc, rig_glb, params)
+        await _leg_skin(sc, rig_glb, params)
         await _limb_joins(sc, rig_glb)
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
@@ -254,6 +255,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     await _inspect(sc, rig_glb, bend_test)
     await fit_hitboxes(sc, rig_glb, hp)
     await _animate(sc, rig_glb, params)
+    await _skin_stretch(sc)
     await judge(sc)
 
 
@@ -899,6 +901,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
     fade the weights onto it and bake the sway into every clip of anim.glb (in place; the file before is kept as
     springs/anim_plain.glb). Files: springs (springs.json), springs_found (what was taken as a hanging part, with the
     chains drawn on it), springs_report. metrics.springs says what sways or why nothing does. Never raises."""
+    from .. import declared_parts
     from .. import springs as springs_mod
 
     rep_path = sc.dir / "anim_anim.json"
@@ -927,10 +930,16 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
         hb = sc.file("hitboxes")
         head = springs_mod.head_options(params, _description(sc))
         sc.set_params(head_sway=head["head_sway"])
+        # Declared sway parts with a location (declared_parts.py): the region round each point gets a chain even where
+        # the search finds none. Locations are in the rig GLB's frame; blender/springs.py converts them.
+        declared = declared_parts.for_springs(declared_parts.read_placed(sc.file("parts")))
+        declared_path = None
+        if declared:
+            declared_path = declared_parts.write_placed(work / "declared.json", declared)
         args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
                                         sc.lineage_file("metallic", ("prep", "mesh")),
                                         library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None,
-                                        head=head)
+                                        head=head, declared=declared_path)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
         family = ((lib or {}).get("metrics") or {}).get("family")  # library hair: the hairstyle's family words
@@ -989,6 +998,46 @@ async def _joins(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> Non
                               "reason": rep.get("reason")})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(joins={"error": str(e)[:300]})
+
+
+async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> None:
+    """Leg skin pass (blender/leg_skin.py, WP-18): smooths the noisy leg weights over four passes, keeps four
+    influences and normalised weights, in place. Setting leg_skin (default on) turns it off. The knee re-split is off in
+    the script (--half 0). metrics.leg_skin: {ok, meshes: [...]} or {reason}. Never raises."""
+    on = params.get("leg_skin", True) is not False
+    sc.set_params(leg_skin=on)
+    if not on:
+        return
+    out = sc.dir / "rig_leg_skin.glb"
+    report = sc.dir / "leg_skin.json"
+    try:
+        await sc.blender("leg_skin.py", [rig_glb, out, "--report", report], log_name="leg_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_leg_skin.glb")
+            shutil.move(str(out), str(rig_glb))
+            sc.set_metrics(leg_skin={"ok": True, "meshes": rep.get("meshes", [])})
+        else:
+            sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+async def _skin_stretch(sc: StageContext) -> None:
+    """metrics.skin_stretch (blender/skin_stretch.py, WP-18): the share of edges over 1.3 times their rest length in
+    walk and run, per body region, measured on the animated GLB. Measure only: nothing is changed. Never raises."""
+    anim = sc.dir / "anim.glb"
+    if not anim.is_file():
+        return
+    out = sc.dir / "skin_stretch.json"
+    try:
+        await sc.blender("skin_stretch.py", [anim, out, "--clips", "walk,run"], log_name="skin_stretch.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        if out.is_file():
+            sc.set_metrics(skin_stretch=json.loads(out.read_text(encoding="utf-8")))
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(skin_stretch={"error": str(e)[:300]})
 
 
 async def _limb_joins(sc: StageContext, rig_glb: Path) -> None:

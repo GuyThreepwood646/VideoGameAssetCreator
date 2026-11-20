@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router'
 import {
   api,
   ApiError,
@@ -17,6 +17,7 @@ import {
   type Feedback,
   type FeedbackBody,
   type Job,
+  type RunResult,
   type StageId,
   type Suggestion,
   type Version,
@@ -28,7 +29,10 @@ import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBa
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
-import { type AutopilotActions } from './AutopilotPanel'
+import { isAutopilotActive, type AutopilotActions } from './AutopilotPanel'
+import { freshParams, startOverState } from './startOver'
+import { savedInUse } from './stepSettings'
+import { HairRailLine, HairSettingPanel, useHairPanel } from './HairSetting'
 import { useConfirm } from '../components/Confirm'
 import { CandidateStrip, shortId, ThumbIcon } from './CandidateStrip'
 import { FineTune } from './FineTune'
@@ -38,7 +42,7 @@ import { useMyAddons } from './AddMyAddon'
 import { editLoras, editLoraApplied, editLoraNotes } from '../editLoras'
 import { BriefCard } from './Brief'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
-import { finishShown, GuidePanel, guideState } from './GuidePanel'
+import { finishShown, GuidePanel, guideState, nextStage } from './GuidePanel'
 import { opensInView, readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
@@ -91,7 +95,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const versions = versionsOf(asset, stage)
   const selected = selectedVersion(asset, stage)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const active = useMemo(() => versions.find((v) => v.id === activeId) ?? selected ?? versions[versions.length - 1], [versions, activeId, selected])
+  // After a run starts that the page should follow (a whole-chain start, which returns no version), the newest version shows.
+  const [followLatest, setFollowLatest] = useState(false)
+  const active = useMemo(
+    () => versions.find((v) => v.id === activeId) ?? (followLatest ? versions[versions.length - 1] : undefined) ?? selected ?? versions[versions.length - 1],
+    [versions, activeId, selected, followLatest],
+  )
   const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
   const canRun = !prev || !!prevSelected
@@ -100,10 +109,43 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const [changeOpen, setChangeOpen] = useState(false)
   // Settings chosen for the first build of this step (shown while it has no versions); the build buttons send them.
   const [firstParams, setFirstParams] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
+  // "Start this step over": the settings form is open over a step that already has versions.
+  const [overOpen, setOverOpen] = useState(false)
+  // The hair route of this character (humanoids only), shown in the form of the steps that use it.
+  const hair = useHairPanel(asset)
+  const [hairOpen, setHairOpen] = useState(false)
+  // The saved defaults for this look and platform, for this step (WP-14). null until they are read.
+  const [savedApplied, setSavedApplied] = useState<Record<string, unknown> | null>(null)
   const { ref } = useRefData()
   const stageInfo = ref?.stages.find((s) => s.id === stage) ?? null
   const schema = stageInfo?.adjust_schema ?? []
   const state = guideState(asset, stage, jobs, selected)
+
+  useEffect(() => {
+    let alive = true
+    setSavedApplied(null)
+    if (!asset.style_preset) {
+      setSavedApplied({})
+      return
+    }
+    api.getStepDefaults(asset.platform_target, asset.style_preset, asset.category).then(
+      (d) => {
+        if (alive) setSavedApplied((d.applied[stage] as Record<string, unknown> | undefined) ?? {})
+      },
+      () => {
+        if (alive) setSavedApplied({})
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [asset.id, asset.platform_target, asset.style_preset, asset.category, stage])
+
+  // What a run of this step sends from the form: the saved defaults for this look and platform, with the changes on top.
+  const formSettings = (changes?: Record<string, unknown> | null): Record<string, unknown> | undefined => {
+    const out = { ...(savedApplied ?? {}), ...(changes ?? {}) }
+    return Object.keys(out).length ? out : undefined
+  }
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -118,14 +160,59 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   }
 
   const runParams = (s: StageId): Record<string, unknown> | undefined => {
-    const chosen = s === stage && versions.length === 0 ? firstParams?.params : undefined
+    const chosen = s === stage && versions.length === 0 ? formSettings(firstParams?.params) : undefined
     const model = s === 'concept' ? preferredConceptModel(asset.id) : null
     const out = { ...(model ? { model } : {}), ...(chosen ?? {}) }
     return Object.keys(out).length ? out : undefined
   }
   // The first build from its own settings panel: what the form shows, on top of the usual painter choice.
   const runFirst = (params: Record<string, unknown>) =>
-    act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...(runParams(stage) ?? {}), ...params } }))
+    act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...(runParams(stage) ?? {}), ...(formSettings(params) ?? {}) } }))
+
+  // The page moves to the version a run made (the first of them, when step 1 draws two) and closes the form.
+  const followRun = (out: RunResult | RunResult[]) => {
+    const first = Array.isArray(out) ? out[0] : out
+    setActiveId(first.version.id)
+    setFollowLatest(false)
+    setOverOpen(false)
+    setFirstParams(null)
+  }
+  // "Just this step": a new version of this step only, built on what is kept before it. It is kept only when the person keeps it.
+  const startFresh = (changes: Record<string, unknown>) =>
+    act(async () => {
+      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...(runParams(stage) ?? {}), ...(formSettings(changes) ?? {}) } }))
+    })
+  // "This step and every step after it": the whole chain from this step, set aside results stay in the history.
+  const startWholeChain = async (changes: Record<string, unknown>) => {
+    const ok = await confirm.ask({
+      title: 'Start this step and every step after it over?',
+      body: 'The current results of this step and of every step after it are set aside. They stay in the history. The steps are made again one after another, each from what is kept before it, and each new result that passes its checks is kept as Make it keeps them.',
+      confirmLabel: 'Start over from this step',
+      danger: true,
+    })
+    if (!ok) return
+    void act(async () => {
+      await api.startAutopilot(asset.id, { from_stage: stage, stage_params: { [stage]: formSettings(changes) ?? {} } })
+      setActiveId(null)
+      setFollowLatest(true)
+      setOverOpen(false)
+      setFirstParams(null)
+    })
+  }
+  // A run is going: stop it (the stopped version stays in the history and is not kept), then open the form.
+  const stopAndStartOver = async () => {
+    const ok = await confirm.ask({
+      title: 'Stop and start over?',
+      body: 'The run stops now. The version it was making stays in the history as stopped, and it is not kept. Then the settings form opens.',
+      confirmLabel: 'Stop and start over',
+      danger: true,
+    })
+    if (!ok) return
+    void act(async () => {
+      await api.stopAsset(asset.id, stage)
+      setOverOpen(true)
+    })
+  }
 
   const run = () => act(() => api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: runParams(stage) }))
   // Delete the stopped or failed version(s), then make this step again from the start with its usual settings.
@@ -148,11 +235,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
       await api.runStage(asset.id, next, { params: runParams(next) })
       navigate(`/assets/${asset.id}/${next}`)
     })
-  const retry = (failed: Version) =>
-    act(() => {
-      const params = { ...failed.params }
-      delete params.seed
-      return api.runStage(asset.id, stage, { params, ...(failed.parent_version_id ? { parent_version_id: failed.parent_version_id } : {}) })
+  // "Try again" (the keyboard R shortcut finds it by its words): the settings of the version on screen, only the step's
+  // own settings, a new seed, and the step built from what is kept before it.
+  const tryAgain = (v: Version) =>
+    act(async () => {
+      const keepModel = stage === 'concept' && typeof v.params.model === 'string' ? { model: v.params.model } : {}
+      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...freshParams(v.params, schema), ...keepModel } }))
     })
 
   // A Fix that opens a tool (2.5): go to the fix's stage, open "Change something" on the kept version and focus
@@ -281,6 +369,43 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   // The finishing card above already shows the export's title, model and downloads.
   const hideReady = stage === 'export' && !!active && active.id === selected?.id && finishShown(asset, stage, autopilot, jobs)
 
+  // "Start this step over": the one button in the heading. What it does depends on the state (startOver.ts).
+  const prevName = prev ? stagePlain(prev, ref?.stages.find((s) => s.id === prev) ?? null) : null
+  const so = startOverState({ guide: state, autopilotActive: isAutopilotActive(autopilot), canRun, prevName })
+  const startOverReason = so.kind === 'disabled' || so.kind === 'link' ? so.reason : versions.length === 0 ? 'The settings for the first build are below.' : null
+  // The newest version is done and not kept while an older one is kept: the one waiting for the person to judge.
+  const newResultWaiting = !!selected && !!active && active.id !== selected.id && active.status === 'done' && active.id === versions[versions.length - 1]?.id
+  const startOverControl: ReactNode =
+    so.kind === 'link' && prev ? (
+      <Link className="small-btn" to={`/assets/${asset.id}/${prev}`}>
+        Go to "{prevName}"
+      </Link>
+    ) : so.kind === 'stop' ? (
+      <button type="button" className="small-btn" disabled={busy} onClick={stopAndStartOver}>
+        Stop and start over
+      </button>
+    ) : (
+      <button
+        type="button"
+        className="small-btn"
+        disabled={busy || so.kind === 'disabled' || versions.length === 0}
+        aria-expanded={overOpen}
+        onClick={() => {
+          setOverOpen((open) => !open)
+          setFirstParams(null)
+        }}
+      >
+        Start this step over
+      </button>
+    )
+  // The saved defaults this form still has at their saved values, by plain name (the same rule as the automatic build's form).
+  const savedNames =
+    savedApplied && stageInfo
+      ? (savedInUse([stageInfo], asset.category, { [stage]: { ...savedApplied, ...(firstParams?.params ?? {}) } }, { [stage]: savedApplied })[stage] ?? []).map((n) =>
+          paramPlain(n, schema.find((p) => p.name === n)?.label),
+        )
+      : []
+
   return (
     <div className="stage-panel">
       {confirm.dialog}
@@ -300,7 +425,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onMakeVariant={onMakeVariant}
         onRun={run}
         onRunNext={runNext}
-        onRetry={retry}
+        onRetry={tryAgain}
         onStartAgain={startAgain}
         onStop={onStop}
         onResume={onResume}
@@ -308,7 +433,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         onFix={fix}
         onOpenTool={openTool}
         onChanged={onChanged}
-        firstParams={versions.length === 0 ? (firstParams?.params ?? null) : null}
+        firstParams={versions.length === 0 ? (formSettings(firstParams?.params) ?? null) : null}
         count={count}
       />
 
@@ -339,7 +464,15 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
             {stageInfo?.estimate_note ? ` / ${stageInfo.estimate_note}` : ''}
           </span>
+          {startOverControl}
         </div>
+        {startOverReason && <div className="muted small start-over-reason">{startOverReason}</div>}
+        {/* A new result waiting while an older one is kept: said here, at the top of the step, not down with the versions. */}
+        {newResultWaiting && selected && (
+          <div className="new-result-note" role="status">
+            <strong>A new result is waiting.</strong> Version {versions.indexOf(selected) + 1} is still the one you kept. Look at the new one below, then keep it or keep the older one.
+          </div>
+        )}
         {stage === 'concept' && <BriefCard asset={asset} onSaved={onChanged} onError={onError} />}
         <OwnPictures asset={asset} stage={stage} active={active} canRun={canRun} busy={busy} act={act} onCreated={(id) => setActiveId(id)} />
         <CandidateStrip versions={versions} stage={stage} jobs={jobs} activeId={active?.id ?? null} selectedId={selected?.id ?? null} onPick={setActiveId} />
@@ -356,13 +489,35 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             </button>
           </div>
         )}
-        {versions.length === 0 && (!canRun || schema.length === 0 ? (
+        {versions.length === 0 && (!canRun || schema.length === 0) && (
           <div className="placeholder-box">Nothing here yet. Use the button above to start.</div>
-        ) : (
-          <div className="first-build">
+        )}
+        {(versions.length === 0 || overOpen) && canRun && schema.length > 0 && (
+          // One form for the first build and for "Start this step over". The choices outside the settings (the description,
+          // own pictures, the picture count) sit with it: BriefCard and OwnPictures are shown above, in this same place.
+          <div className="first-build start-over-form">
             <div className="muted small first-build-intro">
-              <strong>Settings for the first build.</strong> These start at the usual settings for your look and platform. Change any of them before you build. The buttons above use them too, both {stageVerb(stage, stageInfo)} and Make it{firstParams ? ` (changed: ${firstParams.names.join(', ')})` : ''}.
+              <strong>{versions.length === 0 ? 'Settings for the first build.' : 'Settings for a new attempt.'}</strong> These start at the usual settings for your look and platform
+              {savedNames.length ? `, with your saved defaults filled in (${savedNames.join(', ')})` : ''}. Change any of them before you build.
             </div>
+            {(stage === 'mesh' || stage === 'prep') && hair.panel && (
+              // The hair route (built with the 3D model, or a hairstyle from the library) sits with the settings it changes.
+              <div className="start-over-hair">
+                <HairRailLine panel={hair.panel} open={hairOpen} onToggle={() => setHairOpen((v) => !v)} />
+                {hairOpen && (
+                  <HairSettingPanel
+                    asset={asset}
+                    panel={hair.panel}
+                    onClose={() => setHairOpen(false)}
+                    onSaved={(p) => {
+                      hair.setPanel(p)
+                      onChanged()
+                    }}
+                    onError={onError}
+                  />
+                )}
+              </div>
+            )}
             {stage === 'concept' && (
               <div className="concept-count">
                 <label>
@@ -386,17 +541,54 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
             <FineTune
               stage={stage}
               schema={schema}
-              target={firstTarget(asset, stage)}
+              target={{ ...firstTarget(asset, stage), params: savedApplied ?? {} }}
               asset={asset}
               refData={ref}
               suggestion={suggestion}
               disabled={busy || state === 'running'}
-              onSubmit={runFirst}
+              onSubmit={versions.length === 0 ? runFirst : startFresh}
               onPending={(params, names) => setFirstParams(params ? { params, names } : null)}
-              submitLabel={stage === 'concept' ? `${conceptCountLabel(count)} with these settings` : `${stageVerb(stage, stageInfo)} with these settings`}
+              submitLabel={
+                versions.length === 0
+                  ? stage === 'concept'
+                    ? `${conceptCountLabel(count)} with these settings`
+                    : `${stageVerb(stage, stageInfo)} with these settings`
+                  : nextStage(stage)
+                    ? 'Just this step'
+                    : 'Make this step again'
+              }
             />
+            {versions.length > 0 && (
+              <div className="start-over-choices">
+                <p className="muted small">
+                  <strong>Just this step</strong> makes a new version of this step only. The steps after it stay as they are, and the new result is kept only when you keep it.
+                </p>
+                {nextStage(stage) && (
+                  <p className="muted small">
+                    <strong>This step and every step after it</strong> makes this step and each later step again, one after another, from what is kept before each. The current results are set aside in the history.
+                  </p>
+                )}
+                <div className="row-gap">
+                  {nextStage(stage) && (
+                    <button type="button" disabled={busy || state === 'running'} onClick={() => startWholeChain(firstParams?.params ?? {})}>
+                      This step and every step after it
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="link small"
+                    onClick={() => {
+                      setOverOpen(false)
+                      setFirstParams(null)
+                    }}
+                  >
+                    Leave it as it is
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        ))}
+        )}
         {active && (
           <div className="active-version">
             <div className="row-between">
@@ -429,7 +621,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
                 <div className="row-gap">
                   {state !== 'error' && (
-                    <button type="button" disabled={busy} onClick={() => retry(active)}>
+                    <button type="button" className="try-again" disabled={busy} onClick={() => tryAgain(active)}>
                       Try again
                     </button>
                   )}
@@ -466,7 +658,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 changeOpen={changeOpen}
                 setChangeOpen={setChangeOpen}
                 onKeep={() => act(() => api.select(active.id))}
-                onTryAgain={run}
+                onTryAgain={() => tryAgain(active)}
                 onReject={() => act(() => api.reject(active.id))}
                 onFeedbackSaved={onChanged}
               />

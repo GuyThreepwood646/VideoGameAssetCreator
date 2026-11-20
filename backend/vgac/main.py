@@ -61,6 +61,7 @@ app = FastAPI(title="Video Game Asset Creator", version=__version__, lifespan=li
 app.include_router(own_images.router)  # start from your own images (own_images.py)
 app.include_router(people.router)  # the people in a feature photo, for the suggested box (people.py)
 app.include_router(__import__("vgac.bodymarks_api", fromlist=["router"]).router)  # Mark the body on step 2 (bodymarks_api.py)
+app.include_router(__import__("vgac.parts_api", fromlist=["router"]).router)  # declared parts and where they are on a rig (parts_api.py)
 app.include_router(user_addons.router)  # your own add-ons (user_addons.py)
 app.include_router(__import__("vgac.moves", fromlist=["router"]).router)  # "Add a move" and your own animation files (moves.py)
 app.include_router(items.router)  # items: empty-handed characters and "Add an item" (items.py)
@@ -142,13 +143,19 @@ class ProjectPatch(BaseModel):
     unity_project_path: str | None = None
 
 
+class DeclaredPartIn(BaseModel):
+    """A part the character has (declared_parts.py): a name and what it is for."""
+    name: str = Field(max_length=200)
+    kind: str = Field(default="separate", max_length=20)
+
+
 class AssetIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     category: str
     style_preset: str
     platform_target: str | None = None
     prompt: str = ""
-    parts: list[str] | None = None
+    parts: list[DeclaredPartIn] | None = Field(default=None, max_length=32)
     concept_model: str | None = None
     # Start from a picture: the person's own concept picture (base64 or a data: URL); the description may stay empty.
     image: str | None = Field(default=None, max_length=own_images.IMAGE_FIELD_MAX)
@@ -178,7 +185,7 @@ class AssetPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     prompt: str | None = None
     category: str | None = None
-    parts: list[str] | None = None
+    parts: list[DeclaredPartIn] | None = Field(default=None, max_length=32)
     platform_target: str | None = None
     style_preset: str | None = None
     face_matters: bool | None = None
@@ -320,6 +327,15 @@ def _validate_category(cid: str) -> None:
     try:
         reference.category(cid)
     except KeyError as e:
+        raise HTTPException(400, str(e))
+
+
+def _declared(items: list[DeclaredPartIn] | None, category: str | None) -> list[dict[str, str]]:
+    from . import declared_parts
+
+    try:
+        return declared_parts.normalize([p.model_dump() for p in items or []], category)
+    except declared_parts.PartError as e:
         raise HTTPException(400, str(e))
 
 
@@ -588,7 +604,8 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
         a.face_matters = False
     a.wears_armour = body.wears_armour
     a.body_is_metal = body.body_is_metal
-    a.parts = body.parts if body.parts is not None else list(cat.get("parts_default") or [])
+    a.parts = _declared(body.parts, body.category) if body.parts is not None else [
+        {"name": str(n), "kind": "separate"} for n in (cat.get("parts_default") or [])]
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -682,7 +699,7 @@ def update_asset(aid: str, body: AssetPatch, db: Session = Depends(get_session))
         _validate_category(body.category)
         a.category = body.category
     if body.parts is not None:
-        a.parts = body.parts
+        a.parts = _declared(body.parts, a.category)
     if body.platform_target is not None:
         _validate_platform(body.platform_target)
         a.platform_target = body.platform_target

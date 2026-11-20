@@ -565,7 +565,7 @@ on('POST', '/api/projects/:pid/assets', (m, body) => {
     style_preset: String(body.style_preset ?? styles[0].id),
     platform_target: (body.platform_target as Asset['platform_target']) ?? p.platform_target,
     prompt: String(body.prompt ?? ''),
-    parts: (body.parts as string[]) ?? [],
+    parts: (body.parts as { name: string; kind: string }[]) ?? [],
     created_at: nowIso(),
     concept_model: typeof body.concept_model === 'string' && body.concept_model ? body.concept_model : null,
     ...(body.hair === 'library' ? { hair: { source: 'library' as const, pick: null, changed_by: 'form' } } : {}),
@@ -624,7 +624,7 @@ on('POST', '/api/assets/:id/variants', (m, body) => {
 on('PUT', '/api/assets/:id', (m, body) => {
   const a = findAsset(m.groups!.id)
   for (const k of ['name', 'prompt', 'category', 'platform_target'] as const) if (typeof body[k] === 'string') (a as Record<string, unknown>)[k] = body[k]
-  if (Array.isArray(body.parts)) a.parts = body.parts as string[]
+  if (Array.isArray(body.parts)) a.parts = body.parts as { name: string; kind: string }[]
   return a
 })
 on('DELETE', '/api/assets/:id', (m) => {

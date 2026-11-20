@@ -119,6 +119,17 @@ def test_the_verdict_knows_the_feature_scores():
     assert "features" in fd.CLOSEUP_REASONS
 
 
+def test_the_likeness_bar_depends_on_the_look():
+    """A photographic look passes a close-up at 0.91 (bar 0.90); a painted look refuses it (bar 0.93); guided keeps 0.88."""
+    close = {"likeness": 0.91, "feature_move": 0.01, "feature_score_min": 0.95, "eye_colour_shift": 3.0}
+    assert fd.closeup_verdict(close, photo=True) is None
+    assert fd.closeup_verdict(close) == "likeness"
+    assert fd.closeup_verdict(close, photo=True, guided=True) is None
+    assert fd.likeness_bar(True, False) == fd.LIKENESS_MIN_PHOTO == 0.90
+    assert fd.likeness_bar(False, False) == fd.LIKENESS_MIN == 0.93
+    assert fd.likeness_bar(True, True) == fd.LIKENESS_MIN_GUIDED == 0.88
+
+
 def test_a_close_up_turned_photographic_is_rejected_as_another_style():
     """The same face with pores and creases drawn all over the skin (what the editor does to the Ranger's painted
     look): the features are the same, the fine skin texture is not."""
