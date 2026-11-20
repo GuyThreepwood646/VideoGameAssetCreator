@@ -97,10 +97,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The person's own LoRAs for the views and the pose redraw (docs/PLAN-qwen-edit-loras-2026-11-18.md). A view
         # LoRA can stop the views turning, so a changed choice redraws every view it applies to.
         _param("view_addons", "edit_addons", None, label="Your LoRAs for the side views", options=list(ADDON_CHOICES),
-               description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; empty uses none"),
+               description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the pose redraw",
                options=list(ADDON_CHOICES),
-               description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; empty uses none"),
+               description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
         # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
@@ -177,7 +177,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         # Your own LoRAs for the face close-up only (never the sharpening redraw): docs/PLAN-qwen-edit-loras-2026-11-18.md.
         _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
-               options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; empty uses none"),
+               options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off

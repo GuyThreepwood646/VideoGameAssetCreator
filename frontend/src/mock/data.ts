@@ -243,7 +243,7 @@ const editKnob = (name: string, label: string, extra: Record<string, unknown> = 
     type: 'edit_addons' as unknown as 'addons',
     options: ['off', 'subtle', 'normal', 'strong'],
     default: null,
-    description: 'Your own LoRAs for this use only; empty uses none',
+    description: 'Your own LoRAs for this use only; when not set, the ones you set to start on for this kind of asset',
     ...extra,
   }) as StageInfo['adjust_schema'][number]
 

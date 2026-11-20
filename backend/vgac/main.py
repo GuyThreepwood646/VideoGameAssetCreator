@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, paintsave, people, pipeline, reference, shape
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, lora_defaults, move_gate, own_images, paintsave, people, pipeline, reference, shape
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -466,7 +466,7 @@ def categories() -> list[dict[str, Any]]:
              "size_m": c["size_m"], "size_axis": c.get("size_axis"), "size_word": c.get("size_word"),
              "size_label": c.get("size_label"), "size_hint": c.get("size_hint"), "parts_default": c.get("parts_default", []), "budgets": c.get("budgets", {}),
              "views": c.get("views"), "lod_ratios": c.get("lod_ratios"), "topology": c.get("topology"), "input_view_default": c.get("input_view_default"),
-             "skips": list(c.get("skips") or [])}
+             "skips": list(c.get("skips") or []), "noun": reference.CATEGORY_NOUNS.get(c["id"]) or str(c["label"]).lower()}
             for c in reference.categories()]
 
 
@@ -956,8 +956,11 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     if body.edit_addons is not None or "edit_addons" in rparams:
         # This refine's own LoRA choice: the request's, never the parent's (picture_loras.py).
         rparams["edit_addons"] = _edit_choices(body.edit_addons if body.edit_addons is not None else rparams["edit_addons"])
+    elif parent.stage == "concept":
+        # Nothing chosen for this refine: your LoRAs that start on for refines of this kind of asset (lora_defaults.py).
+        rparams = lora_defaults.fill("concept", a.category, rparams, knobs=["edit_addons"])
     inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items()
-                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied")}
+                 if k not in ("reference_experimental", "fix_for", "edit_addons", "edit_addons_applied", "edit_addons_by_default")}
     # The checks this redraw was made to fix (fixes.compose): recorded on the new version only, never inherited.
     fix_for = fixes.check_fix_for(body.fix_for or [])
     if body.fix_for and parent.stage != "concept":

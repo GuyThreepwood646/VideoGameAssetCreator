@@ -311,6 +311,8 @@ export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_eng
 export type Category = {
   id: string
   label: string
+  // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
+  noun?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string
@@ -434,7 +436,12 @@ export type AddonEntry = {
   added_at?: string
   // Your own add-ons only: how the file is kept (see AddonPlacement).
   placement?: AddonPlacement
+  // Your own add-ons only: the kinds of assets and step settings it starts on in (backend lora_defaults.py).
+  start_on?: StartOn
 }
+
+// Which kinds of assets (category ids) and step settings one of your LoRAs starts on in (PUT /api/my-addons/{id}/start-on).
+export type StartOn = { categories: string[]; uses: string[] }
 
 // How one of your LoRA files is kept: 'in_place' (used where it is, in one of your LoRA folders). `note` is the plain sentence to
 // show, and says when the file is gone.
@@ -468,7 +475,7 @@ export type LoraFolders = { folders: LoraFolderState[]; max_folders: number; res
 export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
 // What a picture-edit LoRA was made for (user_addons.MADE_FOR_EDIT / MADE_FOR_PLAIN). Plain also covers "not sure".
 export type MadeFor = 'qwen_image_edit' | 'qwen_image'
-export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string }
+export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string; default_strength?: StrengthName; start_on?: StartOn }
 export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 export type Recipe = {
   id: string
@@ -1071,6 +1078,7 @@ export const api = {
   addMyAddon: (body: MyAddonIn) => post<AddonEntry>('/api/my-addons', body),
   removeMyAddon: (id: string) => del<RemovedAddon>(`/api/my-addons/${encodeURIComponent(id)}`),
   updateMyAddon: (id: string, body: MyAddonChange) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}`, body),
+  setStartOn: (id: string, body: StartOn) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}/start-on`, body),
   availableAddons: () => get<AvailableAddon[]>('/api/my-addons/available'),
   loraFolders: () => get<LoraFolders>('/api/lora-folders'),
   addLoraFolder: (path: string) => post<LoraFolders>('/api/lora-folders', { path }),
