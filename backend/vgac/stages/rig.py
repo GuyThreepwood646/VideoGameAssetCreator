@@ -150,8 +150,14 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     if src is not None:
         sc.register("glb", sc.copy_in(src, "rig.glb"))
     link_textures(sc)
-    sc.set_metrics(rigid=True, bones=0, reason=reason)
-    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False)))
+    moving = _moving_parts(sc)
+    sc.set_metrics(rigid=True, bones=0, reason=reason, moving_parts=moving)
+    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)))
+
+
+def _moving_parts(sc: StageContext) -> list[str]:
+    """The names of the asset's declared parts that are to move (kind separate), for a rigid asset's bones check."""
+    return [p["name"] for p in (sc.asset.parts or []) if p.get("kind") == "separate"]
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:
@@ -1328,7 +1334,8 @@ def link_textures(sc: StageContext) -> None:
 async def judge(sc: StageContext) -> None:
     info_path = sc.file("rig_info")
     if sc.version.metrics.get("rigid"):
-        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False)
+        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False,
+                                    moving_parts=sc.version.metrics.get("moving_parts"))
     elif info_path is not None:
         checks = quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
                                     group_per_vertex=sc.version.params.get("group_per_vertex"))
