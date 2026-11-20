@@ -325,3 +325,19 @@ The person's own settings for each step of an automatic build, kept per platform
 - GET /api/step-defaults?platform=&look=&category= -> `{platform, look, saved, applied, notes}`. `saved` is what is stored (`{step: {setting: value}}`); `applied` is the same brought down to the look's limits for `category` (the 3D step's triangle count above what the look and platform allow, its texture size above the look's own size), `notes` says plainly what was brought down. The stored value is kept, so it comes back into force where there is more room. Without `category` nothing is brought down. 400 for an unknown platform or look.
 - PUT /api/step-defaults?platform=&look=&category= body `{"stages": {step: {setting: value}}}` -> same answer as GET. Changes the saved settings of each step named one setting at a time: a value sets it, `null` removes it (a step with no settings left is dropped), settings not named are kept. Every value is checked against that step's settings like adjust params; 400 with a plain message, and nothing saved, for an unknown step or setting, a value out of range, not finite or of the wrong kind, or `seed`.
 - DELETE /api/step-defaults?platform=&look=&stage=&category= -> same answer. Forgets one step (`stage`) or, left out, every step for that platform and look.
+
+## Additions (WP-20, declared parts)
+
+Declared parts are structured: the asset's `parts` is a list of `{name, kind}` (kind `separate`, a piece that moves or
+swaps, or `sway`, a hanging part; `sway` is for humanoids only). Label strings are refused with 422; the asset's
+create and update calls take the same list. The asset's parts are shown as `parts` on the asset and read as no parts
+where a row is still in the old label form.
+
+- `GET /api/versions/{vid}/parts`: `{version_id, category, parts [{name, kind, location (x, y, z in metres, rig GLB rest
+  pose, y up) or null}], placed [...], applies_to_rig}`. Any version; `applies_to_rig` is true on a rig version.
+- `PUT /api/versions/{vid}/parts` with `{parts: [{name, kind?, location?}]}`: replaces this version's placed parts. Rig
+  versions only (409 when not done, 400 otherwise). Each name must be a declared part of the asset with the same kind;
+  a location is three numbers within 5 metres of the model's centre. The rig step reads `parts.json` when it runs the
+  spring bones: a sway part with a location gets a chain at its region even where the search found none, and
+  `metrics.springs.declared` says what happened to each point (`found`, `added` or `not_added`, with the reason).
+  Writing the placed parts does not re-run a finished rig.

@@ -150,8 +150,14 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     if src is not None:
         sc.register("glb", sc.copy_in(src, "rig.glb"))
     link_textures(sc)
-    sc.set_metrics(rigid=True, bones=0, reason=reason)
-    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False)))
+    moving = _moving_parts(sc)
+    sc.set_metrics(rigid=True, bones=0, reason=reason, moving_parts=moving)
+    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)))
+
+
+def _moving_parts(sc: StageContext) -> list[str]:
+    """The names of the asset's declared parts that are to move (kind separate), for a rigid asset's bones check."""
+    return [p["name"] for p in (sc.asset.parts or []) if p.get("kind") == "separate"]
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:
@@ -901,6 +907,7 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
     fade the weights onto it and bake the sway into every clip of anim.glb (in place; the file before is kept as
     springs/anim_plain.glb). Files: springs (springs.json), springs_found (what was taken as a hanging part, with the
     chains drawn on it), springs_report. metrics.springs says what sways or why nothing does. Never raises."""
+    from .. import declared_parts
     from .. import springs as springs_mod
 
     rep_path = sc.dir / "anim_anim.json"
@@ -929,10 +936,16 @@ async def _springs(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> 
         hb = sc.file("hitboxes")
         head = springs_mod.head_options(params, _description(sc))
         sc.set_params(head_sway=head["head_sway"])
+        # Declared sway parts with a location (declared_parts.py): the region round each point gets a chain even where
+        # the search finds none. Locations are in the rig GLB's frame; blender/springs.py converts them.
+        declared = declared_parts.for_springs(declared_parts.read_placed(sc.file("parts")))
+        declared_path = None
+        if declared:
+            declared_path = declared_parts.write_placed(work / "declared.json", declared)
         args = springs_mod.blender_args(anim_glb, out, work, sc.dir / "anim_clips.json", Path(hb) if hb else None, hair_points,
                                         sc.lineage_file("metallic", ("prep", "mesh")),
                                         library_hair=(HAIR_OBJECT, lib["mesh"], lib.get("parts")) if lib is not None else None,
-                                        head=head)
+                                        head=head, declared=declared_path)
         await sc.blender("springs.py", args, log_name="springs.log", timeout=sc.settings.blender_timeout_seconds)
         rep = json.loads((work / "springs_report.json").read_text(encoding="utf-8"))
         family = ((lib or {}).get("metrics") or {}).get("family")  # library hair: the hairstyle's family words
@@ -1321,7 +1334,8 @@ def link_textures(sc: StageContext) -> None:
 async def judge(sc: StageContext) -> None:
     info_path = sc.file("rig_info")
     if sc.version.metrics.get("rigid"):
-        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False)
+        checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=False,
+                                    moving_parts=sc.version.metrics.get("moving_parts"))
     elif info_path is not None:
         checks = quality.rig_checks(json.loads(Path(info_path).read_text()), rig_expected=True,
                                     group_per_vertex=sc.version.params.get("group_per_vertex"))

@@ -226,8 +226,56 @@ def segment_points(heads, tails, step):
 # --- finding the hanging parts ---------------------------------------------------------------------------------------
 
 
+# A declared point's region: the rest cells within this share of the character's height (at least two cells).
+DECLARED_RADIUS_REL = 0.08
+
+
+def find_declared(declared, V, parts_lab, body, rest, grid, vcell, accepted, bones, roles, weights, hair_v, metal_v,
+                  centre_x, centre_y, height, min_len, cell, head_cloth="stiff", headwear=False):
+    """Declared sway points (declared: [{name, kind, P}] with P in Blender world space). A point that an accepted part
+    already reaches (a vertex within the radius) is reported as found. Otherwise the skin round it (rest cells, not the
+    body) within the radius becomes a region of its own and goes through describe_part as a declared part. Appends the
+    chains it makes to accepted (in place). -> [{name, kind, location, state, ...}] in the order given."""
+    out = []
+    radius = max(DECLARED_RADIUS_REL * height, 2.0 * cell)
+    rest_idx = np.argwhere(rest)
+    rest_xyz = cell_centres(grid, rest_idx) if len(rest_idx) else np.zeros((0, 3))
+    new_id = int(max(parts_lab.max(), 0)) + 1
+    for d in declared:
+        P = np.asarray(d["P"], float)
+        row = {"name": d["name"], "kind": d["kind"], "location": d.get("location")}
+        near = next((p for p in accepted if len(p.get("vertex_ids", [])) and
+                     float(np.min(np.linalg.norm(V[p["vertex_ids"]] - P, axis=1))) <= radius), None)
+        if near is not None:
+            row.update(state="found", part=int(near["id"]), kind=near.get("kind"), radius_m=round(radius, 4))
+            out.append(row)
+            continue
+        sel = rest_idx[np.linalg.norm(rest_xyz - P, axis=1) <= radius] if len(rest_idx) else rest_idx
+        row["radius_m"] = round(radius, 4)
+        row["skin_cells"] = int(len(sel))
+        if len(sel) < 4:
+            row.update(state="not_added", why="No cloth or hair stands clear of the body near this point. Cloth joined to the body along its length cannot be given a chain of its own.")
+            out.append(row)
+            continue
+        lab = parts_lab.copy()
+        lab[sel[:, 0], sel[:, 1], sel[:, 2]] = new_id
+        vlab = lab[vcell[:, 0], vcell[:, 1], vcell[:, 2]]
+        info = describe_part(new_id, lab, body, grid, V, vlab, bones, roles, weights, hair_v, metal_v, centre_x, centre_y,
+                             height, min_len, head_cloth=head_cloth, headwear=headwear, declared=True)
+        new_id += 1
+        if info.get("reason") is None:
+            info["declared_name"] = d["name"]
+            accepted.append(info)
+            row.update(state="added", kind=info["kind"], parent=info["parent"], length_m=round(float(info["length"]), 3),
+                       verts=info.get("verts"))
+        else:
+            row.update(state="not_added", why=info.get("why") or "It could not be made into a chain.")
+        out.append(row)
+    return out
+
+
 def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="humanoid", max_bones=MAX_BONES, counter=None,
-               head_cloth="stiff", headwear=False):
+               head_cloth="stiff", headwear=False, declared=None):
     """The parts that hang free. V (n, 3) vertices and bones in Blender world space (Z up, the character's front -Y,
     its left +X); F (m, 3) triangles; bones: [{name, head, tail, parent}]; weights: (WI (n, 4) bone indices, WW (n, 4))
     or None; hair_v (n,) bool: vertex on a hair triangle; metal_v (n,) metallic 0..1. -> {"parts": accepted,
@@ -291,7 +339,12 @@ def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="h
         if info is None:
             continue
         (accepted if info["reason"] is None else rejected).append(info)
-    accepted.sort(key=lambda p: -p["length"])
+    decl_rows = []
+    if declared:
+        decl_rows = find_declared(declared, V, parts_lab, body, rest, grid, vcell, accepted, bones, roles, weights, hair_v,
+                                  metal_v, centre_x, centre_y, height, min_len, cell, head_cloth=head_cloth, headwear=headwear)
+    # declared chains first (the person named them), then the longest parts; the bone cap keeps what fits
+    accepted.sort(key=lambda p: (p.get("declared_name") is None, -p["length"]))
     # every chain gets its name; the bone cap keeps the longest parts
     total = 0
     kept = []
@@ -310,7 +363,8 @@ def find_parts(V, F, bones, weights=None, hair_v=None, metal_v=None, category="h
             counter[p["kind"]] = counter.get(p["kind"], 0) + 1
             p.setdefault("names", []).append(f"{PREFIX}{p['kind']}_{counter[p['kind']]:02d}")
     return {"parts": kept, "rejected": [r for r in rejected if r.get("notable")], "height": height, "cell": cell,
-            "grid": grid, "seconds": round(time.time() - t0, 2), "body_cells": int(body.sum()), "part_count": int(len(ids))}
+            "grid": grid, "seconds": round(time.time() - t0, 2), "body_cells": int(body.sum()), "part_count": int(len(ids)),
+            "declared": decl_rows}
 
 
 def hold_head_still(parts):
@@ -339,7 +393,10 @@ def _dominant_bone(V, weights, sel, nbones):
 
 
 def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, hair_v, metal_v, centre_x, centre_y,
-                  height, min_len, head_cloth="stiff", headwear=False):
+                  height, min_len, head_cloth="stiff", headwear=False, declared=False):
+    """One part as a chain. declared=True (a point the person named, see find_declared): the region is taken as it is
+    and hangs from its own top to the nearest bone, so the hanging tests, the thin and metal tests and the confidence
+    floor do not apply; only the length does."""
     cell = grid["cell"]
     idx = np.argwhere(parts_lab == pid)  # (k, 3) z, y, x
     z0, z1 = int(idx[:, 0].min()), int(idx[:, 0].max())
@@ -358,12 +415,12 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
            "length": float(length_z), "reason": None, "notable": length_z >= min_len}
     out["centre"] = [round(float(v), 4) for v in xyz.mean(axis=0)]
     n_above, n_below = int(above.sum()), int(below.sum())
-    if n_above + n_below == 0:
+    if n_above + n_below == 0 and not declared:
         out["reason"] = "loose"
         return out
     top_share = float(np.mean(rel[above] >= 0.6)) if n_above else 0.0
     bottom_share = float(np.mean(rel[below] <= 0.4)) if n_below else 0.0
-    hang = n_above > 0 and top_share >= 0.9 and n_below <= max(2, 0.1 * n_above)
+    hang = declared or (n_above > 0 and top_share >= 0.9 and n_below <= max(2, 0.1 * n_above))
     points_up = n_below > 0 and bottom_share >= 0.9 and n_above <= max(2, 0.1 * n_below)
     if not hang:
         out["reason"] = "points_up" if points_up else "both_ends"
@@ -373,7 +430,8 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
             out["notable"] = out["notable"] and n_below < 0.4 * biggest
         return out
     # the centre line, top to bottom, from the slice centroids
-    layers = list(range(z1, z0 - 1, -1))
+    # the slices that hold cells (a declared region can be a blob with empty slices between its top and bottom)
+    layers = [z for z in range(z1, z0 - 1, -1) if np.any(idx[:, 0] == z)]
     cents, areas, widths = [], [], []
     for z in layers:
         c = xyz[idx[:, 0] == z]
@@ -388,7 +446,8 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
     cents = np.array(cents)
     areas, widths = np.array(areas), np.array(widths)
     thick = areas / widths
-    attach = cell_centres(grid, idx[above])
+    # a declared region has no body cells above it: its top slice is where it is joined to the nearest bone
+    attach = cell_centres(grid, idx[idx[:, 0] == z1]) if declared else cell_centres(grid, idx[above])
     root = attach.mean(axis=0)
     root[2] = float(xyz[:, 2].max()) + 0.5 * cell
     line = np.vstack([root, cents])
@@ -460,7 +519,12 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
     out["taper"] = round(tip_area / max(root_area, 1e-9), 3)
     # what it is
     kind, parent = None, None
-    if parent_role in HEAD_ROLES:
+    if declared:  # hangs from the nearest bone; the kind follows the hair share and the width
+        kind = "Hair" if hair_share >= 0.5 else ("Cape" if out["width"] >= WIDE else "Cloth")
+        parent = bones[dom]["name"]
+    if declared:
+        pass
+    elif parent_role in HEAD_ROLES:
         # Under a hat, helmet or hood (headwear: named in the description) a part counts as hair only when it is clearly
         # hair-coloured: a dark brim is not a ponytail.
         kind = "Hair" if hair_share >= (HAIR_SHARE_HEADWEAR if headwear else 0.5) else "Cloth"
@@ -492,6 +556,8 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
     if out["reason"] is None:
         if length < min_len:
             out["reason"] = "short"
+        elif declared:
+            pass
         elif clear_share < CLEAR_SHARE:
             out["reason"] = "rests"
         elif length / max(out["thickness"], cell) < THIN_RATIO and kind != "Cape":
@@ -503,9 +569,10 @@ def describe_part(pid, parts_lab, body, grid, V, vlab, bones, roles, weights, ha
     conf = min(1.0, out["gap_cm"] / (200 * CLEAR_MIN)) * min(1.0, length / (2 * min_len)) * min(1.0, clear_share / 0.8)
     conf *= {"Hair": 1.0 if hair_share >= 0.8 else 0.85, "Cape": 0.9, "Tail": 0.85, "Cloth": 0.75}.get(kind, 0.5)
     out["confidence"] = round(float(conf), 3)
-    if out["reason"] is None and conf < CONFIDENCE_MIN:
+    if out["reason"] is None and conf < CONFIDENCE_MIN and not declared:
         out["reason"] = "low_confidence"
     out["why"] = REASONS.get(out["reason"]) if out["reason"] else None
+    out["declared"] = bool(declared)
     if out["reason"] is None:
         out["columns"] = chain_columns(idx, xyz, root, out["width"], height, kind, length)
         out["vertex_ids"] = np.nonzero(vin)[0]
@@ -1332,10 +1399,21 @@ def main():  # pragma: no cover - runs inside Blender
                                       "groups": len(groups), "chains": len(lib_parts), "scale": round(s_map, 6)}
         except Exception as e:  # noqa: BLE001
             report["library_hair"] = {"error": str(e)[:300]}
+    declared = None
+    decl_path = _opt(argv, "--declared")
+    if decl_path and os.path.isfile(decl_path):
+        # the person's declared sway points (rig GLB frame, y up) into this scene's Z-up frame
+        rows = [r for r in json.load(open(decl_path, encoding="utf-8")).get("parts", []) if r.get("location")]
+        if rows:
+            Pb = gltf_to_blender(np.array([r["location"] for r in rows], float))
+            declared = [{"name": r["name"], "kind": r.get("kind", "sway"), "location": r["location"], "P": Pb[i].tolist()}
+                        for i, r in enumerate(rows)]
     found = find_parts(V, Ft, bones, (WI, WW), hair_v, metal_v, category, max_bones=MAX_BONES - lib_bones, counter=lib_counter,
-                       head_cloth=_opt(argv, "--head-cloth", "stiff"), headwear="--headwear" in argv)
+                       head_cloth=_opt(argv, "--head-cloth", "stiff"), headwear="--headwear" in argv, declared=declared)
     report.update(height=found["height"], cell=found["cell"], find_seconds=found["seconds"],
                   rejected=[_public(r) for r in found["rejected"]], parts_seen=found["part_count"])
+    if declared:
+        report["declared"] = [{k: v for k, v in r.items()} for r in found["declared"]]
     parts = lib_parts + found["parts"]
     if head_still:
         parts, held = hold_head_still(parts)

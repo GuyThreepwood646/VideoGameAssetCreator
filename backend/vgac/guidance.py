@@ -385,6 +385,16 @@ def _var(c: dict[str, Any], name: str) -> Any:
     return (c.get("vars") or {}).get(name)
 
 
+def _no_skeleton_ok(c: dict[str, Any]) -> str:
+    """The bones check with no skeleton. Declared moving parts are named as not rigged yet (WP-29), never as success."""
+    moving = _var(c, "moving") or []
+    if moving:
+        names = ", ".join(str(m).replace("{", "{{").replace("}", "}}") for m in moving)  # the text is formatted later
+        return (f"No skeleton yet. The parts you named to move ({names}) are not rigged, so they stay fixed in the game "
+                "for now; moving them is planned work.")
+    return "No skeleton, as intended for this kind of asset."
+
+
 LIGHT_LEFT_WORDS = {  # lightfix.left_alone keys
     "black": "black and very dark colours (a shadow cannot be told from a dark colour there)",
     "hair": "the hair",
@@ -608,7 +618,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "bones": {
         "severity": "block",
-        "ok": lambda c: "No skeleton, as intended for this kind of asset." if c.get("limit") == 0 else "The skeleton has {value:n} bones.",
+        "ok": lambda c: _no_skeleton_ok(c) if c.get("limit") == 0 else "The skeleton has {value:n} bones.",
         "fail": lambda c: "The model has {value:n} bones, but this kind of asset should have none." if c.get("limit") == 0
         else "No skeleton was found in the rigged model.",
     },

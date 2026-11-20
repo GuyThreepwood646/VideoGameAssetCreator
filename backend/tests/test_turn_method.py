@@ -210,8 +210,8 @@ def test_a_failing_sheet_view_is_redrawn_the_standard_way(tmp_path, monkeypatch)
     sc, concept, new, calls = _world(tmp_path, monkeypatch, "humanoid")
     real = turnaround.view_checks
 
-    def left_fails_once(view, *rest):
-        out = real(view, *rest)
+    def left_fails_once(view, *rest, **kw):
+        out = real(view, *rest, **kw)
         if view == "left" and "left" not in calls["standard"]:
             out["passed"] = out["ok"] = False
         return out

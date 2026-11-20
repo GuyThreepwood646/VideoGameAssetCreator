@@ -149,12 +149,15 @@ class Asset(Base):
         self.hair_json = _dumps(value) if value is not None else None
 
     @property
-    def parts(self) -> list[str]:
-        return _loads(self.parts_json, [])
+    def parts(self) -> list[dict[str, str]]:
+        """The declared parts: [{name, kind}] (declared_parts.py). Rows in the old label form read as none."""
+        from . import declared_parts
+
+        return declared_parts.read_stored(_loads(self.parts_json, []))
 
     @parts.setter
-    def parts(self, value: list[str]) -> None:
-        self.parts_json = _dumps(list(value or []))
+    def parts(self, value: list[dict[str, str]]) -> None:
+        self.parts_json = _dumps([{"name": p["name"], "kind": p["kind"]} for p in (value or [])])
 
 
 class Version(Base):

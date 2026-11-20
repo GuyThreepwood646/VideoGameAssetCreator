@@ -314,6 +314,8 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
             raise FileNotFoundError("The four-view builder (Pixal3D) needs model files that are not installed: " + ", ".join(missing)
                                     + ". Use TRELLIS.2, or put the files in the ComfyUI models folders.")
         views = four_views(sc)
+        from .. import cropcheck  # recorded only: how much today's per-view crop would rescale the views (vgac/cropcheck.py)
+        sc.set_metrics(crop_check=cropcheck.spread_check(views))
         decided = {"view": "front", "why": "none", "measures": {}}
     else:
         default_view = sc.category.get("input_view_default") or "concept"

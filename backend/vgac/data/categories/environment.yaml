@@ -2,6 +2,8 @@ id: environment
 label: Environment piece
 rig_engine: none
 symmetric: false
+# WP-47: pieces closer than this share of the subject's longer side are one subject (a crate by a wall, leaves of one plant).
+subject_gap: 0.08
 size_m: 3.0
 # Size along this axis (G12): height is the up extent, horizontal the larger ground-plane extent, longest the
 # largest of all three. For scenery this is only the starting size (the category size, or a size written in the

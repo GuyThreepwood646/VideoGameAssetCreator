@@ -120,8 +120,8 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
         parts.append(sc.category["pose_block"])
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
-    if sc.asset.parts:
-        parts.append("The following parts are clearly separate pieces: " + ", ".join(sc.asset.parts) + ".")
+    if sc.asset.parts:  # the names of the declared parts (declared_parts.py); the picture is asked to draw them apart
+        parts.append("The following parts are clearly separate pieces: " + ", ".join(p["name"] for p in sc.asset.parts) + ".")
     # Last: placed after the style block it changed the character more (runtime/tmp/celface).
     parts.append(face_sentence(sc, params, base))
     return " ".join(p for p in parts if p)

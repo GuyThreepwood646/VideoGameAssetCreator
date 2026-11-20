@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -572,6 +572,15 @@ async def clear_skin_metal(sc: StageContext, glb: Path, maps: dict[str, Path]) -
         maps = {**maps, "metallic": Path(sm["files"]["metallic"])}
         sc.register("metallic", maps["metallic"])
         await asyncio.to_thread(imaging.glb_replace_images, glb, metallic=maps["metallic"])
+    # Creatures are not metal unless the description says so (vgac/creaturemetal.py); a no-op for every other category.
+    cm = await asyncio.to_thread(creaturemetal.clear, glb, maps, sc.asset.category, sc.asset.prompt, sc.dir / "creature")
+    for key in ("metallic", "roughness"):
+        if cm["files"].get(key) is not None:
+            maps = {**maps, key: Path(cm["files"][key])}
+            sc.register(key, maps[key])
+            await asyncio.to_thread(imaging.glb_replace_images, glb, **{key: maps[key]})
+    if creaturemetal.mode(sc.asset.category, sc.asset.prompt) is not None:
+        sm["metrics"].update(cm["metrics"])  # recorded for creatures only; other categories keep their record
     return maps, sm
 
 

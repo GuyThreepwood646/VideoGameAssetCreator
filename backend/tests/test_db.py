@@ -10,7 +10,7 @@ def test_round_trip_project_asset_version_job(settings):
         db.add(p)
         db.commit()
         a = Asset(project_id=p.id, name="knight", category="humanoid", style_preset="painted", platform_target="pc_mid", prompt="a knight")
-        a.parts = ["shield"]
+        a.parts = [{"name": "shield", "kind": "separate"}]
         db.add(a)
         db.commit()
         v = Version(asset_id=a.id, stage="concept", status="queued")
@@ -35,7 +35,7 @@ def test_round_trip_project_asset_version_job(settings):
         assert d["created_at"].endswith("Z") and len(d["id"]) == 36
         a = db.get(Asset, ids[1])
         ad = asset_to_dict(a)
-        assert ad["parts"] == ["shield"]
+        assert ad["parts"] == [{"name": "shield", "kind": "separate"}]
         assert [x["id"] for x in ad["stages"]["concept"]] == [ids[2], ids[3]]
         assert ad["selected"] == {"concept": ids[3]}
         assert set(ad["stages"]) == {"concept", "turnaround", "mesh", "prep", "rig", "export"}
