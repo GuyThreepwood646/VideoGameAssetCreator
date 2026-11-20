@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
+import { joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 import { pointTool } from '../../declaredPoints'
@@ -201,8 +201,7 @@ export function RigView({ version }: { version: Version }) {
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>
-              The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.
-              To get it back, run setup\Setup-Extras.ps1 -Packs -Install, or unzip it into data\animations by hand. Then make the moves again.
+              {libraryMissingLine()}
             </div>
           )}
           {namesFixed && (
@@ -242,8 +241,8 @@ export function RigView({ version }: { version: Version }) {
       <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} canAsk={canAsk(sugg)} askText={askLabel(sugg)} onAsk={askSuggestion} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
-      {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
-      {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
+      {rigError && <div className="muted small">The bones picture could not be shown. Make the moves again on this step.</div>}
+      {hitFile.error && version.files.hitboxes && <div className="muted small">The hit boxes could not be shown. Make the moves again on this step.</div>}
       <div className="rig-side">
         <div>
           <div className="field-label">
