@@ -7,6 +7,7 @@ frontend can fetch it from GET /api/library/{path}.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -36,8 +37,51 @@ def own_face_closeup(project_id: str, asset_id: str, settings: Settings | None =
 def version_dir(asset: Asset, version: Version, settings: Settings | None = None, create: bool = True) -> Path:
     d = asset_dir(asset.project_id, asset.id, settings) / version.stage / version.id
     if create:
+        check_version_room(d)
         d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# Windows' 260-character limit (MAX_PATH) applies to every file the app writes, and a library folder path is the
+# start of each of them. The deepest fixed-layout file the app writes is a clean-up face picture, with 36-character ids
+# (project, asset, version): projects/<id>/assets/<id>/prep/<id>/face/painted_head_closeup_2_drawn.png. Asset names
+# also go into export folder names and are not checked here (see the note in ARCHITECTURE).
+LONG_PATH_LIMIT = 260
+_DEEPEST_FIXED = "projects/{p}/assets/{a}/prep/{v}/face/painted_head_closeup_2_drawn.png"
+DEEPEST_FIXED_LENGTH = len(_DEEPEST_FIXED.format(p="x" * 36, a="x" * 36, v="x" * 36))
+_BELOW_VERSION = "face/painted_head_closeup_2_drawn.png"  # the deepest fixed file, below a version folder
+
+
+class LibraryPathError(ValueError):
+    """The library folder path is too long for Windows to write the files inside it. The message is plain."""
+
+
+def max_library_folder_length() -> int:
+    """The longest library folder path (characters) that still lets the deepest fixed file fit under 260 characters:
+    folder + one separator + the file's relative path must stay at 259 characters or fewer."""
+    return LONG_PATH_LIMIT - 2 - DEEPEST_FIXED_LENGTH
+
+
+def library_path_problem(folder: Any) -> str | None:
+    """A plain sentence when the library folder path is too long for Windows, else None. Used when the setting is saved."""
+    if not isinstance(folder, (str, Path)) or not str(folder).strip():
+        return None
+    n = len(os.path.abspath(str(folder)))
+    if n <= max_library_folder_length():
+        return None
+    return library_path_message()
+
+
+def library_path_message() -> str:
+    return (f"The library folder's path is too long for Windows: keep it under {max_library_folder_length() + 1} characters, "
+            "for example F:\\Games\\VGAC library.")
+
+
+def check_version_room(d: Path) -> None:
+    """Before a job writes into a version folder: refuse, in plain words, when the deepest fixed file below it would
+    be 260 characters or more. Cheap (one length), and it stops the job before any file is written."""
+    if len(os.path.abspath(str(d))) + 1 + len(_BELOW_VERSION) >= LONG_PATH_LIMIT:
+        raise LibraryPathError(library_path_message())
 
 
 def rel_path(path: Path | str, settings: Settings | None = None) -> str:
