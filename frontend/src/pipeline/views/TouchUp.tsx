@@ -118,6 +118,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
               {saving ? 'Saving the paint' : 'Save as a new version'}
             </button>
             {!paint.saveable && <span className="small muted">Save is not available yet for this model: some of its parts have pictures of their own.</span>}
+            {paint.saveable && !paint.canUndo && !saving && <span className="small muted">Nothing is painted yet. Paint on the model, then save.</span>}
             {saveNote && <span className="small muted">{saveNote}</span>}
           </div>
           {paint.notice && <div className="small muted">{paint.notice}</div>}

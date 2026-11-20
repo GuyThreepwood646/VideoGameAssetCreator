@@ -202,7 +202,7 @@ export function RigView({ version }: { version: Version }) {
             <div>
               <span className="warn-mark">CHECK</span>
               The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.
-              To get it back, run setup\Setup-Extras.ps1 -Packs -Install, or unzip it into data\animations by hand. Then make the moves again.
+              To get it back, open the Health page (the Setup needs attention link at the top) and read the Shared animation library line. Then make the moves again on this step.
             </div>
           )}
           {namesFixed && (

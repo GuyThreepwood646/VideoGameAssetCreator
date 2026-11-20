@@ -1249,6 +1249,7 @@ button.btn-lg {
   padding: var(--s2) var(--s2) var(--s2) var(--s3);
   text-align: left;
   min-width: 0;
+  white-space: normal;
 }
 .rail-stage:hover {
   background: var(--panel-2);
@@ -1263,10 +1264,13 @@ button.btn-lg {
 }
 .rail-label {
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .rail-meta {
   font-size: var(--fs-xs);
   color: var(--muted);
+  white-space: nowrap;
 }
 .rail-prompt {
   padding: var(--s3);
@@ -2170,9 +2174,9 @@ button.btn-lg {
 .rail-stage.kept .rail-meta {
   color: var(--ok);
 }
-.rail-label {
-  display: inline-flex;
-  align-items: center;
+.rail-stage > .info-wrap {
+  flex: none;
+  margin-left: 0;
 }
 .rail-label .info-wrap {
   opacity: 0;
@@ -4675,4 +4679,11 @@ button.preset-card:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+}
+/* Save as a new version when it is not available: the primary colour goes, so it reads as off. */
+.touch-up .btn.primary:disabled {
+  background: var(--btn-bg);
+  color: var(--muted);
+  border-color: var(--border-control);
+  opacity: 1;
 }
