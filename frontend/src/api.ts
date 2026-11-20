@@ -1004,6 +1004,8 @@ export const api = {
   // "Upscale it": a new step 1 version, the picture made bigger and checked again.
   upscale: (vid: string) => post<RunResult>(`/api/versions/${vid}/upscale`),
   adjust: (vid: string, params: Record<string, unknown>) => post<RunResult>(`/api/versions/${vid}/adjust`, { params }),
+  // Touch up save (WP-23): a new clean-up version with the painted picture; the strokes are the paint log.
+  paint: (vid: string, body: { picture_png: string; mask_png: string; strokes: Record<string, unknown>[] }) => post<RunResult>(`/api/versions/${vid}/paint`, body),
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
   // Removes a version that failed, was stopped or was rejected, with its files (409 for any other).

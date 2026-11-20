@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import guidance, headtris, library, limbjoins, quality
+from .. import guidance, headtris, imaging, library, limbjoins, quality
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -178,6 +178,74 @@ def guard_budget(sc: StageContext, src: Path) -> None:
         raise ValueError(problem)
 
 
+def _ancestry(db: Any, v: Any) -> list[Any]:
+    """The version and its parents up the chain (a loop in the data ends the walk)."""
+    from ..db import Version
+
+    out: list[Any] = []
+    seen: set[str] = set()
+    cur = v
+    while cur is not None and cur.id not in seen:
+        out.append(cur)
+        seen.add(cur.id)
+        cur = db.get(Version, cur.parent_version_id) if cur.parent_version_id else None
+    return out
+
+
+def _rig_of_geometry(sc: StageContext, root: Any, template: str, gpv: int) -> Any:
+    """A finished rig of this asset made on the same geometry (its clean-up chain starts at `root`, the first unpainted
+    clean-up) with the same template and per-vertex groups. None when there is none."""
+    from sqlalchemy import select
+
+    from .. import paintsave
+    from ..db import Version
+
+    rigs = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.status == "done")
+                         .order_by(Version.created_at.desc())).all()
+    for r in rigs:
+        if r.id == sc.version.id or (r.metrics or {}).get("rigid"):
+            continue
+        p = r.params or {}
+        if p.get("template_label") != template or int(p.get("group_per_vertex") or 4) != gpv:
+            continue
+        if library.version_file(r, "glb", sc.settings) is None:
+            continue
+        prep = next((v for v in _ancestry(sc.db, r) if v.stage == "prep"), None)
+        if prep is not None and paintsave.geometry_root(sc.db, prep).id == root.id:
+            return r
+    return None
+
+
+async def retexture(sc: StageContext, template: str, gpv: int) -> bool:
+    """WP-23 rig.retexture: a rig made from a painted clean-up (step 4) reuses the rig of the same geometry, its skeleton,
+    weights, hit boxes and moves, and takes the new picture. No SkinToken run: paint never changes the geometry. False
+    when the clean-up is not painted or there is no rig of its geometry; the caller then rigs as usual."""
+    from .. import paintsave
+
+    painted = next((v for v in sc.iter_lineage(include_self=False) if v.stage == "prep"), None)
+    if not paintsave.is_painted(painted):
+        return False
+    root = paintsave.geometry_root(sc.db, painted)
+    donor = _rig_of_geometry(sc, root, template, gpv)
+    if donor is None:
+        return False
+    sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
+    if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
+        return False
+    picture = sc.lineage_file("base_color", ("prep",))
+    if picture is None:
+        raise FileNotFoundError("the painted clean-up has no picture")
+    for key in ("glb", "anim_glb", "anim_body"):
+        path = sc.file(key)
+        if path is not None and Path(path).is_file():
+            if not imaging.glb_replace_images(path, base_color=picture):
+                raise ValueError(f"the new picture could not be written into the rig ({key})")
+    link_textures(sc)
+    sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture")
+    await judge(sc)
+    return True
+
+
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if sc.asset.category == "material":
         sc.set_metrics(skipped=True, rigid=True, reason="material category has no mesh")
@@ -198,6 +266,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_params(**hp)
     if template is None:
         await _skip(sc, f"rig_engine {sc.category.get('rig_engine', 'none')}", src)
+        return
+    if await retexture(sc, template, gpv):
         return
     lib_hair = library_hair(sc)
     if lib_hair is not None:

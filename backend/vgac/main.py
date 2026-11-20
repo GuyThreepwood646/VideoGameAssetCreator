@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, people, pipeline, reference
+from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, move_gate, own_images, paintsave, people, pipeline, reference
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
 from .db import (JOB_STATUSES, STAGES, VERSION_STATUSES, Asset, Job, Project, Version, asset_to_dict, get_session, init_db, utcnow,
@@ -230,6 +230,13 @@ class FixPlanIn(BaseModel):
 
 class AdjustIn(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PaintIn(BaseModel):
+    # The base-colour picture as the panel drew it (PNG, glTF row order), and the edit mask (white where painted).
+    picture_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    mask_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    strokes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class JudgeIn(BaseModel):
@@ -913,6 +920,8 @@ def refine_version(vid: str, body: RefineIn, db: Session = Depends(get_session))
     parent = _version(db, vid)
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
+    if (why := paintsave.refusal(parent)):
+        raise HTTPException(409, why)
     a = _asset(db, parent.asset_id)
     if body.view and body.view not in reference.TURNAROUND_VIEWS:
         raise HTTPException(400, f"unknown view {body.view!r}")
@@ -942,10 +951,35 @@ def adjust_version(vid: str, body: AdjustIn, db: Session = Depends(get_session))
     parent = _version(db, vid)
     if parent.status != "done":
         raise HTTPException(409, f"version is {parent.status}, not done")
+    if (why := paintsave.refusal(parent)):
+        raise HTTPException(409, why)
     a = _asset(db, parent.asset_id)
     aparams = _params(parent.stage, body.params, a.category)
     v = pipeline.new_version(db, a, parent.stage, parent, {**{k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}, **aparams})
     job = pipeline.submit(db, a, v, "adjust", {"params": aparams})
+    return {"job": job_to_dict(job), "version": version_to_dict(v)}
+
+
+@app.post("/api/versions/{vid}/paint")
+def paint_version(vid: str, body: PaintIn, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Touch up save (WP-23): a new clean-up version made from this one, with the painted picture merged in. The
+    geometry, the other maps and the settings are this version's; the job pads the paint and writes the model."""
+    parent = _version(db, vid)
+    if parent.status != "done":
+        raise HTTPException(409, f"version is {parent.status}, not done")
+    if parent.stage != "prep":
+        raise HTTPException(400, "only the clean-up step (step 4) can be painted")
+    a = _asset(db, parent.asset_id)
+    if a.category == "material":
+        raise HTTPException(400, "a material has no 3D model to paint on")
+    try:
+        picture, mask, strokes = paintsave.decode_inputs(body.picture_png, body.mask_png, body.strokes)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
+    v = pipeline.new_version(db, a, "prep", parent, inherited)
+    paintsave.write_inputs(library.version_dir(a, v, get_settings()), picture, mask, strokes)
+    job = pipeline.submit(db, a, v, "paint", {})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
 

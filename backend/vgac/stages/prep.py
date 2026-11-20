@@ -1360,6 +1360,7 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
 
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:
+    _refuse_painted(sc)
     parent = sc.parent
     merged = {**_hair_merge(_merge(parent.params if parent else {}, params), params), "instruction": instruction}
     await _prep(sc, merged)
@@ -1384,7 +1385,17 @@ def fresh_face(sc: StageContext, merged: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _refuse_painted(sc: StageContext) -> None:
+    """Adjust and Refine rebuild the clean-up from the mesh, which would drop the Touch up paint (WP-23)."""
+    from .. import paintsave
+
+    why = paintsave.refusal(sc.parent)
+    if why:
+        raise ValueError(why)
+
+
 async def adjust(sc: StageContext, params: dict[str, Any]) -> None:
+    _refuse_painted(sc)
     parent = sc.parent
     merged = _merge(parent.params if parent else {}, params)
     if params.get(FACE_FRESH):
