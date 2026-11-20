@@ -1442,12 +1442,12 @@ def clip_death(P, t):
             _death_pose(Q, 1.0, 0.0)
             finish_serpent(Q)
 
-        drop = death_ground_fix(final)
+        drop = ground_fix(final)
         fix = {}
         if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
             # The ground is where the body lies before the limbs settle; the limbs are aimed at it, then the
             # whole pose is put back on the ground (nothing below it) with the settled limbs.
-            g = _body_rest[0] - drop
+            g = _rest_low[0] - drop
             lift = {}
             for _ in range(3):
                 Q = Pose()
@@ -1468,7 +1468,7 @@ def clip_death(P, t):
                         done = False
                 if done:
                     break
-            drop = death_ground_fix(lambda R, f=fix: (final(R), apply_fix(R, f, 1.0)))
+            drop = ground_fix(lambda R, f=fix: (final(R), apply_fix(R, f, 1.0)))
         _death.update(drop=drop, fix=fix)
     _death_pose(P, t, _death["drop"])
     apply_fix(P, _death["fix"], gait.envelope(t, [(0.45, 0), (0.9, 1)]))
@@ -1617,56 +1617,6 @@ def ground_fix(pose_fn):
     P = Pose()
     pose_fn(P)
     return _rest_low[0] - lowest_z(P)
-
-
-# The death ground reference (WP-77 round 3): the lowest point of the skinned body only. A vertex whose main bone is a
-# hand or a finger, and any object with no armature (a leftover helper), does not count, so a fingertip or a stray
-# sphere cannot hold the body up off the ground.
-_body_keep = {}
-_body_rest = [None]
-
-
-def _body_mask(o):
-    if o.name not in _body_keep:
-        names = {g.index: g.name for g in o.vertex_groups}
-        keep = []
-        for v in o.data.vertices:
-            main = max(v.groups, key=lambda g: g.weight) if v.groups else None
-            keep.append(main is not None and "Hand" not in names.get(main.group, ""))
-        _body_keep[o.name] = keep
-    return _body_keep[o.name]
-
-
-def body_lowest_z(P):
-    arm.animation_data_create()
-    arm.animation_data.action = None
-    apply_pose(P)
-    bpy.context.view_layer.update()
-    dg = bpy.context.evaluated_depsgraph_get()
-    z = None
-    for o in meshes:
-        if o.parent is None or o.parent.name != arm.name:
-            continue
-        keep = _body_mask(o)
-        ev = o.evaluated_get(dg)
-        me = ev.to_mesh()
-        mw = ev.matrix_world
-        for i, v in enumerate(me.vertices):
-            if i >= len(keep) or not keep[i]:
-                continue
-            vz = (mw @ v.co).z
-            z = vz if z is None or vz < z else z
-        ev.to_mesh_clear()
-    return z if z is not None else lo.z
-
-
-def death_ground_fix(pose_fn):
-    """The death drop: as ground_fix, with the body's lowest point (body_lowest_z) instead of the lowest vertex."""
-    if _body_rest[0] is None:
-        _body_rest[0] = body_lowest_z(Pose())
-    P = Pose()
-    pose_fn(P)
-    return _body_rest[0] - body_lowest_z(P)
 
 
 # ---- collarbone share (WP-75) ----------------------------------------------------------------------------------
