@@ -150,23 +150,90 @@ def test_a_refusal_writes_no_model_and_fails_with_the_plain_reason(job, monkeypa
     assert ctx.metrics == {} and ctx.params == {}
 
 
+def _png(img) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _glb_with_pictures(path: Path, base, mr, ao) -> Path:
+    """A minimal GLB whose first material has base colour, metallic-roughness and occlusion pictures (no mesh: only
+    the pictures are read)."""
+    import json
+    import struct
+
+    blobs = [_png(base), _png(mr), _png(ao)]
+    views, bin_ = [], b""
+    for b in blobs:
+        views.append({"buffer": 0, "byteOffset": len(bin_), "byteLength": len(b)})
+        bin_ += b + b"\0" * ((4 - len(b) % 4) % 4)
+    gltf = {"asset": {"version": "2.0"}, "buffers": [{"byteLength": len(bin_)}], "bufferViews": views,
+            "images": [{"bufferView": i, "mimeType": "image/png"} for i in range(3)],
+            "textures": [{"source": i} for i in range(3)],
+            "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicRoughnessTexture": {"index": 1}},
+                           "occlusionTexture": {"index": 2}}]}
+    js = json.dumps(gltf).encode()
+    js += b" " * ((4 - len(js) % 4) % 4)
+    path.write_bytes(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(js) + 8 + len(bin_)) + struct.pack("<I", len(js)) + b"JSON" + js
+                     + struct.pack("<I", len(bin_)) + b"BIN\x00" + bin_)
+    return path
+
+
+# one cap: the triangle over the top-left corner of the picture (u 0 to 0.25, v 0.75 to 1)
+CAP = {"side": "L", "of": "arm", "uv_tris": [[[0.0, 1.0], [0.25, 1.0], [0.0, 0.75]]]}
+
+
+def test_refresh_pictures_takes_only_the_caps_texels_from_the_model(tmp_path):
+    from PIL import Image
+
+    glb = _glb_with_pictures(tmp_path / "m.glb", Image.new("RGBA", (32, 32), (200, 10, 10, 255)),
+                             Image.new("RGB", (32, 32), (0, 77, 180)), Image.new("RGB", (32, 32), (99, 0, 0)))
+    old_base = tmp_path / "base.png"
+    Image.new("RGBA", (64, 64), (10, 10, 200, 255)).save(old_base)  # a larger source: the model's picture is scaled up
+    old_rough = tmp_path / "rough.png"
+    Image.new("L", (32, 32), 5).save(old_rough)
+    got = shape.refresh_pictures(glb, [CAP], {"base_color": old_base, "roughness": old_rough}, tmp_path)
+    assert set(got) == {"base_color", "roughness"}  # metallic and ao had no source picture: left alone
+    b = np.asarray(Image.open(got["base_color"]))
+    assert b.shape == (64, 64, 4)
+    assert b[1, 1].tolist() == [200, 10, 10, 255]  # inside the cap: the model's colour
+    assert b[60, 60].tolist() == [10, 10, 200, 255]  # far from the cap: the source unchanged
+    r = np.asarray(Image.open(got["roughness"]))
+    assert r[1, 1] == 77 and r[30, 30] == 5  # roughness is the green channel
+
+
+def test_the_carry_file_name_is_the_one_the_rig_stage_reads():
+    from vgac.stages import rig
+
+    assert shape.CARRY_KEY == rig.CARRY_FILE
+
+
 def test_a_success_makes_a_shaped_version_with_its_log_and_keeps_the_source(job, monkeypatch):
     import asyncio
+    import json
+
+    from PIL import Image
 
     ctx, rig, tmp = job
     source_before = (ctx.parent.files.copy(), dict(ctx.parent.metrics))
 
-    def cut(settings, step4, rig_glb, out, *, side, gap, start, timeout):
+    def cut(settings, step4, rig_glb, out, *, side, gap, start, rigged_out, timeout):
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(b"glb-cut")
+        _glb_with_pictures(out, Image.new("RGBA", (16, 16), (1, 2, 3, 255)), Image.new("RGB", (16, 16)), Image.new("RGB", (16, 16)))
+        rigged_out.write_bytes(b"glb-rigged")
+        (out.parent / separate.CAPS_FILE).write_text(json.dumps({"format": 1, "caps": [CAP]}))
         return {**_report(True, ["The left arm is separate."]), "params": {"side": side, "gap": gap, "start": start}}
 
     monkeypatch.setattr(shape.separate, "separate", cut)
-    monkeypatch.setattr(shape, "_extract_picture", lambda glb, out: (out.write_bytes(b"png") or True))
     asyncio.run(shape.run(ctx, {"side": "L", "gap": 0.004, "start": 0.25, "rig_version_id": "rig"}))
 
-    assert ctx.registered["glb"].read_bytes() == b"glb-cut"
-    assert "base_color" in ctx.registered
+    assert ctx.registered["glb"].read_bytes()[:4] == b"glTF"
+    assert "base_color" in ctx.registered  # the source has no picture file in this test: written whole from the model
+    assert ctx.registered["shape_rig"].read_bytes() == b"glb-rigged"
+    assert json.loads(ctx.registered["shape_caps"].read_text())["caps"] == [CAP]
+    assert not (ctx.dir / "shape_work").exists()
     log = ctx.metrics["shape_log"]
     assert log["operation"] == "Separate a fused arm"
     assert log["parameters"] == {"side": "L", "gap": 0.004, "start": 0.25}

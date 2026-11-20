@@ -101,6 +101,9 @@ export function RigView({ version }: { version: Version }) {
   const missing = movesPlain(m.missing_clips)
   // A humanoid whose shared clip library is not on this PC (the check library_missing says the same in the check list).
   const libMissing = Array.isArray(m.library_missing) && m.library_missing.length > 0
+  // rig.carry (WP-27): a rig on a separated clean-up keeps the rig the arm was separated on, or says why it could not.
+  const carried = m.rig_method === 'carry'
+  const carryWhy = typeof m.carry_why === 'string' ? m.carry_why : null
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
@@ -186,8 +189,15 @@ export function RigView({ version }: { version: Version }) {
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing) && (
+      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing || carried || carryWhy) && (
         <div className="rig-lines small">
+          {carried && (
+            <div>
+              Kept from the rig the arm was separated on: the same skeleton and weights, with the weights near the cut made again. Try
+              again makes the whole rig from scratch.
+            </div>
+          )}
+          {!carried && carryWhy && <div>Made from scratch, not kept from the rig the arm was separated on: {carryWhy}.</div>}
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>

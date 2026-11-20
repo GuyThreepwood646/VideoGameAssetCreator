@@ -91,7 +91,8 @@ def test_messages_say_what_was_separated_what_was_left_and_why():
         "L": {"caps": [{"ok": True}], "stretch": {"near_edges_after": 1000, "stretched_after": 69}},
         "R": {"caps": [{"ok": True}], "stretch": {"near_edges_after": 1000, "stretched_after": 10}}}}
     assert wrap.messages(sep) == [
-        "The left arm is separate, but parts near it still move with the arm; fixing their weights comes next.",
+        "The left arm is separate, but the skin near the cut still stretches when the arm is raised (7 percent of it). "
+        "The next rig keeps these weights; Try again on the rig step makes them from scratch.",
         "The right arm is separate."]
     left = {"changed": False, "ok": False, "sides": {
         "L": {"caps": [{"ok": False, "reason": "not_upper_arm"}]},

@@ -231,7 +231,8 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
       </div>
       {note && <p className="muted">{note}</p>}
       <p className="muted">
-        After this, the next rig run makes the weights again for the new shape. Weight fixes near the cut come in a later step.
+        After this, the next rig run keeps this rig: its skeleton, and its weights with the ones near the cut made again. Try again on
+        the rig step makes the whole rig from scratch instead.
       </p>
     </div>
   )

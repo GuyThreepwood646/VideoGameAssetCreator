@@ -105,8 +105,10 @@ def messages(report: dict[str, Any]) -> list[str]:
             st = sd.get("stretch", {})
             near, after = st.get("near_edges_after", 0), st.get("stretched_after", 0)
             if near and after / near > STILL_STRETCHED:
-                lines.append(f"The {name} arm is separate, but parts near it still move with the arm; fixing their "
-                             "weights comes next.")
+                share = round(100 * after / near)
+                lines.append(f"The {name} arm is separate, but the skin near the cut still stretches when the arm is "
+                             f"raised ({share} percent of it). The next rig keeps these weights; Try again on the rig "
+                             "step makes them from scratch.")
             else:
                 lines.append(f"The {name} arm is separate.")
             continue

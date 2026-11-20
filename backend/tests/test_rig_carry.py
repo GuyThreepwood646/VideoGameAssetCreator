@@ -115,10 +115,10 @@ def test_carry_does_not_apply_to_a_clean_up_that_was_not_shaped(version_files, r
 
 
 @pytest.mark.parametrize("kind, why", [
-    ("fresh", "fresh attempt"),
-    ("no_file", "no carried weights"),
-    ("settings", "settings differ"),
-    ("template", "template differs"),
+    ("fresh", "Try again"),
+    ("no_file", "no weights to keep"),
+    ("settings", "settings were changed"),
+    ("template", "different rig template"),
 ])
 def test_carry_falls_back_to_a_real_rig_with_a_reason(version_files, redone, tmp_path, kind, why):
     sc, new_rig, _ = _case(tmp_path, carried=kind != "no_file",
@@ -128,6 +128,9 @@ def test_carry_falls_back_to_a_real_rig_with_a_reason(version_files, redone, tmp
     assert asyncio.run(rig.carry(sc, template, 4, params)) is False
     assert why in new_rig.metrics["carry_why"]
     assert redone == [] and "glb" not in new_rig.files
+    if kind == "settings":  # the setting names stay off the page, in their own metric
+        assert new_rig.metrics["carry_settings_changed"] == ["leg_skin"]
+        assert "leg_skin" not in new_rig.metrics["carry_why"]
 
 
 def test_carry_refuses_when_the_rig_it_was_shaped_on_is_gone(version_files, redone, tmp_path):

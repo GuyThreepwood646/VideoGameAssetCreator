@@ -309,22 +309,23 @@ def carry_donor(sc: StageContext, template: str, gpv: int, params: dict[str, Any
     if not paintsave.is_shaped(shaped):
         return None, None, None, None
     if params.get(FRESH_ATTEMPT):
-        return None, None, None, "a fresh attempt was asked for, so the rig is made again"
+        return None, None, None, "Try again was asked for"
     log = (shaped.metrics or {}).get("shape_log") or {}
     donor = sc.db.get(Version, str(log.get("rig_version") or ""))
     carried = library.version_file(shaped, CARRY_FILE, sc.settings)
     if donor is None or donor.status != "done" or library.version_file(donor, "glb", sc.settings) is None:
         return None, None, None, "the rig the arm was separated on is gone"
     if carried is None:
-        return None, None, None, "the shaped model has no carried weights"
+        return None, None, None, "the separated model has no weights to keep"
     if (donor.metrics or {}).get("hair_bind") or library_hair(sc) is not None:
         return None, None, None, "hair from the library is bound to the body"
     dp = donor.params or {}
     if dp.get("template_label") != template or int(dp.get("group_per_vertex") or 4) != gpv:
-        return None, None, None, "the rig template differs from the earlier rig's"
+        return None, None, None, "a different rig template was chosen"
     diff = reuse_differences(dict(sc.version.params or {}), dp)
     if diff:
-        return None, None, None, "the settings differ from the earlier rig: " + ", ".join(diff)
+        sc.set_metrics(carry_settings_changed=diff)  # the setting names, for checks; the page shows the plain line
+        return None, None, None, "the rig settings were changed since that rig"
     return donor, prep, Path(carried), None
 
 

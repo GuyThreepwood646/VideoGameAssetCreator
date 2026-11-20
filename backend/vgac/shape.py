@@ -10,8 +10,15 @@ them, reads the model files from the library, and runs the mesh-editing engine (
   reasons and the new version carries no model.
 
 The new version is marked `shaped`, not `painted`: its geometry is new, so it must not claim the rig of the old
-geometry (rig.retexture would reuse that rig's weights). Its picture is kept from the source. Adjust and Refine are
-refused on it (paintsave.refusal), since they rebuild the clean-up from the mesh and would drop the cut.
+geometry (rig.retexture would reuse that rig's weights). Adjust and Refine are refused on it (paintsave.refusal), since
+they rebuild the clean-up from the mesh and would drop the cut.
+
+What the version holds besides the model (WP-27):
+- Its pictures (base colour, normal, metallic, roughness, ambient occlusion) are the source's, with the caps' texels
+  taken from the engine's model (the engine paints every picture under the caps); nothing outside the caps changes.
+- shape_rig (rig.CARRY_FILE): the cut model on the rig's skeleton, in the rig's rest pose, with the weights derived
+  again round the cut. The next rig run carries the rig over with it (rig.carry) instead of making the weights again.
+- shape_caps: caps.json, each cap's texture triangles, so the paint tools can find the caps.
 """
 
 from __future__ import annotations
@@ -103,19 +110,105 @@ def preview(rig_glb: Path, *, start: float = separate.DEFAULT_START, gap: float 
     return {"arms": arms, "params": p, "messages": messages}
 
 
-def _extract_picture(glb: Path, out: Path) -> bool:
-    """Write the model's base colour picture (the engine has painted the caps into it) to `out`. False when there is none."""
-    import trimesh
+PICTURES = ("base_color", "normal", "metallic", "roughness", "ao")
+CARRY_KEY = "shape_rig"  # rig.CARRY_FILE
+CAPS_KEY = "shape_caps"
+CAP_MARGIN_PX = 3  # texels round each cap taken from the engine's picture too (it grows the caps' colour 2 past them)
 
-    scene = trimesh.load(str(glb))
-    geoms = list(scene.geometry.values()) if isinstance(scene, trimesh.Scene) else [scene]
-    for g in geoms:
-        mat = getattr(getattr(g, "visual", None), "material", None)
-        tex = getattr(mat, "baseColorTexture", None)
-        if tex is not None:
-            tex.convert("RGBA").save(out)
-            return True
-    return False
+
+def glb_pictures(glb: Path) -> dict[str, Any]:
+    """The pictures of a GLB's first material as PIL images by picture kind: base_color, normal, and metallic (blue),
+    roughness (green) and ao (red of the occlusion image) as single channels."""
+    import io
+    import json
+    import struct
+
+    from PIL import Image
+
+    data = Path(glb).read_bytes()
+    if data[:4] != b"glTF":
+        return {}
+    jlen = struct.unpack_from("<I", data, 12)[0]
+    gltf = json.loads(data[20:20 + jlen])
+    bin_off = 20 + jlen
+    bin_data = data[bin_off + 8: bin_off + 8 + struct.unpack_from("<I", data, bin_off)[0]]
+    mats, images, views, textures = (gltf.get(k) or [] for k in ("materials", "images", "bufferViews", "textures"))
+    if not mats:
+        return {}
+
+    def image(ref: dict[str, Any] | None) -> Any:
+        if not ref or ref.get("index") is None or ref["index"] >= len(textures):
+            return None
+        src = textures[ref["index"]].get("source")
+        if src is None or "bufferView" not in images[src]:
+            return None
+        bv = views[images[src]["bufferView"]]
+        o = bv.get("byteOffset", 0)
+        im = Image.open(io.BytesIO(bin_data[o:o + bv["byteLength"]]))
+        im.load()
+        return im
+
+    m = mats[0]
+    pbr = m.get("pbrMetallicRoughness") or {}
+    out: dict[str, Any] = {}
+    base = image(pbr.get("baseColorTexture"))
+    if base is not None:
+        out["base_color"] = base.convert("RGBA")
+    nrm = image(m.get("normalTexture"))
+    if nrm is not None:
+        out["normal"] = nrm.convert("RGB")
+    mr = image(pbr.get("metallicRoughnessTexture"))
+    if mr is not None:
+        _, g, b = mr.convert("RGB").split()
+        out["roughness"], out["metallic"] = g, b
+    ao = image(m.get("occlusionTexture"))
+    if ao is not None:
+        out["ao"] = ao.convert("RGB").split()[0]
+    return out
+
+
+def cap_mask(caps: list[dict[str, Any]], size: tuple[int, int], margin: int = CAP_MARGIN_PX) -> Any:
+    """An L-mode mask (255 on the caps' texels, grown by `margin`) at `size` from caps.json's texture triangles."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    w, h = size
+    mask = Image.new("L", (w, h), 0)
+    dr = ImageDraw.Draw(mask)
+    for cap in caps:
+        for tri in cap.get("uv_tris") or []:
+            dr.polygon([(u * w, (1.0 - v) * h) for u, v in tri], fill=255)
+    if margin > 0:
+        mask = mask.filter(ImageFilter.MaxFilter(2 * margin + 1))
+    return mask
+
+
+def refresh_pictures(glb: Path, caps: list[dict[str, Any]], sources: dict[str, Path | None], out_dir: Path) -> dict[str, Path]:
+    """The version's pictures with the caps painted in: each source picture keeps every texel except the caps' (and
+    CAP_MARGIN_PX round them), which come from the engine's model at the source's size. A kind with no source is
+    written whole from the model for base colour only (so the clean-up always shows its caps). -> {kind: file}."""
+    from PIL import Image
+
+    got = glb_pictures(glb)
+    out: dict[str, Path] = {}
+    for kind in PICTURES:
+        new = got.get(kind)
+        if new is None:
+            continue
+        src = sources.get(kind)
+        dest = out_dir / f"shape_{kind}.png"
+        if src is None or not Path(src).is_file():
+            if kind != "base_color":
+                continue
+            new.save(dest)
+        else:
+            with Image.open(src) as im:
+                old = im.copy()
+            if new.size != old.size:
+                new = new.resize(old.size, Image.BILINEAR)
+            old.paste(new.convert(old.mode), (0, 0), cap_mask(caps, old.size))
+            old.save(dest)
+        out[kind] = dest
+    return out
 
 
 def _metrics_carried(parent: Version) -> dict[str, Any]:
@@ -126,6 +219,7 @@ def _metrics_carried(parent: Version) -> dict[str, Any]:
 async def run(sc: Any, params: dict[str, Any]) -> None:
     """The job behind Apply (stage prep, op shape). Runs on the host. Raises ShapeRefused when nothing was changed."""
     import asyncio
+    import json
     import shutil
 
     from . import paintsave
@@ -145,24 +239,39 @@ async def run(sc: Any, params: dict[str, Any]) -> None:
     paintsave._copy_parent_files(sc, parent)
     work = sc.dir / "shape_work"
     out_glb = work / Path(step4).name
+    rigged = work / f"{CARRY_KEY}.glb"
     sc.progress(0.1, "separating the arm in Blender")
     timeout = float(sc.settings.blender_timeout_seconds)
 
     def work_it() -> dict[str, Any]:
         return separate.separate(sc.settings, Path(step4), Path(rig_glb), out_glb, side=p["side"], gap=p["gap"],
-                                 start=p["start"], timeout=timeout)
+                                 start=p["start"], rigged_out=rigged, timeout=timeout)
 
     report = await asyncio.to_thread(work_it)
     if not report.get("changed"):
         why = " ".join(report.get("messages") or ["The cut could not be made on this model."])
         raise ShapeRefused(f"{why} {REFUSAL_NOTE}")
 
+    sc.progress(0.85, "saving the separated model and its pictures")
     final_glb = sc.dir / Path(step4).name
     shutil.copyfile(out_glb, final_glb)
     sc.register("glb", final_glb)
-    picture = sc.dir / "base_color.png"
-    if _extract_picture(final_glb, picture):
-        sc.register("base_color", picture)
+    caps_src = work / separate.CAPS_FILE
+    caps = json.loads(caps_src.read_text(encoding="utf-8")).get("caps", []) if caps_src.is_file() else []
+    if caps_src.is_file():
+        caps_file = sc.dir / f"{CAPS_KEY}.json"
+        shutil.copyfile(caps_src, caps_file)
+        sc.register(CAPS_KEY, caps_file)
+    sources = {}
+    for kind in PICTURES:
+        f = library.version_file(parent, kind, sc.settings)
+        sources[kind] = Path(f) if f else None
+    for kind, f in (await asyncio.to_thread(refresh_pictures, final_glb, caps, sources, sc.dir)).items():
+        sc.register(kind, f)
+    if rigged.is_file():  # the rig run carries the rig over with this (rig.carry)
+        carry_file = sc.dir / f"{CARRY_KEY}.glb"
+        shutil.copyfile(rigged, carry_file)
+        sc.register(CARRY_KEY, carry_file)
     shutil.rmtree(work, ignore_errors=True)
     log = {"operation": OPERATIONS[p["operation"]], "parameters": {"side": p["side"], "gap": p["gap"], "start": p["start"]},
            "rig_version": rig.id, "engine": separate.summary(report), "messages": report.get("messages", [])}
