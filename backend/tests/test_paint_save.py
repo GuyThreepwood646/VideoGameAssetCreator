@@ -280,8 +280,8 @@ def test_rig_of_geometry_picks_the_rig_of_the_unpainted_root(version_files):
         r.files = {"glb": str(Path(__file__).resolve())}  # a real file: the lookup checks it exists
     db = _FakeDb(root, painted, other_root, rig_same, rig_other_template, rig_other_geometry)
     sc = SimpleNamespace(db=db, asset=SimpleNamespace(id="a"), version=_version("now"), settings=None)
-    found = rig._rig_of_geometry(sc, root, "Mixamo", 4)
-    assert found is not None and found.id == "rig_same"
+    found = rig._rig_candidates(sc, root, "Mixamo", 4)
+    assert [r.id for r in found] == ["rig_same"]
 
 
 def test_retexture_swaps_the_picture_in_the_rig_and_skips_the_rig_run(version_files, tmp_path, monkeypatch):
@@ -332,7 +332,7 @@ def test_retexture_swaps_the_picture_in_the_rig_and_skips_the_rig_run(version_fi
 
     monkeypatch.setattr(rig, "judge", no_judge)
     monkeypatch.setattr(rig, "link_textures", lambda s: new_rig.files.__setitem__("base_color", str(painted_dir / "base_color.png")))
-    assert asyncio.run(rig.retexture(sc, "Mixamo", 4)) is True
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
     assert new_rig.metrics["retextured_of"] == "donor" and new_rig.metrics["rig_method"] == "retexture"
     assert judged == [True]
     # The rig's model carries the new picture; the donor's rig is untouched.
@@ -360,3 +360,130 @@ def test_export_input_is_the_retextured_rig(version_files, tmp_path):
     p, name = export._input_glb(Sc())
     assert p == anim and name == "rig.anim_glb"
     assert (_base_colour(p)[..., :3] == 33).all()
+
+
+# --- when a painted clean-up reuses a rig (the rules of rig.retexture) -------------------------------------------
+
+
+def test_reuse_differences_ignore_seeds_and_bookkeeping_only():
+    mine = {"leg_skin": True, "head_sway": 2, "seed": 9, "face_seed": 3, "fresh_attempt": True, "instruction": "x"}
+    theirs = {"leg_skin": True, "head_sway": 2, "seed": 1, "face_seed": 7}
+    assert rig.reuse_differences(mine, theirs) == []
+    assert rig.reuse_differences({"leg_skin": False}, {"leg_skin": True}) == ["leg_skin"]
+    assert rig.reuse_differences({"arm_pose": "relaxed"}, {}) == ["arm_pose"]
+    assert rig.reuse_differences({"moves": None}, {}) == []  # unset and missing are the same
+
+
+def _rig_sc(tmp_path, painted, donors, params, selected_ids=()):
+    """A fake rig stage context over real folders: the painted clean-up, the donor rigs and the new rig."""
+    new_rig = _version("new_rig", stage="rig", parent="painted", params=dict(params))
+    new_rig.folder = tmp_path / "new_rig"
+    new_rig.folder.mkdir(parents=True, exist_ok=True)
+    db = _FakeDb(_version("root"), painted, *donors)
+    for d in donors:
+        d.selected = d.id in selected_ids
+    db.rows = list(donors) + [new_rig]
+    picture = painted.files["base_color"]
+    sc = SimpleNamespace(db=db, asset=SimpleNamespace(id="a", project_id="p", category="character"), settings=None, version=new_rig,
+                         dir=new_rig.folder, parent=painted)
+    sc.iter_lineage = lambda include_self=False: iter([painted, _version("root")])
+    sc.lineage_file = lambda key, stages=None: Path(picture) if key == "base_color" else None
+    sc.file = lambda key: Path(new_rig.files[key]) if new_rig.files.get(key) else None
+    sc.progress = lambda *a, **k: None
+    sc.register = lambda key, path: new_rig.files.__setitem__(key, str(path)) or str(path)
+    sc.set_metrics = lambda **v: new_rig.metrics.update(v)
+    sc.set_params = lambda **v: new_rig.params.update(v)
+    sc.save = lambda: None
+    return sc, new_rig
+
+
+def _donor(tmp_path, name, params, glb_source):
+    folder = tmp_path / name
+    folder.mkdir(parents=True, exist_ok=True)
+    glb = _glb(folder / "rig.glb", np.full((SIZE, SIZE, 3), 50, np.uint8))
+    d = _version(name, stage="rig", parent="painted", params=params, files={"glb": str(glb)})
+    d.folder = folder
+    d.metrics = {}
+    return d
+
+
+def _painted_parent(tmp_path):
+    folder = tmp_path / "painted"
+    folder.mkdir(exist_ok=True)
+    glb = _glb(folder / "prep.glb", np.full((SIZE, SIZE, 3), 50, np.uint8))
+    Image.fromarray(np.full((SIZE, SIZE, 4), 240, np.uint8)).save(folder / "base_color.png")
+    p = _version("painted", parent="root", metrics={"painted": True}, files={"glb": str(glb), "base_color": str(folder / "base_color.png")})
+    p.folder = folder
+    return p
+
+
+BASE = {"template_label": "Mixamo", "group_per_vertex": 4, "leg_skin": True}
+
+
+def test_fresh_attempt_never_reuses_a_rig(version_files, tmp_path, monkeypatch):
+    monkeypatch.setattr(rig, "judge", lambda s: asyncio.sleep(0))
+    painted = _painted_parent(tmp_path)
+    donor = _donor(tmp_path, "donor", dict(BASE), None)
+    sc, new_rig = _rig_sc(tmp_path, painted, [donor], dict(BASE))
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {"fresh_attempt": True})) is False
+    assert "fresh attempt" in new_rig.metrics["retexture_why"]
+    assert "retexture_from" not in new_rig.metrics
+
+
+def test_changed_setting_runs_a_real_rig(version_files, tmp_path, monkeypatch):
+    monkeypatch.setattr(rig, "judge", lambda s: asyncio.sleep(0))
+    painted = _painted_parent(tmp_path)
+    donor = _donor(tmp_path, "donor", dict(BASE), None)
+    sc, new_rig = _rig_sc(tmp_path, painted, [donor], {**BASE, "leg_skin": False})
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is False
+    assert "leg_skin" in new_rig.metrics["retexture_why"]
+
+
+def test_equal_settings_reuse_the_donor_and_a_seed_change_does_not_matter(version_files, tmp_path, monkeypatch):
+    judged = []
+
+    async def no_judge(_sc):
+        judged.append(True)
+
+    monkeypatch.setattr(rig, "judge", no_judge)
+    monkeypatch.setattr(rig, "link_textures", lambda s: None)
+    painted = _painted_parent(tmp_path)
+    donor = _donor(tmp_path, "donor", {**BASE, "seed": 1}, None)
+    sc, new_rig = _rig_sc(tmp_path, painted, [donor], {**BASE, "seed": 2})
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    assert new_rig.metrics["retextured_of"] == "donor" and judged == [True]
+
+
+def test_selected_donor_is_preferred_over_a_newer_equal_one(version_files, tmp_path, monkeypatch):
+    async def no_judge(_sc):
+        return None
+
+    monkeypatch.setattr(rig, "judge", no_judge)
+    monkeypatch.setattr(rig, "link_textures", lambda s: None)
+    painted = _painted_parent(tmp_path)
+    newer = _donor(tmp_path, "newer", dict(BASE), None)
+    older = _donor(tmp_path, "older_selected", dict(BASE), None)
+    sc, new_rig = _rig_sc(tmp_path, painted, [newer, older], dict(BASE), selected_ids=("older_selected",))
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    assert new_rig.metrics["retextured_of"] == "older_selected"
+
+
+def test_retexture_of_a_rig_without_an_embedded_picture_uses_the_sidecar(version_files, tmp_path, monkeypatch):
+    """Rig GLBs made by the rig run carry no material: their picture is the base_color file, which is linked to the new
+    clean-up. Retexture must not fail on them."""
+    trimesh = pytest.importorskip("trimesh")
+    monkeypatch.setattr(rig, "judge", lambda s: asyncio.sleep(0))
+    painted = _painted_parent(tmp_path)
+    donor_dir = tmp_path / "donor_plain"
+    donor_dir.mkdir()
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+    trimesh.Trimesh(v, [[0, 1, 2]], process=False).export(donor_dir / "rig.glb")
+    donor = _version("donor", stage="rig", parent="painted", params=dict(BASE), files={"glb": str(donor_dir / "rig.glb")})
+    donor.folder = donor_dir
+    donor.metrics = {}
+    sc, new_rig = _rig_sc(tmp_path, painted, [donor], dict(BASE))
+    link = {"done": False}
+    sc.lineage_file = lambda key, stages=None: Path(painted.files["base_color"]) if key == "base_color" else None
+    monkeypatch.setattr(rig, "link_textures", lambda s: link.__setitem__("done", True))
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    assert link["done"] and new_rig.metrics["rig_method"] == "retexture"

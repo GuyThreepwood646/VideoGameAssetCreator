@@ -192,9 +192,29 @@ def _ancestry(db: Any, v: Any) -> list[Any]:
     return out
 
 
-def _rig_of_geometry(sc: StageContext, root: Any, template: str, gpv: int) -> Any:
-    """A finished rig of this asset made on the same geometry (its clean-up chain starts at `root`, the first unpainted
-    clean-up) with the same template and per-vertex groups. None when there is none."""
+# Settings that never change the rig's result, so two runs that differ only in them may share one rig: the random
+# seeds (any name ending in seed, see reuse_differences) and the bookkeeping the app writes beside the settings.
+REUSE_IGNORED = ("fresh_attempt", "_keep_when_done", "instruction", "view", "views", "fix_for", "edit_addons", "edit_addons_applied",
+                 "reference_experimental", "face_fresh")
+
+
+def reuse_differences(mine: dict[str, Any], theirs: dict[str, Any]) -> list[str]:
+    """The settings that differ between two rig versions and change the result (sorted names). Empty means a donor's
+    rig is the same rig. Seeds and REUSE_IGNORED are left out; an unset value and a missing one are the same."""
+    out = []
+    for k in sorted(set(mine) | set(theirs)):
+        if k in REUSE_IGNORED or k.endswith("seed"):
+            continue
+        if mine.get(k) is None and theirs.get(k) is None:
+            continue
+        if mine.get(k) != theirs.get(k):
+            out.append(k)
+    return out
+
+
+def _rig_candidates(sc: StageContext, root: Any, template: str, gpv: int) -> list[Any]:
+    """Finished rigs of this asset on the same geometry (the clean-up chain starts at `root`) with the same template and
+    per-vertex groups. The asset's selected rig first, then the newest."""
     from sqlalchemy import select
 
     from .. import paintsave
@@ -202,6 +222,7 @@ def _rig_of_geometry(sc: StageContext, root: Any, template: str, gpv: int) -> An
 
     rigs = sc.db.scalars(select(Version).where(Version.asset_id == sc.asset.id, Version.stage == "rig", Version.status == "done")
                          .order_by(Version.created_at.desc())).all()
+    picked = []
     for r in rigs:
         if r.id == sc.version.id or (r.metrics or {}).get("rigid"):
             continue
@@ -212,38 +233,62 @@ def _rig_of_geometry(sc: StageContext, root: Any, template: str, gpv: int) -> An
             continue
         prep = next((v for v in _ancestry(sc.db, r) if v.stage == "prep"), None)
         if prep is not None and paintsave.geometry_root(sc.db, prep).id == root.id:
-            return r
-    return None
+            picked.append(r)
+    return sorted(picked, key=lambda r: 0 if getattr(r, "selected", False) else 1)  # stable: newest first within each group
 
 
-async def retexture(sc: StageContext, template: str, gpv: int) -> bool:
-    """WP-23 rig.retexture: a rig made from a painted clean-up (step 4) reuses the rig of the same geometry, its skeleton,
-    weights, hit boxes and moves, and takes the new picture. No SkinToken run: paint never changes the geometry. False
-    when the clean-up is not painted or there is no rig of its geometry; the caller then rigs as usual."""
+def _embeds_picture(path: Path | str) -> bool:
+    """True when the GLB has a material and an embedded image, so the picture is inside the file."""
+    import struct
+
+    data = Path(path).read_bytes()
+    if data[:4] != b"glTF":
+        return False
+    gltf = json.loads(data[20:20 + struct.unpack_from("<I", data, 12)[0]])
+    return bool(gltf.get("materials")) and bool(gltf.get("images"))
+
+
+async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str, Any]) -> bool:
+    """WP-23 rig.retexture: a rig made from a painted clean-up (step 4) reuses a finished rig of the same geometry, its
+    skeleton, weights, hit boxes and moves, and takes the new picture. No SkinToken run, so it is taken only when the
+    person did not ask for a fresh attempt (Try again) and every setting that changes the result is the same as the
+    donor's. The first donor that qualifies is used. False otherwise; the caller then rigs as usual, and the reason is
+    kept in metrics.retexture_why."""
     from .. import paintsave
 
     painted = next((v for v in sc.iter_lineage(include_self=False) if v.stage == "prep"), None)
     if not paintsave.is_painted(painted):
         return False
+    if params.get(FRESH_ATTEMPT):
+        sc.set_metrics(retexture_why="a fresh attempt was asked for, so the rig is made again")
+        return False
     root = paintsave.geometry_root(sc.db, painted)
-    donor = _rig_of_geometry(sc, root, template, gpv)
-    if donor is None:
-        return False
-    sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
-    if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
-        return False
-    picture = sc.lineage_file("base_color", ("prep",))
-    if picture is None:
-        raise FileNotFoundError("the painted clean-up has no picture")
-    for key in ("glb", "anim_glb", "anim_body"):
-        path = sc.file(key)
-        if path is not None and Path(path).is_file():
-            if not imaging.glb_replace_images(path, base_color=picture):
-                raise ValueError(f"the new picture could not be written into the rig ({key})")
-    link_textures(sc)
-    sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture")
-    await judge(sc)
-    return True
+    mine = dict(sc.version.params or {})
+    why = "no finished rig of this model was found"
+    for donor in _rig_candidates(sc, root, template, gpv):
+        diff = reuse_differences(mine, donor.params or {})
+        if diff:
+            why = "the settings differ from " + "the earlier rig: " + ", ".join(diff)
+            continue
+        sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
+        if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
+            continue
+        picture = sc.lineage_file("base_color", ("prep",))
+        if picture is None:
+            raise FileNotFoundError("the painted clean-up has no picture")
+        for key in ("glb", "anim_glb", "anim_body"):
+            path = sc.file(key)
+            # A rig GLB that carries a material and picture of its own gets the new picture; the rig's own picture
+            # (the base_color file, linked below) is what the viewer and the export use for the rest.
+            if path is not None and Path(path).is_file() and _embeds_picture(path):
+                if not imaging.glb_replace_images(path, base_color=picture):
+                    raise ValueError(f"the new picture could not be written into the rig ({key})")
+        link_textures(sc)
+        sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture", retexture_why=None)
+        await judge(sc)
+        return True
+    sc.set_metrics(retexture_why=why)
+    return False
 
 
 async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
@@ -267,7 +312,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     if template is None:
         await _skip(sc, f"rig_engine {sc.category.get('rig_engine', 'none')}", src)
         return
-    if await retexture(sc, template, gpv):
+    if await retexture(sc, template, gpv, params):
         return
     lib_hair = library_hair(sc)
     if lib_hair is not None:
@@ -419,6 +464,9 @@ _ANIM_METRICS = ("clips", "missing_clips", "library_clips", "procedural_clips", 
                  "retarget_error", "retarget_seconds", "retarget", "anim_error", "anim_kind", "legs_moved", "legs_total", "wings_found", "walk_probe",
                  "moves", "clips_library", "added_moves_missing", "added_moves_reasons", "springs", "hair_bind")
 KEEP_MARKER = "_keep_when_done"
+# Sent by "Try again" on a rig (StagePanel): the person asked for a new rig, so a painted clean-up does not reuse one.
+# Never stored on the version (pipeline.run_stage keeps it out of the version's settings).
+FRESH_ATTEMPT = "fresh_attempt"
 
 
 def reuse_change(parent_params: dict[str, Any], params: dict[str, Any]) -> set[str] | None:

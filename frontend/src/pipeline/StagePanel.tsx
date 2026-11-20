@@ -240,7 +240,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const tryAgain = (v: Version) =>
     act(async () => {
       const keepModel = stage === 'concept' && typeof v.params.model === 'string' ? { model: v.params.model } : {}
-      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...freshParams(v.params, schema), ...keepModel } }))
+      // A rig is made again, not reused from another rig of the same model (backend stages/rig.py FRESH_ATTEMPT).
+      const fresh = stage === 'rig' ? { fresh_attempt: true } : {}
+      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...freshParams(v.params, schema), ...keepModel, ...fresh } }))
     })
 
   // A Fix that opens a tool (2.5): go to the fix's stage, open "Change something" on the kept version and focus
