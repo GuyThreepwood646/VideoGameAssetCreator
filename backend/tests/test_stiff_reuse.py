@@ -74,6 +74,8 @@ def test_record_sets_the_setting_and_clears_it_when_there_are_no_points(tmp_path
 
 import asyncio  # noqa: E402
 
+import pytest  # noqa: E402
+
 
 
 def _base_case(tmp_path, monkeypatch, pre_text):
@@ -114,3 +116,32 @@ def test_refix_plus_moves_keeps_the_refix_result(tmp_path, monkeypatch):
     monkeypatch.setattr(rig, "_fix_weights_again", fake_fix)
     asyncio.run(rig._moves_base(sc, parent, rig_glb, refix=True))
     assert rig_glb.read_text(encoding="utf-8") == "PRE+FIX"
+
+
+def test_refix_without_moves_cleans_the_weights_and_keeps_the_stiff_pass(tmp_path, monkeypatch):
+    # The parent applied the pass and has points; the clean-up is due but no moves are asked for. The base is restored,
+    # the clean-up runs on it, and the current points are applied on top.
+    sc, parent, rig_glb = _base_case(tmp_path, monkeypatch, pre_text="PRE")
+    applied = []
+
+    async def fake_fix(sc_, path):
+        path.write_text(path.read_text(encoding="utf-8") + "+FIX", encoding="utf-8")
+
+    async def fake_worn(sc_, path, params, points):
+        applied.append(points)
+        path.write_text(path.read_text(encoding="utf-8") + "+PASS", encoding="utf-8")
+
+    monkeypatch.setattr(rig, "_fix_weights_again", fake_fix)
+    monkeypatch.setattr(rig, "_worn_region", fake_worn)
+    points = [{"name": "backpack", "locations": [[0.0, 1.1, -0.25]]}]
+    monkeypatch.setattr(rig, "record_stiff_points", lambda s_: points)
+    asyncio.run(rig._rig_base(sc, parent, rig_glb, {}, refix=True, moves=False))
+    assert rig_glb.read_text(encoding="utf-8") == "PRE+FIX+PASS"
+    assert applied == [points]
+
+
+def test_nothing_due_leaves_the_parent_rig(tmp_path, monkeypatch):
+    sc, parent, rig_glb = _base_case(tmp_path, monkeypatch, pre_text="PRE")
+    monkeypatch.setattr(rig, "record_stiff_points", lambda s_: pytest.fail("no points are read when nothing is due"))
+    asyncio.run(rig._rig_base(sc, parent, rig_glb, {}, refix=False, moves=False))
+    assert rig_glb.read_text(encoding="utf-8") == "PASSED"

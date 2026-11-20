@@ -554,15 +554,7 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
     rig_glb = _reuse_parent(sc, parent, skip, _ANIM_METRICS if "moves" in parts else ())
     if rig_glb is None:
         return False
-    if "moves" in parts:
-        # WP-69: the parent's rig may carry its stiff pass. The base is its pre-pass rig, with the weight clean-up run on
-        # it when refix is due, and the points applied after; so removing points takes the pass out, and the clean-up
-        # is not thrown away by a copy after it.
-        await _moves_base(sc, parent, rig_glb, refix)
-    if "moves" in parts:
-        points = record_stiff_points(sc)
-        if points:
-            await _worn_region(sc, rig_glb, params, points)
+    await _rig_base(sc, parent, rig_glb, params, refix=refix, moves="moves" in parts)
     if "hitboxes" in parts:
         hp = hitbox_params(sc.platform, params)
         sc.set_params(**hp)
@@ -577,6 +569,18 @@ async def reuse(sc: StageContext, parent: Any, params: dict[str, Any], parts: se
 
         pipeline.select(sc.db, sc.version)
     return True
+
+
+async def _rig_base(sc: StageContext, parent: Any, rig_glb: Path, params: dict[str, Any], refix: bool, moves: bool) -> None:
+    """The rig GLB a reused version starts from, when the weight clean-up or the moves are due (WP-69 review): restore the
+    parent's pre-pass rig if the parent applied the stiff pass, run the clean-up if refix is due, then apply the current
+    stiff points. Nothing is due: the rig stays the parent's."""
+    if not (refix or moves):
+        return
+    await _moves_base(sc, parent, rig_glb, refix)
+    points = record_stiff_points(sc)
+    if points:
+        await _worn_region(sc, rig_glb, params, points)
 
 
 async def _moves_base(sc: StageContext, parent: Any, rig_glb: Path, refix: bool) -> None:
