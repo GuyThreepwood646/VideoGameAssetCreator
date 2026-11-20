@@ -1396,6 +1396,19 @@ export function movesLine(clips: unknown): string {
   return list.length ? `Moves: ${joinAnd(list)}.` : ''
 }
 
+// The humanoid's built-in clips (humanoid.yaml clips) and the library-only clips it gets from the shared animation
+// library (humanoid.yaml library_clips that have no built-in twin). Both lists go through movesPlain, so the names
+// match the Moves line on the same screen.
+const BUILT_IN_HUMAN_CLIPS = ['idle', 'walk', 'run', 'turn_left', 'turn_right', 'attack', 'hit', 'death']
+const LIBRARY_ONLY_HUMAN_CLIPS = ['sprint', 'punch', 'jump', 'crouch', 'roll', 'interact']
+
+// The sentence under the Rig step when the shared animation library is not on this PC.
+export function libraryMissingLine(): string {
+  const built = joinAnd(movesPlain(BUILT_IN_HUMAN_CLIPS))
+  const extra = joinAnd(movesPlain(LIBRARY_ONLY_HUMAN_CLIPS))
+  return `The shared animation library is not on this PC. The character has the built-in moves: ${built}. The extra library moves (${extra}) are not made until the library is back. To fix it, open the Health page (the Setup needs attention link at the top) and read the Shared animation library line. Then make the moves again on this step.`
+}
+
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
 const CLIP_LABELS: Record<string, string> = {
   idle: 'Standing still',

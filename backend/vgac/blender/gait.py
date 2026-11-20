@@ -1033,6 +1033,27 @@ def swung_arm_angle(hold_deg: float, swing_deg: float) -> float:
     return math.degrees(math.acos(max(-1.0, min(1.0, c))))
 
 
+# ---- collarbone share (WP-75): a raised arm lifts the collarbone too ----------------------------------------------
+# A real shoulder lifts the collarbone as the arm goes past about 60 degrees from straight down (about 25 degrees by
+# 120). Turning only the upper arm caves the shoulder top in. The built-in clips, the retarget (on top of the
+# library's own collarbone turn) and the bend check add this lift; the upper arm turns back by the same amount, so the
+# arm still points where the clip put it.
+CLAVICLE_LIFT_START_DEG = 60.0   # no lift up to this raise (measured in the chest's frame) ...
+CLAVICLE_LIFT_PER_DEG = 25.0 / 60.0  # ... then this many degrees of lift per degree of raise ...
+CLAVICLE_LIFT_MAX_DEG = 30.0     # ... up to this
+
+
+def _clavicle_curve(raise_deg: float) -> float:
+    return min(CLAVICLE_LIFT_MAX_DEG, max(0.0, raise_deg - CLAVICLE_LIFT_START_DEG) * CLAVICLE_LIFT_PER_DEG)
+
+
+def clavicle_lift_deg(raise_deg: float, rest_deg: float = 0.0) -> float:
+    """Degrees the collarbone lifts (its outer end up) for an upper arm raise_deg from the chest's own down direction.
+    rest_deg is the arm's angle in the rest mesh: a model made with its arms already raised (a T-pose) was built with
+    that lift in it, so only the lift beyond the rest's counts, and never below none."""
+    return max(0.0, _clavicle_curve(raise_deg) - _clavicle_curve(rest_deg))
+
+
 def walk_arm_mean_deg(clip: str = "walk", choice: str | None = None, samples: int = 256) -> float:
     """Mean angle from straight down of the upper arm over one built-in walk cycle once it is dropped to its hold: the
     walk swings it WALK_ARM_SWING_DEG each way. The hold does not depend on the rest angle, which the drop removes."""
