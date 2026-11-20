@@ -324,35 +324,71 @@ def test_weights_off_the_arm_are_taken_off_and_the_rigged_copy_sits_in_the_rig_r
 # --- WP-74: rounded ends instead of two flat plates ----------------------------------------------------------------
 
 
-def _strip(width=0.1, length=0.4, step=0.01):
-    """A long cap outline (a strip) as cap_grid takes it, and its CDT-free triangulation over a regular grid."""
-    xs = np.arange(0, length + 1e-9, step)
-    ys = np.arange(0, width + 1e-9, step)
-    P = np.array([[x, y] for y in ys for x in xs])
-    nx = len(xs)
-    tris = []
-    for j in range(len(ys) - 1):
-        for i in range(nx - 1):
-            a, b, c, d = j * nx + i, j * nx + i + 1, (j + 1) * nx + i, (j + 1) * nx + i + 1
-            tris += [(a, b, d), (a, d, c)]
-    edge = (P[:, 0] < 1e-9) | (P[:, 0] > length - 1e-9) | (P[:, 1] < 1e-9) | (P[:, 1] > width - 1e-9)
-    return P, tris, edge
-
-
 def test_a_dome_is_nothing_at_its_edge_highest_in_the_middle_and_round_across_a_long_strip():
-    P, tris, edge = _strip()
-    D = sp.dome_field(len(P), tris, edge)
-    assert np.allclose(D[edge], 0) and D.max() == pytest.approx(1.0)
-    mid = np.abs(P[:, 0] - 0.2) < 1e-9  # a section across the strip, half way along
-    sec = D[mid][np.argsort(P[mid, 1])]
-    assert np.argmax(sec) == len(sec) // 2  # highest on the strip's middle line
-    assert sec[1] > 0.4  # one step in from the edge it has already risen steeply (an elliptical section, not a tent)
-    assert np.all(np.diff(sec[: len(sec) // 2 + 1]) > 0)  # rising all the way to the crown: no flat plate
-    # a narrow strip is lower than a wide one: the dome follows the cap's own width
+    strip = [np.array([[0, 0], [0.4, 0], [0.4, 0.1], [0, 0.1]], dtype=float)]
+    ys = np.arange(0, 0.1 + 1e-9, 0.01)
+    sec = np.c_[np.full(len(ys), 0.2), ys]  # a section across the strip, half way along
+    D = sp.dome_field(sec, strip, 0.01)
+    assert D[0] == pytest.approx(0) and D[-1] == pytest.approx(0) and D.max() == pytest.approx(1.0)
+    assert np.argmax(D) == len(D) // 2  # highest on the strip's middle line
+    assert D[1] > 0.4  # one step in from the edge it has already risen steeply (an elliptical section, not a tent)
+    assert np.all(np.diff(D[: len(D) // 2 + 1]) > 0)  # rising all the way to the crown: no flat plate
+    # a narrow part reaches its crown too (the dome follows the cap's own width there, not the widest part's)
+    tee = [np.array([[0, 0], [0.2, 0], [0.2, 0.2], [0.11, 0.2], [0.11, 0.5], [0.09, 0.5], [0.09, 0.2], [0, 0.2]],
+                    dtype=float)]
+    assert sp.dome_field(np.array([[0.1, 0.4], [0.1, 0.1]]), tee, 0.005) == pytest.approx([1.0, 1.0], abs=0.05)
+    # a narrow strip is lower than a wide one: the dome height follows the cap's own width
     assert sp.half_width([np.array([[0, 0], [0.4, 0], [0.4, 0.04], [0, 0.04]])], 0.002) == pytest.approx(0.02, abs=2e-3)
     assert sp.dome_height([np.array([[0, 0], [0.4, 0], [0.4, 0.04], [0, 0.04]])], 0.006) == pytest.approx(
         sp.DOME_SHARE * 0.02, abs=1e-3)
     assert sp.dome_height([np.array([[0, 0], [1, 0], [1, 1], [0, 1]])], 0.006) == sp.DOME_MAX
+
+
+def test_an_outline_is_upright_where_it_runs_up_and_down_and_level_parts_keep_a_floor():
+    # a loop on a level-ish ring: up the front, across the top, down the back, across the bottom
+    side = np.c_[np.zeros(20), np.zeros(20), np.linspace(0, 0.2, 20)]
+    top = np.c_[np.zeros(20), np.linspace(0, 0.2, 20), np.full(20, 0.2)]
+    P = np.vstack([side, top, side[::-1] + [0, 0.2, 0], top[::-1] * [1, 1, 0]])
+    u = sp.upright(P, True)
+    assert u[10] == pytest.approx(1.0, abs=0.02) and u[30] == pytest.approx(0.0, abs=0.02)
+    assert np.all((u >= 0) & (u <= 1))
+    ul = sp.upright(P, True, least=sp.UPRIGHT_LEAST)
+    assert ul[30] == pytest.approx(sp.UPRIGHT_LEAST, abs=0.02) and ul[10] == pytest.approx(1.0, abs=0.02)
+
+
+def test_local_width_is_the_widest_circle_holding_a_place_and_outside_places_take_the_nearest_edge():
+    tee = [np.array([[0, 0], [0.2, 0], [0.2, 0.2], [0.11, 0.2], [0.11, 0.5], [0.09, 0.5], [0.09, 0.2], [0, 0.2]],
+                    dtype=float)]
+    w = sp.local_width(np.array([[0.1, 0.1], [0.1, 0.4], [0.1, 0.6], [0.3, 0.1]]), tee)
+    assert w[0] == pytest.approx(0.1, abs=0.006)  # the wide part
+    assert w[1] == pytest.approx(0.01, abs=0.006)  # the neck
+    assert w[2] == pytest.approx(w[1], abs=0.006)  # past the neck's end: the neck's width
+    assert w[3] == pytest.approx(w[0], abs=0.006)  # beside the wide part: the wide part's
+
+
+def test_a_dome_is_lowered_round_a_crossing_first_and_only_then_as_a_whole():
+    P = np.array([[0, 0, 0], [0.5 * sp.SPOT_R, 0, 0], [2 * sp.SPOT_R, 0, 0]])
+    k = sp.spot_share(P, [[0, 0, 0]])
+    assert k[0] == 0.0 and 0 < k[1] < 1 and k[2] == 1.0
+    assert np.all(sp.spot_share(P, []) == 1.0)
+    sp1 = sp.new_spots({}, {"R0": [[0, 0, 0]]})
+    assert sp1 == {"R0": [[0.0, 0.0, 0.0]]}
+    # the same crossing again (lowering there did not clear it): no new spot, the caller lowers the whole dome
+    assert sp.new_spots(sp1, {"R0": [[0.1 * sp.SPOT_R, 0, 0]]}) is None
+    assert sp.new_spots(sp1, {"R0": [[sp.SPOT_R, 0, 0]], "L0": [[0, 0, 0]]}) == {
+        "R0": [[0.0, 0.0, 0.0], [sp.SPOT_R, 0.0, 0.0]], "L0": [[0.0, 0.0, 0.0]]}
+
+
+def test_an_outline_that_crosses_itself_is_found():
+    assert not sp.crosses_itself(np.array([[0, 0], [1, 0], [1, 1], [0, 1]]))
+    assert sp.crosses_itself(np.array([[0, 0], [1, 1], [1, 0], [0, 1]]))  # a bow tie
+
+
+def test_a_lip_is_where_the_surface_turns_back_along_the_cap():
+    o = np.zeros(3)
+    assert sp.lip_angle(o, [[1, 0, 0]], [[-1, 0, 0]]) == pytest.approx(180)  # the surface carries straight on
+    assert sp.lip_angle(o, [[1, 0, 0]], [[1, 0.2, 0]]) < sp.LIP_SHARP  # it turns back along the cap: a thin lip
+    assert sp.lip_angle(o, [[1, 0, 0]], [[0, 1, 0]]) == pytest.approx(90)
 
 
 def test_drawing_back_moves_the_cut_off_the_plane_keeps_far_points_and_never_reorders_layers():
@@ -417,9 +453,8 @@ def test_each_side_of_a_separated_arm_is_rounded_and_the_two_never_touch(tmp_pat
     d = (C - pc) @ pn
     gap = 0.006
     arm, body = d[d > 1e-4], d[d < -1e-4]
-    # each cap lies off the plane on its own side, from about gap/2 at its crown to gap/2 + dome at its edge: rounded,
-    # not a flat plate
-    # (all but the few next to the cut's ends, where the gap and the dome narrow to nothing)
-    assert (arm > gap / 2 * 0.9).mean() > 0.8 and arm.max() > gap / 2 + 0.5 * cap["dome_m"]
-    assert (body < -gap / 2 * 0.9).mean() > 0.8 and body.min() < -(gap / 2 + 0.5 * cap["dome_m"])
+    # each cap is a dome on its own side: high at its edge (gap/2 + dome off the plane), falling to its crown, where
+    # the two all but touch (round-2: no slot to see through at rest); they never cross (new_crossings above)
+    assert arm.max() > gap / 2 + 0.5 * cap["dome_m"] and body.min() < -(gap / 2 + 0.5 * cap["dome_m"])
     assert np.ptp(arm) > 0.5 * cap["dome_m"] and np.ptp(body) > 0.5 * cap["dome_m"]
+    assert np.abs(d).min() < gap / 4 and rep["check"]["crossing_kinds"]["cap_cap"] == 0
