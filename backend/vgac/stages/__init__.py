@@ -84,6 +84,13 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
                 await mod.refine(sc, payload.get("instruction") or "", payload.get("view"), mask, params)
         elif op == "adjust":
             await mod.adjust(sc, params)
+        elif op == "paint":
+            # Touch up save (WP-23): a new clean-up version with the painted picture (paintsave.py).
+            if stage != "prep":
+                raise ValueError(f"the {stage} step cannot be painted")
+            from .. import paintsave
+
+            await paintsave.paint(sc, params)
         elif op == "upload":
             # The person's own picture, already written into the version folder by the API (uploads.py).
             upload = getattr(mod, "upload", None)

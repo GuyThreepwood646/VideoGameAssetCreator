@@ -240,7 +240,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const tryAgain = (v: Version) =>
     act(async () => {
       const keepModel = stage === 'concept' && typeof v.params.model === 'string' ? { model: v.params.model } : {}
-      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...freshParams(v.params, schema), ...keepModel } }))
+      // A rig is made again, not reused from another rig of the same model (backend stages/rig.py FRESH_ATTEMPT).
+      const fresh = stage === 'rig' ? { fresh_attempt: true } : {}
+      followRun(await api.runStage(asset.id, stage, { ...(stage === 'concept' ? { count } : {}), params: { ...freshParams(v.params, schema), ...keepModel, ...fresh } }))
     })
 
   // A Fix that opens a tool (2.5): go to the fix's stage, open "Change something" on the kept version and focus
@@ -661,9 +663,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 onTryAgain={() => tryAgain(active)}
                 onReject={() => act(() => api.reject(active.id))}
                 onFeedbackSaved={onChanged}
+                paintLock={stage === 'prep' && active.metrics?.painted === true ? PAINT_LOCK : null}
               />
             )}
-            {changeOpen && active.status === 'done' && (
+            {changeOpen && active.status === 'done' && !(stage === 'prep' && active.metrics?.painted === true) && (
               <ChangePanel
                 stage={stage}
                 target={active}
@@ -849,6 +852,10 @@ function ParamsRow({ version }: { version: Version }) {
 
 // "Happy with this?" with three answers. The Keep answer is the page's primary
 // button only while nothing is kept yet (the guide panel holds it otherwise).
+// Shown on a clean-up with Touch up paint (WP-23): Adjust, Refine and Try again would rebuild it from the 3D model and drop
+// the paint. The backend refuses them with the same meaning.
+const PAINT_LOCK = 'This version has your painted changes. Change something and Try again would rebuild the clean-up from the 3D model and lose the paint. Paint again on this version to change the colours.'
+
 function HappyBlock({
   stage,
   active,
@@ -863,6 +870,7 @@ function HappyBlock({
   onTryAgain,
   onReject,
   onFeedbackSaved,
+  paintLock,
 }: {
   stage: StageId
   active: Version
@@ -877,6 +885,7 @@ function HappyBlock({
   onTryAgain: () => void
   onReject: () => void
   onFeedbackSaved: () => void
+  paintLock: string | null
 }) {
   const fb = useFeedback(active, onFeedbackSaved)
   return (
@@ -887,7 +896,7 @@ function HappyBlock({
           {isSelected ? 'Kept' : 'Yes, keep it'}
         </button>
         <span className="answer-group">
-          <button type="button" disabled={busy} onClick={onTryAgain} title="Make a fresh attempt with the same settings">
+          <button type="button" disabled={busy || paintLock !== null} onClick={onTryAgain} title={paintLock ?? 'Make a fresh attempt with the same settings'}>
             Try again
           </button>
           {stage === 'concept' && (
@@ -900,9 +909,10 @@ function HappyBlock({
             </select>
           )}
         </span>
-        <button type="button" aria-pressed={changeOpen} onClick={() => setChangeOpen(!changeOpen)} title="Describe a change or fine-tune the settings">
+        <button type="button" aria-pressed={changeOpen} disabled={paintLock !== null} onClick={() => setChangeOpen(!changeOpen)} title={paintLock ?? 'Describe a change or fine-tune the settings'}>
           Change something
         </button>
+        {paintLock && <span className="small muted">{paintLock}</span>}
         <span className="grow" />
         <FeedbackButtons fb={fb} />
         <details className="more-menu">

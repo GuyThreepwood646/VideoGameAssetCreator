@@ -125,6 +125,9 @@ def previous_stage(category: str, stage: str) -> str:
     return STAGE_ORDER[idx]
 
 
+FRESH_ATTEMPT = "fresh_attempt"  # the same marker stages/rig.py reads; kept out of stored settings
+
+
 def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[str, Any] | None = None,
               parent_version_id: str | None = None, prepare: Any = None) -> list[dict[str, Any]]:
     """Start `count` versions of a stage (more than one only for concept). Returns [{job, version}] as dicts.
@@ -152,6 +155,11 @@ def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[st
     found = firstrun.blockers(q.settings, stage, a.category, None, q.supervisor, disabled=q.disabled)
     if found:
         raise Conflict(firstrun.sentence(found))
+    # "Try again" on a rig asks for a fresh rig (stages/rig.py FRESH_ATTEMPT): the marker goes to the job only, never onto
+    # the version's settings, so a later Adjust does not inherit it.
+    fresh = bool(params) and bool(params.get(FRESH_ATTEMPT))
+    if params:
+        params = {k: v for k, v in params.items() if k != FRESH_ATTEMPT}
     base_params = validate_params(stage, params, a.category)
     if stage == "concept" and not base_params.get("model") and getattr(a, "concept_model", None):
         base_params["model"] = a.concept_model
@@ -163,7 +171,7 @@ def run_stage(db: Session, a: Asset, stage: str, count: int = 1, params: dict[st
         v = new_version(db, a, stage, parent, p)
         if prepare is not None:
             prepare(v)
-        job = submit(db, a, v, "run", {"params": p})
+        job = submit(db, a, v, "run", {"params": {**p, FRESH_ATTEMPT: True} if fresh else p})
         versions.append(v)
         jobs.append(job)
     return [{"job": job_to_dict(j), "version": version_to_dict(v)} for j, v in zip(jobs, versions)]
