@@ -3,7 +3,7 @@
 // the page: it lives here, except in the review state where it is the "Yes, keep it"
 // answer next to the picture.
 import { Link } from 'react-router'
-import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
+import { api, libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { conceptCountLabel } from '../guide'
@@ -121,7 +121,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
 export function laterFailed(asset: Asset, stage: StageId): boolean {
   return STAGES.slice(STAGES.indexOf(stage) + 1).some((s) => {
     const vs = versionsOf(asset, s)
-    return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+    return (vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')) || (stoppedVersions(asset, s).length > 0 && !vs.some((v) => v.selected && v.status === 'done'))
   })
 }
 
@@ -294,6 +294,22 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
         const vs = versionsOf(asset, s)
         return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
       })
+      // A later step that was stopped: the same Resume that step's own card offers, so the cards agree (UX-06).
+      const stoppedLater = STAGES.slice(STAGES.indexOf(stage) + 1).find((s) => stoppedVersions(asset, s).length > 0 && !versionsOf(asset, s).some((v) => v.selected && v.status === 'done'))
+      if (!failedLater && stoppedLater) {
+        const si = info(stoppedLater)
+        happened = `You stopped step ${STAGES.indexOf(stoppedLater) + 1}, ${stagePlain(stoppedLater, si)}.`
+        now = 'Nothing you kept was lost. Resume runs it again from the start with the same settings.'
+        action = (
+          <>
+            <ResumeButton disabled={busy} onClick={() => void api.resumeAsset(asset.id, stoppedLater).then(() => onChanged?.())} est={fmtDuration(stageEstimate(stoppedLater, si, estimates))} />
+            <Link className="btn" to={`/assets/${asset.id}/${stoppedLater}`}>
+              Go to step {STAGES.indexOf(stoppedLater) + 1}
+            </Link>
+          </>
+        )
+        break
+      }
       if (failedLater) {
         const fi = info(failedLater)
         const failedV = versionsOf(asset, failedLater).slice(-1)[0]
