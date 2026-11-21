@@ -178,8 +178,84 @@ function nearTriangles(bvh: MeshBVH, c: THREE.Vector3, radius: number): number[]
   return out
 }
 
+// Normals for the facing test, one per vertex: the area-weighted sum of the face normals of every triangle that meets
+// the vertex's position, so the copies of a vertex on the two sides of a picture seam get the same normal. The mesh's
+// own normals are often split along those seams (WP-32 review: on a shirt they differed by 20 to 165 degrees across a
+// seam, so one side was judged turned away and painted weaker, leaving a line). Where the faces at a position cancel
+// out (the two sides of a thin sheet), the vertex keeps its own normal, else its first face's.
+const weldedNormals = new WeakMap<THREE.BufferGeometry, Float32Array>()
+
+export function facingNormals(geo: THREE.BufferGeometry): Float32Array {
+  const have = weldedNormals.get(geo)
+  if (have) return have
+  const pos = geo.attributes.position as THREE.BufferAttribute
+  const own = geo.attributes.normal as THREE.BufferAttribute | undefined
+  const idx = geo.index
+  const n = pos.count
+  const tris = idx ? idx.count / 3 : n / 3
+  // Group vertices by position (to a micrometre in model units).
+  const groupOf = new Int32Array(n)
+  const groups = new Map<string, number>()
+  for (let v = 0; v < n; v++) {
+    const key = `${Math.round(pos.getX(v) * 1e6)},${Math.round(pos.getY(v) * 1e6)},${Math.round(pos.getZ(v) * 1e6)}`
+    let g = groups.get(key)
+    if (g === undefined) {
+      g = groups.size
+      groups.set(key, g)
+    }
+    groupOf[v] = g
+  }
+  const sum = new Float64Array(groups.size * 3)
+  const area = new Float64Array(groups.size)
+  const first = new Float32Array(n * 3)
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), fn = new THREE.Vector3()
+  for (let f = 0; f < tris; f++) {
+    const ia = idx ? idx.getX(f * 3) : f * 3
+    const ib = idx ? idx.getX(f * 3 + 1) : f * 3 + 1
+    const ic = idx ? idx.getX(f * 3 + 2) : f * 3 + 2
+    a.fromBufferAttribute(pos, ia)
+    b.fromBufferAttribute(pos, ib)
+    c.fromBufferAttribute(pos, ic)
+    fn.subVectors(b, a).cross(c.sub(a)) // length = twice the area
+    const len = fn.length()
+    for (const v of [ia, ib, ic]) {
+      const g = groupOf[v]
+      sum[g * 3] += fn.x
+      sum[g * 3 + 1] += fn.y
+      sum[g * 3 + 2] += fn.z
+      area[g] += len
+      if (first[v * 3] === 0 && first[v * 3 + 1] === 0 && first[v * 3 + 2] === 0 && len > 0) {
+        first[v * 3] = fn.x / len
+        first[v * 3 + 1] = fn.y / len
+        first[v * 3 + 2] = fn.z / len
+      }
+    }
+  }
+  const out = new Float32Array(n * 3)
+  for (let v = 0; v < n; v++) {
+    const g = groupOf[v]
+    const x = sum[g * 3], y = sum[g * 3 + 1], z = sum[g * 3 + 2]
+    const len = Math.hypot(x, y, z)
+    if (len > 0.2 * area[g]) {
+      out[v * 3] = x / len
+      out[v * 3 + 1] = y / len
+      out[v * 3 + 2] = z / len
+    } else if (own) {
+      out[v * 3] = own.getX(v)
+      out[v * 3 + 1] = own.getY(v)
+      out[v * 3 + 2] = own.getZ(v)
+    } else {
+      out[v * 3] = first[v * 3]
+      out[v * 3 + 1] = first[v * 3 + 1]
+      out[v * 3 + 2] = first[v * 3 + 2]
+    }
+  }
+  weldedNormals.set(geo, out)
+  return out
+}
+
 // Visits the picture texels inside triangle f of the mesh, each with its 3D point and normal (interpolated from the
-// corners). No triangle is skipped for facing: that is decided per texel, so triangles that share an edge agree on it.
+// corners, welded across seams). No triangle is skipped for facing: that is decided per texel, so triangles that share an edge agree on it.
 // Changed texels are reported to the layer so the GPU gets only that rectangle.
 function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, visit: TexelVisit): number {
   const geo = mesh.geometry
@@ -199,17 +275,11 @@ function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, visit: T
   _n.crossVectors(_e1, _e2)
   if (_n.lengthSq() === 0) return 0
   _n.normalize()
-  // Normals at the three corners: the mesh's own, else the face's.
-  const nrm = geo.attributes.normal as THREE.BufferAttribute | undefined
-  if (nrm) {
-    _na.fromBufferAttribute(nrm, ia).transformDirection(m)
-    _nb.fromBufferAttribute(nrm, ib).transformDirection(m)
-    _nc.fromBufferAttribute(nrm, ic).transformDirection(m)
-  } else {
-    _na.copy(_n)
-    _nb.copy(_n)
-    _nc.copy(_n)
-  }
+  // Normals at the three corners, welded across picture seams (facingNormals).
+  const nrm = facingNormals(geo)
+  _na.fromArray(nrm, ia * 3).transformDirection(m)
+  _nb.fromArray(nrm, ib * 3).transformDirection(m)
+  _nc.fromArray(nrm, ic * 3).transformDirection(m)
 
   const W = layer.width
   const H = layer.height
