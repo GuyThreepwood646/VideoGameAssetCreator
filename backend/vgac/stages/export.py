@@ -798,6 +798,7 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
             sc.register(f"glb_{level.lower()}", p)
     _write_colliders(sc, col_plan, report)
     _write_sockets(sc, name, report)
+    _write_take_frames(sc, report)
     sc.set_metrics(lods=lod_list(report.get("lods") or {}), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"),
                    collider_count=report.get("collider_count", 0), collider_shape=col_plan.get("chosen"),
@@ -1166,7 +1167,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
                 textures[key]["layout"] = PACK_LAYOUTS.get(key) or PACK_LAYOUTS[key[5:]]
             if key == "hair_flow":
                 textures[key]["layout"] = HAIR_FLOW_LAYOUT
-    return {
+    manifest = {
         "name": sc.asset.name,
         "export_name": name,
         "asset_id": sc.asset.id,
@@ -1210,6 +1211,46 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "lineage": lineage,
         "checks": sc.version.metrics.get("checks"),
     }
+    moving = _moving_manifest(sc, pack_report)
+    if moving:  # only an asset with moving parts gets the key: every other manifest stays as it was
+        manifest["moving_parts"] = moving
+    return manifest
+
+
+def _write_take_frames(sc: StageContext, report: dict[str, Any]) -> None:
+    """Moving parts (WP-29): the FBX holds their clips one after another on one take (blender/pack.py lay_out_takes).
+    Each clip's first and last frame on it goes into this export's anim_clips.json (fbx_first, fbx_last, with fbx_fps
+    at the top) for the Unity importer, which cuts the take into the clips. Nothing changes without moving parts."""
+    frames = report.get("fbx_clip_frames")
+    path = sc.dir / "anim_clips.json"
+    if not frames or not path.is_file():
+        return
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["fbx_fps"] = report.get("fbx_fps")
+    for c in doc.get("clips") or []:
+        if c.get("name") in frames:
+            c["fbx_first"], c["fbx_last"] = frames[c["name"]]
+    path.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+
+
+def _moving_manifest(sc: StageContext, pack_report: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    """Hinged, spinning and sliding parts (WP-29): per piece its nodes, its turn or slide (pivot and axis in the glTF
+    frame, the amount in degrees or metres) and its clips, from the rig step's clip sidecar, with its triangles per
+    level from the pack report. None when the files hold no moving piece."""
+    packed = {p.get("node"): p for p in (pack_report or {}).get("parts") or []}
+    if not packed:
+        return None
+    doc = _read_json(sc.file("anim_clips")) or {}
+    out = []
+    for r in doc.get("parts") or []:
+        node = r.get("node")
+        if node not in packed:
+            continue
+        out.append({"name": r.get("name"), "kind": r.get("kind"), "node": node, "pivot_node": f"{node}_Pivot",
+                    "pivot": r.get("pivot"), "axis": r.get("axis"), "amount": r.get("amount"), "unit": r.get("unit"),
+                    "sign": r.get("sign"), "open_at_rest": r.get("open_at_rest"), "clips": r.get("clips"),
+                    "triangles_per_lod": packed[node].get("lods")})
+    return out or None
 
 
 # --- Unity checks (G01, G26, G32, G33) -------------------------------------------------------------------------------
@@ -1394,8 +1435,11 @@ def collider_checks(report: dict[str, Any], plan: dict[str, Any], category: str 
         checks.append(quality.check("collider_triangles", worst <= UNITY_CONVEX_TRIANGLES, worst, UNITY_CONVEX_TRIANGLES,
                                     {"parts": len(convex)}))
         cap = plan.get("cap") or colliders.max_parts(category, None)
-        checks.append(quality.check("collider_count", len(convex) <= cap, len(convex), cap,
-                                    {"vertices": sum(int(p.get("vertices") or 0) for p in convex)}))
+        # A moving piece's own hull (kind "part", WP-29) rides on the piece; the cap is for the body's shapes.
+        body = [p for p in convex if p.get("kind") != "part"]
+        riding = len(convex) - len(body)
+        checks.append(quality.check("collider_count", len(body) <= cap, len(body), cap,
+                                    {"vertices": sum(int(p.get("vertices") or 0) for p in convex), **({"moving": riding} if riding else {})}))
     op = plan.get("openings")
     if category in colliders.OPENINGS_CATEGORIES and op:
         checks.append(quality.check("openings_clear", bool(op.get("ok")), int(op.get("blocked_openings") or 0), 0,

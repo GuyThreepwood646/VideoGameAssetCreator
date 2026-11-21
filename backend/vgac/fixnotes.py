@@ -92,6 +92,8 @@ NOTES: dict[str, tuple[str, str]] = {
                                    "which says how to put the library back. Then make the moves again on the Make it move step."),
     "bones": ("by_hand", "Run the skeleton step again with the other skeleton template; if it fails twice, this model cannot be rigged automatically. "
                          "Use your own 3D model, build the 3D model again, or edit the parts by hand."),
+    "moving_parts": ("by_hand", "On the skeleton step, click on each named part in the parts panel (a lid, a door, a wheel or a drawer), "
+                                "then run the step again."),
     "single_root": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),
     "max_influences": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),
     "wings_found": ("by_hand", "Go back to the first step and redraw the creature with both wings fully spread and clearly separate from the body, "
