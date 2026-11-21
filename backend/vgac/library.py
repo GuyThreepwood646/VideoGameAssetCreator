@@ -42,10 +42,11 @@ def version_dir(asset: Asset, version: Version, settings: Settings | None = None
     return d
 
 
-# Windows' 260-character limit (MAX_PATH) applies to every file the app writes, and a library folder path is the
-# start of each of them. The deepest fixed-layout file the app writes is a clean-up face picture, with 36-character ids
-# (project, asset, version): projects/<id>/assets/<id>/prep/<id>/face/painted_head_closeup_2_drawn.png. Asset names
-# also go into export folder names and are not checked here (see the note in ARCHITECTURE).
+# Blender cannot open a file whose path is 260 characters or more (measured on this machine: 259 opens, 260 does not;
+# its Python is not long-path aware). The backend's own Python and ComfyUI's Python open 271 characters fine. So the
+# check covers the files Blender opens. The deepest of those in the clean-up step is the face picture the rebake reads,
+# projects/<id>/assets/<id>/prep/<id>/face/painted_head_closeup_2_drawn.png (36-character ids): 169 characters below the
+# library folder, which gives the 89-character folder limit. Export items are checked in stages/export.py.
 LONG_PATH_LIMIT = 260
 _DEEPEST_FIXED = "projects/{p}/assets/{a}/prep/{v}/face/painted_head_closeup_2_drawn.png"
 DEEPEST_FIXED_LENGTH = len(_DEEPEST_FIXED.format(p="x" * 36, a="x" * 36, v="x" * 36))
