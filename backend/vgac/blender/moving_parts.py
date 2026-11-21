@@ -464,7 +464,8 @@ HINGE_CLEAR = 0.15  # the inside test counts only a hinged piece's points farthe
 def main():  # pragma: no cover - runs inside Blender
     """blender -b --python moving_parts.py -- <in.glb> <out_rig.glb> <out_anim.glb> --parts <json> --report <json>
 
-    --parts: [{name, kind, locations (glTF frame), side, open_at_rest, angle | distance}] (declared_parts.for_moving).
+    --parts: {"parts": [{name, kind, locations (glTF frame), side, open_at_rest, angle | distance}]} (declared_parts.for_moving,
+    written by declared_parts.write_placed; a bare list is read too).
     Writes out_rig.glb (the body, and each piece under its own pivot node, no animation) and out_anim.glb (the same
     with the clips) and the report. Every node is named for the engines: the pivot '<part>_<n>_Pivot' (still, its Z
     along the axis), its child '<part>_<n>' that the clips turn about Z or move along Z, and the piece's mesh
@@ -483,6 +484,8 @@ def main():  # pragma: no cover - runs inside Blender
     report_path = _common.opt("--report", None)
     with open(_common.opt("--parts", ""), encoding="utf-8") as fh:
         parts = json.load(fh)
+    if isinstance(parts, dict):  # declared_parts.write_placed's {"parts": [...]}
+        parts = parts.get("parts") or []
     report = {"ok": False, "fps": FPS, "parts": [], "clips": []}
     _common.open_glb(src)
     scene = bpy.context.scene
