@@ -26,6 +26,7 @@ SEED_SIZE = 4000  # safety net: a region never has more vertices than this
 MIN_PIECE_TIDY = 12  # tidy: pieces smaller than this are dropped
 HOLE_ROUNDS = 3  # rounds of hole filling after the growth (see fill_holes)
 CREASE_DOT = 0.87  # seam duplicates join only when their normals agree within about 30 degrees
+SECTOR_COS = 0.87  # a valley splits a vertex into sectors only when its two faces turn by about 30 degrees or more (trial)
 SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
 SPINE_WORDS = ("spine", "chest")
 
@@ -44,12 +45,64 @@ def _adjacency(V, edges):
     return adj
 
 
+def _sectors(faces, edge_faces, concave, sharp):
+    """Split every vertex into sectors: the faces round it that connect through edges that are not valleys. A growth
+    that enters a vertex in one sector cannot leave it into another sector across a valley, so a shared corner vertex
+    does not carry the region over a valley (WP-69 ridge fix). Returns (node_of, node_vertex, adjacency), where
+    node_of[(v, f)] is the node id of vertex v in face f, node_vertex[n] the vertex, adjacency[n] the nodes it joins."""
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for (p, q), fs in edge_faces.items():
+        if (p, q) in sharp:
+            continue
+        f0 = fs[0]
+        for f in fs[1:]:
+            union((p, f0), (p, f))
+            union((q, f0), (q, f))
+    node_id, node_vertex, vertex_nodes = {}, [], {}
+    node_of = {}
+    for f, tri in enumerate(faces):
+        for v in tri:
+            r = find((int(v), f))
+            if r not in node_id:
+                node_id[r] = len(node_vertex)
+                node_vertex.append(int(v))
+            n = node_id[r]
+            node_of[(int(v), f)] = n
+            nodes = vertex_nodes.setdefault(int(v), [])
+            if n not in nodes:
+                nodes.append(n)
+    adjacency = [[] for _ in node_vertex]
+    for (p, q), fs in edge_faces.items():
+        if (p, q) in concave:
+            continue
+        f0 = fs[0]
+        a, b = node_of[(p, f0)], node_of[(q, f0)]
+        adjacency[a].append(b)
+        adjacency[b].append(a)
+    return node_of, node_vertex, vertex_nodes, adjacency
+
+
 def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE, allowed=None):
     """The region grown from the vertex nearest the point (WP-69 stage 3). Growth crosses mesh edges and seam
-    duplicates (same position, normals within about 30 degrees), and stops at a concave edge: where the next face lies
-    behind this one (a valley, such as where a backpack meets the back), so convex ridges such as a box's own edges are
-    crossed. Safety nets: radius from the point and a vertex limit. faces: (F, 3) triangle vertex indices.
-    Returns a bool mask. Calibrated on The Heir's pack: a click on it reaches 220 of its 227 vertices."""
+    duplicates (same position, normals within about 30 degrees). It stops at a valley: a concave edge, where the next
+    face lies in front of this face's plane (where a backpack meets the back, or a box meets the floor). Convex ridges,
+    such as a box's own edges, are crossed. A sharp valley also stops growth through a vertex it shares (each vertex is
+    split into sectors, see _sectors). Safety nets: radius from the point and a vertex limit. faces: (F, 3) triangle
+    vertex indices. Returns a bool mask. The Heir's pack calibration (a click reaches 220 of its 227 vertices) was made
+    with the old sign and is re-measured in bakeoff/wp69/ridgefix."""
     co = np.asarray(co, dtype=float).reshape(-1, 3)
     V = len(co)
     mask = np.zeros(V, dtype=bool)
@@ -71,15 +124,17 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE, allowed=None):
     for fi, (a0, b0, c0) in enumerate(faces):
         for p_, q_ in ((a0, b0), (b0, c0), (c0, a0)):
             edge_faces.setdefault((min(p_, q_), max(p_, q_)), []).append(fi)
-    adj = [[] for _ in range(V)]
+    concave, sharp = set(), set()
     for (p_, q_), fs in edge_faces.items():
-        concave = False
         if len(fs) == 2:
             f1, f2 = fs
-            concave = np.dot(fn[f1], fc[f2] - fc[f1]) < -1e-6 or np.dot(fn[f2], fc[f1] - fc[f2]) < -1e-6
-        if not concave:
-            adj[p_].append(q_)
-            adj[q_].append(p_)
+            d12 = np.dot(fn[f1], fc[f2] - fc[f1])
+            d21 = np.dot(fn[f2], fc[f1] - fc[f2])
+            if d12 > 1e-6 or d21 > 1e-6:
+                concave.add((p_, q_))
+                if np.dot(fn[f1], fn[f2]) < SECTOR_COS:
+                    sharp.add((p_, q_))
+    node_of, node_vertex, vertex_nodes, adj = _sectors(faces, edge_faces, concave, sharp)
     buckets = {}
     for i, p_ in enumerate(np.round(co, 5)):
         buckets.setdefault(tuple(p_), []).append(i)
@@ -87,22 +142,34 @@ def grow_region(co, faces, point, radius=RADIUS, limit=SEED_SIZE, allowed=None):
         for a0 in group:
             for b0 in group:
                 if a0 < b0 and np.dot(vn[a0], vn[b0]) > CREASE_DOT:
-                    adj[a0].append(b0)
-                    adj[b0].append(a0)
+                    for na in vertex_nodes.get(a0, []):
+                        for nb in vertex_nodes.get(b0, []):
+                            adj[na].append(nb)
+                            adj[nb].append(na)
     if allowed is not None and not allowed[start]:
         return mask
+    visited = np.zeros(len(node_vertex), dtype=bool)
     mask[start] = True
-    stack = [start]
+    stack = []
+    for n in vertex_nodes.get(start, []):
+        visited[n] = True
+        stack.append(n)
     count = 1
     while stack and count < limit:
         u = stack.pop()
-        for w in adj[u]:
+        for m in adj[u]:
             if count >= limit:
                 break
-            if not mask[w] and dist[w] <= radius and (allowed is None or allowed[w]):
+            if visited[m]:
+                continue
+            w = node_vertex[m]
+            if dist[w] > radius or (allowed is not None and not allowed[w]):
+                continue
+            visited[m] = True
+            if not mask[w]:
                 mask[w] = True
                 count += 1
-                stack.append(w)
+            stack.append(m)
     return mask
 
 
