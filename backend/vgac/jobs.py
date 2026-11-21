@@ -53,7 +53,7 @@ import psutil
 from sqlalchemy import func, select
 
 from . import cardmem, comfy_inputs, estimates, model_choices, prefs
-from .comfy import ComfyClient
+from .comfy import JOB_PROMPTS, ComfyClient, withdraw_job_prompts
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
@@ -428,14 +428,15 @@ class Lease:
     granted_at: float = 0.0  # time.monotonic() when it was lent; the borrowing job records how long it kept it
 
     async def end(self, interrupt: bool = False) -> None:
-        """Hand the card back. interrupt: stop what this job left running on it first (the job was stopped), so the
-        next job on the card does not wait behind it. Safe to call twice."""
+        """Hand the card back. interrupt: withdraw this job's own prompts from the card first (the job was stopped), so
+        the next job on the card does not wait behind them. Never another job's prompt. Safe to call twice."""
         if self.ended:
             return
         if interrupt:
+            mine = [(c, p) for c, p in (JOB_PROMPTS.get() or []) if c is self.client]
             try:
-                await asyncio.wait_for(self.client.interrupt(), timeout=6.0)
-            except BaseException:  # noqa: BLE001  (never keep the card because the interrupt failed)
+                await asyncio.wait_for(withdraw_job_prompts(mine), timeout=6.0)
+            except BaseException:  # noqa: BLE001  (never keep the card because the withdrawal failed)
                 pass
         self.give_back()
 
@@ -465,6 +466,8 @@ class JobContext:
     # and only= (that card and no other); returns (Lease or None, the plain reason when None). None: this job cannot
     # borrow (tests).
     borrow: Callable[..., Awaitable[tuple["Lease | None", str]]] | None = None
+    # The prompts this job has sent to the cards, (client, prompt_id): a stop withdraws these (comfy.withdraw_job_prompts).
+    prompts: list[tuple[ComfyClient, str]] = field(default_factory=list)
 
     @property
     def client(self) -> ComfyClient | None:
@@ -715,13 +718,15 @@ class InstanceWorker:
                 except Exception as e:  # noqa: BLE001
                     log.debug("job %s: could not kill child process: %s", job_id[:8], e)
         task = self._job_task
-        client = self.clients.get(self.name)
+        # Only this job's own prompts are withdrawn (interrupt only when one of them runs). A card-wide interrupt here
+        # would also cut short another client's prompt on the same card.
+        sent = list(ctx.prompts) if ctx is not None else []
 
         def _do() -> None:
             if task is not None and not task.done():
                 task.cancel()
-            if client is not None:
-                asyncio.ensure_future(client.interrupt())
+            if sent:
+                asyncio.ensure_future(withdraw_job_prompts(sent))
 
         loop = self._loop
         if loop is None or loop.is_closed():
@@ -815,8 +820,11 @@ class InstanceWorker:
                 log.log(logging.INFO if fraction_changed else logging.DEBUG, "job %s: %.0f%% %s", job_id[:8], j.progress * 100, j.message)
                 _publish_job(j)
 
+        # Every prompt this job sends to a card is recorded here (comfy.JOB_PROMPTS), so a stop can withdraw them.
+        prompts: list[tuple[ComfyClient, str]] = []
+        JOB_PROMPTS.set(prompts)  # this task's own context: it ends with the job
         ctx = JobContext(job_id=job_id, instance=self.name, payload=payload, settings=self.settings, clients=self.clients,
-                         _progress_cb=progress)
+                         _progress_cb=progress, prompts=prompts)
         if self.lend is not None:
             lend, here, job_kind = self.lend, self.name, kind
 
